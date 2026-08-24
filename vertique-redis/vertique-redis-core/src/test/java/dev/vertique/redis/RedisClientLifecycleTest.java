@@ -3,8 +3,8 @@
 
 package dev.vertique.redis;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -14,7 +14,9 @@ import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.redis.client.Redis;
 import io.vertx.redis.client.RedisCluster;
+import io.vertx.redis.client.RedisClusterConnectOptions;
 import io.vertx.redis.client.RedisConnection;
+import io.vertx.redis.client.RedisOptions;
 import io.vertx.redis.client.Request;
 import io.vertx.redis.client.Response;
 import java.lang.reflect.Field;
@@ -130,6 +132,38 @@ class RedisClientLifecycleTest {
     }
 
     @Test
+    @DisplayName("cluster connect options preserve profile endpoints and copied connection settings")
+    void clusterConnectOptionsPreserveProfileEndpointsAndConnectionSettings() {
+        RedisConnectionConfig profile = new RedisConnectionConfig(
+                PROFILE_NAME,
+                List.of("redis://redis-a:6379", "redis://redis-b:6379"),
+                "cache-user",
+                "redis-password",
+                false,
+                500,
+                8,
+                100);
+        RedisOptions options = new RedisOptions()
+                .setUser(profile.username())
+                .setPassword(profile.passwordSecret())
+                .setMaxNestedArrays(17)
+                .setProtocolNegotiation(false)
+                .setMaxWaitingHandlers(23);
+
+        // When: the cluster-connect callback copies the client options for the profile.
+        RedisClusterConnectOptions connectOptions =
+                RedisClientRegistry.copyClusterConnectOptions(options, profile.endpoints());
+
+        // Then: profile seed endpoints and connection settings are retained in the callback options.
+        assertEquals(profile.endpoints(), connectOptions.getEndpoints());
+        assertEquals(options.getUser(), connectOptions.getUser());
+        assertEquals(options.getPassword(), connectOptions.getPassword());
+        assertEquals(options.getMaxNestedArrays(), connectOptions.getMaxNestedArrays());
+        assertEquals(options.isProtocolNegotiation(), connectOptions.isProtocolNegotiation());
+        assertEquals(options.getMaxWaitingHandlers(), connectOptions.getMaxWaitingHandlers());
+    }
+
+    @Test
     @DisplayName("startup credential material is redacted from diagnostics")
     void startupCredentialResolutionDoesNotExposeSecretMaterial() {
         String secret = "redis-password-SENTINEL-7f19";
@@ -200,7 +234,8 @@ class RedisClientLifecycleTest {
     }
 
     @SuppressWarnings("unchecked")
-    private static Map<String, Redis> clusterClientsOf(RedisClientRegistry registry) throws ReflectiveOperationException {
+    private static Map<String, Redis> clusterClientsOf(RedisClientRegistry registry)
+            throws ReflectiveOperationException {
         Field clients = RedisClientRegistry.class.getDeclaredField("clusterClients");
         clients.setAccessible(true);
         return (Map<String, Redis>) clients.get(registry);

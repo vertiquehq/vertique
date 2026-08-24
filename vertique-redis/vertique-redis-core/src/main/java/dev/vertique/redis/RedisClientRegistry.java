@@ -15,6 +15,7 @@ import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
@@ -90,8 +91,8 @@ public final class RedisClientRegistry {
                 throw new IllegalArgumentException("unknown Redis connection profile: " + profileName);
             }
             return primaryOperations.computeIfAbsent(profileName, ignored -> {
-                Redis clusterClient = clusterClients.computeIfAbsent(
-                        profileName, ignoredProfile -> createClusterClient(profile));
+                Redis clusterClient =
+                        clusterClients.computeIfAbsent(profileName, ignoredProfile -> createClusterClient(profile));
                 return new RedisPrimaryOperations(RedisCluster.create(clusterClient));
             });
         }
@@ -140,10 +141,19 @@ public final class RedisClientRegistry {
     private Redis createClusterClient(RedisConnectionConfig profile) {
         RedisOptions options = createOptions(profile).setType(RedisClientType.CLUSTER);
         return Redis.createClusterClient(
-                vertx,
-                options,
-                () -> Future.succeededFuture(
-                        new RedisClusterConnectOptions(options).setEndpoints(profile.endpoints())));
+                vertx, options, () -> Future.succeededFuture(copyClusterConnectOptions(options, profile.endpoints())));
+    }
+
+    /**
+     * Copies the connection settings used by the cluster-connect callback and applies the profile's
+     * seed endpoints.
+     *
+     * @param options the cluster client options
+     * @param endpoints the profile's cluster seed endpoints
+     * @return the copied cluster-connect options
+     */
+    static RedisClusterConnectOptions copyClusterConnectOptions(RedisOptions options, List<String> endpoints) {
+        return new RedisClusterConnectOptions(options).setEndpoints(endpoints);
     }
 
     private static RedisOptions createOptions(RedisConnectionConfig profile) {

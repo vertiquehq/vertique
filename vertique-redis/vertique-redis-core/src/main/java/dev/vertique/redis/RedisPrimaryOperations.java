@@ -16,11 +16,11 @@ public final class RedisPrimaryOperations {
     private final RedisCluster redis;
 
     /**
-     * Constructs the primary-operation seam over an injectable Redis cluster client.
+     * Constructs the primary-operation seam over a Redis cluster client.
      *
      * @param redis the cluster-capable client used to fan out commands to primary nodes
      */
-    public RedisPrimaryOperations(RedisCluster redis) {
+    RedisPrimaryOperations(RedisCluster redis) {
         this.redis = Objects.requireNonNull(redis, "redis");
     }
 

@@ -49,7 +49,7 @@ policy belong to T010 cleanup policy concerns, not this shared core.
 
 ## Testing
 
-Profile and lifecycle behavior are owned by T006/T007. The T007 lifecycle proof covers lazy creation, same-profile identity reuse, ordered/idempotent close, host-owned `Vertx` preservation, secret redaction, and the primary-operation registry boundary. T001 proof selects this module directly.
+Profile and lifecycle behavior are owned by T006/T007. Maintainers can navigate the focused proof in `vertique-redis/vertique-redis-core/src/test/java/dev/vertique/redis/RedisClientLifecycleTest.java` (`RedisClientLifecycleTest`) and `vertique-redis/vertique-redis-core/src/test/java/dev/vertique/redis/RedisPrimaryOperationsTest.java` (`RedisPrimaryOperationsTest`). Run both with:
 
 ```text
 ./mvnw -ntp -pl vertique-redis/vertique-redis-core -am test
