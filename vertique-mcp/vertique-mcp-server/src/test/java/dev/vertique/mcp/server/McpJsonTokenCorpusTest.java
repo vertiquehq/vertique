@@ -30,7 +30,7 @@ import org.junit.jupiter.api.Test;
 class McpJsonTokenCorpusTest {
 
     private static final int DEFAULT_TOKENS = 65_536;
-    private static final String CORPUS_SHA_256 = "0e5e4f9b836da0da1ac3e723d151e4e8415f9433b5a97735c8143574829c4925";
+    private static final String CORPUS_SHA_256 = "1f31751da548edcd0fed697b3f8697aab1d0aa18c9c2a35d35596cd969e48282";
     private static final Map<String, Long> REQUIRED_STRUCTURAL_CLASS_COUNTS = Map.ofEntries(
             Map.entry("flat-array", 7L),
             Map.entry("flat-scalar-array", 7L),
@@ -60,7 +60,8 @@ class McpJsonTokenCorpusTest {
             Map.entry("go-discover-result", 1L),
             Map.entry("go-tools-list-anonymous-result", 1L),
             Map.entry("go-tools-list-bearer-result", 1L),
-            Map.entry("go-tool-call-result", 1L));
+            Map.entry("go-tool-call-result", 1L),
+            Map.entry("header-envelope-string-id-discover", 1L));
 
     @Test
     @DisplayName("R18: the shared JSON corpus has its recorded digest and every required structural class")
@@ -69,7 +70,7 @@ class McpJsonTokenCorpusTest {
         assertAll(
                 () -> assertThat(sha256(McpJsonTokenCorpus.resourceBytes())).isEqualTo(CORPUS_SHA_256),
                 () -> {
-                    assertThat(rows).hasSize(34);
+                    assertThat(rows).hasSize(35);
                     assertThat(rows.stream()
                                     .collect(Collectors.groupingBy(McpJsonTokenCorpus.Row::id, Collectors.counting())))
                             .allSatisfy((id, count) -> assertThat(count)
