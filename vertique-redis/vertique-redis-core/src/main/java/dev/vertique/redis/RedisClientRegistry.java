@@ -3,7 +3,10 @@
 
 package dev.vertique.redis;
 
+import io.lettuce.core.RedisURI;
+import io.lettuce.core.cluster.RedisClusterClient;
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.net.NetClientOptions;
 import io.vertx.redis.client.Redis;
@@ -13,11 +16,13 @@ import io.vertx.redis.client.RedisClusterConnectOptions;
 import io.vertx.redis.client.RedisOptions;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
+import java.time.Duration;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
@@ -30,6 +35,8 @@ public final class RedisClientRegistry {
     private final Map<String, Redis> clients = new ConcurrentHashMap<>();
     private final Map<String, Redis> clusterClients = new ConcurrentHashMap<>();
     private final Map<String, RedisPrimaryOperations> primaryOperations = new ConcurrentHashMap<>();
+    private final Map<String, RedisClusterClient> topologyClients = new ConcurrentHashMap<>();
+    private final Map<String, RedisTopologyOperations> topologyOperations = new ConcurrentHashMap<>();
     private final Object lifecycleLock = new Object();
     private boolean closeStarted;
     private Future<Void> closeFuture;
@@ -117,6 +124,35 @@ public final class RedisClientRegistry {
     }
 
     /**
+     * Returns topology-aware maintenance operations backed by one registry-owned Lettuce client
+     * for the named profile.
+     *
+     * <p>The Lettuce client and its cluster connection are both created lazily. Lettuce remains
+     * confined to this maintenance adapter; request-path operations continue to use Vert.x Redis.
+     *
+     * @param profileName the validated profile name
+     * @return topology-aware maintenance operations backed by the shared profile client
+     * @throws IllegalArgumentException if the profile is unknown
+     * @throws IllegalStateException if registry shutdown has started
+     */
+    public RedisTopologyOperations topologyOperations(String profileName) {
+        synchronized (lifecycleLock) {
+            if (closeStarted) {
+                throw new IllegalStateException("Redis client registry is closed");
+            }
+            RedisConnectionConfig profile = profiles.get(profileName);
+            if (profile == null) {
+                throw new IllegalArgumentException("unknown Redis connection profile: " + profileName);
+            }
+            return topologyOperations.computeIfAbsent(profileName, ignored -> {
+                RedisClusterClient client =
+                        topologyClients.computeIfAbsent(profileName, ignoredProfile -> createTopologyClient(profile));
+                return new LettuceRedisTopologyOperations(client);
+            });
+        }
+    }
+
+    /**
      * Closes created clients in validated profile order and settles once every close attempt has
      * completed.
      *
@@ -143,6 +179,10 @@ public final class RedisClientRegistry {
                 if (clusterClient != null) {
                     sequence = sequence.compose(ignored -> closeClient(clusterClient, firstFailure));
                 }
+                RedisClusterClient topologyClient = topologyClients.get(profileName);
+                if (topologyClient != null) {
+                    sequence = sequence.compose(ignored -> closeTopologyClient(topologyClient, firstFailure));
+                }
             }
             closeFuture = sequence.compose(ignored -> {
                 Throwable failure = firstFailure.get();
@@ -160,6 +200,24 @@ public final class RedisClientRegistry {
         RedisOptions options = createOptions(profile).setType(RedisClientType.CLUSTER);
         return clusterClientFactory.create(
                 vertx, options, () -> Future.succeededFuture(copyClusterConnectOptions(options, profile.endpoints())));
+    }
+
+    private static RedisClusterClient createTopologyClient(RedisConnectionConfig profile) {
+        List<RedisURI> endpoints = profile.endpoints().stream()
+                .map(endpoint -> {
+                    RedisURI uri = RedisURI.create(endpoint)
+                            .setSsl(profile.tlsEnabled())
+                            .setTimeout(Duration.ofMillis(profile.connectTimeoutMs()));
+                    if (profile.username() != null) {
+                        uri.setAuthentication(
+                                profile.username(), profile.passwordSecret() == null ? "" : profile.passwordSecret());
+                    } else if (profile.passwordSecret() != null) {
+                        uri.setAuthentication(profile.passwordSecret());
+                    }
+                    return uri;
+                })
+                .toList();
+        return RedisClusterClient.create(endpoints);
     }
 
     /**
@@ -197,6 +255,23 @@ public final class RedisClientRegistry {
                 firstFailure.compareAndSet(null, cause);
                 return Future.succeededFuture();
             });
+        } catch (RuntimeException failure) {
+            firstFailure.compareAndSet(null, failure);
+            return Future.succeededFuture();
+        }
+    }
+
+    private static Future<Void> closeTopologyClient(
+            RedisClusterClient client, AtomicReference<Throwable> firstFailure) {
+        try {
+            Promise<Void> promise = Promise.promise();
+            client.shutdownAsync(0, 0, TimeUnit.MILLISECONDS).whenComplete((ignored, failure) -> {
+                if (failure != null) {
+                    firstFailure.compareAndSet(null, failure);
+                }
+                promise.complete();
+            });
+            return promise.future();
         } catch (RuntimeException failure) {
             firstFailure.compareAndSet(null, failure);
             return Future.succeededFuture();

@@ -17,6 +17,7 @@
         <dependency><groupId>dev.vertique</groupId><artifactId>vertique-core</artifactId></dependency>
         <dependency><groupId>io.vertx</groupId><artifactId>vertx-core</artifactId></dependency>
         <dependency><groupId>io.vertx</groupId><artifactId>vertx-redis-client</artifactId></dependency>
+        <dependency><groupId>io.lettuce</groupId><artifactId>lettuce-core</artifactId></dependency>
         <dependency><groupId>com.google.dagger</groupId><artifactId>dagger</artifactId></dependency>
         <dependency><groupId>jakarta.inject</groupId><artifactId>jakarta.inject-api</artifactId></dependency>
         <dependency>
