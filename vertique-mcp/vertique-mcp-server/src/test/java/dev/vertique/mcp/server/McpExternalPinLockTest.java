@@ -103,6 +103,20 @@ class McpExternalPinLockTest {
             "sha512-8f1OghQ2rjzIOfqgUCP+8GiUWqRs89njoWLNqAe8kWmDePv3s1fZXseej+QXemssEuuOvLLmLO/kqM3IQHtISw==",
             "go-sdk",
             "h1:yqjY2dsbKAC0LSuWZVBMrHgiG8ukXv6NRo0JiALay44=");
+    private static final Map<String, String> EXPECTED_SOURCE_REFERENCES = Map.of(
+            "conformance-runner",
+            "https://registry.npmjs.org/@modelcontextprotocol/conformance/-/conformance-0.2.0-alpha.10.tgz",
+            "typescript-client",
+            "https://registry.npmjs.org/@modelcontextprotocol/client/-/client-2.0.0.tgz",
+            "go-sdk",
+            "https://github.com/modelcontextprotocol/go-sdk/releases/tag/v1.7.0");
+    private static final Map<String, String> EXPECTED_INVOCATIONS = Map.of(
+            "conformance-runner",
+            "npx @modelcontextprotocol/conformance@0.2.0-alpha.10 server --url <url> --scenario <id>",
+            "typescript-client",
+            "node client.mjs --url <url> --scenario <scenario>",
+            "go-sdk",
+            "go run . --url <url> --scenario <scenario>");
 
     private static Stream<String> t026ContractRows() {
         return Stream.of(ENTRY_ROW, VERSION_ROW, INTEGRITY_ROW, INVOCATION_ROW, DIGEST_ROW, PARTITION_ROW);
@@ -124,15 +138,17 @@ class McpExternalPinLockTest {
     }
 
     private static void assertRequiredEntries() {
+        assertThat(PIN_LOCK.getInteger("schemaVersion")).isEqualTo(1);
         assertThat(ARTIFACTS)
                 .extracting(artifact -> artifact.getString("id"))
                 .containsExactlyInAnyOrder("conformance-runner", "typescript-client", "go-sdk");
-        assertThat(ARTIFACTS).allSatisfy(artifact -> {
-            assertThat(artifact.getString("sourceReference")).isNotBlank();
-            assertThat(URI.create(artifact.getString("sourceReference")).getScheme())
-                    .isEqualTo("https");
-            assertThat(artifact.getString("invocation")).isNotBlank();
-        });
+        Map<String, String> actualSourceReferences = new LinkedHashMap<>();
+        ARTIFACTS.forEach(artifact ->
+                actualSourceReferences.put(artifact.getString("id"), artifact.getString("sourceReference")));
+        assertThat(actualSourceReferences).containsExactlyInAnyOrderEntriesOf(EXPECTED_SOURCE_REFERENCES);
+        assertThat(actualSourceReferences.values())
+                .allSatisfy(reference ->
+                        assertThat(URI.create(reference).getScheme()).isEqualTo("https"));
     }
 
     private static void assertExactVersions() {
@@ -152,10 +168,13 @@ class McpExternalPinLockTest {
     }
 
     private static void assertInvocationForm() {
+        assertThat(PIN_LOCK.getString("wireRevision")).isEqualTo("2026-07-28");
         assertThat(PIN_LOCK.getString("invocationForm")).isEqualTo("server --url <url> --scenario <id>");
         assertThat(PIN_LOCK.encode()).doesNotContain("--requirements", "--spec-version", "--expected-failures");
-        assertThat(artifact("conformance-runner").getString("invocation"))
-                .isEqualTo("npx @modelcontextprotocol/conformance@0.2.0-alpha.10 server --url <url> --scenario <id>");
+        Map<String, String> actualInvocations = new LinkedHashMap<>();
+        ARTIFACTS.forEach(
+                artifact -> actualInvocations.put(artifact.getString("id"), artifact.getString("invocation")));
+        assertThat(actualInvocations).containsExactlyInAnyOrderEntriesOf(EXPECTED_INVOCATIONS);
     }
 
     private static void assertManifestDigest() {
