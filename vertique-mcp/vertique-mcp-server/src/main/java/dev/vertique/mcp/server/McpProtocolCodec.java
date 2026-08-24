@@ -189,9 +189,10 @@ final class McpProtocolCodec {
 
     /**
      * Validates protocol negotiation for one already envelope-validated request (contract §4.7,
-     * issues #429/#438): the required {@code MCP-Protocol-Version} / {@code Mcp-Method} / {@code
-     * Mcp-Name} headers against their body-mirrored values, supported protocol-version policy, and —
-     * for {@code tools/call} only — the rejected reserved MRTR fields.
+     * issues #429/#438): the universally required {@code MCP-Protocol-Version} / {@code Mcp-Method}
+     * headers and the method-applicable {@code Mcp-Name} header against their body-mirrored values,
+     * supported protocol-version policy, and — for {@code tools/call} only — the rejected reserved
+     * MRTR fields.
      *
      * <p><strong>Ordering is the caller's obligation, not this method's.</strong> This method reads
      * only {@code envelope} and {@code headers}; it has no dependency on interceptors, the tool
@@ -202,12 +203,13 @@ final class McpProtocolCodec {
      * params._meta["io.modelcontextprotocol/protocolVersion"]} — the vendored schema's own {@code
      * RequestMetaObject} description: "For the HTTP transport, this value MUST match the {@code
      * MCP-Protocol-Version} header; otherwise the server MUST return a 400 Bad Request." {@code
-     * Mcp-Method} must equal {@code envelope.method}. {@code Mcp-Name} is required on every request,
-     * but its value is compared against {@code params.name} only for {@code tools/call} when {@code
-     * name} is itself present and textual; {@code server/discover} and {@code tools/list} carry no
-     * schema-level "name" concept to mirror, so their {@code Mcp-Name} value is accepted as sent. All
-     * three header <em>values</em> are compared case-sensitively; the header <em>name</em> lookup is
-     * case-insensitive ({@link MultiMap#get(String)}'s own contract). This method does not implement
+     * Mcp-Method} must equal {@code envelope.method}. {@code Mcp-Name} is required and must equal
+     * {@code params.name} only for {@code tools/call}; {@code server/discover} and {@code tools/list}
+     * carry no schema-level name-shaped identifier to mirror, so an absent or unsolicited {@code
+     * Mcp-Name} is accepted for those methods. Official params validation has already established that
+     * {@code tools/call.params.name} is a string before this method runs. Applicable header
+     * <em>values</em> are compared case-sensitively; header <em>name</em> lookup is case-insensitive
+     * ({@link MultiMap#get(String)}'s own contract). This method does not implement
      * the contract's "Base64 sentinel values are decoded before comparison" clause: no concrete
      * sentinel syntax is specified anywhere in this feature's governance corpus, and the three values
      * compared here (the fixed protocol-version literal, the fixed method-string enum, and a tool name
@@ -274,17 +276,9 @@ final class McpProtocolCodec {
         if (!headerMatches(headers, HEADER_METHOD, method)) {
             return NegotiationResult.failed(negotiationError());
         }
-        String nameHeader = headers.get(HEADER_NAME);
-        if (nameHeader == null) {
+        if ("tools/call".equals(method)
+                && !headerMatches(headers, HEADER_NAME, params.get("name").asText())) {
             return NegotiationResult.failed(negotiationError());
-        }
-        if ("tools/call".equals(method)) {
-            JsonNode nameNode = params.get("name");
-            if (nameNode != null && nameNode.isTextual() && !nameNode.asText().isBlank()) {
-                if (!nameHeader.equals(nameNode.asText())) {
-                    return NegotiationResult.failed(negotiationError());
-                }
-            }
         }
         return NegotiationResult.ok(protocolVersion);
     }

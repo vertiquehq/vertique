@@ -140,6 +140,87 @@ class McpProtocolNegotiationTest {
         }
     }
 
+    private static Stream<StandardHeaderCase> applicableStandardHeaderCases() {
+        JsonObject schemaInvalidName = toolsCallBody(KNOWN_TOOL);
+        schemaInvalidName.getJsonObject("params").put("name", 42);
+
+        return Stream.of(
+                StandardHeaderCase.negotiated(
+                        "server/discover without Mcp-Name", discoverBody(), standardHeaders("server/discover")),
+                StandardHeaderCase.negotiated(
+                        "tools/list without Mcp-Name", toolsListBody(), standardHeaders("tools/list")),
+                StandardHeaderCase.negotiated(
+                        "server/discover with unsolicited Mcp-Name",
+                        discoverBody(),
+                        validHeaders("server/discover", "unsolicited")),
+                StandardHeaderCase.negotiated(
+                        "tools/list with unsolicited Mcp-Name",
+                        toolsListBody(),
+                        validHeaders("tools/list", "unsolicited")),
+                StandardHeaderCase.negotiated(
+                        "tools/call with matching Mcp-Name",
+                        toolsCallBody(KNOWN_TOOL),
+                        validHeaders("tools/call", KNOWN_TOOL)),
+                StandardHeaderCase.negotiationFailure(
+                        "tools/call without Mcp-Name", toolsCallBody(KNOWN_TOOL), standardHeaders("tools/call")),
+                StandardHeaderCase.negotiationFailure(
+                        "tools/call with mismatched Mcp-Name",
+                        toolsCallBody(KNOWN_TOOL),
+                        validHeaders("tools/call", "different-tool")),
+                StandardHeaderCase.officialParamsFailure(
+                        "tools/call with a non-textual name remains an official-params failure",
+                        schemaInvalidName,
+                        validHeaders("tools/call", KNOWN_TOOL)),
+                StandardHeaderCase.negotiated(
+                        "tools/call with matching blank name", toolsCallBody(""), validHeaders("tools/call", "")),
+                StandardHeaderCase.negotiationFailure(
+                        "tools/call with blank body name and non-blank Mcp-Name",
+                        toolsCallBody(""),
+                        validHeaders("tools/call", "different-tool")));
+    }
+
+    /** D010: each standard routing header is required only when its official body mirror applies. */
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("applicableStandardHeaderCases")
+    @DisplayName("R21: standard request headers are required only when applicable")
+    void shouldRequireOnlyApplicableStandardHeaders(StandardHeaderCase standardHeaderCase) {
+        McpProtocolCodec codec = new McpProtocolCodec(
+                HttpConfig.builder().build(), McpServerConfig.defaults().ingressMaxTokens());
+        McpProtocolCodec.Decoded decoded =
+                codec.decodeEnvelope(standardHeaderCase.body().toBuffer().getBytes());
+        assertThat(decoded.isError())
+                .as(standardHeaderCase.description() + " must first decode as a valid envelope")
+                .isFalse();
+
+        McpProtocolCodec.ParamsValidationResult params = codec.validateOfficialParams(decoded.envelope());
+        Integer paramsError = params.error() == null ? null : params.error().code();
+        assertThat(paramsError)
+                .as(standardHeaderCase.description() + " official-params result")
+                .isEqualTo(standardHeaderCase.expectedOfficialParamsError());
+        if (params.isError()) {
+            return;
+        }
+
+        McpProtocolCodec.NegotiationResult negotiation =
+                codec.validateNegotiation(decoded.envelope(), standardHeaderCase.headers());
+        Integer negotiationError =
+                negotiation.error() == null ? null : negotiation.error().code();
+        assertThat(negotiationError)
+                .as(standardHeaderCase.description() + " negotiation result")
+                .isEqualTo(standardHeaderCase.expectedNegotiationError());
+        if (standardHeaderCase.expectedNegotiationError() != null) {
+            Outcome outcome = drive(standardHeaderCase.body(), standardHeaderCase.headers());
+            assertThat(outcome.errorCode()).isEqualTo(-32020);
+            assertThat(outcome.interceptorInvocations())
+                    .as(standardHeaderCase.description() + " must fail before application interceptors")
+                    .isZero();
+            verifyNoInteractions(outcome.toolRegistry(), outcome.policyEnforcer());
+        }
+        if (!negotiation.isError()) {
+            assertThat(negotiation.protocolVersion()).isEqualTo(PROTOCOL_VERSION);
+        }
+    }
+
     private static Stream<OfficialParamsViolation> officialParamsViolations() {
         JsonObject missingDiscoverMetaMember = discoverBody();
         missingDiscoverMetaMember
@@ -172,15 +253,15 @@ class McpProtocolNegotiationTest {
                 new OfficialParamsViolation(
                         MISSING_DISCOVER_META_MEMBER_ROW,
                         missingDiscoverMetaMember,
-                        validHeaders("server/discover", null)),
-                new OfficialParamsViolation(NON_STRING_CURSOR_ROW, nonStringCursor, validHeaders("tools/list", null)),
+                        standardHeaders("server/discover")),
+                new OfficialParamsViolation(NON_STRING_CURSOR_ROW, nonStringCursor, standardHeaders("tools/list")),
                 new OfficialParamsViolation(
                         NON_OBJECT_ARGUMENTS_ROW, nonObjectArguments, validHeaders("tools/call", KNOWN_TOOL)),
                 new OfficialParamsViolation(NULL_ARGUMENTS_ROW, nullArguments, validHeaders("tools/call", KNOWN_TOOL)),
                 new OfficialParamsViolation(
                         "tools/list missing _meta clientCapabilities",
                         missingListCapabilities,
-                        validHeaders("tools/list", null)),
+                        standardHeaders("tools/list")),
                 new OfficialParamsViolation(
                         "tools/call missing the schema-required name",
                         missingToolName,
@@ -226,7 +307,7 @@ class McpProtocolNegotiationTest {
         JsonObject body = discoverBody();
         body.getJsonObject("params").put("io.vertique.test/extension", new JsonObject().put("enabled", true));
 
-        Outcome outcome = drive(body, validHeaders("server/discover", null));
+        Outcome outcome = drive(body, standardHeaders("server/discover"));
 
         assertThat(outcome.status())
                 .as("the official schema permits unknown extension properties")
@@ -240,7 +321,7 @@ class McpProtocolNegotiationTest {
     // --- Control: a fully negotiated request reaches the interceptor stage ---
 
     private void shouldPermitAFullyNegotiatedRequestAsTheControl() {
-        Outcome outcome = drive(discoverBody(), validHeaders("server/discover", null));
+        Outcome outcome = drive(discoverBody(), standardHeaders("server/discover"));
 
         assertThat(outcome.status())
                 .as("a fully negotiated discover request must not be rejected at negotiation")
@@ -255,7 +336,7 @@ class McpProtocolNegotiationTest {
     // --- Missing header ---
 
     private void shouldRejectAMissingRequiredHeaderBeforeDispatch() {
-        MultiMap headers = validHeaders("server/discover", null);
+        MultiMap headers = standardHeaders("server/discover");
         headers.remove(HEADER_PROTOCOL_VERSION);
 
         Outcome outcome = drive(discoverBody(), headers);
@@ -266,7 +347,7 @@ class McpProtocolNegotiationTest {
     // --- Mismatched header ---
 
     private void shouldRejectAMismatchedRequiredHeaderBeforeDispatch() {
-        MultiMap headers = validHeaders("server/discover", null);
+        MultiMap headers = standardHeaders("server/discover");
         headers.set(HEADER_PROTOCOL_VERSION, "1999-01-01");
 
         Outcome outcome = drive(discoverBody(), headers);
@@ -305,7 +386,7 @@ class McpProtocolNegotiationTest {
         String poisoned = PROTOCOL_VERSION + "\t";
         JsonObject body = discoverBody();
         body.getJsonObject("params").getJsonObject("_meta").put("io.modelcontextprotocol/protocolVersion", poisoned);
-        MultiMap headers = validHeaders("server/discover", null);
+        MultiMap headers = standardHeaders("server/discover");
         headers.set(HEADER_PROTOCOL_VERSION, poisoned);
 
         Outcome outcome = drive(body, headers);
@@ -321,7 +402,7 @@ class McpProtocolNegotiationTest {
         String unsupported = "1999-01-01";
         JsonObject body = discoverBody();
         body.getJsonObject("params").getJsonObject("_meta").put("io.modelcontextprotocol/protocolVersion", unsupported);
-        MultiMap headers = validHeaders("server/discover", null);
+        MultiMap headers = standardHeaders("server/discover");
         headers.set(HEADER_PROTOCOL_VERSION, unsupported);
 
         Outcome outcome = drive(body, headers);
@@ -356,7 +437,7 @@ class McpProtocolNegotiationTest {
         String poisoned = PROTOCOL_VERSION + "\t";
         JsonObject body = discoverBody();
         body.getJsonObject("params").getJsonObject("_meta").put("io.modelcontextprotocol/protocolVersion", poisoned);
-        MultiMap headers = validHeaders("server/discover", null);
+        MultiMap headers = standardHeaders("server/discover");
         headers.set(HEADER_PROTOCOL_VERSION, poisoned);
 
         McpPolicyEnforcer policyEnforcer = mock(McpPolicyEnforcer.class);
@@ -539,6 +620,31 @@ class McpProtocolNegotiationTest {
         }
     }
 
+    private record StandardHeaderCase(
+            String description,
+            JsonObject body,
+            MultiMap headers,
+            Integer expectedOfficialParamsError,
+            Integer expectedNegotiationError) {
+
+        private static StandardHeaderCase negotiated(String description, JsonObject body, MultiMap headers) {
+            return new StandardHeaderCase(description, body, headers, null, null);
+        }
+
+        private static StandardHeaderCase negotiationFailure(String description, JsonObject body, MultiMap headers) {
+            return new StandardHeaderCase(description, body, headers, null, -32020);
+        }
+
+        private static StandardHeaderCase officialParamsFailure(String description, JsonObject body, MultiMap headers) {
+            return new StandardHeaderCase(description, body, headers, -32602, null);
+        }
+
+        @Override
+        public String toString() {
+            return description;
+        }
+    }
+
     // --- Body/header builders ---
 
     private static JsonObject metaObject() {
@@ -576,19 +682,21 @@ class McpProtocolNegotiationTest {
                                 .put("arguments", new JsonObject()));
     }
 
-    /**
-     * Builds the three required headers, self-consistent with a baseline body built by {@link
-     * #discoverBody()}/{@link #toolsListBody()}/{@link #toolsCallBody(String)}: {@code MCP-Protocol-Version}
-     * mirrors {@link #PROTOCOL_VERSION}, {@code Mcp-Method} mirrors {@code method}, and {@code Mcp-Name}
-     * mirrors {@code toolName} for {@code tools/call} or the method string otherwise (this test's own
-     * bounded design choice for the two methods with no schema-level "name" — see {@code
-     * McpProtocolCodec#validateNegotiation}'s javadoc).
-     */
-    private static MultiMap validHeaders(String method, String toolName) {
+    /** Builds the universally required protocol-version and method headers. */
+    private static MultiMap standardHeaders(String method) {
         MultiMap headers = MultiMap.caseInsensitiveMultiMap();
         headers.set(HEADER_PROTOCOL_VERSION, PROTOCOL_VERSION);
         headers.set(HEADER_METHOD, method);
-        headers.set(HEADER_NAME, toolName != null ? toolName : method);
+        return headers;
+    }
+
+    /**
+     * Builds standard headers with an explicit {@code Mcp-Name}. The value is the required body mirror
+     * for {@code tools/call} and a tolerated unsolicited value for methods with no name-shaped field.
+     */
+    private static MultiMap validHeaders(String method, String toolName) {
+        MultiMap headers = standardHeaders(method);
+        headers.set(HEADER_NAME, toolName);
         return headers;
     }
 

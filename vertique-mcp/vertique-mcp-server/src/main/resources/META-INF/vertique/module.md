@@ -282,15 +282,17 @@ this module's own resources (not test-only), so this validation is available in 
 shipped, not merely in the test tree.
 
 Only after official params validation succeeds does `McpProtocolCodec#validateNegotiation` validate
-protocol negotiation (R05, issue #429; R08, merge blocker 1). The required
-`MCP-Protocol-Version`, `Mcp-Method`, and `Mcp-Name` headers must agree with their body-mirrored
-values (`params._meta`'s `io.modelcontextprotocol/protocolVersion`, the envelope's `method`, and —
-for `tools/call` only, when present — `params.name`); the per-method `_meta` shape and supported
-protocol version must satisfy Phase-1 policy; and `tools/call.params` must carry neither of the
-reserved multi-round-trip fields `inputResponses`/`requestState`. A header/body disagreement or
-Phase-1 negotiation-policy violation is exclusively `-32020` *Header/body mismatch*, mapped to HTTP
-400 through the bounded, capped JSON writer. Negotiation still completes before the request-
-interceptor stage below and every later application stage — see
+protocol negotiation (R05, issue #429; R08, merge blocker 1; D010). `MCP-Protocol-Version` and
+`Mcp-Method` are required on every supported request and must agree with
+`params._meta`'s `io.modelcontextprotocol/protocolVersion` and the envelope's `method`.
+`Mcp-Name` is required and compared with `params.name` only for `tools/call`; `server/discover` and
+`tools/list` have no name-shaped identifier, so they accept either an absent or unsolicited
+`Mcp-Name`. The per-method `_meta` shape and supported protocol version must satisfy Phase-1 policy,
+and `tools/call.params` must carry neither reserved multi-round-trip field
+`inputResponses`/`requestState`. A missing applicable header, header/body disagreement, or Phase-1
+negotiation-policy violation is exclusively `-32020` *Header/body mismatch*, mapped to HTTP 400
+through the bounded, capped JSON writer. Negotiation still completes before the request-interceptor
+stage below and every later application stage — see
 [Request interceptor stage](#request-interceptor-stage).
 
 The mount handles no file uploads of its own, but it does not rely on that alone: an
