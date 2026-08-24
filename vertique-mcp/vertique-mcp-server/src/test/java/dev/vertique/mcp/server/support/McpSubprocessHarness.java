@@ -25,7 +25,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
 /** Test-scope subprocess runner shared by MCP conformance and client fixtures. */
-final class McpSubprocessHarness {
+public final class McpSubprocessHarness {
 
     private static final String REDACTED = "[REDACTED]";
     private static final Duration DESCENDANT_POLL_INTERVAL = Duration.ofMillis(20);
@@ -34,14 +34,14 @@ final class McpSubprocessHarness {
 
     private final Duration timeout;
 
-    McpSubprocessHarness(Duration timeout) {
+    public McpSubprocessHarness(Duration timeout) {
         if (Objects.requireNonNull(timeout, "timeout").isZero() || timeout.isNegative()) {
             throw new IllegalArgumentException("timeout must be positive");
         }
         this.timeout = timeout;
     }
 
-    Execution<Void> run(Invocation invocation) throws Exception {
+    public Execution<Void> run(Invocation invocation) throws Exception {
         return run(invocation, (workspace, result) -> null);
     }
 
@@ -50,7 +50,7 @@ final class McpSubprocessHarness {
      * is redacted before it is returned, and all observed descendants are terminated before the
      * workspace is deleted. The reader runs after result capture but before workspace cleanup.
      */
-    <T> Execution<T> run(Invocation invocation, WorkspaceReader<T> reader) throws Exception {
+    public <T> Execution<T> run(Invocation invocation, WorkspaceReader<T> reader) throws Exception {
         Objects.requireNonNull(invocation, "invocation");
         Objects.requireNonNull(reader, "reader");
 
@@ -257,10 +257,10 @@ final class McpSubprocessHarness {
         }
     }
 
-    record Invocation(
+    public record Invocation(
             List<String> command, Map<String, String> environment, byte[] standardInput, Set<String> sensitiveValues) {
 
-        Invocation {
+        public Invocation {
             command = List.copyOf(command);
             if (command.isEmpty()) {
                 throw new IllegalArgumentException("command must not be empty");
@@ -270,20 +270,20 @@ final class McpSubprocessHarness {
             sensitiveValues = Set.copyOf(sensitiveValues);
         }
 
-        static Invocation of(List<String> command) {
+        public static Invocation of(List<String> command) {
             return new Invocation(command, Map.of(), new byte[0], Set.of());
         }
 
-        Invocation withEnvironment(Map<String, String> environment) {
+        public Invocation withEnvironment(Map<String, String> environment) {
             return new Invocation(command, environment, standardInput, sensitiveValues);
         }
 
-        Invocation withStandardInput(String standardInput) {
+        public Invocation withStandardInput(String standardInput) {
             return new Invocation(
                     command, environment, standardInput.getBytes(StandardCharsets.UTF_8), sensitiveValues);
         }
 
-        Invocation withSensitiveValues(Set<String> sensitiveValues) {
+        public Invocation withSensitiveValues(Set<String> sensitiveValues) {
             return new Invocation(command, environment, standardInput, sensitiveValues);
         }
 
@@ -293,7 +293,7 @@ final class McpSubprocessHarness {
         }
     }
 
-    record Result(
+    public record Result(
             Path workspace,
             long rootPid,
             int exitCode,
@@ -304,10 +304,10 @@ final class McpSubprocessHarness {
             String stderr,
             Set<Long> observedDescendantPids) {}
 
-    record Execution<T>(Result result, T workspaceValue) {}
+    public record Execution<T>(Result result, T workspaceValue) {}
 
     @FunctionalInterface
-    interface WorkspaceReader<T> {
+    public interface WorkspaceReader<T> {
         T read(Path workspace, Result result) throws Exception;
     }
 
