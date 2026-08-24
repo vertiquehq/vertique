@@ -420,6 +420,10 @@ to the single terminal writer ([Cancellation and
 write-phase settlement](#cancellation-and-write-phase-settlement)) — in that fixed order, introducing
 no second streaming, writing, completion, or settlement path.
 
+Every successfully transported `tools/call` result carries the final-protocol discriminator
+`resultType: "complete"`, including a handler result whose `isError` value is `true`. A protocol-level
+failure remains a JSON-RPC error and carries no tool-result discriminator.
+
 `McpRequestDispatcher` converts a handler's structured result (`McpToolResult#structuredContent()`)
 to its bounded, JSON-compatible canonical shape (`Map`/`List`/scalar) exactly once per call; that one
 normalized value is reused for output-schema validation, the `onToolOutput` observation, and the wire

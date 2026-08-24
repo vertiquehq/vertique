@@ -95,11 +95,13 @@ class McpLifecycleObservationIT {
         HttpResponse<Buffer> rejectedResponse = await(callTool(UNKNOWN_TOOL_NAME, 3));
 
         assertThat(successResponse.statusCode()).isEqualTo(200);
-        assertThat(sseResult(successResponse.bodyAsString()).getBoolean("isError"))
-                .isFalse();
+        JsonObject successResult = sseResult(successResponse.bodyAsString());
+        assertThat(successResult.getString("resultType")).isEqualTo("complete");
+        assertThat(successResult.getBoolean("isError")).isFalse();
         assertThat(toolErrorResponse.statusCode()).isEqualTo(200);
-        assertThat(sseResult(toolErrorResponse.bodyAsString()).getBoolean("isError"))
-                .isTrue();
+        JsonObject toolErrorResult = sseResult(toolErrorResponse.bodyAsString());
+        assertThat(toolErrorResult.getString("resultType")).isEqualTo("complete");
+        assertThat(toolErrorResult.getBoolean("isError")).isTrue();
         assertThat(rejectedResponse.statusCode())
                 .as("an unknown tool name is rejected before any invocation is attempted")
                 .isEqualTo(400);

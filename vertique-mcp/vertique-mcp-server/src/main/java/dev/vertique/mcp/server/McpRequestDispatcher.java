@@ -118,7 +118,7 @@ final class McpRequestDispatcher {
     private static final String TOOLS_CALL_METHOD = "tools/call";
     private static final String PROTOCOL_VERSION = McpCursorCodec.PROTOCOL_VERSION;
 
-    /** The official schema treats an absent {@code resultType} as this completed-result value. */
+    /** The final protocol's mandatory discriminator for every successfully transported result. */
     private static final String COMPLETE_RESULT_TYPE = "complete";
 
     /** Discovery and listing results are never shared across authorization contexts. */
@@ -2207,8 +2207,9 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * Builds the canonical {@code CallToolResult} response node: the text content items, the optional
-     * structured content, the {@code isError} flag, and the mandatory server-identity {@code _meta}.
+     * Builds the canonical {@code CallToolResult} response node: the mandatory completed-result
+     * discriminator, the text content items, the optional structured content, the {@code isError}
+     * flag, and the mandatory server-identity {@code _meta}.
      *
      * <p>Embeds {@code normalizedStructuredContent} — the T020 single-pass normalized value — rather
      * than {@code result.structuredContent()}: converting the already-normalized bounded
@@ -2243,6 +2244,7 @@ final class McpRequestDispatcher {
         ObjectNode meta = OUTPUT_ENCODER.createObjectNode();
         meta.set(SERVER_INFO_META_KEY, serverInfo);
         ObjectNode toolResult = OUTPUT_ENCODER.createObjectNode();
+        toolResult.put("resultType", COMPLETE_RESULT_TYPE);
         toolResult.set("content", content);
         toolResult.put("isError", result.isError());
         if (normalizedStructuredContent != null) {
