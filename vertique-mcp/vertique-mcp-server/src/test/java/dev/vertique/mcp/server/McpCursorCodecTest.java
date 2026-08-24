@@ -93,11 +93,29 @@ class McpCursorCodecTest {
     }
 
     private static void assertByteBoundBeforeParsing() {
-        String overLongToken = Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[65]);
-        String atEncodedBound = Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[64]);
+        assertEncodedBoundary(63, 84);
+        assertEncodedBoundary(64, 86);
+        assertEncodedBoundary(65, 87);
+        assertEncodedBoundary(2_048, 2_731);
+
+        CountingObjectMapper counting = new CountingObjectMapper();
+        McpCursorCodec withinBound = new McpCursorCodec(2_048, counting);
+        assertThat(withinBound
+                        .decode(buildToken(McpCursorCodec.PROTOCOL_VERSION, REGISTRY_DIGEST, ANCHOR), REGISTRY_DIGEST)
+                        .isInvalid())
+                .isFalse();
+        assertThat(counting.readTreeCount()).isEqualTo(1);
+    }
+
+    private static void assertEncodedBoundary(int maxDecodedBytes, int expectedMaxEncodedChars) {
+        String atEncodedBound = Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[maxDecodedBytes]);
+        String overLongToken = Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[maxDecodedBytes + 1]);
+        assertThat(atEncodedBound).hasSize(expectedMaxEncodedChars);
+        assertThat(overLongToken.length()).isGreaterThan(expectedMaxEncodedChars);
+
         CountingObjectMapper counting = new CountingObjectMapper();
         AtomicInteger decodeCount = new AtomicInteger();
-        McpCursorCodec bounded = new McpCursorCodec(64, counting, token -> {
+        McpCursorCodec bounded = new McpCursorCodec(maxDecodedBytes, counting, token -> {
             decodeCount.incrementAndGet();
             return Base64.getUrlDecoder().decode(token);
         });
@@ -115,13 +133,6 @@ class McpCursorCodecTest {
                 .as("the exact encoded boundary remains eligible for decoding")
                 .hasValue(1);
         assertThat(counting.readTreeCount()).isEqualTo(1);
-
-        McpCursorCodec withinBound = new McpCursorCodec(2_048, counting);
-        assertThat(withinBound
-                        .decode(buildToken(McpCursorCodec.PROTOCOL_VERSION, REGISTRY_DIGEST, ANCHOR), REGISTRY_DIGEST)
-                        .isInvalid())
-                .isFalse();
-        assertThat(counting.readTreeCount()).isEqualTo(2);
     }
 
     private static void assertNoSignatureExpiryOrRetiredStateMember(String token) {
