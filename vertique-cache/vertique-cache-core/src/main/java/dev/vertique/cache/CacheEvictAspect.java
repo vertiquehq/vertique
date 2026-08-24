@@ -8,23 +8,31 @@ import dev.vertique.aop.Invocation;
 import dev.vertique.aop.MethodInterceptor;
 import dev.vertique.cache.config.CacheConfig;
 import dev.vertique.cache.spi.CacheKey;
+import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.cache.spi.CacheRegion;
 import dev.vertique.cache.spi.CacheStore;
 import dev.vertique.core.codegen.MethodMetadata;
 import io.vertx.core.Future;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
+import java.util.Set;
 
 /** Provider-neutral interceptor that performs fail-open invalidation after a successful result. */
 @Singleton
 public final class CacheEvictAspect implements AspectProvider<CacheEvict> {
     private final CacheStore store;
     private final CacheConfig config;
+    private final Set<CacheObserver> observers;
+
+    public CacheEvictAspect(CacheStore store, CacheConfig config) {
+        this(store, config, Set.of());
+    }
 
     @Inject
-    public CacheEvictAspect(CacheStore store, CacheConfig config) {
+    public CacheEvictAspect(CacheStore store, CacheConfig config, Set<CacheObserver> observers) {
         this.store = store;
         this.config = config;
+        this.observers = Set.copyOf(observers);
     }
 
     @Override
@@ -51,8 +59,16 @@ public final class CacheEvictAspect implements AspectProvider<CacheEvict> {
             } else {
                 return Future.succeededFuture();
             }
-            return operation.recover(ignored -> Future.succeededFuture());
-        } catch (Throwable ignored) {
+            long startedAt = System.nanoTime();
+            return operation
+                    .onSuccess(ignored -> CacheObservationSupport.observe(
+                            observers, annotation.clear() ? "clear" : "evict", region, "success", startedAt))
+                    .onFailure(ignored -> CacheObservationSupport.observe(
+                            observers, annotation.clear() ? "clear" : "evict", region, "failure", startedAt))
+                    .recover(ignored -> Future.succeededFuture());
+        } catch (Throwable failure) {
+            CacheObservationSupport.observe(
+                    observers, annotation.clear() ? "clear" : "evict", region, "failure", System.nanoTime());
             return Future.succeededFuture();
         }
     }

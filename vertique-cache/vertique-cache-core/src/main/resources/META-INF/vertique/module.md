@@ -28,6 +28,15 @@ profile for cache values; a per-cache `jsonProfile` override may inherit the glo
 cache profile when omitted. Provider modules contribute storage bindings through the
 internal `CacheMode` Dagger map seam.
 
+## Runtime behavior
+
+The cache aspects are fail-open: disabled caches, invalid or oversized keys, backend
+failures, and observer failures preserve the business invocation. A successful local
+miss may populate the provider-neutral `CacheStore`; a hit skips the target after the
+outer framework authorization boundary has run. The optional `CacheObserver` set is
+empty by default and receives redacted operation, provider, cache, outcome, and duration
+data without becoming a cache or telemetry dependency.
+
 ## Dependencies
 
 | Artifact | Purpose |
