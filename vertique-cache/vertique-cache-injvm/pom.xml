@@ -15,6 +15,7 @@
     <description>In-JVM cache provider for annotation-driven cache support</description>
     <dependencies>
         <dependency><groupId>dev.vertique</groupId><artifactId>vertique-cache-core</artifactId></dependency>
+        <dependency><groupId>dev.vertique</groupId><artifactId>vertique-json</artifactId></dependency>
         <dependency>
             <groupId>com.github.ben-manes.caffeine</groupId>
             <artifactId>caffeine</artifactId>
