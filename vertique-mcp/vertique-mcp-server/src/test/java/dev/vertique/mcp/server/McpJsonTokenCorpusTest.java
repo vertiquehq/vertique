@@ -30,7 +30,7 @@ import org.junit.jupiter.api.Test;
 class McpJsonTokenCorpusTest {
 
     private static final int DEFAULT_TOKENS = 65_536;
-    private static final String CORPUS_SHA_256 = "2881c3b1c30bbb6456145a05a264f0e7a39b1f672a5fa26008e73856b2e4fb8a";
+    private static final String CORPUS_SHA_256 = "72cc374aa77dfb6383bf95318d745e5206cf95095df171eb32a20ef78f01fbf0";
     private static final Map<String, Long> REQUIRED_STRUCTURAL_CLASS_COUNTS = Map.ofEntries(
             Map.entry("flat-array", 7L),
             Map.entry("flat-scalar-array", 7L),
@@ -46,7 +46,14 @@ class McpJsonTokenCorpusTest {
             Map.entry("conformance-tools-list-request", 1L),
             Map.entry("conformance-tools-call-request", 1L),
             Map.entry("conformance-tool-text-result", 1L),
-            Map.entry("conformance-tool-error-result", 1L));
+            Map.entry("conformance-tool-error-result", 1L),
+            Map.entry("typescript-discover-request", 1L),
+            Map.entry("typescript-tools-list-request", 1L),
+            Map.entry("typescript-tools-call-request", 1L),
+            Map.entry("typescript-discover-result", 1L),
+            Map.entry("typescript-tools-list-anonymous-result", 1L),
+            Map.entry("typescript-tools-list-bearer-result", 1L),
+            Map.entry("typescript-tool-call-result", 1L));
 
     @Test
     @DisplayName("R18: the shared JSON corpus has its recorded digest and every required structural class")
@@ -55,7 +62,7 @@ class McpJsonTokenCorpusTest {
         assertAll(
                 () -> assertThat(sha256(McpJsonTokenCorpus.resourceBytes())).isEqualTo(CORPUS_SHA_256),
                 () -> {
-                    assertThat(rows).hasSize(20);
+                    assertThat(rows).hasSize(27);
                     assertThat(rows.stream()
                                     .collect(Collectors.groupingBy(McpJsonTokenCorpus.Row::id, Collectors.counting())))
                             .allSatisfy((id, count) -> assertThat(count)

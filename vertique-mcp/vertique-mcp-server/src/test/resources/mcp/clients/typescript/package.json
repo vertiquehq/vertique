@@ -1,0 +1,8 @@
+{
+  "name": "vertique-mcp-typescript-client-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@modelcontextprotocol/client": "2.0.0"
+  }
+}
