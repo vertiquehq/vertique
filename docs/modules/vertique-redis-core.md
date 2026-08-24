@@ -25,9 +25,11 @@ for the profile with Vert.x `Redis.createClusterClient(...)` and wraps it with
 standalone client returned by `client(profileName)`. Registry shutdown remains responsible for
 both client types.
 
-The cluster client uses `RedisClientType.CLUSTER`, `RedisClusterConnectOptions(options)`, and
-the profile endpoints as its cluster seed endpoints while preserving the profile's connection
-and pool options.
+The cluster client uses `RedisClientType.CLUSTER` and receives the profile's network and pool
+settings on the `RedisOptions` passed to `Redis.createClusterClient(...)`. Its connect-options
+supplier creates `RedisClusterConnectOptions(options)`, copies the connect-level settings, and
+applies the profile endpoints as cluster seed endpoints; pool and network options remain on the
+`RedisOptions` instance.
 
 `RedisPrimaryOperations.scan(Object... args)` and `unlink(Object... keys)` each construct the
 corresponding Redis request and call `RedisCluster.onAllMasterNodes`. Both methods return the

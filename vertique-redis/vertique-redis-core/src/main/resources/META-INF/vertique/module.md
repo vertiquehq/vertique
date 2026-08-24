@@ -53,8 +53,10 @@ Redis clients close in validated profile order. The first registry `close()` cal
 profile. It does not wrap the standalone client returned by `client(profileName)`. The registry
 retains lifecycle ownership of both client types and closes them in profile order.
 
-The cluster client uses the profile endpoints as seed endpoints and preserves the profile's
-connection and pool options through Vert.x `RedisClusterConnectOptions`.
+The cluster client receives the profile's network and pool options on the `RedisOptions` passed to
+Vert.x `Redis.createClusterClient(...)`. Its connect-options supplier copies connect-level settings
+from that `RedisOptions` into `RedisClusterConnectOptions` and applies the profile endpoints as
+cluster seed endpoints; pool and network options remain on `RedisOptions`.
 
 The wrapper exposes asynchronous fan-outs to every Redis primary:
 

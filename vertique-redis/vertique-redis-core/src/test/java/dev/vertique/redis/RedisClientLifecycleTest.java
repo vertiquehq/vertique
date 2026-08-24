@@ -3,17 +3,16 @@
 
 package dev.vertique.redis;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.redis.client.Redis;
-import io.vertx.redis.client.RedisCluster;
+import io.vertx.redis.client.RedisClientType;
 import io.vertx.redis.client.RedisClusterConnectOptions;
 import io.vertx.redis.client.RedisConnection;
 import io.vertx.redis.client.RedisOptions;
@@ -27,6 +26,7 @@ import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -104,7 +104,19 @@ class RedisClientLifecycleTest {
     @DisplayName("primary operations reuse one cluster client and registry close handles it")
     void primaryOperationsReuseOneClusterClientAndRegistryCloseHandlesIt() throws Exception {
         Vertx vertx = Vertx.vertx();
-        RedisClientRegistry registry = new RedisClientRegistry(vertx, new RedisConnectionsConfig(List.of(profile())));
+        RedisConnectionConfig profile = new RedisConnectionConfig(
+                PROFILE_NAME,
+                List.of("redis://redis-a:6379", "redis://redis-b:6379"),
+                "cache-user",
+                "redis-password",
+                true,
+                750,
+                8,
+                100);
+        RecordingRedis clusterClient = new RecordingRedis(PROFILE_NAME + "-cluster", new ArrayList<>());
+        RecordingRedisClusterClientFactory factory = new RecordingRedisClusterClientFactory(clusterClient);
+        RedisClientRegistry registry =
+                new RedisClientRegistry(vertx, new RedisConnectionsConfig(List.of(profile)), factory);
 
         try {
             // When: the same profile requests its primary-operation seam twice.
@@ -115,9 +127,27 @@ class RedisClientLifecycleTest {
             // Then: one cluster-capable client and seam are reused without connecting to Redis.
             assertSame(first, second, "one primary-operation seam must be reused for a profile");
             assertEquals(1, clusterClients.size(), "only one cluster client must be registered");
-            Redis clusterClient = clusterClients.get(PROFILE_NAME);
-            assertNotNull(clusterClient, "the primary-operation client must be registered");
-            assertDoesNotThrow(() -> RedisCluster.create(clusterClient), "the client must be cluster-capable");
+            assertSame(clusterClient, clusterClients.get(PROFILE_NAME), "the factory result must be cached");
+            assertTrue(clientsOf(registry).isEmpty(), "primary operations must not invoke the standalone factory");
+            assertEquals(1, factory.calls(), "the cluster factory must be invoked once");
+            assertEquals(RedisClientType.CLUSTER, factory.options().getType());
+
+            RedisOptions options = factory.options();
+            assertEquals(profile.endpoints(), options.getEndpoints());
+            assertEquals(profile.tlsEnabled(), options.getNetClientOptions().isSsl());
+            assertEquals(
+                    (int) profile.connectTimeoutMs(),
+                    options.getNetClientOptions().getConnectTimeout());
+            assertEquals(profile.maxPoolSize(), options.getMaxPoolSize());
+            assertEquals(profile.maxPoolWaiting(), options.getMaxPoolWaiting());
+
+            Object suppliedConnectOptions =
+                    await(factory.connectOptionsSupplier().get());
+            RedisClusterConnectOptions connectOptions =
+                    assertInstanceOf(RedisClusterConnectOptions.class, suppliedConnectOptions);
+            assertEquals(profile.endpoints(), connectOptions.getEndpoints());
+            assertEquals(options.getUser(), connectOptions.getUser());
+            assertEquals(options.getPassword(), connectOptions.getPassword());
 
             // When: application shutdown is requested twice.
             Future<Void> firstClose = registry.close();
@@ -126,6 +156,7 @@ class RedisClientLifecycleTest {
             // Then: registry-owned cluster client close uses the shared idempotent future.
             assertSame(firstClose, secondClose, "registry close must return one shared future");
             await(firstClose);
+            assertEquals(1, clusterClient.closeCalls(), "registry lifecycle must close the cached cluster client");
         } finally {
             await(vertx.close());
         }
@@ -241,8 +272,43 @@ class RedisClientLifecycleTest {
         return (Map<String, Redis>) clients.get(registry);
     }
 
-    private static void await(Future<Void> future) throws Exception {
-        future.toCompletionStage().toCompletableFuture().get(WAIT_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+    private static <T> T await(Future<T> future) throws Exception {
+        return future.toCompletionStage().toCompletableFuture().get(WAIT_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+    }
+
+    private static final class RecordingRedisClusterClientFactory
+            implements RedisClientRegistry.RedisClusterClientFactory {
+        private final Redis client;
+        private final AtomicInteger calls = new AtomicInteger();
+        private RedisOptions options;
+        private Supplier<Future<RedisClusterConnectOptions>> connectOptionsSupplier;
+
+        private RecordingRedisClusterClientFactory(Redis client) {
+            this.client = client;
+        }
+
+        @Override
+        public Redis create(
+                Vertx vertx,
+                RedisOptions options,
+                Supplier<Future<RedisClusterConnectOptions>> connectOptionsSupplier) {
+            calls.incrementAndGet();
+            this.options = options;
+            this.connectOptionsSupplier = connectOptionsSupplier;
+            return client;
+        }
+
+        private int calls() {
+            return calls.get();
+        }
+
+        private RedisOptions options() {
+            return options;
+        }
+
+        private Supplier<Future<RedisClusterConnectOptions>> connectOptionsSupplier() {
+            return connectOptionsSupplier;
+        }
     }
 
     private static final class RecordingRedis implements Redis {

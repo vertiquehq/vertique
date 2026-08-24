@@ -19,11 +19,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 /** Application-scoped lazy Redis client registry keyed by typed connection profile name. */
 @Singleton
 public final class RedisClientRegistry {
     private final Vertx vertx;
+    private final RedisClusterClientFactory clusterClientFactory;
     private final Map<String, RedisConnectionConfig> profiles;
     private final Map<String, Redis> clients = new ConcurrentHashMap<>();
     private final Map<String, Redis> clusterClients = new ConcurrentHashMap<>();
@@ -40,7 +42,23 @@ public final class RedisClientRegistry {
      */
     @Inject
     public RedisClientRegistry(Vertx vertx, RedisConnectionsConfig config) {
+        this(vertx, config, Redis::createClusterClient);
+    }
+
+    /**
+     * Constructs the registry with an internal cluster-client creation seam.
+     *
+     * <p>The seam is package-private so production wiring keeps the public constructor while
+     * same-package tests can observe the exact options and connect-options supplier passed to
+     * Vert.x without creating a real client implementation.
+     *
+     * @param vertx the host-owned Vert.x instance used to create Redis clients
+     * @param config the validated Redis connection profiles
+     * @param clusterClientFactory the factory used for cluster-capable clients
+     */
+    RedisClientRegistry(Vertx vertx, RedisConnectionsConfig config, RedisClusterClientFactory clusterClientFactory) {
         this.vertx = vertx;
+        this.clusterClientFactory = clusterClientFactory;
         // The typed configuration has already resolved property sources by the time Dagger builds
         // this singleton. Keeping an immutable snapshot here makes credential rotation explicitly
         // restart-only and prevents a later configuration mutation from changing a live client.
@@ -140,7 +158,7 @@ public final class RedisClientRegistry {
 
     private Redis createClusterClient(RedisConnectionConfig profile) {
         RedisOptions options = createOptions(profile).setType(RedisClientType.CLUSTER);
-        return Redis.createClusterClient(
+        return clusterClientFactory.create(
                 vertx, options, () -> Future.succeededFuture(copyClusterConnectOptions(options, profile.endpoints())));
     }
 
@@ -183,5 +201,26 @@ public final class RedisClientRegistry {
             firstFailure.compareAndSet(null, failure);
             return Future.succeededFuture();
         }
+    }
+
+    /**
+     * Internal factory for the exact Vert.x cluster-client creation boundary.
+     *
+     * <p>Pool and network settings remain on the supplied {@link RedisOptions}; the supplier
+     * provides the connect-level settings and endpoints used by cluster discovery.
+     */
+    @FunctionalInterface
+    interface RedisClusterClientFactory {
+
+        /**
+         * Creates a cluster-capable Redis client.
+         *
+         * @param vertx the host-owned Vert.x instance
+         * @param options the Redis client options
+         * @param connectOptionsSupplier the lazy cluster connect-options supplier
+         * @return the created Redis client
+         */
+        Redis create(
+                Vertx vertx, RedisOptions options, Supplier<Future<RedisClusterConnectOptions>> connectOptionsSupplier);
     }
 }
