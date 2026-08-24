@@ -67,13 +67,13 @@ token budgets are distinct from the encoded byte caps: `http.maxBodySize` remain
 ingress body-size and maximum-decodable-document limit, while `mcp.outputMaxBytes` remains the
 response/output byte limit.
 
-**R18 actively enforces `mcp.ingressMaxTokens`.** `McpRequestDispatcher` passes the validated scalar
+**R18 and R19 actively enforce both token budgets.** `McpRequestDispatcher` passes the validated scalar
 `config.ingressMaxTokens()` to `McpProtocolCodec`, which passes that same scalar to
 `McpEnvelopeJsonCodec` as Jackson's `maxTokenCount`; it is neither derived from `http.maxBodySize`
 nor replaced by a fixed internal ingress limit. Token exhaustion is a malformed JSON-RPC frame:
-HTTP `400` with JSON-RPC code `-32700`, before dispatch. R19 has not yet consumed
-`mcp.outputMaxTokens`: it remains validated configuration only while the output-normalization
-reparse retains its fixed 2,000-node / 4,000-parser-token behavior.
+HTTP `400` with JSON-RPC code `-32700`, before dispatch. Independently, the dispatcher applies
+`config.outputMaxTokens()` to the reparse of bytes already bounded by `mcp.outputMaxBytes`; there is
+no separate fixed node or parser-token limit.
 
 **Retired configuration keys fail startup.** For one release, `McpServerConfig` rejects each exact
 flat spelling `mcp.requestTimeoutMs`, `mcp.jsonMaxDepth`, `mcp.jsonMaxPropertiesPerObject`,
@@ -403,17 +403,18 @@ callback-scoped use remains a documented obligation on implementors.
 strictly after the [Bounded output pipeline](#bounded-output-pipeline) has normalized and validated
 the result **and** successfully encoded the bounded terminal envelope — never merely after validation.
 It fires for every completed result — success or tool error alike — carrying the normalized structured
-value (`@Nullable`, absent for a text-only result); a schema-invalid value, or a value the wire cap
-ultimately rejects, never reaches this callback. Delivery is capability-gated identically to
+value (`@Nullable`, absent for a text-only result); a schema-invalid value, or a value the byte or
+token cap rejects, never reaches this callback. Delivery is capability-gated identically to
 `onToolInput`, and the coordinator retains no reference to the output observation or its value once
 every `onToolOutput` call has returned.
 
 ## Bounded output pipeline
 
 Every completed `tools/call` result (contract §4.7 stage 7) is normalized exactly once, bounded by
-`mcp.outputMaxBytes` as bytes are produced, validated against the tool's advertised output schema,
-encoded into the bounded terminal envelope, offered to the opt-in `onToolOutput` observation only once
-that envelope exists, and only then handed to the single terminal writer ([Cancellation and
+`mcp.outputMaxBytes` as bytes are produced and by `mcp.outputMaxTokens` while those bytes are reparsed,
+validated against the tool's advertised output schema, encoded into the bounded terminal envelope,
+offered to the opt-in `onToolOutput` observation only once that envelope exists, and only then handed
+to the single terminal writer ([Cancellation and
 write-phase settlement](#cancellation-and-write-phase-settlement)) — in that fixed order, introducing
 no second streaming, writing, completion, or settlement path.
 
@@ -437,22 +438,17 @@ earlier, because a probe-then-convert shape would serialize the handler's raw va
 message is bounded the same way, by the same mechanism, when the normalized value is re-embedded into
 the full envelope.
 
-**The reparse is bounded in nodes as well as in bytes (R14 item 1).** A byte cap alone does not bound
-what the reparse costs in memory: a two-megabyte document of nothing but `[` characters is inside any
-byte cap and still materializes roughly a million container objects. The reader that parses
-`encodeCapped`'s bounded bytes back into the canonical `Map`/`List`/scalar tree therefore also caps
-the number of parser tokens. R14 derived that fixed output policy from its stated 512 MiB / 10% / 256
-concurrent-request model divided by a measured worst-case retained cost of 100 bytes per materialized
-node. **A structured result that materializes
-more than 2,000 nodes is rejected**, however far inside `mcp.outputMaxBytes` it is, and degrades to
-the same bounded internal-error response every other failure in this stage uses. This is a real limit
-on tool output shape, not only on tool output size: a result with thousands of small elements will hit
-it. `mcp.outputMaxBytes` continues to bound the reparse in bytes and continues to scale with
-configuration; the node bound is fixed, because scaling it with a byte figure is exactly what made the
-previous revision's token bound unreachable — a JSON token always costs at least one source byte, so a
-token cap set to the byte cap could never fire. `mcp.outputMaxTokens` is validated but does not
-configure this reparse yet; R19 owns replacing the fixed 2,000-node / 4,000-parser-token limit with
-the configured budget.
+**The reparse has independent configured byte and token bounds.** `mcp.outputMaxBytes` stops the sole
+raw-value serialization as bytes are produced and also becomes the decoder's document-length limit.
+`mcp.outputMaxTokens` independently becomes that decoder's parser-token limit; it is not derived from
+the byte cap, and no additional fixed node limit is layered beside it. Token exhaustion emits a
+bounded JSON-RPC `-32603` response, no partial success and no `onToolOutput` observation, while the
+terminal event is classified exactly as `McpErrorType.SERIALIZATION`.
+
+Finite JSON numbers retain their canonical representation through the reparse: scale-sensitive
+`BigDecimal` values and large finite decimals reach the wire unchanged. Java `Float`/`Double` NaN and
+infinity values are rejected during the sole serialization pass rather than being converted into
+quoted strings.
 
 The output-value observation (`onToolOutput`) is published only after the terminal envelope has been
 successfully encoded — never before. A capable session can therefore never observe a structured value
@@ -467,17 +463,17 @@ A structured result that fails its own declared output schema never reaches the 
 reaches a session: it is rejected before the `onToolOutput` observation fires and before any response
 byte is produced, settling as a bounded internal error (`McpErrorType.OUTPUT_VALIDATION`, JSON-RPC
 `-32603`) through the same non-leaking degrade-to-id-less shape used elsewhere for a serialization or
-handler failure — carrying no schema keyword, property, or value detail. The whole of this stage —
-normalization, output-schema validation, envelope encoding, and the observation callback — runs under
-the same bounded fallback: an over-cap value, a cyclic object graph a handler returned
-(`IllegalArgumentException` from Jackson's conversion), or a pathologically deep value (a
-native-recursion `StackOverflowError`) all degrade to the same bounded internal-error response rather
-than silently stranding the request with no response, no terminal, and no completion.
+handler failure — carrying no schema keyword, property, or value detail. Serialization and reparse
+failures — byte or token exhaustion, a cyclic or non-finite value, or normalization recursion — use
+the bounded internal wire response and terminal type `McpErrorType.SERIALIZATION`. Output-schema
+failure remains `McpErrorType.OUTPUT_VALIDATION`; observer and other downstream callback failures
+remain `McpErrorType.INTERNAL`. Every path settles rather than stranding the request with no response,
+terminal, or completion.
 
 The response write itself is bounded exactly like discovery and `tools/list` ([Bounded response
 output](#bounded-response-output)): serialization streams to the same byte-counting sink that aborts
 the moment the running count would exceed `mcp.outputMaxBytes`, so an over-cap structured result is
-classified as a bounded internal error before its full byte array is ever materialized — the same T004
+classified as `SERIALIZATION` before its full byte array is ever materialized — the same T004
 mechanism, now also covering structured content rather than only discovery and listing payloads.
 
 ## Tool runtime

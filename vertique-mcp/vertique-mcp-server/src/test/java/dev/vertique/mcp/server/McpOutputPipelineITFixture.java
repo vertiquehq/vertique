@@ -95,6 +95,14 @@ public final class McpOutputPipelineITFixture {
                 .outputMaxBytes(outputMaxBytes)
                 .build();
 
+        return start(vertx, config, Set.of(metrics, capable), tools);
+    }
+
+    /** Starts the shared output-pipeline fixture with an explicit MCP configuration and observers. */
+    static Started start(
+            Vertx vertx, McpServerConfig config, Set<McpRequestLifecycleObserver> observers, Set<McpToolInvoker> tools)
+            throws Exception {
+
         McpToolRegistry registry = McpToolRegistry.build(tools);
 
         RecordingSecurityRuntime securityRuntime = new RecordingSecurityRuntime();
@@ -111,7 +119,7 @@ public final class McpOutputPipelineITFixture {
         McpRequestDispatcher dispatcher = new McpRequestDispatcher(
                 config,
                 securityRuntime,
-                Set.of(metrics, capable),
+                observers,
                 Set.of(),
                 Set.of(),
                 Set.of(),
@@ -536,72 +544,6 @@ public final class McpOutputPipelineITFixture {
                 public Future<McpToolResult<?>> invoke() {
                     return Future.succeededFuture(
                             McpToolResult.structured(Map.of("payload", "X".repeat(PAYLOAD_LENGTH))));
-                }
-            };
-        }
-    }
-
-    /**
-     * R07 item 4's decisive fixture: a tool whose structured result carries two {@link
-     * java.math.BigDecimal} values the advertised output schema declares as {@code number} — one
-     * exercising precision loss ({@code 0.1000}, which a lossy round-trip through {@code Double} would
-     * collapse to {@code 0.1}), the other exercising magnitude overflow ({@link
-     * #LARGE_MAGNITUDE_VALUE_TEXT}, a finite decimal literal far outside {@code Double}'s
-     * representable range, which a lossy round-trip would silently turn into {@code
-     * Double.POSITIVE_INFINITY} and then — because Jackson's default {@code QUOTE_NON_NUMERIC_NUMBERS}
-     * is on — the wire <em>string</em> {@code "Infinity"} for a field the schema declares as a number).
-     * {@code LARGE_MAGNITUDE_VALUE_TEXT} carries an explicit fractional part deliberately: an
-     * integral-only literal (no decimal point) is a JSON <em>integer</em> token, which Jackson's
-     * untyped deserialization auto-promotes to {@link java.math.BigInteger} regardless of any
-     * floating-point handling — and so would not actually exercise this bug at all.
-     */
-    public static final class NumericPrecisionResultToolInvoker implements McpToolInvoker {
-        public static final String TOOL_NAME = "output.pipeline.numeric.precision";
-        public static final String PRECISE_FIELD = "precise";
-        public static final String LARGE_FIELD = "large";
-        public static final String PRECISE_VALUE_TEXT = "0.1000";
-
-        /**
-         * A finite decimal literal comfortably beyond {@link Double#MAX_VALUE}'s ~1.8E308 magnitude,
-         * with an explicit fractional part so it is a genuine JSON float-shaped token (see the class
-         * javadoc for why an integral-only literal would not exercise this bug).
-         */
-        public static final String LARGE_MAGNITUDE_VALUE_TEXT = "1" + "0".repeat(400) + ".5";
-
-        private final McpToolDescriptor descriptor;
-
-        public NumericPrecisionResultToolInvoker() {
-            this.descriptor = new McpToolDescriptor(
-                    TOOL_NAME,
-                    null,
-                    "R07 item 4 numeric-precision fixture tool.",
-                    new McpToolAnnotations(true, false, true, false),
-                    "{\"type\":\"object\"}",
-                    "{\"type\":\"object\",\"properties\":{\"precise\":{\"type\":\"number\"},"
-                            + "\"large\":{\"type\":\"number\"}},\"required\":[\"precise\",\"large\"]}",
-                    new McpToolAccess(McpAccessMode.PERMIT_ALL, List.of(), null));
-        }
-
-        @Override
-        public McpToolDescriptor descriptor() {
-            return descriptor;
-        }
-
-        @Override
-        public McpPreparedToolCall prepare(Map<String, Object> arguments, McpCancellationSignal cancellation) {
-            return new McpPreparedToolCall() {
-                @Override
-                public Map<String, Object> normalizedArguments() {
-                    return Map.of();
-                }
-
-                @Override
-                public Future<McpToolResult<?>> invoke() {
-                    return Future.succeededFuture(McpToolResult.structured(Map.of(
-                            PRECISE_FIELD,
-                            new java.math.BigDecimal(PRECISE_VALUE_TEXT),
-                            LARGE_FIELD,
-                            new java.math.BigDecimal(LARGE_MAGNITUDE_VALUE_TEXT))));
                 }
             };
         }

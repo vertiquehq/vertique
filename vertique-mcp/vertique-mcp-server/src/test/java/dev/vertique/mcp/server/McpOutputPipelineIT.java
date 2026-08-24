@@ -17,7 +17,6 @@ import dev.vertique.mcp.server.McpOutputPipelineITFixture.CountingOversizedResul
 import dev.vertique.mcp.server.McpOutputPipelineITFixture.InvalidOutputToolInvoker;
 import dev.vertique.mcp.server.McpOutputPipelineITFixture.MetricsShapedObserver;
 import dev.vertique.mcp.server.McpOutputPipelineITFixture.NearCapResultToolInvoker;
-import dev.vertique.mcp.server.McpOutputPipelineITFixture.NumericPrecisionResultToolInvoker;
 import dev.vertique.mcp.server.McpOutputPipelineITFixture.OversizedResultToolInvoker;
 import dev.vertique.mcp.server.McpOutputPipelineITFixture.Started;
 import dev.vertique.mcp.server.McpOutputPipelineITFixture.StructuredResultToolInvoker;
@@ -377,57 +376,6 @@ class McpOutputPipelineIT {
                         + "output observation, isolating the observation-ordering fix from normalization "
                         + "boundedness")
                 .isEqualTo(0);
-    }
-
-    // --- R07 item 4: normalizeStructuredContent's parse side must be lossless ---
-
-    /**
-     * R07 item 4 — closes a security-review finding on R04's normalization pass: {@code
-     * normalizeStructuredContent} previously round-tripped a handler's structured value through {@code
-     * OUTPUT_ENCODER.readValue(bounded, Object.class)}, whose default float handling silently changed
-     * tool output numerics twice over — {@code convertValue}'s original {@code TokenBuffer} round-trip
-     * preserved a {@link java.math.BigDecimal} exactly, but a plain-text JSON parse back to {@code
-     * Object.class} coerces every floating-point literal to {@code Double} unless told otherwise. This
-     * decisively proves both failure modes are closed by asserting the raw wire bytes, not a
-     * re-parsed value: re-parsing the response through a JSON library would itself re-introduce the
-     * exact precision loss and magnitude overflow this proof exists to catch, making a parsed-value
-     * assertion vacuous.
-     */
-    @Test
-    @DisplayName("preserves numeric precision and magnitude through output normalization")
-    void shouldPreserveNumericPrecisionAndMagnitudeThroughNormalization() throws Exception {
-        NumericPrecisionResultToolInvoker tool = new NumericPrecisionResultToolInvoker();
-        Started started = McpOutputPipelineITFixture.start(
-                vertx, OUTPUT_MAX_BYTES, new MetricsShapedObserver(), new CapableObserver(), Set.of(tool));
-        server = started.server();
-        port = started.port();
-        rawClient = vertx.createHttpClient();
-        client = WebClient.wrap(rawClient);
-
-        HttpResponse<Buffer> response = await(callTool(NumericPrecisionResultToolInvoker.TOOL_NAME, 7));
-
-        assertThat(response.statusCode())
-                .as("a schema-valid structured result carrying BigDecimal fields must succeed")
-                .isEqualTo(200);
-        String rawBody = response.bodyAsString();
-
-        // DECISIVE (precision): the trailing zeros on the raw wire bytes prove BigDecimal("0.1000")
-        // survived normalization unchanged. A lossy round-trip through Double would collapse this to
-        // the raw text "0.1" instead.
-        assertThat(rawBody)
-                .as("DECISIVE: BigDecimal(\"0.1000\")'s exact scale must reach the wire unchanged")
-                .contains("\"" + NumericPrecisionResultToolInvoker.PRECISE_FIELD + "\":"
-                        + NumericPrecisionResultToolInvoker.PRECISE_VALUE_TEXT);
-
-        // DECISIVE (magnitude): the full 401-digit literal reaches the wire as a JSON number. A lossy
-        // round-trip through Double would overflow this to Infinity, which Jackson's default
-        // QUOTE_NON_NUMERIC_NUMBERS then serializes as the *string* "Infinity" instead.
-        assertThat(rawBody)
-                .as("DECISIVE: a large-magnitude finite decimal must reach the wire as the same finite "
-                        + "number, never the string \"Infinity\"")
-                .contains("\"" + NumericPrecisionResultToolInvoker.LARGE_FIELD + "\":"
-                        + NumericPrecisionResultToolInvoker.LARGE_MAGNITUDE_VALUE_TEXT)
-                .doesNotContain("Infinity");
     }
 
     // --- Shared framework construction ---

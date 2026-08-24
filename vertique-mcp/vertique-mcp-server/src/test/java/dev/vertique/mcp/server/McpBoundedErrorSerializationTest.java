@@ -12,8 +12,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.core.StreamReadConstraints;
-import com.fasterxml.jackson.core.exc.StreamConstraintsException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.vertique.core.context.ContextHolder;
@@ -32,9 +30,6 @@ import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RequestBody;
 import io.vertx.ext.web.RoutingContext;
-import java.nio.charset.StandardCharsets;
-import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
@@ -234,122 +229,6 @@ class McpBoundedErrorSerializationTest {
                         + "and then measured")
                 .isLessThanOrEqualTo(cap)
                 .isLessThan(fullBytes.length);
-    }
-
-    // --- R14 item 1 (superseding R12): the normalization reader's token bound is node-derived ---
-
-    /**
-     * R14 item 1 — the reparse token bound must reject a document the byte cap would admit.
-     *
-     * <p>R12 set {@code maxTokenCount} to {@code outputMaxBytes} and shipped a test that asserted the
-     * <em>constraint value</em>. That test passed either way, because the bound it pinned could never
-     * fire: the reader's only input is {@code encodeCapped}'s own output, already at most {@code
-     * outputMaxBytes} bytes, and a JSON token never consumes less than one source byte — so {@code
-     * tokens <= bytes} always held and {@code maxDocumentLength} rejected first at equality.
-     *
-     * <p>This proof asserts a <strong>materialized node count</strong> instead. The fixture is a flat
-     * array of empty arrays, a few kilobytes long — orders of magnitude inside {@code outputMaxBytes},
-     * asserted below so the claim is not taken on trust — sized to exactly the node budget and to one
-     * node past it. If the token bound is ever re-derived from a byte figure, the over-budget document
-     * parses instead of being rejected and this test turns red; the node-count assertion on the accepted
-     * document turns red the same way if the budget silently grows.
-     */
-    @Test
-    @DisplayName("R14 item 1: the normalization reader rejects one node past its budget, far inside the byte cap")
-    void shouldBoundNormalizationReparseByMaterializedNodeCountNotBySourceBytes() throws Exception {
-        int outputMaxBytes = McpServerConfig.builder().build().outputMaxBytes();
-        McpRequestDispatcher dispatcher = dispatcher(
-                McpServerConfig.builder().outputMaxBytes(outputMaxBytes).build());
-        ObjectMapper reader = dispatcher.normalizationDecoder();
-
-        // nodes = 1 outer + K inner; tokens = 2 + 2K. The budget admits exactly NORMALIZATION_NODE_BUDGET
-        // nodes, so K = budget - 1 is the largest accepted document of this shape.
-        byte[] atBudget = flatArrayOfEmptyArrays(McpRequestDispatcher.NORMALIZATION_NODE_BUDGET - 1);
-        byte[] onePastBudget = flatArrayOfEmptyArrays(McpRequestDispatcher.NORMALIZATION_NODE_BUDGET);
-
-        assertThat(onePastBudget.length)
-                .as("NON-VACUITY: the rejected document must be far inside mcp.output.maxBytes, so only a "
-                        + "node-derived bound can possibly reject it — the byte bound would admit it")
-                .isLessThan(outputMaxBytes / 100);
-
-        Object accepted = reader.readValue(atBudget, Object.class);
-        assertThat(countMaterializedNodes(accepted))
-                .as("DECISIVE: the largest document this reader accepts must materialize no more than the "
-                        + "stated node budget — this is the quantity the heap derivation bounds, and it is "
-                        + "asserted on the real materialized value, not on the constraint's configured number")
-                .isEqualTo(McpRequestDispatcher.NORMALIZATION_NODE_BUDGET)
-                .isLessThanOrEqualTo(McpRequestDispatcher.NORMALIZATION_NODE_BUDGET);
-
-        assertThatExceptionOfType(StreamConstraintsException.class)
-                .as("DECISIVE: one node past the budget must be rejected even though the document is "
-                        + "kilobytes inside the byte cap — under R12's byte-derived bound this parsed fine "
-                        + "and materialized every node")
-                .isThrownBy(() -> reader.readValue(onePastBudget, Object.class));
-    }
-
-    /**
-     * R14 item 1 — the byte half of the bound stays per-instance, the token half stays fixed.
-     *
-     * <p>{@code maxDocumentLength} is a genuine byte bound and must keep tracking this instance's own
-     * {@code mcp.output.maxBytes}; {@code maxTokenCount} must not, because a byte-derived token count is
-     * the no-op the test above exists to prevent.
-     */
-    @Test
-    @DisplayName("R14 item 1: maxDocumentLength tracks mcp.output.maxBytes; maxTokenCount does not")
-    void shouldKeepTheDocumentBoundPerInstanceAndTheTokenBoundFixed() {
-        McpRequestDispatcher small =
-                dispatcher(McpServerConfig.builder().outputMaxBytes(2_048).build());
-        McpRequestDispatcher large =
-                dispatcher(McpServerConfig.builder().outputMaxBytes(8_192).build());
-
-        StreamReadConstraints smallConstraints =
-                small.normalizationDecoder().getFactory().streamReadConstraints();
-        StreamReadConstraints largeConstraints =
-                large.normalizationDecoder().getFactory().streamReadConstraints();
-
-        assertThat(smallConstraints.getMaxDocumentLength()).isEqualTo(2_048L);
-        assertThat(largeConstraints.getMaxDocumentLength())
-                .as("the byte bound must remain derived from this instance's own configuration")
-                .isEqualTo(8_192L);
-        assertThat(smallConstraints.getMaxTokenCount())
-                .as("DECISIVE: the token bound must be the fixed node-derived cap, identical across "
-                        + "differently configured instances — a value that tracked outputMaxBytes here "
-                        + "would be the unreachable R12 bound again")
-                .isEqualTo(McpRequestDispatcher.NORMALIZATION_MAX_TOKEN_COUNT)
-                .isEqualTo(largeConstraints.getMaxTokenCount());
-    }
-
-    /** Builds {@code [[],[],…]} with {@code innerArrays} empty inner arrays — one node each, plus the outer. */
-    private static byte[] flatArrayOfEmptyArrays(int innerArrays) {
-        StringBuilder json = new StringBuilder(innerArrays * 3 + 2);
-        json.append('[');
-        for (int i = 0; i < innerArrays; i++) {
-            if (i > 0) {
-                json.append(',');
-            }
-            json.append("[]");
-        }
-        json.append(']');
-        return json.toString().getBytes(StandardCharsets.UTF_8);
-    }
-
-    /** Counts every container and scalar instance the canonical Map/List/scalar shape materialized. */
-    private static int countMaterializedNodes(Object value) {
-        if (value instanceof List<?> list) {
-            int total = 1;
-            for (Object child : list) {
-                total += countMaterializedNodes(child);
-            }
-            return total;
-        }
-        if (value instanceof Map<?, ?> map) {
-            int total = 1;
-            for (Object child : map.values()) {
-                total += countMaterializedNodes(child);
-            }
-            return total;
-        }
-        return 1;
     }
 
     // --- Shared framework construction ---

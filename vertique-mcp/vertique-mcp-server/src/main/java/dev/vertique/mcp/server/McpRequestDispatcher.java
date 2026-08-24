@@ -6,6 +6,7 @@ package dev.vertique.mcp.server;
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.StreamReadConstraints;
 import com.fasterxml.jackson.core.StreamWriteFeature;
+import com.fasterxml.jackson.core.json.JsonWriteFeature;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -268,94 +269,19 @@ final class McpRequestDispatcher {
      */
     private static final ObjectMapper OUTPUT_ENCODER = JsonMapper.builder()
             .enable(StreamWriteFeature.WRITE_BIGDECIMAL_AS_PLAIN)
+            // Keep non-finite spellings unquoted so the strict normalization reparse rejects them
+            // rather than admitting a JSON string value.
+            .disable(JsonWriteFeature.WRITE_NAN_AS_STRINGS)
             .build();
 
     /**
-     * The reader {@link #normalizeStructuredContent} uses to parse the bytes {@link #encodeCapped}
-     * already produced back into the canonical {@code Map}/{@code List}/scalar shape (R07 item 4,
-     * closing a security-review finding on R04's normalization pass).
+     * Parses the bytes {@link #encodeCapped} already produced back into the canonical {@code
+     * Map}/{@code List}/scalar output shape. Its independent document and token constraints come from
+     * {@code mcp.outputMaxBytes} and {@code mcp.outputMaxTokens}; no fixed node budget remains.
      *
-     * <p>{@code USE_BIG_DECIMAL_FOR_FLOATS} is enabled so a floating-point JSON literal parses back to
-     * {@link java.math.BigDecimal} — matching {@link #OUTPUT_ENCODER}'s own {@code
-     * WRITE_BIGDECIMAL_AS_PLAIN} encode side, and Jackson's own default handling of a value that already
-     * carried a {@code BigDecimal} through its original serialization path — instead of the mapper
-     * default {@link Double}. Without this, {@code OUTPUT_ENCODER.readValue(bounded, Object.class)}
-     * silently changed tool output numerics twice over: {@code BigDecimal("0.1000")} lost its trailing
-     * zeros as {@code Double} {@code 0.1}, and a large-magnitude finite decimal literal — one whose text
-     * {@link #encodeCapped} wrote correctly and in full — overflowed {@code Double} parsing to {@code
-     * Double.POSITIVE_INFINITY}, which Jackson's default {@code QUOTE_NON_NUMERIC_NUMBERS} then emitted
-     * to the wire as the <em>string</em> {@code "Infinity"} for a field the tool's own advertised output
-     * schema declares as a number — a value {@link #outputSchemaValid} validates against the Java value
-     * (still a legitimate, in-range {@code Double}, i.e. {@code Infinity}) before that later string
-     * substitution ever happens, so the schema gate could never see the corruption. A separate reader
-     * instance — never applied to {@link #OUTPUT_ENCODER} itself — keeps this fix scoped to output
-     * normalization only: {@link #OUTPUT_ENCODER} still deserializes {@code tools/call} input {@code
-     * arguments} (see {@link #argumentsOf}) with its unmodified default numeric handling, which this
-     * repair has no contract to change.
-     *
-     * <p><strong>R12, superseded by R14 item 1.</strong> R12 set both {@link
-     * StreamReadConstraints#getMaxTokenCount() maxTokenCount} and {@link
-     * StreamReadConstraints#getMaxDocumentLength() maxDocumentLength} to {@code outputMaxBytes},
-     * and argued that {@code maxTokenCount = outputMaxBytes} was "deliberately generous but
-     * mathematically tight". The second half of that claim was true and the first half made it
-     * worthless: {@code bounded} is {@link #encodeCapped}'s own output and therefore already at most
-     * {@code outputMaxBytes} bytes, and <strong>a JSON token always consumes at least one source
-     * byte, so {@code tokens <= bytes} holds for every document that can ever reach this reader</strong>
-     * — with {@code maxDocumentLength} rejecting first at equality. The token bound was therefore
-     * unreachable by construction: <strong>a no-op</strong>. A 2 MiB {@code [[[[…} structured result
-     * still materialized roughly a million nodes after R12, exactly as before it. R12's evidence
-     * presenting that derivation as a fix is corrected in place.
-     *
-     * <p><strong>R14 item 1 — the node budget this bound is actually derived from.</strong> Retained
-     * heap is a function of materialized {@link com.fasterxml.jackson.databind.JsonNode} count, not of
-     * source byte count. R14 therefore derived this fixed output bound from a stated heap budget and
-     * measured per-node cost rather than from any byte figure:
-     *
-     * <ul>
-     *   <li><b>Heap budget.</b> R14 assumed a 512 MiB container floor, of which at most 10%
-     *       (53,687,091 bytes) may be retained by MCP request trees.
-     *   <li><b>Concurrency.</b> The same stated design ceiling of {@code N = 256} simultaneous in-flight
-     *       requests. This reparse is post-authorization, but that buys nothing: a framework-level
-     *       {@code @PermitAll} tool is reachable anonymously, this layer enforces no concurrency or rate
-     *       limit (deferred to MCP-002), and the normalized tree stays reachable until the terminal
-     *       write resolves — which a client that simply stops reading holds open for as long as the
-     *       shared {@link HttpConfig} liveness bound allows. Per-request allowance =
-     *       53,687,091 / 256 &#8776; 209,715 bytes.
-     *   <li><b>Per-node cost.</b> 100 bytes per materialized node, the worst case re-measured under
-     *       R14 item 8 over the container-heavy shapes (95.4 bytes/node for nested-array chains,
-     *       99.6 bytes/node for a short-key object whose field names are unique to its own tree),
-     *       stable within 0.2% across a 10&times; range of tree sizes and within 0.6% across two
-     *       collectors. R11's own summary figure of 45&ndash;50 bytes/node is <em>not</em> reused here:
-     *       item 8 reproduced it and identified it as a harness artifact — every measured tree parsed
-     *       byte-identical source through one shared {@code JsonFactory}, so Jackson canonicalized each
-     *       field name once and all 256 trees shared those strings, which no real workload does.
-     *   <li><b>Arithmetic.</b> 209,715 / 100 &#8776; 2,097 nodes, rounded down to {@value
-     *       #NORMALIZATION_NODE_BUDGET}. Both container-heavy shapes materialize one node per two
-     *       parser tokens, so the token bound is 2 &times; {@value #NORMALIZATION_NODE_BUDGET} =
-     *       {@value #NORMALIZATION_MAX_TOKEN_COUNT}.
-     * </ul>
-     *
-     * <p>The bound now genuinely bites well inside the byte cap: a ~12 KB document of empty arrays
-     * carries far more nodes than the budget while passing {@code maxDocumentLength} untouched, and is
-     * rejected. Rejection is not an outage — the reparse failure surfaces as an {@link
-     * UncheckedIOException} inside {@code invokeAndRespond}'s already-existing stage-7
-     * {@code catch (RuntimeException | StackOverflowError)}, which degrades to the same bounded,
-     * SSE-framed internal-error response every other stage-7 failure uses. <strong>It is nonetheless a
-     * behavioral narrowing:</strong> a tool whose structured result materializes more than {@value
-     * #NORMALIZATION_NODE_BUDGET} nodes now fails where it previously succeeded, regardless of how far
-     * inside {@code mcp.output.maxBytes} it was. That consequence is stated, not hidden; the cap's
-     * R19 owns replacing this fixed policy with the independently configured
-     * {@code mcp.outputMaxTokens} budget.
-     *
-     * <p>{@code maxDocumentLength} stays at {@code outputMaxBytes} — that one <em>is</em> a byte bound
-     * and is genuinely per-instance, which is why this reader remains an instance field rather than a
-     * {@code static final} constant.
-     *
-     * <p><strong>Serialized once.</strong> This reader only parses bytes {@link #encodeCapped} already
-     * wrote; it never serializes {@code value} a second time — see {@link #normalizeStructuredContent}'s
-     * own javadoc for the single-serialization guarantee these constraints must not disturb, and R04's
-     * evidence for why an earlier attempt at a related fix was reverted for violating exactly that
-     * guarantee.
+     * <p>{@link DeserializationFeature#USE_BIG_DECIMAL_FOR_FLOATS} preserves scale-sensitive and
+     * large finite decimals. This reader never sees the raw application object and therefore does not
+     * create a second serialization pass.
      */
     private final ObjectMapper normalizationDecoder;
 
@@ -397,37 +323,19 @@ final class McpRequestDispatcher {
         this.cursorCodec = new McpCursorCodec();
         this.contextHolder = contextHolder;
         this.correlationContextFactory = correlationContextFactory;
-        this.normalizationDecoder = buildNormalizationDecoder(config.outputMaxBytes());
+        this.normalizationDecoder = buildNormalizationDecoder(config.outputMaxBytes(), config.outputMaxTokens());
     }
 
     /**
-     * The maximum number of {@link com.fasterxml.jackson.databind.JsonNode} instances one tool result's
-     * normalization reparse may materialize (R14 item 1), derived in {@link #normalizationDecoder}'s own
-     * javadoc from a 209,715-byte per-request heap allowance and a re-measured worst case of 100 bytes
-     * per node. Expressed as a node count, never a byte count, because retained heap tracks node count.
-     */
-    static final int NORMALIZATION_NODE_BUDGET = 2_000;
-
-    /**
-     * {@link #normalizationDecoder}'s {@code maxTokenCount} (R14 item 1): two parser tokens per
-     * materialized node for both container-heavy worst-case shapes, so {@code 2 *} {@value
-     * #NORMALIZATION_NODE_BUDGET}. Fixed, and deliberately independent of {@code outputMaxBytes} — the
-     * byte-derived form R12 shipped could never reject anything (see {@link #normalizationDecoder}).
-     */
-    static final long NORMALIZATION_MAX_TOKEN_COUNT = 2L * NORMALIZATION_NODE_BUDGET;
-
-    /**
-     * Builds {@link #normalizationDecoder}: {@code maxTokenCount} from the fixed node budget (R14 item
-     * 1) and {@code maxDocumentLength} from this instance's {@code outputMaxBytes} — see {@link
-     * #normalizationDecoder}'s own javadoc for the full derivation, and for why R12's byte-derived token
-     * bound was a no-op.
+     * Builds the output-normalization reader from the two independent configured resource boundaries.
      *
      * @param outputMaxBytes this instance's configured {@code mcp.output.maxBytes}
-     * @return a reader bounded by the node budget in tokens and by {@code outputMaxBytes} in bytes
+     * @param outputMaxTokens this instance's configured {@code mcp.outputMaxTokens}
+     * @return a reader bounded independently by bytes and parser tokens
      */
-    private static ObjectMapper buildNormalizationDecoder(int outputMaxBytes) {
+    private static ObjectMapper buildNormalizationDecoder(int outputMaxBytes, int outputMaxTokens) {
         StreamReadConstraints constraints = StreamReadConstraints.builder()
-                .maxTokenCount(NORMALIZATION_MAX_TOKEN_COUNT)
+                .maxTokenCount(outputMaxTokens)
                 .maxDocumentLength(outputMaxBytes)
                 .build();
         JsonFactory factory =
@@ -1975,19 +1883,19 @@ final class McpRequestDispatcher {
                 // after its own encodeCapped call succeeds — see its Javadoc — so an observer can never
                 // see a value the wire cap or the schema check would still reject.
                 //
-                // The whole stage runs inside this try: normalizeStructuredContent bounds serialization
-                // size but can still throw — OutputCapExceededException for an over-cap value, or for a
-                // pathologically shaped one, IllegalArgumentException from a cyclic object graph Jackson
-                // cannot convert — and a deeply nested value can drive a native-recursion
-                // StackOverflowError in code this stage calls. Any of these would otherwise escape this
-                // lambda after beginWrite was never called — no response, no terminal, no completion —
-                // permanently stranding the request (compounded by the fact that MCP relies on the shared
-                // HttpConfig liveness bound, not a stage-local timer, to ever reclaim it). All degrade to
-                // the same bounded, SSE-framed internal-error fallback every other invocation failure in
-                // this method already uses.
                 McpToolResult<?> toolResult = ar.result();
+                Object normalizedOutput;
                 try {
-                    Object normalizedOutput = normalizeStructuredContent(toolResult.structuredContent());
+                    normalizedOutput = normalizeStructuredContent(toolResult.structuredContent());
+                } catch (RuntimeException | StackOverflowError serializationFailure) {
+                    // This boundary owns only the sole raw-value serialization and bounded-byte
+                    // reparse. Byte/token exhaustion, cyclic or non-finite output, and recursion are
+                    // therefore serialization failures, never generic handler failures.
+                    writeSseFallback(
+                            context, envelope, security, toolName, serializationFailure, McpErrorType.SERIALIZATION);
+                    return;
+                }
+                try {
                     if (!outputSchemaValid(toolName, normalizedOutput)) {
                         // The schema-invalid value never reaches writeToolResult/encodeCapped: it is
                         // rejected here, before any wire byte is produced and before the output
@@ -2006,8 +1914,10 @@ final class McpRequestDispatcher {
                             McpErrorType.HANDLER,
                             coordinator,
                             toolContext);
-                } catch (RuntimeException | StackOverflowError stage7Failure) {
-                    writeSseFallback(context, envelope, security, toolName, stage7Failure);
+                } catch (RuntimeException | StackOverflowError downstreamFailure) {
+                    // Schema infrastructure, observation, and other callbacks after normalization are
+                    // not serialization failures. Keep their existing internal classification.
+                    writeSseFallback(context, envelope, security, toolName, downstreamFailure);
                 }
             });
         });
@@ -2081,7 +1991,8 @@ final class McpRequestDispatcher {
      * @throws OutputCapExceededException when {@code value}'s own canonical JSON representation would
      *     exceed {@code mcp.output.maxBytes}
      */
-    private @Nullable Object normalizeStructuredContent(@Nullable Object value) {
+    @Nullable
+    Object normalizeStructuredContent(@Nullable Object value) {
         if (value == null) {
             return null;
         }
@@ -2232,7 +2143,7 @@ final class McpRequestDispatcher {
         try {
             payload = encodeCapped(toolCallResponse(envelope, result, normalizedStructuredContent));
         } catch (OutputCapExceededException overCap) {
-            writeSseFallback(context, envelope, security, toolName, overCap);
+            writeSseFallback(context, envelope, security, toolName, overCap, McpErrorType.SERIALIZATION);
             return;
         }
         if (coordinator != null && toolContext != null && coordinator.hasValueObservers()) {
@@ -2358,6 +2269,17 @@ final class McpRequestDispatcher {
             @Nullable SecurityContextSnapshot security,
             String toolName,
             Throwable cause) {
+        writeSseFallback(context, envelope, security, toolName, cause, McpErrorType.INTERNAL);
+    }
+
+    /** Settles one invocation-path failure with its operation-owned lifecycle classification. */
+    private void writeSseFallback(
+            RoutingContext context,
+            JsonNode envelope,
+            @Nullable SecurityContextSnapshot security,
+            String toolName,
+            Throwable cause,
+            McpErrorType errorType) {
         // cause is deliberately never read (see writeDispatchByMethodFailure's identical note). R12:
         // boundedErrorResponse replaces the previous materialize-then-measure idiom.
         byte[] fallback = boundedErrorResponse(envelope.get("id"), INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
@@ -2366,7 +2288,7 @@ final class McpRequestDispatcher {
                 Instant.now(),
                 McpMethod.TOOLS_CALL,
                 toolName,
-                McpErrorType.INTERNAL,
+                errorType,
                 500,
                 INTERNAL_ERROR,
                 protocolVersionOf(context),

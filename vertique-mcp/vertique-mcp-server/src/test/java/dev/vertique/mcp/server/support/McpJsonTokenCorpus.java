@@ -33,6 +33,8 @@ public final class McpJsonTokenCorpus {
     public static final String RESOURCE_PATH = "mcp/characterization/json-token-budget-corpus.jsonl";
     public static final String INGRESS_UNIT_CONSUMER = "ingress-unit";
     public static final String INGRESS_INTEGRATION_CONSUMER = "ingress-integration";
+    public static final String OUTPUT_NORMALIZATION_CONSUMER = "output-normalization";
+    public static final String BOTH_CONFIGURED_DEFAULTS_CONSUMER = "both-configured-defaults";
 
     private static final Set<String> ROW_FIELDS = Set.of(
             "id",
@@ -60,6 +62,14 @@ public final class McpJsonTokenCorpus {
 
     public static List<Row> ingressIntegrationRows() {
         return rowsForConsumer(INGRESS_INTEGRATION_CONSUMER);
+    }
+
+    public static List<Row> outputNormalizationRows() {
+        return rowsForConsumer(OUTPUT_NORMALIZATION_CONSUMER);
+    }
+
+    public static List<Row> bothConfiguredDefaultsRows() {
+        return rowsForConsumer(BOTH_CONFIGURED_DEFAULTS_CONSUMER);
     }
 
     public static List<Row> rowsForConsumer(String consumer) {
