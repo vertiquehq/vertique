@@ -45,7 +45,7 @@ class RedisApiSpikeTest {
         AtomicBoolean lateBackendTryCompleteResult = new AtomicBoolean();
 
         try {
-            // When: the missing production seam is installed on an event-loop context.
+            // When: the existing deadline wrapper is invoked from an event-loop context.
             vertx.runOnContext(ignored -> {
                 Future<String> deadlineFuture = RedisDeadline.withDeadline(vertx, backend.future(), DEADLINE);
                 returnedFuture.set(deadlineFuture);
@@ -71,7 +71,8 @@ class RedisApiSpikeTest {
             assertTrue(settledOnEventLoop.get(), "deadline settlement must run on the event loop");
             assertInstanceOf(TimeoutException.class, returnedFuture.get().cause());
 
-            // Completing the backend late is allowed; this test makes no claim about cancellation propagation.
+            // Completing the backend late is allowed; the wrapper fences the returned future and does not
+            // claim upstream cancellation propagation.
             assertTrue(lateBackendCompleted.await(WAIT_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS));
             assertTrue(lateBackendTryCompleteResult.get(), "the backend must remain independently completable");
             assertEquals(1, completionCount.get(), "late backend completion must not settle the returned future again");

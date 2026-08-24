@@ -40,11 +40,15 @@ The registry maps profile settings to the Vert.x Redis Client 5.1.6 options as f
 | `username` | `RedisOptions.setUser(...)` when present |
 | `passwordSecret` | `RedisOptions.setPassword(...)` when present |
 
+Single Redis commands are asynchronous: Vert.x Redis Client 5.1.6 `send(Request)` returns a
+`Future<Response>`. `Future.timeout(long, TimeUnit)` fences the returned future to the timeout
+boundary. This module does not claim per-request cancellation.
+
 Redis clients close in validated profile order. The first registry `close()` call owns the asynchronous close sequence and its future; later calls return that same future, so application teardown is ordered and idempotent. The Dagger contribution runs in lifecycle phase `INFRA` at the lowest same-phase priority, which places shared-client shutdown after same-phase consumers during reverse-order teardown. The registry closes only its Redis clients; the host-owned `Vertx` instance remains the caller's responsibility.
 
 ## Deadline behavior
 
-`RedisDeadline.withDeadline(Vertx, Future<T>, Duration)` provides a non-blocking event-loop deadline for asynchronous Redis operations. The duration must be positive; when it expires, the returned future fails with a timeout. The backend future is not canceled: late backend completion is fenced and ignored after the returned future settles, so callers must not assume upstream cancellation.
+`RedisDeadline.withDeadline(Vertx, Future<T>, Duration)` provides non-blocking event-loop settlement for asynchronous Redis operations. The duration must be positive; when it expires, the returned future fails with a timeout. The backend future is not canceled: late backend completion is fenced and ignored after the returned future settles, so callers must not assume upstream cancellation.
 
 ## Dependencies
 

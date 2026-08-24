@@ -16,6 +16,8 @@ This module owns shared Redis connection-profile and client-lifecycle infrastruc
 
 The reactor builds this core module before `vertique-cache-redis`, allowing multiple Redis-backed features to share one managed infrastructure artifact. `RedisConnectionModule` reads `redis.connections`, and the typed `RedisConnectionConfig` record validates profile identity, credential-free Redis endpoint syntax, TLS mode, connect timeout, pool size, and waiting limits. `RedisConnectionsConfig` preserves the validated profile list and rejects duplicate names before the application-scoped `RedisClientRegistry` consumes it. The registry retains an immutable startup snapshot, so credential changes are restart-only, and it creates a client only when a consumer requests a profile.
 
+Vert.x Redis Client 5.1.6 single-command sends return `Future<Response>`. `Future.timeout(long, TimeUnit)` fences the returned future to the timeout boundary; no per-request cancellation is claimed. `RedisDeadline` provides non-blocking event-loop settlement, and late backend results are fenced and ignored after the returned future settles.
+
 ## Load-Bearing Invariants
 
 - Redis client types remain behind this shared infrastructure boundary and are not introduced into provider-neutral cache contracts.
