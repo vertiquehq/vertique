@@ -7,6 +7,7 @@ import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.net.NetClientOptions;
 import io.vertx.redis.client.Redis;
+import io.vertx.redis.client.RedisCluster;
 import io.vertx.redis.client.RedisOptions;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
@@ -62,6 +63,22 @@ public final class RedisClientRegistry {
             }
             return clients.computeIfAbsent(profileName, ignored -> createClient(profile));
         }
+    }
+
+    /**
+     * Returns primary-node operations backed by the existing client for a named profile.
+     *
+     * <p>The profile must be configured for a cluster-capable Redis client. This method wraps
+     * the registry-owned client and does not create or own another client; the registry remains
+     * responsible for its lifecycle.
+     *
+     * @param profileName the validated cluster-capable profile name
+     * @return primary-node operations backed by the shared profile client
+     * @throws IllegalArgumentException if the profile is unknown
+     * @throws IllegalStateException if registry shutdown has started
+     */
+    public RedisPrimaryOperations primaryOperations(String profileName) {
+        return new RedisPrimaryOperations(RedisCluster.create(client(profileName)));
     }
 
     /**
