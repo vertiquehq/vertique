@@ -20,6 +20,14 @@ Use this artifact when an application or provider module needs the provider-neut
 
 Cache annotations and storage contracts are kept separate from provider details. Local and clustered implementations depend on this module; this module does not depend on Caffeine, Redis, or a serialization engine.
 
+## Configuration
+
+The typed cache configuration uses explicit duration units such as `defaultTtlSeconds`,
+`maxTtlSeconds`, and `backendTimeoutMs`. `jsonProfile` selects the existing JSON mapper
+profile for cache values; a per-cache `jsonProfile` override may inherit the global
+cache profile when omitted. Provider modules contribute storage bindings through the
+internal `CacheMode` Dagger map seam.
+
 ## Dependencies
 
 | Artifact | Purpose |
