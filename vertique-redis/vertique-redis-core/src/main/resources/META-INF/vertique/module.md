@@ -18,7 +18,9 @@ Use this artifact when composing a Vertique capability that needs shared Redis c
 
 ## Core Concepts
 
-Connection profiles are named application configuration. Feature modules reference a profile and receive shared infrastructure through explicit Dagger composition.
+Connection profiles are named application configuration under `redis.connections.<name>`. Each profile validates a non-blank name, one or more credential-free `redis://` or `rediss://` endpoints, optional username and secret-reference fields, TLS mode, connect timeout, maximum pool size, and maximum waiting requests. Profile names must be unique. Feature modules reference a profile and receive shared infrastructure through explicit Dagger composition.
+
+Validation is performed while typed configuration is constructed. Diagnostics contain stable field-level messages and never include endpoint credentials or password material. This module owns profile shape and validation; secret resolution, client construction, connection reuse, and shutdown lifecycle belong to the Redis client-lifecycle boundary.
 
 ## Deadline behavior
 

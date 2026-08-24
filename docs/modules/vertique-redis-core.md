@@ -11,12 +11,14 @@ This module owns shared Redis connection-profile and client-lifecycle infrastruc
 
 ## Runtime or Build Flow
 
-The reactor builds this core module before `vertique-cache-redis`, allowing multiple Redis-backed features to share one managed infrastructure artifact.
+The reactor builds this core module before `vertique-cache-redis`, allowing multiple Redis-backed features to share one managed infrastructure artifact. The typed `RedisConnectionConfig` record validates profile identity, credential-free Redis endpoint syntax, TLS mode, connect timeout, pool size, and waiting limits. `RedisConnectionsConfig` preserves the validated profile list and rejects duplicate names before the client registry consumes it.
 
 ## Load-Bearing Invariants
 
 - Redis client types remain behind this shared infrastructure boundary and are not introduced into provider-neutral cache contracts.
 - Profile parsing and lifecycle ownership stay here; feature modules do not duplicate connection configuration or shutdown wiring.
+- Profile validation failures use stable, secret-free diagnostics; endpoint query, fragment, and user-info credentials are rejected at the configuration boundary.
+- T006 owns profile records and parser validation. T007 owns credential resolution, lazy client lifecycle, and ordered shutdown; T009 owns Redis cache commands.
 
 ## Testing
 
