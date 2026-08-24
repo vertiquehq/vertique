@@ -6,6 +6,7 @@ package dev.vertique.mcp.server;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertAll;
 
 import dev.vertique.config.parser.DefaultConfigMapper;
 import dev.vertique.config.parser.DefaultConfigParser;
@@ -56,6 +57,67 @@ class McpServerConfigTest {
         assertThat(defaults.outputMaxBytes()).isEqualTo(2_097_152);
         assertThat(defaults.toolsPageSize()).isEqualTo(100);
         assertThat(defaults.toolsTtlMs()).isEqualTo(300_000L);
+    }
+
+    /**
+     * R17 — binds the two independently configurable parser-token budgets through the production
+     * configuration mapper. The flat property names are deliberate: nested {@code ingress.maxTokens}
+     * and {@code output.maxTokens} describe no supported MCP configuration shape and must remain
+     * ordinary lenient unknown properties rather than silently configuring either budget.
+     */
+    @Test
+    @DisplayName("binds and validates independent JSON token budgets through the production mapper")
+    void shouldBindAndValidateIndependentTokenBudgetsThroughTheProductionMapper() {
+        ConfigParser parser = new DefaultConfigParser(DefaultConfigMapper.lenient());
+
+        // Given: an omitted budget pair binds the two documented defaults.
+        McpServerConfig defaults = parser.parse(new JsonObject(), McpServerConfig.class);
+
+        assertThat(defaults.ingressMaxTokens()).isEqualTo(65_536);
+        assertThat(defaults.outputMaxTokens()).isEqualTo(65_536);
+        assertThatCode(() -> validator.validate(defaults)).doesNotThrowAnyException();
+
+        // When: each flat property is supplied at both inclusive boundaries by itself.
+        McpServerConfig ingressMinimum =
+                parser.parse(new JsonObject().put("ingressMaxTokens", 1_024), McpServerConfig.class);
+        McpServerConfig ingressMaximum =
+                parser.parse(new JsonObject().put("ingressMaxTokens", 262_144), McpServerConfig.class);
+        McpServerConfig outputMinimum =
+                parser.parse(new JsonObject().put("outputMaxTokens", 1_024), McpServerConfig.class);
+        McpServerConfig outputMaximum =
+                parser.parse(new JsonObject().put("outputMaxTokens", 262_144), McpServerConfig.class);
+
+        // Then: every boundary is accepted, and changing either setting leaves the other unchanged.
+        assertThatCode(() -> validator.validate(ingressMinimum)).doesNotThrowAnyException();
+        assertThatCode(() -> validator.validate(ingressMaximum)).doesNotThrowAnyException();
+        assertThatCode(() -> validator.validate(outputMinimum)).doesNotThrowAnyException();
+        assertThatCode(() -> validator.validate(outputMaximum)).doesNotThrowAnyException();
+        assertThat(ingressMinimum.ingressMaxTokens()).isEqualTo(1_024);
+        assertThat(ingressMaximum.ingressMaxTokens()).isEqualTo(262_144);
+        assertThat(outputMinimum.outputMaxTokens()).isEqualTo(1_024);
+        assertThat(outputMaximum.outputMaxTokens()).isEqualTo(262_144);
+        assertThat(ingressMinimum.outputMaxTokens()).isEqualTo(65_536);
+        assertThat(ingressMaximum.outputMaxTokens()).isEqualTo(65_536);
+        assertThat(outputMinimum.ingressMaxTokens()).isEqualTo(65_536);
+        assertThat(outputMaximum.ingressMaxTokens()).isEqualTo(65_536);
+
+        // Adjacent out-of-range values fail independently with stable, value-free flat-key/range messages.
+        assertAll(
+                () -> assertTokenBudgetIsRejected(parser, "ingressMaxTokens", 1_023, "mcp.ingressMaxTokens"),
+                () -> assertTokenBudgetIsRejected(parser, "ingressMaxTokens", 262_145, "mcp.ingressMaxTokens"),
+                () -> assertTokenBudgetIsRejected(parser, "outputMaxTokens", 1_023, "mcp.outputMaxTokens"),
+                () -> assertTokenBudgetIsRejected(parser, "outputMaxTokens", 262_145, "mcp.outputMaxTokens"));
+
+        // Nested dotted spellings are not aliases for the two intentionally flat MCP properties.
+        McpServerConfig nestedSpellings = parser.parse(
+                new JsonObject()
+                        .put("ingress", new JsonObject().put("maxTokens", 1_024))
+                        .put("output", new JsonObject().put("maxTokens", 262_144)),
+                McpServerConfig.class);
+
+        assertThat(nestedSpellings.ingressMaxTokens()).isEqualTo(65_536);
+        assertThat(nestedSpellings.outputMaxTokens()).isEqualTo(65_536);
+        assertThatCode(() -> validator.validate(nestedSpellings)).doesNotThrowAnyException();
     }
 
     /**
@@ -558,6 +620,14 @@ class McpServerConfigTest {
                 return optionalCapable ? Optional.of(RoutingContext::next) : Optional.empty();
             }
         };
+    }
+
+    private void assertTokenBudgetIsRejected(ConfigParser parser, String property, int value, String flatKey) {
+        McpServerConfig configuration = parser.parse(new JsonObject().put(property, value), McpServerConfig.class);
+
+        assertThatThrownBy(() -> validator.validate(configuration))
+                .isInstanceOf(ConfigurationException.class)
+                .hasMessage("Invalid configuration: " + flatKey + " must be between 1024 and 262144 inclusive");
     }
 
     /** One bounded numeric configuration property and the builder mutator that sets it. */

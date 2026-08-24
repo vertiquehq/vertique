@@ -33,9 +33,9 @@ consistency at startup, before the router is mounted — so an out-of-range valu
 rather than a live request. JSON-RPC envelope parsing is bounded by Jackson's own frozen
 `StreamReadConstraints` inside the private
 [Bounded JSON-RPC envelope codec](#bounded-json-rpc-envelope-codec) — MCP owns JSON-RPC envelope
-semantics, not a second general-purpose JSON resource-limit subsystem, and exposes no configuration
-key for it. Request body size is enforced from `http.maxBodySize`, which also bounds the maximum
-decodable envelope document length. A configured `jsonProfile` is validated during composition even
+semantics, not a second general-purpose JSON resource-limit subsystem, and exposes no per-constraint
+generic JSON configuration keys for it. Request body size is enforced from `http.maxBodySize`, which
+also bounds the maximum decodable envelope document length. A configured `jsonProfile` is validated during composition even
 if MCP is disabled, preventing a latent invalid deployment configuration.
 
 **Transport liveness is not provided out of the box, and startup enforces that at least one bound
@@ -53,10 +53,23 @@ Set at least one non-zero `HttpConfig` timeout for any MCP deployment — the mo
 otherwise.
 
 **Configuration keys are flat under `mcp`.** `McpServerConfig` is bound from the `mcp` section by
-Jackson using the field names exactly as declared: `mcp.outputMaxBytes`, `mcp.toolsPageSize`,
-`mcp.toolsTtlMs`, and `mcp.jsonProfile`, not dotted nested objects. There is no nested `tools`,
-`output`, or `json` object. Ordinary unknown keys remain deliberately forward-compatible and are
-silently ignored, so use the declared field names rather than dotted prose spellings.
+Jackson using the field names exactly as declared: `mcp.outputMaxBytes`, `mcp.ingressMaxTokens`,
+`mcp.outputMaxTokens`, `mcp.toolsPageSize`, `mcp.toolsTtlMs`, and `mcp.jsonProfile`, not dotted
+nested objects. There is no nested `tools`, `output`, or `json` object. Ordinary unknown keys remain
+deliberately forward-compatible and are silently ignored, so use the declared field names rather
+than dotted prose spellings.
+
+**R17 exposes and validates two independent JSON token budgets; it does not yet consume them.**
+`mcp.ingressMaxTokens` is the intended parser-token budget for one incoming JSON-RPC envelope, and
+`mcp.outputMaxTokens` is the intended parser-token budget for one structured-output normalization.
+Each defaults to 65,536 and accepts the inclusive range 1,024–262,144; neither has an unlimited
+mode, and changing one does not change the other. These token budgets are distinct from the encoded
+byte caps: `http.maxBodySize` remains the ingress body-size limit and `mcp.outputMaxBytes` remains
+the response/output byte limit. R17 validates the configured values only. The shipped envelope codec
+continues to use its fixed 8,000-token ingress limit until R18 consumes
+`mcp.ingressMaxTokens`; the shipped output-normalization reparse continues to use its fixed
+2,000-node budget, translated to a 4,000-parser-token limit, until R19 consumes
+`mcp.outputMaxTokens`.
 
 **Retired configuration keys fail startup.** For one release, `McpServerConfig` rejects each exact
 flat spelling `mcp.requestTimeoutMs`, `mcp.jsonMaxDepth`, `mcp.jsonMaxPropertiesPerObject`,
@@ -181,7 +194,7 @@ guaranteed armed for every mount that actually starts by the startup gate descri
 
 ## Bounded response output
 
-The response write is bounded by `mcp.output.maxBytes`: serialization streams through a byte-counting
+The response write is bounded by `mcp.outputMaxBytes`: serialization streams through a byte-counting
 writer that stops the moment the running count would exceed the cap, so an over-cap response is
 classified as a bounded internal error and never emitted — the full over-cap byte array is never
 materialized. Discovery and `tools/list` responses are far below the default cap; a `tools/call`
@@ -194,7 +207,7 @@ unknown-or-unauthorized `-32602`, an interceptor rejection, an ordinary envelope
 capped mechanism, never a separate unrestricted encode measured only after the fact. The one
 unbounded element any of these shapes can carry is the echoed request `id` (bounded only by the
 envelope codec's own frozen `maxStringLength`,
-far above this cap's floor): when even the id-bearing shape would exceed `mcp.output.maxBytes`, the
+far above this cap's floor): when even the id-bearing shape would exceed `mcp.outputMaxBytes`, the
 response degrades to the minimal id-less generic internal-error shape instead — itself encoded through
 the same capped writer — so a client that sent an oversized id receives a bounded response with a
 `null` id rather than its own id ever being echoed back in an oversized payload.
@@ -215,7 +228,8 @@ carries:
 - a document larger than the effective `http.maxBodySize` in bytes (`maxDocumentLength`) — the one
   Jackson default (unlimited) this codec narrows, read from the shared `HttpConfig` rather than a
   separate MCP configuration key;
-- more than 8,000 JSON tokens (`maxTokenCount`) — a fixed constant, **not** derived from
+- more than 8,000 JSON tokens (`maxTokenCount`) — the currently shipped fixed ingress limit,
+  **not** derived from
   `http.maxBodySize` (R11, merge blocker 4; supersedes the issue #423 `max(1024, http.maxBodySize / 4)`
   ratio). A bounded document *length* alone does not bound retained node allocation: a deeply nested or
   token-dense shape can amplify tens of times past its own byte size before the document-length check
@@ -227,11 +241,12 @@ carries:
   reserved for anonymous ingress retention, 256 assumed concurrent anonymous in-flight requests — this
   layer enforces no connection-concurrency or rate limit of its own) and proven under concurrent load;
   because heap retention tracks token count rather than input byte count, this cap does not scale with
-  `http.maxBodySize`;
+  `http.maxBodySize`. R17 exposes and validates `mcp.ingressMaxTokens`, but it does not configure
+  this codec yet; R18 owns replacing the fixed 8,000-token limit with the configured budget;
 - invalid UTF-8.
 
-None of these bounds is a consumer-visible configuration key: the four generic JSON-limit properties
-and the handcrafted strict JSON reader that used to enforce them were removed in the T007
+The generic limits above are not consumer-visible configuration keys: the four generic JSON-limit
+properties and the handcrafted strict JSON reader that used to enforce them were removed in the T007
 architecture rebaseline in favor of Jackson's own bounded read constraints. MCP owns JSON-RPC
 envelope semantics, not a second general-purpose JSON resource-limit subsystem, and exposes no
 public parser API. Tool argument and result values continue to use the existing
@@ -403,7 +418,7 @@ every `onToolOutput` call has returned.
 ## Bounded output pipeline
 
 Every completed `tools/call` result (contract §4.7 stage 7) is normalized exactly once, bounded by
-`mcp.output.maxBytes` as bytes are produced, validated against the tool's advertised output schema,
+`mcp.outputMaxBytes` as bytes are produced, validated against the tool's advertised output schema,
 encoded into the bounded terminal envelope, offered to the opt-in `onToolOutput` observation only once
 that envelope exists, and only then handed to the single terminal writer ([Cancellation and
 write-phase settlement](#cancellation-and-write-phase-settlement)) — in that fixed order, introducing
@@ -416,7 +431,7 @@ embed — nothing re-serializes the original application object a second time. A
 output schema, or a text-only/structured-content-free result, is trivially valid: there is nothing to
 normalize or validate.
 
-**The `mcp.output.maxBytes` cap independently bounds both halves contract §4.3 names.** Normalization
+**The `mcp.outputMaxBytes` cap independently bounds both halves contract §4.3 names.** Normalization
 (`McpRequestDispatcher#normalizeStructuredContent`) serializes a handler's raw structured value exactly
 once into the same byte-counting sink (`CappedOutputStream`, via `encodeCapped`) every terminal writer
 uses, aborting the moment the running byte count would exceed the cap — before a full `Map`/`List` tree
@@ -436,13 +451,15 @@ byte cap and still materializes roughly a million container objects. The reader 
 the number of parser tokens, and that cap is derived from a heap budget — the same 512 MiB / 10% / 256
 concurrent-request budget the envelope codec's own token cap is derived from — divided by a measured
 worst-case retained cost of 100 bytes per materialized node. **A structured result that materializes
-more than 2,000 nodes is rejected**, however far inside `mcp.output.maxBytes` it is, and degrades to
+more than 2,000 nodes is rejected**, however far inside `mcp.outputMaxBytes` it is, and degrades to
 the same bounded internal-error response every other failure in this stage uses. This is a real limit
 on tool output shape, not only on tool output size: a result with thousands of small elements will hit
-it. `mcp.output.maxBytes` continues to bound the reparse in bytes and continues to scale with
+it. `mcp.outputMaxBytes` continues to bound the reparse in bytes and continues to scale with
 configuration; the node bound is fixed, because scaling it with a byte figure is exactly what made the
 previous revision's token bound unreachable — a JSON token always costs at least one source byte, so a
-token cap set to the byte cap could never fire.
+token cap set to the byte cap could never fire. R17 exposes and validates `mcp.outputMaxTokens`, but
+it does not configure this reparse yet; R19 owns replacing the fixed 2,000-node / 4,000-parser-token
+limit with the configured budget.
 
 The output-value observation (`onToolOutput`) is published only after the terminal envelope has been
 successfully encoded — never before. A capable session can therefore never observe a structured value
@@ -466,7 +483,7 @@ than silently stranding the request with no response, no terminal, and no comple
 
 The response write itself is bounded exactly like discovery and `tools/list` ([Bounded response
 output](#bounded-response-output)): serialization streams to the same byte-counting sink that aborts
-the moment the running count would exceed `mcp.output.maxBytes`, so an over-cap structured result is
+the moment the running count would exceed `mcp.outputMaxBytes`, so an over-cap structured result is
 classified as a bounded internal error before its full byte array is ever materialized — the same T004
 mechanism, now also covering structured content rather than only discovery and listing payloads.
 
@@ -648,7 +665,7 @@ with its owning slice:
   [Tool interceptor stage](#tool-interceptor-stage).
 - **Single-pass bounded structured output.** Present since T020: a structured `McpToolResult` is
   normalized exactly once, validated against the tool's advertised output schema, and bounded at
-  `mcp.output.maxBytes` as bytes are produced — see [Bounded output
+  `mcp.outputMaxBytes` as bytes are produced — see [Bounded output
   pipeline](#bounded-output-pipeline). Rich (non-scalar-graph) result shapes beyond this remain a
   later slice.
 

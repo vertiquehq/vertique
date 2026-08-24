@@ -36,6 +36,8 @@ final class McpServerConfigValidator {
                         || !config.authenticationScheme().isBlank(),
                 "mcp.authenticationScheme");
         requireRange(config.outputMaxBytes(), 1_024, 16_777_216, "mcp.output.maxBytes");
+        requireTokenBudget(config.ingressMaxTokens(), "mcp.ingressMaxTokens");
+        requireTokenBudget(config.outputMaxTokens(), "mcp.outputMaxTokens");
         requireRange(config.toolsPageSize(), 1, 500, "mcp.tools.pageSize");
         requireRange(config.toolsTtlMs(), 0, 3_600_000, "mcp.tools.ttlMs");
         validateOrigins(config.allowedOrigins());
@@ -252,6 +254,13 @@ final class McpServerConfigValidator {
 
     private static void requireRange(long value, long minimum, long maximum, String key) {
         require(value >= minimum && value <= maximum, key);
+    }
+
+    private static void requireTokenBudget(int value, String key) {
+        if (value < 1_024 || value > 262_144) {
+            throw new ConfigurationException(
+                    "Invalid configuration: " + key + " must be between 1024 and 262144 inclusive");
+        }
     }
 
     private static void require(boolean condition, String key) {

@@ -72,6 +72,20 @@ public final class McpServerConfig {
     @Builder.Default
     private final int outputMaxBytes = 2_097_152;
 
+    /**
+     * Configured parser-token budget for one ingress JSON-RPC envelope. Defaults to {@code 65536};
+     * range 1,024–262,144.
+     */
+    @Builder.Default
+    private final int ingressMaxTokens = 65_536;
+
+    /**
+     * Configured parser-token budget for one output normalization. Defaults to {@code 65536}; range
+     * 1,024–262,144.
+     */
+    @Builder.Default
+    private final int outputMaxTokens = 65_536;
+
     /** Maximum tools returned per {@code tools/list} page. Defaults to {@code 100}; range 1–500. */
     @Builder.Default
     private final int toolsPageSize = 100;
