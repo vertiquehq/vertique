@@ -24,6 +24,9 @@ final class CacheTestFixtures {
     private CacheTestFixtures() {}
 
     static MethodMetadata metadata(Method method, String parameterName) {
+        if (method.getParameterCount() == 0) {
+            return new ReflectiveMethodMetadata(method, List.of());
+        }
         ParameterMetadata parameter = new ParameterMetadata() {
             @Override
             public int index() {
@@ -89,6 +92,7 @@ final class CacheTestFixtures {
         int evictCalls;
         int clearCalls;
         Duration lastTtl;
+        CacheKey lastKey;
         boolean failGets;
         boolean failPuts;
         boolean failEvictions;
@@ -97,6 +101,7 @@ final class CacheTestFixtures {
         @Override
         public Future<Optional<Object>> get(CacheKey key, Type declaredType) {
             getCalls++;
+            lastKey = key;
             if (failGets) {
                 return Future.failedFuture("get failed");
             }
@@ -106,6 +111,7 @@ final class CacheTestFixtures {
         @Override
         public Future<Void> put(CacheKey key, Object value, Type declaredType, Duration ttl) {
             putCalls++;
+            lastKey = key;
             lastTtl = ttl;
             if (failPuts) {
                 return Future.failedFuture("put failed");

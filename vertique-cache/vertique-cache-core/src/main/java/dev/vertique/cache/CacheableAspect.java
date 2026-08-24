@@ -8,6 +8,7 @@ import dev.vertique.aop.Invocation;
 import dev.vertique.aop.MethodInterceptor;
 import dev.vertique.cache.config.CacheConfig;
 import dev.vertique.cache.config.CacheEntryConfig;
+import dev.vertique.cache.spi.CacheIdentityResolver;
 import dev.vertique.cache.spi.CacheKey;
 import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.cache.spi.CacheRegion;
@@ -29,16 +30,26 @@ public final class CacheableAspect implements AspectProvider<Cacheable> {
     private final CacheStore store;
     private final CacheConfig config;
     private final Set<CacheObserver> observers;
+    private final Set<CacheIdentityResolver> identityResolvers;
 
     public CacheableAspect(CacheStore store, CacheConfig config) {
-        this(store, config, Set.of());
+        this(store, config, Set.of(), Set.of());
+    }
+
+    public CacheableAspect(CacheStore store, CacheConfig config, Set<CacheObserver> observers) {
+        this(store, config, observers, Set.of());
     }
 
     @Inject
-    public CacheableAspect(CacheStore store, CacheConfig config, Set<CacheObserver> observers) {
+    public CacheableAspect(
+            CacheStore store,
+            CacheConfig config,
+            Set<CacheObserver> observers,
+            Set<CacheIdentityResolver> identityResolvers) {
         this.store = store;
         this.config = config;
         this.observers = Set.copyOf(observers);
+        this.identityResolvers = Set.copyOf(identityResolvers);
     }
 
     @Override
@@ -54,7 +65,11 @@ public final class CacheableAspect implements AspectProvider<Cacheable> {
             CacheKey key;
             try {
                 String selector = CacheKeyRenderer.render(annotation.key(), target, invocation.arguments());
-                key = new CacheKey(region, identityComponent(annotation), selector);
+                Optional<String> identityComponent = identityComponent(annotation);
+                if (identityComponent.isEmpty()) {
+                    return invocation.proceed();
+                }
+                key = new CacheKey(region, identityComponent.get(), selector);
                 if (key.canonical().getBytes(StandardCharsets.UTF_8).length > config.maxKeyBytes()) {
                     return invocation.proceed();
                 }
@@ -125,11 +140,27 @@ public final class CacheableAspect implements AspectProvider<Cacheable> {
         return annotation.mode() == CacheMode.DEFAULT ? config.defaultMode() : annotation.mode();
     }
 
-    private static String identityComponent(Cacheable annotation) {
-        if (annotation.identity() != CacheIdentity.NONE) {
-            throw new IllegalArgumentException("an identity resolver is required for identity-aware caching");
+    private Optional<String> identityComponent(Cacheable annotation) {
+        if (annotation.identity() == CacheIdentity.NONE) {
+            return Optional.of("NONE");
         }
-        return annotation.anonymous() == AnonymousCachePolicy.CACHE_AS_ANONYMOUS ? "ANONYMOUS" : "NONE";
+        if (identityResolvers.size() != 1) {
+            return annotation.anonymous() == AnonymousCachePolicy.CACHE_AS_ANONYMOUS
+                    ? Optional.of("ANONYMOUS")
+                    : Optional.empty();
+        }
+        try {
+            return identityResolvers
+                    .iterator()
+                    .next()
+                    .resolve(annotation.identity())
+                    .filter(component -> !component.isBlank())
+                    .or(() -> annotation.anonymous() == AnonymousCachePolicy.CACHE_AS_ANONYMOUS
+                            ? Optional.of("ANONYMOUS")
+                            : Optional.empty());
+        } catch (RuntimeException unavailable) {
+            return Optional.empty();
+        }
     }
 
     private static Type valueType(MethodMetadata target) {

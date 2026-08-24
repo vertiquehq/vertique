@@ -20,6 +20,9 @@ public abstract class CacheCoreModule {
     @Multibinds
     abstract Set<dev.vertique.cache.spi.CacheObserver> cacheObservers();
 
+    @Multibinds
+    abstract Set<dev.vertique.cache.spi.CacheIdentityResolver> cacheIdentityResolvers();
+
     @Provides
     @Singleton
     static CacheConfig cacheConfig(@VertxConfig JsonObject config, ConfigParser parser) {

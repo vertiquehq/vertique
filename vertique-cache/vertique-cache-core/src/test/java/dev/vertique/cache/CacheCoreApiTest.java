@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import dagger.MapKey;
 import dev.vertique.cache.config.CacheConfig;
 import dev.vertique.cache.config.CacheEntryConfig;
+import dev.vertique.cache.spi.CacheIdentityResolver;
 import dev.vertique.cache.spi.CacheKey;
 import dev.vertique.cache.spi.CacheObservation;
 import dev.vertique.cache.spi.CacheObserver;
@@ -38,7 +39,8 @@ class CacheCoreApiTest {
             CacheConfig.class,
             CacheEntryConfig.class,
             CacheObserver.class,
-            CacheObservation.class);
+            CacheObservation.class,
+            CacheIdentityResolver.class);
 
     @Test
     @DisplayName("public cache contracts are provider-neutral")
@@ -71,6 +73,9 @@ class CacheCoreApiTest {
         assertTrue(modeKey.isAnnotationPresent(MapKey.class), "CacheModeKey must be a Dagger map key");
         assertEquals(CacheMode.class, modeKey.getDeclaredMethods()[0].getReturnType());
         assertTrue(hasObserverSetSeam(), "CacheCoreModule must preserve the provider-neutral observer seam");
+        assertTrue(
+                CacheIdentityResolver.class.isInterface(),
+                "CacheIdentityResolver must remain a provider-neutral extension point");
     }
 
     private static void assertProviderNeutral(Class<?> contract) {
