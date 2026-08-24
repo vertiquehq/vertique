@@ -93,16 +93,13 @@ final class McpEnvelopeJsonCodec {
      * correlation contexts), and any non-MCP traffic sharing the JVM. Assume a worst-case concurrency
      * of {@code N = 256} simultaneous anonymous in-flight requests: this framework enforces no
      * connection-concurrency or rate limit at this layer (deferred to MCP-002), so {@code N} is a
-     * stated design ceiling, not derived from an existing knob. The <em>latency</em> half of the
-     * budget is a negative finding, not a shrinking factor: {@code McpServerConfig.toolsListDeadlineMs}
-     * (default 30s, R10) is the only framework-enforced ceiling on how long an accepted request may
-     * retain its tree, and it bounds only {@code tools/list} scans — {@code server/discover} and
-     * {@code tools/call} have no such bound (the shared {@code HttpConfig} idle/read/write timeouts
-     * default to {@code 0}, disabled). An attacker can therefore hold {@code N} trees live for as long
-     * as a slow or hung downstream handler runs, so the budget must hold for sustained concurrency, not
-     * a transient parse-time spike — which is exactly why the proof below measures {@code N}
-     * concurrently <em>accepted</em> (retained) requests, not {@code N} concurrent rejections (a
-     * rejected decode's partial tree is immediately garbage once {@link #decode} returns).
+     * stated design ceiling, not derived from an existing knob. MCP has no aggregate {@code tools/list}
+     * deadline, but startup requires at least one shared {@code HttpConfig} idle/read/write liveness
+     * timeout. An attacker can retain {@code N} trees only until the configured shared HTTP liveness
+     * timeout closes each request, so the budget must hold for sustained concurrency, not a transient
+     * parse-time spike — which is exactly why the proof below measures {@code N} concurrently
+     * <em>accepted</em> (retained) requests, not {@code N} concurrent rejections (a rejected decode's
+     * partial tree is immediately garbage once {@link #decode} returns).
      *
      * <p><b>Arithmetic.</b> Per-request allowance = 53,687,091 / 256 &#8776; 209,715 bytes. The
      * worst-case retained bytes per materialized {@code JsonNode}, measured with a heap-delta harness

@@ -70,6 +70,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -243,6 +244,32 @@ class McpToolPaginationIT {
         }
     }
 
+    @Test
+    @DisplayName("a valid nonmember cursor anchor is an exclusive lexicographic position hint")
+    void shouldTreatAValidNonmemberAnchorAsALexicographicPositionHint() throws Exception {
+        startServer();
+        String forgedPositionHint = McpToolPaginationITFixture.cursor("tool09.5", fixture.registryDigest());
+        int before = fixture.decideCount();
+
+        JsonObject result = listToolsResult(await(listTools(BEARER_ALICE, forgedPositionHint)));
+
+        assertThat(toolNames(result))
+                .as(
+                        "the scan must resume strictly after the forged lexicographic position, not require registry membership")
+                .containsExactly("tool10", "tool11");
+        assertThat(fixture.decideCount() - before)
+                .as("every returned candidate remains subject to authorization after a forged cursor")
+                .isEqualTo(2);
+
+        HttpResponse<Buffer> malformed = await(listTools(BEARER_ALICE, "not-base64url"));
+        assertInvalidCursor(malformed, "a malformed cursor");
+
+        HttpResponse<Buffer> nonCanonical = await(listTools(
+                BEARER_ALICE,
+                McpToolPaginationITFixture.cursorWithUnexpectedField("tool09.5", fixture.registryDigest())));
+        assertInvalidCursor(nonCanonical, "a structurally non-canonical cursor");
+    }
+
     // --- Wire helpers ---
 
     private void startServer() throws Exception {
@@ -302,6 +329,14 @@ class McpToolPaginationIT {
             names.add(((JsonObject) element).getString("name"));
         }
         return names;
+    }
+
+    private static void assertInvalidCursor(HttpResponse<Buffer> response, String shape) {
+        assertThat(response.statusCode()).as(shape + " must map to HTTP 400").isEqualTo(400);
+        JsonObject error = new JsonObject(response.bodyAsString()).getJsonObject("error");
+        assertThat(error.getInteger("code"))
+                .as(shape + " must remain JSON-RPC invalid params")
+                .isEqualTo(-32602);
     }
 
     private static <T> T await(Future<T> future) throws Exception {
@@ -383,8 +418,33 @@ class McpToolPaginationIT {
             return securityPolicyEnforcer.count();
         }
 
+        String registryDigest() {
+            return McpToolRegistry.build(twelveToolRegistry()).digest();
+        }
+
+        static String cursor(String lastScannedToolName, String registryDigest) throws Exception {
+            ObjectNode node = new ObjectMapper().createObjectNode();
+            node.put("protocolVersion", PROTOCOL_VERSION);
+            node.put("registryDigest", registryDigest);
+            node.put("lastScannedToolName", lastScannedToolName);
+            return java.util.Base64.getUrlEncoder()
+                    .withoutPadding()
+                    .encodeToString(new ObjectMapper().writeValueAsBytes(node));
+        }
+
+        static String cursorWithUnexpectedField(String lastScannedToolName, String registryDigest) throws Exception {
+            ObjectNode node = new ObjectMapper().createObjectNode();
+            node.put("protocolVersion", PROTOCOL_VERSION);
+            node.put("registryDigest", registryDigest);
+            node.put("lastScannedToolName", lastScannedToolName);
+            node.put("unexpected", true);
+            return java.util.Base64.getUrlEncoder()
+                    .withoutPadding()
+                    .encodeToString(new ObjectMapper().writeValueAsBytes(node));
+        }
+
         /**
-         * Base64url-decodes {@code cursor}, flips the registry {@code digest} field to an unrelated
+         * Base64url-decodes {@code cursor}, flips the registry {@code registryDigest} field to an unrelated
          * value, and re-encodes — the minimal single-field tamper that must be rejected identically
          * to any other invalid cursor (§4.7, issue #420).
          */
@@ -392,7 +452,7 @@ class McpToolPaginationIT {
             ObjectMapper mapper = new ObjectMapper();
             byte[] decoded = java.util.Base64.getUrlDecoder().decode(cursor);
             ObjectNode node = (ObjectNode) mapper.readTree(decoded);
-            node.put("digest", "0".repeat(64));
+            node.put("registryDigest", "0".repeat(64));
             byte[] tampered = mapper.writeValueAsBytes((JsonNode) node);
             return java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(tampered);
         }

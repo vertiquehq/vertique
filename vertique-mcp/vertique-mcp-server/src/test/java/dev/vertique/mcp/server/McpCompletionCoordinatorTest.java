@@ -196,6 +196,38 @@ class McpCompletionCoordinatorTest {
     }
 
     /**
+     * Pins the inline branch of {@link McpCompletionCoordinator#settleDisconnected}: when the call
+     * already runs on the coordinator's owning Vert.x context, cancellation must be visible before
+     * the method returns. The disconnect listing proof relies on this ordering before it resolves a
+     * late authorization decision.
+     */
+    @Test
+    @DisplayName("a same-context disconnect exposes cancellation before settleDisconnected returns")
+    void shouldExposeCancellationBeforeSameContextDisconnectSettlementReturns() throws Exception {
+        Context context = vertx.getOrCreateContext();
+        ManualClock clock = new ManualClock(COMPLETED_AT);
+        RecordingObserver observer = new RecordingObserver();
+        McpCompletionCoordinator coordinator = coordinator(context, clock, observer);
+        CompletableFuture<Boolean> cancellationObservedBeforeReturn = new CompletableFuture<>();
+
+        context.runOnContext(ignored -> {
+            try {
+                coordinator.settleDisconnected(cancelledTerminal(McpErrorType.TRANSPORT), false);
+                cancellationObservedBeforeReturn.complete(
+                        coordinator.cancellation().isCancelled());
+            } catch (Throwable failure) {
+                cancellationObservedBeforeReturn.completeExceptionally(failure);
+            }
+        });
+
+        assertThat(cancellationObservedBeforeReturn.get(SETTLEMENT_WAIT_SECONDS, TimeUnit.SECONDS))
+                .as("same-context settleDisconnected must cancel inline, before returning to its caller")
+                .isTrue();
+        assertThat(observer.awaitCallbacks()).isTrue();
+        observer.assertExactlyOneTerminalThenOneCompletion();
+    }
+
+    /**
      * W1: proves the successful-write path publishes the terminal at {@code beginWrite} — before the
      * byte write — and the completion only at {@code finishWrite} — after it. The snapshot is taken
      * inside one context task: immediately after {@code beginWrite} returns, exactly one terminal and

@@ -83,23 +83,6 @@ public final class McpServerConfig {
     @Builder.Default
     private final long toolsTtlMs = 300_000;
 
-    /**
-     * The request-scoped absolute wall-clock deadline, in milliseconds, on one {@code tools/list}
-     * scan's whole candidate walk (R10, issue #438) — distinct from, and in addition to, {@link
-     * dev.vertique.rest.security.SecurityPolicyEnforcer#DEFAULT_GATE_DEADLINE_MS}'s per-candidate gate
-     * deadline. The per-candidate deadline alone bounds only one decision; it does not bound the sum
-     * of up to {@code 4 * mcp.tools.pageSize} of them, each of which may legitimately answer just
-     * under its own bound without ever tripping it — accumulating into hours of wall clock and
-     * thousands of outbound policy-decision round trips for one request (up to 2,000 candidates at
-     * the maximum {@code mcp.tools.pageSize}). {@code McpRequestDispatcher#scan} checks this deadline
-     * both before starting a candidate's decision and after it resolves, stopping the scan the moment
-     * it elapses and returning a truncated page whose {@code nextCursor} still reaches every
-     * unexamined candidate — exactly like the existing gate-timeout and budget-exhaustion stops.
-     * Defaults to {@code 30000} (30 seconds); range 1,000–600,000.
-     */
-    @Builder.Default
-    private final long toolsListDeadlineMs = 30_000;
-
     /** Returns the complete, programmatic MCP default configuration. */
     public static McpServerConfig defaults() {
         return builder().build();
@@ -110,7 +93,7 @@ public final class McpServerConfig {
      * this pre-existing class — Lombok's documented "reuse an existing builder class" behavior —
      * instead of generating a brand new one, letting this class additionally carry exactly one
      * hand-written method: {@link #rejectRetiredKey}, a package-private {@code @JsonAnySetter} that
-     * fails startup on one of the five configuration keys the T007 rebaseline removed (issue #424)
+     * fails startup on one of the retired configuration keys (issue #424)
      * while leaving every other unrecognized property forward-compatible, matching {@link
      * McpServerConfig}'s class-level {@code ignoreUnknown = true} for everything that is not a retired
      * key. Jackson checks a builder's {@code @JsonAnySetter} before falling back to "ignore unknown",
@@ -127,7 +110,7 @@ public final class McpServerConfig {
                         + "replacement configuration key";
 
         /**
-         * The five keys the T007 architecture rebaseline removed, mapped to the operator-facing
+         * The retired keys, mapped to the operator-facing
          * replacement guidance issue #424 requires — each message names the retired key's successor
          * (or explains why none exists) rather than merely saying the key is gone.
          */
@@ -139,7 +122,10 @@ public final class McpServerConfig {
                 "jsonMaxDepth", RETIRED_JSON_LIMIT_GUIDANCE,
                 "jsonMaxPropertiesPerObject", RETIRED_JSON_LIMIT_GUIDANCE,
                 "jsonMaxItemsPerArray", RETIRED_JSON_LIMIT_GUIDANCE,
-                "jsonMaxStringChars", RETIRED_JSON_LIMIT_GUIDANCE);
+                "jsonMaxStringChars", RETIRED_JSON_LIMIT_GUIDANCE,
+                "toolsListDeadlineMs",
+                        "per-decision authorization timeouts and shared HTTP liveness own the remaining "
+                                + "bounds; there is no replacement MCP setting");
 
         /**
          * Intercepts every property Jackson would otherwise treat as unrecognized. A retired key
@@ -149,7 +135,7 @@ public final class McpServerConfig {
          *
          * @param name the unrecognized JSON property name
          * @param value the unrecognized property's value; never inspected — only presence matters
-         * @throws ConfigurationException if {@code name} is one of the five retired keys
+         * @throws ConfigurationException if {@code name} is a retired key
          */
         @JsonAnySetter
         void rejectRetiredKey(String name, Object value) {

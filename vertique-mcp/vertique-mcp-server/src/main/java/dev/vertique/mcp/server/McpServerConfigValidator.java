@@ -38,7 +38,6 @@ final class McpServerConfigValidator {
         requireRange(config.outputMaxBytes(), 1_024, 16_777_216, "mcp.output.maxBytes");
         requireRange(config.toolsPageSize(), 1, 500, "mcp.tools.pageSize");
         requireRange(config.toolsTtlMs(), 0, 3_600_000, "mcp.tools.ttlMs");
-        requireRange(config.toolsListDeadlineMs(), 1_000, 600_000, "mcp.tools.listDeadlineMs");
         validateOrigins(config.allowedOrigins());
     }
 

@@ -18,6 +18,7 @@ import dev.vertique.mcp.tool.McpCancellationSignal;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
+import io.vertx.core.Vertx;
 import java.time.Instant;
 import java.time.InstantSource;
 import java.util.ArrayList;
@@ -41,9 +42,9 @@ final class McpCompletionCoordinator {
     private final McpRequestCancellationSignal cancellationSignal = new McpRequestCancellationSignal();
 
     // Both latches are mutated only on the request-owning Vert.x context: the write path calls
-    // beginWrite/finishWrite synchronously on that context, and every settlement path redispatches
-    // onto it via context.runOnContext. They therefore need no memory barrier beyond the context's
-    // own serialization.
+    // beginWrite/finishWrite synchronously on that context, and settlement either completes inline
+    // when already on it or redispatches there from another context. They therefore need no memory
+    // barrier beyond the context's own serialization.
     private boolean settled;
     private boolean completionEmitted;
     private McpRequestTerminalEvent writeTerminal;
@@ -237,10 +238,11 @@ final class McpCompletionCoordinator {
     // of its own (T007): a shared HttpConfig idle/read/write liveness expiry closes the connection, so
     // it reaches this same seam through the ordinary disconnect/reset path rather than a distinct
     // timeout entry. Each drives exactly one terminal and exactly one completion through the same
-    // first-observed-wins completed-guard as the write path, redispatched onto the request-owning
-    // Vert.x context, with the completion instant read from the injected clock. A signal that arrives
-    // after settlement has already won is suppressed, so the frozen lifecycle contract's exactly-once
-    // terminal-before-completion guarantee holds on every settlement path.
+    // first-observed-wins completed-guard as the write path, on the request-owning Vert.x context
+    // (inline when already current, otherwise redispatched), with the completion instant read from
+    // the injected clock. A signal that arrives after settlement has already won is suppressed, so
+    // the frozen lifecycle contract's exactly-once terminal-before-completion guarantee holds on every
+    // settlement path.
 
     /**
      * Settles the request when the client disconnects before or after the first write.
@@ -276,7 +278,7 @@ final class McpCompletionCoordinator {
     }
 
     /**
-     * Redispatches a settlement onto the request-owning context and drives the completed-guard once.
+     * Drives the completed-guard on the request-owning context, redispatching only from another context.
      *
      * @param terminal the terminal facts to publish before completion
      * @param transport the transport outcome the completion records
@@ -284,6 +286,10 @@ final class McpCompletionCoordinator {
      */
     private void settle(McpRequestTerminalEvent terminal, McpTransportOutcome transport, boolean responseCommitted) {
         Instant completedAt = clock.instant();
+        if (Vertx.currentContext() == context) {
+            completeOnContext(terminal, transport, responseCommitted, completedAt);
+            return;
+        }
         context.runOnContext(ignored -> completeOnContext(terminal, transport, responseCommitted, completedAt));
     }
 

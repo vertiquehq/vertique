@@ -56,7 +56,6 @@ class McpServerConfigTest {
         assertThat(defaults.outputMaxBytes()).isEqualTo(2_097_152);
         assertThat(defaults.toolsPageSize()).isEqualTo(100);
         assertThat(defaults.toolsTtlMs()).isEqualTo(300_000L);
-        assertThat(defaults.toolsListDeadlineMs()).isEqualTo(30_000L);
     }
 
     /**
@@ -81,6 +80,17 @@ class McpServerConfigTest {
     @Nested
     @DisplayName("retired configuration keys (R02 TP-002, issue #424)")
     class RetiredConfigurationKeys {
+
+        @Test
+        @DisplayName("rejects the retired tools/list deadline through the production mapper")
+        void shouldRejectTheRetiredToolsListDeadlineThroughTheProductionMapper() {
+            assertThatThrownBy(() -> McpServerConfigRetiredKeyRejectionTestFixture.parse(Set.of("toolsListDeadlineMs")))
+                    .as("the retired flat MCP key must not be silently ignored or rebound")
+                    .isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("mcp.toolsListDeadlineMs")
+                    .hasMessageContaining("per-decision authorization timeouts")
+                    .hasMessageContaining("shared HTTP liveness");
+        }
 
         @ParameterizedTest(name = "{0}")
         @MethodSource("dev.vertique.mcp.server.McpServerConfigTest#retiredKeys")
@@ -373,12 +383,7 @@ class McpServerConfigTest {
                         500,
                         (builder, value) -> builder.toolsPageSize(Math.toIntExact(value))),
                 new NumericProperty(
-                        "mcp.tools.ttlMs", 0, 3_600_000, McpServerConfig.McpServerConfigBuilder::toolsTtlMs),
-                new NumericProperty(
-                        "mcp.tools.listDeadlineMs",
-                        1_000,
-                        600_000,
-                        McpServerConfig.McpServerConfigBuilder::toolsListDeadlineMs));
+                        "mcp.tools.ttlMs", 0, 3_600_000, McpServerConfig.McpServerConfigBuilder::toolsTtlMs));
     }
 
     // --- Row tables: identity and instructions (W4) ---

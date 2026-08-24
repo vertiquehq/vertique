@@ -53,31 +53,19 @@ Set at least one non-zero `HttpConfig` timeout for any MCP deployment — the mo
 otherwise.
 
 **Configuration keys are flat under `mcp`.** `McpServerConfig` is bound from the `mcp` section by
-Jackson using the field names exactly as declared, so the accepted key for the scan deadline is
-`mcp.toolsListDeadlineMs`, not `mcp.tools.listDeadlineMs`, and for the output cap it is
-`mcp.outputMaxBytes`, not `mcp.output.maxBytes`. There is no nested `tools`, `output`, or `json`
-object. Because everything except the five retired keys below is deliberately forward-compatible
-(`ignoreUnknown = true`), a dotted key is **silently ignored** and the deployment starts on the
-default with no warning — so the difference is not cosmetic. Earlier revisions of this document wrote
-several of these keys in dotted form; `mcp.toolsListDeadlineMs` is corrected above, and the remaining
-dotted spellings elsewhere in this document (`mcp.output.maxBytes`, `mcp.tools.pageSize`,
-`mcp.tools.ttlMs`, `mcp.jsonProfile`) are prose references to the same flat fields —
-`outputMaxBytes`, `toolsPageSize`, `toolsTtlMs`, `jsonProfile` — and are being corrected as their
-owning sections are next revised. When in doubt, the field names on `McpServerConfig` are the
-contract.
+Jackson using the field names exactly as declared: `mcp.outputMaxBytes`, `mcp.toolsPageSize`,
+`mcp.toolsTtlMs`, and `mcp.jsonProfile`, not dotted nested objects. There is no nested `tools`,
+`output`, or `json` object. Ordinary unknown keys remain deliberately forward-compatible and are
+silently ignored, so use the declared field names rather than dotted prose spellings.
 
-**Upgrading past T007:** `mcp.requestTimeoutMs`, `mcp.jsonMaxDepth`, `mcp.jsonMaxPropertiesPerObject`,
-`mcp.jsonMaxItemsPerArray`, and `mcp.jsonMaxStringChars` no longer exist. `McpServerConfig` fails
-startup on any one of these five retired keys for one release (issue #424 fix), naming the offending
-key and its replacement in the `ConfigurationException` message, rather than silently dropping it —
-an earlier version of this module silently ignored them, which let an operator who had tightened
-`requestTimeoutMs` (MCP's only prior deadline) upgrade into no deadline at all without any warning.
-Move the equivalent protection to `HttpConfig`'s idle/read/write timeouts above; the four JSON-shape
-limits have no direct replacement key because they are now Jackson's own frozen
-`StreamReadConstraints` inside the envelope codec (see [Bounded JSON-RPC envelope
-codec](#bounded-json-rpc-envelope-codec)), not a configurable value. An **ordinary** unknown key —
-anything other than these five retired names — stays forward-compatible and is still silently
-ignored, exactly as before.
+**Retired configuration keys fail startup.** For one release, `McpServerConfig` rejects each exact
+flat spelling `mcp.requestTimeoutMs`, `mcp.jsonMaxDepth`, `mcp.jsonMaxPropertiesPerObject`,
+`mcp.jsonMaxItemsPerArray`, `mcp.jsonMaxStringChars`, and `mcp.toolsListDeadlineMs` with a
+`ConfigurationException` that names the key and its guidance; it does not silently ignore any of
+them. `toolsListDeadlineMs` has no replacement MCP setting: per-decision authorization timeouts and
+the shared HTTP liveness settings own the remaining bounds. The removed JSON-shape settings likewise
+have no direct replacement because the private envelope codec uses Jackson's frozen
+`StreamReadConstraints` (see [Bounded JSON-RPC envelope codec](#bounded-json-rpc-envelope-codec)).
 
 ## Stateless HTTP contract
 
@@ -673,76 +661,42 @@ examines through the same `SecurityPolicyEnforcer`/`McpPolicyEnforcer` pair
 `McpPolicyEnforcer#decide` and `#isVisible` for the same candidate, which would double-emit its
 authorization event. Examination for one page stops at the first of:
 
-- the page reaching `mcp.tools.pageSize` visible tools;
-- examining `4 * mcp.tools.pageSize` candidates — the fixed fan-out bound that caps how many
+- the page reaching `mcp.toolsPageSize` visible tools;
+- examining `4 * mcp.toolsPageSize` candidates — the fixed fan-out bound that caps how many
   authorization evaluations (and, with a remote decision point, network round trips) an
   unauthenticated or narrowly-scoped `tools/list` scan can trigger;
 - the registry being exhausted.
 
-A page may therefore be underfilled or empty and still carry a `nextCursor` while unexamined
-candidates remain past the budget. A `nextCursor` is omitted in exactly two cases: a scan that
-reached the registry's end, and the forward-progress bound below. Only
-tools the decision permits are returned — a hidden `@DenyAll` or role-mismatched candidate examined
-within the scan window never appears in the page, even though it was authorized.
+A page may therefore be underfilled or empty and still carry a `nextCursor` while candidates remain.
+Only an ordinary authorization deny is filtered: a hidden `@DenyAll` or role-mismatched candidate
+never appears, and the scan continues. A deny whose reason code is
+`AuthzReasonCodes.INTERNAL_AUTHZ_ERROR` instead means authorization infrastructure could not decide;
+the entire request fails with HTTP 500 and the bounded JSON-RPC `-32603` internal error. It returns
+no partial tools, cache hint, or cursor, and records the terminal lifecycle outcome as
+`McpErrorType.AUTHORIZATION`.
 
-A candidate whose authorization decision exceeds the shared gate deadline also ends the page early —
-the same amplification bound above, applied to a single hanging candidate rather than the whole
-scan — and is denied for this request (fail-closed). The returned `nextCursor` anchors to the
-candidate *before* the timed-out one, not the timed-out candidate itself, so the next `tools/list`
-call re-examines it rather than permanently excluding it from every future page — including when the
-very first candidate of the scan is the one that times out, with no previous candidate to anchor to:
-the cursor then carries a reserved "resume from the beginning" anchor instead, so this case is
-retried too, never silently and permanently excluded.
+The listing has no aggregate deadline. Its only bounds are the existing per-decision authorization
+timeout, the candidate-examination budget above, the shared `HttpConfig` liveness timeouts, and
+request cancellation. A disconnect marks the request cancelled, prevents further candidate
+evaluations, and ignores an in-flight decision when it later settles; it sends no late response. The
+authorization SPI remains cooperative: MCP does not claim to forcibly cancel the in-flight operation.
 
-**Pagination is guaranteed to make progress (R14 item 2).** A page that stops before examining
-anything past the resume point it was given — a gate timeout on its very first candidate, an
-exhausted scan deadline, or an observed cancellation — hands back a `nextCursor` resolving to the
-*same* resume point, so that the candidate it stopped on is retried rather than permanently skipped.
-Because this document tells clients to follow an empty page's cursor, a persistently slow or
-unavailable decision point would otherwise spin a conforming client forever, one full gate deadline
-per request, with an identical empty body every time; the per-request scan deadline cannot bound
-that, because the loop spans requests. The cursor therefore carries an opaque count of consecutive
-non-progressing pages. **After two consecutive pages that do not advance the resume point, no
-`nextCursor` is returned at all** and the cursor chain ends. Clients need no change: this is the
-ordinary "no more pages" signal. A page that does advance resets the count, and a fresh, cursor-less
-`tools/list` always starts a new chain — so a client that comes back after the backend recovers
-paginates normally.
+The cursor is an unsigned, non-expiring, unpadded base64url encoding of canonical JSON with exactly
+three fields, in order: `protocolVersion`, `registryDigest`, and `lastScannedToolName`. The anchor is
+a bounded syntactically valid tool name and only a lexicographic resume-position hint: the next page
+starts at the first registry name strictly greater than it. It need not be a current registry member,
+so decoding does not expose tool-name membership. A forged valid anchor may skip entries for its
+caller, but it cannot include an unauthorized tool because each examined candidate is reauthorized.
+The registry digest invalidates stale cursors across deployments; there is no signature, expiry,
+attempt count, sentinel, or retry state.
 
-**Request-scoped scan budget (R10, issue #438).** The per-candidate gate deadline above bounds only
-one decision; it does not bound the sum of up to `4 * mcp.tools.pageSize` of them. A decision point
-that consistently answers just under its own deadline never trips the gate-timeout stop, so the walk
-still needs its own aggregate bound. `mcp.toolsListDeadlineMs` (default `30000`, range
-1,000–600,000) is a single, request-scoped absolute wall-clock deadline computed once when the scan
-starts; once it elapses, the scan stops exactly like the gate-timeout and budget-exhaustion stops
-above — a truncated page whose `nextCursor` still reaches every unexamined candidate. Independently,
-the scan also observes the same request cancellation signal T013 already fires on client disconnect,
-stream reset, or a failed write (never a second, invented signal): both the deadline and the
-cancellation signal are checked immediately before a candidate's decision is started and again
-immediately after it resolves, so a client that has already left never keeps the scan issuing further
-authorization decisions, whether the disconnect lands between candidates or while one is genuinely in
-flight.
-
-The cursor is unsigned, non-expiring, opaque base64url (no padding) JSON: the frozen protocol
-version, the current registry digest, the last global-name candidate examined (not merely the last
-visible tool), and the consecutive non-progressing-page count the forward-progress bound above
-spends. It carries no signature, HMAC, or expiry member — tampering cannot bypass
-authorization, since every candidate reached from a resumed cursor is reauthorized exactly like any
-other, and the immutable registry digest (not a client-enforceable expiry) invalidates a cursor
-across deployments. `McpCursorCodec` bounds the base64url-decoded byte length **before** any JSON
-parsing is attempted, so an over-long or expensive-to-parse payload never reaches the parser. A
-wrong protocol version, a stale digest, an anchor absent from the current registry, an over-long
-payload, or a malformed one all collapse to the same indistinguishable outcome — no field of the
-rejection reveals which check failed.
-
-Both `server/discover` and `tools/list` carry the mandatory `ttlMs` (`mcp.tools.ttlMs`) and
-`cacheScope=private` cache hints. An invalid cursor is rejected with the exact same externally
-indistinguishable `-32602`/`Invalid params` response, and the same HTTP status, that a denied or
-unknown tool produces (`McpPolicyEnforcer#unknownOrUnauthorizedError()` mapped through the one
-shared `httpStatusFor` factory) — never a distinct code or status that would let a caller
-distinguish "malformed cursor" from any other `-32602` cause. Because both bodies are per-identity
-filtered, both responses also carry `Cache-Control: private, no-store` and `Vary: Authorization`
-alongside their JSON `cacheScope`/`ttlMs` hints, so a shared cache (a CDN, a proxy, a browser disk
-cache) has an HTTP-level signal not to store or replay one caller's filtered result for another.
+The decoder bounds decoded bytes before parsing and rejects an invalid protocol version, digest,
+encoding, field set, or anchor syntax as the same bounded `-32602`/`Invalid params` outcome used for
+unknown or denied tools. It exposes no rejection detail. A `nextCursor` is emitted only after at
+least one candidate was examined and candidates remain. Successful identity-filtered
+`server/discover` and `tools/list` results carry `ttlMs` (`mcp.toolsTtlMs`), `cacheScope=private`,
+`Cache-Control: private, no-store`, and `Vary: Authorization`; failed listing and cursor paths do
+not present a cacheable partial page.
 
 ## Zero-argument tool calls
 

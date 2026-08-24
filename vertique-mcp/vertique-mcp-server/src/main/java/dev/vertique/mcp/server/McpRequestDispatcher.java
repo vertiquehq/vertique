@@ -46,12 +46,12 @@ import dev.vertique.mcp.tool.McpToolResult;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.SecurityRuntime;
-import dev.vertique.rest.security.SecurityPolicyEnforcer;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityContextSnapshot;
 import dev.vertique.security.SecurityContexts;
 import dev.vertique.security.SecurityIdentity;
 import dev.vertique.security.authz.AuthorizationDecision;
+import dev.vertique.security.authz.AuthzReasonCodes;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
@@ -70,6 +70,7 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -1302,104 +1303,82 @@ final class McpRequestDispatcher {
      * indistinguishable {@code -32602} response {@link McpPolicyEnforcer#unknownOrUnauthorizedError()}
      * produces for a denied or unknown tool (issue #420), never a distinct code or status.
      *
-     * <p><strong>Forward progress is bounded, not assumed (R14 item 2).</strong> Both stop branches
-     * that can fire before this page examines a single candidate — R13's {@code BEFORE_FIRST_ANCHOR}
-     * fallback on the true first page, and R07's {@code seedAnchor} fallback on page 2+ — return an
-     * empty page whose cursor resolves to the state this request already started from. Module.md tells
-     * clients to follow an empty page's cursor, so a persistently slow or unavailable decision point
-     * would otherwise spin a conforming client forever at one gate deadline per iteration. The cursor
-     * therefore carries a consecutive-non-progressing-page count ({@link McpCursorCodec}); this method
-     * seeds it from the incoming cursor and {@link #toolsListResponse} spends it.
+     * <p>A valid cursor anchor is a lexicographic position hint, not a registry membership proof: a
+     * nonmember anchor resumes at the first registry name strictly greater than the anchor. A cursor is
+     * emitted only after this scan examined at least one candidate and candidates remain.
      *
      * @param context the request context
      * @param envelope the validated {@code tools/list} request envelope
      * @param security the established security snapshot, recorded on the terminal event
      */
     private void writeToolsList(RoutingContext context, JsonNode envelope, @Nullable SecurityContextSnapshot security) {
+        McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
+        if (coordinator != null && coordinator.cancellation().isCancelled()) {
+            return;
+        }
         JsonNode cursorNode = envelope.get("params").get("cursor");
         if (cursorNode != null && !cursorNode.isTextual()) {
             writeUnknownOrUnauthorized(
                     context, envelope, security, McpMethod.TOOLS_LIST, McpRequestTerminalEvent.UNKNOWN_TOOL_NAME);
             return;
         }
-        List<String> names = List.copyOf(toolRegistry.descriptorsByName().keySet());
-        int startIndex;
-        // R07 item 7: seeded from the incoming cursor's own anchor (or null when this is the true
-        // first page — no cursor was ever presented at all) rather than an unconditional null, so a
-        // gate timeout on the very first candidate examined on page 2+ still has a genuine
-        // previous-candidate anchor to fall back to instead of one it can never have. R13 item 2
-        // retracts R07 item 7's "unavoidable" residual on the true first page too:
-        // McpCursorCodec.BEFORE_FIRST_ANCHOR round-trips through decode() to startIndex 0 exactly like
-        // a null cursorNode does (names.indexOf(BEFORE_FIRST_ANCHOR) is always -1 — no real tool name
-        // can ever equal it — so +1 yields 0), so a resumed scan seeded with it, or one that falls back
-        // to it again on a repeat timeout, keeps retrying the very first candidate rather than
-        // excluding it.
-        String seedAnchor;
-        // R14 item 2: the incoming cursor's own consecutive-non-progressing-page count, zero when this
-        // is the true first page — see writeToolsListResult for where it is spent.
-        int seedAttempts;
-        if (cursorNode == null) {
-            startIndex = 0;
-            seedAnchor = null;
-            seedAttempts = 0;
-        } else {
-            McpCursorCodec.Decoded decoded = cursorCodec.decode(
-                    cursorNode.asText(),
-                    toolRegistry.digest(),
-                    toolRegistry.descriptorsByName().keySet());
+        String anchor = null;
+        if (cursorNode != null) {
+            McpCursorCodec.Decoded decoded = cursorCodec.decode(cursorNode.asText(), toolRegistry.digest());
             if (decoded.isInvalid()) {
                 writeUnknownOrUnauthorized(
                         context, envelope, security, McpMethod.TOOLS_LIST, McpRequestTerminalEvent.UNKNOWN_TOOL_NAME);
                 return;
             }
-            startIndex = names.indexOf(decoded.anchor()) + 1;
-            seedAnchor = decoded.anchor();
-            seedAttempts = decoded.attempts();
+            anchor = decoded.anchor();
         }
+        List<String> names = List.copyOf(toolRegistry.descriptorsByName().keySet());
+        int startIndex = anchor != null ? firstIndexStrictlyAfter(names, anchor) : 0;
         int pageSize = config.toolsPageSize();
         int budget = pageSize * EXAMINATION_BUDGET_MULTIPLIER;
         // establishedSecurityContext() (never null) rather than the raw securityRuntime.current():
         // McpPolicyEnforcer#decide null-checks its caller and would throw for the null the raw runtime
         // value can carry.
         SecurityContext caller = establishedSecurityContext();
-        // R10 (issue #438): the per-candidate gate deadline alone never bounds the aggregate — a
-        // decision answering just under it, repeated across the whole examination budget, is
-        // unbounded in wall clock and outbound policy-decision round trips. This absolute deadline
-        // (computed once, here, before the scan starts) and the coordinator's own cancellation signal
-        // — the same signal T013 already fires on disconnect, reset, or a failed write, not a second,
-        // invented one — are both threaded through every scan() call and checked before and after
-        // every candidate's decision.
-        McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
         McpCancellationSignal cancellation =
                 coordinator != null ? coordinator.cancellation() : NoOpCancellationSignal.INSTANCE;
-        Instant scanDeadline = Instant.now().plusMillis(config.toolsListDeadlineMs());
-        scan(names, startIndex, pageSize, budget, 0, List.of(), seedAnchor, caller, cancellation, scanDeadline)
+        scan(names, startIndex, pageSize, budget, 0, new ArrayList<>(pageSize), null, caller, cancellation)
                 .onComplete(ar -> {
+                    if (cancellation.isCancelled()) {
+                        return;
+                    }
                     if (ar.failed()) {
                         // McpPolicyEnforcer#decide never fails per its own contract; defended here so a
                         // contract-violating extension cannot escape as an unhandled exception.
                         writeToolsListFallback(context, envelope, security, ar.cause());
                         return;
                     }
-                    writeToolsListResult(context, envelope, security, ar.result(), seedAnchor, seedAttempts);
+                    if (ar.result().outcome() == ScanOutcome.CANCELLED) {
+                        return;
+                    }
+                    if (ar.result().outcome() == ScanOutcome.AUTHORIZATION_FAILURE) {
+                        writeToolsListAuthorizationFailure(context, envelope, security);
+                        return;
+                    }
+                    writeToolsListResult(context, envelope, security, ar.result());
                 });
+    }
+
+    /** Returns the first sorted registry index strictly greater than {@code anchor}. */
+    private static int firstIndexStrictlyAfter(List<String> names, String anchor) {
+        int search = Collections.binarySearch(names, anchor);
+        return search >= 0 ? search + 1 : -search - 1;
     }
 
     /**
      * Scans candidates {@code names[index..)} for one bounded page, reauthorizing every candidate it
      * examines exactly once, and stopping at the first of: the page reaching {@code pageSize} visible
-     * tools, {@code examined} reaching {@code budget}, the candidate list being exhausted, {@code
-     * deadline} elapsing, or {@code cancellation} firing (R10, issue #438).
+     * tools, {@code examined} reaching {@code budget}, the candidate list being exhausted, or {@code
+     * cancellation} firing.
      *
-     * <p>{@code cancellation} and {@code deadline} are each checked twice per candidate — immediately
-     * before {@link McpPolicyEnforcer#decide} is called, and again immediately after its decision
-     * resolves — because a decision that answers well inside its own per-gate deadline can still
-     * accumulate, across the whole examination budget, into an unbounded aggregate wall-clock cost;
-     * and because a disconnect can arrive at any point while a decision is genuinely in flight, not
-     * only between candidates. Both checks stop the scan the same way the pre-existing gate-timeout
-     * stop does: a truncated page whose {@code nextCursor} still reaches every unexamined candidate.
-     * A candidate whose decision had already resolved before either check tripped keeps its outcome
-     * (its cost is already paid); the scan simply does not start — or does not chain into — another.
+     * <p>{@code cancellation} is checked before a decision starts and after it resolves because a
+     * disconnect can arrive while a decision is in flight. A resolved decision keeps its outcome, but
+     * the scan does not chain into another candidate.
      *
      * <p>Deliberately iterative, not recursive. Vert.x 5.1.6 documents no trampolining or
      * stack-safety guarantee for {@link Future#compose} on an already-completed future, and a
@@ -1416,9 +1395,6 @@ final class McpRequestDispatcher {
      *     tool handler observes, not a second, invented one; {@link McpCancellationSignal#isCancelled()}
      *     is checked synchronously, never {@link McpCancellationSignal#cancelled()}, since this loop
      *     must never itself wait on a future to learn whether it should stop
-     * @param deadline the absolute instant, computed once before the first {@link #scan} call for this
-     *     request, past which the whole scan stops regardless of how quickly each individual gate
-     *     answered
      */
     private Future<ScanResult> scan(
             List<String> names,
@@ -1426,12 +1402,11 @@ final class McpRequestDispatcher {
             int pageSize,
             int budget,
             int examined,
-            List<McpToolDescriptor> visible,
+            ArrayList<McpToolDescriptor> visible,
             @Nullable String lastExaminedName,
             SecurityContext caller,
-            McpCancellationSignal cancellation,
-            Instant deadline) {
-        List<McpToolDescriptor> currentVisible = visible;
+            McpCancellationSignal cancellation) {
+        ArrayList<McpToolDescriptor> currentVisible = visible;
         int currentIndex = index;
         int currentExamined = examined;
         String currentLastExaminedName = lastExaminedName;
@@ -1439,155 +1414,99 @@ final class McpRequestDispatcher {
             if (currentVisible.size() >= pageSize || currentExamined >= budget || currentIndex >= names.size()) {
                 boolean candidatesRemain = currentIndex < names.size();
                 return Future.succeededFuture(new ScanResult(
-                        currentVisible, candidatesRemain ? currentLastExaminedName : null, currentExamined));
+                        List.copyOf(currentVisible),
+                        candidatesRemain ? currentLastExaminedName : null,
+                        ScanOutcome.COMPLETED));
             }
             String name = names.get(currentIndex);
-            // R10 (issue #438): checked before this candidate's decision is ever started. Neither
-            // check has examined this candidate at all, so — mirroring the gate-timeout branches'
-            // established fallback below — the anchor is the last candidate this scan actually
-            // examined, falling back to McpCursorCodec.BEFORE_FIRST_ANCHOR (R13 item 2, retracting R07
-            // item 7's "unavoidable" self-anchor) in the one narrow edge case where nothing has been
-            // examined yet on this scan call (the very first candidate), so nextCursor is never
-            // silently dropped AND this candidate is retried on the next page rather than permanently
-            // excluded by an exclusive anchor pointing at itself.
-            if (cancellation.isCancelled() || deadlineExceeded(deadline)) {
-                String anchor =
-                        currentLastExaminedName != null ? currentLastExaminedName : McpCursorCodec.BEFORE_FIRST_ANCHOR;
-                return Future.succeededFuture(new ScanResult(currentVisible, anchor, currentExamined));
+            if (cancellation.isCancelled()) {
+                return Future.succeededFuture(ScanResult.cancelled());
             }
             McpToolDescriptor descriptor = toolRegistry.descriptorsByName().get(name);
             var decisionFuture = policyEnforcer.decide(descriptor, caller);
             if (!decisionFuture.isComplete()) {
                 // Genuinely asynchronous: resume through compose, on a fresh stack frame, instead of
                 // looping here — looping would spin-wait on a future that is not yet resolved.
-                List<McpToolDescriptor> visibleSnapshot = currentVisible;
+                ArrayList<McpToolDescriptor> visibleSnapshot = currentVisible;
                 int examinedSnapshot = currentExamined;
                 int indexSnapshot = currentIndex;
-                // R07 item 7: captured before this candidate's own decision resolves, so a timeout can
-                // anchor to the candidate BEFORE this one — see the timeout branch below.
-                String previousAnchor = currentLastExaminedName;
                 return decisionFuture.compose(decision -> {
-                    List<McpToolDescriptor> updated = visibleSnapshot;
+                    // A disconnect can race the in-flight decision. Its result is intentionally
+                    // ignored: no further candidate is scheduled and the completed request writes no
+                    // response. The shared authorization SPI offers no forced cancellation contract.
+                    if (cancellation.isCancelled()) {
+                        return Future.succeededFuture(ScanResult.cancelled());
+                    }
+                    if (isAuthorizationInfrastructureFailure(decision)) {
+                        return Future.succeededFuture(ScanResult.authorizationFailure());
+                    }
                     if (decision.permitted()) {
-                        updated = new ArrayList<>(visibleSnapshot);
-                        updated.add(descriptor);
+                        visibleSnapshot.add(descriptor);
                     }
                     int updatedExamined = examinedSnapshot + 1;
-                    if (gateTimedOut(decision)) {
-                        // Stop scanning (issue #417): the gate SecurityPolicyEnforcer#decide just
-                        // bounded already paid its deadline once; continuing would pay it again for
-                        // every remaining candidate — the exact per-candidate amplification a shared
-                        // decision-gate deadline must not reintroduce. One timeout ends this page here.
-                        //
-                        // R07 item 7 (security review): the next-page anchor is the PREVIOUS candidate
-                        // (previousAnchor), not this timed-out one. The cursor grammar's anchor is
-                        // exclusive (McpCursorCodec decodes a page's startIndex as indexOf(anchor)+1),
-                        // so anchoring to the timed-out candidate itself made it permanently unreachable
-                        // on every future page — fail-closed is correct, permanently-skipped is not.
-                        // Anchoring one candidate earlier means the very next tools/list call (using the
-                        // nextCursor this page returns) re-examines this exact candidate instead of
-                        // silently excluding it forever. A null previousAnchor means this was the very
-                        // first candidate examined across the whole scan (module.md's own contract: "a
-                        // page may be empty and still carry a nextCursor while unexamined candidates
-                        // remain" — so nextCursor must never silently disappear here).
-                        //
-                        // R13 item 2 (retracting R07 item 7's "unavoidable" wording): R07 claimed the
-                        // cursor grammar had no anchor meaning "before the beginning" and so fell back
-                        // to self-anchoring — excluding this one candidate permanently after all, on
-                        // exactly the one page where it could happen. That claim was wrong: the cursor
-                        // is opaque wire format entirely under this codec's control, so
-                        // McpCursorCodec.BEFORE_FIRST_ANCHOR (a reserved value no real tool name can
-                        // ever equal) now expresses "resume scanning from index 0" explicitly, and
-                        // McpCursorCodec#decode recognizes it without a registry-membership check. The
-                        // timed-out first candidate is retried on the next page, exactly like every
-                        // other timed-out candidate.
-                        String anchor = previousAnchor != null ? previousAnchor : McpCursorCodec.BEFORE_FIRST_ANCHOR;
-                        return Future.succeededFuture(new ScanResult(updated, anchor, updatedExamined));
-                    }
-                    // R10 (issue #438): checked immediately after this in-flight decision resolved —
-                    // the "after" half of the before/after pair this method's javadoc documents. This
-                    // candidate's own decision is kept (it already resolved; discarding it would waste
-                    // the round trip that already happened for nothing), but the scan does not chain
-                    // into another. Unlike the gate-timeout branch above, this candidate WAS genuinely
-                    // examined, so the anchor is this candidate itself — not the previous one — exactly
-                    // like the ordinary bottom-of-loop advance below; a null nextAnchor (only when no
-                    // candidate remains past this one) matches the same convention every other stop in
-                    // this method already uses.
-                    if (cancellation.isCancelled() || deadlineExceeded(deadline)) {
-                        boolean candidatesRemain = indexSnapshot + 1 < names.size();
-                        return Future.succeededFuture(
-                                new ScanResult(updated, candidatesRemain ? name : null, updatedExamined));
-                    }
                     return scan(
                             names,
                             indexSnapshot + 1,
                             pageSize,
                             budget,
                             updatedExamined,
-                            updated,
+                            visibleSnapshot,
                             name,
                             caller,
-                            cancellation,
-                            deadline);
+                            cancellation);
                 });
             }
             if (decisionFuture.failed()) {
                 return Future.failedFuture(decisionFuture.cause());
             }
             AuthorizationDecision decision = decisionFuture.result();
+            if (cancellation.isCancelled()) {
+                return Future.succeededFuture(ScanResult.cancelled());
+            }
+            if (isAuthorizationInfrastructureFailure(decision)) {
+                return Future.succeededFuture(ScanResult.authorizationFailure());
+            }
             if (decision.permitted()) {
-                List<McpToolDescriptor> updated = new ArrayList<>(currentVisible);
-                updated.add(descriptor);
-                currentVisible = updated;
+                currentVisible.add(descriptor);
             }
             currentExamined = currentExamined + 1;
-            if (gateTimedOut(decision)) {
-                // Defensive mirror of the async stop above, same R07 item 7 fix (including the same
-                // R13-item-2 BEFORE_FIRST_ANCHOR fallback — see that branch's comment): anchor to
-                // currentLastExaminedName as it stood BEFORE this candidate (not yet advanced to
-                // `name`), so this timed-out candidate is retried on the next page rather than
-                // permanently skipped. In practice a genuine gate timeout is scheduled by
-                // Future#timeout on a later event-loop tick, so it is never observed through this
-                // already-complete synchronous branch — but stopping here too means this method's
-                // termination guarantee does not depend on that scheduling detail.
-                String anchor =
-                        currentLastExaminedName != null ? currentLastExaminedName : McpCursorCodec.BEFORE_FIRST_ANCHOR;
-                return Future.succeededFuture(new ScanResult(currentVisible, anchor, currentExamined));
-            }
-            // R10 (issue #438): the synchronous-branch mirror of the async "after" check above — this
-            // candidate's decision genuinely resolved (immediately, in this case), so it is kept and
-            // the anchor is this candidate itself; the loop simply does not advance to examine another.
-            if (cancellation.isCancelled() || deadlineExceeded(deadline)) {
-                boolean candidatesRemain = currentIndex + 1 < names.size();
-                return Future.succeededFuture(
-                        new ScanResult(currentVisible, candidatesRemain ? name : null, currentExamined));
-            }
             currentLastExaminedName = name;
             currentIndex = currentIndex + 1;
         }
     }
 
     /**
-     * Reports whether {@code deadline} has already passed (R10, issue #438) — the request-scoped
-     * absolute wall-clock bound on one {@code tools/list} scan's whole candidate walk, distinct from,
-     * and in addition to, the per-candidate gate deadline {@link #gateTimedOut} observes.
+     * Reports whether {@code decision} represents an authorization-infrastructure failure rather than
+     * an ordinary access denial.
      */
-    private static boolean deadlineExceeded(Instant deadline) {
-        return !Instant.now().isBefore(deadline);
+    private static boolean isAuthorizationInfrastructureFailure(AuthorizationDecision decision) {
+        return !decision.permitted() && AuthzReasonCodes.INTERNAL_AUTHZ_ERROR.equals(decision.reasonCode());
     }
 
-    /**
-     * Reports whether {@code decision} is the specific fail-closed shape {@link
-     * SecurityPolicyEnforcer#decide} produces when a gate future missed the shared decision deadline
-     * (issue #417), as opposed to any other deny (including a different fail-closed cause).
-     */
-    private static boolean gateTimedOut(AuthorizationDecision decision) {
-        return Boolean.TRUE.equals(decision.safeAttributes().get(SecurityPolicyEnforcer.GATE_TIMEOUT_ATTRIBUTE));
-    }
-
-    /** One bounded page's outcome: the visible tools, the next-page anchor, and the examined count. */
+    /** One bounded page's outcome: the visible tools, next-page anchor, and settlement state. */
     private record ScanResult(
-            List<McpToolDescriptor> visible, @Nullable String nextAnchor, int examined) {}
+            List<McpToolDescriptor> visible, @Nullable String nextAnchor, ScanOutcome outcome) {
+
+        /** Creates the response-suppressed outcome for a client-disconnected request. */
+        private static ScanResult cancelled() {
+            return new ScanResult(List.of(), null, ScanOutcome.CANCELLED);
+        }
+
+        /** Creates the fail-whole-list outcome for authorization infrastructure failure. */
+        private static ScanResult authorizationFailure() {
+            return new ScanResult(List.of(), null, ScanOutcome.AUTHORIZATION_FAILURE);
+        }
+    }
+
+    /** The terminal state reached by one bounded authorization scan. */
+    private enum ScanOutcome {
+        /** The scan completed normally and may serialize a list result. */
+        COMPLETED,
+        /** A disconnect or reset won; no response may be emitted. */
+        CANCELLED,
+        /** Authorization infrastructure failed; the whole list maps to a generic internal error. */
+        AUTHORIZATION_FAILURE
+    }
 
     /**
      * Settles a {@link McpPolicyEnforcer#decide} contract violation through the internal fallback.
@@ -1614,21 +1533,41 @@ final class McpRequestDispatcher {
     }
 
     /**
+     * Fails the entire list when the authorization layer cannot establish candidate visibility.
+     *
+     * <p>No cache headers or partial result are created before this writer runs, so this bounded
+     * generic response cannot present an incomplete authorization computation as a cacheable page.
+     */
+    private void writeToolsListAuthorizationFailure(
+            RoutingContext context, JsonNode envelope, @Nullable SecurityContextSnapshot security) {
+        context.response().putHeader("content-type", JSON_CONTENT_TYPE);
+        byte[] fallback = boundedErrorResponse(envelope.get("id"), INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
+        McpRequestTerminalEvent terminal = McpRequestTerminalEvent.failed(
+                startedAt(context),
+                Instant.now(),
+                McpMethod.TOOLS_LIST,
+                McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
+                McpErrorType.AUTHORIZATION,
+                500,
+                INTERNAL_ERROR,
+                protocolVersionOf(context),
+                authorizationOf(context),
+                security,
+                correlationOf(context));
+        write(context, 500, fallback, terminal);
+    }
+
+    /**
      * Writes the bounded {@code tools/list} result, bounding serialization at {@code
      * mcp.output.maxBytes} exactly like discovery.
      */
     private void writeToolsListResult(
-            RoutingContext context,
-            JsonNode envelope,
-            @Nullable SecurityContextSnapshot security,
-            ScanResult result,
-            @Nullable String seedAnchor,
-            int seedAttempts) {
+            RoutingContext context, JsonNode envelope, @Nullable SecurityContextSnapshot security, ScanResult result) {
         context.response().putHeader("content-type", JSON_CONTENT_TYPE);
         putIdentityFilteredCacheHeaders(context);
         byte[] payload;
         try {
-            payload = encodeCapped(toolsListResponse(envelope, result, seedAnchor, seedAttempts));
+            payload = encodeCapped(toolsListResponse(envelope, result));
         } catch (OutputCapExceededException overCap) {
             // R12: see writeDiscovery's identical note — boundedErrorResponse replaces the previous
             // materialize-then-measure idiom.
@@ -1663,17 +1602,10 @@ final class McpRequestDispatcher {
 
     /**
      * Builds the canonical {@code ListToolsResult} response node: the visible tools in scanned order,
-     * an opaque {@code nextCursor} when unexamined candidates remain <em>and</em> pagination still has
-     * forward progress left to offer (R14 item 2), and the mandatory {@code ttlMs} and {@code
-     * cacheScope=private} cache hints.
-     *
-     * @param seedAnchor the resume point this request arrived with, or {@code null} when no cursor was
-     *     presented
-     * @param seedAttempts the consecutive non-progressing-page count carried by the request's own
-     *     cursor, or {@code 0} when no cursor was presented
+     * an opaque {@code nextCursor} only after this page examined a candidate and candidates remain,
+     * and the mandatory {@code ttlMs} and {@code cacheScope=private} cache hints.
      */
-    private ObjectNode toolsListResponse(
-            JsonNode envelope, ScanResult result, @Nullable String seedAnchor, int seedAttempts) {
+    private ObjectNode toolsListResponse(JsonNode envelope, ScanResult result) {
         ArrayNode tools = OUTPUT_ENCODER.createArrayNode();
         for (McpToolDescriptor descriptor : result.visible()) {
             tools.add(toolNode(descriptor));
@@ -1687,23 +1619,7 @@ final class McpRequestDispatcher {
         result0.put("resultType", COMPLETE_RESULT_TYPE);
         result0.set("tools", tools);
         if (result.nextAnchor() != null) {
-            // R14 item 2: a page makes forward progress exactly when the resume point it hands back
-            // differs from the one it started from. Two stop branches can hand back the same one: R13's
-            // BEFORE_FIRST_ANCHOR fallback on the true first page, and R07's seedAnchor fallback on page
-            // 2+ (both fire when the scan stops before any candidate past the resume point was examined
-            // successfully). Such a page returns no tools and a cursor resolving to the exact state the
-            // request arrived in, and module.md instructs a client to follow an empty page's cursor —
-            // so against a persistently slow or unavailable decision point a conforming client would
-            // loop forever, one full gate deadline per iteration, for nothing. R10's deadline cannot
-            // bound that: the loop spans requests. Counting consecutive non-progressing pages in the
-            // cursor and dropping the cursor at the bound is what stops it. Deliberately not "examined
-            // zero candidates": a gate timeout DOES count its candidate as examined (fail-closed denied)
-            // while still handing back the caller's own resume point, which is precisely the shape that
-            // loops.
-            int nextAttempts = progressed(seedAnchor, result.nextAnchor()) ? 0 : seedAttempts + 1;
-            if (nextAttempts < McpCursorCodec.MAX_NON_PROGRESSING_PAGES) {
-                result0.put("nextCursor", cursorCodec.encode(result.nextAnchor(), toolRegistry.digest(), nextAttempts));
-            }
+            result0.put("nextCursor", cursorCodec.encode(result.nextAnchor(), toolRegistry.digest()));
         }
         result0.put("ttlMs", config.toolsTtlMs());
         result0.put("cacheScope", PRIVATE_CACHE_SCOPE);
@@ -1714,25 +1630,6 @@ final class McpRequestDispatcher {
         JsonNode id = envelope.get("id");
         response.set("id", id != null ? id : NullNode.getInstance());
         return response;
-    }
-
-    /**
-     * Reports whether one page advanced the scan's resume point (R14 item 2).
-     *
-     * <p>A cursor-less request resumes from the very beginning, which is exactly what {@link
-     * McpCursorCodec#BEFORE_FIRST_ANCHOR} names, so a {@code null} {@code seedAnchor} is normalized to
-     * it rather than special-cased. Because candidate names are scanned in strictly increasing order
-     * from {@code indexOf(anchor) + 1}, a page that genuinely examined anything past its resume point
-     * can never hand that same resume point back — so equality here is precisely "this page changed
-     * nothing", and never a false alarm on a page that did work.
-     *
-     * @param seedAnchor the resume point this request arrived with, or {@code null} for the first page
-     * @param nextAnchor the resume point this page hands back; never {@code null} at this call site
-     * @return {@code true} when the resume point moved
-     */
-    private static boolean progressed(@Nullable String seedAnchor, String nextAnchor) {
-        String startAnchor = seedAnchor != null ? seedAnchor : McpCursorCodec.BEFORE_FIRST_ANCHOR;
-        return !startAnchor.equals(nextAnchor);
     }
 
     /** Builds one {@code Tool} node from a visible descriptor. */
