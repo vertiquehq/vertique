@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "wireRevision": "2026-07-28",
+  "manifest": {
+    "resource": "mcp/conformance/requirements-2026-07-28.yaml",
+    "sourceReference": "https://raw.githubusercontent.com/modelcontextprotocol/conformance/main/requirements/2026-07-28.yaml",
+    "sha256": "ae2f4f6210fd729e2e318edd5bbfa31a43cee0bc608e48052fa26dbf1d939b57"
+  },
+  "invocationForm": "server --url <url> --scenario <id>",
+  "artifacts": [
+    {
+      "id": "conformance-runner",
+      "name": "@modelcontextprotocol/conformance",
+      "version": "0.2.0-alpha.10",
+      "sourceReference": "https://registry.npmjs.org/@modelcontextprotocol/conformance/-/conformance-0.2.0-alpha.10.tgz",
+      "integrity": "sha512-0V/HZDdWHcg6j0zVBzBsXcPZ571IVi6umKgTpnBhtTx/jm/LONmGF6cIWL2k4Xjyps0OiHV6B37nj2s0pUg0nQ==",
+      "invocation": "npx @modelcontextprotocol/conformance@0.2.0-alpha.10 server --url <url> --scenario <id>",
+      "prereleaseException": "The frozen requirements-2026-07-28.yaml manifest names 0.2.0-alpha.10 as its published anchor."
+    },
+    {
+      "id": "typescript-client",
+      "name": "@modelcontextprotocol/client",
+      "version": "2.0.0",
+      "sourceReference": "https://registry.npmjs.org/@modelcontextprotocol/client/-/client-2.0.0.tgz",
+      "integrity": "sha512-8f1OghQ2rjzIOfqgUCP+8GiUWqRs89njoWLNqAe8kWmDePv3s1fZXseej+QXemssEuuOvLLmLO/kqM3IQHtISw==",
+      "invocation": "node client.mjs --url <url> --scenario <scenario>"
+    },
+    {
+      "id": "go-sdk",
+      "name": "github.com/modelcontextprotocol/go-sdk",
+      "version": "v1.7.0",
+      "sourceReference": "https://github.com/modelcontextprotocol/go-sdk/releases/tag/v1.7.0",
+      "integrity": "h1:yqjY2dsbKAC0LSuWZVBMrHgiG8ukXv6NRo0JiALay44=",
+      "invocation": "go run . --url <url> --scenario <scenario>"
+    }
+  ],
+  "supportedScenarios": [
+    "tools-list",
+    "tools-call-simple-text",
+    "tools-call-error",
+    "dns-rebinding-protection"
+  ],
+  "deferredScenarios": [
+    { "id": "server-stateless", "owningSpecification": "MCP-005" },
+    { "id": "caching", "owningSpecification": "MCP-004" },
+    { "id": "completion-complete", "owningSpecification": "MCP-004" },
+    { "id": "tools-call-image", "owningSpecification": "MCP-006" },
+    { "id": "tools-call-audio", "owningSpecification": "MCP-006" },
+    { "id": "tools-call-embedded-resource", "owningSpecification": "MCP-006" },
+    { "id": "tools-call-mixed-content", "owningSpecification": "MCP-006" },
+    { "id": "tools-call-with-progress", "owningSpecification": "MCP-005" },
+    { "id": "server-sse-multiple-streams", "owningSpecification": "MCP-005" },
+    { "id": "resources-list", "owningSpecification": "MCP-004" },
+    { "id": "resources-read-text", "owningSpecification": "MCP-004" },
+    { "id": "resources-read-binary", "owningSpecification": "MCP-004" },
+    { "id": "resources-templates-read", "owningSpecification": "MCP-004" },
+    { "id": "sep-2164-resource-not-found", "owningSpecification": "MCP-004" },
+    { "id": "prompts-list", "owningSpecification": "MCP-004" },
+    { "id": "prompts-get-simple", "owningSpecification": "MCP-004" },
+    { "id": "prompts-get-with-args", "owningSpecification": "MCP-004" },
+    { "id": "prompts-get-embedded-resource", "owningSpecification": "MCP-004" },
+    { "id": "prompts-get-with-image", "owningSpecification": "MCP-004" },
+    { "id": "input-required-result-basic-elicitation", "owningSpecification": "MCP-005" },
+    { "id": "input-required-result-basic-sampling", "owningSpecification": "MCP-005" },
+    { "id": "input-required-result-basic-list-roots", "owningSpecification": "MCP-005" },
+    { "id": "input-required-result-request-state", "owningSpecification": "MCP-003" },
+    { "id": "input-required-result-multiple-input-requests", "owningSpecification": "MCP-005" },
+    { "id": "input-required-result-multi-round", "owningSpecification": "MCP-005" },
+    { "id": "input-required-result-missing-input-response", "owningSpecification": "MCP-005" },
+    { "id": "input-required-result-non-tool-request", "owningSpecification": "MCP-005" },
+    { "id": "input-required-result-result-type", "owningSpecification": "MCP-005" },
+    { "id": "input-required-result-unsupported-methods", "owningSpecification": "MCP-005" },
+    { "id": "input-required-result-tampered-state", "owningSpecification": "MCP-003" },
+    { "id": "input-required-result-capability-check", "owningSpecification": "MCP-005" },
+    { "id": "input-required-result-ignore-extra-params", "owningSpecification": "MCP-005" },
+    { "id": "input-required-result-validate-input", "owningSpecification": "MCP-005" }
+  ],
+  "notScoredUpstream": [
+    "tasks-lifecycle",
+    "tasks-capability-negotiation",
+    "tasks-wire-fields",
+    "tasks-request-state-removal",
+    "tasks-mrtr-input",
+    "tasks-request-headers",
+    "tasks-dispatch-and-envelope",
+    "tasks-status-notifications",
+    "tasks-required-task-error",
+    "tasks-mrtr-composition",
+    "json-schema-2020-12",
+    "http-header-validation",
+    "http-custom-header-server-validation"
+  ]
+}
