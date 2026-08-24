@@ -330,7 +330,13 @@ public class McpDiscoverWalkingSkeletonIT {
                 .contains("cacheScope", "capabilities", "resultType", "supportedVersions", "ttlMs");
         assertThat(result.getString("resultType")).isEqualTo("complete");
         assertThat(result.getJsonArray("supportedVersions")).containsExactly(PROTOCOL_VERSION);
-        assertThat(result.getJsonObject("capabilities")).isNotNull();
+        JsonObject capabilities = result.getJsonObject("capabilities");
+        assertThat(capabilities.fieldNames())
+                .as("the empty-registry server still implements exactly the tools operation family")
+                .containsExactly("tools");
+        assertThat(capabilities.getJsonObject("tools"))
+                .as("the immutable registry has no listChanged capability")
+                .isEqualTo(new JsonObject());
         assertThat(result.getString("cacheScope")).isEqualTo("private");
         assertThat(result.getLong("ttlMs")).isEqualTo(CONFIGURED_TTL_MS);
         JsonObject stampedServerInfo =

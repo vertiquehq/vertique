@@ -56,7 +56,7 @@ class McpCacheHintsGoldenTest {
 
     private static final byte[] EXPECTED_DISCOVER_RESPONSE =
             ("{\"jsonrpc\":\"2.0\",\"result\":{\"resultType\":\"complete\","
-                            + "\"supportedVersions\":[\"2026-07-28\"],\"capabilities\":{},"
+                            + "\"supportedVersions\":[\"2026-07-28\"],\"capabilities\":{\"tools\":{}},"
                             + "\"ttlMs\":300000,\"cacheScope\":\"private\","
                             + "\"_meta\":{\"io.modelcontextprotocol/serverInfo\":"
                             + "{\"name\":\"vertique-golden\",\"version\":\"1.0\"}}},\"id\":1}")

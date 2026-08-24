@@ -1178,12 +1178,17 @@ final class McpRequestDispatcher {
         meta.set(SERVER_INFO_META_KEY, serverInfo);
         ArrayNode supportedVersions = OUTPUT_ENCODER.createArrayNode();
         supportedVersions.add(PROTOCOL_VERSION);
+        ObjectNode capabilities = OUTPUT_ENCODER.createObjectNode();
+        // D011: capability means the operation family is implemented, not that this immutable
+        // registry (or a caller's authorized view) currently contains a tool. listChanged stays
+        // absent because MCP-001 has no dynamic-registry notification mechanism.
+        capabilities.set("tools", OUTPUT_ENCODER.createObjectNode());
         ObjectNode result = OUTPUT_ENCODER.createObjectNode();
         // The official DiscoverResult requires resultType, supportedVersions, capabilities, ttlMs,
         // and cacheScope; the configured server identity is stamped into result _meta.
         result.put("resultType", COMPLETE_RESULT_TYPE);
         result.set("supportedVersions", supportedVersions);
-        result.set("capabilities", OUTPUT_ENCODER.createObjectNode());
+        result.set("capabilities", capabilities);
         result.put("ttlMs", config.toolsTtlMs());
         result.put("cacheScope", PRIVATE_CACHE_SCOPE);
         result.set("_meta", meta);

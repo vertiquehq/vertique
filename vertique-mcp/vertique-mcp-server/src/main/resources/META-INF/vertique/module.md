@@ -707,6 +707,13 @@ The decoder rejects an encoded token longer than the exact unpadded-base64 repre
 protocol version, digest, encoding, field set, or anchor syntax as the same bounded
 `-32602`/`Invalid params` outcome used for unknown or denied tools. It exposes no rejection detail. A
 `nextCursor` is emitted only after at least one candidate was examined and candidates remain.
+
+Discovery advertises `capabilities.tools={}` for every enabled server, including when the immutable
+registry or a caller's authorized view is empty. The capability declares that the tools operation
+family is implemented; it does not disclose registry contents or bypass per-candidate authorization.
+`listChanged` is absent because the registry is immutable, and no deferred capability family is
+advertised.
+
 Successful identity-filtered
 `server/discover` and `tools/list` results carry `ttlMs` (`mcp.toolsTtlMs`), `cacheScope=private`,
 `Cache-Control: private, no-store`, and `Vary: Authorization`; failed listing and cursor paths do
