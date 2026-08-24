@@ -11,13 +11,16 @@ import dev.vertique.cache.spi.CacheStore;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.config.JsonConfigPaths;
+import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.json.JsonRuntimeModule;
 import dev.vertique.redis.RedisClientRegistry;
 import dev.vertique.redis.RedisConnectionModule;
+import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 
 /** Dagger contribution for the clustered Redis cache store. */
-@Module(includes = {CacheCoreModule.class, RedisConnectionModule.class})
+@Module(includes = {CacheCoreModule.class, JsonRuntimeModule.class, RedisConnectionModule.class})
 public final class CacheRedisModule {
     @Provides
     @Singleton
@@ -27,7 +30,12 @@ public final class CacheRedisModule {
 
     @Provides
     @Singleton
-    static CacheStore cacheStore(RedisClientRegistry clients, CacheRedisConfig config, CacheConfig cacheConfig) {
-        return new RedisCacheStore(clients, config, cacheConfig);
+    static CacheStore cacheStore(
+            RedisClientRegistry clients,
+            CacheRedisConfig config,
+            CacheConfig cacheConfig,
+            JsonMapperProfileRegistry profiles,
+            Vertx vertx) {
+        return new RedisCacheStore(clients, config, cacheConfig, profiles, vertx);
     }
 }
