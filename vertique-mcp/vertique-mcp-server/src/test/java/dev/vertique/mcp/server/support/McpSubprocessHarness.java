@@ -21,6 +21,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
 /** Test-scope subprocess runner shared by MCP conformance and client fixtures. */
@@ -55,6 +56,7 @@ final class McpSubprocessHarness {
 
         Path workspace = createRestrictedWorkspace();
         Process process = null;
+        Thread standardInputWriter = null;
         boolean terminationCompleted = false;
         Set<ProcessHandle> observedDescendants = new LinkedHashSet<>();
         try {
@@ -70,12 +72,17 @@ final class McpSubprocessHarness {
             builder.redirectError(stderr.toFile());
 
             process = builder.start();
-            try (var standardInput = process.getOutputStream()) {
-                standardInput.write(invocation.standardInput());
-            }
+            long deadline = System.nanoTime() + timeout.toNanos();
+            AtomicReference<IOException> standardInputFailure = new AtomicReference<>();
+            Process startedProcess = process;
+            byte[] standardInput = invocation.standardInput();
+            standardInputWriter = Thread.ofVirtual()
+                    .name("mcp-subprocess-stdin-" + process.pid())
+                    .start(() -> writeStandardInput(startedProcess, standardInput, standardInputFailure));
 
-            Settlement settlement = awaitSettlement(process, observedDescendants);
+            Settlement settlement = awaitSettlement(process, observedDescendants, deadline);
             terminationCompleted = true;
+            awaitStandardInput(standardInputWriter, standardInputFailure, settlement.timedOut());
             String capturedStdout = redact(Files.readString(stdout), environment.sensitiveValues());
             String capturedStderr = redact(Files.readString(stderr), environment.sensitiveValues());
             Result result = new Result(
@@ -96,15 +103,42 @@ final class McpSubprocessHarness {
                 if (process != null && !terminationCompleted) {
                     terminateAlive(process, observedDescendants);
                 }
+                if (standardInputWriter != null && standardInputWriter.isAlive()) {
+                    awaitStandardInputTermination(standardInputWriter);
+                }
             } finally {
                 deleteRecursively(workspace);
             }
         }
     }
 
-    private Settlement awaitSettlement(Process process, Set<ProcessHandle> observedDescendants)
+    private static void writeStandardInput(Process process, byte[] input, AtomicReference<IOException> failure) {
+        try (var standardInput = process.getOutputStream()) {
+            standardInput.write(input);
+        } catch (IOException exception) {
+            failure.set(exception);
+        }
+    }
+
+    private void awaitStandardInput(Thread writer, AtomicReference<IOException> failure, boolean processTimedOut)
             throws InterruptedException, IOException {
-        long deadline = System.nanoTime() + timeout.toNanos();
+        awaitStandardInputTermination(writer);
+        if (!processTimedOut && failure.get() != null) {
+            throw new IOException("could not deliver subprocess standard input", failure.get());
+        }
+        // Forced termination closes the pipe while a blocked writer is being released. That
+        // expected close is represented by timedOut rather than reported as a second failure.
+    }
+
+    private void awaitStandardInputTermination(Thread writer) throws InterruptedException, IOException {
+        if (!writer.join(timeout)) {
+            writer.interrupt();
+            throw new IOException("standard input writer survived subprocess termination");
+        }
+    }
+
+    private Settlement awaitSettlement(Process process, Set<ProcessHandle> observedDescendants, long deadline)
+            throws InterruptedException, IOException {
         while (process.isAlive()) {
             process.descendants().forEach(observedDescendants::add);
             long remainingNanos = deadline - System.nanoTime();

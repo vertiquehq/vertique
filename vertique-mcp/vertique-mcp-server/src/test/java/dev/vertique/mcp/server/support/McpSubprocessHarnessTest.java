@@ -32,6 +32,7 @@ class McpSubprocessHarnessTest {
     private static final String FAST_OUTPUT = "t025-fast-output";
     private static final String SAFE_MARKER = "t025-safe-marker";
     private static final String SECRET = "t025-secret-that-must-not-leak";
+    private static final String PIPE_FILLING_INPUT = "x".repeat(8 * 1024 * 1024);
 
     private final McpSubprocessHarness harness = new McpSubprocessHarness(Duration.ofSeconds(2));
 
@@ -67,7 +68,8 @@ class McpSubprocessHarnessTest {
 
     private void assertHangingChild() throws Exception {
         long started = System.nanoTime();
-        McpSubprocessHarness.Result result = harness.run(fixture("hang")).result();
+        McpSubprocessHarness.Result result = harness.run(fixture("hang").withStandardInput(PIPE_FILLING_INPUT))
+                .result();
         Duration elapsed = Duration.ofNanos(System.nanoTime() - started);
 
         assertThat(List.of(result.timedOut(), result.forcedTerminationCount(), result.normalExitCount()))
