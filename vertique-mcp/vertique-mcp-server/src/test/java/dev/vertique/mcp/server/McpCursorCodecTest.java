@@ -93,21 +93,35 @@ class McpCursorCodecTest {
     }
 
     private static void assertByteBoundBeforeParsing() {
-        String overLongToken = buildRawToken("{\"padding\":\"" + "a".repeat(500) + "\"}");
+        String overLongToken = Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[65]);
+        String atEncodedBound = Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[64]);
         CountingObjectMapper counting = new CountingObjectMapper();
-        McpCursorCodec bounded = new McpCursorCodec(64, counting);
+        AtomicInteger decodeCount = new AtomicInteger();
+        McpCursorCodec bounded = new McpCursorCodec(64, counting, token -> {
+            decodeCount.incrementAndGet();
+            return Base64.getUrlDecoder().decode(token);
+        });
 
         assertThat(bounded.decode(overLongToken, REGISTRY_DIGEST).isInvalid()).isTrue();
+        assertThat(decodeCount)
+                .as("an encoded token beyond the exact unpadded-base64 maximum must not be decoded")
+                .hasValue(0);
         assertThat(counting.readTreeCount())
                 .as("an over-long cursor must not reach the JSON parser")
                 .isZero();
+
+        assertThat(bounded.decode(atEncodedBound, REGISTRY_DIGEST).isInvalid()).isTrue();
+        assertThat(decodeCount)
+                .as("the exact encoded boundary remains eligible for decoding")
+                .hasValue(1);
+        assertThat(counting.readTreeCount()).isEqualTo(1);
 
         McpCursorCodec withinBound = new McpCursorCodec(2_048, counting);
         assertThat(withinBound
                         .decode(buildToken(McpCursorCodec.PROTOCOL_VERSION, REGISTRY_DIGEST, ANCHOR), REGISTRY_DIGEST)
                         .isInvalid())
                 .isFalse();
-        assertThat(counting.readTreeCount()).isEqualTo(1);
+        assertThat(counting.readTreeCount()).isEqualTo(2);
     }
 
     private static void assertNoSignatureExpiryOrRetiredStateMember(String token) {

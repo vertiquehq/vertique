@@ -23,11 +23,12 @@ import java.util.regex.Pattern;
  * and the immutable registry digest invalidates a cursor across deployments. Pagination is not an
  * authority boundary, so a cursor secret is disproportionate.
  *
- * <p>{@link #decode} bounds decoded bytes before parsing and accepts an anchor only when it is a
- * syntactically valid tool name. It deliberately does not require that name to be in the current
- * registry: the anchor is only a lexicographic position hint, so membership validation would expose a
- * registry-name oracle. Every rejection collapses to {@link Decoded#isInvalid()} with no detail, so
- * callers emit the same indistinguishable {@code -32602} response.
+ * <p>{@link #decode} bounds the encoded token before Base64 decoding and decoded bytes before JSON
+ * parsing. It accepts an anchor only when it is a syntactically valid tool name. It deliberately does
+ * not require that name to be in the current registry: the anchor is only a lexicographic position
+ * hint, so membership validation would expose a registry-name oracle. Every rejection collapses to
+ * {@link Decoded#isInvalid()} with no detail, so callers emit the same indistinguishable {@code
+ * -32602} response.
  *
  * <p>Not part of the application-facing public surface: package-private per the frozen artifact
  * inventory, matching {@link McpToolRegistry} and {@link McpSchemaRegistry}.
@@ -47,7 +48,9 @@ final class McpCursorCodec {
     private static final ObjectMapper DEFAULT_MAPPER = new ObjectMapper();
 
     private final int maxDecodedBytes;
+    private final long maxEncodedChars;
     private final ObjectMapper mapper;
+    private final Base64UrlDecoder decoder;
 
     /** Creates the production codec with the frozen byte bound and a plain Jackson mapper. */
     McpCursorCodec() {
@@ -62,8 +65,18 @@ final class McpCursorCodec {
      * @param mapper the mapper used for canonical encoding and bounded-tree parsing
      */
     McpCursorCodec(int maxDecodedBytes, ObjectMapper mapper) {
+        this(maxDecodedBytes, mapper, Base64.getUrlDecoder()::decode);
+    }
+
+    /** Test-only seam: permits proving that the encoded-length guard runs before Base64 decoding. */
+    McpCursorCodec(int maxDecodedBytes, ObjectMapper mapper, Base64UrlDecoder decoder) {
+        if (maxDecodedBytes < 1) {
+            throw new IllegalArgumentException("maxDecodedBytes must be positive");
+        }
         this.maxDecodedBytes = maxDecodedBytes;
+        this.maxEncodedChars = maxUnpaddedBase64UrlChars(maxDecodedBytes);
         this.mapper = Objects.requireNonNull(mapper, "mapper");
+        this.decoder = Objects.requireNonNull(decoder, "decoder");
     }
 
     /**
@@ -90,12 +103,12 @@ final class McpCursorCodec {
     Decoded decode(String cursor, String registryDigest) {
         Objects.requireNonNull(cursor, "cursor");
         Objects.requireNonNull(registryDigest, "registryDigest");
-        if (!isCanonicalBase64Url(cursor)) {
+        if (cursor.length() > maxEncodedChars || !isCanonicalBase64Url(cursor)) {
             return Decoded.invalid();
         }
         byte[] decodedBytes;
         try {
-            decodedBytes = Base64.getUrlDecoder().decode(cursor);
+            decodedBytes = decoder.decode(cursor);
         } catch (IllegalArgumentException invalidBase64) {
             return Decoded.invalid();
         }
@@ -157,6 +170,19 @@ final class McpCursorCodec {
                                 Character.isLetterOrDigit(character) || character == '-' || character == '_');
     }
 
+    /** Returns the exact maximum unpadded-base64 length for a decoded byte budget. */
+    private static long maxUnpaddedBase64UrlChars(int maxDecodedBytes) {
+        long completeQuanta = maxDecodedBytes / 3L;
+        int remainder = maxDecodedBytes % 3;
+        return completeQuanta * 4L
+                + switch (remainder) {
+                    case 0 -> 0L;
+                    case 1 -> 2L;
+                    case 2 -> 3L;
+                    default -> throw new AssertionError("unreachable remainder");
+                };
+    }
+
     /** Reports whether {@code digest} has the lower-case hexadecimal SHA-256 grammar. */
     private static boolean isValidDigest(@Nullable String digest) {
         return digest != null && SHA_256_HEX.matcher(digest).matches();
@@ -209,5 +235,11 @@ final class McpCursorCodec {
         static Decoded invalid() {
             return new Decoded(null, true);
         }
+    }
+
+    /** Decodes one unpadded base64url token after its encoded length and alphabet are accepted. */
+    @FunctionalInterface
+    interface Base64UrlDecoder {
+        byte[] decode(String cursor);
     }
 }

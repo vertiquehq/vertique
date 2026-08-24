@@ -696,10 +696,12 @@ caller, but it cannot include an unauthorized tool because each examined candida
 The registry digest invalidates stale cursors across deployments; there is no signature, expiry,
 attempt count, sentinel, or retry state.
 
-The decoder bounds decoded bytes before parsing and rejects an invalid protocol version, digest,
-encoding, field set, or anchor syntax as the same bounded `-32602`/`Invalid params` outcome used for
-unknown or denied tools. It exposes no rejection detail. A `nextCursor` is emitted only after at
-least one candidate was examined and candidates remain. Successful identity-filtered
+The decoder rejects an encoded token longer than the exact unpadded-base64 representation of its
+2,048-byte budget before decoding, bounds decoded bytes again before parsing, and rejects an invalid
+protocol version, digest, encoding, field set, or anchor syntax as the same bounded
+`-32602`/`Invalid params` outcome used for unknown or denied tools. It exposes no rejection detail. A
+`nextCursor` is emitted only after at least one candidate was examined and candidates remain.
+Successful identity-filtered
 `server/discover` and `tools/list` results carry `ttlMs` (`mcp.toolsTtlMs`), `cacheScope=private`,
 `Cache-Control: private, no-store`, and `Vary: Authorization`; failed listing and cursor paths do
 not present a cacheable partial page.
