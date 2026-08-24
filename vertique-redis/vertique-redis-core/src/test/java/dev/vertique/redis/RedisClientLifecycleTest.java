@@ -4,13 +4,16 @@
 package dev.vertique.redis;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.redis.client.Redis;
+import io.vertx.redis.client.RedisCluster;
 import io.vertx.redis.client.RedisConnection;
 import io.vertx.redis.client.Request;
 import io.vertx.redis.client.Response;
@@ -96,6 +99,37 @@ class RedisClientLifecycleTest {
     }
 
     @Test
+    @DisplayName("primary operations reuse one cluster client and registry close handles it")
+    void primaryOperationsReuseOneClusterClientAndRegistryCloseHandlesIt() throws Exception {
+        Vertx vertx = Vertx.vertx();
+        RedisClientRegistry registry = new RedisClientRegistry(vertx, new RedisConnectionsConfig(List.of(profile())));
+
+        try {
+            // When: the same profile requests its primary-operation seam twice.
+            RedisPrimaryOperations first = registry.primaryOperations(PROFILE_NAME);
+            RedisPrimaryOperations second = registry.primaryOperations(PROFILE_NAME);
+            Map<String, Redis> clusterClients = clusterClientsOf(registry);
+
+            // Then: one cluster-capable client and seam are reused without connecting to Redis.
+            assertSame(first, second, "one primary-operation seam must be reused for a profile");
+            assertEquals(1, clusterClients.size(), "only one cluster client must be registered");
+            Redis clusterClient = clusterClients.get(PROFILE_NAME);
+            assertNotNull(clusterClient, "the primary-operation client must be registered");
+            assertDoesNotThrow(() -> RedisCluster.create(clusterClient), "the client must be cluster-capable");
+
+            // When: application shutdown is requested twice.
+            Future<Void> firstClose = registry.close();
+            Future<Void> secondClose = registry.close();
+
+            // Then: registry-owned cluster client close uses the shared idempotent future.
+            assertSame(firstClose, secondClose, "registry close must return one shared future");
+            await(firstClose);
+        } finally {
+            await(vertx.close());
+        }
+    }
+
+    @Test
     @DisplayName("startup credential material is redacted from diagnostics")
     void startupCredentialResolutionDoesNotExposeSecretMaterial() {
         String secret = "redis-password-SENTINEL-7f19";
@@ -116,8 +150,11 @@ class RedisClientLifecycleTest {
                 new RedisClientRegistry(vertx, new RedisConnectionsConfig(List.of(profile(), replica)));
         List<String> closeOrder = new ArrayList<>();
         Map<String, Redis> clients = clientsOf(registry);
+        Map<String, Redis> clusterClients = clusterClientsOf(registry);
         clients.put(PROFILE_NAME, new RecordingRedis(PROFILE_NAME, closeOrder));
         clients.put("replica", new RecordingRedis("replica", closeOrder));
+        clusterClients.put(PROFILE_NAME, new RecordingRedis(PROFILE_NAME + "-cluster", closeOrder));
+        clusterClients.put("replica", new RecordingRedis("replica-cluster", closeOrder));
 
         try {
             // When: application shutdown is requested twice.
@@ -125,7 +162,7 @@ class RedisClientLifecycleTest {
             await(registry.close());
 
             // Then: profile clients close in profile order and repeated shutdown is a no-op.
-            assertEquals(List.of(PROFILE_NAME, "replica"), closeOrder);
+            assertEquals(List.of(PROFILE_NAME, PROFILE_NAME + "-cluster", "replica", "replica-cluster"), closeOrder);
         } finally {
             await(vertx.close());
         }
@@ -158,6 +195,13 @@ class RedisClientLifecycleTest {
     @SuppressWarnings("unchecked")
     private static Map<String, Redis> clientsOf(RedisClientRegistry registry) throws ReflectiveOperationException {
         Field clients = RedisClientRegistry.class.getDeclaredField("clients");
+        clients.setAccessible(true);
+        return (Map<String, Redis>) clients.get(registry);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Redis> clusterClientsOf(RedisClientRegistry registry) throws ReflectiveOperationException {
+        Field clients = RedisClientRegistry.class.getDeclaredField("clusterClients");
         clients.setAccessible(true);
         return (Map<String, Redis>) clients.get(registry);
     }

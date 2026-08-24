@@ -26,7 +26,7 @@ Validation is performed while typed configuration is constructed. Diagnostics co
 
 ## Redis client lifecycle
 
-`RedisClientRegistry` is the application-scoped profile registry. Calling `client(name)` lazily creates one shared Vert.x Redis client for that profile; repeated calls for the same name reuse it. A request for an unknown profile fails, and requests after shutdown has started are rejected. Client creation does not claim that Redis is synchronously connected or ready.
+`RedisClientRegistry` is the application-scoped profile registry. Calling `client(name)` lazily creates one shared standalone Vert.x Redis client for that profile; repeated calls for the same name reuse it. Calling `primaryOperations(name)` lazily creates one separate shared cluster-capable client and seam for that profile; repeated calls reuse both. A request for an unknown profile fails, and requests after shutdown has started are rejected. Client creation does not claim that Redis is synchronously connected or ready.
 
 The registry maps profile settings to the Vert.x Redis Client 5.1.6 options as follows:
 
@@ -49,9 +49,12 @@ Redis clients close in validated profile order. The first registry `close()` cal
 ## Primary-node operations
 
 `RedisClientRegistry.primaryOperations(profileName)` returns a topology-aware
-`RedisPrimaryOperations` wrapper around the existing shared client for the named profile.
-The profile must already be configured for a cluster-capable Redis client. The wrapper does
-not create or close another client; the registry retains client lifecycle ownership.
+`RedisPrimaryOperations` wrapper around an explicit cluster-capable client for the named
+profile. It does not wrap the standalone client returned by `client(profileName)`. The registry
+retains lifecycle ownership of both client types and closes them in profile order.
+
+The cluster client uses the profile endpoints as seed endpoints and preserves the profile's
+connection and pool options through Vert.x `RedisClusterConnectOptions`.
 
 The wrapper exposes asynchronous fan-outs to every Redis primary:
 

@@ -7,7 +7,9 @@ import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.net.NetClientOptions;
 import io.vertx.redis.client.Redis;
+import io.vertx.redis.client.RedisClientType;
 import io.vertx.redis.client.RedisCluster;
+import io.vertx.redis.client.RedisClusterConnectOptions;
 import io.vertx.redis.client.RedisOptions;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
@@ -23,6 +25,8 @@ public final class RedisClientRegistry {
     private final Vertx vertx;
     private final Map<String, RedisConnectionConfig> profiles;
     private final Map<String, Redis> clients = new ConcurrentHashMap<>();
+    private final Map<String, Redis> clusterClients = new ConcurrentHashMap<>();
+    private final Map<String, RedisPrimaryOperations> primaryOperations = new ConcurrentHashMap<>();
     private final Object lifecycleLock = new Object();
     private boolean closeStarted;
     private Future<Void> closeFuture;
@@ -66,19 +70,31 @@ public final class RedisClientRegistry {
     }
 
     /**
-     * Returns primary-node operations backed by the existing client for a named profile.
+     * Returns primary-node operations backed by a registry-owned cluster client for a named profile.
      *
-     * <p>The profile must be configured for a cluster-capable Redis client. This method wraps
-     * the registry-owned client and does not create or own another client; the registry remains
-     * responsible for its lifecycle.
+     * <p>This method creates one cluster-capable client for the profile and wraps it in one
+     * cached seam. The registry remains responsible for the cluster client's lifecycle.
      *
-     * @param profileName the validated cluster-capable profile name
-     * @return primary-node operations backed by the shared profile client
+     * @param profileName the validated profile name
+     * @return primary-node operations backed by the shared cluster client
      * @throws IllegalArgumentException if the profile is unknown
      * @throws IllegalStateException if registry shutdown has started
      */
     public RedisPrimaryOperations primaryOperations(String profileName) {
-        return new RedisPrimaryOperations(RedisCluster.create(client(profileName)));
+        synchronized (lifecycleLock) {
+            if (closeStarted) {
+                throw new IllegalStateException("Redis client registry is closed");
+            }
+            RedisConnectionConfig profile = profiles.get(profileName);
+            if (profile == null) {
+                throw new IllegalArgumentException("unknown Redis connection profile: " + profileName);
+            }
+            return primaryOperations.computeIfAbsent(profileName, ignored -> {
+                Redis clusterClient = clusterClients.computeIfAbsent(
+                        profileName, ignoredProfile -> createClusterClient(profile));
+                return new RedisPrimaryOperations(RedisCluster.create(clusterClient));
+            });
+        }
     }
 
     /**
@@ -104,6 +120,10 @@ public final class RedisClientRegistry {
                 if (client != null) {
                     sequence = sequence.compose(ignored -> closeClient(client, firstFailure));
                 }
+                Redis clusterClient = clusterClients.get(profileName);
+                if (clusterClient != null) {
+                    sequence = sequence.compose(ignored -> closeClient(clusterClient, firstFailure));
+                }
             }
             closeFuture = sequence.compose(ignored -> {
                 Throwable failure = firstFailure.get();
@@ -114,6 +134,19 @@ public final class RedisClientRegistry {
     }
 
     private Redis createClient(RedisConnectionConfig profile) {
+        return Redis.createClient(vertx, createOptions(profile));
+    }
+
+    private Redis createClusterClient(RedisConnectionConfig profile) {
+        RedisOptions options = createOptions(profile).setType(RedisClientType.CLUSTER);
+        return Redis.createClusterClient(
+                vertx,
+                options,
+                () -> Future.succeededFuture(
+                        new RedisClusterConnectOptions(options).setEndpoints(profile.endpoints())));
+    }
+
+    private static RedisOptions createOptions(RedisConnectionConfig profile) {
         RedisOptions options = new RedisOptions()
                 .setEndpoints(profile.endpoints())
                 .setNetClientOptions(new NetClientOptions()
@@ -127,7 +160,7 @@ public final class RedisClientRegistry {
         if (profile.passwordSecret() != null) {
             options.setPassword(profile.passwordSecret());
         }
-        return Redis.createClient(vertx, options);
+        return options;
     }
 
     private static Future<Void> closeClient(Redis client, AtomicReference<Throwable> firstFailure) {
