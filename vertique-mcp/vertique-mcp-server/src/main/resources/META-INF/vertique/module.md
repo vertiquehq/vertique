@@ -59,17 +59,21 @@ nested objects. There is no nested `tools`, `output`, or `json` object. Ordinary
 deliberately forward-compatible and are silently ignored, so use the declared field names rather
 than dotted prose spellings.
 
-**R17 exposes and validates two independent JSON token budgets; it does not yet consume them.**
-`mcp.ingressMaxTokens` is the intended parser-token budget for one incoming JSON-RPC envelope, and
-`mcp.outputMaxTokens` is the intended parser-token budget for one structured-output normalization.
-Each defaults to 65,536 and accepts the inclusive range 1,024–262,144; neither has an unlimited
-mode, and changing one does not change the other. These token budgets are distinct from the encoded
-byte caps: `http.maxBodySize` remains the ingress body-size limit and `mcp.outputMaxBytes` remains
-the response/output byte limit. R17 validates the configured values only. The shipped envelope codec
-continues to use its fixed 8,000-token ingress limit until R18 consumes
-`mcp.ingressMaxTokens`; the shipped output-normalization reparse continues to use its fixed
-2,000-node budget, translated to a 4,000-parser-token limit, until R19 consumes
-`mcp.outputMaxTokens`.
+**Ingress and output token budgets are independent.** `mcp.ingressMaxTokens` is the parser-token
+budget for one incoming JSON-RPC envelope, and `mcp.outputMaxTokens` is the parser-token budget for
+one structured-output normalization. Each defaults to 65,536 and accepts the inclusive range
+1,024–262,144; neither has an unlimited mode, and changing one does not change the other. These
+token budgets are distinct from the encoded byte caps: `http.maxBodySize` remains the independent
+ingress body-size and maximum-decodable-document limit, while `mcp.outputMaxBytes` remains the
+response/output byte limit.
+
+**R18 actively enforces `mcp.ingressMaxTokens`.** `McpRequestDispatcher` passes the validated scalar
+`config.ingressMaxTokens()` to `McpProtocolCodec`, which passes that same scalar to
+`McpEnvelopeJsonCodec` as Jackson's `maxTokenCount`; it is neither derived from `http.maxBodySize`
+nor replaced by a fixed internal ingress limit. Token exhaustion is a malformed JSON-RPC frame:
+HTTP `400` with JSON-RPC code `-32700`, before dispatch. R19 has not yet consumed
+`mcp.outputMaxTokens`: it remains validated configuration only while the output-normalization
+reparse retains its fixed 2,000-node / 4,000-parser-token behavior.
 
 **Retired configuration keys fail startup.** For one release, `McpServerConfig` rejects each exact
 flat spelling `mcp.requestTimeoutMs`, `mcp.jsonMaxDepth`, `mcp.jsonMaxPropertiesPerObject`,
@@ -228,21 +232,10 @@ carries:
 - a document larger than the effective `http.maxBodySize` in bytes (`maxDocumentLength`) — the one
   Jackson default (unlimited) this codec narrows, read from the shared `HttpConfig` rather than a
   separate MCP configuration key;
-- more than 8,000 JSON tokens (`maxTokenCount`) — the currently shipped fixed ingress limit,
-  **not** derived from
-  `http.maxBodySize` (R11, merge blocker 4; supersedes the issue #423 `max(1024, http.maxBodySize / 4)`
-  ratio). A bounded document *length* alone does not bound retained node allocation: a deeply nested or
-  token-dense shape can amplify tens of times past its own byte size before the document-length check
-  would ever matter — but the ratio-derived cap only ever answered "what ratio rejects a few
-  adversarial shapes?", not "how much heap may many concurrent anonymous requests retain?": at the
-  shipped 2 MiB default it admitted up to 524,288 tokens, and a single unauthenticated request could
-  retain 262,475 nodes — 95.2% of one adversarial shape's own full tree. The fixed 8,000-token cap is
-  instead derived from a stated heap-and-concurrency budget (512 MiB assumed instance heap, 10%
-  reserved for anonymous ingress retention, 256 assumed concurrent anonymous in-flight requests — this
-  layer enforces no connection-concurrency or rate limit of its own) and proven under concurrent load;
-  because heap retention tracks token count rather than input byte count, this cap does not scale with
-  `http.maxBodySize`. R17 exposes and validates `mcp.ingressMaxTokens`, but it does not configure
-  this codec yet; R18 owns replacing the fixed 8,000-token limit with the configured budget;
+- more than the configured `mcp.ingressMaxTokens` JSON tokens (`maxTokenCount`). This is independent
+  of the `http.maxBodySize` document-length limit: byte length and parser-token count bound different
+  properties, and either may reject first. The dispatcher-to-protocol-to-envelope scalar seam preserves
+  the configured token value unchanged, so there is no byte-derived ratio or fixed ingress fallback;
 - invalid UTF-8.
 
 The generic limits above are not consumer-visible configuration keys: the four generic JSON-limit
@@ -448,18 +441,18 @@ the full envelope.
 what the reparse costs in memory: a two-megabyte document of nothing but `[` characters is inside any
 byte cap and still materializes roughly a million container objects. The reader that parses
 `encodeCapped`'s bounded bytes back into the canonical `Map`/`List`/scalar tree therefore also caps
-the number of parser tokens, and that cap is derived from a heap budget — the same 512 MiB / 10% / 256
-concurrent-request budget the envelope codec's own token cap is derived from — divided by a measured
-worst-case retained cost of 100 bytes per materialized node. **A structured result that materializes
+the number of parser tokens. R14 derived that fixed output policy from its stated 512 MiB / 10% / 256
+concurrent-request model divided by a measured worst-case retained cost of 100 bytes per materialized
+node. **A structured result that materializes
 more than 2,000 nodes is rejected**, however far inside `mcp.outputMaxBytes` it is, and degrades to
 the same bounded internal-error response every other failure in this stage uses. This is a real limit
 on tool output shape, not only on tool output size: a result with thousands of small elements will hit
 it. `mcp.outputMaxBytes` continues to bound the reparse in bytes and continues to scale with
 configuration; the node bound is fixed, because scaling it with a byte figure is exactly what made the
 previous revision's token bound unreachable — a JSON token always costs at least one source byte, so a
-token cap set to the byte cap could never fire. R17 exposes and validates `mcp.outputMaxTokens`, but
-it does not configure this reparse yet; R19 owns replacing the fixed 2,000-node / 4,000-parser-token
-limit with the configured budget.
+token cap set to the byte cap could never fire. `mcp.outputMaxTokens` is validated but does not
+configure this reparse yet; R19 owns replacing the fixed 2,000-node / 4,000-parser-token limit with
+the configured budget.
 
 The output-value observation (`onToolOutput`) is published only after the terminal envelope has been
 successfully encoded — never before. A capable session can therefore never observe a structured value

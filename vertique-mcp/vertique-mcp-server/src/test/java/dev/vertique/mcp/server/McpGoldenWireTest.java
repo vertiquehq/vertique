@@ -35,8 +35,10 @@ class McpGoldenWireTest {
     @DisplayName("valid frames round-trip byte-identically and invalid frames yield the pinned errors")
     void shouldMatchPinnedFinal2026WireFixtures() {
         HttpConfig httpConfig = HttpConfig.builder().build();
-        McpEnvelopeJsonCodec envelopeCodec = new McpEnvelopeJsonCodec(httpConfig);
-        McpProtocolCodec codec = new McpProtocolCodec(httpConfig);
+        McpEnvelopeJsonCodec envelopeCodec =
+                new McpEnvelopeJsonCodec(httpConfig, McpServerConfig.defaults().ingressMaxTokens());
+        McpProtocolCodec codec =
+                new McpProtocolCodec(httpConfig, McpServerConfig.defaults().ingressMaxTokens());
         List<byte[]> validFrames = McpGoldenWireTestFixture.loadValidFrames();
         List<McpGoldenWireTestFixture.InvalidCase> invalidCases = McpGoldenWireTestFixture.loadInvalidCases();
 

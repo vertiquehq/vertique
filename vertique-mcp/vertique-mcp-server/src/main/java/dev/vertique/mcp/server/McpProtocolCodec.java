@@ -123,13 +123,14 @@ final class McpProtocolCodec {
     private final McpProtocolSchemaValidator schemaValidator;
 
     /**
-     * Creates a codec bound to the effective ingress cap.
+     * Creates a codec with independent ingress byte and parser-token bounds.
      *
      * @param httpConfig the shared HTTP configuration whose {@link HttpConfig#maxBodySize()} bounds
      *     the envelope codec's maximum decodable document length
+     * @param ingressMaxTokens the configured parser-token budget for an ingress envelope
      */
-    McpProtocolCodec(HttpConfig httpConfig) {
-        this.envelopeCodec = new McpEnvelopeJsonCodec(httpConfig);
+    McpProtocolCodec(HttpConfig httpConfig, int ingressMaxTokens) {
+        this.envelopeCodec = new McpEnvelopeJsonCodec(httpConfig, ingressMaxTokens);
         this.schemaValidator = new McpProtocolSchemaValidator();
     }
 

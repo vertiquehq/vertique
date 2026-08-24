@@ -308,14 +308,12 @@ final class McpRequestDispatcher {
      *
      * <p><strong>R14 item 1 — the node budget this bound is actually derived from.</strong> Retained
      * heap is a function of materialized {@link com.fasterxml.jackson.databind.JsonNode} count, not of
-     * source byte count, so the bound is derived the same way {@code McpEnvelopeJsonCodec}'s own
-     * {@code MAX_TOKEN_COUNT} is — from a stated heap budget divided by a measured per-node cost — and
-     * not from any byte figure:
+     * source byte count. R14 therefore derived this fixed output bound from a stated heap budget and
+     * measured per-node cost rather than from any byte figure:
      *
      * <ul>
-     *   <li><b>Heap budget.</b> The same one R11 states for the ingress side, because it is the same
-     *       heap: a 512 MiB container floor, of which at most 10% (53,687,091 bytes) may be retained by
-     *       MCP request trees.
+     *   <li><b>Heap budget.</b> R14 assumed a 512 MiB container floor, of which at most 10%
+     *       (53,687,091 bytes) may be retained by MCP request trees.
      *   <li><b>Concurrency.</b> The same stated design ceiling of {@code N = 256} simultaneous in-flight
      *       requests. This reparse is post-authorization, but that buys nothing: a framework-level
      *       {@code @PermitAll} tool is reachable anonymously, this layer enforces no concurrency or rate
@@ -346,7 +344,8 @@ final class McpRequestDispatcher {
      * behavioral narrowing:</strong> a tool whose structured result materializes more than {@value
      * #NORMALIZATION_NODE_BUDGET} nodes now fails where it previously succeeded, regardless of how far
      * inside {@code mcp.output.maxBytes} it was. That consequence is stated, not hidden; the cap's
-     * value carries the same pending ruling as {@code McpEnvelopeJsonCodec.MAX_TOKEN_COUNT}.
+     * R19 owns replacing this fixed policy with the independently configured
+     * {@code mcp.outputMaxTokens} budget.
      *
      * <p>{@code maxDocumentLength} stays at {@code outputMaxBytes} — that one <em>is</em> a byte bound
      * and is genuinely per-instance, which is why this reader remains an instance field rather than a
@@ -392,7 +391,7 @@ final class McpRequestDispatcher {
         this.completedListeners = Set.copyOf(completedListeners);
         this.orderedRequestInterceptors = sortedAndValidatedRequestInterceptors(requestInterceptors);
         this.orderedToolInterceptors = sortedAndValidatedToolInterceptors(toolInterceptors);
-        this.codec = new McpProtocolCodec(httpConfig);
+        this.codec = new McpProtocolCodec(httpConfig, config.ingressMaxTokens());
         this.toolRegistry = toolRegistry;
         this.policyEnforcer = policyEnforcer;
         this.cursorCodec = new McpCursorCodec();

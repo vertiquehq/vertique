@@ -29,7 +29,8 @@ class McpCodecFailureTest {
     @Test
     @DisplayName("failure frames yield the pinned bounded error and the internal fallback never leaks SECRET")
     void shouldUsePreEncodedInternalFallbackOrDeterministicReset() {
-        McpProtocolCodec codec = new McpProtocolCodec(HttpConfig.builder().build());
+        McpProtocolCodec codec = new McpProtocolCodec(
+                HttpConfig.builder().build(), McpServerConfig.defaults().ingressMaxTokens());
 
         for (McpCodecFailureTestFixture.Row row : McpCodecFailureTestFixture.decodeRows()) {
             byte[] response = codec.errorResponse(row.frame());

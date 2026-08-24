@@ -27,11 +27,10 @@ import org.junit.jupiter.params.provider.MethodSource;
  * over-long number literal, invalid UTF-8 (both malformed and overlong), an overflowing decimal
  * exponent, and an over-scaled decimal — maps to the same bounded rejection. The depth and
  * number-length rows assert the frozen boundary from both sides in the same row: exactly 1000 is
- * accepted, exactly 1001 is rejected. No row consults an MCP configuration key because none exists —
- * every bound is Jackson's own frozen {@code StreamReadConstraints} inside the codec (proved
- * structurally by {@link #STRUCTURAL_CONSTRAINTS_ROW}), except {@code maxDocumentLength}, which is
- * proved separately in {@link #shouldRejectOnlyPastTheConfiguredMaxDocumentLength()} because it is
- * derived from a per-codec {@link HttpConfig} rather than being a fixed frozen value.
+ * accepted, exactly 1001 is rejected. The structural row distinguishes the R18-configured
+ * {@code maxTokenCount} and the {@link HttpConfig}-derived {@code maxDocumentLength} from Jackson's
+ * remaining frozen constraints. Document-length behavior is proved separately in
+ * {@link #shouldRejectOnlyPastTheConfiguredMaxDocumentLength()}.
  */
 class McpEnvelopeJsonCodecTest {
 
@@ -276,9 +275,8 @@ class McpEnvelopeJsonCodecTest {
                 // wiring for every constraint except maxDocumentLength, proved separately).
                 StreamReadConstraints constraints = codec.mapper().getFactory().streamReadConstraints();
 
-                // DECISIVE: reads every one of the six frozen constraints back off the live parser
-                // configuration, so a change to any of them — including the three (maxStringLength,
-                // maxNameLength, maxTokenCount) that no other row exercises — fails this assertion.
+                // DECISIVE: reads every configured or frozen constraint back off the live parser
+                // configuration, so a change to any of them — including the R18 maxTokenCount — fails.
                 assertThat(constraints.getMaxNestingDepth())
                         .as("maxNestingDepth must stay frozen at 1000")
                         .isEqualTo(1_000);
@@ -295,11 +293,8 @@ class McpEnvelopeJsonCodecTest {
                         .as("maxDocumentLength must equal the codec's configured HttpConfig#maxBodySize")
                         .isEqualTo(HttpConfig.builder().build().maxBodySize());
                 assertThat(constraints.getMaxTokenCount())
-                        .as("maxTokenCount must stay the fixed heap-and-concurrency-budget-derived cap "
-                                + "(R11, merge blocker 4), independent of maxBodySize — see "
-                                + "McpEnvelopeTokenBudgetTest for the full derivation, concurrency proof, "
-                                + "and sensitivity check")
-                        .isEqualTo(8_000L);
+                        .as("maxTokenCount must equal the independently configured ingress token budget")
+                        .isEqualTo(McpServerConfig.defaults().ingressMaxTokens());
             }
             default -> fail("unknown T007 contract row: " + row);
         }
@@ -316,7 +311,8 @@ class McpEnvelopeJsonCodecTest {
     void shouldRejectOnlyPastTheConfiguredMaxDocumentLength() {
         long smallCap = 10;
         McpEnvelopeJsonCodec smallCapCodec = new McpEnvelopeJsonCodec(
-                HttpConfig.builder().maxBodySize(smallCap).build());
+                HttpConfig.builder().maxBodySize(smallCap).build(),
+                McpServerConfig.defaults().ingressMaxTokens());
 
         // A 10-byte JSON string literal: two quote characters plus 8 filler bytes.
         McpEnvelopeJsonCodec.Result atCap = smallCapCodec.decode("\"aaaaaaaa\"".getBytes(StandardCharsets.UTF_8));
@@ -338,7 +334,8 @@ class McpEnvelopeJsonCodecTest {
 
         /** A codec built from the default {@link HttpConfig}, matching production wiring. */
         static McpEnvelopeJsonCodec newCodec() {
-            return new McpEnvelopeJsonCodec(HttpConfig.builder().build());
+            return new McpEnvelopeJsonCodec(
+                    HttpConfig.builder().build(), McpServerConfig.defaults().ingressMaxTokens());
         }
 
         /**

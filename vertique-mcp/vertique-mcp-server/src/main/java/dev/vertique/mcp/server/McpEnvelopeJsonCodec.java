@@ -34,9 +34,9 @@ import java.util.Iterator;
  * more permissive UTF-8 decoding ever runs — see {@link #rejectsInvalidUtf8}). Every other bound is
  * enforced by Jackson's own {@link StreamReadConstraints} rather than a handcrafted reader: this class
  * replaces the T003/T004 handcrafted strict JSON reader and the four generic JSON-limit configuration
- * properties it enforced. None of the constraints below is a consumer-visible configuration key — they
- * are frozen by the T007 contract amendment, not chosen at implementation time, so the codec cannot
- * silently inherit a changed upstream Jackson default.
+ * properties it enforced. The generic shape constraints remain frozen by the T007 contract amendment
+ * so the codec cannot silently inherit changed Jackson defaults; R18 makes only {@code maxTokenCount}
+ * consumer-configurable through {@code mcp.ingressMaxTokens}.
  *
  * <ul>
  *   <li>{@code maxNestingDepth} 1000 — matches Jackson's own default, restated explicitly.
@@ -45,20 +45,9 @@ import java.util.Iterator;
  *   <li>{@code maxNameLength} 50,000 — matches Jackson's own default, restated explicitly.
  *   <li>{@code maxDocumentLength} — the one Jackson default that is unbounded ({@code -1}); set
  *       explicitly to the effective {@link HttpConfig#maxBodySize()} in bytes so this codec introduces
- *       no separate MCP ingress bound.
- *   <li>{@code maxTokenCount} — a fixed constant of {@value #MAX_TOKEN_COUNT} tokens (R11, merge
- *       blocker 4), <strong>no longer derived from {@code maxBodySize}</strong>. Issue #423's original
- *       fix ({@code max(1024, maxBodySize / 4)}, superseded — see the R02 evidence and this contract's
- *       R02 amendment, both left legible with a superseding note) answered "what ratio rejects three
- *       adversarial shapes?" — it guaranteed eventual rejection of a byte-bounded body, not an
- *       acceptable <em>retained-memory or concurrency</em> budget: for the shipped 2 MiB {@code
- *       maxBodySize} default it admitted up to 524,288 tokens, and R02's own benchmark recorded a
- *       single such request retaining 262,475 nodes (95.2% of one adversarial shape's own full tree).
- *       All unauthenticated, and never proven under concurrency. See {@link #MAX_TOKEN_COUNT}'s javadoc
- *       for the heap-and-concurrency budget this cap is derived from instead. Because heap retention is
- *       bounded by <em>token count</em>, not input byte count — a single legitimate multi-megabyte
- *       string payload is one token — this cap is independent of {@code maxBodySize}, which continues
- *       to bound only {@code maxDocumentLength} above.
+ *       no second byte setting; this cap independently bounds the encoded document.
+ *   <li>{@code maxTokenCount} — set to the configured MCP ingress token budget independently of
+ *       {@code maxDocumentLength}.
  * </ul>
  *
  * <p>{@link StreamReadFeature#STRICT_DUPLICATE_DETECTION} and {@link
@@ -79,54 +68,6 @@ final class McpEnvelopeJsonCodec {
     private static final int MAX_NAME_LENGTH = 50_000;
 
     /**
-     * Fixed {@code maxTokenCount} cap (R11, merge blocker 4), derived from a stated heap-and-latency
-     * budget and proven under concurrent anonymous requests — not from the smallest ratio that rejects
-     * a handful of adversarial shapes (issue #423's original approach, superseded; see the class
-     * javadoc, the R02 evidence, and this contract's R02 amendment, all left legible with a
-     * superseding note rather than rewritten).
-     *
-     * <p><b>Stated budget.</b> Assume a single, unautoscaled MCP-server instance provisioned with a
-     * 512 MiB heap (a common container floor for a Vert.x microservice) and allow at most 10% of it
-     * (53,687,091 bytes, ~51.2 MiB) to be retained by ingress envelope trees from anonymous
-     * (unauthenticated, pre-authorization) requests — the remaining 90% must cover Netty/Vert.x
-     * connection buffers, GC headroom, this server's own runtime state (schema cache, tool registry,
-     * correlation contexts), and any non-MCP traffic sharing the JVM. Assume a worst-case concurrency
-     * of {@code N = 256} simultaneous anonymous in-flight requests: this framework enforces no
-     * connection-concurrency or rate limit at this layer (deferred to MCP-002), so {@code N} is a
-     * stated design ceiling, not derived from an existing knob. MCP has no aggregate {@code tools/list}
-     * deadline, but startup requires at least one shared {@code HttpConfig} idle/read/write liveness
-     * timeout. An attacker can retain {@code N} trees only until the configured shared HTTP liveness
-     * timeout closes each request, so the budget must hold for sustained concurrency, not a transient
-     * parse-time spike — which is exactly why the proof below measures {@code N} concurrently
-     * <em>accepted</em> (retained) requests, not {@code N} concurrent rejections (a rejected decode's
-     * partial tree is immediately garbage once {@link #decode} returns).
-     *
-     * <p><b>Arithmetic.</b> Per-request allowance = 53,687,091 / 256 &#8776; 209,715 bytes. The
-     * worst-case retained bytes per materialized {@code JsonNode}, measured with a heap-delta harness
-     * (forced full GC before and after, references held live, stable within &lt;2% across repeated
-     * trials and across tree scales from 250K to 2.5M nodes) over the container-heavy shapes R02's own
-     * benchmark used — repeated nested-array chains and a flat short-object-key document — is
-     * approximately 45–50 bytes/node under concurrent load; both shapes materialize one {@code
-     * JsonNode} per two parser tokens ({@code START_*}/{@code END_*} pairs), so worst-case retained
-     * bytes per unit of {@code maxTokenCount} &#8776; 0.5 &times; 50 = 25, well under the 209,715-byte
-     * per-request allowance even before rounding down. A live concurrent measurement (256 real
-     * threads, each decoding an accepted short-key-object document sized to {@value #MAX_TOKEN_COUNT}
-     * tokens, all 256 trees held live simultaneously, forced GC, {@code Runtime} memory delta) recorded
-     * ~49.5 MB total retained heap — 92% of the 53,687,091-byte budget, reproducible within 0.3% across
-     * three trials. This live measurement was run and its methodology/result recorded in the R11
-     * evidence, not committed as a CI assertion — heap-delta sampling is JVM/GC-configuration dependent
-     * and would be exactly the flaky, environment-sensitive gate R02 already declined to commit for the
-     * same reason (see R02's "benchmark harness was run and deleted, not committed" evidence note); the
-     * committed regression guard instead pins the derivation arithmetic and the deterministic
-     * node-materialized-before-rejection proof, in {@code McpEnvelopeTokenBudgetTest}.
-     *
-     * <p><b>Sensitivity.</b> Loosening this cap by one step (+1,000, to 9,000) was measured the same
-     * way: ~54.7 MB total retained heap for 256 concurrent accepted requests, exceeding the 53,687,091-
-     * byte budget on every trial — the proof is not vacuous.
-     */
-    private static final long MAX_TOKEN_COUNT = 8_000L;
-
-    /**
      * Fixed internal cap on the magnitude of a decimal's scale, aligned exactly with the encoder's
      * {@code WRITE_BIGDECIMAL_AS_PLAIN} plain-form guard (retained unchanged from the T003 hardening).
      * Jackson's {@code GeneratorBase} rejects a plain-form encode when {@code scale < -9999 ||
@@ -140,19 +81,20 @@ final class McpEnvelopeJsonCodec {
     private final ObjectMapper mapper;
 
     /**
-     * Creates a codec whose {@code maxDocumentLength} is bound to the effective ingress cap.
+     * Creates a codec with independent byte and parser-token bounds for one ingress document.
      *
      * @param httpConfig the shared HTTP configuration whose {@link HttpConfig#maxBodySize()} becomes
      *     this codec's {@code maxDocumentLength}
+     * @param ingressMaxTokens the configured {@code maxTokenCount} for this ingress document
      */
-    McpEnvelopeJsonCodec(HttpConfig httpConfig) {
+    McpEnvelopeJsonCodec(HttpConfig httpConfig, int ingressMaxTokens) {
         StreamReadConstraints constraints = StreamReadConstraints.builder()
                 .maxNestingDepth(MAX_NESTING_DEPTH)
                 .maxNumberLength(MAX_NUMBER_LENGTH)
                 .maxStringLength(MAX_STRING_LENGTH)
                 .maxNameLength(MAX_NAME_LENGTH)
                 .maxDocumentLength(httpConfig.maxBodySize())
-                .maxTokenCount(MAX_TOKEN_COUNT)
+                .maxTokenCount(ingressMaxTokens)
                 .build();
         JsonFactory factory =
                 JsonFactory.builder().streamReadConstraints(constraints).build();

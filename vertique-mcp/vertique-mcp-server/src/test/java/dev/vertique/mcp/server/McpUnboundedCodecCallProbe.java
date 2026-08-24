@@ -26,7 +26,8 @@ public final class McpUnboundedCodecCallProbe {
 
     /** Calls all three byte-unbounded helpers, standing in for a regressed production write path. */
     static void callEveryUnboundedHelper() {
-        McpProtocolCodec codec = new McpProtocolCodec(HttpConfig.builder().build());
+        McpProtocolCodec codec = new McpProtocolCodec(
+                HttpConfig.builder().build(), McpServerConfig.defaults().ingressMaxTokens());
         byte[] frame = "{}".getBytes(StandardCharsets.UTF_8);
         codec.errorResponse(frame);
         McpProtocolCodec.Decoded decoded = codec.decodeEnvelope(frame);
