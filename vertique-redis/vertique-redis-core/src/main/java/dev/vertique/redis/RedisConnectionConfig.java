@@ -3,6 +3,7 @@
 
 package dev.vertique.redis;
 
+import dev.vertique.core.config.ConfigSecretRenderer;
 import java.net.URI;
 import java.util.List;
 import java.util.Objects;
@@ -36,6 +37,25 @@ public record RedisConnectionConfig(
         if (maxPoolWaiting < 0 || maxPoolWaiting > 10_000) {
             throw new IllegalArgumentException("maxPoolWaiting must be between 0 and 10000");
         }
+    }
+
+    /**
+     * Returns a diagnostic representation with the password or secret reference redacted.
+     *
+     * @return a secret-free profile representation
+     */
+    @Override
+    public String toString() {
+        return "RedisConnectionConfig["
+                + "name=" + name
+                + ", endpoints=" + endpoints
+                + ", username=" + username
+                + ", passwordSecret=" + ConfigSecretRenderer.MASK
+                + ", tlsEnabled=" + tlsEnabled
+                + ", connectTimeoutMs=" + connectTimeoutMs
+                + ", maxPoolSize=" + maxPoolSize
+                + ", maxPoolWaiting=" + maxPoolWaiting
+                + "]";
     }
 
     private static void validateEndpoint(String endpoint) {
