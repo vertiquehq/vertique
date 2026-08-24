@@ -6,7 +6,7 @@
     "sourceReference": "https://raw.githubusercontent.com/modelcontextprotocol/conformance/main/requirements/2026-07-28.yaml",
     "sha256": "ae2f4f6210fd729e2e318edd5bbfa31a43cee0bc608e48052fa26dbf1d939b57"
   },
-  "invocationForm": "server --url <url> --scenario <id>",
+  "invocationForm": "server --url <url> --scenario <id> --spec-version 2026-07-28",
   "artifacts": [
     {
       "id": "conformance-runner",
@@ -14,7 +14,7 @@
       "version": "0.2.0-alpha.10",
       "sourceReference": "https://registry.npmjs.org/@modelcontextprotocol/conformance/-/conformance-0.2.0-alpha.10.tgz",
       "integrity": "sha512-0V/HZDdWHcg6j0zVBzBsXcPZ571IVi6umKgTpnBhtTx/jm/LONmGF6cIWL2k4Xjyps0OiHV6B37nj2s0pUg0nQ==",
-      "invocation": "npx @modelcontextprotocol/conformance@0.2.0-alpha.10 server --url <url> --scenario <id>",
+      "invocation": "npx @modelcontextprotocol/conformance@0.2.0-alpha.10 server --url <url> --scenario <id> --spec-version 2026-07-28",
       "prereleaseException": "The frozen requirements-2026-07-28.yaml manifest names 0.2.0-alpha.10 as its published anchor."
     },
     {

@@ -30,7 +30,7 @@ import org.junit.jupiter.api.Test;
 class McpJsonTokenCorpusTest {
 
     private static final int DEFAULT_TOKENS = 65_536;
-    private static final String CORPUS_SHA_256 = "8dfc3e24dbc7d52e0dc581ff3c1523ff51d9be501526a602731e682cdcd82ab5";
+    private static final String CORPUS_SHA_256 = "2881c3b1c30bbb6456145a05a264f0e7a39b1f672a5fa26008e73856b2e4fb8a";
     private static final Map<String, Long> REQUIRED_STRUCTURAL_CLASS_COUNTS = Map.ofEntries(
             Map.entry("flat-array", 7L),
             Map.entry("flat-scalar-array", 7L),
@@ -41,7 +41,12 @@ class McpJsonTokenCorpusTest {
             Map.entry("high-field-name-diversity", 1L),
             Map.entry("valid-tools-call-arguments", 1L),
             Map.entry("byte-first-precedence", 1L),
-            Map.entry("numeric-fidelity", 1L));
+            Map.entry("numeric-fidelity", 1L),
+            Map.entry("conformance-discover-request", 1L),
+            Map.entry("conformance-tools-list-request", 1L),
+            Map.entry("conformance-tools-call-request", 1L),
+            Map.entry("conformance-tool-text-result", 1L),
+            Map.entry("conformance-tool-error-result", 1L));
 
     @Test
     @DisplayName("R18: the shared JSON corpus has its recorded digest and every required structural class")
@@ -50,7 +55,7 @@ class McpJsonTokenCorpusTest {
         assertAll(
                 () -> assertThat(sha256(McpJsonTokenCorpus.resourceBytes())).isEqualTo(CORPUS_SHA_256),
                 () -> {
-                    assertThat(rows).hasSize(15);
+                    assertThat(rows).hasSize(20);
                     assertThat(rows.stream()
                                     .collect(Collectors.groupingBy(McpJsonTokenCorpus.Row::id, Collectors.counting())))
                             .allSatisfy((id, count) -> assertThat(count)
@@ -137,9 +142,9 @@ class McpJsonTokenCorpusTest {
         McpEnvelopeJsonCodec.Result decoded = ingress.decode(numericRow.renderedUtf8());
         assertThat(decoded.isRejected()).isFalse();
 
+        McpRequestDispatcher dispatcher = outputDispatcher();
         @SuppressWarnings("unchecked")
-        Map<String, Object> normalized =
-                (Map<String, Object>) outputDispatcher().normalizeStructuredContent(decoded.value());
+        Map<String, Object> normalized = (Map<String, Object>) dispatcher.normalizeStructuredContent(decoded.value());
         assertThat(normalized.get("precise"))
                 .isInstanceOf(BigDecimal.class)
                 .extracting(value -> ((BigDecimal) value).toPlainString())
@@ -155,7 +160,7 @@ class McpJsonTokenCorpusTest {
                 Float.NaN,
                 Float.POSITIVE_INFINITY,
                 Float.NEGATIVE_INFINITY)) {
-            assertThatThrownBy(() -> outputDispatcher().normalizeStructuredContent(nonFinite))
+            assertThatThrownBy(() -> dispatcher.normalizeStructuredContent(nonFinite))
                     .as("non-finite Java value %s must not cross output normalization as a quoted string", nonFinite)
                     .isInstanceOf(RuntimeException.class);
         }

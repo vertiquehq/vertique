@@ -112,7 +112,7 @@ class McpExternalPinLockTest {
             "https://github.com/modelcontextprotocol/go-sdk/releases/tag/v1.7.0");
     private static final Map<String, String> EXPECTED_INVOCATIONS = Map.of(
             "conformance-runner",
-            "npx @modelcontextprotocol/conformance@0.2.0-alpha.10 server --url <url> --scenario <id>",
+            "npx @modelcontextprotocol/conformance@0.2.0-alpha.10 server --url <url> --scenario <id> --spec-version 2026-07-28",
             "typescript-client",
             "node client.mjs --url <url> --scenario <scenario>",
             "go-sdk",
@@ -169,8 +169,9 @@ class McpExternalPinLockTest {
 
     private static void assertInvocationForm() {
         assertThat(PIN_LOCK.getString("wireRevision")).isEqualTo("2026-07-28");
-        assertThat(PIN_LOCK.getString("invocationForm")).isEqualTo("server --url <url> --scenario <id>");
-        assertThat(PIN_LOCK.encode()).doesNotContain("--requirements", "--spec-version", "--expected-failures");
+        assertThat(PIN_LOCK.getString("invocationForm"))
+                .isEqualTo("server --url <url> --scenario <id> --spec-version 2026-07-28");
+        assertThat(PIN_LOCK.encode()).doesNotContain("--requirements", "--expected-failures");
         Map<String, String> actualInvocations = new LinkedHashMap<>();
         ARTIFACTS.forEach(
                 artifact -> actualInvocations.put(artifact.getString("id"), artifact.getString("invocation")));
