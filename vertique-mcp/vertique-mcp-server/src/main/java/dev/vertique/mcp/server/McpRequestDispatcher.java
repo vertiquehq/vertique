@@ -196,18 +196,6 @@ final class McpRequestDispatcher {
     private static final String SCHEMA_REJECTION_MESSAGE = "Invalid tool arguments: schema validation failed";
 
     /**
-     * The bounded, non-leaking text returned as the sole content item when {@code tools/call}'s
-     * {@code arguments} member is present and non-null but not a JSON object (e.g. an array, string,
-     * or number). Such a value is rejected outright rather than silently coerced to the empty map:
-     * coercing it would let a zero-argument tool execute from a schema-invalid call, materializing a
-     * result from an input the client never actually sent (§4.7). An absent {@code arguments} member,
-     * or an explicit JSON {@code null}, is unaffected and still normalizes to {@code {}} through
-     * {@link #argumentsOf} — only a present non-null non-object value is rejected here.
-     */
-    private static final String ARGUMENTS_TYPE_REJECTION_MESSAGE =
-            "Invalid tool arguments: arguments must be an object";
-
-    /**
      * The hard per-page examination cap (§4.7): a page examines at most this many multiples of
      * {@code mcp.tools.pageSize} candidates, bounding the authorization fan-out an unauthenticated
      * {@code tools/list} scan can trigger (issue #416).
@@ -818,10 +806,12 @@ final class McpRequestDispatcher {
      * through the same codec decode as every other method, so it requires {@code params} exactly like
      * the rest of the supported set.
      *
-     * <p>Only once the envelope validates does this method run the ordered, fail-closed pre-dispatch
-     * request-interceptor stage (T016, contract §4.7 stage 5) — after envelope decode, before method
-     * dispatch, before any tool is resolved, and before any argument is processed. A permitted request
-     * continues to {@link #dispatchByMethod}; a rejection never reaches it.
+     * <p>After envelope decoding, the complete official per-method {@code params} schema validates
+     * before negotiation or application policy. A violation is a JSON-RPC {@code -32602} response over
+     * HTTP 400. Only then does header/body and Phase-1 negotiation run; those failures are {@code
+     * -32020}. A negotiated request enters the ordered, fail-closed pre-dispatch request-interceptor
+     * stage (T016, contract §4.7 stage 5) before method dispatch, tool lookup, authorization, or
+     * application input processing.
      */
     void dispatch(RoutingContext context) {
         SecurityContextSnapshot security = establishedSecurity();
@@ -833,16 +823,17 @@ final class McpRequestDispatcher {
         }
         JsonNode envelope = decoded.envelope();
         McpMethod method = classifyMethod(envelope.get("method").asText());
-        // R05 (issue #429): protocol negotiation — the required header/body agreement and per-method
-        // _meta shape — runs here, strictly after strict decoding succeeded and strictly before the
-        // request-interceptor stage immediately below, tool lookup, or authorization. This ordering is
-        // the fix: a validation that instead ran inside a per-method handler (as the pre-existing
-        // tools/call params.name shape check does) would run after interceptors already had, since
-        // dispatchByMethod is reached only once runRequestInterceptors below has already permitted.
+        McpProtocolCodec.ParamsValidationResult paramsValidation = codec.validateOfficialParams(envelope);
+        if (paramsValidation.isError()) {
+            writePreDispatchProtocolRejection(context, envelope, method, security, paramsValidation.error());
+            return;
+        }
+        // Header/body negotiation and Phase-1 negotiation policy run only after the official schema
+        // boundary, but still before every application policy or dispatch stage.
         McpProtocolCodec.NegotiationResult negotiation =
                 codec.validateNegotiation(envelope, context.request().headers());
         if (negotiation.isError()) {
-            writeNegotiationRejection(context, envelope, method, security, negotiation);
+            writePreDispatchProtocolRejection(context, envelope, method, security, negotiation.error());
             return;
         }
         context.put(PROTOCOL_VERSION_KEY, negotiation.protocolVersion());
@@ -1082,7 +1073,7 @@ final class McpRequestDispatcher {
      *
      * <p>This method is reached from {@link #dispatch} only once {@link McpProtocolCodec#validateNegotiation}
      * has already succeeded — negotiation always completes strictly before {@link #runRequestInterceptors}
-     * ever runs — so, unlike {@link #writeNegotiationRejection}, the terminal event here does carry the
+     * ever runs — so, unlike {@link #writePreDispatchProtocolRejection}, the terminal event here does carry the
      * negotiated {@code protocolVersion} via {@link #protocolVersionOf}. (Security review, post-R05: an
      * earlier revision passed a hardcoded {@code null} on the normal-response branch below while the
      * over-cap branch correctly used {@link #protocolVersionOf} — the same request reported a version
@@ -1141,30 +1132,28 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * Writes the bounded, non-leaking JSON-RPC error response for a failed protocol-negotiation check
-     * (R05, issue #429; contract §4.7 — "Header/body mismatch is HTTP 400 with -32020"). Runs strictly
-     * before negotiation could ever succeed for this request — this method is called exactly when {@link
-     * McpProtocolCodec#validateNegotiation} itself failed — so the terminal event carries no {@code
-     * protocolVersion}: negotiation did not complete for this request (contract §4.7 — "emit only when
-     * negotiation completed"). This is unlike {@link #writeInterceptorRejection}, which runs only after
-     * negotiation has already succeeded and so does carry the negotiated version.
-     * Correlation and security are already established by this point (stages 2 and 3 both precede
-     * stage 4's negotiation check) and are still recorded.
+     * Writes the bounded, non-leaking JSON-RPC error response for a failed official-params or
+     * negotiation check. Official {@code params} validation produces {@code -32602 Invalid params};
+     * header/body disagreement and Phase-1 negotiation policy produce {@code -32020 Header/body
+     * mismatch}. Both occur before negotiation completes, so the terminal event carries no {@code
+     * protocolVersion}. This is unlike {@link #writeInterceptorRejection}, which runs only after
+     * negotiation has succeeded and therefore does carry the negotiated version. Correlation and
+     * security are already established and remain recorded.
      *
      * @param context the request context
      * @param envelope the successfully decoded envelope whose id is echoed when it fits the cap
      * @param method the classified method, recorded on the terminal event
      * @param security the established security snapshot, recorded on the terminal event
-     * @param negotiation the failed {@link McpProtocolCodec.NegotiationResult}
+     * @param error the bounded official-params or negotiation error
      */
-    private void writeNegotiationRejection(
+    private void writePreDispatchProtocolRejection(
             RoutingContext context,
             JsonNode envelope,
             McpMethod method,
             @Nullable SecurityContextSnapshot security,
-            McpProtocolCodec.NegotiationResult negotiation) {
+            McpProtocolCodec.CodecError error) {
         context.response().putHeader("content-type", JSON_CONTENT_TYPE);
-        int code = negotiation.error().code();
+        int code = error.code();
         int status = httpStatusFor(code);
         byte[] errorBytes;
         try {
@@ -1174,8 +1163,7 @@ final class McpRequestDispatcher {
             // promised cap ever applied. This now serializes once through the same capped stream every
             // other terminal writer in this class uses, degrading to the id-less internal error below
             // only when the cap actually trips while bytes are being produced.
-            errorBytes = encodeCapped(
-                    errorNode(envelope.get("id"), code, negotiation.error().message()));
+            errorBytes = encodeCapped(errorNode(envelope.get("id"), code, error.message()));
         } catch (OutputCapExceededException overCap) {
             byte[] fallback = boundedErrorResponse(null, INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
             McpRequestTerminalEvent overCapTerminal = McpRequestTerminalEvent.failed(
@@ -1931,11 +1919,9 @@ final class McpRequestDispatcher {
      * McpToolInvoker#prepare} is ever called — so the response is committed to SSE framing before
      * invocation begins and independently of how invocation later resolves: a synchronous {@code
      * prepare}/{@code invoke} throw and a failed invocation future both settle through {@link
-     * #writeSseFallback}, never a JSON response. {@code arguments} is the bounded empty map for an
-     * absent or explicit-{@code null} {@code arguments} member; a present member that is neither
-     * absent/null nor a JSON object (an array, string, number, or boolean) is rejected outright — see
-     * {@link #isMalformedArguments} — rather than silently coerced to the empty map, so a zero-argument
-     * tool never executes from a schema-invalid call.
+     * #writeSseFallback}, never a JSON response. The official schema has already admitted only an
+     * absent or object-valued {@code arguments} member; explicit {@code null} and every other
+     * non-object value are rejected as {@code -32602} before SSE selection.
      *
      * <p>Stage 1 — the precompiled schema validator T009 compiled at composition — runs next, on
      * exactly this {@code arguments} tree, before {@code prepare()} is ever called: a schema rejection
@@ -1954,25 +1940,6 @@ final class McpRequestDispatcher {
             String toolName,
             McpToolInvoker invoker) {
         selectSse(context);
-        if (isMalformedArguments(envelope)) {
-            // A present, non-null, non-object arguments member (e.g. [], "x", 3) is rejected outright
-            // rather than coerced to {}: coercion would let a zero-argument tool execute from a
-            // schema-invalid call. Settles exactly like a stage-1 schema rejection — bounded text-only
-            // isError=true — and never calls prepare().
-            // No tool ever ran, so there is no output value to observe: coordinator/toolContext are
-            // omitted, and writeToolResult never publishes onToolOutput for this call.
-            writeToolResult(
-                    context,
-                    envelope,
-                    security,
-                    toolName,
-                    McpToolResult.error(ARGUMENTS_TYPE_REJECTION_MESSAGE),
-                    null,
-                    McpErrorType.INPUT_VALIDATION,
-                    null,
-                    null);
-            return;
-        }
         Map<String, Object> arguments = argumentsOf(envelope);
         if (!schemaValid(toolName, arguments)) {
             // Same rationale as above: rejected before invocation, no output observation.
@@ -2295,31 +2262,17 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * Reports whether the {@code tools/call} {@code arguments} member is present, non-null, and not a
-     * JSON object — an array, string, number, or boolean. {@link #invokeAndRespond} checks this before
-     * ever calling {@link #argumentsOf}, and rejects such a request outright instead of letting it
-     * silently coerce to the empty map: without this guard a zero-argument tool would execute from a
-     * schema-invalid call.
-     *
-     * @param envelope the validated {@code tools/call} request envelope
-     * @return {@code true} when {@code arguments} is present, non-null, and not an object
-     */
-    private static boolean isMalformedArguments(JsonNode envelope) {
-        JsonNode arguments = envelope.get("params").get("arguments");
-        return arguments != null && !arguments.isNull() && !arguments.isObject();
-    }
-
-    /**
-     * Normalizes the {@code tools/call} {@code arguments} member to a bounded, non-null map: absent or
-     * explicit {@code null} both normalize to the same immutable empty map as {@code {}} (§4.7). A
-     * present non-null, non-object value is never passed here — {@link #invokeAndRespond} rejects it
-     * through {@link #isMalformedArguments} first. A present object is shallow-converted to
-     * {@code Map<String, Object>}; deeper structure is preserved as nested {@code Map}/{@code List}/
-     * scalar values exactly as Jackson's generic conversion produces them.
+     * Normalizes the {@code tools/call} {@code arguments} member to a bounded, non-null map. An absent
+     * member normalizes to the immutable empty map ({@code {}}); the official per-method schema already
+     * guaranteed that any present member is an object. The defensive explicit-{@code null} branch is
+     * unreachable on the dispatch path because {@code null} is rejected as {@code -32602} before SSE
+     * selection. A present object is shallow-converted to {@code Map<String, Object>}; deeper structure
+     * is preserved as nested {@code Map}/{@code List}/scalar values exactly as Jackson's generic
+     * conversion produces them.
      */
     private static Map<String, Object> argumentsOf(JsonNode envelope) {
         JsonNode arguments = envelope.get("params").get("arguments");
-        if (arguments == null || !arguments.isObject()) {
+        if (arguments == null || arguments.isNull()) {
             return Map.of();
         }
         return OUTPUT_ENCODER.convertValue(arguments, new TypeReference<Map<String, Object>>() {});
@@ -2711,7 +2664,7 @@ final class McpRequestDispatcher {
      * an unrestricted {@code writeValueAsBytes}, and only then compared the completed array's length
      * against the cap: this is the "ordinary protocol errors have the same defect" finding named
      * alongside the negotiation-rejection defect this same repair slice fixes in {@link
-     * #writeNegotiationRejection}. {@link McpProtocolCodec#errorResponseFor} itself is unchanged and
+     * #writePreDispatchProtocolRejection}. {@link McpProtocolCodec#errorResponseFor} itself is unchanged and
      * still used directly by {@code McpGoldenWireTest} to pin the codec's own wire-format bytes.
      *
      * @param context the request context

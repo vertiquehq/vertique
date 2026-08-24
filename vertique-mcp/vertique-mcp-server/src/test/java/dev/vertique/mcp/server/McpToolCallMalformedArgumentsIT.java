@@ -4,7 +4,10 @@
 package dev.vertique.mcp.server;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assertions.fail;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
@@ -33,7 +36,6 @@ import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpServer;
-import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
@@ -47,36 +49,28 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Review-finding proof (round-14 remediation): a present, non-null, non-object {@code
- * tools/call.arguments} member ({@code []}, {@code "x"}, {@code 3}) must be rejected as a bounded
- * invalid-arguments tool error, never silently coerced to {@code {}} — the pre-fix behavior, which let
- * a zero-argument tool execute from a schema-invalid call.
+ * R15 TP-002 — a present non-object {@code tools/call.arguments} member is an official-method-params
+ * violation, rejected at the protocol boundary before lookup, authorization, SSE selection, or tool
+ * invocation.
  *
- * <p>Every malformed row asserts on the tool's own invocation counter, never only on the response
- * shape, so a regression that answered the right JSON but still ran the handler cannot pass. The
- * control row (absent {@code arguments}) proves that same counter is genuinely live: a zero count
- * nothing ever increments would make the malformed rows' zero-count assertions vacuous.
+ * <p>The fixture exposes the authorization interaction and invocation counter separately. An HTTP 400
+ * JSON body alone would not prove ordering: a later authorization or tool result could produce a
+ * failure response after the forbidden application stages had already run.
  */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
-class McpToolCallMalformedArgumentsIT {
-
-    private static final String ARRAY_ARGUMENTS_ROW = "shouldRejectArrayArgumentsWithoutInvoking";
-    private static final String STRING_ARGUMENTS_ROW = "shouldRejectStringArgumentsWithoutInvoking";
-    private static final String NUMBER_ARGUMENTS_ROW = "shouldRejectNumberArgumentsWithoutInvoking";
-    private static final String ABSENT_ARGUMENTS_CONTROL_ROW = "shouldInvokeOnceWithAbsentArguments";
+public class McpToolCallMalformedArgumentsIT {
 
     private static final String REQUEST_PATH = "/mcp/";
     private static final String SERVER_NAME = "vertique-test";
     private static final String SERVER_VERSION = "1.0";
     private static final String PROTOCOL_VERSION = "2026-07-28";
-    private static final String SSE_PREFIX = "event: message\ndata: ";
     private static final String PUBLIC_TOOL = "malformed.publicTool";
-    private static final String REJECTION_MESSAGE = "Invalid tool arguments: arguments must be an object";
 
     private final Vertx vertx = Vertx.vertx();
 
@@ -85,8 +79,10 @@ class McpToolCallMalformedArgumentsIT {
     private HttpClient rawClient;
     private WebClient client;
 
-    private static Stream<String> rows() {
-        return Stream.of(ARRAY_ARGUMENTS_ROW, STRING_ARGUMENTS_ROW, NUMBER_ARGUMENTS_ROW, ABSENT_ARGUMENTS_CONTROL_ROW);
+    private static Stream<MalformedArgumentsCase> malformedArgumentsCases() {
+        return Stream.of(
+                new MalformedArgumentsCase("array arguments", "[]"),
+                new MalformedArgumentsCase("explicit null arguments", "null"));
     }
 
     @AfterEach
@@ -104,82 +100,60 @@ class McpToolCallMalformedArgumentsIT {
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("rows")
-    @DisplayName("a present non-object arguments member is rejected, never coerced to {}")
-    void shouldRejectNonObjectArgumentsWithoutCoercion(String row) throws Exception {
+    @MethodSource("malformedArgumentsCases")
+    @DisplayName("R15: malformed arguments are JSON invalid params before authorization or SSE")
+    void shouldRejectMalformedArgumentsBeforeLookupAuthorizationAndSseSelection(MalformedArgumentsCase argumentsCase)
+            throws Exception {
         startServer();
-        switch (row) {
-            case ARRAY_ARGUMENTS_ROW -> shouldRejectMalformedArguments("[]");
-            case STRING_ARGUMENTS_ROW -> shouldRejectMalformedArguments("\"x\"");
-            case NUMBER_ARGUMENTS_ROW -> shouldRejectMalformedArguments("3");
-            case ABSENT_ARGUMENTS_CONTROL_ROW -> shouldInvokeOnceWithAbsentArguments();
-            default -> fail("unknown row: " + row);
-        }
-    }
+        HttpResponse<Buffer> response = await(callTool(argumentsCase.rawValue()));
 
-    private void shouldRejectMalformedArguments(String argumentsLiteral) throws Exception {
-        HttpResponse<Buffer> response = await(callTool(argumentsLiteral));
-
-        // DECISIVE: the zero-argument tool must never run — a regression that coerced [] / "x" / 3 to
-        // {} would execute the tool from a schema-invalid call, exactly the defect this proof catches.
-        assertThat(fixture.publicTool().invocationCount())
-                .as("a present non-object arguments member must never reach invocation")
-                .isZero();
-
-        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.statusCode())
+                .as(argumentsCase + " must be rejected before tools/call becomes SSE")
+                .isEqualTo(400);
         assertThat(response.getHeader("content-type"))
-                .as("SSE is already selected before this check runs")
-                .isEqualTo("text/event-stream");
-        JsonObject result = sseResult(response.bodyAsString());
-        assertThat(result.getBoolean("isError"))
-                .as("a rejected non-object arguments member settles as a bounded tool error")
-                .isTrue();
-        assertThat(result.getJsonArray("content").getJsonObject(0).getString("text"))
-                .isEqualTo(REJECTION_MESSAGE);
+                .as(argumentsCase + " must be a JSON protocol rejection, never an SSE tool result")
+                .startsWith("application/json")
+                .doesNotContain("text/event-stream");
+        assertThat(response.bodyAsJsonObject().getJsonObject("error").getInteger("code"))
+                .as(argumentsCase + " must carry the protocol-owned Invalid params error")
+                .isEqualTo(-32602);
+        verify(fixture.policyEnforcer(), never()).decide(any(), any());
+        assertThat(fixture.publicTool().invocationCount())
+                .as("DECISIVE (" + argumentsCase + "): malformed official params must not reach tool invocation")
+                .isZero();
     }
 
-    private void shouldInvokeOnceWithAbsentArguments() throws Exception {
-        HttpResponse<Buffer> response = await(callTool(null));
+    @Test
+    @DisplayName("R15 control: valid object arguments reach policy and tool invocation")
+    void shouldReachPolicyAndToolInvocationForValidObjectArguments() throws Exception {
+        startServer();
+        HttpResponse<Buffer> response = await(callTool("{}"));
 
         assertThat(response.statusCode()).isEqualTo(200);
-        JsonObject result = sseResult(response.bodyAsString());
-        assertThat(result.getBoolean("isError")).isFalse();
-
-        // Non-vacuousness proof: the exact same counter type the malformed rows assert isZero() on
-        // genuinely increments for a well-formed call.
+        assertThat(response.getHeader("content-type")).startsWith("text/event-stream");
+        verify(fixture.policyEnforcer()).decide(any(), any());
         assertThat(fixture.publicTool().invocationCount())
-                .as("the control row proves the invocation counter is genuinely live")
+                .as("CONTROL: the malformed-case counter must increment for a valid object-valued call")
                 .isEqualTo(1);
     }
 
     /**
-     * Posts one {@code tools/call} for the fixture's public tool. {@code argumentsLiteral} is embedded
-     * verbatim as the raw JSON value of the {@code arguments} member ({@code "[]"}, {@code "\"x\""},
-     * {@code "3"}), or the member is omitted entirely when {@code argumentsLiteral} is {@code null}.
+     * Posts one {@code tools/call} for the fixture's public tool with {@code rawArgumentsValue} embedded
+     * verbatim as the JSON value of its {@code arguments} member. {@link WebClient} aggregates the
+     * response body before its future settles, so the JSON body is attached before {@link #await(Future)}
+     * observes the result.
      */
-    private Future<HttpResponse<Buffer>> callTool(String argumentsLiteral) {
-        String argumentsMember = argumentsLiteral == null ? "" : ",\"arguments\":" + argumentsLiteral;
+    private Future<HttpResponse<Buffer>> callTool(String rawArgumentsValue) {
         String body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"_meta\":{"
                 + "\"io.modelcontextprotocol/protocolVersion\":\"" + PROTOCOL_VERSION + "\","
                 + "\"io.modelcontextprotocol/clientCapabilities\":{}},\"name\":\"" + PUBLIC_TOOL + "\""
-                + argumentsMember + "}}";
+                + ",\"arguments\":" + rawArgumentsValue + "}}";
         return client.post(fixture.port(), "127.0.0.1", REQUEST_PATH)
                 .putHeader("content-type", "application/json")
                 .putHeader("MCP-Protocol-Version", PROTOCOL_VERSION)
                 .putHeader("Mcp-Method", "tools/call")
                 .putHeader("Mcp-Name", PUBLIC_TOOL)
                 .sendBuffer(Buffer.buffer(body));
-    }
-
-    /** Extracts and parses the JSON payload framed by the frozen {@code event: message}/{@code data:} block. */
-    private static JsonObject sseResult(String rawBody) {
-        assertThat(rawBody)
-                .as("a known, authorized tools/call response must use the frozen SSE framing")
-                .startsWith(SSE_PREFIX);
-        JsonObject data = new JsonObject(rawBody.substring(SSE_PREFIX.length()).stripTrailing());
-        JsonObject result = data.getJsonObject("result");
-        assertThat(result).as("a tools/call response must carry a result").isNotNull();
-        return result;
     }
 
     private void startServer() throws Exception {
@@ -191,6 +165,13 @@ class McpToolCallMalformedArgumentsIT {
 
     private static <T> T await(Future<T> future) throws Exception {
         return future.toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+    }
+
+    private record MalformedArgumentsCase(String description, String rawValue) {
+        @Override
+        public String toString() {
+            return description;
+        }
     }
 
     // --- Fixture ---
@@ -273,6 +254,7 @@ class McpToolCallMalformedArgumentsIT {
         private final HttpServer server;
         private final int port;
         private final CountingToolInvoker publicTool;
+        private final McpPolicyEnforcer policyEnforcer;
 
         private Fixture(Vertx vertx) throws Exception {
             McpServerConfig config = McpServerConfig.builder()
@@ -292,14 +274,14 @@ class McpToolCallMalformedArgumentsIT {
             McpToolRegistry registry = McpToolRegistry.build(Set.of(publicTool));
 
             RecordingSecurityRuntime securityRuntime = new RecordingSecurityRuntime();
-            McpPolicyEnforcer policyEnforcer = new McpPolicyEnforcer(new SecurityPolicyEnforcer(
+            this.policyEnforcer = spy(new McpPolicyEnforcer(new SecurityPolicyEnforcer(
                     Optional.empty(),
                     Optional.empty(),
                     Set.of(),
                     new SecurityEventEmitter(Set.of()),
                     NO_OP_CONTEXT_HOLDER,
                     securityRuntime,
-                    Optional.empty()));
+                    Optional.empty())));
             HttpConfig httpConfig = HttpConfig.builder().idleTimeoutSeconds(60).build();
 
             McpRouterMount mount = new McpRouterMount(
@@ -342,6 +324,10 @@ class McpToolCallMalformedArgumentsIT {
 
         CountingToolInvoker publicTool() {
             return publicTool;
+        }
+
+        McpPolicyEnforcer policyEnforcer() {
+            return policyEnforcer;
         }
 
         private static IdentityResolutionMiddleware identityResolution(SecurityRuntime securityRuntime) {

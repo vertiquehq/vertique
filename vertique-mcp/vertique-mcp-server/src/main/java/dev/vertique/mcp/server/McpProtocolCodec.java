@@ -26,18 +26,17 @@ import java.util.Set;
  * the final-spec JSON-RPC codes — {@code -32700} (malformed JSON or a strict-reader rejection such
  * as a duplicate key or trailing token), {@code -32600} (invalid envelope/request), {@code -32601}
  * (unknown method, classified against the bounded supported-method set), and {@code -32603}
- * (internal error). Error messages are the standard JSON-RPC strings and no {@code data} member is
- * emitted.
+ * (internal error). Official per-method {@code params} violations are {@code -32602} (invalid
+ * params). Error messages are the standard JSON-RPC strings and no {@code data} member is emitted.
  *
  * <p>Envelope validation trusts only the framework-owned {@link McpEnvelopeJsonCodec}; the supported
  * request methods are the bounded set {@code server/discover}, {@code tools/list}, and
  * {@code tools/call}. Tool-level authorization ({@code -32602}) belongs to a later HTTP slice and is
- * deliberately absent here. Protocol negotiation — validation of {@code params} against the pinned
- * official per-method schema (R08, merge blocker 1), the required header/body agreement, the per-method
- * {@code _meta} shape (issue #429), and the reserved {@code tools/call} MRTR fields — is {@link
- * #validateNegotiation}, a distinct step the caller runs strictly after a successful {@link
- * #decodeEnvelope} and strictly before any interceptor, tool lookup, or authorization; this class has
- * no dependency on any of those later stages.
+ * deliberately absent here. Official per-method {@code params} validation is {@link
+ * #validateOfficialParams}; it runs immediately after a successful {@link #decodeEnvelope}. Protocol
+ * negotiation — required header/body agreement, supported-version policy, and rejected {@code
+ * tools/call} MRTR fields — is {@link #validateNegotiation}; it runs only after official params
+ * validation. Neither step depends on interceptors, tool lookup, or authorization.
  */
 final class McpProtocolCodec {
 
@@ -47,28 +46,21 @@ final class McpProtocolCodec {
     private static final int PARSE_ERROR = -32700;
     private static final int INVALID_REQUEST = -32600;
     private static final int METHOD_NOT_FOUND = -32601;
+    private static final int INVALID_PARAMS = -32602;
     private static final int INTERNAL_ERROR = -32603;
 
     /**
      * The implementation-defined JSON-RPC server-error-range code (contract §4.7 — "Header/body
-     * mismatch is HTTP 400 with -32020") this class's {@link #validateNegotiation} settles as. Widened
-     * (R05, issues #429/#431) to cover the whole pre-dispatch protocol-negotiation stage this method
-     * owns — a missing/mismatched required header, a structurally invalid {@code _meta} negotiation
-     * shape, and a rejected reserved {@code tools/call} field — rather than the header/body comparison
-     * alone: every one of these is a negotiation-stage failure in the sense R05's own title names, and
-     * splitting them across two codes would give a caller no reliable signal that "negotiation failed"
-     * without also parsing the specific reason. Widened again (R08, merge blocker 1) to also cover a
-     * {@code params} value that fails the pinned official per-method schema — {@link
-     * McpProtocolSchemaValidator} — for exactly the same reason: it is still a negotiation-stage
-     * failure, and the contract's own frozen stage-4 language ("strict JSON decode, official envelope
-     * validation, required-header comparison...") already named schema validation as part of this same
-     * stage before R05 ever ran.
+     * mismatch is HTTP 400 with -32020") this class's {@link #validateNegotiation} settles as. It is
+     * reserved for HTTP header/body disagreement and Phase-1 negotiation policy, never official
+     * per-method schema violations.
      */
     private static final int NEGOTIATION_MISMATCH = -32020;
 
     private static final String MSG_PARSE_ERROR = "Parse error";
     private static final String MSG_INVALID_REQUEST = "Invalid Request";
     private static final String MSG_METHOD_NOT_FOUND = "Method not found";
+    private static final String MSG_INVALID_PARAMS = "Invalid params";
     private static final String MSG_INTERNAL_ERROR = "Internal error";
 
     /**
@@ -174,34 +166,36 @@ final class McpProtocolCodec {
     }
 
     /**
+     * Validates the complete pinned official {@code params} schema for an already envelope-validated
+     * request.
+     *
+     * <p>This protocol-boundary check is deliberately independent of HTTP negotiation and runs before
+     * headers, request interceptors, tool lookup, authorization, application input validation, SSE
+     * selection, or invocation. A violation is JSON-RPC {@code -32602} with the bounded generic
+     * {@code Invalid params} message.
+     *
+     * @param envelope a successfully decoded envelope, as {@link Decoded#envelope()} carries it
+     * @return a successful result when {@code params} satisfies the pinned schema, otherwise the
+     *     bounded {@code -32602} error
+     */
+    ParamsValidationResult validateOfficialParams(JsonNode envelope) {
+        String method = envelope.get("method").asText();
+        JsonNode params = envelope.get("params");
+        return schemaValidator.isValid(method, params)
+                ? ParamsValidationResult.ok()
+                : ParamsValidationResult.failed(invalidParamsError());
+    }
+
+    /**
      * Validates protocol negotiation for one already envelope-validated request (contract §4.7,
-     * issues #429/#438): {@code params} against the pinned official per-method schema ({@link
-     * McpProtocolSchemaValidator}, R08), the required {@code MCP-Protocol-Version} / {@code
-     * Mcp-Method} / {@code Mcp-Name} headers against their body-mirrored values, the mandatory
-     * per-method {@code _meta} negotiation shape, and — for {@code tools/call} only — the rejected
-     * reserved MRTR fields.
+     * issues #429/#438): the required {@code MCP-Protocol-Version} / {@code Mcp-Method} / {@code
+     * Mcp-Name} headers against their body-mirrored values, supported protocol-version policy, and —
+     * for {@code tools/call} only — the rejected reserved MRTR fields.
      *
      * <p><strong>Ordering is the caller's obligation, not this method's.</strong> This method reads
      * only {@code envelope} and {@code headers}; it has no dependency on interceptors, the tool
-     * registry, or authorization, so a caller that invokes it immediately after a successful {@link
-     * #decodeEnvelope} and before anything else necessarily satisfies contract §4.7's "before
-     * interceptors, lookup, or authorization" ordering.
-     *
-     * <p><strong>Official schema.</strong> {@code params} must satisfy the pinned schema's {@code
-     * $defs} entry for {@code method} — {@code RequestParams} ({@code server/discover}), {@code
-     * PaginatedRequestParams} ({@code tools/list}: types {@code cursor} as a string when present),
-     * {@code CallToolRequestParams} ({@code tools/call}: requires {@code name} as a non-absent string;
-     * {@code arguments} is deliberately excluded from this check — see {@link
-     * McpProtocolSchemaValidator}'s javadoc for why). This is the check R08 (merge blocker 1) adds: before
-     * it, an invalid {@code cursor} or {@code name} reached interceptors, tool lookup, or authorization,
-     * because none of the narrower checks below ever inspected them (a non-object {@code arguments}
-     * value also reached them, and by design still does — {@link McpRequestDispatcher}'s pre-existing
-     * stage-6 input pipeline rejects it downstream instead, with a different, already-frozen wire
-     * shape). The pinned schema's {@code name} type is a bare {@code string} with no {@code minLength}, so a
-     * present-but-<em>blank</em> {@code name} is schema-valid and is still left, exactly as before, to
-     * {@link McpRequestDispatcher#writeToolsCall}'s existing, already-tested {@code -32602}
-     * unknown-or-unauthorized handling; only an <em>absent</em> or <em>non-textual</em> {@code name}
-     * — a genuine schema violation — is now rejected here instead of reaching that later stage.
+     * registry, or authorization. The caller invokes {@link #validateOfficialParams} first, then this
+     * method, and both before application policy.
      *
      * <p><strong>Header comparison.</strong> {@code MCP-Protocol-Version} must equal {@code
      * params._meta["io.modelcontextprotocol/protocolVersion"]} — the vendored schema's own {@code
@@ -231,10 +225,8 @@ final class McpProtocolCodec {
      * cannot be skipped in favor of trusting the header alone) and must be a member of {@link
      * #SUPPORTED_PROTOCOL_VERSIONS} — the single final-2026 version this server actually advertises;
      * {@code io.modelcontextprotocol/clientCapabilities} must be an object. Both are schema-required on
-     * every supported method's {@code RequestMetaObject}; these bounds (length, control characters, the
-     * supported-version set) are application policy layered on top of the pinned schema's own plain
-     * {@code string} type for {@code protocolVersion}, so the official-schema check above does not
-     * subsume them.
+     * every supported method's {@code RequestMetaObject}. The bounds (length, control characters, and
+     * supported-version set) are Phase-1 negotiation policy layered on the official schema.
      *
      * <p><strong>Reserved fields.</strong> A {@code tools/call} {@code params} containing {@code
      * inputResponses} or {@code requestState} — schema-permitted MRTR fields Phase 1 does not implement
@@ -250,15 +242,6 @@ final class McpProtocolCodec {
     NegotiationResult validateNegotiation(JsonNode envelope, MultiMap headers) {
         String method = envelope.get("method").asText();
         JsonNode params = envelope.get("params");
-        // R08 (merge blocker 1): official envelope validation — contract §4.7 stage 4 names this before
-        // "required-header comparison" — against the pinned per-method schema runs first, so a
-        // structurally invalid cursor or name (neither of which the hand-rolled checks below ever
-        // inspected) is rejected here, before any of the narrower _meta/header/reserved-field checks
-        // below could otherwise let it through to them. arguments' type-validity is deliberately
-        // excluded from this check (see McpProtocolSchemaValidator's javadoc for why).
-        if (!schemaValidator.isValid(method, params)) {
-            return NegotiationResult.failed(negotiationError());
-        }
         JsonNode meta = params.get(META_FIELD);
         if (meta == null || !meta.isObject()) {
             return NegotiationResult.failed(negotiationError());
@@ -319,6 +302,35 @@ final class McpProtocolCodec {
         return new CodecError(NEGOTIATION_MISMATCH, MSG_NEGOTIATION_MISMATCH, null);
     }
 
+    private static CodecError invalidParamsError() {
+        return new CodecError(INVALID_PARAMS, MSG_INVALID_PARAMS, null);
+    }
+
+    /**
+     * The outcome of {@link #validateOfficialParams}: either success or a bounded invalid-params error.
+     *
+     * @param error the bounded {@code -32602} error, or {@code null} when validation succeeded
+     */
+    record ParamsValidationResult(@Nullable CodecError error) {
+
+        /**
+         * Reports whether official parameter validation failed.
+         *
+         * @return {@code true} when an invalid-params error was produced
+         */
+        boolean isError() {
+            return error != null;
+        }
+
+        static ParamsValidationResult ok() {
+            return new ParamsValidationResult(null);
+        }
+
+        static ParamsValidationResult failed(CodecError error) {
+            return new ParamsValidationResult(error);
+        }
+    }
+
     /**
      * The outcome of {@link #validateNegotiation}: either the negotiated protocol version or a bounded
      * classified error, never both.
@@ -355,7 +367,7 @@ final class McpProtocolCodec {
     //
     // R14 item 4 deleted the fourth, errorResponseFor(JsonNode, NegotiationResult): after R12 it had
     // zero callers in main OR test source, and deleting it makes R12's own documented mutation —
-    // putting codec.errorResponseFor(...) back into writeNegotiationRejection — fail to COMPILE. That
+    // putting codec.errorResponseFor(...) back into writePreDispatchProtocolRejection — fail to COMPILE. That
     // is the regression protection R12's evidence reported as impossible to obtain: no test can
     // distinguish the defective and fixed byte output, but a method that no longer exists cannot be
     // called back into a write path at all.

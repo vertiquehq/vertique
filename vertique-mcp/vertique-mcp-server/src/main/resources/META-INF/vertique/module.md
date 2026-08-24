@@ -200,11 +200,12 @@ materialized. Discovery and `tools/list` responses are far below the default cap
 structured result is bounded the same way — see [Bounded output pipeline](#bounded-output-pipeline)
 for the full output-stage order this cap is one part of.
 
-Every JSON-RPC error response — a negotiation-mismatch `-32020`, an unknown-or-unauthorized `-32602`,
-an interceptor rejection, an ordinary envelope-decode failure (`-32700`/`-32600`/`-32601`), and every
-internal-error fallback — serializes through this exact same capped mechanism, never a separate
-unrestricted encode measured only after the fact. The one unbounded element any of these shapes can
-carry is the echoed request `id` (bounded only by the envelope codec's own frozen `maxStringLength`,
+Every JSON-RPC error response — a negotiation-mismatch `-32020`, an official-params or
+unknown-or-unauthorized `-32602`, an interceptor rejection, an ordinary envelope-decode failure
+(`-32700`/`-32600`/`-32601`), and every internal-error fallback — serializes through this exact same
+capped mechanism, never a separate unrestricted encode measured only after the fact. The one
+unbounded element any of these shapes can carry is the echoed request `id` (bounded only by the
+envelope codec's own frozen `maxStringLength`,
 far above this cap's floor): when even the id-bearing shape would exceed `mcp.output.maxBytes`, the
 response degrades to the minimal id-less generic internal-error shape instead — itself encoded through
 the same capped writer — so a client that sent an oversized id receives a bounded response with a
@@ -268,33 +269,33 @@ no `data`: `-32700` *Parse error* (malformed JSON, or an envelope-codec rejectio
 key or trailing token; null id), `-32600` *Invalid Request* (bad envelope — wrong version, a missing
 or non-string/non-integer id, a missing method, or a missing or non-object `params`; original usable
 id when the id itself is a trustworthy string or integer, else null), and `-32601` *Method not
-found* (unknown method; original usable id). Tool-level authorization (`-32602`) classification
-belongs to the tool-dispatch slice and is not part of this codec. An internal codec failure settles
-through a pre-encoded `-32603` *Internal error* response that is written exactly once and never
-carries the cause's text, so an internal exception message cannot leak to a client.
+found* (unknown method; original usable id). Unknown-or-unauthorized tool classification (`-32602`)
+belongs to the tool-dispatch slice and is not part of envelope decoding. An internal codec failure
+settles through a pre-encoded `-32603` *Internal error* response that is written exactly once and
+never carries the cause's text, so an internal exception message cannot leak to a client.
 
-Once a decode succeeds, `McpProtocolCodec#validateNegotiation` validates protocol negotiation (R05,
-issue #429; R08, merge blocker 1): `params` must satisfy the pinned official per-method schema
-(`schema/2026-07-28/schema.json` — `RequestParams` for `server/discover`, `PaginatedRequestParams`
-for `tools/list`, `CallToolRequestParams` for `tools/call`), so a schema-invalid `cursor` or `name` is
-rejected here — one narrow, deliberate exception: `tools/call`'s `arguments` is excluded from this
-schema check, because a present, non-null, non-object `arguments` value is already rejected
-downstream, as a bounded SSE tool-error (never invoking the handler), by the pre-existing
-[Request-time input pipeline](#request-time-input-pipeline)'s stage 1; rejecting it here too would
-change that already-shipped wire response. The required `MCP-Protocol-Version`, `Mcp-Method`, and `Mcp-Name`
-headers must also agree with their body-mirrored values (`params._meta`'s
-`io.modelcontextprotocol/protocolVersion`, the envelope's `method`, and — for `tools/call` only, when
-present — `params.name`), the per-method `_meta` shape must be structurally valid
-(`io.modelcontextprotocol/protocolVersion` a non-blank string of at most 64 characters containing no
-control character, and a member of the versions this server actually supports;
-`io.modelcontextprotocol/clientCapabilities` an object), and — for `tools/call` only — `params` must
-carry neither of the reserved multi-round-trip fields `inputResponses`/`requestState`. Any violation
-classifies as `-32020` *Header/body mismatch*, mapped to HTTP 400 through the same bounded, capped
-writer every other terminal response uses. This runs strictly after envelope decode and strictly
-before the request-interceptor stage below, tool lookup, or authorization — see
-[Request interceptor stage](#request-interceptor-stage). The pinned schema document ships in this
-module's own resources (not test-only), so this validation is available in production as shipped, not
-merely in the test tree.
+Once a decode succeeds, `McpProtocolCodec#validateOfficialParams` validates `params` against the
+unmodified pinned official per-method schema (`schema/2026-07-28/schema.json` — `RequestParams` for
+`server/discover`, `PaginatedRequestParams` for `tools/list`, `CallToolRequestParams` for
+`tools/call`). A schema-invalid `cursor` or `name`, or a present non-object `tools/call.arguments`,
+is rejected as HTTP 400 JSON-RPC `-32602` *Invalid params* through the same bounded, capped JSON
+writer every other terminal response uses. This official request-shape check runs strictly before
+header/body or Phase-1 negotiation, request interceptors, method dispatch, tool lookup,
+authorization, application input processing, or SSE selection. The pinned schema document ships in
+this module's own resources (not test-only), so this validation is available in production as
+shipped, not merely in the test tree.
+
+Only after official params validation succeeds does `McpProtocolCodec#validateNegotiation` validate
+protocol negotiation (R05, issue #429; R08, merge blocker 1). The required
+`MCP-Protocol-Version`, `Mcp-Method`, and `Mcp-Name` headers must agree with their body-mirrored
+values (`params._meta`'s `io.modelcontextprotocol/protocolVersion`, the envelope's `method`, and —
+for `tools/call` only, when present — `params.name`); the per-method `_meta` shape and supported
+protocol version must satisfy Phase-1 policy; and `tools/call.params` must carry neither of the
+reserved multi-round-trip fields `inputResponses`/`requestState`. A header/body disagreement or
+Phase-1 negotiation-policy violation is exclusively `-32020` *Header/body mismatch*, mapped to HTTP
+400 through the bounded, capped JSON writer. Negotiation still completes before the request-
+interceptor stage below and every later application stage — see
+[Request interceptor stage](#request-interceptor-stage).
 
 The mount handles no file uploads of its own, but it does not rely on that alone: an
 application-composed ancestor `BodyHandler` with uploads enabled spools multipart parts to disk
@@ -307,15 +308,16 @@ boundary and owns the HTTP/router composition only.
 
 ## Request interceptor stage
 
-Once — and only once — the envelope decodes successfully *and* protocol negotiation passes does
-`McpRequestDispatcher` run the ordered, fail-closed pre-dispatch `McpRequestInterceptor` stage (T016,
-contract §4.7 stage 5): after envelope decode and negotiation, before the method dispatches to
-`server/discover`, `tools/list`, or `tools/call`, and before any tool is resolved or argument is
-processed. A decode failure never reaches this stage; it settles through
-[Bounded JSON-RPC envelope codec](#bounded-json-rpc-envelope-codec) exactly as before. A negotiation
-failure likewise never reaches this stage — see that same section's negotiation paragraph — so neither
-this interceptor stage nor anything after it ever observes a request whose required headers disagree
-with its body.
+Once — and only once — the envelope decodes successfully, its official per-method `params` schema
+validates, *and* protocol negotiation passes does `McpRequestDispatcher` run the ordered, fail-closed
+pre-dispatch `McpRequestInterceptor` stage (T016, contract §4.7 stage 5): after those protocol-
+boundary stages, before the method dispatches to `server/discover`, `tools/list`, or `tools/call`,
+and before any tool is resolved, authorized, or passed to the application input pipeline. A decode
+failure never reaches this stage; it settles through
+[Bounded JSON-RPC envelope codec](#bounded-json-rpc-envelope-codec) exactly as before. An official
+params failure returns HTTP 400 JSON-RPC `-32602` *Invalid params* before this stage, while a
+header/body or Phase-1 negotiation failure returns HTTP 400 JSON-RPC `-32020` *Header/body mismatch*.
+Neither this interceptor stage nor anything after it observes either rejected request.
 
 Contribute `McpRequestInterceptor` through Dagger set multibinding (`McpServerModule`). The
 dispatcher sorts and validates the contributed set exactly once, at construction — never per request
@@ -780,10 +782,14 @@ JSON-RPC response — is ready; header mutation alone reaches no byte onto the w
 defers sending them until the first `write`/`end`, and this dispatcher's only write is that one
 complete, already-framed message.
 
-`arguments` — absent, explicit `null`, or a non-object value — normalizes to the same immutable empty
-map as `{}` before reaching stage 1 of [Request-time input pipeline](#request-time-input-pipeline)
-below, exactly like a present object; a zero-argument tool's schema is the trivial empty object
-schema, so its stage 1 always passes. See [Value observation stage](#value-observation-stage) for the
+At this point, `arguments` is either absent or an object: the unmodified official per-method schema
+rejects explicit `null` and every other non-object as HTTP 400 JSON-RPC `-32602` *Invalid params*
+before request interceptors, lookup, authorization, or SSE selection. An absent value normalizes to
+an immutable empty map; a present object is converted to its map representation and then validated
+against the tool's application schema in stage 1 of the
+[Request-time input pipeline](#request-time-input-pipeline) below. For a zero-argument tool, absence
+or `{}` satisfies the trivial empty-object schema. See
+[Value observation stage](#value-observation-stage) for the
 opt-in `onToolInput`/`onToolOutput` capability this version delivers, and [Bounded output
 pipeline](#bounded-output-pipeline) for the output-side normalization, validation, and observation
 order; cancellation and write-phase settlement (T013) are described in
@@ -854,4 +860,3 @@ Denial and absence are externally indistinguishable — an unknown tool name and
 not use both resolve to the same `-32602` response, with no detail identifying which — and a denied
 tool is never invoked. Every restrictive evaluation emits exactly one combined
 `AuthorizationDecisionEvent`.
-

@@ -48,8 +48,9 @@ import org.mockito.ArgumentCaptor;
  * mirroring {@code McpProtocolNegotiationTest}'s driving style, with a small {@code
  * mcp.output.maxBytes} (the validator-enforced 1,024-byte floor) and a request id large enough that
  * the fully enveloped, id-bearing error response would exceed it. Covers both error-writing paths R12
- * names by name: the negotiation-rejection path ({@link McpRequestDispatcher#writeNegotiationRejection})
- * and the ordinary protocol-error path ({@link McpRequestDispatcher#emitProtocolError}).
+ * names by name: the pre-dispatch protocol-rejection path ({@link
+ * McpRequestDispatcher#writePreDispatchProtocolRejection}) and the ordinary protocol-error path ({@link
+ * McpRequestDispatcher#emitProtocolError}).
  *
  * <p><strong>Proves early rejection, not rejection.</strong> Following R04's own proof shape exactly
  * ({@code McpOutputPipelineIT#assertCappedStreamAbortsBeforeMaterializing}): a live HTTP-level check
@@ -66,7 +67,7 @@ import org.mockito.ArgumentCaptor;
  *
  * <p><strong>Known limitation, stated rather than hidden — closed by R14 item 4.</strong> Reverting only
  * the call site (e.g. putting {@code codec.errorResponseFor(...)} back in {@code
- * writeNegotiationRejection}) does not turn any assertion above red: the defective and fixed code
+ * writePreDispatchProtocolRejection}) does not turn any assertion above red: the defective and fixed code
  * degrade to the identical final bytes for any id short of triggering an {@code OutOfMemoryError}, so
  * no external, mock-observable signal distinguishes them — this is the exact "the defective code also
  * produced a bounded response" trap R12 names. R14 item 4 supplies the protection no assertion here
@@ -91,19 +92,19 @@ class McpBoundedErrorSerializationTest {
     private static final int OUTPUT_MAX_BYTES = 1_024;
 
     /**
-     * Large enough that the fully enveloped negotiation-rejection or protocol-error response —
+     * Large enough that the fully enveloped pre-dispatch protocol-rejection or protocol-error response —
      * {@code {"jsonrpc":"2.0","id":"<ID>","error":{"code":...,"message":"..."}}}, well under 100 bytes
      * of fixed overhead — exceeds {@link #OUTPUT_MAX_BYTES}, while staying far under the envelope
      * codec's own frozen 20,000,000-character {@code maxStringLength} so the request still decodes.
      */
     private static final String OVERSIZED_ID = "a".repeat(5_000);
 
-    // --- Path 1: negotiation rejection (writeNegotiationRejection) ---
+    // --- Path 1: pre-dispatch protocol rejection (writePreDispatchProtocolRejection) ---
 
     @Test
-    @DisplayName("R12: an oversized id degrades a negotiation rejection to the bounded id-less shape, "
+    @DisplayName("R12: an oversized id degrades an official-params rejection to the bounded id-less shape, "
             + "aborting serialization before the full response is materialized")
-    void shouldDegradeNegotiationRejectionEarlyWhenIdOverflowsTheCap() throws Exception {
+    void shouldDegradeOfficialParamsRejectionEarlyWhenIdOverflowsTheCap() throws Exception {
         JsonObject body = discoverBodyMissingMeta(OVERSIZED_ID);
         MultiMap headers = validHeaders("server/discover", null);
 
@@ -120,7 +121,7 @@ class McpBoundedErrorSerializationTest {
                 .as("the oversized id must never reach the wire")
                 .isNull();
         assertThat(decoded.getJsonObject("error").getInteger("code"))
-                .as("a degraded response reports the generic internal error, not -32020")
+                .as("a degraded response reports the generic internal error, not -32602")
                 .isEqualTo(-32603);
         assertThat(outcome.rawBody())
                 .as("DECISIVE: the oversized id text must never reach the wire in any form, even partially")
@@ -129,12 +130,12 @@ class McpBoundedErrorSerializationTest {
         // DECISIVE ordering proof: the live outcome above cannot by itself distinguish a streaming abort
         // from an implementation that first materializes the full byte array and then rejects it on
         // length — both produce the same bounded external response (this is exactly the R12 defect).
-        assertCappedStreamAbortsBeforeMaterializing(OUTPUT_MAX_BYTES, OVERSIZED_ID, -32020, "Header/body mismatch");
+        assertCappedStreamAbortsBeforeMaterializing(OUTPUT_MAX_BYTES, OVERSIZED_ID, -32602, "Invalid params");
     }
 
     @Test
-    @DisplayName("R12 control: a small id is echoed as-is by a negotiation rejection, never degraded")
-    void shouldNotDegradeNegotiationRejectionWhenIdFitsUnderTheCap() throws Exception {
+    @DisplayName("R12 control: a small id is echoed as-is by an official-params rejection, never degraded")
+    void shouldNotDegradeOfficialParamsRejectionWhenIdFitsUnderTheCap() throws Exception {
         JsonObject body = discoverBodyMissingMeta("1");
         MultiMap headers = validHeaders("server/discover", null);
 
@@ -147,7 +148,7 @@ class McpBoundedErrorSerializationTest {
                 .isEqualTo("1");
         assertThat(decoded.getJsonObject("error").getInteger("code"))
                 .as("CONTROL: a response that fits under the cap must still carry the real classified code")
-                .isEqualTo(-32020);
+                .isEqualTo(-32602);
     }
 
     // --- Path 2: ordinary protocol error (emitProtocolError) ---
@@ -411,9 +412,9 @@ class McpBoundedErrorSerializationTest {
 
     /**
      * A {@code server/discover} body whose {@code params} carries no {@code _meta} at all — a
-     * negotiation-stage rejection ({@code -32020}), not an envelope-decode rejection: the envelope
+     * official-params rejection ({@code -32602}), not an envelope-decode rejection: the envelope
      * codec only requires {@code params} to be an object, so this still decodes successfully and only
-     * fails {@link McpProtocolCodec#validateNegotiation}'s {@code _meta}-presence check.
+     * fails {@link McpProtocolCodec#validateOfficialParams}'s {@code _meta}-presence check.
      */
     private static JsonObject discoverBodyMissingMeta(String id) {
         return new JsonObject()

@@ -34,7 +34,6 @@ import io.vertx.core.MultiMap;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.http.HttpServerResponse;
-import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RequestBody;
 import io.vertx.ext.web.RoutingContext;
@@ -57,8 +56,8 @@ import org.mockito.ArgumentCaptor;
  *
  * <p>Every row drives {@link McpRequestDispatcher#dispatch} directly against a mocked {@link
  * RoutingContext} — mirroring {@code McpRequestInterceptorPipelineTest}'s driving style — carrying a
- * negotiation violation: a missing required header, a mismatched required header, a schema-invalid
- * {@code params} for each supported method, or a {@code tools/call} reserved-field violation. Each
+ * negotiation violation: a missing required header, a mismatched required header, or a {@code tools/call}
+ * reserved-field violation. Each
  * must yield HTTP 400 / {@code -32020} <strong>and</strong> leave a permitting request interceptor and
  * the policy enforcer completely uninvoked — the decisive proof that negotiation runs strictly before
  * the request-interceptor stage, tool lookup, and authorization, not merely that the response happens
@@ -71,29 +70,9 @@ import org.mockito.ArgumentCaptor;
  * accidentally triggering {@code -32020}, so a negative row's rejection is attributable to the one
  * mutated fact it names.
  *
- * <p><strong>R08 (merge blocker 1) rows.</strong> The {@code SCHEMA_INVALID_..._ROW} rows above mutate only
- * {@code _meta} — exactly why R08 found this suite could pass while {@link McpProtocolCodec} validated
- * nothing else against the pinned official schema. The {@code NON_META_...} rows below each mutate a
- * schema-typed field <em>outside</em> {@code _meta} — {@code cursor} ({@code tools/list}), {@code name}
- * ({@code tools/call}, two ways: absent and non-textual) — proving the new {@link
- * McpProtocolSchemaValidator} gate itself, not the pre-existing {@code _meta} checks, is what rejects
- * them. There is no equivalent non-{@code _meta} row for {@code server/discover}: the pinned schema's
- * {@code RequestParams} — {@code server/discover}'s own {@code params} shape — declares exactly one
- * property, {@code _meta}; every other request-envelope fact ({@code id}, {@code jsonrpc}, {@code
- * method}) is already validated earlier, by {@link McpProtocolCodec#decodeEnvelope}. Fabricating an
- * unsupported extra property on {@code server/discover} would not exercise the schema gate either — the
- * pinned schema permits unknown properties there (contract §4.7 — "Unknown fields permitted by the
- * official schema... are accepted"), so such a request would still be schema-valid.
- *
- * <p><strong>{@code arguments} is deliberately not one of these rows.</strong> {@link
- * #shouldNotRejectNonObjectArgumentsAtNegotiation()} below proves, directly against {@link
- * McpProtocolCodec}, that a present non-object {@code arguments} value still passes negotiation: it is
- * already rejected downstream, as a bounded SSE tool-error, by the pre-existing, decisively tested
- * {@code McpToolCallMalformedArgumentsIT} contract (review-finding round-14 remediation) — reached only
- * after registry lookup and the policy enforcer have already run. Folding it into this gate too would
- * reject the identical condition earlier with a different wire response, a consumer-visible behavior
- * change outside this repair-only slice's authority (see {@link McpProtocolSchemaValidator}'s own
- * javadoc for the full reasoning).
+ * <p>R15 separately proves the official per-method schema boundary. Those failures are JSON-RPC
+ * {@code -32602}, not protocol-version negotiation failures, so they deliberately do not share this
+ * matrix's {@code -32020} assertion.
  */
 class McpProtocolNegotiationTest {
 
@@ -107,35 +86,14 @@ class McpProtocolNegotiationTest {
     private static final String BASELINE_ROW = "shouldPermitAFullyNegotiatedRequestAsTheControl";
     private static final String MISSING_HEADER_ROW = "shouldRejectAMissingRequiredHeaderBeforeDispatch";
     private static final String MISMATCHED_HEADER_ROW = "shouldRejectAMismatchedRequiredHeaderBeforeDispatch";
-    private static final String SCHEMA_INVALID_DISCOVER_ROW =
-            "shouldRejectSchemaInvalidMetaForServerDiscoverBeforeDispatch";
-    private static final String SCHEMA_INVALID_TOOLS_LIST_ROW =
-            "shouldRejectSchemaInvalidMetaForToolsListBeforeDispatch";
-    private static final String SCHEMA_INVALID_TOOLS_CALL_ROW =
-            "shouldRejectSchemaInvalidMetaForToolsCallBeforeDispatch";
+    private static final String BLANK_CALL_PROTOCOL_VERSION_ROW =
+            "shouldRejectABlankToolsCallProtocolVersionBeforeDispatch";
     private static final String RESERVED_FIELD_ROW = "shouldRejectAToolsCallReservedFieldBeforeDispatch";
 
-    /**
-     * R08 (merge blocker 1): a {@code cursor} value the pinned schema types as a string, mutated to a
-     * number — a schema violation entirely outside {@code _meta}.
-     */
-    private static final String NON_META_INVALID_CURSOR_ROW = "shouldRejectANonStringCursorBeforeDispatch";
-
-    /**
-     * R08 (merge blocker 1): a {@code tools/call} request whose {@code name} — schema-required and typed as
-     * a string — is absent. The pinned schema's {@code name} type carries no {@code minLength}, so a
-     * present-but-blank {@code name} stays schema-valid and is deliberately left to the downstream
-     * {@code -32602} unknown-or-unauthorized path (not this row's concern); an <em>absent</em> {@code
-     * name} is a genuine schema violation this row proves is now caught before the interceptor stage.
-     */
-    private static final String NON_META_MISSING_NAME_ROW = "shouldRejectAMissingToolNameBeforeDispatch";
-
-    /**
-     * R08 (merge blocker 1): a {@code tools/call} request whose {@code name} is present but non-textual (a
-     * number) — the pinned schema's {@code name} type is {@code string}, so this is also a genuine
-     * schema violation, distinct from the missing-name row above.
-     */
-    private static final String NON_META_NON_TEXTUAL_NAME_ROW = "shouldRejectANonTextualToolNameBeforeDispatch";
+    private static final String MISSING_DISCOVER_META_MEMBER_ROW = "server/discover missing _meta protocolVersion";
+    private static final String NON_STRING_CURSOR_ROW = "tools/list with a non-string cursor";
+    private static final String NON_OBJECT_ARGUMENTS_ROW = "tools/call with non-object arguments";
+    private static final String NULL_ARGUMENTS_ROW = "tools/call with explicit null arguments";
 
     /**
      * R07 item 1 (security review): HTAB (0x09) survives Netty's own non-first-byte header validation
@@ -160,15 +118,10 @@ class McpProtocolNegotiationTest {
                 BASELINE_ROW,
                 MISSING_HEADER_ROW,
                 MISMATCHED_HEADER_ROW,
-                SCHEMA_INVALID_DISCOVER_ROW,
-                SCHEMA_INVALID_TOOLS_LIST_ROW,
-                SCHEMA_INVALID_TOOLS_CALL_ROW,
+                BLANK_CALL_PROTOCOL_VERSION_ROW,
                 RESERVED_FIELD_ROW,
                 CONTROL_CHARACTER_ROW,
-                UNSUPPORTED_VERSION_ROW,
-                NON_META_INVALID_CURSOR_ROW,
-                NON_META_MISSING_NAME_ROW,
-                NON_META_NON_TEXTUAL_NAME_ROW);
+                UNSUPPORTED_VERSION_ROW);
     }
 
     @ParameterizedTest(name = "{0}")
@@ -179,17 +132,109 @@ class McpProtocolNegotiationTest {
             case BASELINE_ROW -> shouldPermitAFullyNegotiatedRequestAsTheControl();
             case MISSING_HEADER_ROW -> shouldRejectAMissingRequiredHeaderBeforeDispatch();
             case MISMATCHED_HEADER_ROW -> shouldRejectAMismatchedRequiredHeaderBeforeDispatch();
-            case SCHEMA_INVALID_DISCOVER_ROW -> shouldRejectSchemaInvalidMetaForServerDiscoverBeforeDispatch();
-            case SCHEMA_INVALID_TOOLS_LIST_ROW -> shouldRejectSchemaInvalidMetaForToolsListBeforeDispatch();
-            case SCHEMA_INVALID_TOOLS_CALL_ROW -> shouldRejectSchemaInvalidMetaForToolsCallBeforeDispatch();
+            case BLANK_CALL_PROTOCOL_VERSION_ROW -> shouldRejectABlankToolsCallProtocolVersionBeforeDispatch();
             case RESERVED_FIELD_ROW -> shouldRejectAToolsCallReservedFieldBeforeDispatch();
             case CONTROL_CHARACTER_ROW -> shouldRejectAControlCharacterInProtocolVersionBeforeDispatch();
             case UNSUPPORTED_VERSION_ROW -> shouldRejectAnUnsupportedProtocolVersionBeforeDispatch();
-            case NON_META_INVALID_CURSOR_ROW -> shouldRejectANonStringCursorBeforeDispatch();
-            case NON_META_MISSING_NAME_ROW -> shouldRejectAMissingToolNameBeforeDispatch();
-            case NON_META_NON_TEXTUAL_NAME_ROW -> shouldRejectANonTextualToolNameBeforeDispatch();
             default -> throw new IllegalArgumentException("unknown R05 TP-001 row: " + row);
         }
+    }
+
+    private static Stream<OfficialParamsViolation> officialParamsViolations() {
+        JsonObject missingDiscoverMetaMember = discoverBody();
+        missingDiscoverMetaMember
+                .getJsonObject("params")
+                .getJsonObject("_meta")
+                .remove("io.modelcontextprotocol/protocolVersion");
+
+        JsonObject nonStringCursor = toolsListBody();
+        nonStringCursor.getJsonObject("params").put("cursor", 12345);
+
+        JsonObject nonObjectArguments = toolsCallBody(KNOWN_TOOL);
+        nonObjectArguments.getJsonObject("params").put("arguments", "not-an-object");
+
+        JsonObject nullArguments = toolsCallBody(KNOWN_TOOL);
+        nullArguments.getJsonObject("params").put("arguments", (Object) null);
+
+        JsonObject missingListCapabilities = toolsListBody();
+        missingListCapabilities
+                .getJsonObject("params")
+                .getJsonObject("_meta")
+                .remove("io.modelcontextprotocol/clientCapabilities");
+
+        JsonObject missingToolName = toolsCallBody(KNOWN_TOOL);
+        missingToolName.getJsonObject("params").remove("name");
+
+        JsonObject nonTextualToolName = toolsCallBody(KNOWN_TOOL);
+        nonTextualToolName.getJsonObject("params").put("name", 42);
+
+        return Stream.of(
+                new OfficialParamsViolation(
+                        MISSING_DISCOVER_META_MEMBER_ROW,
+                        missingDiscoverMetaMember,
+                        validHeaders("server/discover", null)),
+                new OfficialParamsViolation(NON_STRING_CURSOR_ROW, nonStringCursor, validHeaders("tools/list", null)),
+                new OfficialParamsViolation(
+                        NON_OBJECT_ARGUMENTS_ROW, nonObjectArguments, validHeaders("tools/call", KNOWN_TOOL)),
+                new OfficialParamsViolation(NULL_ARGUMENTS_ROW, nullArguments, validHeaders("tools/call", KNOWN_TOOL)),
+                new OfficialParamsViolation(
+                        "tools/list missing _meta clientCapabilities",
+                        missingListCapabilities,
+                        validHeaders("tools/list", null)),
+                new OfficialParamsViolation(
+                        "tools/call missing the schema-required name",
+                        missingToolName,
+                        validHeaders("tools/call", KNOWN_TOOL)),
+                new OfficialParamsViolation(
+                        "tools/call with a non-textual name",
+                        nonTextualToolName,
+                        validHeaders("tools/call", KNOWN_TOOL)));
+    }
+
+    /**
+     * R15 TP-001: the complete pinned official params shape is a protocol boundary, before all
+     * application-policy work. Each row changes exactly one official-schema fact and proves the
+     * resulting {@code -32602} response is not a later authorization or invocation failure that happens
+     * to share HTTP 400.
+     */
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("officialParamsViolations")
+    @DisplayName("R15: official params violations are rejected before application policy")
+    void shouldRejectOfficialParamsViolationsAsInvalidParamsBeforeApplicationPolicy(OfficialParamsViolation violation) {
+        Outcome outcome = drive(violation.body(), violation.headers());
+
+        assertThat(outcome.status())
+                .as(violation.description() + " must be rejected HTTP 400")
+                .isEqualTo(400);
+        assertThat(outcome.errorCode())
+                .as(violation.description() + " must carry JSON-RPC Invalid params")
+                .isEqualTo(-32602);
+        assertThat(outcome.interceptorInvocations())
+                .as("DECISIVE (" + violation.description() + "): interceptors must not see invalid official params")
+                .isZero();
+        verifyNoInteractions(outcome.toolRegistry(), outcome.policyEnforcer());
+    }
+
+    /**
+     * The pinned schema deliberately leaves unknown extension properties open. This control prevents the
+     * negative rows from being implemented by adding an invented {@code additionalProperties: false}
+     * restriction at the protocol boundary.
+     */
+    @Test
+    @DisplayName("R15: an unknown official-schema extension remains accepted")
+    void shouldAcceptUnknownExtensionPropertyPermittedByTheOfficialSchema() {
+        JsonObject body = discoverBody();
+        body.getJsonObject("params").put("io.vertique.test/extension", new JsonObject().put("enabled", true));
+
+        Outcome outcome = drive(body, validHeaders("server/discover", null));
+
+        assertThat(outcome.status())
+                .as("the official schema permits unknown extension properties")
+                .isEqualTo(200);
+        assertThat(outcome.interceptorInvocations())
+                .as("the accepted extension must reach the next application stage")
+                .isEqualTo(1);
+        verifyNoInteractions(outcome.toolRegistry(), outcome.policyEnforcer());
     }
 
     // --- Control: a fully negotiated request reaches the interceptor stage ---
@@ -229,27 +274,7 @@ class McpProtocolNegotiationTest {
         assertRejectedBeforeDispatch(outcome, "a header value that disagrees with the negotiated body value");
     }
 
-    // --- Schema-invalid params, one row per supported method ---
-
-    private void shouldRejectSchemaInvalidMetaForServerDiscoverBeforeDispatch() {
-        JsonObject body = discoverBody();
-        body.getJsonObject("params").getJsonObject("_meta").remove("io.modelcontextprotocol/protocolVersion");
-
-        Outcome outcome = drive(body, validHeaders("server/discover", null));
-
-        assertRejectedBeforeDispatch(outcome, "server/discover missing the schema-required protocolVersion");
-    }
-
-    private void shouldRejectSchemaInvalidMetaForToolsListBeforeDispatch() {
-        JsonObject body = toolsListBody();
-        body.getJsonObject("params").getJsonObject("_meta").remove("io.modelcontextprotocol/clientCapabilities");
-
-        Outcome outcome = drive(body, validHeaders("tools/list", null));
-
-        assertRejectedBeforeDispatch(outcome, "tools/list missing the schema-required clientCapabilities");
-    }
-
-    private void shouldRejectSchemaInvalidMetaForToolsCallBeforeDispatch() {
+    private void shouldRejectABlankToolsCallProtocolVersionBeforeDispatch() {
         JsonObject body = toolsCallBody(KNOWN_TOOL);
         body.getJsonObject("params").getJsonObject("_meta").put("io.modelcontextprotocol/protocolVersion", "   ");
 
@@ -262,76 +287,11 @@ class McpProtocolNegotiationTest {
 
     private void shouldRejectAToolsCallReservedFieldBeforeDispatch() {
         JsonObject body = toolsCallBody(KNOWN_TOOL);
-        body.getJsonObject("params").put("inputResponses", new JsonArray());
+        body.getJsonObject("params").put("inputResponses", new JsonObject());
 
         Outcome outcome = drive(body, validHeaders("tools/call", KNOWN_TOOL));
 
         assertRejectedBeforeDispatch(outcome, "a tools/call params carrying the reserved inputResponses field");
-    }
-
-    // --- R08 (merge blocker 1): schema violations outside _meta, one row per field the pinned schema types ---
-
-    private void shouldRejectANonStringCursorBeforeDispatch() {
-        JsonObject body = toolsListBody();
-        body.getJsonObject("params").put("cursor", 12345);
-
-        Outcome outcome = drive(body, validHeaders("tools/list", null));
-
-        assertRejectedBeforeDispatch(outcome, "tools/list with a non-string cursor");
-    }
-
-    private void shouldRejectAMissingToolNameBeforeDispatch() {
-        JsonObject body = toolsCallBody(KNOWN_TOOL);
-        body.getJsonObject("params").remove("name");
-
-        Outcome outcome = drive(body, validHeaders("tools/call", KNOWN_TOOL));
-
-        assertRejectedBeforeDispatch(outcome, "tools/call with an absent (schema-required) name");
-    }
-
-    private void shouldRejectANonTextualToolNameBeforeDispatch() {
-        JsonObject body = toolsCallBody(KNOWN_TOOL);
-        body.getJsonObject("params").put("name", 42);
-
-        Outcome outcome = drive(body, validHeaders("tools/call", KNOWN_TOOL));
-
-        assertRejectedBeforeDispatch(outcome, "tools/call with a non-textual name");
-    }
-
-    /**
-     * R08 (merge blocker 1), decisive boundary proof: a present non-object {@code arguments} value must
-     * still pass negotiation — it is deliberately excluded from {@link McpProtocolSchemaValidator}'s
-     * compiled {@code tools/call} schema (see that class's javadoc) because {@code
-     * McpToolCallMalformedArgumentsIT} already, decisively, pins a different wire shape for the exact
-     * same condition (a bounded SSE tool-error reached only after registry lookup and the policy
-     * enforcer already ran). Driven directly against {@link McpProtocolCodec} rather than through
-     * {@link #drive}: {@link #drive}'s shared fixture uses an empty tool registry and an unstubbed
-     * mocked {@link McpPolicyEnforcer}, so it cannot safely exercise the real downstream tool-call
-     * pipeline this boundary is about — this test only needs to prove negotiation itself does not
-     * reject the request, which {@link McpProtocolCodec#validateNegotiation} alone already answers.
-     * If a future change folded {@code arguments} back into the negotiation schema gate, this test
-     * would go red instead of {@code McpToolCallMalformedArgumentsIT} silently changing its own wire
-     * shape.
-     */
-    @Test
-    @DisplayName("R08: arguments' type-validity stays out of the negotiation-stage schema gate")
-    void shouldNotRejectNonObjectArgumentsAtNegotiation() {
-        JsonObject body = toolsCallBody(KNOWN_TOOL);
-        body.getJsonObject("params").put("arguments", "not-an-object");
-        MultiMap headers = validHeaders("tools/call", KNOWN_TOOL);
-
-        McpProtocolCodec codec = new McpProtocolCodec(HttpConfig.builder().build());
-        McpProtocolCodec.Decoded decoded = codec.decodeEnvelope(body.toBuffer().getBytes());
-        assertThat(decoded.isError())
-                .as("the envelope itself must decode cleanly")
-                .isFalse();
-
-        McpProtocolCodec.NegotiationResult negotiation = codec.validateNegotiation(decoded.envelope(), headers);
-
-        assertThat(negotiation.isError())
-                .as("DECISIVE: non-object arguments must not fail negotiation — that condition is "
-                        + "already, deliberately, rejected downstream by McpToolCallMalformedArgumentsIT")
-                .isFalse();
     }
 
     // --- R07 item 1: a control character in protocolVersion ---
@@ -400,6 +360,7 @@ class McpProtocolNegotiationTest {
         headers.set(HEADER_PROTOCOL_VERSION, poisoned);
 
         McpPolicyEnforcer policyEnforcer = mock(McpPolicyEnforcer.class);
+        McpToolRegistry toolRegistry = mock(McpToolRegistry.class);
         SecurityRuntime securityRuntime = mock(SecurityRuntime.class);
         SecurityContext anonymous = SecurityContexts.unauthenticated(SecurityIdentity.anonymous());
         when(securityRuntime.current()).thenReturn(anonymous);
@@ -412,7 +373,7 @@ class McpProtocolNegotiationTest {
                 Set.of(),
                 Set.of(),
                 HttpConfig.builder().build(),
-                McpToolRegistry.build(Set.of()),
+                toolRegistry,
                 policyEnforcer,
                 NO_OP_CONTEXT_HOLDER,
                 new CorrelationContextFactory(Optional.empty()));
@@ -519,6 +480,7 @@ class McpProtocolNegotiationTest {
     private Outcome drive(JsonObject body, MultiMap headers) {
         RecordingInterceptor interceptor = new RecordingInterceptor();
         McpPolicyEnforcer policyEnforcer = mock(McpPolicyEnforcer.class);
+        McpToolRegistry toolRegistry = mock(McpToolRegistry.class);
         SecurityRuntime securityRuntime = mock(SecurityRuntime.class);
         SecurityContext anonymous = SecurityContexts.unauthenticated(SecurityIdentity.anonymous());
         when(securityRuntime.current()).thenReturn(anonymous);
@@ -530,7 +492,7 @@ class McpProtocolNegotiationTest {
                 Set.of(interceptor),
                 Set.of(),
                 HttpConfig.builder().build(),
-                McpToolRegistry.build(Set.of()),
+                toolRegistry,
                 policyEnforcer,
                 NO_OP_CONTEXT_HOLDER,
                 new CorrelationContextFactory(Optional.empty()));
@@ -559,12 +521,23 @@ class McpProtocolNegotiationTest {
         JsonObject decoded = new JsonObject(bodyCaptor.getValue());
         JsonObject error = decoded.getJsonObject("error");
         Integer errorCode = error == null ? null : error.getInteger("code");
-        return new Outcome(status, errorCode, interceptor.invocations(), policyEnforcer);
+        return new Outcome(status, errorCode, interceptor.invocations(), toolRegistry, policyEnforcer);
     }
 
     /** One drive's observed outcome. */
     private record Outcome(
-            int status, Integer errorCode, int interceptorInvocations, McpPolicyEnforcer policyEnforcer) {}
+            int status,
+            Integer errorCode,
+            int interceptorInvocations,
+            McpToolRegistry toolRegistry,
+            McpPolicyEnforcer policyEnforcer) {}
+
+    private record OfficialParamsViolation(String description, JsonObject body, MultiMap headers) {
+        @Override
+        public String toString() {
+            return description;
+        }
+    }
 
     // --- Body/header builders ---
 
