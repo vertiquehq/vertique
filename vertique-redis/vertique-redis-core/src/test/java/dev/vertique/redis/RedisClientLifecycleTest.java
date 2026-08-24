@@ -11,6 +11,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
+import io.vertx.core.net.NetClientOptions;
+import io.vertx.core.tracing.TracingPolicy;
+import io.vertx.redis.client.PoolOptions;
 import io.vertx.redis.client.Redis;
 import io.vertx.redis.client.RedisClientType;
 import io.vertx.redis.client.RedisClusterConnectOptions;
@@ -18,6 +21,7 @@ import io.vertx.redis.client.RedisConnection;
 import io.vertx.redis.client.RedisOptions;
 import io.vertx.redis.client.Request;
 import io.vertx.redis.client.Response;
+import io.vertx.redis.client.impl.RedisClusterClient;
 import java.lang.reflect.Field;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -113,8 +117,7 @@ class RedisClientLifecycleTest {
                 750,
                 8,
                 100);
-        RecordingRedis clusterClient = new RecordingRedis(PROFILE_NAME + "-cluster", new ArrayList<>());
-        RecordingRedisClusterClientFactory factory = new RecordingRedisClusterClientFactory(clusterClient);
+        RecordingRedisClusterClientFactory factory = new RecordingRedisClusterClientFactory(new ArrayList<>());
         RedisClientRegistry registry =
                 new RedisClientRegistry(vertx, new RedisConnectionsConfig(List.of(profile)), factory);
 
@@ -123,6 +126,7 @@ class RedisClientLifecycleTest {
             RedisPrimaryOperations first = registry.primaryOperations(PROFILE_NAME);
             RedisPrimaryOperations second = registry.primaryOperations(PROFILE_NAME);
             Map<String, Redis> clusterClients = clusterClientsOf(registry);
+            RecordingRedisClusterClient clusterClient = factory.client();
 
             // Then: one cluster-capable client and seam are reused without connecting to Redis.
             assertSame(first, second, "one primary-operation seam must be reused for a profile");
@@ -278,13 +282,14 @@ class RedisClientLifecycleTest {
 
     private static final class RecordingRedisClusterClientFactory
             implements RedisClientRegistry.RedisClusterClientFactory {
-        private final Redis client;
+        private final List<String> closeOrder;
         private final AtomicInteger calls = new AtomicInteger();
+        private RecordingRedisClusterClient client;
         private RedisOptions options;
         private Supplier<Future<RedisClusterConnectOptions>> connectOptionsSupplier;
 
-        private RecordingRedisClusterClientFactory(Redis client) {
-            this.client = client;
+        private RecordingRedisClusterClientFactory(List<String> closeOrder) {
+            this.closeOrder = closeOrder;
         }
 
         @Override
@@ -295,6 +300,8 @@ class RedisClientLifecycleTest {
             calls.incrementAndGet();
             this.options = options;
             this.connectOptionsSupplier = connectOptionsSupplier;
+            this.client = new RecordingRedisClusterClient(
+                    vertx, options, connectOptionsSupplier, PROFILE_NAME + "-cluster", closeOrder);
             return client;
         }
 
@@ -310,6 +317,42 @@ class RedisClientLifecycleTest {
             return connectOptionsSupplier;
         }
 
+        private RecordingRedisClusterClient client() {
+            return client;
+        }
+    }
+
+    private static final class RecordingRedisClusterClient extends RedisClusterClient {
+        private final String name;
+        private final List<String> closeOrder;
+        private final AtomicInteger closeCalls = new AtomicInteger();
+
+        private RecordingRedisClusterClient(
+                Vertx vertx,
+                RedisOptions options,
+                Supplier<Future<RedisClusterConnectOptions>> connectOptionsSupplier,
+                String name,
+                List<String> closeOrder) {
+            super(
+                    vertx,
+                    new NetClientOptions(options.getNetClientOptions()),
+                    new PoolOptions(options.getPoolOptions()),
+                    connectOptionsSupplier,
+                    options.getTracingPolicy() == null ? TracingPolicy.IGNORE : options.getTracingPolicy());
+            this.name = name;
+            this.closeOrder = closeOrder;
+        }
+
+        @Override
+        public Future<Void> close() {
+            closeCalls.incrementAndGet();
+            closeOrder.add(name);
+            return Future.succeededFuture();
+        }
+
+        private int closeCalls() {
+            return closeCalls.get();
+        }
     }
 
     private static final class RecordingRedis implements Redis {
