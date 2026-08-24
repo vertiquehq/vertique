@@ -309,6 +309,7 @@ class RedisClientLifecycleTest {
         private Supplier<Future<RedisClusterConnectOptions>> connectOptionsSupplier() {
             return connectOptionsSupplier;
         }
+
     }
 
     private static final class RecordingRedis implements Redis {
