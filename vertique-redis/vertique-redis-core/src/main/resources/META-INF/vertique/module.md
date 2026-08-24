@@ -46,6 +46,24 @@ boundary. This module does not claim per-request cancellation.
 
 Redis clients close in validated profile order. The first registry `close()` call owns the asynchronous close sequence and its future; later calls return that same future, so application teardown is ordered and idempotent. The Dagger contribution runs in lifecycle phase `INFRA` at the lowest same-phase priority, which places shared-client shutdown after same-phase consumers during reverse-order teardown. The registry closes only its Redis clients; the host-owned `Vertx` instance remains the caller's responsibility.
 
+## Primary-node operations
+
+`RedisClientRegistry.primaryOperations(profileName)` returns a topology-aware
+`RedisPrimaryOperations` wrapper around the existing shared client for the named profile.
+The profile must already be configured for a cluster-capable Redis client. The wrapper does
+not create or close another client; the registry retains client lifecycle ownership.
+
+The wrapper exposes asynchronous fan-outs to every Redis primary:
+
+| Operation | Signature | Behavior |
+|---|---|---|
+| `scan` | `Future<List<Response>> scan(Object... args)` | Sends `SCAN` with the supplied arguments through `RedisCluster.onAllMasterNodes`. |
+| `unlink` | `Future<List<Response>> unlink(Object... keys)` | Sends `UNLINK` with the supplied keys through `RedisCluster.onAllMasterNodes`. |
+
+The returned futures contain the response list from the cluster operation. Cleanup
+scheduling, scan bounds, retries and backoff, metrics, and cache-key policy are concerns of
+the feature or cleanup policy using this seam; they are not defined by `vertique-redis-core`.
+
 ## Deadline behavior
 
 `RedisDeadline.withDeadline(Vertx, Future<T>, Duration)` provides non-blocking event-loop settlement for asynchronous Redis operations. The duration must be positive; when it expires, the returned future fails with a timeout. The backend future is not canceled: late backend completion is fenced and ignored after the returned future settles, so callers must not assume upstream cancellation.

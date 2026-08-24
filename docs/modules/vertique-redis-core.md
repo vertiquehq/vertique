@@ -10,6 +10,7 @@ This module owns shared Redis connection-profile and client-lifecycle infrastruc
 - `dev.vertique.redis` — shared Redis infrastructure package root.
 - `RedisConnectionModule` — parses the named profile section, binds the registry, and contributes its shutdown step.
 - `RedisClientRegistry` — snapshots startup-resolved profiles, lazily creates one client per profile, and owns ordered/idempotent close.
+- `RedisPrimaryOperations` — wraps a shared cluster-capable profile client and fans out `SCAN` and `UNLINK` to every primary.
 - `RedisClientShutdownStep` — contributes Redis cleanup in lifecycle phase `INFRA` after same-phase consumers.
 
 ## Runtime or Build Flow
@@ -17,6 +18,17 @@ This module owns shared Redis connection-profile and client-lifecycle infrastruc
 The reactor builds this core module before `vertique-cache-redis`, allowing multiple Redis-backed features to share one managed infrastructure artifact. `RedisConnectionModule` reads `redis.connections`, and the typed `RedisConnectionConfig` record validates profile identity, credential-free Redis endpoint syntax, TLS mode, connect timeout, pool size, and waiting limits. `RedisConnectionsConfig` preserves the validated profile list and rejects duplicate names before the application-scoped `RedisClientRegistry` consumes it. The registry retains an immutable startup snapshot, so credential changes are restart-only, and it creates a client only when a consumer requests a profile.
 
 Vert.x Redis Client 5.1.6 single-command sends return `Future<Response>`. `Future.timeout(long, TimeUnit)` fences the returned future to the timeout boundary; no per-request cancellation is claimed. `RedisDeadline` provides non-blocking event-loop settlement, and late backend results are fenced and ignored after the returned future settles.
+
+`RedisClientRegistry.primaryOperations(profileName)` obtains the existing profile client and
+wraps it with `RedisCluster.create(...)` as a `RedisPrimaryOperations` seam. The profile must
+already be cluster-capable. The wrapper does not create or close another client; registry
+shutdown remains responsible for the shared client.
+
+`RedisPrimaryOperations.scan(Object... args)` and `unlink(Object... keys)` each construct the
+corresponding Redis request and call `RedisCluster.onAllMasterNodes`. Both methods return the
+topology operation's asynchronous `Future<List<Response>>` without adding scan bounds,
+retry/backoff behavior, or response transformation. Cleanup scheduling, metrics, and cache-key
+policy belong to T010 cleanup policy concerns, not this shared core.
 
 ## Load-Bearing Invariants
 
@@ -27,6 +39,7 @@ Vert.x Redis Client 5.1.6 single-command sends return `Future<Response>`. `Futur
 - Credentials are captured at startup. `RedisConnectionConfig.toString()` redacts `passwordSecret`, and later configuration mutation cannot rotate a live client's credentials.
 - `RedisClientShutdownStep` is contributed as an `ApplicationShutdownStep` in `LifecyclePhase.INFRA` with the lowest same-phase priority, so reverse-order teardown closes shared clients after their consumers.
 - Registry close follows validated profile order, returns one shared close future, and never closes the caller-owned `Vertx` instance.
+- Primary-node operations require a cluster-capable profile and remain an adapter over the registry-owned client; they do not introduce a second client or lifecycle owner.
 - T006 owns profile records and parser validation. T007 owns startup credential capture, lazy client lifecycle, option mapping, and ordered shutdown; T009 owns Redis cache commands.
 
 ## Testing
