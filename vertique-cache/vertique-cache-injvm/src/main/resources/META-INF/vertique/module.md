@@ -22,6 +22,23 @@ The provider owns local storage policy and lifecycle while the cache core owns t
 
 The implementation maintains one bounded Caffeine cache per logical `CacheRegion`. Entries are JSON-serialized with the configured profile, so callers receive a defensive copy and generic declared result types remain supported. A finite TTL expires entries using a monotonic clock; TTL `0` disables time expiration while the per-region size bound remains active. Disabled caches and null results are no-ops, and codec or size failures are surfaced as failed provider futures for the runtime's fail-open policy.
 
+The provider edge runs the shared provider-neutral `CacheStoreContractTest`, so local behavior is
+checked against the same hit, miss, TTL, clear, failure, declared-type, value-isolation, and
+repeatable-eviction contract used by Redis. Core operational limits also apply here: oversized
+keys and values are rejected, and an explicit annotation TTL above `maxTtlSeconds` is rejected
+rather than clamped.
+
+## Verification
+
+Run the local-provider proof with:
+
+```text
+./mvnw -ntp -pl vertique-cache/vertique-cache-injvm -am verify
+```
+
+The clean reactor verification also checks dependency/BOM parity, packaged module-documentation
+parity, and generated cache/AOP output.
+
 ## Dependencies
 
 | Artifact | Purpose |

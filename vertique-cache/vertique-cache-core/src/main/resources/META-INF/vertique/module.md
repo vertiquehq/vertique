@@ -43,6 +43,30 @@ provide a canonical identity component for authenticated requests; unavailable o
 ambiguous identity bypasses the cache unless `CACHE_AS_ANONYMOUS` is explicitly selected.
 Identity components must use the same canonical characters accepted by `CacheKey`.
 
+## Conformance and operational limits
+
+The provider-neutral `CacheStoreContractTest` runs the same contract against the Caffeine and
+Redis providers, covering hits, misses, TTL, clear, failure handling, declared types, value
+isolation, and repeatable eviction. Core operational validation rejects oversized keys and values
+before provider work. An explicit annotation TTL above `maxTtlSeconds` is rejected with
+`IllegalArgumentException`; it is not silently clamped. `ttlSeconds = 0` retains provider size
+protection while disabling time expiration.
+
+## Verification
+
+Run the cache package proof with:
+
+```text
+./mvnw -ntp -pl vertique-cache/vertique-cache-core,vertique-cache/vertique-cache-codegen,vertique-cache/vertique-cache-injvm,vertique-cache/vertique-cache-redis -am verify
+```
+
+The clean reactor verification additionally checks dependency and BOM parity, forbidden provider
+dependencies, packaged module-documentation parity, and regeneration of cache and AOP metadata:
+
+```text
+./mvnw -ntp clean verify
+```
+
 ## Dependencies
 
 | Artifact | Purpose |

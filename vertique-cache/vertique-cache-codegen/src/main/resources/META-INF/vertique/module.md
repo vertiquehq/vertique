@@ -67,6 +67,23 @@ construction and calls that bypass the proxy are not intercepted.
 The generic AOP processor must be present on the application's annotation-processor path
 alongside this artifact for the validated annotations to produce proxies and metadata.
 
+## Verification
+
+A clean reactor build regenerates the cache metadata, generated cache module, and AOP composition
+from the consuming application sources; stale generated output is not a runtime provider
+dependency. Run the processor proof with:
+
+```text
+./mvnw -ntp -pl vertique-cache/vertique-cache-codegen -am verify
+```
+
+The package-level clean build also verifies dependency/BOM parity and packaged module-documentation
+parity:
+
+```text
+./mvnw -ntp clean verify
+```
+
 ## Decision records
 
 - [D012 — Named and property key selectors](../../../../../../../../../docs/specs/cache-001-annotation-cache-support/decisions/D012-named-and-property-key-selectors.md)

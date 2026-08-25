@@ -108,6 +108,22 @@ closes the shared Redis clients. When an application provides `CronScheduler`, t
 registers the bounded cleanup job and its event-bus dispatch handler. Cleanup policy and metrics
 remain owned by T010; this module only composes their lifecycle with the shared client.
 
+## Conformance and verification
+
+The Redis edge runs the same provider-neutral `CacheStoreContractTest` as the in-process provider,
+including hit, miss, TTL, clear, failure, declared-type, value-isolation, and repeatable-eviction
+semantics. Redis integration uses the pinned Testcontainers image
+`redis:7.2.4-alpine@sha256:c8bb255c3559b3e458766db810aa7b3c7af1235b204cfdb304e79ff388fe1a5a`.
+
+Run the Redis provider proof with:
+
+```text
+./mvnw -ntp -pl vertique-cache/vertique-cache-redis -am verify
+```
+
+The package-level clean verification also checks dependency/BOM parity, forbidden implementation
+dependencies, packaged module-documentation parity, and clean generated-code regeneration.
+
 ## Dependencies
 
 | Artifact | Purpose |
