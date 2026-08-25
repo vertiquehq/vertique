@@ -16,6 +16,7 @@
     <dependencies>
         <dependency><groupId>dev.vertique</groupId><artifactId>vertique-cache-core</artifactId></dependency>
         <dependency><groupId>dev.vertique</groupId><artifactId>vertique-json</artifactId></dependency>
+        <dependency><groupId>dev.vertique</groupId><artifactId>vertique-job-cron</artifactId></dependency>
         <dependency><groupId>dev.vertique</groupId><artifactId>vertique-redis-core</artifactId></dependency>
         <dependency><groupId>io.vertx</groupId><artifactId>vertx-core</artifactId></dependency>
         <dependency><groupId>io.vertx</groupId><artifactId>vertx-redis-client</artifactId></dependency>
