@@ -81,17 +81,15 @@ class CacheSecurityIntegrationTest {
             trace.add("authorize");
             return Future.failedFuture("forbidden");
         };
-        assertThrows(
-                CompletionException.class,
-                () -> Invocations.run(
-                                this,
-                                metadata,
-                                new Object[] {"hit"},
-                                new MethodInterceptor[] {deny, cache},
-                                target(deniedTargetCalls, "should-not-run"))
-                        .toCompletionStage()
-                        .toCompletableFuture()
-                        .join());
+        assertThrows(CompletionException.class, () -> Invocations.run(
+                        this,
+                        metadata,
+                        new Object[] {"hit"},
+                        new MethodInterceptor[] {deny, cache},
+                        target(deniedTargetCalls, "should-not-run"))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join());
         assertEquals(List.of("authorize"), trace);
         assertEquals(getsBeforeDenied, store.getCalls, "the denied hit must not reach CacheStore.get");
         assertEquals(0, deniedTargetCalls.get(), "the denied hit must not invoke the target");
