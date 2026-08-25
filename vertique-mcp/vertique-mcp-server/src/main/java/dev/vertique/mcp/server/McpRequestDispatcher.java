@@ -39,6 +39,7 @@ import dev.vertique.mcp.tool.McpAccessMode;
 import dev.vertique.mcp.tool.McpCancellationSignal;
 import dev.vertique.mcp.tool.McpInputRejectionException;
 import dev.vertique.mcp.tool.McpPreparedToolCall;
+import dev.vertique.mcp.tool.McpStructuredOutputWriter;
 import dev.vertique.mcp.tool.McpToolAccess;
 import dev.vertique.mcp.tool.McpToolAnnotations;
 import dev.vertique.mcp.tool.McpToolDescriptor;
@@ -273,6 +274,10 @@ final class McpRequestDispatcher {
             // rather than admitting a JSON string value.
             .disable(JsonWriteFeature.WRITE_NAN_AS_STRINGS)
             .build();
+
+    /** Compatibility writer for protocol-owned values and hand-written framework fixtures. */
+    private static final McpStructuredOutputWriter NEUTRAL_OUTPUT_WRITER =
+            (value, destination) -> OUTPUT_ENCODER.writeValue(destination, value);
 
     /**
      * Parses the bytes {@link #encodeCapped} already produced back into the canonical {@code
@@ -1891,7 +1896,7 @@ final class McpRequestDispatcher {
                 McpToolResult<?> toolResult = ar.result();
                 Object normalizedOutput;
                 try {
-                    normalizedOutput = normalizeStructuredContent(toolResult.structuredContent());
+                    normalizedOutput = normalizeStructuredContent(invoker, toolResult.structuredContent());
                 } catch (RuntimeException | StackOverflowError serializationFailure) {
                     // This boundary owns only the sole raw-value serialization and bounded-byte
                     // reparse. Byte/token exhaustion, cyclic or non-finite output, and recursion are
@@ -1998,10 +2003,21 @@ final class McpRequestDispatcher {
      */
     @Nullable
     Object normalizeStructuredContent(@Nullable Object value) {
+        return normalizeStructuredContent(value, NEUTRAL_OUTPUT_WRITER);
+    }
+
+    /** Uses a generated invoker's effective-profile writer, retaining the neutral fixture fallback. */
+    private Object normalizeStructuredContent(McpToolInvoker invoker, @Nullable Object value) {
+        McpStructuredOutputWriter writer = invoker.structuredOutputWriter().orElse(NEUTRAL_OUTPUT_WRITER);
+        return normalizeStructuredContent(value, writer);
+    }
+
+    /** Serializes once through {@code writer}, then reparses only the bounded bytes it produced. */
+    private Object normalizeStructuredContent(@Nullable Object value, McpStructuredOutputWriter writer) {
         if (value == null) {
             return null;
         }
-        byte[] bounded = encodeCapped(value);
+        byte[] bounded = encodeCapped(value, writer);
         try {
             return normalizationDecoder.readValue(bounded, Object.class);
         } catch (IOException parseFailure) {
@@ -2705,9 +2721,14 @@ final class McpRequestDispatcher {
      * @throws OutputCapExceededException when serialization would exceed the configured cap
      */
     private byte[] encodeCapped(Object value) {
+        return encodeCapped(value, NEUTRAL_OUTPUT_WRITER);
+    }
+
+    /** Encodes through the selected writer while the dispatcher-owned sink enforces the byte cap. */
+    private byte[] encodeCapped(Object value, McpStructuredOutputWriter writer) {
         CappedOutputStream out = new CappedOutputStream(config.outputMaxBytes());
         try {
-            OUTPUT_ENCODER.writeValue(out, value);
+            writer.write(value, out);
         } catch (OutputCapExceededException overCap) {
             throw overCap;
         } catch (IOException encodeFailure) {

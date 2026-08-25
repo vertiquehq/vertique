@@ -489,6 +489,8 @@ class McpToolProcessorCompileTest {
                     .assertGeneratedSourceContains(WEATHER_INVOKER_FQN, "McpToolInvoker")
                     .assertGeneratedSourceContains(WEATHER_INVOKER_FQN, "weather.lookup")
                     .assertGeneratedSourceContains(WEATHER_INVOKER_FQN, "record Input")
+                    .assertGeneratedSourceContains(WEATHER_INVOKER_FQN, "structuredOutputWriter()")
+                    .assertGeneratedSourceContains(WEATHER_INVOKER_FQN, "Optional.of(runtime)")
                     .assertGeneratedSourceDoesNotContain(
                             WEATHER_INVOKER_FQN, "public class WeatherTools_lookup_McpToolInvoker")
                     // Direct invocation: the generated body calls lookup(...) and never reflects.
@@ -1572,12 +1574,15 @@ class McpToolProcessorCompileTest {
                     package dev.vertique.mcp.server.runtime;
 
                     import dev.vertique.core.sanitization.InputFieldNameResolver;
+                    import dev.vertique.mcp.tool.McpStructuredOutputWriter;
                     import dev.vertique.mcp.tool.McpToolDescriptor;
+                    import java.io.IOException;
+                    import java.io.OutputStream;
                     import java.util.Map;
                     import java.util.Optional;
                     import java.util.function.Function;
 
-                    public final class McpToolRuntime<I> {
+                    public final class McpToolRuntime<I> implements McpStructuredOutputWriter {
                         public McpToolDescriptor descriptor() {
                             return null;
                         }
@@ -1588,6 +1593,10 @@ class McpToolProcessorCompileTest {
 
                         public InputFieldNameResolver fieldNameResolver() {
                             return null;
+                        }
+
+                        @Override
+                        public void write(Object value, OutputStream destination) throws IOException {
                         }
 
                         public <P> void verifyOptionalMaterialization(

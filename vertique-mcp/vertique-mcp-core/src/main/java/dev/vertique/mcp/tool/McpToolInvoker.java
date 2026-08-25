@@ -4,6 +4,7 @@
 package dev.vertique.mcp.tool;
 
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * The generated-runtime contract between the MCP server and one published tool.
@@ -25,6 +26,18 @@ public interface McpToolInvoker {
      * @return the published descriptor of this tool
      */
     McpToolDescriptor descriptor();
+
+    /**
+     * Returns the effective-profile writer for structured application results.
+     *
+     * <p>Generated invokers always return their runtime-bound writer. The empty default exists only
+     * for hand-written framework fixtures, which retain the server's neutral compatibility writer.
+     *
+     * @return the generated runtime's structured-output writer, or empty for a hand-written fixture
+     */
+    default Optional<McpStructuredOutputWriter> structuredOutputWriter() {
+        return Optional.empty();
+    }
 
     /**
      * Prepares one call after the server has validated the arguments against the input schema.

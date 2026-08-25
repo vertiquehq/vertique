@@ -58,7 +58,7 @@
       "public I dev.vertique.mcp.server.runtime.McpToolRuntime.materializeArguments(java.util.Map<java.lang.String, java.lang.Object>)",
       "public dev.vertique.core.sanitization.InputFieldNameResolver dev.vertique.mcp.server.runtime.McpToolRuntime.fieldNameResolver()",
       "public dev.vertique.mcp.tool.McpToolDescriptor dev.vertique.mcp.server.runtime.McpToolRuntime.descriptor()",
-      "public java.lang.Object dev.vertique.mcp.server.runtime.McpToolRuntime.normalizeStructuredContent(java.lang.Object)",
+      "public void dev.vertique.mcp.server.runtime.McpToolRuntime.write(java.lang.Object,java.io.OutputStream) throws java.io.IOException",
       "public <P> void dev.vertique.mcp.server.runtime.McpToolRuntime.verifyOptionalMaterialization(java.lang.Class<P>,java.util.function.Function<P, java.util.Optional<?>>)"
     ],
     "dev.vertique.mcp.server.runtime.McpToolRuntimeFactory": [

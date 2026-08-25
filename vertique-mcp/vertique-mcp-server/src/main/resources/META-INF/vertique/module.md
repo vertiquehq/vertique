@@ -432,11 +432,12 @@ output schema, or a text-only/structured-content-free result, is trivially valid
 normalize or validate.
 
 **The `mcp.outputMaxBytes` cap independently bounds both halves contract §4.3 names.** Normalization
-(`McpRequestDispatcher#normalizeStructuredContent`) serializes a handler's raw structured value exactly
-once into the same byte-counting sink (`CappedOutputStream`, via `encodeCapped`) every terminal writer
-uses, aborting the moment the running byte count would exceed the cap — before a full `Map`/`List` tree
-is ever built. The resulting bounded byte array, never the raw value again, is then parsed back into
-that canonical tree. This keeps the "normalized exactly once" guarantee
+serializes a handler's raw structured value exactly once through the generated invoker's effective-
+profile `McpStructuredOutputWriter` into the same byte-counting sink (`CappedOutputStream`, via
+`encodeCapped`) every terminal writer uses, aborting the moment the running byte count would exceed
+the cap — before a full `Map`/`List` tree is ever built. The resulting bounded byte array, never the
+raw value again, is then parsed back into that canonical tree. Hand-written framework fixtures use
+the neutral compatibility writer. This keeps the "normalized exactly once" guarantee
 `McpOutputPipelineIT#shouldNormalizeAndValidateAStructuredResultOnce` pins on real emitted output: an
 independent byte-counting probe ahead of an otherwise-unbounded conversion was evaluated and rejected
 earlier, because a probe-then-convert shape would serialize the handler's raw value twice; reusing
@@ -497,8 +498,10 @@ method directly.
 `McpToolRuntimeFactory` is the single construction path for a generated tool's descriptor and
 profile binding. It is a generated-runtime contract: application code neither calls nor implements
 it, and `McpToolRuntime` has no public constructor. Per tool it resolves the effective profile and
-returns an immutable binding that privately retains the exact stable mapper. No profile lookup
-happens on the request path.
+returns an immutable binding that privately retains the exact stable mapper. Generated invokers
+publish that binding only as an `McpStructuredOutputWriter`, allowing the dispatcher to stream a
+structured value into its own capped destination without exposing or mutating the mapper. No profile
+lookup happens on the request path.
 
 ### Immutable registry and startup validation
 
@@ -586,7 +589,9 @@ framework profile and this section does not apply.
 `AnnotationJsonSchemaGenerator.forInputProfile(profile)` / `forOutputProfile(profile)` — never
 `withVictoolsDefaults()` and never a directly configured Victools instance. For each distinct
 effective profile used by a tool, the factory creates or reuses one generator per direction, never
-rebuilding one per tool.
+rebuilding one per tool. Direction-appropriate Jackson introspection supplies the mapper's external
+property names, including mapper-level naming strategies and mix-ins, so the published schema and
+the mapper used at runtime describe the same wire shape.
 
 The generated input schema is then hardened at the protocol argument-object boundary, document-driven
 and never type-graph-driven:

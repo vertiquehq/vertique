@@ -131,6 +131,8 @@ final class McpToolInvokerEmitter {
     private static final ClassName MCP_TOOL_ACCESS = ClassName.get("dev.vertique.mcp.tool", "McpToolAccess");
     private static final ClassName MCP_ACCESS_MODE = ClassName.get("dev.vertique.mcp.tool", "McpAccessMode");
     private static final ClassName MCP_TOOL_RESULT = ClassName.get("dev.vertique.mcp.tool", "McpToolResult");
+    private static final ClassName MCP_STRUCTURED_OUTPUT_WRITER =
+            ClassName.get("dev.vertique.mcp.tool", "McpStructuredOutputWriter");
     private static final ClassName MCP_PREPARED_TOOL_CALL =
             ClassName.get("dev.vertique.mcp.tool", "McpPreparedToolCall");
     private static final ClassName MCP_CANCELLATION_SIGNAL =
@@ -268,6 +270,12 @@ final class McpToolInvokerEmitter {
                         .addModifiers(Modifier.PUBLIC)
                         .returns(MCP_TOOL_DESCRIPTOR)
                         .addStatement("return $N.descriptor()", RUNTIME_FIELD)
+                        .build())
+                .addMethod(MethodSpec.methodBuilder("structuredOutputWriter")
+                        .addAnnotation(Override.class)
+                        .addModifiers(Modifier.PUBLIC)
+                        .returns(ParameterizedTypeName.get(OPTIONAL, MCP_STRUCTURED_OUTPUT_WRITER))
+                        .addStatement("return $T.of($N)", OPTIONAL, RUNTIME_FIELD)
                         .build())
                 .addMethod(prepare(model, inputType, preparedCallType, cancellationAware))
                 .addType(preparedCall(model, inputType, preparedCallType, cancellationAware))

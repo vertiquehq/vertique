@@ -78,11 +78,14 @@ the constructor itself enforces — so another type in this module (`McpRequestT
 constructor bounds any resolved-tool-identity telemetry against it) can validate a candidate name
 without duplicating the pattern.
 
-`McpToolInvoker` and `McpPreparedToolCall` are generated-runtime contracts: application code
-neither implements nor calls them. `prepare` is the fixed input boundary — the server validates
-arguments against the input schema, generated code then applies input policies, materializes typed
-parameters through the effective JSON profile, and performs Bean Validation. No prepared call
-exists for a failed stage.
+`McpToolInvoker`, `McpPreparedToolCall`, and `McpStructuredOutputWriter` are generated-runtime
+contracts: application code neither implements nor calls them. `prepare` is the fixed input
+boundary — the server validates arguments against the input schema, generated code then applies
+input policies, materializes typed parameters through the effective JSON profile, and performs Bean
+Validation. No prepared call exists for a failed stage. A generated invoker's
+`structuredOutputWriter()` exposes only the ability to stream a structured result through the same
+stable profile mapper into a server-owned destination; it does not expose the mapper or own output
+limits, validation, observation, or terminal encoding.
 
 `McpBeanValidation`, `McpInputRejectionException`, and `McpValueTrees` are further generated-runtime
 support types, public for the same reason `McpToolInvoker` is: `prepare` is generated into an

@@ -7,8 +7,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.json.JacksonFieldNameResolver;
+import dev.vertique.mcp.tool.McpStructuredOutputWriter;
 import dev.vertique.mcp.tool.McpToolDescriptor;
 import jakarta.annotation.Nullable;
+import java.io.IOException;
+import java.io.OutputStream;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -25,7 +28,7 @@ import java.util.function.Function;
  *
  * @param <I> the generated input-carrier record type of the owning tool
  */
-public final class McpToolRuntime<I> {
+public final class McpToolRuntime<I> implements McpStructuredOutputWriter {
 
     private final McpToolDescriptor descriptor;
     private final ObjectMapper mapper;
@@ -156,13 +159,16 @@ public final class McpToolRuntime<I> {
     }
 
     /**
-     * Normalizes a structured tool result into the one bounded JSON-compatible value later reused for
-     * output-schema validation, canonical text, observation, and envelope encoding.
+     * Writes a structured tool result through this runtime's stable effective-profile mapper.
      *
-     * @param value the application structured value, or {@code null} when the result carries none
-     * @return the normalized JSON-compatible value, or {@code null} when {@code value} is {@code null}
+     * <p>The dispatcher owns and supplies the bounded destination, then reparses only the produced
+     * bytes for validation, observation, and envelope encoding. This runtime never exposes its mapper
+     * or materializes an unbounded intermediate tree.
      */
-    public @Nullable Object normalizeStructuredContent(@Nullable Object value) {
-        return value == null ? null : mapper.convertValue(value, Object.class);
+    @Override
+    public void write(Object value, OutputStream destination) throws IOException {
+        Objects.requireNonNull(value, "value");
+        Objects.requireNonNull(destination, "destination");
+        mapper.writeValue(destination, value);
     }
 }

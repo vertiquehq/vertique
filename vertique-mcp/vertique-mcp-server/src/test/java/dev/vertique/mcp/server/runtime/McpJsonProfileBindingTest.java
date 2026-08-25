@@ -22,7 +22,9 @@ import dev.vertique.mcp.tool.McpToolAccess;
 import dev.vertique.mcp.tool.McpToolAnnotations;
 import dev.vertique.mcp.tool.McpToolDescriptor;
 import jakarta.annotation.Nullable;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -181,7 +183,7 @@ class McpJsonProfileBindingTest {
      * constructed from — normalizes structured content through that identical mapper, and a tool
      * declaring a different profile is bound to a different one.
      */
-    private static void shouldGenerateSchemaWithAndRetainTheSameEffectiveProfileMapper() {
+    private static void shouldGenerateSchemaWithAndRetainTheSameEffectiveProfileMapper() throws IOException {
         McpJsonProfileResolver resolver = McpJsonProfileBindingTestFixture.resolver("mcp-default", "global-default");
 
         JsonMapperProfile methodProfile = resolver.resolve(JsonProfileId.of("method"));
@@ -192,15 +194,21 @@ class McpJsonProfileBindingTest {
                 .isSameAs(methodProfileAgain.mapper());
 
         McpToolRuntime<Map<String, Object>> methodBinding = McpJsonProfileBindingTestFixture.binding(methodProfile);
-        assertThat(methodBinding.normalizeStructuredContent(new ProfileMarker()))
+        assertThat(write(methodBinding, new ProfileMarker()))
                 .as("the retained mapper is the effective profile's mapper")
-                .isEqualTo("method");
+                .isEqualTo("\"method\"");
 
         JsonMapperProfile typeProfile = resolver.resolve(JsonProfileId.of("type"));
         McpToolRuntime<Map<String, Object>> typeBinding = McpJsonProfileBindingTestFixture.binding(typeProfile);
-        assertThat(typeBinding.normalizeStructuredContent(new ProfileMarker()))
+        assertThat(write(typeBinding, new ProfileMarker()))
                 .as("a tool declaring another profile is bound to that profile's mapper")
-                .isEqualTo("type");
+                .isEqualTo("\"type\"");
+    }
+
+    private static String write(McpToolRuntime<?> runtime, Object value) throws IOException {
+        ByteArrayOutputStream destination = new ByteArrayOutputStream();
+        runtime.write(value, destination);
+        return destination.toString(StandardCharsets.UTF_8);
     }
 
     // --- Fixtures ---

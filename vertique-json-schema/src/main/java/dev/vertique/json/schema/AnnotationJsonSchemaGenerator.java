@@ -4,8 +4,13 @@
 package dev.vertique.json.schema;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.BeanDescription;
+import com.fasterxml.jackson.databind.JavaType;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.victools.jsonschema.generator.FieldScope;
+import com.github.victools.jsonschema.generator.MemberScope;
 import com.github.victools.jsonschema.generator.MethodScope;
 import com.github.victools.jsonschema.generator.OptionPreset;
 import com.github.victools.jsonschema.generator.SchemaGenerator;
@@ -19,8 +24,11 @@ import com.github.victools.jsonschema.module.swagger2.Swagger2Module;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonSchemaTypeOverride.Direction;
 import java.lang.reflect.GenericArrayType;
+import java.lang.reflect.Member;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -271,7 +279,8 @@ public final class AnnotationJsonSchemaGenerator {
             builder.forFields().withCustomDefinitionProvider(new SchemaImplementationGuard<FieldScope>(validated));
             builder.forMethods().withCustomDefinitionProvider(new SchemaImplementationGuard<MethodScope>(validated));
         }
-        return new AnnotationJsonSchemaGenerator(build(builder), hasOverrides);
+        return new AnnotationJsonSchemaGenerator(
+                build(builder, new ProfilePropertyNameResolver(validated.mapper(), direction)), hasOverrides);
     }
 
     /**
@@ -287,12 +296,81 @@ public final class AnnotationJsonSchemaGenerator {
      * @return the configured Victools generator
      */
     private static SchemaGenerator build(SchemaGeneratorConfigBuilder builder) {
+        return build(builder, null);
+    }
+
+    /**
+     * Installs the shared annotation modules and, for profile-aware generation, the selected mapper's
+     * actual input- or output-direction property names.
+     *
+     * <p>Victools' Jackson module reads Jackson annotations but does not project an
+     * {@link ObjectMapper}-level property naming strategy. Registering the mapper-derived resolver
+     * after the modules makes the generated schema use the same names that the selected mapper
+     * materializes or serializes.
+     */
+    private static SchemaGenerator build(
+            SchemaGeneratorConfigBuilder builder, ProfilePropertyNameResolver propertyNames) {
         builder.with(new JacksonModule())
                 .with(new JakartaValidationModule(
                         JakartaValidationOption.NOT_NULLABLE_FIELD_IS_REQUIRED,
                         JakartaValidationOption.INCLUDE_PATTERN_EXPRESSIONS))
                 .with(new Swagger2Module());
+        if (propertyNames != null) {
+            builder.forFields().withPropertyNameOverrideResolver(propertyNames::resolve);
+            builder.forMethods().withPropertyNameOverrideResolver(propertyNames::resolve);
+        }
         return new SchemaGenerator(builder.build());
+    }
+
+    /** Mapper-introspected wire names keyed by the exact member Victools is publishing. */
+    private static final class ProfilePropertyNameResolver {
+        private final ObjectMapper mapper;
+        private final Direction direction;
+
+        private record PropertyNames(Map<Member, String> byMember, Map<String, String> byInternalName) {}
+
+        private final ClassValue<PropertyNames> namesByType = new ClassValue<>() {
+            @Override
+            protected PropertyNames computeValue(Class<?> type) {
+                return introspect(type);
+            }
+        };
+
+        private ProfilePropertyNameResolver(ObjectMapper mapper, Direction direction) {
+            this.mapper = mapper;
+            this.direction = direction;
+        }
+
+        private String resolve(MemberScope<?, ?> scope) {
+            if (scope.isFakeContainerItemScope()) {
+                return null;
+            }
+            PropertyNames names = namesByType.get(scope.getDeclaringType().getErasedType());
+            String byMember = names.byMember().get(scope.getRawMember());
+            return byMember != null ? byMember : names.byInternalName().get(scope.getName());
+        }
+
+        private PropertyNames introspect(Class<?> type) {
+            JavaType javaType = mapper.getTypeFactory().constructType(type);
+            BeanDescription description = direction == Direction.INPUT
+                    ? mapper.getDeserializationConfig().introspect(javaType)
+                    : mapper.getSerializationConfig().introspect(javaType);
+            Map<Member, String> members = new HashMap<>();
+            Map<String, String> internalNames = new HashMap<>();
+            for (BeanPropertyDefinition property : description.findProperties()) {
+                internalNames.put(property.getInternalName(), property.getName());
+                if (property.getField() != null) {
+                    members.put(property.getField().getMember(), property.getName());
+                }
+                if (property.getGetter() != null) {
+                    members.put(property.getGetter().getMember(), property.getName());
+                }
+                if (property.getSetter() != null) {
+                    members.put(property.getSetter().getMember(), property.getName());
+                }
+            }
+            return new PropertyNames(Map.copyOf(members), Map.copyOf(internalNames));
+        }
     }
 
     /**

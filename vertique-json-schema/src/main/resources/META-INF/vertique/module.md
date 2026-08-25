@@ -44,10 +44,12 @@ overrides apply:
 
 - `withVictoolsDefaults()` — Victools' own default mapper, with no profile override applied. This
   is the mode a consumer without a resolved `JsonMapperProfile` uses.
-- `forInputProfile(JsonMapperProfile)` — property discovery uses `profile.mapper()`; only the
-  profile's `INPUT`- and `BOTH`-direction schema-type overrides apply.
-- `forOutputProfile(JsonMapperProfile)` — property discovery uses `profile.mapper()`; only the
-  profile's `OUTPUT`- and `BOTH`-direction schema-type overrides apply.
+- `forInputProfile(JsonMapperProfile)` — property discovery and external property names use the
+  input-direction Jackson introspection of `profile.mapper()`; only the profile's `INPUT`- and
+  `BOTH`-direction schema-type overrides apply.
+- `forOutputProfile(JsonMapperProfile)` — property discovery and external property names use the
+  output-direction Jackson introspection of `profile.mapper()`; only the profile's `OUTPUT`- and
+  `BOTH`-direction schema-type overrides apply.
 
 All three modes install the same Victools modules and options — the Jackson module, the Jakarta
 Validation module with `NOT_NULLABLE_FIELD_IS_REQUIRED` and `INCLUDE_PATTERN_EXPRESSIONS`, and the
