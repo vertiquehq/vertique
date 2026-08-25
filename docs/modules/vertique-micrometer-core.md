@@ -5,7 +5,7 @@
 
 This module owns the backend-agnostic Micrometer registry bootstrap and the `MeterRegistry`
 binding. It does not own cache observers; cache telemetry is composed by the separate
-`vertique-micrometer-cache` adapter.
+`vertique-cache-micrometer` adapter.
 
 ## Source Map
 
@@ -18,7 +18,8 @@ binding. It does not own cache observers; cache telemetry is composed by the sep
 ServiceLoader discovers registry backend providers before Vert.x is built. The contributor assembles
 the composite registry, applies common tags and cardinality filters, installs it into Vert.x, and
 publishes it through `MeterRegistryHolder`. Backend modules remain pluggable. Consumers that need
-cache metrics install `MicrometerCacheModule` explicitly alongside `MicrometerModule`; core does
+cache metrics install `MicrometerCacheModule` from `vertique-cache-micrometer` explicitly alongside
+`MicrometerModule`; core does
 not discover or contribute a cache observer.
 
 ## Load-Bearing Invariants

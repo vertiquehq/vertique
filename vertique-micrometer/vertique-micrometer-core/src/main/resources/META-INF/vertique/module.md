@@ -29,7 +29,7 @@ Add `vertique-micrometer-core` to any application that should emit metrics. Pair
 one backend module (`vertique-micrometer-registry-prometheus`) and install `MicrometerModule` in the
 Dagger `@Component`. Add `vertique-micrometer-rest` or `vertique-micrometer-services` to emit
 request and dispatch timing from those subsystems.
-Cache telemetry is provided by the separate `vertique-micrometer-cache` adapter, which
+Cache telemetry is provided by the separate `vertique-cache-micrometer` adapter, which
 applications install explicitly when they use cache modules and want cache metrics.
 
 Do not add this module if the application has no need for metrics — the module adds a runtime

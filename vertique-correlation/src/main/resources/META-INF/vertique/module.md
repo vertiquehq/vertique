@@ -86,7 +86,7 @@ not wire a tracer.
 **Singleton by design:** at most one implementation may be on the graph. Tracing is
 OpenTelemetry-only in this framework; contributing multiple resolvers would create
 an ambiguous binding that Dagger rejects at compile time. Note that
-`vertique-opentelemetry-core`'s `OpenTelemetryModule` **already contributes**
+`vertique-opentelemetry-core`'s `OpenTelemetryModule` contributes
 `OpenTelemetryTraceReferenceResolver` — an application that installs it must **not** also bind its
 own resolver (doing so is the duplicate-binding error above). The registration example below applies
 only when wiring a tracer integration that does not already provide one.

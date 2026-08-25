@@ -35,7 +35,7 @@
       "packaging": "pom"
     }
   ],
-  "expectedPublishableGavCount": 102,
+  "expectedPublishableGavCount": 103,
   "expectedPublishableGavs": [
     "dev.vertique:vertique-aop",
     "dev.vertique:vertique-app-parent",
@@ -49,6 +49,8 @@
     "dev.vertique:vertique-cache-codegen",
     "dev.vertique:vertique-cache-core",
     "dev.vertique:vertique-cache-injvm",
+    "dev.vertique:vertique-cache-micrometer",
+    "dev.vertique:vertique-cache-opentelemetry",
     "dev.vertique:vertique-cache-redis",
     "dev.vertique:vertique-codegen-all",
     "dev.vertique:vertique-codegen-aop",
@@ -99,7 +101,6 @@
     "dev.vertique:vertique-localization",
     "dev.vertique:vertique-logging",
     "dev.vertique:vertique-management",
-    "dev.vertique:vertique-micrometer-cache",
     "dev.vertique:vertique-micrometer-core",
     "dev.vertique:vertique-micrometer-registry-prometheus",
     "dev.vertique:vertique-micrometer-rest",

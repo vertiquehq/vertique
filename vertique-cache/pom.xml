@@ -13,11 +13,13 @@
     <artifactId>vertique-cache</artifactId>
     <packaging>pom</packaging>
     <name>Vertique Cache</name>
-    <description>Annotation-driven cache support family: provider-neutral contracts, code generation, and storage providers</description>
+    <description>Annotation-driven cache support family: contracts, code generation, storage providers, and optional adapters</description>
     <modules>
         <module>vertique-cache-core</module>
         <module>vertique-cache-codegen</module>
         <module>vertique-cache-injvm</module>
         <module>vertique-cache-redis</module>
+        <module>vertique-cache-micrometer</module>
+        <module>vertique-cache-opentelemetry</module>
     </modules>
 </project>

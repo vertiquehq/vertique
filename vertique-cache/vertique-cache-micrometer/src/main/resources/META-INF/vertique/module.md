@@ -7,7 +7,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 > **Status:** Beta
 > **Package:** `dev.vertique.micrometer.cache`
-> **Artifact:** `vertique-micrometer-cache`
+> **Artifact:** `vertique-cache-micrometer`
 > **Depends on:** `vertique-micrometer-core`, `vertique-cache-core`, micrometer-core
 
 Provides the explicit Micrometer adapter for provider-neutral cache observations. It contributes
@@ -16,7 +16,7 @@ Micrometer and applications choose whether to install this adapter.
 
 ## When To Use It
 
-Add `vertique-micrometer-cache` when the application uses `vertique-cache-core` with a local or
+Add `vertique-cache-micrometer` when the application uses `vertique-cache-core` with a local or
 Redis provider and wants cache operation and cleanup metrics. Install `MicrometerCacheModule`
 alongside `MicrometerModule` and the application's cache modules in the Dagger `@Component`.
 

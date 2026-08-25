@@ -3,8 +3,8 @@
 
 package dev.vertique.opentelemetry;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.Mockito.mock;
@@ -55,7 +55,8 @@ class CacheObserverTest {
     void tracerFailureDoesNotEscapeTheObserver() {
         Tracer tracer = mock(Tracer.class);
         when(tracer.spanBuilder("cache.get")).thenThrow(new AssertionError("tracer failure"));
-        CacheTracingObserver observer = new CacheTracingObserver(tracer, TracingConfig.builder().build());
+        CacheTracingObserver observer =
+                new CacheTracingObserver(tracer, TracingConfig.builder().build());
 
         assertDoesNotThrow(() -> observer.onOperation(
                 new CacheObservation("get", "redis", "profiles", "failure", Duration.ofMillis(1))));
