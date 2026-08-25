@@ -7,6 +7,7 @@ import dev.vertique.core.lifecycle.ApplicationShutdownStep;
 import dev.vertique.core.lifecycle.LifecyclePhase;
 import dev.vertique.redis.RedisClientShutdownStep;
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import java.util.Objects;
 import java.util.function.Supplier;
 
@@ -46,7 +47,29 @@ final class RedisCleanupLifecycle implements ApplicationShutdownStep {
      */
     @Override
     public Future<Void> stop() {
-        return unregister.get().compose(ignored -> closeRedis.get());
+        Promise<Void> completion = Promise.promise();
+        invoke(unregister).onComplete(unregisterResult -> {
+            invoke(closeRedis).onComplete(closeResult -> {
+                if (unregisterResult.failed()) {
+                    completion.fail(unregisterResult.cause());
+                } else if (closeResult.failed()) {
+                    completion.fail(closeResult.cause());
+                } else {
+                    completion.complete();
+                }
+            });
+        });
+        return completion.future();
+    }
+
+    /** Invokes a lifecycle operation while converting synchronous failures into failed futures. */
+    private static Future<Void> invoke(Supplier<Future<Void>> operation) {
+        try {
+            Future<Void> result = operation.get();
+            return result == null ? Future.failedFuture("Lifecycle operation returned null") : result;
+        } catch (Throwable failure) {
+            return Future.failedFuture(failure);
+        }
     }
 
     /**
