@@ -31,6 +31,27 @@ public final class McpSubprocessHarness {
     private static final Duration DESCENDANT_POLL_INTERVAL = Duration.ofMillis(20);
     private static final Set<String> SUBPROCESS_SENSITIVE_KEY_FRAGMENTS =
             Set.of("PASSWD", "AUTHORIZATION", "SESSION_KEY", "SSH_AUTH");
+    private static final Set<String> AMBIENT_ENVIRONMENT_ALLOWLIST =
+            Set.of("PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "LANG", "LC_ALL", "TZ");
+    private static final Set<String> HARNESS_OWNED_ENVIRONMENT = Set.of(
+            "HOME",
+            "USERPROFILE",
+            "HOMEDRIVE",
+            "HOMEPATH",
+            "XDG_CONFIG_HOME",
+            "XDG_CACHE_HOME",
+            "XDG_DATA_HOME",
+            "XDG_STATE_HOME",
+            "TMPDIR",
+            "TMP",
+            "TEMP",
+            "NPM_CONFIG_USERCONFIG",
+            "NPM_CONFIG_CACHE",
+            "GIT_CONFIG_GLOBAL",
+            "GIT_CONFIG_NOSYSTEM",
+            "GIT_TERMINAL_PROMPT",
+            "GCM_INTERACTIVE",
+            "GNUPGHOME");
 
     private final Duration timeout;
 
@@ -205,20 +226,61 @@ public final class McpSubprocessHarness {
         }
     }
 
-    private static Environment scrubbedEnvironment(Invocation invocation, Path workspace) {
+    private static Environment scrubbedEnvironment(Invocation invocation, Path workspace) throws IOException {
         Map<String, String> values = new LinkedHashMap<>();
         Set<String> sensitiveValues = new HashSet<>(invocation.sensitiveValues());
-        copyNonSensitiveEnvironment(System.getenv(), values, sensitiveValues);
+        copyAllowedAmbientEnvironment(values);
+        rejectHarnessOwnedOverrides(invocation.environment());
         copyNonSensitiveEnvironment(invocation.environment(), values, sensitiveValues);
+
         String workspaceValue = workspace.toString();
+        Path home = Files.createDirectories(workspace.resolve("home"));
+        Path config = Files.createDirectories(workspace.resolve("config"));
+        Path cache = Files.createDirectories(workspace.resolve("cache"));
+        Path data = Files.createDirectories(workspace.resolve("data"));
+        Path state = Files.createDirectories(workspace.resolve("state"));
+        Path npmCache = Files.createDirectories(cache.resolve("npm"));
+        Path gnupgHome = Files.createDirectories(config.resolve("gnupg"));
+        Path npmConfig = Files.createFile(config.resolve("npmrc"));
+        Path gitConfig = Files.createFile(config.resolve("gitconfig"));
+
+        values.put("HOME", home.toString());
+        values.put("USERPROFILE", home.toString());
+        values.put("XDG_CONFIG_HOME", config.toString());
+        values.put("XDG_CACHE_HOME", cache.toString());
+        values.put("XDG_DATA_HOME", data.toString());
+        values.put("XDG_STATE_HOME", state.toString());
         values.put("TMPDIR", workspaceValue);
         values.put("TMP", workspaceValue);
         values.put("TEMP", workspaceValue);
+        values.put("NPM_CONFIG_USERCONFIG", npmConfig.toString());
+        values.put("NPM_CONFIG_CACHE", npmCache.toString());
+        values.put("GIT_CONFIG_GLOBAL", gitConfig.toString());
+        values.put("GIT_CONFIG_NOSYSTEM", "1");
+        values.put("GIT_TERMINAL_PROMPT", "0");
+        values.put("GCM_INTERACTIVE", "Never");
+        values.put("GNUPGHOME", gnupgHome.toString());
         List<String> redactions = sensitiveValues.stream()
                 .filter(value -> !value.isEmpty())
                 .sorted(Comparator.comparingInt(String::length).reversed())
                 .toList();
         return new Environment(Map.copyOf(values), redactions);
+    }
+
+    private static void copyAllowedAmbientEnvironment(Map<String, String> target) {
+        System.getenv().forEach((key, value) -> {
+            if (AMBIENT_ENVIRONMENT_ALLOWLIST.contains(key.toUpperCase(Locale.ROOT))) {
+                target.put(key, value);
+            }
+        });
+    }
+
+    private static void rejectHarnessOwnedOverrides(Map<String, String> environment) {
+        environment.keySet().forEach(key -> {
+            if (HARNESS_OWNED_ENVIRONMENT.contains(key.toUpperCase(Locale.ROOT))) {
+                throw new IllegalArgumentException("environment variable is owned by the harness: " + key);
+            }
+        });
     }
 
     private static void copyNonSensitiveEnvironment(

@@ -4,6 +4,7 @@
 package dev.vertique.mcp.server.support;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.fail;
 
 import java.nio.file.Files;
@@ -33,6 +34,20 @@ class McpSubprocessHarnessTest {
     private static final String SAFE_MARKER = "t025-safe-marker";
     private static final String SECRET = "t025-secret-that-must-not-leak";
     private static final String PIPE_FILLING_INPUT = "x".repeat(8 * 1024 * 1024);
+    private static final List<String> WORKSPACE_PATH_VARIABLES = List.of(
+            "HOME",
+            "USERPROFILE",
+            "XDG_CONFIG_HOME",
+            "XDG_CACHE_HOME",
+            "XDG_DATA_HOME",
+            "XDG_STATE_HOME",
+            "TMPDIR",
+            "TMP",
+            "TEMP",
+            "NPM_CONFIG_USERCONFIG",
+            "NPM_CONFIG_CACHE",
+            "GIT_CONFIG_GLOBAL",
+            "GNUPGHOME");
 
     private final McpSubprocessHarness harness = new McpSubprocessHarness(Duration.ofSeconds(2));
 
@@ -104,7 +119,11 @@ class McpSubprocessHarnessTest {
     }
 
     private void assertCredentialsScrubbed() throws Exception {
-        McpSubprocessHarness.Invocation invocation = fixture("environment", SECRET)
+        String ambientOnlyKey = Stream.of("USER", "USERNAME", "SHELL", "PWD")
+                .filter(System.getenv()::containsKey)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("no ambient-only environment fixture is available"));
+        McpSubprocessHarness.Invocation invocation = fixture("environment", SECRET, ambientOnlyKey)
                 .withEnvironment(Map.of(
                         "T025_TEST_TOKEN",
                         SECRET,
@@ -123,9 +142,52 @@ class McpSubprocessHarnessTest {
         assertThat(result.stdout()).contains("AUTHORIZATION=null");
         assertThat(result.stdout()).contains("SAFE=" + SAFE_MARKER);
         assertThat(result.stdout()).contains("PRINTED=[REDACTED]");
+        assertThat(result.stdout()).contains("AMBIENT_KEY=" + ambientOnlyKey);
+        assertThat(result.stdout()).contains("AMBIENT_VALUE=null");
+        WORKSPACE_PATH_VARIABLES.forEach(variable -> assertWorkspacePath(result, variable));
+        assertThat(result.stdout()).contains("GIT_CONFIG_NOSYSTEM=1");
+        assertThat(result.stdout()).contains("GIT_TERMINAL_PROMPT=0");
+        assertThat(result.stdout()).contains("GCM_INTERACTIVE=Never");
         assertThat(result.stdout()).doesNotContain(SECRET);
         assertThat(result.stderr()).doesNotContain(SECRET);
         assertThat(Files.notExists(result.workspace())).isTrue();
+
+        assertReservedOverrideRejectedBeforeLaunch();
+    }
+
+    private static void assertWorkspacePath(McpSubprocessHarness.Result result, String variable) {
+        String prefix = variable + "=";
+        String value = result.stdout()
+                .lines()
+                .filter(line -> line.startsWith(prefix))
+                .map(line -> line.substring(prefix.length()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("child did not print " + variable));
+        assertThat(Path.of(value).normalize().startsWith(result.workspace().normalize()))
+                .as(variable + " must resolve beneath the invocation workspace")
+                .isTrue();
+        String ambient = System.getenv(variable);
+        if (ambient != null) {
+            assertThat(Path.of(value).normalize()).isNotEqualTo(Path.of(ambient).normalize());
+        }
+    }
+
+    private void assertReservedOverrideRejectedBeforeLaunch() throws Exception {
+        Path markerDirectory = Files.createTempDirectory("t025-launch-marker-");
+        Path marker = markerDirectory.resolve("started");
+        try {
+            McpSubprocessHarness.Invocation invocation = fixture("mark-launch", marker.toString())
+                    .withEnvironment(Map.of(
+                            "HOME", markerDirectory.resolve("override-home").toString()));
+
+            assertThatThrownBy(() -> harness.run(invocation))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("HOME");
+            assertThat(marker).doesNotExist();
+        } finally {
+            Files.deleteIfExists(marker);
+            Files.deleteIfExists(markerDirectory);
+        }
     }
 
     private static McpSubprocessHarness.Invocation fixture(String mode, String... arguments) {
@@ -158,7 +220,8 @@ class McpSubprocessHarnessTest {
                 case "hang" -> hang();
                 case "spawn-grandchild" -> spawnGrandchild();
                 case "workspace" -> printWorkspace();
-                case "environment" -> printEnvironment(arguments[1]);
+                case "environment" -> printEnvironment(arguments[1], arguments[2]);
+                case "mark-launch" -> Files.writeString(Path.of(arguments[1]), "started");
                 default -> throw new IllegalArgumentException("unknown fixture mode");
             }
         }
@@ -189,12 +252,18 @@ class McpSubprocessHarnessTest {
                     "PERMISSIONS=" + PosixFilePermissions.toString(Files.getPosixFilePermissions(workspace)));
         }
 
-        private static void printEnvironment(String secret) {
+        private static void printEnvironment(String secret, String ambientOnlyKey) {
             System.out.println("TOKEN=" + System.getenv("T025_TEST_TOKEN"));
             System.out.println("PASSPHRASE=" + System.getenv("T025_SSL_PASSPHRASE"));
             System.out.println("AUTHORIZATION=" + System.getenv("T025_AUTHORIZATION"));
             System.out.println("SAFE=" + System.getenv("T025_SAFE_MARKER"));
             System.out.println("PRINTED=" + secret);
+            System.out.println("AMBIENT_KEY=" + ambientOnlyKey);
+            System.out.println("AMBIENT_VALUE=" + System.getenv(ambientOnlyKey));
+            WORKSPACE_PATH_VARIABLES.forEach(variable -> System.out.println(variable + "=" + System.getenv(variable)));
+            System.out.println("GIT_CONFIG_NOSYSTEM=" + System.getenv("GIT_CONFIG_NOSYSTEM"));
+            System.out.println("GIT_TERMINAL_PROMPT=" + System.getenv("GIT_TERMINAL_PROMPT"));
+            System.out.println("GCM_INTERACTIVE=" + System.getenv("GCM_INTERACTIVE"));
         }
     }
 }

@@ -14,9 +14,14 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
@@ -45,10 +50,12 @@ public class McpGoClientInteropIT {
     private static final String CLIENT_RESOURCE = "mcp/clients/go/client.go";
 
     private static McpGoClientInteropITFixture fixture;
+    private static Path goCacheRoot;
 
     @BeforeAll
-    static void setUp(Vertx vertx, VertxTestContext context) {
+    static void setUp(Vertx vertx, VertxTestContext context) throws IOException {
         assertLockMatchesPin();
+        goCacheRoot = createRestrictedGoCache();
         McpGoClientInteropITFixture.start(vertx).onComplete(context.succeeding(started -> {
             fixture = started;
             context.completeNow();
@@ -58,10 +65,10 @@ public class McpGoClientInteropIT {
     @AfterAll
     static void tearDown(VertxTestContext context) {
         if (fixture == null) {
-            context.completeNow();
+            finishTeardown(context, null);
             return;
         }
-        fixture.server().close().onComplete(context.succeeding(ignored -> context.completeNow()));
+        fixture.server().close().onComplete(result -> finishTeardown(context, result.cause()));
     }
 
     private static Stream<String> t029ContractRows() {
@@ -86,6 +93,11 @@ public class McpGoClientInteropIT {
                         fixture.serverUrl(),
                         "--scenario",
                         row))
+                .withEnvironment(Map.of(
+                        "GOPATH", goCacheRoot.resolve("gopath").toString(),
+                        "GOMODCACHE", goCacheRoot.resolve("modules").toString(),
+                        "GOCACHE", goCacheRoot.resolve("build").toString(),
+                        "GOENV", "off"))
                 .withSensitiveValues(Set.of(McpGoClientInteropITFixture.BEARER_ALICE, "Bearer invalid"));
         McpSubprocessHarness.Result process =
                 new McpSubprocessHarness(Duration.ofSeconds(60)).run(invocation).result();
@@ -195,6 +207,58 @@ public class McpGoClientInteropIT {
 
     private static String goExecutable() {
         return System.getProperty("mcp.go.executable", "go");
+    }
+
+    private static Path createRestrictedGoCache() throws IOException {
+        try {
+            return Files.createTempDirectory(
+                    "vertique-mcp-go-cache-",
+                    PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+        } catch (UnsupportedOperationException unsupported) {
+            Path cache = Files.createTempDirectory("vertique-mcp-go-cache-");
+            boolean restricted = cache.toFile().setReadable(false, false)
+                    && cache.toFile().setWritable(false, false)
+                    && cache.toFile().setExecutable(false, false)
+                    && cache.toFile().setReadable(true, true)
+                    && cache.toFile().setWritable(true, true)
+                    && cache.toFile().setExecutable(true, true);
+            if (!restricted) {
+                Files.deleteIfExists(cache);
+                throw new IOException("could not restrict the Go cache to its owner");
+            }
+            return cache;
+        }
+    }
+
+    private static void finishTeardown(VertxTestContext context, Throwable closeFailure) {
+        Throwable failure = closeFailure;
+        try {
+            if (goCacheRoot != null && Files.exists(goCacheRoot)) {
+                try (Stream<Path> paths = Files.walk(goCacheRoot)) {
+                    List<Path> cachedPaths = new ArrayList<>(paths.toList());
+                    for (Path path : cachedPaths) {
+                        if (!path.toFile().setWritable(true, true)) {
+                            throw new IOException("could not make Go cache path writable for cleanup: " + path);
+                        }
+                    }
+                    cachedPaths.sort(Comparator.reverseOrder());
+                    for (Path path : cachedPaths) {
+                        Files.deleteIfExists(path);
+                    }
+                }
+            }
+        } catch (IOException cleanupFailure) {
+            if (failure == null) {
+                failure = cleanupFailure;
+            } else {
+                failure.addSuppressed(cleanupFailure);
+            }
+        }
+        if (failure == null) {
+            context.completeNow();
+        } else {
+            context.failNow(failure);
+        }
     }
 
     private static String readResource(String resource) {
