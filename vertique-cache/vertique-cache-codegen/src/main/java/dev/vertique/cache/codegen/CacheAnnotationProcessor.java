@@ -104,7 +104,7 @@ public final class CacheAnnotationProcessor extends AbstractProcessor {
                 .addModifiers(Modifier.PUBLIC, Modifier.ABSTRACT)
                 .addAnnotation(AnnotationSpec.builder(ClassName.get("dagger", "Module"))
                         .addMember(
-                                "includes", "$T.class", ClassName.get("dev.vertique.cache.injvm", "CacheInJvmModule"))
+                                "includes", "$T.class", ClassName.get("dev.vertique.cache.caffeine", "CacheCaffeineModule"))
                         .build())
                 .addAnnotation(AnnotationSpec.builder(ClassName.get("javax.annotation.processing", "Generated"))
                         .addMember("value", "$S", CacheAnnotationProcessor.class.getName())

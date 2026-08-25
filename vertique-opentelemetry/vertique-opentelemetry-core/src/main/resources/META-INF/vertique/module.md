@@ -82,11 +82,6 @@ are installed in the same Dagger component, security lifecycle events are record
 the current active span — never as new child spans, which keeps the operation cheap and leaves the
 trace tree unchanged.
 
-**Cache child spans.** Cache tracing is provided by the separate
-`vertique-cache-opentelemetry` adapter. Install its `OpenTelemetryCacheModule` alongside
-`OpenTelemetryModule` when cache observations should become child spans. The core tracing module
-remains independent of cache contracts.
-
 ---
 
 ## Key Classes
@@ -150,8 +145,7 @@ The message carries only the failing class's simple name or a structural descrip
 
 ## Emitted Telemetry
 
-The security observer adds **span events** to the current recording span. The cache adapter creates
-cache-specific child spans from the injected `Tracer`; it does not modify an unrelated current span.
+The security observer adds **span events** to the current recording span.
 
 | Trigger | Span event name | Attributes |
 |---|---|---|
@@ -170,11 +164,6 @@ cache-specific child spans from the injected `Tracer`; it does not modify an unr
 
 Channel identifiers are deliberately excluded from every attribute set, to limit cardinality and to
 avoid emitting session-tracking data into a trace backend.
-
-Cache adapter spans use the `cache.<operation>` name and the `provider`, `cache`, `outcome`, and
-`duration_ms` attributes. Provider, cache, and outcome values are bounded before they are attached,
-and cache adapter failures are swallowed after the span is ended. See
-`vertique-cache-opentelemetry` for the adapter's Dagger installation contract.
 
 Emission is gated twice: on `tracing.enabled && tracing.security.spanEvents` (read once at
 construction) and on `Span.current().isRecording()`. Every observer method returns a succeeded

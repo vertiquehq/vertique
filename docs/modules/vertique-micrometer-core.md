@@ -4,8 +4,7 @@
 > **Public contract:** `vertique-micrometer-core/src/main/resources/META-INF/vertique/module.md`
 
 This module owns the backend-agnostic Micrometer registry bootstrap and the `MeterRegistry`
-binding. It does not own cache observers; cache telemetry is composed by the separate
-`vertique-cache-micrometer` adapter.
+binding.
 
 ## Source Map
 
@@ -18,14 +17,11 @@ binding. It does not own cache observers; cache telemetry is composed by the sep
 ServiceLoader discovers registry backend providers before Vert.x is built. The contributor assembles
 the composite registry, applies common tags and cardinality filters, installs it into Vert.x, and
 publishes it through `MeterRegistryHolder`. Backend modules remain pluggable. Consumers that need
-cache metrics install `MicrometerCacheModule` from `vertique-cache-micrometer` explicitly alongside
-`MicrometerModule`; core does
-not discover or contribute a cache observer.
+subsystem-specific metrics install their observer modules explicitly alongside `MicrometerModule`;
+core does not discover or contribute subsystem observers.
 
 ## Load-Bearing Invariants
 
-- The core module has no dependency on `vertique-cache-core` and does not contribute
-  `CacheMetricsObserver`.
 - Applications install adapter modules explicitly; the generic registry bootstrap does not select
   subsystem-specific observers.
 - Registry assembly publishes only after successful backend and binder setup; rollback closes
@@ -42,4 +38,3 @@ Focused core proof:
 ## Related ADRs
 
 - ADR 0098: Micrometer facade and pluggable registry backends.
-- D018: Public cache store SPI boundary — cache contracts and adapters remain provider-neutral.

@@ -17,9 +17,4 @@ public record CacheEntryConfig(CacheMode mode, long ttlSeconds, String jsonProfi
             throw new IllegalArgumentException("jsonProfile must not be blank");
         }
     }
-
-    /** Compatibility constructor retaining the pre-profile public shape. */
-    public CacheEntryConfig(CacheMode mode, long ttlSeconds) {
-        this(mode, ttlSeconds, null);
-    }
 }

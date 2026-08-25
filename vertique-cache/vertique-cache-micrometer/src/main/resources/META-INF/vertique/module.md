@@ -6,7 +6,7 @@ SPDX-License-Identifier: EUPL-1.2
 # Micrometer Cache Module
 
 > **Status:** Beta
-> **Package:** `dev.vertique.micrometer.cache`
+> **Package:** `dev.vertique.cache.micrometer`
 > **Artifact:** `vertique-cache-micrometer`
 > **Depends on:** `vertique-micrometer-core`, `vertique-cache-core`, micrometer-core
 

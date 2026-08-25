@@ -17,7 +17,7 @@
     <modules>
         <module>vertique-cache-core</module>
         <module>vertique-cache-codegen</module>
-        <module>vertique-cache-injvm</module>
+        <module>vertique-cache-caffeine</module>
         <module>vertique-cache-redis</module>
         <module>vertique-cache-micrometer</module>
         <module>vertique-cache-opentelemetry</module>

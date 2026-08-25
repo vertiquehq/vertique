@@ -13,7 +13,7 @@ SPDX-License-Identifier: EUPL-1.2
 | `vertique-bootstrap` | [module.md](../vertique-bootstrap/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-cache-codegen` | [module.md](../vertique-cache/vertique-cache-codegen/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-cache-core` | [module.md](../vertique-cache/vertique-cache-core/src/main/resources/META-INF/vertique/module.md) |
-| `vertique-cache-injvm` | [module.md](../vertique-cache/vertique-cache-injvm/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-cache-caffeine` | [module.md](../vertique-cache/vertique-cache-caffeine/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-cache-redis` | [module.md](../vertique-cache/vertique-cache-redis/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-cache-micrometer` | [module.md](../vertique-cache/vertique-cache-micrometer/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-cache-opentelemetry` | [module.md](../vertique-cache/vertique-cache-opentelemetry/src/main/resources/META-INF/vertique/module.md) |

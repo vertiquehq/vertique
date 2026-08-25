@@ -24,7 +24,7 @@
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
-            <artifactId>vertique-cache-injvm</artifactId>
+            <artifactId>vertique-cache-caffeine</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>

@@ -48,7 +48,7 @@
     "dev.vertique:vertique-bootstrap",
     "dev.vertique:vertique-cache-codegen",
     "dev.vertique:vertique-cache-core",
-    "dev.vertique:vertique-cache-injvm",
+    "dev.vertique:vertique-cache-caffeine",
     "dev.vertique:vertique-cache-micrometer",
     "dev.vertique:vertique-cache-opentelemetry",
     "dev.vertique:vertique-cache-redis",

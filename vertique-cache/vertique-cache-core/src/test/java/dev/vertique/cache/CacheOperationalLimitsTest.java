@@ -64,7 +64,7 @@ class CacheOperationalLimitsTest {
                 1_048_576,
                 10_000,
                 100,
-                Map.of("profile", new CacheEntryConfig(CacheMode.LOCAL, 7)));
+                Map.of("profile", new CacheEntryConfig(CacheMode.LOCAL, 7, null)));
         var method = Target.class.getDeclaredMethod("value");
         var metadata = CacheTestFixtures.metadata(method, "unused");
         var targetCalls = new AtomicInteger();

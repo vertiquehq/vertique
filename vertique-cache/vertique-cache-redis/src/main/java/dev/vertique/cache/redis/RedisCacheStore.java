@@ -36,7 +36,7 @@ public final class RedisCacheStore implements CacheStore {
     private final RedisDeadlineBoundary deadline;
     private final Duration backendTimeout;
 
-    /** Compatibility constructor retaining the established direct-provider shape. */
+    /** Direct-provider constructor for use without a Dagger graph. */
     public RedisCacheStore(RedisClientRegistry clients, CacheRedisConfig config, CacheConfig cacheConfig) {
         this(
                 VertxRedisCommandClient.from(clients, config.connection()),

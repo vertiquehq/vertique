@@ -9,7 +9,7 @@ OpenTelemetry.
 
 ## Source Map
 
-- `dev.vertique.opentelemetry.CacheTracingObserver` — bounded cache span observer.
+- `dev.vertique.cache.opentelemetry.CacheTracingObserver` — bounded cache span observer.
 - `OpenTelemetryCacheModule` — explicit Dagger contribution module.
 
 ## Runtime or Build Flow

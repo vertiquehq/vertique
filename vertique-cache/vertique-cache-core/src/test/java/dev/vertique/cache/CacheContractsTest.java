@@ -70,11 +70,12 @@ class CacheContractsTest {
                         CacheMode.LOCAL,
                         60,
                         120,
+                        "vertx",
                         1_024,
                         1_048_576,
                         10_000,
                         100,
-                        Map.of("profile", new CacheEntryConfig(CacheMode.LOCAL, 121))));
+                        Map.of("profile", new CacheEntryConfig(CacheMode.LOCAL, 121, null))));
     }
 
     @Test

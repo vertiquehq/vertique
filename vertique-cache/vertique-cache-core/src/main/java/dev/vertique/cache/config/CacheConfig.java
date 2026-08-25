@@ -50,30 +50,6 @@ public record CacheConfig(
         });
     }
 
-    /** Compatibility constructor retaining the pre-profile public shape. */
-    public CacheConfig(
-            boolean enabled,
-            CacheMode defaultMode,
-            long defaultTtlSeconds,
-            long maxTtlSeconds,
-            int maxKeyBytes,
-            int maxValueBytes,
-            int maximumEntries,
-            long backendTimeoutMs,
-            Map<String, CacheEntryConfig> caches) {
-        this(
-                enabled,
-                defaultMode,
-                defaultTtlSeconds,
-                maxTtlSeconds,
-                "vertx",
-                maxKeyBytes,
-                maxValueBytes,
-                maximumEntries,
-                backendTimeoutMs,
-                caches);
-    }
-
     /** Recommended defaults from the cache contract. */
     public static CacheConfig defaults() {
         return new CacheConfig(true, CacheMode.LOCAL, 60, 86_400, "vertx", 1_024, 1_048_576, 10_000, 100, Map.of());

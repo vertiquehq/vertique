@@ -37,7 +37,7 @@ class CacheAnnotationProcessorTest {
                                 """))
                 .assertSuccess()
                 .assertGeneratedSourceContains("com.example.GeneratedCacheModule", "@Module")
-                .assertGeneratedSourceContains("com.example.GeneratedCacheModule", "CacheInJvmModule.class");
+                .assertGeneratedSourceContains("com.example.GeneratedCacheModule", "CacheCaffeineModule.class");
     }
 
     @Test

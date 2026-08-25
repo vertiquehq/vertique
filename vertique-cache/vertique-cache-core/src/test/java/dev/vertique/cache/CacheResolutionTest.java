@@ -28,7 +28,7 @@ class CacheResolutionTest {
                 1_048_576,
                 10_000,
                 100,
-                Map.of("profile", new CacheEntryConfig(CacheMode.LOCAL, 7)));
+                Map.of("profile", new CacheEntryConfig(CacheMode.LOCAL, 7, null)));
         var method = Target.class.getDeclaredMethod("value", String.class);
         var metadata = CacheTestFixtures.metadata(method, "user");
         var annotation = method.getAnnotation(Cacheable.class);
@@ -59,7 +59,7 @@ class CacheResolutionTest {
                 1_048_576,
                 10_000,
                 100,
-                Map.of("profile", new CacheEntryConfig(CacheMode.LOCAL, 0)));
+                Map.of("profile", new CacheEntryConfig(CacheMode.LOCAL, 0, null)));
         var method = Target.class.getDeclaredMethod("value", String.class);
         var metadata = CacheTestFixtures.metadata(method, "user");
         AtomicInteger targetCalls = new AtomicInteger();

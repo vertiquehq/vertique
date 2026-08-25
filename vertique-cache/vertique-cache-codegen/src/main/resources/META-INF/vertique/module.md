@@ -18,7 +18,7 @@ Use this artifact in the compile-time processor path of applications that use ge
 
 ## Core Concepts
 
-The registered `CacheAnnotationProcessor` validates `@Cacheable` and `@CacheEvict` declarations and returns control to the other processors. When a compilation contains cache annotations, it emits one public `GeneratedCacheModule` in the annotated bean's package; that module includes `CacheInJvmModule` so the generated application component can install the local provider through the normal cache-core map seam. The generic AOP processor emits the application-owned subclass proxy and reflection-free `MethodMetadata`; generated types belong to the consuming application compilation and are not supplied by a runtime provider module.
+The registered `CacheAnnotationProcessor` validates `@Cacheable` and `@CacheEvict` declarations and returns control to the other processors. When a compilation contains cache annotations, it emits one public `GeneratedCacheModule` in the annotated bean's package; that module includes `CacheCaffeineModule` so the generated application component can install the Caffeine provider through the normal cache-core map seam. The generic AOP processor emits the application-owned subclass proxy and reflection-free `MethodMetadata`; generated types belong to the consuming application compilation and are not supplied by a runtime provider module.
 
 ## Validation boundary
 

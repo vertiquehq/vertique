@@ -62,7 +62,7 @@ protection while disabling time expiration.
 Run the cache package proof with:
 
 ```text
-./mvnw -ntp -pl vertique-cache/vertique-cache-core,vertique-cache/vertique-cache-codegen,vertique-cache/vertique-cache-injvm,vertique-cache/vertique-cache-redis,vertique-cache/vertique-cache-micrometer,vertique-cache/vertique-cache-opentelemetry -am verify
+./mvnw -ntp -pl vertique-cache/vertique-cache-core,vertique-cache/vertique-cache-codegen,vertique-cache/vertique-cache-caffeine,vertique-cache/vertique-cache-redis,vertique-cache/vertique-cache-micrometer,vertique-cache/vertique-cache-opentelemetry -am verify
 ```
 
 The clean reactor verification additionally checks dependency and BOM parity, forbidden provider

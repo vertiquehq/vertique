@@ -16,7 +16,7 @@ processing remains in `vertique-codegen`.
 vertique-cache/
 ├── vertique-cache-core
 ├── vertique-cache-codegen
-├── vertique-cache-injvm
+├── vertique-cache-caffeine
 ├── vertique-cache-redis
 ├── vertique-cache-micrometer
 └── vertique-cache-opentelemetry
@@ -36,9 +36,9 @@ observers. Applications opt into each cache adapter's Dagger module explicitly.
 ### Invariants to preserve
 
 - Cache operation and cleanup observation behavior remains unchanged.
-- Micrometer and OpenTelemetry adapter public Java packages and Dagger binding
-  semantics remain unchanged, except for their Maven artifact coordinates and
-  installation documentation.
+- Cache-owned Micrometer and OpenTelemetry adapter packages use the cache family
+  namespace (`dev.vertique.cache.micrometer` and `dev.vertique.cache.opentelemetry`).
+  Provider-wide packages remain unchanged.
 - `OpenTelemetryModule` remains cache-agnostic; cache tracing is contributed only
   by the cache-owned adapter module.
 - Cache codegen remains a consumable annotation-processor artifact under the cache
@@ -52,15 +52,15 @@ observers. Applications opt into each cache adapter's Dagger module explicitly.
 - Redis timeout/deadline implementation changes.
 - Cache behavior, cleanup policy, retry policy, metrics policy, or tracing payload
   changes.
-- Renaming Java packages or public classes.
+- Renaming Redis APIs or changing timeout/deadline behavior.
 
 ## Green checkpoints
 
 1. Move the Micrometer cache adapter from `vertique-micrometer` into
-   `vertique-cache`, preserving its Java packages and tests.
+   `vertique-cache`, moving its implementation into the cache family package.
 2. Extract the OpenTelemetry cache observer and Dagger contribution from
-   `vertique-opentelemetry-core` into `vertique-cache-opentelemetry`, preserving
-   Java packages and observer behavior.
+   `vertique-opentelemetry-core` into `vertique-cache-opentelemetry`, moving the
+   cache observer into the cache family package and preserving its behavior.
 3. Update reactor, BOM, publication, coverage, module index, canonical module
    docs, maintainer docs, and installation references.
 4. Run exact old-coordinate/path absence checks, dependency-direction checks,

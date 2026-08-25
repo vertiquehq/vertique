@@ -49,7 +49,7 @@ inherit the consumer-safe `vertique-app-parent` described below.
 
 Cache support follows the same one-way boundary: `vertique-cache-core` owns
 provider-neutral cache contracts and consumes `vertique-aop` and `vertique-core`;
-the in-JVM and Redis provider modules depend on that neutral core. Shared Redis
+the Caffeine and Redis provider modules depend on that neutral core. Shared Redis
 connection profiles and client lifecycle belong to `vertique-redis-core`, which is
 independent of cache-specific behavior so other Redis-backed capabilities can reuse it.
 

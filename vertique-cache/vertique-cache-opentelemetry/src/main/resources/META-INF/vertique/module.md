@@ -6,7 +6,7 @@ SPDX-License-Identifier: EUPL-1.2
 # OpenTelemetry Cache Module
 
 > **Status:** Beta
-> **Package:** `dev.vertique.opentelemetry`
+> **Package:** `dev.vertique.cache.opentelemetry`
 > **Artifact:** `vertique-cache-opentelemetry`
 > **Depends on:** `vertique-cache-core`, `vertique-opentelemetry-core`
 
