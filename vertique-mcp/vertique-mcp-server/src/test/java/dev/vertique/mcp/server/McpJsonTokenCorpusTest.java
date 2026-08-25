@@ -30,7 +30,7 @@ import org.junit.jupiter.api.Test;
 class McpJsonTokenCorpusTest {
 
     private static final int DEFAULT_TOKENS = 65_536;
-    private static final String CORPUS_SHA_256 = "bbf82e027cd5ec520eca723bcfb64d22e76edc949e2af74b820cac8574b3d736";
+    private static final String CORPUS_SHA_256 = "2e7e884c2b1794b3e3db2b56b40db0f50eef23569cf4a6bd24b01ff0c7672bde";
     private static final Map<String, Long> REQUIRED_STRUCTURAL_CLASS_COUNTS = Map.ofEntries(
             Map.entry("flat-array", 7L),
             Map.entry("flat-scalar-array", 7L),
@@ -67,7 +67,10 @@ class McpJsonTokenCorpusTest {
             Map.entry("example-tools-call-request", 1L),
             Map.entry("example-discover-result", 1L),
             Map.entry("example-tools-list-result", 1L),
-            Map.entry("example-tools-call-result", 1L));
+            Map.entry("example-tools-call-result", 1L),
+            Map.entry("audit-overlay-tool-error-request", 1L),
+            Map.entry("audit-overlay-tool-error-result", 1L),
+            Map.entry("audit-overlay-authorization-denial-result", 1L));
 
     @Test
     @DisplayName("R18: the shared JSON corpus has its recorded digest and every required structural class")
@@ -76,7 +79,7 @@ class McpJsonTokenCorpusTest {
         assertAll(
                 () -> assertThat(sha256(McpJsonTokenCorpus.resourceBytes())).isEqualTo(CORPUS_SHA_256),
                 () -> {
-                    assertThat(rows).hasSize(41);
+                    assertThat(rows).hasSize(44);
                     assertThat(rows.stream()
                                     .collect(Collectors.groupingBy(McpJsonTokenCorpus.Row::id, Collectors.counting())))
                             .allSatisfy((id, count) -> assertThat(count)
