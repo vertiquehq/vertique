@@ -41,6 +41,130 @@ class CacheAnnotationProcessorTest {
     }
 
     @Test
+    @DisplayName("REST entity and Future entity results compile")
+    void restEntityResultsCompile() {
+        ProcessorTestHarness.run(new CacheAnnotationProcessor(), SourceFiles.inline("com.example.RestCacheableBean", """
+                                package com.example;
+
+                                import dev.vertique.cache.Cacheable;
+                                import io.vertx.core.Future;
+                                import jakarta.inject.Inject;
+                                import jakarta.ws.rs.GET;
+
+                                public class RestCacheableBean {
+                                    @Inject
+                                    public RestCacheableBean() {}
+
+                                    @GET
+                                    @Cacheable(name = "users", key = "{0}")
+                                    public String entity(String id) {
+                                        return id;
+                                    }
+
+                                    @GET
+                                    @Cacheable(name = "users", key = "{0}")
+                                    public Future<String> futureEntity(String id) {
+                                        return Future.succeededFuture(id);
+                                    }
+                                }
+                                """))
+                .assertSuccess();
+    }
+
+    @Test
+    @DisplayName("REST Response results are rejected")
+    void restResponseResultsAreRejected() {
+        ProcessorTestHarness.run(new CacheAnnotationProcessor(), SourceFiles.inline("com.example.ResponseCacheableBean", """
+                                package com.example;
+
+                                import dev.vertique.cache.Cacheable;
+                                import jakarta.inject.Inject;
+                                import jakarta.ws.rs.GET;
+                                import jakarta.ws.rs.core.Response;
+
+                                public class ResponseCacheableBean {
+                                    @Inject
+                                    public ResponseCacheableBean() {}
+
+                                    @GET
+                                    @Cacheable(name = "users", key = "{0}")
+                                    public Response response(String id) {
+                                        return Response.ok(id).build();
+                                    }
+                                }
+                                """))
+                .assertFailed()
+                .assertErrorMessage("REST cacheable methods must return an entity result");
+    }
+
+    @Test
+    @DisplayName("REST Future Response results are rejected")
+    void restFutureResponseResultsAreRejected() {
+        ProcessorTestHarness.run(new CacheAnnotationProcessor(), SourceFiles.inline("com.example.FutureResponseCacheableBean", """
+                                package com.example;
+
+                                import dev.vertique.cache.Cacheable;
+                                import io.vertx.core.Future;
+                                import jakarta.inject.Inject;
+                                import jakarta.ws.rs.GET;
+                                import jakarta.ws.rs.core.Response;
+
+                                public class FutureResponseCacheableBean {
+                                    @Inject
+                                    public FutureResponseCacheableBean() {}
+
+                                    @GET
+                                    @Cacheable(name = "users", key = "{0}")
+                                    public Future<Response> response(String id) {
+                                        return Future.succeededFuture(Response.ok(id).build());
+                                    }
+                                }
+                                """))
+                .assertFailed()
+                .assertErrorMessage("REST cacheable Future result must contain an entity");
+    }
+
+    @Test
+    @DisplayName("REST streaming and transport results are rejected")
+    void restStreamingAndTransportResultsAreRejected() {
+        ProcessorTestHarness.run(new CacheAnnotationProcessor(), SourceFiles.inline("com.example.StreamingCacheableBean", """
+                                package com.example;
+
+                                import dev.vertique.cache.Cacheable;
+                                import io.vertx.core.buffer.Buffer;
+                                import io.vertx.core.http.HttpServerResponse;
+                                import io.vertx.core.streams.ReadStream;
+                                import jakarta.inject.Inject;
+                                import jakarta.ws.rs.GET;
+
+                                public class StreamingCacheableBean {
+                                    @Inject
+                                    public StreamingCacheableBean() {}
+
+                                    @GET
+                                    @Cacheable(name = "users", key = "{0}")
+                                    public Buffer buffer(String id) {
+                                        return null;
+                                    }
+
+                                    @GET
+                                    @Cacheable(name = "users", key = "{0}")
+                                    public ReadStream<String> stream(String id) {
+                                        return null;
+                                    }
+
+                                    @GET
+                                    @Cacheable(name = "users", key = "{0}")
+                                    public HttpServerResponse response(String id) {
+                                        return null;
+                                    }
+                                }
+                                """))
+                .assertFailed()
+                .assertErrorMessage("REST cacheable methods must return an entity result");
+    }
+
+    @Test
     @DisplayName("unsupported selector shapes are rejected")
     void unsupportedSelectorShapesAreRejected() {
         JavaFileObject source = SourceFiles.inline("com.example.InvalidCacheableBean", """
