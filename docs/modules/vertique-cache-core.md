@@ -26,7 +26,9 @@ security state directly.
 
 ## Testing
 
-T001 proof is the focused reactor-selection command. Public contract tests belong to T002 and runtime/provider tests belong to later tasks.
+T013 owns the shared conformance and operational-limit proof. The provider-neutral
+`CacheStoreContractTest` is defined in cache-core and inherited by the Caffeine and Redis
+provider test edges; T005 and T009 retain ownership of their provider-specific proofs.
 
 ```text
 ./mvnw -ntp -pl vertique-cache/vertique-cache-core -am test

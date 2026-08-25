@@ -47,8 +47,11 @@ Identity components must use the same canonical characters accepted by `CacheKey
 
 The provider-neutral `CacheStoreContractTest` runs the same contract against the Caffeine and
 Redis providers, covering hits, misses, TTL, clear, failure handling, declared types, value
-isolation, and repeatable eviction. Core operational validation rejects oversized keys and values
-before provider work. An explicit annotation TTL above `maxTtlSeconds` is rejected with
+isolation, and repeatable eviction. Core operational validation rejects an oversized canonical
+key before a provider operation. Core does not validate values before provider work: Caffeine and
+Redis serialize values in their provider implementations and then enforce `maxValueBytes` on the
+serialized bytes; those provider failures are handled by the cache core's fail-open path. An
+explicit annotation TTL above `maxTtlSeconds` is rejected with
 `IllegalArgumentException`; it is not silently clamped. `ttlSeconds = 0` retains provider size
 protection while disabling time expiration.
 

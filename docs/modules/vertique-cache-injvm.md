@@ -23,7 +23,10 @@ The provider is selected by the cache-core `CacheMode` map and depends on the ca
 
 ## Testing
 
-T005 owns the local provider proof: deterministic TTL, per-region bounds, JSON defensive copies, logical-region clearing, disabled behavior, and null-result bypass. T011 owns application-level provider composition and observation wiring.
+T013 owns the shared provider-neutral `CacheStoreContractTest` defined in cache-core; the local
+provider test edge inherits it. T005 owns the local provider proof: deterministic TTL, per-region
+bounds, JSON defensive copies, logical-region clearing, disabled behavior, and null-result bypass.
+T011 owns application-level provider composition and observation wiring.
 
 ```text
 ./mvnw -ntp -pl vertique-cache/vertique-cache-injvm -am test

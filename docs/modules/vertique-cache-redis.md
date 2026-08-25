@@ -104,8 +104,9 @@ callbacks do not re-register cleanup or close the shared Redis clients more than
 
 ## Testing
 
-T009's provider proof covers key rendering, selected-profile and declared-type JSON
-conversion, codec fail-open behavior, finite and zero TTLs, exact-key eviction,
+T013 owns the shared provider-neutral `CacheStoreContractTest` defined in cache-core; the Redis
+provider test edge inherits it. T009's provider proof covers key rendering, selected-profile and
+declared-type JSON conversion, codec fail-open behavior, finite and zero TTLs, exact-key eviction,
 generation replacement/recreation, weak invalidation, timeout/business-result
 isolation, and event-loop responsiveness. Unit tests are in
 `vertique-cache-redis/src/test/java/dev/vertique/cache/redis`; the Redis contract
