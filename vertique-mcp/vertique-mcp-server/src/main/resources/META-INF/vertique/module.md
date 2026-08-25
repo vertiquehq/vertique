@@ -39,8 +39,8 @@ also bounds the maximum decodable envelope document length. A configured `jsonPr
 if MCP is disabled, preventing a latent invalid deployment configuration.
 
 **Transport liveness is not provided out of the box, and startup enforces that at least one bound
-exists.** MCP arms no whole-request deadline of its own (T007 removed the earlier
-`mcp.requestTimeoutMs`); it relies entirely on the shared `HttpConfig` idle/read/write timeouts to
+exists.** MCP arms no whole-request deadline of its own; it relies entirely on the shared
+`HttpConfig` idle/read/write timeouts to
 ever close a stalled or abandoned connection. Those three settings — `http.idleTimeoutSeconds`,
 `http.readIdleTimeoutSeconds`, and `http.writeIdleTimeoutSeconds` — all **default to `0`, which
 disables them**. Left unset, a hanging request-interceptor, a hanging tool-interceptor, a hanging
@@ -67,7 +67,7 @@ token budgets are distinct from the encoded byte caps: `http.maxBodySize` remain
 ingress body-size and maximum-decodable-document limit, while `mcp.outputMaxBytes` remains the
 response/output byte limit.
 
-**R18 and R19 actively enforce both token budgets.** `McpRequestDispatcher` passes the validated scalar
+**Both token budgets are actively enforced.** `McpRequestDispatcher` passes the validated scalar
 `config.ingressMaxTokens()` to `McpProtocolCodec`, which passes that same scalar to
 `McpEnvelopeJsonCodec` as Jackson's `maxTokenCount`; it is neither derived from `http.maxBodySize`
 nor replaced by a fixed internal ingress limit. Token exhaustion is a malformed JSON-RPC frame:
@@ -139,7 +139,7 @@ lifecycle enum purely for enum stability, reserved for a future cross-transport 
 `@Timeout` capability. Observer `open`, callback, null-session, and retention failures are isolated
 per observer and never change the protocol or business outcome — including a `StackOverflowError` from
 an observer's `open` or from any `onToolInput`/`onToolOutput`/`onTerminal`/`onCompleted` callback,
-which is isolated exactly like a `RuntimeException` (R14 item 3): a deeply recursive application
+which is isolated exactly like a `RuntimeException`: a deeply recursive application
 callback can no longer abort the coordinator's construction or strand the completion behind a
 half-published terminal. **This changed one observable outcome:** a `StackOverflowError` from a
 capable session's `onToolInput` used to escape the coordinator and degrade the whole `tools/call` to
@@ -148,7 +148,7 @@ succeeded. Both are now isolated and the call succeeds, which is what "never cha
 business outcome" always said. A failure the *framework* hits while building an observation — as
 opposed to one an observer throws — still degrades to the bounded internal-error response.
 
-**A disconnect or reset also runs the ordinary request-scoped cleanup (R14 item 5).** Settlement is
+**A disconnect or reset also runs the ordinary request-scoped cleanup.** Settlement is
 driven from the routing context's own end handler rather than from the response close/exception
 handlers. Those two are single-slot, and Vert.x Web installs its own there to drive every registered
 end handler, so registering on them replaced them and silently disabled the framework's request
@@ -161,7 +161,7 @@ outcome classification also became more accurate as a result: an orderly client 
 so — like a body-limit rejection — a request that fails admission produces no lifecycle observation;
 only an admitted request opens observation.
 
-**Completion scope bracketing (R06, issue #435).** Immediately before the completion coordinator
+**Completion scope bracketing.** Immediately before the completion coordinator
 dispatches the one completion event to every retained observation and completion listener, it opens
 every retained session's `McpCompletionScope` — an opt-in capability a session returned from
 `McpRequestLifecycleObserver#open` may additionally implement (see `vertique-mcp-core`'s "Opt-in
@@ -239,8 +239,8 @@ carries:
 - invalid UTF-8.
 
 The generic limits above are not consumer-visible configuration keys: the four generic JSON-limit
-properties and the handcrafted strict JSON reader that used to enforce them were removed in the T007
-architecture rebaseline in favor of Jackson's own bounded read constraints. MCP owns JSON-RPC
+properties and the handcrafted strict JSON reader that used to enforce them were removed in favor
+of Jackson's own bounded read constraints. MCP owns JSON-RPC
 envelope semantics, not a second general-purpose JSON resource-limit subsystem, and exposes no
 public parser API. Tool argument and result values continue to use the existing
 `JsonMapperProfile`/`JsonMapperProfileRegistry` contract, unaffected by this codec.
@@ -251,7 +251,7 @@ re-encode without lossy `double` rounding, so downstream schema validation sees 
 client sent. Canonical encoding is a compact, insertion-order-preserving re-encode; an
 already-compact frame round-trips byte-for-byte. A decimal whose scale magnitude is far beyond any
 legitimate value — the vector that would otherwise drive an out-of-memory plain-form encode — is
-rejected against a fixed internal hardening bound (retained unchanged from the T003 hardening: a
+rejected against a fixed internal hardening bound (a
 decimal whose scale magnitude exceeds 9,999) rather than materialized into a value the encoder could
 later choke on.
 
@@ -282,7 +282,7 @@ this module's own resources (not test-only), so this validation is available in 
 shipped, not merely in the test tree.
 
 Only after official params validation succeeds does `McpProtocolCodec#validateNegotiation` validate
-protocol negotiation (R05, issue #429; R08, merge blocker 1; D010). `MCP-Protocol-Version` and
+protocol negotiation. `MCP-Protocol-Version` and
 `Mcp-Method` are required on every supported request and must agree with
 `params._meta`'s `io.modelcontextprotocol/protocolVersion` and the envelope's `method`.
 `Mcp-Name` is required and compared with `params.name` only for `tools/call`; `server/discover` and
@@ -308,7 +308,7 @@ boundary and owns the HTTP/router composition only.
 
 Once — and only once — the envelope decodes successfully, its official per-method `params` schema
 validates, *and* protocol negotiation passes does `McpRequestDispatcher` run the ordered, fail-closed
-pre-dispatch `McpRequestInterceptor` stage (T016, contract §4.7 stage 5): after those protocol-
+pre-dispatch `McpRequestInterceptor` stage: after those protocol-
 boundary stages, before the method dispatches to `server/discover`, `tools/list`, or `tools/call`,
 and before any tool is resolved, authorized, or passed to the application input pipeline. A decode
 failure never reaches this stage; it settles through
@@ -340,7 +340,7 @@ Once a `tools/call` invocation has passed schema validation (stage 1) and the ge
 `prepare(...)` has returned — meaning stages 2–4 of the [Request-time input
 pipeline](#request-time-input-pipeline), including Bean Validation, already succeeded —
 `McpRequestDispatcher` runs the ordered, fail-closed post-validation `McpToolInterceptor` stage
-(T017, contract §4.4) strictly before the generated invocation (`McpPreparedToolCall#invoke()`) ever
+strictly before the generated invocation (`McpPreparedToolCall#invoke()`) ever
 runs. This is the second and final live interceptor stage; the pre-dispatch
 [Request interceptor stage](#request-interceptor-stage) above already ran, earlier, before any tool
 was resolved.
@@ -379,7 +379,7 @@ distinction.
 Once the generated invoker's `prepare(...)` has returned — meaning stages 1–4 of the [Request-time
 input pipeline](#request-time-input-pipeline), including Bean Validation, already succeeded —
 `McpRequestDispatcher` delivers an `McpToolInputObservation` through
-`McpCompletionCoordinator#publishToolInput` (T018, contract §4.4), strictly before the [Tool
+`McpCompletionCoordinator#publishToolInput`, strictly before the [Tool
 interceptor stage](#tool-interceptor-stage) runs. Delivery is capability-gated: the coordinator
 delivers `onToolInput` only to a retained session that is an instance of `McpToolValueObservation`,
 never to a plain `McpRequestObservation` session — an ordinary metrics or tracing session never
@@ -401,7 +401,7 @@ This is the whole of the framework's enforceable claim: nothing prevents a sessi
 reference it is handed past its own callback — an immutable record cannot revoke itself — so
 callback-scoped use remains a documented obligation on implementors.
 
-`onToolOutput` (T020/R04) is delivered the same way, through `McpCompletionCoordinator#publishToolOutput`,
+`onToolOutput` is delivered the same way, through `McpCompletionCoordinator#publishToolOutput`,
 strictly after the [Bounded output pipeline](#bounded-output-pipeline) has normalized and validated
 the result **and** successfully encoded the bounded terminal envelope — never merely after validation.
 It fires for every completed result — success or tool error alike — carrying the normalized structured
@@ -412,7 +412,7 @@ every `onToolOutput` call has returned.
 
 ## Bounded output pipeline
 
-Every completed `tools/call` result (contract §4.7 stage 7) is normalized exactly once, bounded by
+Every completed `tools/call` result is normalized exactly once, bounded by
 `mcp.outputMaxBytes` as bytes are produced and by `mcp.outputMaxTokens` while those bytes are reparsed,
 validated against the tool's advertised output schema, encoded into the bounded terminal envelope,
 offered to the opt-in `onToolOutput` observation only once that envelope exists, and only then handed
@@ -431,7 +431,7 @@ embed — nothing re-serializes the original application object a second time. A
 output schema, or a text-only/structured-content-free result, is trivially valid: there is nothing to
 normalize or validate.
 
-**The `mcp.outputMaxBytes` cap independently bounds both halves contract §4.3 names.** Normalization
+**The `mcp.outputMaxBytes` cap independently bounds both output representations.** Normalization
 serializes a handler's raw structured value exactly once through the generated invoker's effective-
 profile `McpStructuredOutputWriter` into the same byte-counting sink (`CappedOutputStream`, via
 `encodeCapped`) every terminal writer uses, aborting the moment the running byte count would exceed
@@ -480,8 +480,8 @@ terminal, or completion.
 The response write itself is bounded exactly like discovery and `tools/list` ([Bounded response
 output](#bounded-response-output)): serialization streams to the same byte-counting sink that aborts
 the moment the running count would exceed `mcp.outputMaxBytes`, so an over-cap structured result is
-classified as `SERIALIZATION` before its full byte array is ever materialized — the same T004
-mechanism, now also covering structured content rather than only discovery and listing payloads.
+classified as `SERIALIZATION` before its full byte array is ever materialized, covering structured
+content as well as discovery and listing payloads.
 
 ## Tool runtime
 
@@ -657,13 +657,13 @@ parameterized calls described in
 [Request-time input pipeline](#request-time-input-pipeline). What is deliberately still absent arrives
 with its owning slice:
 
-- **Opt-in value-observation input and output callbacks.** Present since T018/T020: `onToolInput` and
+- **Opt-in value-observation input and output callbacks.** `onToolInput` and
   `onToolOutput` are each delivered, only to a capability-implementing session, through the [Value
   observation stage](#value-observation-stage). Both live interceptor stages exist: the pre-dispatch
   request-interceptor stage described in [Request interceptor stage](#request-interceptor-stage), and
   the post-validation tool-interceptor stage described in
   [Tool interceptor stage](#tool-interceptor-stage).
-- **Single-pass bounded structured output.** Present since T020: a structured `McpToolResult` is
+- **Single-pass bounded structured output.** A structured `McpToolResult` is
   normalized exactly once, validated against the tool's advertised output schema, and bounded at
   `mcp.outputMaxBytes` as bytes are produced — see [Bounded output
   pipeline](#bounded-output-pipeline). Rich (non-scalar-graph) result shapes beyond this remain a
@@ -772,14 +772,14 @@ or `{}` satisfies the trivial empty-object schema. See
 [Value observation stage](#value-observation-stage) for the
 opt-in `onToolInput`/`onToolOutput` capability this version delivers, and [Bounded output
 pipeline](#bounded-output-pipeline) for the output-side normalization, validation, and observation
-order; cancellation and write-phase settlement (T013) are described in
+order; cancellation and write-phase settlement are described in
 [Cancellation and write-phase settlement](#cancellation-and-write-phase-settlement), and the
 post-validation tool-interceptor stage is described in
 [Tool interceptor stage](#tool-interceptor-stage).
 
 ## Request-time input pipeline
 
-Every parameterized `tools/call` runs a fixed, fail-closed order (contract §4.7) before the
+Every parameterized `tools/call` runs a fixed, fail-closed order before the
 application handler ever runs:
 
 1. **Schema validation.** `McpRequestDispatcher` validates `arguments` against the compiled `Validator`

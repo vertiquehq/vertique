@@ -52,7 +52,18 @@ canonical_suffix="/src/main/resources/META-INF/vertique/module.md"
 # hyphenated form the records themselves use and the spaced form that occurs in
 # prose are matched; the leading boundary keeps a word merely ending in "adr"
 # from claiming a citation.
-private_decision_pattern='(^|[^[:alpha:]])ADR[-[:space:]][0-9]{3,4}'
+private_decision_pattern='(^|[^[:alpha:]])[Aa][Dd][Rr][-[:space:]][0-9]{3,4}'
+
+# Package-local feature delivery identifiers are private provenance just like
+# ADR citations. Public reference explains the shipped behavior; it does not
+# send application developers into a task, repair, phase, or decision ledger
+# that is absent from the artifact.
+private_delivery_pattern='(^|[^[:alnum:]_])(T[0-9]{3}|R[0-9]{2}|P[0-9]{2}|D[0-9]{3})([^[:alnum:]_]|$)'
+
+# A bare section number may legitimately cite an external standard. The
+# unmistakable "contract §N" form, however, refers to a private feature
+# contract that is not packaged with the module document.
+private_contract_section_pattern='(^|[^[:alpha:]])[Cc][Oo][Nn][Tt][Rr][Aa][Cc][Tt][[:space:]]+§[0-9]'
 
 # Sections whose subject matter is private decision or roadmap material. The
 # heading is rejected on its own: "## Related ADRs" carries that material even
@@ -371,14 +382,20 @@ report_matching_document_lines() {
     local document="$2"
     local rule_description="$3"
     local pattern="$4"
+    local match_case="${5:-insensitive}"
     local match
+
+    local -a grep_options=(-n -E)
+    if [[ "$match_case" == "insensitive" ]]; then
+        grep_options+=(-i)
+    fi
 
     while IFS= read -r match; do
         [[ -n "$match" ]] || continue
         # grep -n emits "<line-number>:<line>", and the offending line is quoted
         # back so the diagnostic names what to change, not merely where.
         report_failure "$artifact_id $rule_description: ${match#*:} (${document#"$repository_root"/} line ${match%%:*})"
-    done < <(grep -niE "$pattern" "$document" || true)
+    done < <(grep "${grep_options[@]}" "$pattern" "$document" || true)
 }
 
 # Prints why an artifactId may never be BOM-managed or indexed, or returns 1
@@ -554,6 +571,15 @@ while IFS=$'\t' read -r artifact_id link; do
     report_matching_document_lines "$artifact_id" "$document" \
         "cites a private decision record in its canonical module document" \
         "$private_decision_pattern"
+
+    report_matching_document_lines "$artifact_id" "$document" \
+        "cites private delivery provenance in its canonical module document" \
+        "$private_delivery_pattern" \
+        sensitive
+
+    report_matching_document_lines "$artifact_id" "$document" \
+        "cites a private contract section in its canonical module document" \
+        "$private_contract_section_pattern"
 
     report_matching_document_lines "$artifact_id" "$document" \
         "has a forbidden section in its canonical module document" \

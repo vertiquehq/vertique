@@ -13,8 +13,8 @@ SPDX-License-Identifier: EUPL-1.2
 Observe-only OpenTelemetry span-enrichment adapter for the MCP server. When installed alongside
 `McpServerModule`, it captures the current Vert.x HTTP server span in `open(...)`, retains it across
 asynchronous completion, and enriches that exact retained span with bounded MCP attributes. It also
-carries a not-yet-fed body-trace-link path — see "At most one body-trace link" below (P05 review
-remediation) — and never creates or renames a span.
+carries a not-yet-fed body-trace-link path — see "At most one body-trace link" below — and never
+creates or renames a span.
 
 The module compiles against the OpenTelemetry **API only** — no SDK dependency. Without an
 OpenTelemetry SDK installed (or with a no-op `OpenTelemetry` instance and no exporter configured),
@@ -59,7 +59,7 @@ before the terminal write."
 - `rpc.system.name` — always the literal `jsonrpc`.
 - `mcp.method.name` — an `McpMethod` name, with `McpMethod.OTHER` remapped to the underscore-prefixed
   literal `_OTHER`, mirroring the sibling Micrometer adapter's `method` tag convention.
-- `mcp.protocol.version` — the terminal event's negotiated protocol version (R05, issue #431), set only
+- `mcp.protocol.version` — the terminal event's negotiated protocol version, set only
   when non-null: a request whose protocol negotiation never completed (rejected at or before
   negotiation) sets no value here at all, rather than a hardcoded or default literal.
 - `vertique.mcp.outcome` — the terminal event's `McpOutcome` enum name.
@@ -71,8 +71,8 @@ before the terminal write."
 OpenTelemetry semantic-convention names; rather than depending on an incubating semconv artifact, they
 are declared as internal, Vertique-owned `AttributeKey` constants on `McpServerSpanObserver`.
 
-**At most one body-trace link, never a child span — path exists but is not yet fed (P05 review
-remediation).** When the request's terminal observation carries a non-null `bodyTraceContext` (a
+**At most one body-trace link, never a child span — path exists but is not yet fed.** When the
+request's terminal observation carries a non-null `bodyTraceContext` (a
 normalized W3C trace reference captured from the request body), the observer converts it into an
 OpenTelemetry `SpanContext` and adds exactly one `Span#addLink` when that context is valid and
 distinct (different trace id or span id) from the HTTP span's own captured context. A body trace
@@ -87,7 +87,7 @@ a trace-correlation-spoofing surface.
 
 **Zero-overhead when unconfigured.** Every operation is guarded by `Span#getSpanContext().isValid()`
 (at `open`), `Span#isRecording()` (at enrichment — a late terminal callback can observe a span that
-already ended between capture and enrichment; P05 review remediation), and try/catch, so a missing
+already ended between capture and enrichment), and try/catch, so a missing
 OpenTelemetry SDK, a no-op `OpenTelemetry` instance, or a throwing OpenTelemetry implementation never
 affects MCP request processing.
 
@@ -118,13 +118,13 @@ interface AppComponent { /* ... */ }
 its `SpanContext` and returns a session retaining both, or a no-op session when no valid span is
 current. The session's `onTerminal` enriches the retained span with the bounded attributes above and
 adds the optional body-trace link. The session does not override `onCompleted` — no MCP-specific work
-happens at transport completion — but it does implement the neutral `McpCompletionScope` capability
-(R06, issue #435): `openCompletionScope()` re-makes the retained span current for the framework's
+happens at transport completion — but it does implement the neutral `McpCompletionScope` capability:
+`openCompletionScope()` re-makes the retained span current for the framework's
 completion dispatch loop, so a co-installed Micrometer observer's timer recording happens with a valid
 span current and a registry-level exemplar bridge can attach its trace id. See
 "Micrometer exemplar completion scope" below.
 
-**Micrometer exemplar completion scope (R06, issue #435).** The frozen observability contract requires
+**Micrometer exemplar completion scope.** The observability contract requires
 that "when a sampled HTTP span is current at terminal settlement, the adapter always invokes the
 Micrometer exemplar path." Vert.x's OpenTelemetry tracer ends the HTTP server span before any
 completion callback runs, so without help `Span.current()` is a no-op span by the time a Micrometer

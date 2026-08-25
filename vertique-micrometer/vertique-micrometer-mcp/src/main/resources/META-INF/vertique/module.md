@@ -41,7 +41,7 @@ protocol behavior is identical either way.
 ## Core Concepts
 
 **Observe-only.** The module contributes exactly one `McpRequestLifecycleObserver` into the
-multibinding set MCP core drives (T020's `McpCompletionCoordinator`). The observer's callback bodies
+multibinding set MCP core's `McpCompletionCoordinator` drives. The observer's callback bodies
 are wrapped in try/catch that logs at WARN and swallows, so a misbehaving registry or a throwing
 callback never affects MCP request processing.
 
@@ -74,7 +74,7 @@ by this class, so none can become a tag (FR-MCP-202). The observer performs no m
 registration of its own; each tag value's domain is bounded structurally by the type it is read
 from, independent of any registry-level cardinality guard.
 
-**Defense in depth (R06, issue #430).** `vertique-micrometer-core`'s `CardinalityGuard.GUARDED_TAG_KEYS`
+**Defense in depth.** `vertique-micrometer-core`'s `CardinalityGuard.GUARDED_TAG_KEYS`
 now also lists `tool`, `result.type`, and `transport.outcome` alongside `method`, `outcome`, and
 `error.type`, so a future producer that ever bypassed the structural bound above would still be capped
 and warned by the registry-level guard, not silently unbounded.

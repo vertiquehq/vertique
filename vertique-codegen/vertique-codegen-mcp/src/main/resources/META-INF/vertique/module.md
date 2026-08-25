@@ -126,7 +126,7 @@ For every parameterized tool the processor emits:
 - a position-stable `List<McpToolParameterMetadata>` pairing each component name with its external
   protocol name and description.
 
-`McpInputPolicyResolver` is MCP's own frozen derivation (§4.6): `vertique-input-processing` publishes
+`McpInputPolicyResolver` is MCP's transport-specific derivation: `vertique-input-processing` publishes
 `EffectiveInputPolicies` but no annotation→policy resolver, so each transport derives its own.
 
 ### A handler's return type is adapted onto `McpToolResult`, never coerced to a partial shape
