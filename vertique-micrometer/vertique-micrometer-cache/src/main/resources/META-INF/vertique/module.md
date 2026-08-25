@@ -20,9 +20,9 @@ Add `vertique-micrometer-cache` when the application uses `vertique-cache-core` 
 Redis provider and wants cache operation and cleanup metrics. Install `MicrometerCacheModule`
 alongside `MicrometerModule` and the application's cache modules in the Dagger `@Component`.
 
-The adapter may be installed without `MicrometerModule`; when no `MetricsConfig` binding is
-present, cache metrics default to enabled. When `metrics.enabled=false`, the adapter records
-nothing.
+The adapter may be installed without `MicrometerModule`, but the application must provide the
+`MeterRegistry` binding that the adapter injects. When no `MetricsConfig` binding is present,
+cache metrics default to enabled. When `metrics.enabled=false`, the adapter records nothing.
 
 ## Core Concepts
 
@@ -48,7 +48,8 @@ Redis cleanup behavior.
 
 Abstract Dagger module. Install it explicitly to contribute one `CacheMetricsObserver` to the
 `Set<CacheObserver>` multibinding. It declares `MetricsConfig` as an optional binding so the
-adapter can be used with or without `MicrometerModule`.
+adapter can be used with or without `MicrometerModule`; without that module, the application
+must provide the required `MeterRegistry` binding.
 
 ### CacheMetricsObserver
 
@@ -66,6 +67,6 @@ adapter can be used with or without `MicrometerModule`.
 
 | Artifact | Purpose |
 |---|---|
-| `vertique-micrometer-core` | Provides the application `MeterRegistry` and metrics configuration |
+| `vertique-micrometer-core` | Provides the application `MeterRegistry` and metrics configuration when `MicrometerModule` is installed |
 | `vertique-cache-core` | Provides `CacheObserver`, `CacheObservation`, and `CacheCleanupObservation` |
 | `micrometer-core` | Supplies timers, counters, tags, and registry APIs |

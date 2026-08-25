@@ -175,8 +175,13 @@ class RedisCleanupJobTest {
     void failureRetriesOnNextRun() throws Exception {
         RedisCleanupTestFixtures.FakeTopology topology = new RedisCleanupTestFixtures.FakeTopology();
         topology.nextScan = Future.failedFuture("temporary scan failure");
-        RedisCleanupJob job =
-                RedisCleanupJobTestSupport.job(topology, new RedisCleanupTestFixtures.RecordingCommands());
+        RedisCleanupTestFixtures.RecordingObserver observer = new RedisCleanupTestFixtures.RecordingObserver();
+        RedisCleanupJob job = RedisCleanupJobTestSupport.job(
+                topology,
+                new RedisCleanupTestFixtures.RecordingCommands(),
+                Set.of(observer),
+                () -> 0,
+                System::nanoTime);
 
         RedisCleanupJob.CleanupResult first = await(job.sweep());
         RedisCleanupJob.CleanupResult second = await(job.sweep());
@@ -184,6 +189,9 @@ class RedisCleanupJobTest {
         assertTrue(first.failed());
         assertNotNull(second);
         assertTrue(topology.scans.size() >= 2);
+        assertEquals(2, observer.records.size());
+        assertEquals("error", observer.records.get(0).outcome());
+        assertTrue(observer.records.get(0).failed());
     }
 
     @Test

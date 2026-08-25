@@ -45,6 +45,7 @@ class CacheObserverTest {
                 registry, MetricsConfig.builder().enabled(false).build());
 
         observer.onOperation(new CacheObservation("get", "redis", "profiles", "miss", Duration.ofMillis(1)));
+        observer.onCleanup(new CacheCleanupObservation("primary", "profiles", "success", 4, 3, 1, false));
 
         assertFalse(registry.getMeters().stream()
                 .anyMatch(meter -> meter.getId().getName().startsWith("cache.")));
@@ -58,6 +59,8 @@ class CacheObserverTest {
 
         assertDoesNotThrow(() -> observer.onOperation(
                 new CacheObservation("get", "redis", "profiles", "failure", Duration.ofMillis(1))));
+        assertDoesNotThrow(
+                () -> observer.onCleanup(new CacheCleanupObservation("primary", "profiles", "failure", 0, 0, 1, true)));
     }
 
     @Test
