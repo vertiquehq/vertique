@@ -23,8 +23,7 @@ final class RedisCleanupLifecycle implements ApplicationShutdownStep {
      * @param unregister operation that stops cleanup dispatch registration
      * @param closeRedis operation that closes the shared Redis clients
      */
-    RedisCleanupLifecycle(
-            RedisCleanupJob job, Supplier<Future<Void>> unregister, Supplier<Future<Void>> closeRedis) {
+    RedisCleanupLifecycle(RedisCleanupJob job, Supplier<Future<Void>> unregister, Supplier<Future<Void>> closeRedis) {
         this.job = Objects.requireNonNull(job, "job");
         this.unregister = Objects.requireNonNull(unregister, "unregister");
         this.closeRedis = Objects.requireNonNull(closeRedis, "closeRedis");
@@ -47,7 +46,6 @@ final class RedisCleanupLifecycle implements ApplicationShutdownStep {
      */
     @Override
     public Future<Void> stop() {
-        Objects.requireNonNull(job, "job");
         return unregister.get().compose(ignored -> closeRedis.get());
     }
 

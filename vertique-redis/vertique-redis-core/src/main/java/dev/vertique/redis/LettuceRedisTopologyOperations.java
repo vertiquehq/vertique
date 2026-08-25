@@ -10,7 +10,6 @@ import io.lettuce.core.cluster.RedisClusterClient;
 import io.lettuce.core.cluster.api.StatefulRedisClusterConnection;
 import io.lettuce.core.cluster.models.partitions.RedisClusterNode;
 import io.vertx.core.Future;
-import io.vertx.core.Promise;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -28,7 +27,7 @@ final class LettuceRedisTopologyOperations implements RedisTopologyOperations {
 
     @Override
     public Future<List<RedisPrimaryNode>> primaryNodes() {
-        return adapt(connection().thenApply(cluster -> cluster.getPartitions().stream()
+        return Future.fromCompletionStage(connection().thenApply(cluster -> cluster.getPartitions().stream()
                 .filter(node -> node.is(RedisClusterNode.NodeFlag.UPSTREAM))
                 .map(node -> new RedisPrimaryNode(node.getNodeId()))
                 .toList()));
@@ -41,7 +40,7 @@ final class LettuceRedisTopologyOperations implements RedisTopologyOperations {
         if (count < 1) {
             return Future.failedFuture("count must be positive");
         }
-        return adapt(connection().thenCompose(cluster -> cluster.getConnectionAsync(node.id())
+        return Future.fromCompletionStage(connection().thenCompose(cluster -> cluster.getConnectionAsync(node.id())
                 .thenCompose(primary -> scan(primary, cursor, count))));
     }
 
@@ -52,7 +51,7 @@ final class LettuceRedisTopologyOperations implements RedisTopologyOperations {
         if (keys.isEmpty()) {
             return Future.succeededFuture(0L);
         }
-        return adapt(connection().thenCompose(cluster -> cluster.getConnectionAsync(node.id())
+        return Future.fromCompletionStage(connection().thenCompose(cluster -> cluster.getConnectionAsync(node.id())
                 .thenCompose(primary -> primary.async().unlink(keys.toArray(String[]::new)))));
     }
 
@@ -76,17 +75,5 @@ final class LettuceRedisTopologyOperations implements RedisTopologyOperations {
             }
             return connection;
         }
-    }
-
-    private static <T> Future<T> adapt(CompletionStage<T> stage) {
-        Promise<T> promise = Promise.promise();
-        stage.whenComplete((value, failure) -> {
-            if (failure != null) {
-                promise.fail(failure);
-            } else {
-                promise.complete(value);
-            }
-        });
-        return promise.future();
     }
 }

@@ -22,8 +22,7 @@ final class RedisCleanupJobTestSupport {
         return job(new RedisCleanupTestFixtures.FakeTopology(), new RedisCleanupTestFixtures.RecordingCommands());
     }
 
-    static RedisCleanupJob job(
-            RedisTopologyOperations topology, RedisCleanupTestFixtures.RecordingCommands commands) {
+    static RedisCleanupJob job(RedisTopologyOperations topology, RedisCleanupTestFixtures.RecordingCommands commands) {
         return new RedisCleanupJob(
                 topology,
                 commands,

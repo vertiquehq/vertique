@@ -33,20 +33,24 @@ class RedisCleanupJobTest {
     @DisplayName("deletes only generation keys proven unreachable by the current marker")
     void deletesOnlyUnreachableGenerationKeys() throws Exception {
         RedisCleanupTestFixtures.FakeTopology topology = new RedisCleanupTestFixtures.FakeTopology()
-                .pages(NODE_A, RedisCleanupTestFixtures.page("0", true,
-                        "it:v1:cache:v1:profiles:gOLD:NONE:alice",
-                        "it:v1:cache:v1:profiles:gCURRENT:NONE:bob"));
+                .pages(
+                        NODE_A,
+                        RedisCleanupTestFixtures.page(
+                                "0",
+                                true,
+                                "it:v1:cache:v1:profiles:gOLD:NONE:alice",
+                                "it:v1:cache:v1:profiles:gCURRENT:NONE:bob"));
         RedisCleanupTestFixtures.RecordingCommands commands = new RedisCleanupTestFixtures.RecordingCommands();
-        commands.values.put(RedisCacheKey.generation(
-                RedisTestFixtures.REGION, REDIS_CONFIG, cacheConfig()), "CURRENT");
-        topology.physicallyPresent.addAll(List.of(
-                "it:v1:cache:v1:profiles:gOLD:NONE:alice",
-                "it:v1:cache:v1:profiles:gCURRENT:NONE:bob"));
+        commands.values.put(RedisCacheKey.generation(RedisTestFixtures.REGION, REDIS_CONFIG, cacheConfig()), "CURRENT");
+        topology.physicallyPresent.addAll(
+                List.of("it:v1:cache:v1:profiles:gOLD:NONE:alice", "it:v1:cache:v1:profiles:gCURRENT:NONE:bob"));
 
         await(RedisCleanupJobTestSupport.job(topology, commands).sweep());
 
         assertEquals(1, topology.unlinks.size());
-        assertEquals(List.of("it:v1:cache:v1:profiles:gOLD:NONE:alice"), topology.unlinks.get(0).keys());
+        assertEquals(
+                List.of("it:v1:cache:v1:profiles:gOLD:NONE:alice"),
+                topology.unlinks.get(0).keys());
         assertTrue(topology.physicallyPresent.contains("it:v1:cache:v1:profiles:gCURRENT:NONE:bob"));
     }
 
@@ -60,8 +64,12 @@ class RedisCleanupJobTest {
 
         await(RedisCleanupJobTestSupport.job(topology, commands).sweep());
 
-        assertEquals(List.of(NODE_A, NODE_B), topology.scans.stream().map(
-                RedisCleanupTestFixtures.FakeTopology.ScanCall::node).distinct().toList());
+        assertEquals(
+                List.of(NODE_A, NODE_B),
+                topology.scans.stream()
+                        .map(RedisCleanupTestFixtures.FakeTopology.ScanCall::node)
+                        .distinct()
+                        .toList());
         assertEquals(2, topology.unlinks.size());
         assertFalse(commands.commands.stream().anyMatch(command -> "DEL".equals(command.get(0))));
     }
@@ -71,14 +79,17 @@ class RedisCleanupJobTest {
     void deduplicatesKeysAcrossPagesAndNodes() throws Exception {
         String duplicate = "it:v1:cache:v1:profiles:gOLD:NONE:duplicate";
         RedisCleanupTestFixtures.FakeTopology topology = new RedisCleanupTestFixtures.FakeTopology()
-                .pages(NODE_A,
+                .pages(
+                        NODE_A,
                         RedisCleanupTestFixtures.page("a2", false, duplicate),
                         RedisCleanupTestFixtures.page("0", true, duplicate, "it:v1:cache:v1:profiles:gOLD:NONE:a"))
                 .pages(NODE_B, RedisCleanupTestFixtures.page("0", true, duplicate));
 
-        await(RedisCleanupJobTestSupport.job(topology, new RedisCleanupTestFixtures.RecordingCommands()).sweep());
+        await(RedisCleanupJobTestSupport.job(topology, new RedisCleanupTestFixtures.RecordingCommands())
+                .sweep());
 
-        List<String> deleted = topology.unlinks.stream().flatMap(call -> call.keys().stream()).toList();
+        List<String> deleted =
+                topology.unlinks.stream().flatMap(call -> call.keys().stream()).toList();
         assertEquals(List.of(duplicate, "it:v1:cache:v1:profiles:gOLD:NONE:a"), deleted);
     }
 
@@ -89,10 +100,11 @@ class RedisCleanupJobTest {
                 .mapToObj(index -> "it:v1:cache:v1:profiles:gOLD:NONE:key-" + index)
                 .toArray(String[]::new);
         RedisCleanupTestFixtures.FakeTopology topology = new RedisCleanupTestFixtures.FakeTopology()
-                .pages(NODE_A, new RedisScanPage("next", false, List.of(keys)));
+                .pages(NODE_A, new RedisScanPage("next", List.of(keys), false));
 
-        RedisCleanupJob.CleanupResult result = await(
-                RedisCleanupJobTestSupport.job(topology, new RedisCleanupTestFixtures.RecordingCommands()).sweep());
+        RedisCleanupJob.CleanupResult result =
+                await(RedisCleanupJobTestSupport.job(topology, new RedisCleanupTestFixtures.RecordingCommands())
+                        .sweep());
 
         assertEquals(MAX_KEYS_PER_SWEEP, result.scannedKeys());
         assertTrue(result.backlog() > 0);
@@ -151,7 +163,11 @@ class RedisCleanupJobTest {
         await(Future.all(first.sweep(), second.sweep()));
 
         assertTrue(topology.physicallyPresent.isEmpty());
-        assertTrue(topology.unlinks.stream().flatMap(call -> call.keys().stream()).distinct().count() <= 2);
+        assertTrue(topology.unlinks.stream()
+                        .flatMap(call -> call.keys().stream())
+                        .distinct()
+                        .count()
+                <= 2);
     }
 
     @Test
@@ -159,7 +175,8 @@ class RedisCleanupJobTest {
     void failureRetriesOnNextRun() throws Exception {
         RedisCleanupTestFixtures.FakeTopology topology = new RedisCleanupTestFixtures.FakeTopology();
         topology.nextScan = Future.failedFuture("temporary scan failure");
-        RedisCleanupJob job = RedisCleanupJobTestSupport.job(topology, new RedisCleanupTestFixtures.RecordingCommands());
+        RedisCleanupJob job =
+                RedisCleanupJobTestSupport.job(topology, new RedisCleanupTestFixtures.RecordingCommands());
 
         RedisCleanupJob.CleanupResult first = await(job.sweep());
         RedisCleanupJob.CleanupResult second = await(job.sweep());
@@ -188,11 +205,7 @@ class RedisCleanupJobTest {
                 .pages(NODE_A, RedisCleanupTestFixtures.page("0", true, "it:v1:cache:v1:profiles:gOLD:NONE:a"));
 
         await(RedisCleanupJobTestSupport.job(
-                        topology,
-                        new RedisCleanupTestFixtures.RecordingCommands(),
-                        metrics,
-                        () -> 0,
-                        System::nanoTime)
+                        topology, new RedisCleanupTestFixtures.RecordingCommands(), metrics, () -> 0, System::nanoTime)
                 .sweep());
 
         assertEquals(1, metrics.records.size());
@@ -211,7 +224,8 @@ class RedisCleanupJobTest {
         RedisCleanupTestFixtures.FakeTopology topology = new RedisCleanupTestFixtures.FakeTopology();
         var pending = RedisCleanupTestFixtures.pendingScan();
         topology.nextScan = pending.future();
-        RedisCleanupJob job = RedisCleanupJobTestSupport.job(topology, new RedisCleanupTestFixtures.RecordingCommands());
+        RedisCleanupJob job =
+                RedisCleanupJobTestSupport.job(topology, new RedisCleanupTestFixtures.RecordingCommands());
 
         Future<RedisCleanupJob.CleanupResult> cleanup = job.sweep();
         Future<String> business = Future.succeededFuture("business-result");

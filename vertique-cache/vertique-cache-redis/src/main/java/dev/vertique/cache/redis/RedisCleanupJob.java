@@ -22,7 +22,6 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -31,7 +30,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.IntSupplier;
 import java.util.function.LongSupplier;
-import java.util.function.Supplier;
+import java.util.regex.Pattern;
 
 /** Bounded, topology-aware physical cleanup for unreachable Redis cache generations. */
 final class RedisCleanupJob {
@@ -43,7 +42,8 @@ final class RedisCleanupJob {
     private static final long MAX_KEYS_PER_SWEEP = 10_000L;
     private static final long MAX_SWEEP_MILLIS = 5_000L;
     private static final long MAX_BACKOFF_MILLIS = 60 * 60_000L;
-    private static final String REGION_PATTERN = "[A-Za-z0-9._~-]+:v[1-9][0-9]*:[A-Za-z0-9._~-]+";
+    private static final int INSPECTION_BATCH_SIZE = 64;
+    private static final Pattern REGION_PATTERN = Pattern.compile("[A-Za-z0-9._~-]+:v[1-9][0-9]*:[A-Za-z0-9._~-]+");
 
     private final RedisTopologyOperations topology;
     private final RedisCommandClient redis;
@@ -51,7 +51,6 @@ final class RedisCleanupJob {
     private final CacheConfig cacheConfig;
     private final Policy policy;
     private final Object metrics;
-    private final IntSupplier jitterMillis;
     private final LongSupplier monotonicNanos;
     private final long firstRunJitterMillis;
     private final AtomicBoolean registered = new AtomicBoolean();
@@ -84,9 +83,9 @@ final class RedisCleanupJob {
         this.cacheConfig = Objects.requireNonNull(cacheConfig, "cacheConfig");
         this.policy = Objects.requireNonNull(policy, "policy");
         this.metrics = Objects.requireNonNull(metrics, "metrics");
-        this.jitterMillis = Objects.requireNonNull(jitterMillis, "jitterMillis");
         this.monotonicNanos = Objects.requireNonNull(monotonicNanos, "monotonicNanos");
-        this.firstRunJitterMillis = boundedJitter(jitterMillis.getAsInt(), policy.maxJitterMillis());
+        this.firstRunJitterMillis = boundedJitter(
+                Objects.requireNonNull(jitterMillis, "jitterMillis").getAsInt(), policy.maxJitterMillis());
     }
 
     /**
@@ -142,19 +141,7 @@ final class RedisCleanupJob {
     record Schedule(Duration delay, long jitterMillis) {}
 
     /** Outcome of one bounded cleanup sweep. */
-    record CleanupResult(long scannedKeys, long deletedKeys, long backlog, boolean failed) {
-        long scanned() {
-            return scannedKeys;
-        }
-
-        long deleted() {
-            return deletedKeys;
-        }
-
-        boolean failure() {
-            return failed;
-        }
-    }
+    record CleanupResult(long scannedKeys, long deletedKeys, long backlog, boolean failed) {}
 
     /** Returns the current jittered cadence or the capped retry delay after a failure. */
     Schedule schedule() {
@@ -221,8 +208,7 @@ final class RedisCleanupJob {
         }
 
         Future<Void> scan = nodes.compose(value -> scanNodes(value == null ? List.of() : value, 0, state, startedAt));
-        return scan
-                .map(ignored -> result(state))
+        return scan.map(ignored -> result(state))
                 .recover(failure -> {
                     state.failed = true;
                     return Future.succeededFuture(result(state));
@@ -268,8 +254,7 @@ final class RedisCleanupJob {
         if (node == null) {
             return scanNodes(nodes, index + 1, state, startedAt);
         }
-        return scanNode(node, "0", state, startedAt)
-                .compose(ignored -> scanNodes(nodes, index + 1, state, startedAt));
+        return scanNode(node, "0", state, startedAt).compose(ignored -> scanNodes(nodes, index + 1, state, startedAt));
     }
 
     private Future<Void> scanNode(RedisPrimaryNode node, String cursor, SweepState state, long startedAt) {
@@ -325,27 +310,35 @@ final class RedisCleanupJob {
         if (index >= keys.size()) {
             return Future.succeededFuture();
         }
+        int end = Math.min(keys.size(), index + INSPECTION_BATCH_SIZE);
+        Future<Void> batch = Future.succeededFuture();
+        for (int position = index; position < end; position++) {
+            int current = position;
+            batch = batch.compose(ignored -> inspectKey(node, keys.get(current), state, startedAt));
+        }
+        return batch.compose(ignored -> inspectKeys(node, keys, end, state, startedAt));
+    }
+
+    private Future<Void> inspectKey(RedisPrimaryNode node, String key, SweepState state, long startedAt) {
         if (timeBudgetReached(startedAt)) {
             state.backlog = true;
             return Future.succeededFuture();
         }
-        String key = keys.get(index);
         state.scannedKeys++;
         ParsedKey parsed = parse(key);
         if (parsed == null || !state.seenKeys.add(key)) {
-            return inspectKeys(node, keys, index + 1, state, startedAt);
+            return Future.succeededFuture();
         }
-        return marker(parsed.markerKey(), state).compose(marker -> {
+        return marker(parsed.markerKey(), state).map(marker -> {
             if (marker.readable() && !Objects.equals(marker.generation(), parsed.generation())) {
-                state.candidatesByNode.computeIfAbsent(node, ignored -> new ArrayList<>()).add(key);
+                state.candidates.add(key);
             }
-            return inspectKeys(node, keys, index + 1, state, startedAt);
+            return (Void) null;
         });
     }
 
     private Future<Void> unlinkCandidates(RedisPrimaryNode node, SweepState state, long startedAt) {
-        List<String> candidates = state.candidatesByNode.remove(node);
-        if (candidates == null || candidates.isEmpty()) {
+        if (state.candidates.isEmpty()) {
             return Future.succeededFuture();
         }
         if (timeBudgetReached(startedAt)) {
@@ -353,8 +346,10 @@ final class RedisCleanupJob {
             return Future.succeededFuture();
         }
         Future<Long> unlink;
+        List<String> candidates = List.copyOf(state.candidates);
+        state.candidates.clear();
         try {
-            unlink = topology.unlink(node, List.copyOf(candidates));
+            unlink = topology.unlink(node, candidates);
         } catch (RuntimeException failure) {
             state.failed = true;
             state.backlog = true;
@@ -365,8 +360,7 @@ final class RedisCleanupJob {
             state.backlog = true;
             return Future.succeededFuture();
         }
-        return unlink
-                .map(deleted -> state.deletedKeys += deleted == null ? 0 : Math.max(0, deleted))
+        return unlink.map(deleted -> state.deletedKeys += deleted == null ? 0 : Math.max(0, deleted))
                 .recover(failure -> {
                     state.failed = true;
                     state.backlog = true;
@@ -394,8 +388,7 @@ final class RedisCleanupJob {
             state.markers.put(markerKey, invalid);
             return Future.succeededFuture(invalid);
         }
-        return value
-                .map(response -> {
+        return value.map(response -> {
                     String generation = response == null ? null : response.toString();
                     if (generation != null && generation.isBlank()) {
                         throw new IllegalStateException("Redis cache generation marker was blank");
@@ -422,7 +415,7 @@ final class RedisCleanupJob {
             return null;
         }
         String regionPrefix = key.substring(root.length(), generationMarker);
-        if (!regionPrefix.matches(REGION_PATTERN)) {
+        if (!REGION_PATTERN.matcher(regionPrefix).matches()) {
             return null;
         }
         int generationStart = generationMarker + 2;
@@ -452,11 +445,25 @@ final class RedisCleanupJob {
         try {
             Method method;
             try {
-                method = metrics.getClass().getMethod(
-                        "record", String.class, String.class, long.class, long.class, long.class, boolean.class);
+                method = metrics.getClass()
+                        .getMethod(
+                                "record",
+                                String.class,
+                                String.class,
+                                long.class,
+                                long.class,
+                                long.class,
+                                boolean.class);
             } catch (NoSuchMethodException ignored) {
-                method = metrics.getClass().getDeclaredMethod(
-                        "record", String.class, String.class, long.class, long.class, long.class, boolean.class);
+                method = metrics.getClass()
+                        .getDeclaredMethod(
+                                "record",
+                                String.class,
+                                String.class,
+                                long.class,
+                                long.class,
+                                long.class,
+                                boolean.class);
                 method.trySetAccessible();
             }
             method.invoke(
@@ -473,7 +480,7 @@ final class RedisCleanupJob {
     }
 
     private CleanupResult result(SweepState state) {
-        long backlog = state.backlog || state.failed || !state.candidatesByNode.isEmpty() ? 1 : 0;
+        long backlog = state.backlog || state.failed || !state.candidates.isEmpty() ? 1 : 0;
         return new CleanupResult(state.scannedKeys, state.deletedKeys, backlog, state.failed);
     }
 
@@ -499,6 +506,6 @@ final class RedisCleanupJob {
         boolean failed;
         final Set<String> seenKeys = new HashSet<>();
         final Map<String, Marker> markers = new HashMap<>();
-        final Map<RedisPrimaryNode, List<String>> candidatesByNode = new LinkedHashMap<>();
+        final List<String> candidates = new ArrayList<>();
     }
 }

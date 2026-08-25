@@ -205,9 +205,9 @@ public final class RedisClientRegistry {
     private static RedisClusterClient createTopologyClient(RedisConnectionConfig profile) {
         List<RedisURI> endpoints = profile.endpoints().stream()
                 .map(endpoint -> {
-                    RedisURI uri = RedisURI.create(endpoint)
-                            .setSsl(profile.tlsEnabled())
-                            .setTimeout(Duration.ofMillis(profile.connectTimeoutMs()));
+                    RedisURI uri = RedisURI.create(endpoint);
+                    uri.setSsl(profile.tlsEnabled());
+                    uri.setTimeout(Duration.ofMillis(profile.connectTimeoutMs()));
                     if (profile.username() != null) {
                         uri.setAuthentication(
                                 profile.username(), profile.passwordSecret() == null ? "" : profile.passwordSecret());

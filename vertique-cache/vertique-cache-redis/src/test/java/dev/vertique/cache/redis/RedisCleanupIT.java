@@ -14,8 +14,8 @@ import dev.vertique.redis.RedisTopologyOperations;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
-import io.vertx.redis.client.RedisAPI;
 import io.vertx.redis.client.Redis;
+import io.vertx.redis.client.RedisAPI;
 import io.vertx.redis.client.Response;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -49,8 +49,8 @@ public class RedisCleanupIT {
     static void setUp(Vertx vertx) {
         client = Redis.createClient(
                 vertx,
-                new io.vertx.redis.client.RedisOptions().setConnectionString(
-                        "redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379)));
+                new io.vertx.redis.client.RedisOptions()
+                        .setConnectionString("redis://" + REDIS.getHost() + ":" + REDIS.getMappedPort(6379)));
         commands = RedisAPI.api(client);
     }
 
@@ -74,7 +74,8 @@ public class RedisCleanupIT {
         long deleted = await(topology.unlink(new RedisPrimaryNode("standalone"), page.keys()));
         Response remaining = await(commands.get(oldKey));
 
-        assertEquals(List.of(oldKey), page.keys().stream().filter(oldKey::equals).toList());
+        assertEquals(
+                List.of(oldKey), page.keys().stream().filter(oldKey::equals).toList());
         assertEquals(1L, deleted);
         assertEquals(null, remaining);
     }
@@ -83,8 +84,7 @@ public class RedisCleanupIT {
         return future.toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
     }
 
-    private record PinnedRedisTopology(RedisAPI commands, RedisPrimaryNode node)
-            implements RedisTopologyOperations {
+    private record PinnedRedisTopology(RedisAPI commands, RedisPrimaryNode node) implements RedisTopologyOperations {
         @Override
         public Future<List<RedisPrimaryNode>> primaryNodes() {
             return Future.succeededFuture(List.of(node));
