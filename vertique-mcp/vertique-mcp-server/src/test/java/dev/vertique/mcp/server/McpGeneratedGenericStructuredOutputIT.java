@@ -125,6 +125,28 @@ class McpGeneratedGenericStructuredOutputIT {
         softly.assertAll();
     }
 
+    @Test
+    @DisplayName("generated profile writers reject every non-finite nested output before observation")
+    void shouldRejectEveryNonFiniteNestedValueThroughTheGeneratedProfileWriter() throws Exception {
+        fixture = McpGeneratedGenericStructuredOutputITFixture.start(vertx);
+        server = fixture.server();
+        rawClient = vertx.createHttpClient();
+        client = WebClient.wrap(rawClient);
+
+        for (String toolName : McpGeneratedGenericStructuredOutputITFixture.NON_FINITE_TOOL_NAMES) {
+            HttpResponse<Buffer> response = await(post(toolName).sendBuffer(callBody(toolName)));
+
+            assertThat(response.statusCode()).as(toolName).isEqualTo(500);
+            assertThat(response.bodyAsString())
+                    .as("a non-finite spelling from %s must never reach the wire", toolName)
+                    .doesNotContain("NaN")
+                    .doesNotContain("Infinity");
+        }
+        assertThat(fixture.outputObservationCount())
+                .as("no non-finite value may reach the opt-in output observer")
+                .isZero();
+    }
+
     // --- Wire helpers ---
 
     private HttpRequest<Buffer> post(String toolName) {

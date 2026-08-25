@@ -29,6 +29,8 @@ import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.Router;
 import java.lang.reflect.Constructor;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -52,6 +54,20 @@ final class McpGeneratedGenericStructuredOutputITFixture {
     static final String INVALID_TOOL_NAME = "notes.invalid";
     static final String VALID_INVOKER_FQN = TOOL_PACKAGE + ".NoteTools_valid_McpToolInvoker";
     static final String INVALID_INVOKER_FQN = TOOL_PACKAGE + ".NoteTools_invalid_McpToolInvoker";
+    static final List<String> NON_FINITE_TOOL_NAMES = List.of(
+            "notes.double-nan",
+            "notes.double-positive-infinity",
+            "notes.double-negative-infinity",
+            "notes.float-nan",
+            "notes.float-positive-infinity",
+            "notes.float-negative-infinity");
+    private static final List<String> NON_FINITE_INVOKER_FQNS = List.of(
+            TOOL_PACKAGE + ".NoteTools_doubleNan_McpToolInvoker",
+            TOOL_PACKAGE + ".NoteTools_doublePositiveInfinity_McpToolInvoker",
+            TOOL_PACKAGE + ".NoteTools_doubleNegativeInfinity_McpToolInvoker",
+            TOOL_PACKAGE + ".NoteTools_floatNan_McpToolInvoker",
+            TOOL_PACKAGE + ".NoteTools_floatPositiveInfinity_McpToolInvoker",
+            TOOL_PACKAGE + ".NoteTools_floatNegativeInfinity_McpToolInvoker");
 
     private static final String SERVER_NAME = "vertique-test";
     private static final String SERVER_VERSION = "1.0";
@@ -59,6 +75,7 @@ final class McpGeneratedGenericStructuredOutputITFixture {
     private final ProcessorTestHarness.Result result;
     private final McpToolInvoker validInvoker;
     private final McpToolInvoker invalidInvoker;
+    private final McpOutputPipelineITFixture.CapableObserver outputObserver;
     private final HttpServer server;
     private final int port;
 
@@ -68,7 +85,7 @@ final class McpGeneratedGenericStructuredOutputITFixture {
 
                 import jakarta.validation.constraints.Min;
 
-                public record Note(String text, @Min(1) int priority) {}
+                public record Note(String text, @Min(1) int priority, Object value) {}
                 """);
         JavaFileObject toolSource = SourceFiles.inline(TOOLS_SOURCE_FQN, """
                 package com.example.notes;
@@ -85,12 +102,42 @@ final class McpGeneratedGenericStructuredOutputITFixture {
 
                     @McpTool(name = "notes.valid", description = "Returns a note satisfying its own output schema.")
                     public Future<List<Note>> valid() {
-                        return Future.succeededFuture(List.of(new Note("hello", 5)));
+                        return Future.succeededFuture(List.of(new Note("hello", 5, "finite")));
                     }
 
                     @McpTool(name = "notes.invalid", description = "Returns a note violating its own output schema.")
                     public Future<List<Note>> invalid() {
-                        return Future.succeededFuture(List.of(new Note("hello", -1)));
+                        return Future.succeededFuture(List.of(new Note("hello", -1, "finite")));
+                    }
+
+                    @McpTool(name = "notes.double-nan", description = "Returns a non-finite nested value.")
+                    public Future<List<Note>> doubleNan() {
+                        return Future.succeededFuture(List.of(new Note("hello", 5, Double.NaN)));
+                    }
+
+                    @McpTool(name = "notes.double-positive-infinity", description = "Returns a non-finite nested value.")
+                    public Future<List<Note>> doublePositiveInfinity() {
+                        return Future.succeededFuture(List.of(new Note("hello", 5, Double.POSITIVE_INFINITY)));
+                    }
+
+                    @McpTool(name = "notes.double-negative-infinity", description = "Returns a non-finite nested value.")
+                    public Future<List<Note>> doubleNegativeInfinity() {
+                        return Future.succeededFuture(List.of(new Note("hello", 5, Double.NEGATIVE_INFINITY)));
+                    }
+
+                    @McpTool(name = "notes.float-nan", description = "Returns a non-finite nested value.")
+                    public Future<List<Note>> floatNan() {
+                        return Future.succeededFuture(List.of(new Note("hello", 5, Float.NaN)));
+                    }
+
+                    @McpTool(name = "notes.float-positive-infinity", description = "Returns a non-finite nested value.")
+                    public Future<List<Note>> floatPositiveInfinity() {
+                        return Future.succeededFuture(List.of(new Note("hello", 5, Float.POSITIVE_INFINITY)));
+                    }
+
+                    @McpTool(name = "notes.float-negative-infinity", description = "Returns a non-finite nested value.")
+                    public Future<List<Note>> floatNegativeInfinity() {
+                        return Future.succeededFuture(List.of(new Note("hello", 5, Float.NEGATIVE_INFINITY)));
                     }
                 }
                 """);
@@ -102,13 +149,20 @@ final class McpGeneratedGenericStructuredOutputITFixture {
                 .newInstance();
         this.validInvoker = loadInvoker(VALID_INVOKER_FQN, toolsInstance);
         this.invalidInvoker = loadInvoker(INVALID_INVOKER_FQN, toolsInstance);
+        Set<McpToolInvoker> invokers = new LinkedHashSet<>();
+        invokers.add(validInvoker);
+        invokers.add(invalidInvoker);
+        for (String invokerFqn : NON_FINITE_INVOKER_FQNS) {
+            invokers.add(loadInvoker(invokerFqn, toolsInstance));
+        }
 
         McpServerConfig config = McpServerConfig.builder()
                 .enabled(true)
                 .serverName(SERVER_NAME)
                 .serverVersion(SERVER_VERSION)
                 .build();
-        McpToolRegistry registry = McpToolRegistry.build(Set.of(validInvoker, invalidInvoker));
+        McpToolRegistry registry = McpToolRegistry.build(invokers);
+        this.outputObserver = new McpOutputPipelineITFixture.CapableObserver();
         RecordingSecurityRuntime securityRuntime = new RecordingSecurityRuntime();
         McpPolicyEnforcer policyEnforcer = new McpPolicyEnforcer(new SecurityPolicyEnforcer(
                 Optional.empty(),
@@ -126,7 +180,7 @@ final class McpGeneratedGenericStructuredOutputITFixture {
                 new McpRequestDispatcher(
                         config,
                         securityRuntime,
-                        Set.of(),
+                        Set.of(outputObserver),
                         Set.of(),
                         Set.of(),
                         Set.of(),
@@ -166,6 +220,10 @@ final class McpGeneratedGenericStructuredOutputITFixture {
     /** The real generated invoker for {@code notes.invalid} — exposed so the test can read its descriptor. */
     McpToolInvoker invalidInvoker() {
         return invalidInvoker;
+    }
+
+    int outputObservationCount() {
+        return outputObserver.session().toolOutputCount();
     }
 
     private McpToolInvoker loadInvoker(String invokerFqn, Object toolsInstance) throws Exception {

@@ -3,7 +3,9 @@
 
 package dev.vertique.mcp.server.runtime;
 
+import com.fasterxml.jackson.core.json.JsonWriteFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectWriter;
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.json.JacksonFieldNameResolver;
@@ -32,6 +34,7 @@ public final class McpToolRuntime<I> implements McpStructuredOutputWriter {
 
     private final McpToolDescriptor descriptor;
     private final ObjectMapper mapper;
+    private final ObjectWriter structuredOutputWriter;
     private final Class<I> inputCarrierType;
     private final InputFieldNameResolver fieldNameResolver;
 
@@ -45,6 +48,7 @@ public final class McpToolRuntime<I> implements McpStructuredOutputWriter {
     McpToolRuntime(McpToolDescriptor descriptor, ObjectMapper mapper, Class<I> inputCarrierType) {
         this.descriptor = descriptor;
         this.mapper = mapper;
+        this.structuredOutputWriter = mapper.writer().without(JsonWriteFeature.WRITE_NAN_AS_STRINGS);
         this.inputCarrierType = inputCarrierType;
         this.fieldNameResolver = JacksonFieldNameResolver.forMapper(mapper);
     }
@@ -169,6 +173,6 @@ public final class McpToolRuntime<I> implements McpStructuredOutputWriter {
     public void write(Object value, OutputStream destination) throws IOException {
         Objects.requireNonNull(value, "value");
         Objects.requireNonNull(destination, "destination");
-        mapper.writeValue(destination, value);
+        structuredOutputWriter.writeValue(destination, value);
     }
 }
