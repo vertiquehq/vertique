@@ -4,7 +4,8 @@
 > **Public contract:** `vertique-cache-redis/src/main/resources/META-INF/vertique/module.md`
 
 This module owns asynchronous Redis cache commands, canonical physical-key rendering,
-generation visibility, JSON value conversion, and operation-level deadline behavior.
+generation visibility, JSON value conversion, operation-level deadline behavior, and the
+bounded physical cleanup policy for unreachable old generations.
 Connection profile validation, client reuse, and client shutdown remain in
 `vertique-redis-core`.
 
@@ -21,13 +22,19 @@ Connection profile validation, client reuse, and client shutdown remain in
 - `RedisCacheKey` — renders and bounds generation and entry keys; package-private.
 - `RedisCommandClient` — isolates the provider from the Vert.x Redis command API;
   package-private.
+- `RedisCleanupJob` — defines bounded topology-aware old-generation cleanup and its cron policy;
+  package-private.
+- `RedisCleanupLifecycle` — orders cleanup deregistration before shared Redis client close;
+  package-private.
 
 ## Runtime or Build Flow
 
 The Dagger module reads `cache.redis` and obtains the named client from the shared
 `RedisClientRegistry`. `RedisCacheStore` composes the generation lookup and the entry
 operation into one asynchronous future, then applies the configured backend deadline.
-No provider operation blocks the event loop.
+No provider operation blocks the event loop. Ordinary request-path commands use the Vert.x Redis
+client; the topology-maintenance seam and its internal Lettuce client are not coupled to a cache
+business future or readiness future.
 
 For a region with canonical prefix `<region namespace>:v<region format version>:<region name>`,
 the generation key is
@@ -55,6 +62,26 @@ the deadline and ignores late completion on the captured event-loop context; it 
 not claim upstream cancellation. Cache failures therefore do not replace the
 authoritative business result.
 
+`RedisCleanupJob` is the separate physical-maintenance path for old generations. It registers the
+stable cron id `cache-redis-old-generation-cleanup` with `0 */15 * * * *` (every 15 minutes, UTC),
+`ExecutionMode.EVERY_INSTANCE`, `OverlapPolicy.SKIP`, `MisfirePolicy.SKIP`, and `tracked=false`.
+Registration is idempotent. The first run includes a per-instance jitter in `[0, 60 seconds)`.
+
+The job discovers every Redis primary through `RedisTopologyOperations`, scans with each
+node-local cursor, and stops a sweep at 10,000 inspected keys or five seconds of monotonic time.
+It deduplicates keys repeated across scan pages and primaries, protects generation markers, and
+issues asynchronous `UNLINK` for only those provider-shaped entry keys whose readable marker has a
+different generation. Marker-read or unlink failures produce a failed/backlogged maintenance
+outcome without deleting unverified keys. Consecutive failures use capped exponential backoff of
+15 minutes, 30 minutes, then at most one hour. Per-sweep metrics are bounded to profile,
+namespace, scanned, deleted, backlog, and failure values; metrics recording cannot fail the sweep.
+
+`RedisCleanupLifecycle` runs in `LifecyclePhase.INFRA` at
+`RedisClientShutdownStep.SHUTDOWN_PRIORITY + 1`; reverse teardown therefore unregisters cleanup
+dispatch before the shared Redis registry closes. Application/Dagger composition, cron dispatch,
+metrics binding, and registration of the cleanup job/lifecycle remain T011-owned and are not wired
+in `CacheRedisModule`.
+
 ## Load-Bearing Invariants
 
 - Redis connection profile parsing and client lifecycle remain in `vertique-redis-core`.
@@ -67,9 +94,10 @@ authoritative business result.
   invalidation and does not provide per-key fencing or cancellation.
 - T010 owns bounded background cleanup of unreachable old generations; cleanup is not
   part of this provider's request-path operations or business future.
-- T011 owns Dagger/provider-selection, telemetry, and application client/provider
-  lifecycle composition; this module owns the provider command behavior consumed by
-  that graph.
+- `RedisCleanupJob` uses the minimal topology seam from `vertique-redis-core`; it does not expose
+  Lettuce or topology details through the provider-neutral cache contracts.
+- T011 owns Dagger/provider-selection, telemetry, cron dispatch, and application client/provider
+  lifecycle composition. T011's application graph is not wired here.
 
 ## Testing
 
@@ -87,9 +115,19 @@ and `RedisEventLoopIT` run with the focused verification command:
 ./mvnw -ntp -pl vertique-cache/vertique-cache-redis -am verify
 ```
 
-T010 owns the separate physical old-generation cleanup proof. T011 owns the assembled
-application-graph, provider-selection, telemetry, and shutdown-order proof that
-consumes this module.
+T010's focused cleanup proof is in `RedisCleanupJobTest` (eligibility, topology traversal,
+deduplication, 10,000-key and five-second bounds, jitter, idempotence, retry/backoff, metrics,
+and request-future isolation), `RedisCleanupCronWiringTest` (stable registration policy), and
+`RedisCleanupLifecycleTest` (unregister-before-close ordering). `RedisCleanupIT` verifies the
+real Redis `SCAN`/`UNLINK` path with Testcontainers. Run the focused unit proof with:
+
+```text
+./mvnw -ntp -pl vertique-cache/vertique-cache-redis -am test -Dtest=RedisCleanupJobTest,RedisCleanupCronWiringTest,RedisCleanupLifecycleTest
+```
+
+Run the module's `verify` command above when the Testcontainers integration proof is available.
+T011 owns the assembled application graph, provider selection, telemetry, cron dispatch, and
+shutdown-composition proof that consumes this module; those components are not wired here.
 
 ## Related ADRs
 

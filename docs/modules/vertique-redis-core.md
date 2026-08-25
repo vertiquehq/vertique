@@ -3,14 +3,16 @@
 > **Audience:** Vertique framework contributors and source agents
 > **Public contract:** `vertique-redis-core/src/main/resources/META-INF/vertique/module.md`
 
-This module owns shared Redis connection-profile and client-lifecycle infrastructure. Feature modules consume it; it must remain independent of cache-specific behavior. The application-scoped registry owns the shared Redis clients, while the application host owns `Vertx`.
+This module owns shared Redis connection-profile, client-lifecycle, and topology-maintenance infrastructure. Feature modules consume it; it must remain independent of cache-specific behavior. The application-scoped registry owns the shared Redis clients, while the application host owns `Vertx`.
 
 ## Source Map
 
 - `dev.vertique.redis` — shared Redis infrastructure package root.
 - `RedisConnectionModule` — parses the named profile section, binds the registry, and contributes its shutdown step.
-- `RedisClientRegistry` — snapshots startup-resolved profiles, lazily creates standalone and primary-operation clients per profile, and owns ordered/idempotent close.
+- `RedisClientRegistry` — snapshots startup-resolved profiles, lazily creates standalone, primary-operation, and topology-maintenance clients per profile, and owns ordered/idempotent close.
 - `RedisPrimaryOperations` — wraps a shared cluster-capable profile client and fans out `SCAN` and `UNLINK` to every primary.
+- `RedisTopologyOperations`, `RedisPrimaryNode`, and `RedisScanPage` — the minimal public seam for topology-aware maintenance.
+- `LettuceRedisTopologyOperations` — package-private Lettuce 7.7.0.RELEASE adapter for primary discovery, node-local `SCAN`, and `UNLINK`.
 - `RedisClientShutdownStep` — contributes Redis cleanup in lifecycle phase `INFRA` after same-phase consumers.
 
 ## Runtime or Build Flow
@@ -24,6 +26,12 @@ for the profile with Vert.x `Redis.createClusterClient(...)` and wraps it with
 `RedisCluster.create(...)` as a cached `RedisPrimaryOperations` seam. It does not wrap the
 standalone client returned by `client(profileName)`. Registry shutdown remains responsible for
 both client types.
+
+`RedisClientRegistry.topologyOperations(profileName)` creates one registry-owned Lettuce
+`RedisClusterClient` per profile and returns a cached `RedisTopologyOperations` seam. The adapter
+opens its Lettuce cluster connection lazily, discovers upstream primaries, scans each primary with
+a caller-owned cursor, and asynchronously unlinks keys from that primary. Lettuce is restricted to
+this maintenance boundary; ordinary request-path commands continue to use the Vert.x Redis client.
 
 The cluster client uses `RedisClientType.CLUSTER` and receives the profile's network and pool
 settings on the `RedisOptions` passed to `Redis.createClusterClient(...)`. Its connect-options
@@ -46,12 +54,12 @@ policy belong to T010 cleanup policy concerns, not this shared core.
 - Credentials are captured at startup. `RedisConnectionConfig.toString()` redacts `passwordSecret`, and later configuration mutation cannot rotate a live client's credentials.
 - `RedisClientShutdownStep` is contributed as an `ApplicationShutdownStep` in `LifecyclePhase.INFRA` with the lowest same-phase priority, so reverse-order teardown closes shared clients after their consumers.
 - Registry close follows validated profile order, returns one shared close future, and never closes the caller-owned `Vertx` instance.
-- Primary-node operations use one cached cluster-capable client and seam per profile; the registry owns both the standalone and cluster client lifecycles.
+- Primary-node operations use one cached cluster-capable client and seam per profile; topology maintenance uses one cached Lettuce client and seam per profile. The registry owns all created client lifecycles.
 - T006 owns profile records and parser validation. T007 owns startup credential capture, lazy client lifecycle, option mapping, and ordered shutdown; T009 owns Redis cache commands.
 
 ## Testing
 
-Profile and lifecycle behavior are owned by T006/T007. Maintainers can navigate the focused proof in `vertique-redis/vertique-redis-core/src/test/java/dev/vertique/redis/RedisClientLifecycleTest.java` (`RedisClientLifecycleTest`) and `vertique-redis/vertique-redis-core/src/test/java/dev/vertique/redis/RedisPrimaryOperationsTest.java` (`RedisPrimaryOperationsTest`). Run both with:
+Profile and lifecycle behavior are owned by T006/T007. Maintainers can navigate the focused proof in `vertique-redis/vertique-redis-core/src/test/java/dev/vertique/redis/RedisClientLifecycleTest.java` (`RedisClientLifecycleTest`) and `vertique-redis/vertique-redis-core/src/test/java/dev/vertique/redis/RedisPrimaryOperationsTest.java` (`RedisPrimaryOperationsTest`). The topology-maintenance seam is consumed by the T010 cleanup tests in `vertique-cache/vertique-cache-redis/src/test/java/dev/vertique/cache/redis/RedisCleanupJobTest.java`, `RedisCleanupCronWiringTest.java`, and `RedisCleanupLifecycleTest.java`. Run the core proof with:
 
 ```text
 ./mvnw -ntp -pl vertique-redis/vertique-redis-core -am test

@@ -12,8 +12,9 @@ SPDX-License-Identifier: EUPL-1.2
 
 `vertique-cache-redis` is the asynchronous clustered provider for the provider-neutral
 cache contracts. It stores JSON values in Redis through the shared Redis client
-infrastructure and returns Vert.x futures for every cache operation. It does not own
-named Redis profile parsing or shared-client lifecycle.
+infrastructure and returns Vert.x futures for every cache operation. It also contains the
+bounded physical cleanup policy for unreachable old generations. It does not own named Redis
+profile parsing or shared-client lifecycle.
 
 ## When To Use It
 
@@ -73,6 +74,38 @@ generation and client-pool wait portion. On timeout or Redis failure, the cache 
 preserves the business result. The backend future is not assumed to be cancellable;
 a late Redis completion is ignored by the returned operation future, although the
 backend side effect may still complete.
+
+## Physical old-generation cleanup
+
+Whole-region clear leaves old physical generations for background maintenance. `RedisCleanupJob`
+uses the `vertique-redis-core` topology seam and an ordinary Vert.x command client for marker
+reads; it is not part of a cache request, readiness future, or business future. The normal cache
+request path therefore remains on Vert.x Redis operations, while the internal Lettuce topology
+client is reserved for maintenance.
+
+The cleanup definition has the stable id `cache-redis-old-generation-cleanup` and the six-field
+cron expression `0 */15 * * * *` (every 15 minutes, UTC). It runs with `EVERY_INSTANCE`, skips
+overlap, skips misfires, and is untracked (`tracked=false`). Each instance selects a first-run
+jitter in the bounded range `[0, 60 seconds)`. Registration is idempotent, so repeated
+registration leaves one job with the stable id.
+
+Each sweep is bounded to at most 10,000 inspected keys or five seconds of monotonic elapsed time.
+It scans every discovered Redis primary with node-local cursors, deduplicates keys repeated across
+pages or primaries, and uses `UNLINK` rather than `DEL`. A key is eligible only when it matches
+this provider's namespace, keyspace version, region grammar, and generation-key shape, its
+generation marker can be read, and the marker generation differs from the entry generation. The
+generation marker itself is never a candidate; unreadable markers are protected and cause a
+failed/backlogged outcome instead of deletion.
+
+Failures are retained for the next run and use capped exponential retry backoff: 15 minutes,
+30 minutes, then up to a one-hour ceiling. Each sweep records bounded metrics for the connection
+profile, namespace, scanned keys, deleted keys, backlog, and failure; an observability failure does
+not fail the maintenance operation.
+
+The `RedisCleanupLifecycle` step runs in `INFRA` at one priority above
+`RedisClientShutdownStep`. During reverse teardown it unregisters cleanup dispatch first, then
+closes the shared Redis clients. Application/Dagger composition, cron dispatch, metrics binding,
+and registration of these cleanup components remain T011-owned; they are not wired by this module.
 
 ## Dependencies
 

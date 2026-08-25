@@ -10,7 +10,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Artifact:** `vertique-redis-core`
 > **Depends on:** `vertique-core`, Vert.x Redis Client
 
-`vertique-redis-core` is the shared infrastructure boundary for named Redis connection profiles and client lifecycle. Redis-backed features depend on this module instead of defining duplicate endpoint, credential, TLS, or pool configuration.
+`vertique-redis-core` is the shared infrastructure boundary for named Redis connection profiles, client lifecycle, and topology-aware maintenance. Redis-backed features depend on this module instead of defining duplicate endpoint, credential, TLS, or pool configuration.
 
 ## When To Use It
 
@@ -26,7 +26,9 @@ Validation is performed while typed configuration is constructed. Diagnostics co
 
 ## Redis client lifecycle
 
-`RedisClientRegistry` is the application-scoped profile registry. Calling `client(name)` lazily creates one shared standalone Vert.x Redis client for that profile; repeated calls for the same name reuse it. Calling `primaryOperations(name)` lazily creates one separate shared cluster-capable client and seam for that profile; repeated calls reuse both. A request for an unknown profile fails, and requests after shutdown has started are rejected. Client creation does not claim that Redis is synchronously connected or ready.
+`RedisClientRegistry` is the application-scoped profile registry. Calling `client(name)` lazily creates one shared standalone Vert.x Redis client for that profile; repeated calls for the same name reuse it. Calling `primaryOperations(name)` lazily creates one separate shared cluster-capable client and seam for that profile; repeated calls reuse both. Calling `topologyOperations(name)` lazily creates one internal Lettuce 7.7.0.RELEASE cluster client and one cached topology-maintenance seam for that profile; the Lettuce cluster connection is opened lazily by that seam. A request for an unknown profile fails, and requests after shutdown has started are rejected. Client creation does not claim that Redis is synchronously connected or ready.
+
+Ordinary request-path Redis commands remain on the asynchronous Vert.x Redis clients. The Lettuce client is an internal maintenance implementation detail and is not used by the ordinary cache request path, readiness futures, or business futures.
 
 The registry maps profile settings to the Vert.x Redis Client 5.1.6 options as follows:
 
@@ -44,7 +46,7 @@ Single Redis commands are asynchronous: Vert.x Redis Client 5.1.6 `send(Request)
 `Future<Response>`. `Future.timeout(long, TimeUnit)` fences the returned future to the timeout
 boundary. This module does not claim per-request cancellation.
 
-Redis clients close in validated profile order. The first registry `close()` call owns the asynchronous close sequence and its future; later calls return that same future, so application teardown is ordered and idempotent. The Dagger contribution runs in lifecycle phase `INFRA` at the lowest same-phase priority, which places shared-client shutdown after same-phase consumers during reverse-order teardown. The registry closes only its Redis clients; the host-owned `Vertx` instance remains the caller's responsibility.
+Redis clients close in validated profile order. For each profile, the registry closes any created Vert.x standalone client, Vert.x cluster client, and Lettuce topology client; the first registry `close()` call owns the asynchronous close sequence and its future, while later calls return that same future. This makes application teardown ordered and idempotent. The Dagger contribution runs in lifecycle phase `INFRA` at the lowest same-phase priority, which places shared-client shutdown after same-phase consumers during reverse-order teardown. The registry closes only its Redis clients; the host-owned `Vertx` instance remains the caller's responsibility.
 
 ## Primary-node operations
 
@@ -69,6 +71,20 @@ The returned futures contain the response list from the cluster operation. Clean
 scheduling, scan bounds, retries and backoff, metrics, and cache-key policy are concerns of
 the feature or cleanup policy using this seam; they are not defined by `vertique-redis-core`.
 
+## Topology maintenance
+
+`RedisClientRegistry.topologyOperations(profileName)` exposes the minimal public maintenance seam:
+
+- `RedisPrimaryNode` is a stable primary-node identity.
+- `RedisScanPage` carries a node-local cursor, the keys returned by that page, and its finished flag.
+- `RedisTopologyOperations` discovers primary nodes, scans one primary with a caller-owned cursor and requested count, and asynchronously unlinks keys from one primary.
+
+The package-private `LettuceRedisTopologyOperations` adapter implements that seam with Lettuce
+7.7.0.RELEASE. It discovers upstream nodes from the Lettuce topology, performs node-local
+`SCAN`, and issues asynchronous `UNLINK`. The registry owns the Lettuce client and closes it with
+the other created Redis clients. This core seam does not define cleanup scheduling, key eligibility,
+deduplication, retry/backoff, metrics, or cache-marker policy; those remain feature-policy concerns.
+
 ## Deadline behavior
 
 `RedisDeadline.withDeadline(Vertx, Future<T>, Duration)` provides non-blocking event-loop settlement for asynchronous Redis operations. The duration must be positive; when it expires, the returned future fails with a timeout. The backend future is not canceled: late backend completion is fenced and ignored after the returned future settles, so callers must not assume upstream cancellation.
@@ -79,3 +95,4 @@ the feature or cleanup policy using this seam; they are not defined by `vertique
 |---|---|
 | `vertique-core` | Framework foundation and typed configuration boundary |
 | Vert.x Redis Client 5.1.6 | Asynchronous Redis client API |
+| Lettuce 7.7.0.RELEASE | Internal topology-maintenance client |
