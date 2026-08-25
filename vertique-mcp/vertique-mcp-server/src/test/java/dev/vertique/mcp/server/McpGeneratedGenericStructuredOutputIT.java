@@ -99,12 +99,14 @@ class McpGeneratedGenericStructuredOutputIT {
                 .isEqualTo(1);
         JsonNode inputSchema =
                 new ObjectMapper().readTree(fixture.validInvoker().descriptor().inputSchema());
-        assertThat(inputSchema.findPath("display_name").path("type").asText())
+        assertThat(inputSchema
+                        .at("/properties/input/properties/display_name/type")
+                        .asText())
                 .as("the same selected profile must publish the typed input member name")
                 .isEqualTo("string");
-        assertThat(inputSchema.path("properties").has("displayName"))
+        assertThat(inputSchema.at("/properties/input/properties/displayName").isMissingNode())
                 .as("the neutral mapper's input spelling must not escape the generated profile")
-                .isFalse();
+                .isTrue();
 
         // --- Then (b): a call whose returned element violates that schema is rejected ---
         HttpResponse<Buffer> invalid = await(post(McpGeneratedGenericStructuredOutputITFixture.INVALID_TOOL_NAME)
