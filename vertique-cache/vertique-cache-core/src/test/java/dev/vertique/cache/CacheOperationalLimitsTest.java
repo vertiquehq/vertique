@@ -11,7 +11,7 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 /** Verifies provider-neutral cache operational-limit rejection at the annotation boundary. */
-class CacheOperationalLimitsIT {
+class CacheOperationalLimitsTest {
 
     @Test
     void rejectsTtlAboveMaximum() throws NoSuchMethodException {
