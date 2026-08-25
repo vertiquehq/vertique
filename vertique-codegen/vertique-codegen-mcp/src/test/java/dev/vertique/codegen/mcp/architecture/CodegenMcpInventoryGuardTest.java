@@ -16,8 +16,8 @@ import org.junit.jupiter.api.Test;
  * frozen per-module mechanism).
  *
  * <p>Compares every public member this module compiles against the committed local inventory at
- * full generic signature. The direction is subset, so a recorded row for a member a later task has
- * not implemented yet does not fail. This guard scans only this module's own compiled
+ * full generic signature in both directions. From T036 onward, recorded and compiled sets must be
+ * exactly equal. This guard scans only this module's own compiled
  * {@code target/classes} output; it does not — and cannot from this module — measure the generated
  * source surface {@code vertique-codegen-mcp} emits into a downstream application's compilation,
  * which is not present in this module's own output directory.
@@ -31,17 +31,31 @@ class CodegenMcpInventoryGuardTest {
         CodegenMcpInventoryChecker checker = new CodegenMcpInventoryChecker(McpToolProcessor.class);
         JsonObject recorded = CodegenMcpInventoryChecker.recordedInventory(INVENTORY_RESOURCE);
 
-        Set<String> unrecordedSignatures = new TreeSet<>(checker.scannedSignatures());
-        unrecordedSignatures.removeAll(CodegenMcpInventoryChecker.recordedSignatures(recorded));
+        Set<String> scannedSignatures = checker.scannedSignatures();
+        Set<String> recordedSignatures = CodegenMcpInventoryChecker.recordedSignatures(recorded);
+        Set<String> unrecordedSignatures = new TreeSet<>(scannedSignatures);
+        unrecordedSignatures.removeAll(recordedSignatures);
+        Set<String> unimplementedSignatures = new TreeSet<>(recordedSignatures);
+        unimplementedSignatures.removeAll(scannedSignatures);
 
-        Set<String> unrecordedPackages = new TreeSet<>(checker.scannedPackages());
-        unrecordedPackages.removeAll(CodegenMcpInventoryChecker.recordedPackages(recorded));
+        Set<String> scannedPackages = checker.scannedPackages();
+        Set<String> recordedPackages = CodegenMcpInventoryChecker.recordedPackages(recorded);
+        Set<String> unrecordedPackages = new TreeSet<>(scannedPackages);
+        unrecordedPackages.removeAll(recordedPackages);
+        Set<String> unimplementedPackages = new TreeSet<>(recordedPackages);
+        unimplementedPackages.removeAll(scannedPackages);
 
         assertThat(unrecordedSignatures)
                 .as("public generic signatures exported by vertique-codegen-mcp but absent from " + INVENTORY_RESOURCE)
                 .isEmpty();
+        assertThat(unimplementedSignatures)
+                .as("recorded public generic signatures no longer exported by this module")
+                .isEmpty();
         assertThat(unrecordedPackages)
                 .as("packages declared by vertique-codegen-mcp but absent from " + INVENTORY_RESOURCE)
+                .isEmpty();
+        assertThat(unimplementedPackages)
+                .as("recorded packages no longer exported by this module")
                 .isEmpty();
 
         assertThat(checker.publicTypesWithNonPublicModuleSupertypes())

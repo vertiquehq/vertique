@@ -22,8 +22,8 @@ import org.junit.jupiter.api.Test;
  * generic signatures, so any member drift beyond the one addition fails.
  *
  * <p>Compares every public member this module compiles against the committed local inventory at
- * full generic signature. The direction is subset, so a recorded row for a member a later task has
- * not implemented yet does not fail; T036's cross-module union check is exact-set equality.
+ * full generic signature in both directions. From T036 onward, recorded and compiled sets must be
+ * exactly equal, independently of the cross-module union check.
  */
 class RestSecurityInventoryGuardTest {
 
@@ -34,18 +34,32 @@ class RestSecurityInventoryGuardTest {
         RestSecurityInventoryChecker checker = new RestSecurityInventoryChecker(SecurityPolicyEnforcer.class);
         JsonObject recorded = RestSecurityInventoryChecker.recordedInventory(INVENTORY_RESOURCE);
 
-        Set<String> unrecordedSignatures = new TreeSet<>(checker.scannedSignatures());
-        unrecordedSignatures.removeAll(RestSecurityInventoryChecker.recordedSignatures(recorded));
+        Set<String> scannedSignatures = checker.scannedSignatures();
+        Set<String> recordedSignatures = RestSecurityInventoryChecker.recordedSignatures(recorded);
+        Set<String> unrecordedSignatures = new TreeSet<>(scannedSignatures);
+        unrecordedSignatures.removeAll(recordedSignatures);
+        Set<String> unimplementedSignatures = new TreeSet<>(recordedSignatures);
+        unimplementedSignatures.removeAll(scannedSignatures);
 
-        Set<String> unrecordedPackages = new TreeSet<>(checker.scannedPackages());
-        unrecordedPackages.removeAll(RestSecurityInventoryChecker.recordedPackages(recorded));
+        Set<String> scannedPackages = checker.scannedPackages();
+        Set<String> recordedPackages = RestSecurityInventoryChecker.recordedPackages(recorded);
+        Set<String> unrecordedPackages = new TreeSet<>(scannedPackages);
+        unrecordedPackages.removeAll(recordedPackages);
+        Set<String> unimplementedPackages = new TreeSet<>(recordedPackages);
+        unimplementedPackages.removeAll(scannedPackages);
 
         assertThat(unrecordedSignatures)
                 .as("public generic signatures exported by vertique-rest-security but absent from "
                         + INVENTORY_RESOURCE)
                 .isEmpty();
+        assertThat(unimplementedSignatures)
+                .as("recorded public generic signatures no longer exported by this module")
+                .isEmpty();
         assertThat(unrecordedPackages)
                 .as("packages declared by vertique-rest-security but absent from " + INVENTORY_RESOURCE)
+                .isEmpty();
+        assertThat(unimplementedPackages)
+                .as("recorded packages no longer exported by this module")
                 .isEmpty();
 
         assertThat(checker.publicTypesWithNonPublicModuleSupertypes())

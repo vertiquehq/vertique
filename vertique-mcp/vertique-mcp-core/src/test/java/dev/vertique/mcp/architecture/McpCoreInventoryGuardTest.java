@@ -14,8 +14,8 @@ import org.junit.jupiter.api.Test;
 /**
  * Progressive public-surface guard for {@code vertique-mcp-core} (T006, TP-002).
  *
- * <p>Same comparison basis and subset direction as the sibling guard in {@code vertique-mcp-server},
- * driven by this module's own duplicated checker rather than a shared utility.
+ * <p>Uses the same full-generic-signature, exact-set comparison as the sibling guard in {@code
+ * vertique-mcp-server}, driven by this module's own duplicated checker rather than a shared utility.
  */
 class McpCoreInventoryGuardTest {
 
@@ -26,17 +26,31 @@ class McpCoreInventoryGuardTest {
         McpCoreInventoryChecker checker = new McpCoreInventoryChecker(McpToolDescriptor.class);
         JsonObject recorded = McpCoreInventoryChecker.recordedInventory(INVENTORY_RESOURCE);
 
-        Set<String> unrecordedSignatures = new TreeSet<>(checker.scannedSignatures());
-        unrecordedSignatures.removeAll(McpCoreInventoryChecker.recordedSignatures(recorded));
+        Set<String> scannedSignatures = checker.scannedSignatures();
+        Set<String> recordedSignatures = McpCoreInventoryChecker.recordedSignatures(recorded);
+        Set<String> unrecordedSignatures = new TreeSet<>(scannedSignatures);
+        unrecordedSignatures.removeAll(recordedSignatures);
+        Set<String> unimplementedSignatures = new TreeSet<>(recordedSignatures);
+        unimplementedSignatures.removeAll(scannedSignatures);
 
-        Set<String> unrecordedPackages = new TreeSet<>(checker.scannedPackages());
-        unrecordedPackages.removeAll(McpCoreInventoryChecker.recordedPackages(recorded));
+        Set<String> scannedPackages = checker.scannedPackages();
+        Set<String> recordedPackages = McpCoreInventoryChecker.recordedPackages(recorded);
+        Set<String> unrecordedPackages = new TreeSet<>(scannedPackages);
+        unrecordedPackages.removeAll(recordedPackages);
+        Set<String> unimplementedPackages = new TreeSet<>(recordedPackages);
+        unimplementedPackages.removeAll(scannedPackages);
 
         assertThat(unrecordedSignatures)
                 .as("public generic signatures exported by vertique-mcp-core but absent from " + INVENTORY_RESOURCE)
                 .isEmpty();
+        assertThat(unimplementedSignatures)
+                .as("recorded public generic signatures no longer exported by this module")
+                .isEmpty();
         assertThat(unrecordedPackages)
                 .as("packages declared by vertique-mcp-core but absent from " + INVENTORY_RESOURCE)
+                .isEmpty();
+        assertThat(unimplementedPackages)
+                .as("recorded packages no longer exported by this module")
                 .isEmpty();
 
         assertThat(checker.publicTypesWithNonPublicModuleSupertypes())

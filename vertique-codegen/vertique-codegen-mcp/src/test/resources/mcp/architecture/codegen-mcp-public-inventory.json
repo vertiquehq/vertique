@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "module": "vertique-codegen-mcp",
   "comparisonBasis": "full-generic-signature",
-  "direction": "subset",
+  "direction": "exact",
   "scanScope": "hand-authored-public-surface; a top-level public type with no src/main/java source file is annotation-processor output and is excluded",
   "packages": [
     "dev.vertique.codegen.mcp"

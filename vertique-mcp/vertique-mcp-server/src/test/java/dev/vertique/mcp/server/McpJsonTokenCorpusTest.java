@@ -31,6 +31,51 @@ class McpJsonTokenCorpusTest {
 
     private static final int DEFAULT_TOKENS = 65_536;
     private static final String CORPUS_SHA_256 = "2e7e884c2b1794b3e3db2b56b40db0f50eef23569cf4a6bd24b01ff0c7672bde";
+    private static final Set<String> REQUIRED_RELEASED_SHAPE_IDS = Set.of(
+            "audit-overlay-authorization-denial-result",
+            "audit-overlay-tool-error-request",
+            "audit-overlay-tool-error-result",
+            "byte-first-precedence",
+            "conformance-discover-request",
+            "conformance-tool-error-result",
+            "conformance-tool-text-result",
+            "conformance-tools-call-request",
+            "conformance-tools-list-request",
+            "default-flat-array-exact",
+            "default-flat-array-plus-one",
+            "example-discover-request",
+            "example-discover-result",
+            "example-tools-call-request",
+            "example-tools-call-result",
+            "example-tools-list-request",
+            "example-tools-list-result",
+            "flat-object",
+            "go-discover-request",
+            "go-discover-result",
+            "go-tool-call-result",
+            "go-tools-call-request",
+            "go-tools-list-anonymous-result",
+            "go-tools-list-bearer-result",
+            "go-tools-list-request",
+            "header-envelope-string-id-discover",
+            "high-field-name-diversity",
+            "literal-flat-object",
+            "long-string",
+            "maximum-flat-array-exact",
+            "maximum-flat-array-plus-one",
+            "minimum-flat-array-exact",
+            "minimum-flat-array-plus-one",
+            "nested-array",
+            "nested-object",
+            "output-numeric-fidelity",
+            "typescript-discover-request",
+            "typescript-discover-result",
+            "typescript-tool-call-result",
+            "typescript-tools-call-request",
+            "typescript-tools-list-anonymous-result",
+            "typescript-tools-list-bearer-result",
+            "typescript-tools-list-request",
+            "valid-tools-call-arguments-plus-one");
     private static final Map<String, Long> REQUIRED_STRUCTURAL_CLASS_COUNTS = Map.ofEntries(
             Map.entry("flat-array", 7L),
             Map.entry("flat-scalar-array", 7L),
@@ -73,18 +118,19 @@ class McpJsonTokenCorpusTest {
             Map.entry("audit-overlay-authorization-denial-result", 1L));
 
     @Test
-    @DisplayName("R18: the shared JSON corpus has its recorded digest and every required structural class")
-    void shouldMatchItsRecordedDigestAndCoverEveryRequiredStructuralClass() {
+    @DisplayName("T036: the finalized corpus digest contains every released shape exactly once")
+    void shouldMatchFinalRecordedDigestAndContainEveryReleasedShape() {
         var rows = McpJsonTokenCorpus.rows();
         assertAll(
                 () -> assertThat(sha256(McpJsonTokenCorpus.resourceBytes())).isEqualTo(CORPUS_SHA_256),
                 () -> {
                     assertThat(rows).hasSize(44);
-                    assertThat(rows.stream()
-                                    .collect(Collectors.groupingBy(McpJsonTokenCorpus.Row::id, Collectors.counting())))
-                            .allSatisfy((id, count) -> assertThat(count)
-                                    .as("id %s must be unique", id)
-                                    .isEqualTo(1L));
+                    Map<String, Long> shapeCounts = rows.stream()
+                            .collect(Collectors.groupingBy(McpJsonTokenCorpus.Row::id, Collectors.counting()));
+                    assertThat(shapeCounts.keySet()).isEqualTo(REQUIRED_RELEASED_SHAPE_IDS);
+                    assertThat(shapeCounts).allSatisfy((id, count) -> assertThat(count)
+                            .as("id %s must be unique", id)
+                            .isEqualTo(1L));
                 },
                 () -> assertThat(rows.stream()
                                 .flatMap(row -> row.structuralClasses().stream())

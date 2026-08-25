@@ -16,8 +16,8 @@ import org.junit.jupiter.api.Test;
  * Progressive public-surface guard for {@code vertique-mcp-server} (T006, TP-001).
  *
  * <p>Compares every public member this module compiles against the committed local inventory at
- * full generic signature. The direction is subset, so a recorded row for a member a later task has
- * not implemented yet does not fail; from T036 the comparison becomes exact-set equality.
+ * full generic signature in both directions. From T036 onward, recorded and compiled sets must be
+ * exactly equal.
  */
 class McpServerInventoryGuardTest {
 
@@ -31,8 +31,8 @@ class McpServerInventoryGuardTest {
                     + "dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.outputMaxTokens(int)");
 
     @Test
-    @DisplayName("exports only recorded generic signatures and the required R17 token-budget surface")
-    void shouldExportOnlyRecordedGenericSignatures() {
+    @DisplayName("exports exactly the recorded generic signatures and the required R17 token-budget surface")
+    void shouldExportExactlyTheRecordedGenericSignatures() {
         McpServerInventoryChecker checker = new McpServerInventoryChecker(McpServerConfig.class);
         JsonObject recorded = McpServerInventoryChecker.recordedInventory(INVENTORY_RESOURCE);
         Set<String> scannedSignatures = checker.scannedSignatures();
@@ -40,15 +40,27 @@ class McpServerInventoryGuardTest {
 
         Set<String> unrecordedSignatures = new TreeSet<>(scannedSignatures);
         unrecordedSignatures.removeAll(recordedSignatures);
+        Set<String> unimplementedSignatures = new TreeSet<>(recordedSignatures);
+        unimplementedSignatures.removeAll(scannedSignatures);
 
-        Set<String> unrecordedPackages = new TreeSet<>(checker.scannedPackages());
-        unrecordedPackages.removeAll(McpServerInventoryChecker.recordedPackages(recorded));
+        Set<String> scannedPackages = checker.scannedPackages();
+        Set<String> recordedPackages = McpServerInventoryChecker.recordedPackages(recorded);
+        Set<String> unrecordedPackages = new TreeSet<>(scannedPackages);
+        unrecordedPackages.removeAll(recordedPackages);
+        Set<String> unimplementedPackages = new TreeSet<>(recordedPackages);
+        unimplementedPackages.removeAll(scannedPackages);
 
         assertThat(unrecordedSignatures)
                 .as("public generic signatures exported by vertique-mcp-server but absent from " + INVENTORY_RESOURCE)
                 .isEmpty();
+        assertThat(unimplementedSignatures)
+                .as("public generic signatures recorded in " + INVENTORY_RESOURCE + " but not exported")
+                .isEmpty();
         assertThat(unrecordedPackages)
                 .as("packages declared by vertique-mcp-server but absent from " + INVENTORY_RESOURCE)
+                .isEmpty();
+        assertThat(unimplementedPackages)
+                .as("packages recorded in " + INVENTORY_RESOURCE + " but not exported")
                 .isEmpty();
 
         assertThat(scannedSignatures)

@@ -15,8 +15,8 @@ import org.junit.jupiter.api.Test;
  * Progressive public-surface guard for {@code vertique-opentelemetry-mcp} (T022, TP-001).
  *
  * <p>Compares every public member this module compiles against the committed local inventory at
- * full generic signature. The direction is subset, so a recorded row for a member a later task has
- * not implemented yet does not fail; from T036 the comparison becomes exact-set equality.
+ * full generic signature in both directions. From T036 onward, recorded and compiled sets must be
+ * exactly equal.
  */
 class OpenTelemetryMcpInventoryGuardTest {
 
@@ -27,18 +27,32 @@ class OpenTelemetryMcpInventoryGuardTest {
         OpenTelemetryMcpInventoryChecker checker = new OpenTelemetryMcpInventoryChecker(McpOpenTelemetryModule.class);
         JsonObject recorded = OpenTelemetryMcpInventoryChecker.recordedInventory(INVENTORY_RESOURCE);
 
-        Set<String> unrecordedSignatures = new TreeSet<>(checker.scannedSignatures());
-        unrecordedSignatures.removeAll(OpenTelemetryMcpInventoryChecker.recordedSignatures(recorded));
+        Set<String> scannedSignatures = checker.scannedSignatures();
+        Set<String> recordedSignatures = OpenTelemetryMcpInventoryChecker.recordedSignatures(recorded);
+        Set<String> unrecordedSignatures = new TreeSet<>(scannedSignatures);
+        unrecordedSignatures.removeAll(recordedSignatures);
+        Set<String> unimplementedSignatures = new TreeSet<>(recordedSignatures);
+        unimplementedSignatures.removeAll(scannedSignatures);
 
-        Set<String> unrecordedPackages = new TreeSet<>(checker.scannedPackages());
-        unrecordedPackages.removeAll(OpenTelemetryMcpInventoryChecker.recordedPackages(recorded));
+        Set<String> scannedPackages = checker.scannedPackages();
+        Set<String> recordedPackages = OpenTelemetryMcpInventoryChecker.recordedPackages(recorded);
+        Set<String> unrecordedPackages = new TreeSet<>(scannedPackages);
+        unrecordedPackages.removeAll(recordedPackages);
+        Set<String> unimplementedPackages = new TreeSet<>(recordedPackages);
+        unimplementedPackages.removeAll(scannedPackages);
 
         assertThat(unrecordedSignatures)
                 .as("public generic signatures exported by vertique-opentelemetry-mcp but absent from "
                         + INVENTORY_RESOURCE)
                 .isEmpty();
+        assertThat(unimplementedSignatures)
+                .as("recorded public generic signatures no longer exported by this module")
+                .isEmpty();
         assertThat(unrecordedPackages)
                 .as("packages declared by vertique-opentelemetry-mcp but absent from " + INVENTORY_RESOURCE)
+                .isEmpty();
+        assertThat(unimplementedPackages)
+                .as("recorded packages no longer exported by this module")
                 .isEmpty();
 
         assertThat(checker.publicTypesWithNonPublicModuleSupertypes())
