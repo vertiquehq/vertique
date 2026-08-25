@@ -29,6 +29,8 @@ Add `vertique-micrometer-core` to any application that should emit metrics. Pair
 one backend module (`vertique-micrometer-registry-prometheus`) and install `MicrometerModule` in the
 Dagger `@Component`. Add `vertique-micrometer-rest` or `vertique-micrometer-services` to emit
 request and dispatch timing from those subsystems.
+Cache telemetry is provided by the separate `vertique-micrometer-cache` adapter, which
+applications install explicitly when they use cache modules and want cache metrics.
 
 Do not add this module if the application has no need for metrics — the module adds a runtime
 cost only if backends are present (zero-backend path is truly a no-op; see Zero-backend cost below).
@@ -205,14 +207,6 @@ Adapter modules gate their hot-path callbacks by declaring `@BindsOptionalOf Met
 injecting `Optional<MetricsConfig>`. They read `.map(MetricsConfig::enabled).orElse(true)` — absent
 means `MicrometerModule` is not installed, so the adapter defaults to enabled. When
 `metrics.enabled=false`, adapter callbacks return immediately — no tag assembly, no registry lookup.
-
-### CacheMetricsObserver
-
-`MicrometerModule` contributes `CacheMetricsObserver` to the cache-core `CacheObserver` set. When
-metrics are enabled it records a bounded timer named `cache.<operation>` with `provider`, `cache`,
-and `outcome` tags; provider, cache, and outcome values are length-bounded before registration.
-The observer is fail-open and returns successfully when metrics are disabled or a registry call
-fails, so cache telemetry cannot affect the business invocation.
 
 ### SecurityMetricsObserver
 

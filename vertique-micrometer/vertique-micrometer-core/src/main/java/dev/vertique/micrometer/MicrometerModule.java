@@ -9,7 +9,6 @@ import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dev.vertique.aop.AspectProvider;
-import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.config.JsonConfigPaths;
@@ -115,12 +114,6 @@ public abstract class MicrometerModule {
     @Provides
     @IntoSet
     static SecurityEventObserver securityMetricsObserver(SecurityMetricsObserver observer) {
-        return observer;
-    }
-
-    @Provides
-    @IntoSet
-    static CacheObserver cacheMetricsObserver(CacheMetricsObserver observer) {
         return observer;
     }
 

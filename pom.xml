@@ -679,6 +679,11 @@ SPDX-License-Identifier: EUPL-1.2
             </dependency>
             <dependency>
                 <groupId>dev.vertique</groupId>
+                <artifactId>vertique-micrometer-cache</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
                 <artifactId>vertique-micrometer-registry-prometheus</artifactId>
                 <version>${project.version}</version>
             </dependency>

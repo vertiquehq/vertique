@@ -10,19 +10,35 @@ import static dev.vertique.cache.redis.RedisCleanupTestFixtures.MAX_SWEEP_MILLIS
 import static dev.vertique.cache.redis.RedisTestFixtures.REDIS_CONFIG;
 import static dev.vertique.cache.redis.RedisTestFixtures.cacheConfig;
 
+import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.redis.RedisTopologyOperations;
 import java.time.Duration;
 import java.util.List;
+import java.util.Set;
 import java.util.function.IntSupplier;
 
 final class RedisCleanupJobTestSupport {
     private RedisCleanupJobTestSupport() {}
 
     static RedisCleanupJob job() {
-        return job(new RedisCleanupTestFixtures.FakeTopology(), new RedisCleanupTestFixtures.RecordingCommands());
+        return job(
+                new RedisCleanupTestFixtures.FakeTopology(),
+                new RedisCleanupTestFixtures.RecordingCommands(),
+                Set.of(),
+                () -> 0,
+                () -> 0L);
     }
 
     static RedisCleanupJob job(RedisTopologyOperations topology, RedisCleanupTestFixtures.RecordingCommands commands) {
+        return job(topology, commands, Set.of(), () -> 0, () -> 0L);
+    }
+
+    static RedisCleanupJob job(
+            RedisTopologyOperations topology,
+            RedisCleanupTestFixtures.RecordingCommands commands,
+            Set<CacheObserver> observers,
+            IntSupplier jitterMillis,
+            java.util.function.LongSupplier monotonicNanos) {
         return new RedisCleanupJob(
                 topology,
                 commands,
@@ -33,24 +49,7 @@ final class RedisCleanupJobTestSupport {
                         Duration.ofMillis(MAX_SWEEP_MILLIS),
                         Duration.ofMillis(MAX_JITTER_MILLIS),
                         Duration.ofMillis(MAX_BACKOFF_MILLIS)),
-                new RedisCleanupTestFixtures.RecordingMetrics(),
-                () -> 0,
-                () -> 0L);
-    }
-
-    static RedisCleanupJob job(
-            RedisTopologyOperations topology,
-            RedisCleanupTestFixtures.RecordingCommands commands,
-            RedisCleanupTestFixtures.RecordingMetrics metrics,
-            IntSupplier jitterMillis,
-            java.util.function.LongSupplier monotonicNanos) {
-        return new RedisCleanupJob(
-                topology,
-                commands,
-                REDIS_CONFIG,
-                cacheConfig(),
-                RedisCleanupJob.Policy.defaults(),
-                metrics,
+                observers,
                 jitterMillis,
                 monotonicNanos);
     }

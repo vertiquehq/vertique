@@ -98,9 +98,12 @@ generation marker itself is never a candidate; unreadable markers are protected 
 failed/backlogged outcome instead of deletion.
 
 Failures are retained for the next run and use capped exponential retry backoff: 15 minutes,
-30 minutes, then up to a one-hour ceiling. Each sweep records bounded metrics for the connection
-profile, namespace, scanned keys, deleted keys, backlog, and failure; an observability failure does
-not fail the maintenance operation.
+30 minutes, then up to a one-hour ceiling. Each sweep sends a bounded `CacheCleanupObservation`
+through the provider-neutral `CacheObserver.onCleanup` seam. The observation contains the
+connection profile, namespace, success/error outcome, scanned count, deleted count, backlog
+indicator, and failure flag. An observer failure does not fail the maintenance operation. A
+metrics adapter may translate this observation into backend-specific counters without adding a
+Micrometer dependency to this module.
 
 The `RedisCleanupLifecycle` step runs in `INFRA` at one priority above
 `RedisClientShutdownStep`. During reverse teardown it unregisters cleanup dispatch first, then

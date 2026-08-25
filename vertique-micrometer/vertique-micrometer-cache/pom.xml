@@ -16,34 +16,22 @@ SPDX-License-Identifier: EUPL-1.2
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
-    <artifactId>vertique-micrometer-core</artifactId>
-    <name>Vertique Micrometer Core</name>
-    <description>Backend-agnostic Micrometer metrics core: registry provider SPI, composite assembly, and bootstrap contributor</description>
+    <artifactId>vertique-micrometer-cache</artifactId>
+    <name>Vertique Micrometer Cache Adapter</name>
+    <description>Micrometer metrics adapter for provider-neutral cache observations</description>
 
     <dependencies>
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-security-core</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-core</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-bootstrap</artifactId>
-        </dependency>
         <dependency>
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-core</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.vertx</groupId>
-            <artifactId>vertx-micrometer-metrics</artifactId>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-micrometer-core</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.vertx</groupId>
-            <artifactId>vertx-core</artifactId>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-cache-core</artifactId>
         </dependency>
         <dependency>
             <groupId>com.google.dagger</groupId>
@@ -52,24 +40,6 @@ SPDX-License-Identifier: EUPL-1.2
         <dependency>
             <groupId>jakarta.inject</groupId>
             <artifactId>jakarta.inject-api</artifactId>
-        </dependency>
-        <!--
-            vertique-aop provides the AOP SPI (AspectProvider, MethodInterceptor, Invocation,
-            Invocations) that the @Timed built-in (Timed annotation + TimedAspect provider) depends
-            on at compile scope.
-        -->
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-aop</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-api</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-            <scope>provided</scope>
         </dependency>
 
         <!-- Test -->
@@ -84,20 +54,11 @@ SPDX-License-Identifier: EUPL-1.2
         <dependency>
             <groupId>org.mockito</groupId>
             <artifactId>mockito-junit-jupiter</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.vertx</groupId>
-            <artifactId>vertx-junit5</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.vertx</groupId>
-            <artifactId>vertx-web-client</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>ch.qos.logback</groupId>
-            <artifactId>logback-classic</artifactId>
-            <scope>test</scope>
+            <groupId>io.vertx</groupId>
+            <artifactId>vertx-core</artifactId>
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>

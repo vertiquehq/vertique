@@ -13,6 +13,7 @@ import dev.vertique.cache.CacheMode;
 import dev.vertique.cache.CacheModeKey;
 import dev.vertique.cache.CacheProviderIdKey;
 import dev.vertique.cache.config.CacheConfig;
+import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.cache.spi.CacheStore;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
@@ -30,6 +31,7 @@ import io.vertx.core.eventbus.MessageConsumer;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 
 /** Dagger contribution for the clustered Redis cache store. */
@@ -67,14 +69,17 @@ public abstract class CacheRedisModule {
     @Provides
     @Singleton
     static RedisCleanupJob redisCleanupJob(
-            RedisClientRegistry clients, CacheRedisConfig config, CacheConfig cacheConfig) {
+            RedisClientRegistry clients,
+            CacheRedisConfig config,
+            CacheConfig cacheConfig,
+            Set<CacheObserver> observers) {
         return new RedisCleanupJob(
                 clients.topologyOperations(config.connection()),
                 VertxRedisCommandClient.from(clients, config.connection()),
                 config,
                 cacheConfig,
                 RedisCleanupJob.Policy.defaults(),
-                new Object(),
+                observers,
                 () -> ThreadLocalRandom.current().nextInt(),
                 System::nanoTime);
     }

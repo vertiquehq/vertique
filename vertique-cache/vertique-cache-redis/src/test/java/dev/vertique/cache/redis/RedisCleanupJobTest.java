@@ -18,10 +18,14 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.vertique.cache.spi.CacheCleanupObservation;
+import dev.vertique.cache.spi.CacheObservation;
+import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.redis.RedisScanPage;
 import io.vertx.core.Future;
 import java.time.Duration;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -118,11 +122,7 @@ class RedisCleanupJobTest {
                 .pages(NODE_A, RedisCleanupTestFixtures.page("next", false, "it:v1:cache:v1:profiles:gOLD:NONE:a"));
         topology.nextScan = Future.succeededFuture(RedisCleanupTestFixtures.page("next", false));
         RedisCleanupJob job = RedisCleanupJobTestSupport.job(
-                topology,
-                new RedisCleanupTestFixtures.RecordingCommands(),
-                new RedisCleanupTestFixtures.RecordingMetrics(),
-                () -> 0,
-                () -> {
+                topology, new RedisCleanupTestFixtures.RecordingCommands(), Set.of(), () -> 0, () -> {
                     clock.advanceMillis(MAX_SWEEP_MILLIS);
                     return clock.getAsLong();
                 });
@@ -140,7 +140,7 @@ class RedisCleanupJobTest {
         RedisCleanupJob job = RedisCleanupJobTestSupport.job(
                 new RedisCleanupTestFixtures.FakeTopology(),
                 new RedisCleanupTestFixtures.RecordingCommands(),
-                new RedisCleanupTestFixtures.RecordingMetrics(),
+                Set.of(),
                 jitter::get,
                 System::nanoTime);
 
@@ -199,23 +199,57 @@ class RedisCleanupJobTest {
 
     @Test
     @DisplayName("reports scanned, deleted, backlog, and failure outcomes with bounded labels")
-    void recordsScannedDeletedBacklogAndFailureMetrics() throws Exception {
-        RedisCleanupTestFixtures.RecordingMetrics metrics = new RedisCleanupTestFixtures.RecordingMetrics();
+    void recordsScannedDeletedBacklogAndFailureOutcomes() throws Exception {
+        RedisCleanupTestFixtures.RecordingObserver observer = new RedisCleanupTestFixtures.RecordingObserver();
         RedisCleanupTestFixtures.FakeTopology topology = new RedisCleanupTestFixtures.FakeTopology()
                 .pages(NODE_A, RedisCleanupTestFixtures.page("0", true, "it:v1:cache:v1:profiles:gOLD:NONE:a"));
 
         await(RedisCleanupJobTestSupport.job(
-                        topology, new RedisCleanupTestFixtures.RecordingCommands(), metrics, () -> 0, System::nanoTime)
+                        topology,
+                        new RedisCleanupTestFixtures.RecordingCommands(),
+                        Set.of(observer),
+                        () -> 0,
+                        System::nanoTime)
                 .sweep());
 
-        assertEquals(1, metrics.records.size());
-        RedisCleanupTestFixtures.RecordingMetrics.Metric metric = metrics.records.get(0);
-        assertEquals(1, metric.scanned());
-        assertEquals(1, metric.deleted());
-        assertEquals(0, metric.backlog());
-        assertFalse(metric.failed());
-        assertEquals("primary", metric.profile());
-        assertEquals("it", metric.namespace());
+        assertEquals(1, observer.records.size());
+        var observation = observer.records.get(0);
+        assertEquals(1, observation.scanned());
+        assertEquals(1, observation.deleted());
+        assertEquals(0, observation.backlog());
+        assertFalse(observation.failed());
+        assertEquals("primary", observation.profile());
+        assertEquals("it", observation.namespace());
+        assertEquals("success", observation.outcome());
+    }
+
+    @Test
+    @DisplayName("isolates cleanup observer failures from the sweep result")
+    void isolatesObserverFailure() throws Exception {
+        RedisCleanupTestFixtures.RecordingObserver recordingObserver = new RedisCleanupTestFixtures.RecordingObserver();
+        CacheObserver failingObserver = new CacheObserver() {
+            @Override
+            public void onOperation(CacheObservation observation) {}
+
+            @Override
+            public void onCleanup(CacheCleanupObservation observation) {
+                throw new AssertionError("observer failure");
+            }
+        };
+        RedisCleanupTestFixtures.FakeTopology topology = new RedisCleanupTestFixtures.FakeTopology()
+                .pages(NODE_A, RedisCleanupTestFixtures.page("0", true, "it:v1:cache:v1:profiles:gOLD:NONE:a"));
+
+        RedisCleanupJob.CleanupResult result = await(RedisCleanupJobTestSupport.job(
+                        topology,
+                        new RedisCleanupTestFixtures.RecordingCommands(),
+                        Set.of(failingObserver, recordingObserver),
+                        () -> 0,
+                        System::nanoTime)
+                .sweep());
+
+        assertFalse(result.failed());
+        assertEquals(1, recordingObserver.records.size());
+        assertEquals("success", recordingObserver.records.get(0).outcome());
     }
 
     @Test

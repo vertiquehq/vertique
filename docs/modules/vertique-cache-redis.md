@@ -98,6 +98,8 @@ callbacks do not re-register cleanup or close the shared Redis clients more than
   part of this provider's request-path operations or business future.
 - `RedisCleanupJob` uses the minimal topology seam from `vertique-redis-core`; it does not expose
   Lettuce or topology details through the provider-neutral cache contracts.
+- Cache cleanup observation uses `CacheObserver` and `CacheCleanupObservation`; Redis remains
+  Micrometer-free and does not select or install a metrics adapter.
 - T011 owns Dagger/provider-selection, telemetry, cron dispatch, and application client/provider
   lifecycle composition. `CacheRedisModule` contributes that composition when the application
   graph provides `CronScheduler`.

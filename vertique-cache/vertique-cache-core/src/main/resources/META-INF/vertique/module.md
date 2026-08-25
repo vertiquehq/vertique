@@ -37,7 +37,9 @@ failures, and observer failures preserve the business invocation. A successful l
 miss may populate the provider-neutral `CacheStore`; a hit skips the target after the
 outer framework authorization boundary has run. The optional `CacheObserver` set is
 empty by default and receives redacted operation, provider, cache, outcome, and duration
-data without becoming a cache or telemetry dependency. Identity-scoped annotations use
+data without becoming a cache or telemetry dependency. The same observer seam exposes
+redacted cleanup outcomes through `CacheObserver.onCleanup(CacheCleanupObservation)`; the
+default method keeps operation-only observers source-compatible. Identity-scoped annotations use
 the provider-neutral `CacheIdentityResolver` multibinding. Exactly one resolver must
 provide a canonical identity component for authenticated requests; unavailable or
 ambiguous identity bypasses the cache unless `CACHE_AS_ANONYMOUS` is explicitly selected.

@@ -16,11 +16,15 @@ The module is selected before provider modules in the reactor and supplies the n
 The cache aspect remains inside the framework authorization boundary. Authorization must
 run before a lookup on both hits and misses; a hit may skip the target method only after
 that outer boundary has completed. Cache core does not own authorization or read transport
-security state directly.
+security state directly. `CacheObserver` is the neutral observation seam for operation
+observations and for bounded cleanup outcomes through its default `onCleanup` method;
+cache-core does not depend on Micrometer or any other telemetry implementation.
 
 ## Load-Bearing Invariants
 
 - The core module must not depend on Caffeine, Redis, or provider serialization libraries.
+- Cleanup observation remains a provider-neutral `CacheCleanupObservation` record; telemetry
+  adapters consume it through `CacheObserver` rather than adding provider or Micrometer types.
 - Aggregator POMs remain non-consumable and are not added to the BOM.
 - Provider selection stays behind the cache-core resolver; aspects do not know provider implementation classes.
 
@@ -36,4 +40,4 @@ provider test edges; T005 and T009 retain ownership of their provider-specific p
 
 ## Related ADRs
 
-- D018: Public cache store SPI boundary — provider-neutral cache contracts remain separate from storage implementations.
+- D018: Public cache store SPI boundary — provider-neutral cache contracts remain separate from storage implementations, including observation adapters.

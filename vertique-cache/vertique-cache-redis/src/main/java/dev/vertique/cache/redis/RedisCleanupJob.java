@@ -4,6 +4,8 @@
 package dev.vertique.cache.redis;
 
 import dev.vertique.cache.config.CacheConfig;
+import dev.vertique.cache.spi.CacheCleanupObservation;
+import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.job.cron.CronExpression;
 import dev.vertique.job.cron.CronJobDefinition;
 import dev.vertique.job.cron.CronScheduler;
@@ -16,7 +18,6 @@ import dev.vertique.redis.RedisScanPage;
 import dev.vertique.redis.RedisTopologyOperations;
 import io.vertx.core.Future;
 import io.vertx.redis.client.Response;
-import java.lang.reflect.Method;
 import java.time.Duration;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -50,21 +51,21 @@ final class RedisCleanupJob {
     private final CacheRedisConfig redisConfig;
     private final CacheConfig cacheConfig;
     private final Policy policy;
-    private final Object metrics;
+    private final Set<CacheObserver> observers;
     private final LongSupplier monotonicNanos;
     private final long firstRunJitterMillis;
     private final AtomicBoolean registered = new AtomicBoolean();
     private final AtomicInteger consecutiveFailures = new AtomicInteger();
 
     /**
-     * Creates a cleanup job with explicit seams for topology, marker reads, timing, and metrics.
+     * Creates a cleanup job with explicit seams for topology, marker reads, timing, and observation.
      *
      * @param topology topology-aware Redis primary operations
      * @param redis command client used to read generation markers
      * @param redisConfig provider namespace and keyspace format configuration
      * @param cacheConfig provider-neutral cache limits and configuration
      * @param policy bounded cleanup policy
-     * @param metrics provider-local metrics sink exposing {@code record(...)}
+     * @param observers provider-neutral cleanup observers
      * @param jitterMillis source for the first-run per-instance jitter
      * @param monotonicNanos monotonic clock used for the sweep time budget
      */
@@ -74,7 +75,7 @@ final class RedisCleanupJob {
             CacheRedisConfig redisConfig,
             CacheConfig cacheConfig,
             Policy policy,
-            Object metrics,
+            Set<CacheObserver> observers,
             IntSupplier jitterMillis,
             LongSupplier monotonicNanos) {
         this.topology = Objects.requireNonNull(topology, "topology");
@@ -82,7 +83,7 @@ final class RedisCleanupJob {
         this.redisConfig = Objects.requireNonNull(redisConfig, "redisConfig");
         this.cacheConfig = Objects.requireNonNull(cacheConfig, "cacheConfig");
         this.policy = Objects.requireNonNull(policy, "policy");
-        this.metrics = Objects.requireNonNull(metrics, "metrics");
+        this.observers = Set.copyOf(Objects.requireNonNull(observers, "observers"));
         this.monotonicNanos = Objects.requireNonNull(monotonicNanos, "monotonicNanos");
         this.firstRunJitterMillis = boundedJitter(
                 Objects.requireNonNull(jitterMillis, "jitterMillis").getAsInt(), policy.maxJitterMillis());
@@ -245,7 +246,7 @@ final class RedisCleanupJob {
         } else {
             consecutiveFailures.set(0);
         }
-        recordMetrics(outcome);
+        observeCleanup(outcome);
         return Future.succeededFuture(outcome);
     }
 
@@ -447,41 +448,21 @@ final class RedisCleanupJob {
         }
     }
 
-    private void recordMetrics(CleanupResult outcome) {
-        try {
-            Method method;
+    private void observeCleanup(CleanupResult outcome) {
+        CacheCleanupObservation observation = new CacheCleanupObservation(
+                redisConfig.connection(),
+                redisConfig.namespace(),
+                outcome.failed() ? "error" : "success",
+                outcome.scannedKeys(),
+                outcome.deletedKeys(),
+                outcome.backlog(),
+                outcome.failed());
+        for (CacheObserver observer : observers) {
             try {
-                method = metrics.getClass()
-                        .getMethod(
-                                "record",
-                                String.class,
-                                String.class,
-                                long.class,
-                                long.class,
-                                long.class,
-                                boolean.class);
-            } catch (NoSuchMethodException ignored) {
-                method = metrics.getClass()
-                        .getDeclaredMethod(
-                                "record",
-                                String.class,
-                                String.class,
-                                long.class,
-                                long.class,
-                                long.class,
-                                boolean.class);
-                method.trySetAccessible();
+                observer.onCleanup(observation);
+            } catch (Throwable ignored) {
+                // Observer failures must not turn best-effort maintenance into an application failure.
             }
-            method.invoke(
-                    metrics,
-                    redisConfig.connection(),
-                    redisConfig.namespace(),
-                    outcome.scannedKeys(),
-                    outcome.deletedKeys(),
-                    outcome.backlog(),
-                    outcome.failed());
-        } catch (ReflectiveOperationException | RuntimeException ignored) {
-            // Observability must not turn best-effort maintenance into an application failure.
         }
     }
 

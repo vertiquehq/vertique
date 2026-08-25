@@ -6,6 +6,9 @@ package dev.vertique.cache.redis;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import dev.vertique.cache.spi.CacheCleanupObservation;
+import dev.vertique.cache.spi.CacheObservation;
+import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.redis.RedisPrimaryNode;
 import dev.vertique.redis.RedisScanPage;
 import dev.vertique.redis.RedisTopologyOperations;
@@ -117,14 +120,16 @@ final class RedisCleanupTestFixtures {
         }
     }
 
-    static final class RecordingMetrics {
-        final List<Metric> records = new ArrayList<>();
+    static final class RecordingObserver implements CacheObserver {
+        final List<CacheCleanupObservation> records = new ArrayList<>();
 
-        void record(String profile, String namespace, long scanned, long deleted, long backlog, boolean failed) {
-            records.add(new Metric(profile, namespace, scanned, deleted, backlog, failed));
+        @Override
+        public void onOperation(CacheObservation observation) {}
+
+        @Override
+        public void onCleanup(CacheCleanupObservation observation) {
+            records.add(observation);
         }
-
-        record Metric(String profile, String namespace, long scanned, long deleted, long backlog, boolean failed) {}
     }
 
     static final class MutableClock implements LongSupplier {
