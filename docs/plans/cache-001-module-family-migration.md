@@ -1,6 +1,6 @@
 # Plan — Cache-specific module family migration
 
-**Status:** Implementing  
+**Status:** Implementing
 **Risk:** Contract-critical — published Maven coordinates, reactor boundaries, and Dagger composition points
 
 ## Charter

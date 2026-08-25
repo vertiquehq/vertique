@@ -14,8 +14,11 @@ import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.trace.Tracer;
 import jakarta.inject.Singleton;
 import java.util.Set;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+/** Verifies that the cache-owned OpenTelemetry module contributes its observer through Dagger. */
+@DisplayName("OpenTelemetry cache module")
 class OpenTelemetryCacheModuleTest {
 
     @Test
