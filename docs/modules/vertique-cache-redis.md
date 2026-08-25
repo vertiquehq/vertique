@@ -81,7 +81,8 @@ namespace, scanned, deleted, backlog, and failure values; metrics recording cann
 dispatch before the shared Redis registry closes. When a `CronScheduler` is installed,
 `CacheRedisModule` registers the cleanup job, its event-bus dispatch handler, and its shutdown step;
 the handler reports the bounded sweep result through the cron reply address. Cleanup policy and
-metrics remain owned by T010.
+metrics remain owned by T010. Shutdown is best-effort and idempotent: repeated lifecycle
+callbacks do not re-register cleanup or close the shared Redis clients more than once.
 
 ## Load-Bearing Invariants
 

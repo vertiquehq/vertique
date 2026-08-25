@@ -13,6 +13,11 @@ This module owns the provider-neutral cache package boundary. Provider implement
 
 The module is selected before provider modules in the reactor and supplies the neutral dependency target for code generation and storage providers. Its Dagger map seam selects a `CacheStore` by effective `CacheMode`; the standard provider composition maps `LOCAL` to Caffeine and `CLUSTERED` to Redis, while observations receive the selected provider identity.
 
+The cache aspect remains inside the framework authorization boundary. Authorization must
+run before a lookup on both hits and misses; a hit may skip the target method only after
+that outer boundary has completed. Cache core does not own authorization or read transport
+security state directly.
+
 ## Load-Bearing Invariants
 
 - The core module must not depend on Caffeine, Redis, or provider serialization libraries.
