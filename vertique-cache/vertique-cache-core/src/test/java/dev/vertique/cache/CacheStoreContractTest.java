@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /** Shared provider-neutral CacheStore contract inherited by provider test edges. */
@@ -43,6 +44,7 @@ public abstract class CacheStoreContractTest {
     }
 
     @Test
+    @DisplayName("all providers satisfy core semantics")
     void allProvidersSatisfyCoreSemantics() throws Exception {
         assertEquals(Optional.empty(), await(store.get(KEY, String.class)));
 
@@ -64,6 +66,7 @@ public abstract class CacheStoreContractTest {
     }
 
     @Test
+    @DisplayName("all providers isolate mutable values")
     void allProvidersIsolateMutableValues() throws Exception {
         MutableValue expected = new MutableValue("before", List.of("one"));
         await(store.put(KEY, expected, MutableValue.class, Duration.ZERO));
@@ -80,6 +83,7 @@ public abstract class CacheStoreContractTest {
     }
 
     @Test
+    @DisplayName("all providers respect declared types")
     void allProvidersRespectDeclaredType() throws Exception {
         Type declaredType = listOf(MutableValue.class);
         List<MutableValue> expected = List.of(new MutableValue("alice", List.of("admin")));
@@ -90,6 +94,7 @@ public abstract class CacheStoreContractTest {
     }
 
     @Test
+    @DisplayName("all providers fail open on codec failure")
     void allProvidersFailOpenOnCodecFailure() throws Exception {
         await(store.put(KEY, "not-an-integer", String.class, Duration.ZERO));
 
@@ -101,6 +106,7 @@ public abstract class CacheStoreContractTest {
     }
 
     @Test
+    @DisplayName("all providers handle repeatable eviction")
     void allProvidersHandleRepeatableEviction() throws Exception {
         await(store.put(KEY, "alice", String.class, Duration.ZERO));
         await(store.put(OTHER_KEY, "bob", String.class, Duration.ZERO));
