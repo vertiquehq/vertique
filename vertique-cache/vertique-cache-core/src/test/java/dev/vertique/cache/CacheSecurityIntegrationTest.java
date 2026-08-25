@@ -42,40 +42,31 @@ class CacheSecurityIntegrationTest {
             return invocation.proceed();
         };
 
-        Object miss = Invocations.run(
-                        this,
-                        metadata,
-                        new Object[] {"miss"},
-                        new MethodInterceptor[] {authorization, cache},
-                        target(targetCalls, "miss"))
-                .toCompletionStage()
-                .toCompletableFuture()
-                .join();
+        Object miss = T011CacheCompositionFixtures.await(Invocations.run(
+                this,
+                metadata,
+                new Object[] {"miss"},
+                new MethodInterceptor[] {authorization, cache},
+                target(targetCalls, "miss")));
         assertEquals("miss-value-1", miss);
         assertEquals(List.of("authorize", "lookup", "put"), trace);
 
         trace.clear();
         CacheKey hitKey = new CacheKey(new CacheRegion("cache", "profiles", 1), "NONE", "hit");
-        store.put(hitKey, "cached-value", String.class, java.time.Duration.ofSeconds(60))
-                .toCompletionStage()
-                .toCompletableFuture()
-                .join();
+        T011CacheCompositionFixtures.await(
+                store.put(hitKey, "cached-value", String.class, java.time.Duration.ofSeconds(60)));
         trace.clear();
-        Object hit = Invocations.run(
-                        this,
-                        metadata,
-                        new Object[] {"hit"},
-                        new MethodInterceptor[] {authorization, cache},
-                        target(targetCalls, "hit"))
-                .toCompletionStage()
-                .toCompletableFuture()
-                .join();
+        Object hit = T011CacheCompositionFixtures.await(Invocations.run(
+                this,
+                metadata,
+                new Object[] {"hit"},
+                new MethodInterceptor[] {authorization, cache},
+                target(targetCalls, "hit")));
         assertEquals("cached-value", hit);
         assertEquals(List.of("authorize", "lookup"), trace);
         assertEquals(1, targetCalls.get(), "the cache hit must skip the target after authorization");
 
         trace.clear();
-        int getsBeforeDenied = store.getCalls;
         AtomicInteger deniedTargetCalls = new AtomicInteger();
         MethodInterceptor deny = invocation -> {
             trace.add("authorize");
@@ -91,7 +82,6 @@ class CacheSecurityIntegrationTest {
                 .toCompletableFuture()
                 .join());
         assertEquals(List.of("authorize"), trace);
-        assertEquals(getsBeforeDenied, store.getCalls, "the denied hit must not reach CacheStore.get");
         assertEquals(0, deniedTargetCalls.get(), "the denied hit must not invoke the target");
 
         Aspect aspect = Cacheable.class.getAnnotation(Aspect.class);
@@ -105,7 +95,6 @@ class CacheSecurityIntegrationTest {
     private static final class TracingStore implements CacheStore {
         private final List<String> trace;
         private final Map<String, Object> values = new HashMap<>();
-        private int getCalls;
 
         private TracingStore(List<String> trace) {
             this.trace = trace;
@@ -113,7 +102,6 @@ class CacheSecurityIntegrationTest {
 
         @Override
         public Future<Optional<Object>> get(CacheKey key, Type declaredType) {
-            getCalls++;
             trace.add("lookup");
             return Future.succeededFuture(Optional.ofNullable(values.get(key.canonical())));
         }
