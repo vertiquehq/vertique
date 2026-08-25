@@ -71,7 +71,7 @@ public class RedisCleanupIT {
 
         RedisTopologyOperations topology = new PinnedRedisTopology(commands, new RedisPrimaryNode("standalone"));
         RedisScanPage page = await(topology.scan(new RedisPrimaryNode("standalone"), "0", 10));
-        long deleted = await(topology.unlink(new RedisPrimaryNode("standalone"), page.keys()));
+        long deleted = await(topology.unlink(new RedisPrimaryNode("standalone"), List.of(oldKey)));
         Response remaining = await(commands.get(oldKey));
 
         assertEquals(
