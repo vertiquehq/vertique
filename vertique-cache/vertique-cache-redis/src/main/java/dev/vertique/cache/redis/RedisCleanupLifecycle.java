@@ -16,6 +16,7 @@ final class RedisCleanupLifecycle implements ApplicationShutdownStep {
     private final RedisCleanupJob job;
     private final Supplier<Future<Void>> unregister;
     private final Supplier<Future<Void>> closeRedis;
+    private volatile Future<Void> stopFuture;
 
     /**
      * Creates the cleanup shutdown step with explicit lifecycle operation seams.
@@ -47,19 +48,30 @@ final class RedisCleanupLifecycle implements ApplicationShutdownStep {
      */
     @Override
     public Future<Void> stop() {
-        Promise<Void> completion = Promise.promise();
-        invoke(unregister).onComplete(unregisterResult -> {
-            invoke(closeRedis).onComplete(closeResult -> {
-                if (unregisterResult.failed()) {
-                    completion.fail(unregisterResult.cause());
-                } else if (closeResult.failed()) {
-                    completion.fail(closeResult.cause());
-                } else {
-                    completion.complete();
-                }
+        Future<Void> existing = stopFuture;
+        if (existing != null) {
+            return existing;
+        }
+        synchronized (this) {
+            existing = stopFuture;
+            if (existing != null) {
+                return existing;
+            }
+            Promise<Void> completion = Promise.promise();
+            stopFuture = completion.future();
+            invoke(unregister).onComplete(unregisterResult -> {
+                invoke(closeRedis).onComplete(closeResult -> {
+                    if (unregisterResult.failed()) {
+                        completion.fail(unregisterResult.cause());
+                    } else if (closeResult.failed()) {
+                        completion.fail(closeResult.cause());
+                    } else {
+                        completion.complete();
+                    }
+                });
             });
-        });
-        return completion.future();
+            return stopFuture;
+        }
     }
 
     /** Invokes a lifecycle operation while converting synchronous failures into failed futures. */

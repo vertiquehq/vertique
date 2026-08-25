@@ -27,7 +27,7 @@ import java.util.Set;
 /** Provider-neutral around interceptor for cacheable object-facing methods. */
 @Singleton
 public final class CacheableAspect implements AspectProvider<Cacheable> {
-    private final CacheStore store;
+    private final CacheStoreResolver stores;
     private final CacheConfig config;
     private final Set<CacheObserver> observers;
     private final Set<CacheIdentityResolver> identityResolvers;
@@ -40,13 +40,21 @@ public final class CacheableAspect implements AspectProvider<Cacheable> {
         this(store, config, observers, Set.of());
     }
 
-    @Inject
     public CacheableAspect(
             CacheStore store,
             CacheConfig config,
             Set<CacheObserver> observers,
             Set<CacheIdentityResolver> identityResolvers) {
-        this.store = store;
+        this(CacheStoreResolver.fixed(store), config, observers, identityResolvers);
+    }
+
+    @Inject
+    public CacheableAspect(
+            CacheStoreResolver stores,
+            CacheConfig config,
+            Set<CacheObserver> observers,
+            Set<CacheIdentityResolver> identityResolvers) {
+        this.stores = stores;
         this.config = config;
         this.observers = Set.copyOf(observers);
         this.identityResolvers = Set.copyOf(identityResolvers);
@@ -58,8 +66,14 @@ public final class CacheableAspect implements AspectProvider<Cacheable> {
         Type declaredType = valueType(target);
         long ttlSeconds = effectiveTtl(annotation);
         return invocation -> {
-            if (!config.enabled()
-                    || effectiveMode(annotation) == CacheMode.CLUSTERED && target.returnType() != Future.class) {
+            CacheMode mode = effectiveMode(annotation);
+            if (!config.enabled() || mode == CacheMode.CLUSTERED && target.returnType() != Future.class) {
+                return invocation.proceed();
+            }
+            CacheStoreSelection selection;
+            try {
+                selection = stores.resolve(mode);
+            } catch (RuntimeException unavailable) {
                 return invocation.proceed();
             }
             CacheKey key;
@@ -76,51 +90,60 @@ public final class CacheableAspect implements AspectProvider<Cacheable> {
             } catch (RuntimeException invalidKey) {
                 return invocation.proceed();
             }
-            return lookupOrProceed(invocation, key, region, declaredType, ttlSeconds);
+            return lookupOrProceed(invocation, key, region, declaredType, ttlSeconds, selection);
         };
     }
 
     private Future<Object> lookupOrProceed(
-            Invocation invocation, CacheKey key, CacheRegion region, Type declaredType, long ttlSeconds) {
+            Invocation invocation,
+            CacheKey key,
+            CacheRegion region,
+            Type declaredType,
+            long ttlSeconds,
+            CacheStoreSelection selection) {
         long startedAt = System.nanoTime();
         Future<Optional<Object>> lookup;
         try {
-            lookup = store.get(key, declaredType);
+            lookup = selection.store().get(key, declaredType);
         } catch (Throwable failure) {
-            observe("get", region, "failure", startedAt);
+            observe(selection.providerId(), "get", region, "failure", startedAt);
             return invocation.proceed();
         }
         return lookup.recover(failure -> {
-                    observe("get", region, "failure", startedAt);
+                    observe(selection.providerId(), "get", region, "failure", startedAt);
                     return Future.succeededFuture(Optional.empty());
                 })
                 .compose(hit -> {
                     if (hit.isPresent()) {
-                        observe("get", region, "hit", startedAt);
+                        observe(selection.providerId(), "get", region, "hit", startedAt);
                         return Future.succeededFuture(hit.get());
                     }
-                    observe("get", region, "miss", startedAt);
+                    observe(selection.providerId(), "get", region, "miss", startedAt);
                     return invocation.proceed().compose(value -> {
                         if (value == null) {
                             return Future.succeededFuture(null);
                         }
                         try {
                             long putStartedAt = System.nanoTime();
-                            return store.put(key, value, declaredType, Duration.ofSeconds(ttlSeconds))
-                                    .onSuccess(ignored -> observe("put", region, "stored", putStartedAt))
-                                    .onFailure(ignored -> observe("put", region, "failure", putStartedAt))
+                            return selection
+                                    .store()
+                                    .put(key, value, declaredType, Duration.ofSeconds(ttlSeconds))
+                                    .onSuccess(ignored ->
+                                            observe(selection.providerId(), "put", region, "stored", putStartedAt))
+                                    .onFailure(ignored ->
+                                            observe(selection.providerId(), "put", region, "failure", putStartedAt))
                                     .recover(ignored -> Future.succeededFuture())
                                     .map(value);
                         } catch (Throwable failure) {
-                            observe("put", region, "failure", System.nanoTime());
+                            observe(selection.providerId(), "put", region, "failure", System.nanoTime());
                             return Future.succeededFuture(value);
                         }
                     });
                 });
     }
 
-    private void observe(String operation, CacheRegion region, String outcome, long startedAt) {
-        CacheObservationSupport.observe(observers, operation, region, outcome, startedAt);
+    private void observe(String provider, String operation, CacheRegion region, String outcome, long startedAt) {
+        CacheObservationSupport.observe(observers, provider, operation, region, outcome, startedAt);
     }
 
     private long effectiveTtl(Cacheable annotation) {

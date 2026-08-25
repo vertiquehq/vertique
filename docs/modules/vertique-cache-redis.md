@@ -15,7 +15,7 @@ Connection profile validation, client reuse, and client shutdown remain in
 - `CacheRedisModule` — includes `CacheCoreModule`, `JsonRuntimeModule` from
   `vertique-json`, and `RedisConnectionModule`, so it supplies the
   `JsonMapperProfileRegistry` wiring; it parses `cache.redis` and provides the singleton
-  provider-neutral `CacheStore`.
+  `CLUSTERED` provider contribution and provider identity to the cache-core mode map.
 - `CacheRedisConfig` — validates the Redis connection name, physical key namespace,
   and positive format version.
 - `RedisCacheStore` — implements asynchronous `get`, `put`, `evict`, and `clear`.
@@ -78,9 +78,10 @@ namespace, scanned, deleted, backlog, and failure values; metrics recording cann
 
 `RedisCleanupLifecycle` runs in `LifecyclePhase.INFRA` at
 `RedisClientShutdownStep.SHUTDOWN_PRIORITY + 1`; reverse teardown therefore unregisters cleanup
-dispatch before the shared Redis registry closes. Application/Dagger composition, cron dispatch,
-metrics binding, and registration of the cleanup job/lifecycle remain T011-owned and are not wired
-in `CacheRedisModule`.
+dispatch before the shared Redis registry closes. When a `CronScheduler` is installed,
+`CacheRedisModule` registers the cleanup job, its event-bus dispatch handler, and its shutdown step;
+the handler reports the bounded sweep result through the cron reply address. Cleanup policy and
+metrics remain owned by T010.
 
 ## Load-Bearing Invariants
 
@@ -97,7 +98,8 @@ in `CacheRedisModule`.
 - `RedisCleanupJob` uses the minimal topology seam from `vertique-redis-core`; it does not expose
   Lettuce or topology details through the provider-neutral cache contracts.
 - T011 owns Dagger/provider-selection, telemetry, cron dispatch, and application client/provider
-  lifecycle composition. T011's application graph is not wired here.
+  lifecycle composition. `CacheRedisModule` contributes that composition when the application
+  graph provides `CronScheduler`.
 
 ## Testing
 
@@ -126,8 +128,8 @@ real Redis `SCAN`/`UNLINK` path with Testcontainers. Run the focused unit proof 
 ```
 
 Run the module's `verify` command above when the Testcontainers integration proof is available.
-T011 owns the assembled application graph, provider selection, telemetry, cron dispatch, and
-shutdown-composition proof that consumes this module; those components are not wired here.
+T011's `CacheDaggerGraphIT` additionally proves the assembled Redis provider and cleanup shutdown
+contribution without requiring a live Redis server.
 
 ## Related ADRs
 

@@ -36,7 +36,7 @@ import java.util.regex.Pattern;
 final class RedisCleanupJob {
     static final String JOB_ID = "cache-redis-old-generation-cleanup";
     private static final String CRON_EXPRESSION = "0 */15 * * * *";
-    private static final String HANDLER_ADDRESS = "vertique/cache/redis/cleanup";
+    static final String HANDLER_ADDRESS = "vertique/cache/redis/cleanup";
     private static final long CADENCE_MILLIS = 15 * 60_000L;
     private static final long MAX_JITTER_MILLIS = 60_000L;
     private static final long MAX_KEYS_PER_SWEEP = 10_000L;
@@ -182,6 +182,12 @@ final class RedisCleanupJob {
             registered.set(false);
             throw failure;
         }
+    }
+
+    /** Releases this job's registration guard after the owning cron scheduler has stopped. */
+    Future<Void> unregister() {
+        registered.set(false);
+        return Future.succeededFuture();
     }
 
     /** Runs one asynchronous bounded cleanup sweep. */

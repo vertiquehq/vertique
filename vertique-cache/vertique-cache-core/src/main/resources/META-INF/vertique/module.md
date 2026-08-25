@@ -26,7 +26,9 @@ The typed cache configuration uses explicit duration units such as `defaultTtlSe
 `maxTtlSeconds`, and `backendTimeoutMs`. `jsonProfile` selects the existing JSON mapper
 profile for cache values; a per-cache `jsonProfile` override may inherit the global
 cache profile when omitted. Provider modules contribute storage bindings through the
-internal `CacheMode` Dagger map seam.
+internal `CacheMode` Dagger map seam. The standard composition maps `LOCAL` to Caffeine and
+`CLUSTERED` to Redis; the aspects resolve the provider for the effective mode and record that
+provider in cache observations.
 
 ## Runtime behavior
 

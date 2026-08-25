@@ -11,7 +11,7 @@ This module owns the future cache annotation processor boundary and must keep ge
 
 ## Runtime or Build Flow
 
-The processor consumes `vertique-cache-core` contracts during application compilation. Generated classes belong to the consuming compilation and are not dependencies of cache providers.
+The processor consumes `vertique-cache-core` contracts during application compilation. When cache annotations are present it emits one public `GeneratedCacheModule` in the annotated bean's package, including `CacheInJvmModule`; applications can include that generated module in their Dagger component to install the local provider. Generated classes belong to the consuming compilation and are not dependencies of cache providers.
 
 ## Load-Bearing Invariants
 

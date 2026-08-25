@@ -104,6 +104,10 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-config-core</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-cache-core</artifactId>
+        </dependency>
     </dependencies>
 
     <build>

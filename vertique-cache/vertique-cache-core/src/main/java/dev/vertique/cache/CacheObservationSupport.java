@@ -15,10 +15,15 @@ final class CacheObservationSupport {
     private CacheObservationSupport() {}
 
     static void observe(
-            Set<CacheObserver> observers, String operation, CacheRegion region, String outcome, long startedAt) {
+            Set<CacheObserver> observers,
+            String provider,
+            String operation,
+            CacheRegion region,
+            String outcome,
+            long startedAt) {
         CacheObservation observation = new CacheObservation(
                 operation,
-                "provider-neutral",
+                provider,
                 region.name(),
                 outcome,
                 Duration.ofNanos(Math.max(0, System.nanoTime() - startedAt)));

@@ -206,6 +206,14 @@ injecting `Optional<MetricsConfig>`. They read `.map(MetricsConfig::enabled).orE
 means `MicrometerModule` is not installed, so the adapter defaults to enabled. When
 `metrics.enabled=false`, adapter callbacks return immediately — no tag assembly, no registry lookup.
 
+### CacheMetricsObserver
+
+`MicrometerModule` contributes `CacheMetricsObserver` to the cache-core `CacheObserver` set. When
+metrics are enabled it records a bounded timer named `cache.<operation>` with `provider`, `cache`,
+and `outcome` tags; provider, cache, and outcome values are length-bounded before registration.
+The observer is fail-open and returns successfully when metrics are disabled or a registry call
+fails, so cache telemetry cannot affect the business invocation.
+
 ### SecurityMetricsObserver
 
 Package-private `SecurityEventObserver` contributed into the `SecurityEventsModule` multibinding

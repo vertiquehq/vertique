@@ -15,6 +15,13 @@
     <description>In-JVM cache provider for annotation-driven cache support</description>
     <dependencies>
         <dependency><groupId>dev.vertique</groupId><artifactId>vertique-cache-core</artifactId></dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-cache-core</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
         <dependency><groupId>dev.vertique</groupId><artifactId>vertique-json</artifactId></dependency>
         <dependency>
             <groupId>com.github.ben-manes.caffeine</groupId>
@@ -23,6 +30,11 @@
         </dependency>
         <dependency><groupId>com.google.dagger</groupId><artifactId>dagger</artifactId></dependency>
         <dependency><groupId>jakarta.inject</groupId><artifactId>jakarta.inject-api</artifactId></dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-config-core</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>

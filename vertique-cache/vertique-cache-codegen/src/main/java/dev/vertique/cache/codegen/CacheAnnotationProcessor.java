@@ -3,9 +3,17 @@
 
 package dev.vertique.cache.codegen;
 
+import com.palantir.javapoet.AnnotationSpec;
+import com.palantir.javapoet.ClassName;
+import com.palantir.javapoet.JavaFile;
+import com.palantir.javapoet.TypeSpec;
 import dev.vertique.cache.CacheEvict;
 import dev.vertique.cache.Cacheable;
 import dev.vertique.codegen.AnnotationMirrors;
+import dev.vertique.codegen.CodegenContext;
+import dev.vertique.codegen.PackageResolver;
+import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -47,25 +55,31 @@ public final class CacheAnnotationProcessor extends AbstractProcessor {
 
     private Types types;
     private Elements elements;
+    private CodegenContext context;
+    private boolean generatedModule;
     private final Set<Element> proxyabilityValidated = new HashSet<>();
 
     @Override
     public synchronized void init(javax.annotation.processing.ProcessingEnvironment environment) {
         super.init(environment);
+        context = new CodegenContext(environment);
         types = environment.getTypeUtils();
         elements = environment.getElementUtils();
     }
 
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnvironment) {
+        List<Element> cacheOrigins = new ArrayList<>();
         for (Element element : roundEnvironment.getElementsAnnotatedWith(Cacheable.class)) {
             if (element.getKind() == ElementKind.METHOD) {
+                cacheOrigins.add(element);
                 Cacheable annotation = element.getAnnotation(Cacheable.class);
                 validateMethod((ExecutableElement) element, annotation.key(), true);
             }
         }
         for (Element element : roundEnvironment.getElementsAnnotatedWith(CacheEvict.class)) {
             if (element.getKind() == ElementKind.METHOD) {
+                cacheOrigins.add(element);
                 CacheEvict annotation = element.getAnnotation(CacheEvict.class);
                 validateProxyability((ExecutableElement) element);
                 if (annotation != null
@@ -75,7 +89,33 @@ public final class CacheAnnotationProcessor extends AbstractProcessor {
                 }
             }
         }
+        if (!cacheOrigins.isEmpty() && !generatedModule && !roundEnvironment.processingOver()) {
+            emitGeneratedCacheModule(cacheOrigins);
+        }
         return false;
+    }
+
+    private void emitGeneratedCacheModule(List<? extends Element> origins) {
+        String packageName = new PackageResolver(context.env()).resolve(origins, context);
+        if (packageName == null) {
+            return;
+        }
+        TypeSpec module = TypeSpec.classBuilder("GeneratedCacheModule")
+                .addModifiers(Modifier.PUBLIC, Modifier.ABSTRACT)
+                .addAnnotation(AnnotationSpec.builder(ClassName.get("dagger", "Module"))
+                        .addMember(
+                                "includes", "$T.class", ClassName.get("dev.vertique.cache.injvm", "CacheInJvmModule"))
+                        .build())
+                .addAnnotation(AnnotationSpec.builder(ClassName.get("javax.annotation.processing", "Generated"))
+                        .addMember("value", "$S", CacheAnnotationProcessor.class.getName())
+                        .build())
+                .build();
+        try {
+            JavaFile.builder(packageName, module).build().writeTo(context.filer());
+            generatedModule = true;
+        } catch (IOException failure) {
+            context.diagnostics().error(null, "Failed to write GeneratedCacheModule: %s", failure.getMessage());
+        }
     }
 
     private void validateMethod(ExecutableElement method, String template, boolean resultRequired) {

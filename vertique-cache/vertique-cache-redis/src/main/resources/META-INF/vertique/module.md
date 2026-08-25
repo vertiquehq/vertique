@@ -41,10 +41,10 @@ key namespace, and a positive provider format-version field:
 ## Core Concepts
 
 Cache-specific storage behavior belongs here, while named Redis profiles and client
-lifecycle belong to the shared Redis module. `CacheRedisModule` contributes the
-provider-neutral `CacheStore` binding and includes the cache core, JSON runtime, and Redis
-connection modules. Its included `JsonRuntimeModule` supplies the `JsonMapperProfileRegistry`
-wiring used for cache value conversion.
+lifecycle belong to the shared Redis module. `CacheRedisModule` contributes the `CLUSTERED`
+`CacheStore` binding and provider identity to the cache-core mode map, and includes the cache
+core, JSON runtime, and Redis connection modules. Its included `JsonRuntimeModule` supplies the
+`JsonMapperProfileRegistry` wiring used for cache value conversion.
 
 Redis operations are asynchronous and do not block the Vert.x event loop. The provider
 uses a generation marker for each logical region. A physical entry key has the form
@@ -104,8 +104,9 @@ not fail the maintenance operation.
 
 The `RedisCleanupLifecycle` step runs in `INFRA` at one priority above
 `RedisClientShutdownStep`. During reverse teardown it unregisters cleanup dispatch first, then
-closes the shared Redis clients. Application/Dagger composition, cron dispatch, metrics binding,
-and registration of these cleanup components remain T011-owned; they are not wired by this module.
+closes the shared Redis clients. When an application provides `CronScheduler`, this module also
+registers the bounded cleanup job and its event-bus dispatch handler. Cleanup policy and metrics
+remain owned by T010; this module only composes their lifecycle with the shared client.
 
 ## Dependencies
 

@@ -20,7 +20,7 @@ public final class RedisConnectionModule {
     @Provides
     @Singleton
     static RedisConnectionsConfig redisConnectionsConfig(@VertxConfig JsonObject config, ConfigParser parser) {
-        JsonObject section = JsonConfigPaths.navigateObject(config, "redis.connections");
+        JsonObject section = JsonConfigPaths.navigateObject(config, "redis", "connections");
         return new RedisConnectionsConfig(parser.parseKeyedObject(section, "name", RedisConnectionConfig.class));
     }
 
