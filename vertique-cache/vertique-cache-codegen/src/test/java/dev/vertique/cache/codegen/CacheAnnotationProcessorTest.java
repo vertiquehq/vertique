@@ -43,7 +43,8 @@ class CacheAnnotationProcessorTest {
     @Test
     @DisplayName("REST entity and Future entity results compile")
     void restEntityResultsCompile() {
-        ProcessorTestHarness.run(new CacheAnnotationProcessor(), SourceFiles.inline("com.example.RestCacheableBean", """
+        ProcessorTestHarness.run(
+                        new CacheAnnotationProcessor(), SourceFiles.inline("com.example.RestCacheableBean", """
                                 package com.example;
 
                                 import dev.vertique.cache.Cacheable;
@@ -74,7 +75,8 @@ class CacheAnnotationProcessorTest {
     @Test
     @DisplayName("REST Response results are rejected")
     void restResponseResultsAreRejected() {
-        ProcessorTestHarness.run(new CacheAnnotationProcessor(), SourceFiles.inline("com.example.ResponseCacheableBean", """
+        ProcessorTestHarness.run(
+                        new CacheAnnotationProcessor(), SourceFiles.inline("com.example.ResponseCacheableBean", """
                                 package com.example;
 
                                 import dev.vertique.cache.Cacheable;
@@ -100,7 +102,9 @@ class CacheAnnotationProcessorTest {
     @Test
     @DisplayName("REST Future Response results are rejected")
     void restFutureResponseResultsAreRejected() {
-        ProcessorTestHarness.run(new CacheAnnotationProcessor(), SourceFiles.inline("com.example.FutureResponseCacheableBean", """
+        ProcessorTestHarness.run(
+                        new CacheAnnotationProcessor(),
+                        SourceFiles.inline("com.example.FutureResponseCacheableBean", """
                                 package com.example;
 
                                 import dev.vertique.cache.Cacheable;
@@ -127,7 +131,8 @@ class CacheAnnotationProcessorTest {
     @Test
     @DisplayName("REST streaming and transport results are rejected")
     void restStreamingAndTransportResultsAreRejected() {
-        ProcessorTestHarness.run(new CacheAnnotationProcessor(), SourceFiles.inline("com.example.StreamingCacheableBean", """
+        ProcessorTestHarness.run(
+                        new CacheAnnotationProcessor(), SourceFiles.inline("com.example.StreamingCacheableBean", """
                                 package com.example;
 
                                 import dev.vertique.cache.Cacheable;
