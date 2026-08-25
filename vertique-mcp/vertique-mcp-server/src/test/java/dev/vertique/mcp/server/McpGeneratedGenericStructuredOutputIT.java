@@ -30,7 +30,7 @@ import org.junit.jupiter.api.Timeout;
  * Future<List<Note>>} advertised the same schema {@code List.class} would (no element description),
  * and output-schema validation could never reject an element that violated it.
  *
- * <p>Proved through two real, generated (never hand-authored) tools compiled by the real {@link
+ * <p>Proved through two real, generated, parameterized (never hand-authored) tools compiled by the real {@link
  * dev.vertique.codegen.mcp.McpToolProcessor}, both returning {@code Future<List<Note>>} where {@code
  * Note} carries a real Jakarta Bean Validation {@code @Min(1)} constraint on a record component:
  *
@@ -89,7 +89,7 @@ class McpGeneratedGenericStructuredOutputIT {
         assertThat(outputSchema.at("/type").asText())
                 .as("the declared List<Note> return type must describe a JSON array")
                 .isEqualTo("array");
-        assertThat(outputSchema.at("/items/properties/text/type").asText())
+        assertThat(outputSchema.at("/items/properties/display_name/type").asText())
                 .as("DECISIVE: the array's element type must be described — the pre-fix erasure to "
                         + "List.class produces no /items definition at all")
                 .isEqualTo("string");
@@ -97,6 +97,14 @@ class McpGeneratedGenericStructuredOutputIT {
                 .as("DECISIVE: the element's own @Min(1) constraint must reach the advertised schema, "
                         + "proving the full generic Note element type — not just List — was captured")
                 .isEqualTo(1);
+        JsonNode inputSchema =
+                new ObjectMapper().readTree(fixture.validInvoker().descriptor().inputSchema());
+        assertThat(inputSchema.findPath("display_name").path("type").asText())
+                .as("the same selected profile must publish the typed input member name")
+                .isEqualTo("string");
+        assertThat(inputSchema.path("properties").has("displayName"))
+                .as("the neutral mapper's input spelling must not escape the generated profile")
+                .isFalse();
 
         // --- Then (b): a call whose returned element violates that schema is rejected ---
         HttpResponse<Buffer> invalid = await(post(McpGeneratedGenericStructuredOutputITFixture.INVALID_TOOL_NAME)
@@ -115,6 +123,7 @@ class McpGeneratedGenericStructuredOutputIT {
                 .isEqualTo(-32603);
 
         // --- Then (c): the sibling call whose element satisfies the same schema succeeds ---
+        fixture.resetNoteAccessCount();
         HttpResponse<Buffer> valid = await(post(McpGeneratedGenericStructuredOutputITFixture.VALID_TOOL_NAME)
                 .sendBuffer(callBody(McpGeneratedGenericStructuredOutputITFixture.VALID_TOOL_NAME)));
         softly.assertThat(valid.statusCode())
@@ -122,6 +131,19 @@ class McpGeneratedGenericStructuredOutputIT {
                 .isEqualTo(200);
         JsonObject validResult = sseResult(valid.bodyAsString());
         softly.assertThat(validResult.getBoolean("isError")).isFalse();
+        softly.assertThat(validResult
+                        .getJsonArray("structuredContent")
+                        .getJsonObject(0)
+                        .getString("display_name"))
+                .as("the selected profile's output name must reach the wire through the generated writer")
+                .isEqualTo("hello");
+        softly.assertThat(fixture.observedOutput().toString())
+                .as("the output observer receives the same profile-normalized name")
+                .contains("display_name")
+                .doesNotContain("displayName");
+        softly.assertThat(fixture.noteAccessCount())
+                .as("the raw generated result is serialized exactly once before normalized reuse")
+                .isEqualTo(1);
         softly.assertAll();
     }
 
@@ -162,6 +184,10 @@ class McpGeneratedGenericStructuredOutputIT {
                 .put("io.modelcontextprotocol/protocolVersion", PROTOCOL_VERSION)
                 .put("io.modelcontextprotocol/clientCapabilities", new JsonObject());
         JsonObject params = new JsonObject().put("_meta", meta).put("name", toolName);
+        if (toolName.equals(McpGeneratedGenericStructuredOutputITFixture.VALID_TOOL_NAME)
+                || toolName.equals(McpGeneratedGenericStructuredOutputITFixture.INVALID_TOOL_NAME)) {
+            params.put("arguments", new JsonObject().put("input", new JsonObject().put("display_name", "hello")));
+        }
         return new JsonObject()
                 .put("jsonrpc", "2.0")
                 .put("id", 1)

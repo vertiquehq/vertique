@@ -43,6 +43,13 @@ class McpServerInventoryGuardTest {
         Set<String> unimplementedSignatures = new TreeSet<>(recordedSignatures);
         unimplementedSignatures.removeAll(scannedSignatures);
 
+        Set<String> scannedTypes = checker.scannedTypes();
+        Set<String> recordedTypes = McpServerInventoryChecker.recordedTypes(recorded);
+        Set<String> unrecordedTypes = new TreeSet<>(scannedTypes);
+        unrecordedTypes.removeAll(recordedTypes);
+        Set<String> unimplementedTypes = new TreeSet<>(recordedTypes);
+        unimplementedTypes.removeAll(scannedTypes);
+
         Set<String> scannedPackages = checker.scannedPackages();
         Set<String> recordedPackages = McpServerInventoryChecker.recordedPackages(recorded);
         Set<String> unrecordedPackages = new TreeSet<>(scannedPackages);
@@ -55,6 +62,12 @@ class McpServerInventoryGuardTest {
                 .isEmpty();
         assertThat(unimplementedSignatures)
                 .as("public generic signatures recorded in " + INVENTORY_RESOURCE + " but not exported")
+                .isEmpty();
+        assertThat(unrecordedTypes)
+                .as("public types exported by vertique-mcp-server but absent from " + INVENTORY_RESOURCE)
+                .isEmpty();
+        assertThat(unimplementedTypes)
+                .as("recorded public types no longer exported by vertique-mcp-server")
                 .isEmpty();
         assertThat(unrecordedPackages)
                 .as("packages declared by vertique-mcp-server but absent from " + INVENTORY_RESOURCE)
@@ -80,6 +93,32 @@ class McpServerInventoryGuardTest {
                 .allSatisfy(name -> assertThat(simpleNameOf(name))
                         .as("excluded type %s does not look like annotation-processor output", name)
                         .matches("^(Dagger[A-Za-z0-9_$]*|[A-Za-z0-9$]+_[A-Za-z0-9_$]+)$"));
+    }
+
+    @Test
+    @DisplayName("detects added and removed public types even when they export no public members")
+    void shouldDetectEmptyPublicTypeDriftInBothDirections() {
+        McpServerInventoryChecker checker = new McpServerInventoryChecker(McpServerConfig.class);
+        JsonObject recorded = McpServerInventoryChecker.recordedInventory(INVENTORY_RESOURCE);
+        Set<String> scannedTypes = checker.scannedTypes();
+        Set<String> recordedTypes = McpServerInventoryChecker.recordedTypes(recorded);
+        String emptyPublicModule = "dev.vertique.mcp.server.McpServerModule";
+
+        assertThat(checker.scannedSignatures())
+                .as("the sensitivity anchor intentionally has no public member signature")
+                .noneMatch(signature -> signature.contains(emptyPublicModule));
+        assertThat(scannedTypes).contains(emptyPublicModule);
+        assertThat(recordedTypes).contains(emptyPublicModule);
+
+        Set<String> withUnrecordedCompiledType = new TreeSet<>(scannedTypes);
+        withUnrecordedCompiledType.add("dev.vertique.mcp.server.SyntheticEmptyModule");
+        withUnrecordedCompiledType.removeAll(recordedTypes);
+        assertThat(withUnrecordedCompiledType).containsExactly("dev.vertique.mcp.server.SyntheticEmptyModule");
+
+        Set<String> withRemovedRecordedType = new TreeSet<>(recordedTypes);
+        withRemovedRecordedType.add("dev.vertique.mcp.server.RemovedEmptyModule");
+        withRemovedRecordedType.removeAll(scannedTypes);
+        assertThat(withRemovedRecordedType).containsExactly("dev.vertique.mcp.server.RemovedEmptyModule");
     }
 
     /**

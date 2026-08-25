@@ -80,6 +80,14 @@ final class CodegenMcpInventoryChecker {
         return signatures;
     }
 
+    /** Exact binary names of every hand-authored public type exported by this module. */
+    Set<String> scannedTypes() {
+        return moduleClasses.stream()
+                .filter(type -> Modifier.isPublic(type.getModifiers()) && !type.isSynthetic() && handAuthored(type))
+                .map(Class::getName)
+                .collect(Collectors.toCollection(TreeSet::new));
+    }
+
     /**
      * Hand-authored public types of this module that extend a <strong>non-public</strong> type of the
      * same module.
@@ -152,6 +160,11 @@ final class CodegenMcpInventoryChecker {
             types.getJsonArray(type).forEach(signature -> signatures.add((String) signature));
         }
         return signatures;
+    }
+
+    /** Exact public type identities recorded as inventory keys, including empty marker/module types. */
+    static Set<String> recordedTypes(JsonObject inventory) {
+        return new TreeSet<>(inventory.getJsonObject("types").fieldNames());
     }
 
     static Set<String> recordedPackages(JsonObject inventory) {

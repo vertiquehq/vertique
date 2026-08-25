@@ -3,13 +3,17 @@
 
 package dev.vertique.mcp.server;
 
+import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import dev.vertique.codegen.mcp.McpToolProcessor;
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
+import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.input.processing.InputObjectProcessor;
+import dev.vertique.json.JsonMapperProfiles;
 import dev.vertique.mcp.server.runtime.McpToolRuntimeFactory;
 import dev.vertique.mcp.server.runtime.McpToolRuntimeFactoryTestSupport;
 import dev.vertique.mcp.tool.McpToolInvoker;
@@ -27,6 +31,7 @@ import dev.vertique.security.runtime.events.SecurityEventEmitter;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpServer;
+import io.vertx.core.json.jackson.DatabindCodec;
 import io.vertx.ext.web.Router;
 import java.lang.reflect.Constructor;
 import java.util.LinkedHashSet;
@@ -39,7 +44,7 @@ import javax.tools.JavaFileObject;
 /**
  * Framework wiring for {@link McpGeneratedGenericStructuredOutputIT} (review-finding #5, round-14
  * remediation): compiles one real {@code com.example.notes.NoteTools} application source — two
- * zero-argument tools returning {@code Future<List<Note>>}, where {@code Note} carries a Jakarta
+ * parameterized tools returning {@code Future<List<Note>>}, where {@code Note} carries a Jakarta
  * Bean Validation {@code @Min} constraint directly on a record component — with the real {@link
  * McpToolProcessor}, loads both resulting generated invokers, and mounts them behind one real
  * port-0 stateless Streamable HTTP server, exactly like {@link McpGeneratedHelloToolITFixture} but
@@ -71,6 +76,7 @@ final class McpGeneratedGenericStructuredOutputITFixture {
 
     private static final String SERVER_NAME = "vertique-test";
     private static final String SERVER_VERSION = "1.0";
+    private static final String PROFILE_ID = "generated-output-snake";
 
     private final ProcessorTestHarness.Result result;
     private final McpToolInvoker validInvoker;
@@ -85,12 +91,31 @@ final class McpGeneratedGenericStructuredOutputITFixture {
 
                 import jakarta.validation.constraints.Min;
 
-                public record Note(String text, @Min(1) int priority, Object value) {}
+                import java.util.concurrent.atomic.AtomicInteger;
+
+                public record Note(String displayName, @Min(1) int priority, Object value) {
+                    private static final AtomicInteger DISPLAY_NAME_ACCESSES = new AtomicInteger();
+
+                    @Override
+                    public String displayName() {
+                        DISPLAY_NAME_ACCESSES.incrementAndGet();
+                        return displayName;
+                    }
+
+                    public static void resetAccessCount() {
+                        DISPLAY_NAME_ACCESSES.set(0);
+                    }
+
+                    public static int accessCount() {
+                        return DISPLAY_NAME_ACCESSES.get();
+                    }
+                }
                 """);
         JavaFileObject toolSource = SourceFiles.inline(TOOLS_SOURCE_FQN, """
                 package com.example.notes;
 
                 import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
                 import io.vertx.core.Future;
                 import jakarta.inject.Inject;
                 import java.util.List;
@@ -100,14 +125,18 @@ final class McpGeneratedGenericStructuredOutputITFixture {
                     @Inject
                     public NoteTools() {}
 
+                    public record NoteInput(String displayName) {}
+
                     @McpTool(name = "notes.valid", description = "Returns a note satisfying its own output schema.")
-                    public Future<List<Note>> valid() {
-                        return Future.succeededFuture(List.of(new Note("hello", 5, "finite")));
+                    public Future<List<Note>> valid(
+                            @McpToolParam(name = "input", description = "The note input.") NoteInput input) {
+                        return Future.succeededFuture(List.of(new Note(input.displayName(), 5, "finite")));
                     }
 
                     @McpTool(name = "notes.invalid", description = "Returns a note violating its own output schema.")
-                    public Future<List<Note>> invalid() {
-                        return Future.succeededFuture(List.of(new Note("hello", -1, "finite")));
+                    public Future<List<Note>> invalid(
+                            @McpToolParam(name = "input", description = "The note input.") NoteInput input) {
+                        return Future.succeededFuture(List.of(new Note(input.displayName(), -1, "finite")));
                     }
 
                     @McpTool(name = "notes.double-nan", description = "Returns a non-finite nested value.")
@@ -147,19 +176,29 @@ final class McpGeneratedGenericStructuredOutputITFixture {
         Object toolsInstance = result.loadGeneratedClass(TOOLS_SOURCE_FQN)
                 .getDeclaredConstructor()
                 .newInstance();
-        this.validInvoker = loadInvoker(VALID_INVOKER_FQN, toolsInstance);
-        this.invalidInvoker = loadInvoker(INVALID_INVOKER_FQN, toolsInstance);
+        McpToolRuntimeFactory runtimeFactory =
+                McpToolRuntimeFactoryTestSupport.factory(Set.of(snakeProfile()), PROFILE_ID);
+        InputObjectProcessor inputProcessor = InputObjectProcessor.createDefault(
+                canonicalizerType -> {
+                    throw new IllegalArgumentException("unresolvable canonicalizer " + canonicalizerType);
+                },
+                sanitizerType -> {
+                    throw new IllegalArgumentException("unresolvable sanitizer " + sanitizerType);
+                });
+        this.validInvoker = loadInvoker(VALID_INVOKER_FQN, toolsInstance, runtimeFactory, inputProcessor);
+        this.invalidInvoker = loadInvoker(INVALID_INVOKER_FQN, toolsInstance, runtimeFactory, inputProcessor);
         Set<McpToolInvoker> invokers = new LinkedHashSet<>();
         invokers.add(validInvoker);
         invokers.add(invalidInvoker);
         for (String invokerFqn : NON_FINITE_INVOKER_FQNS) {
-            invokers.add(loadInvoker(invokerFqn, toolsInstance));
+            invokers.add(loadInvoker(invokerFqn, toolsInstance, runtimeFactory, inputProcessor));
         }
 
         McpServerConfig config = McpServerConfig.builder()
                 .enabled(true)
                 .serverName(SERVER_NAME)
                 .serverVersion(SERVER_VERSION)
+                .jsonProfile(PROFILE_ID)
                 .build();
         McpToolRegistry registry = McpToolRegistry.build(invokers);
         this.outputObserver = new McpOutputPipelineITFixture.CapableObserver();
@@ -226,23 +265,38 @@ final class McpGeneratedGenericStructuredOutputITFixture {
         return outputObserver.session().toolOutputCount();
     }
 
-    private McpToolInvoker loadInvoker(String invokerFqn, Object toolsInstance) throws Exception {
+    Object observedOutput() {
+        return outputObserver.session().observedOutput().normalizedOutput();
+    }
+
+    void resetNoteAccessCount() throws Exception {
+        result.loadGeneratedClass(NOTE_SOURCE_FQN).getMethod("resetAccessCount").invoke(null);
+    }
+
+    int noteAccessCount() throws Exception {
+        return (int) result.loadGeneratedClass(NOTE_SOURCE_FQN)
+                .getMethod("accessCount")
+                .invoke(null);
+    }
+
+    private McpToolInvoker loadInvoker(
+            String invokerFqn,
+            Object toolsInstance,
+            McpToolRuntimeFactory runtimeFactory,
+            InputObjectProcessor inputProcessor)
+            throws Exception {
         Class<?> toolsClass = result.loadGeneratedClass(TOOLS_SOURCE_FQN);
         Class<?> invokerClass = result.loadGeneratedClass(invokerFqn);
         Constructor<?> invokerConstructor = invokerClass.getDeclaredConstructor(
                 toolsClass, McpToolRuntimeFactory.class, InputObjectProcessor.class);
         invokerConstructor.setAccessible(true);
-        return (McpToolInvoker) invokerConstructor.newInstance(
-                toolsInstance,
-                McpToolRuntimeFactoryTestSupport.factory(),
-                // Both tools are zero-argument, so neither resolver function is ever actually invoked.
-                InputObjectProcessor.createDefault(
-                        canonicalizerType -> {
-                            throw new IllegalArgumentException("unresolvable canonicalizer " + canonicalizerType);
-                        },
-                        sanitizerType -> {
-                            throw new IllegalArgumentException("unresolvable sanitizer " + sanitizerType);
-                        }));
+        return (McpToolInvoker) invokerConstructor.newInstance(toolsInstance, runtimeFactory, inputProcessor);
+    }
+
+    private static JsonMapperProfile snakeProfile() {
+        var mapper = DatabindCodec.mapper().copy();
+        mapper.setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
+        return JsonMapperProfiles.of(JsonProfileId.of(PROFILE_ID), mapper);
     }
 
     private static IdentityResolutionMiddleware identityResolution(SecurityRuntime securityRuntime) {

@@ -41,6 +41,13 @@ class RestSecurityInventoryGuardTest {
         Set<String> unimplementedSignatures = new TreeSet<>(recordedSignatures);
         unimplementedSignatures.removeAll(scannedSignatures);
 
+        Set<String> scannedTypes = checker.scannedTypes();
+        Set<String> recordedTypes = RestSecurityInventoryChecker.recordedTypes(recorded);
+        Set<String> unrecordedTypes = new TreeSet<>(scannedTypes);
+        unrecordedTypes.removeAll(recordedTypes);
+        Set<String> unimplementedTypes = new TreeSet<>(recordedTypes);
+        unimplementedTypes.removeAll(scannedTypes);
+
         Set<String> scannedPackages = checker.scannedPackages();
         Set<String> recordedPackages = RestSecurityInventoryChecker.recordedPackages(recorded);
         Set<String> unrecordedPackages = new TreeSet<>(scannedPackages);
@@ -54,6 +61,12 @@ class RestSecurityInventoryGuardTest {
                 .isEmpty();
         assertThat(unimplementedSignatures)
                 .as("recorded public generic signatures no longer exported by this module")
+                .isEmpty();
+        assertThat(unrecordedTypes)
+                .as("public types exported by vertique-rest-security but absent from " + INVENTORY_RESOURCE)
+                .isEmpty();
+        assertThat(unimplementedTypes)
+                .as("recorded public types no longer exported by vertique-rest-security")
                 .isEmpty();
         assertThat(unrecordedPackages)
                 .as("packages declared by vertique-rest-security but absent from " + INVENTORY_RESOURCE)

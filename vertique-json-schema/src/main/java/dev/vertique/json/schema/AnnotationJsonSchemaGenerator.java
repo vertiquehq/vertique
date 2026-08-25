@@ -3,10 +3,13 @@
 
 package dev.vertique.json.schema;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.AnnotationIntrospector;
 import com.fasterxml.jackson.databind.BeanDescription;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
 import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.victools.jsonschema.generator.FieldScope;
@@ -316,8 +319,12 @@ public final class AnnotationJsonSchemaGenerator {
                         JakartaValidationOption.INCLUDE_PATTERN_EXPRESSIONS))
                 .with(new Swagger2Module());
         if (propertyNames != null) {
-            builder.forFields().withPropertyNameOverrideResolver(propertyNames::resolve);
-            builder.forMethods().withPropertyNameOverrideResolver(propertyNames::resolve);
+            builder.forFields()
+                    .withIgnoreCheck(propertyNames::isIgnored)
+                    .withPropertyNameOverrideResolver(propertyNames::resolve);
+            builder.forMethods()
+                    .withIgnoreCheck(propertyNames::isIgnored)
+                    .withPropertyNameOverrideResolver(propertyNames::resolve);
         }
         return new SchemaGenerator(builder.build());
     }
@@ -327,7 +334,10 @@ public final class AnnotationJsonSchemaGenerator {
         private final ObjectMapper mapper;
         private final Direction direction;
 
-        private record PropertyNames(Map<Member, String> byMember, Map<String, String> byInternalName) {}
+        private record PropertyMetadata(String wireName, boolean visible) {}
+
+        private record PropertyNames(
+                Map<Member, PropertyMetadata> byMember, Map<String, PropertyMetadata> byInternalName) {}
 
         private final ClassValue<PropertyNames> namesByType = new ClassValue<>() {
             @Override
@@ -342,11 +352,21 @@ public final class AnnotationJsonSchemaGenerator {
         }
 
         private String resolve(MemberScope<?, ?> scope) {
+            PropertyMetadata property = metadata(scope);
+            return property == null ? null : property.wireName();
+        }
+
+        private boolean isIgnored(MemberScope<?, ?> scope) {
+            PropertyMetadata property = metadata(scope);
+            return property != null && !property.visible();
+        }
+
+        private PropertyMetadata metadata(MemberScope<?, ?> scope) {
             if (scope.isFakeContainerItemScope()) {
                 return null;
             }
             PropertyNames names = namesByType.get(scope.getDeclaringType().getErasedType());
-            String byMember = names.byMember().get(scope.getRawMember());
+            PropertyMetadata byMember = names.byMember().get(scope.getRawMember());
             return byMember != null ? byMember : names.byInternalName().get(scope.getName());
         }
 
@@ -355,21 +375,46 @@ public final class AnnotationJsonSchemaGenerator {
             BeanDescription description = direction == Direction.INPUT
                     ? mapper.getDeserializationConfig().introspect(javaType)
                     : mapper.getSerializationConfig().introspect(javaType);
-            Map<Member, String> members = new HashMap<>();
-            Map<String, String> internalNames = new HashMap<>();
+            Map<Member, PropertyMetadata> members = new HashMap<>();
+            Map<String, PropertyMetadata> internalNames = new HashMap<>();
             for (BeanPropertyDefinition property : description.findProperties()) {
-                internalNames.put(property.getInternalName(), property.getName());
+                JsonProperty.Access access = propertyAccess(property);
+                boolean visible = direction == Direction.INPUT
+                        ? property.couldDeserialize() && access != JsonProperty.Access.READ_ONLY
+                        : property.couldSerialize() && access != JsonProperty.Access.WRITE_ONLY;
+                PropertyMetadata metadata = new PropertyMetadata(property.getName(), visible);
+                internalNames.put(property.getInternalName(), metadata);
+                internalNames.put(property.getName(), metadata);
                 if (property.getField() != null) {
-                    members.put(property.getField().getMember(), property.getName());
+                    members.put(property.getField().getMember(), metadata);
                 }
                 if (property.getGetter() != null) {
-                    members.put(property.getGetter().getMember(), property.getName());
+                    members.put(property.getGetter().getMember(), metadata);
                 }
                 if (property.getSetter() != null) {
-                    members.put(property.getSetter().getMember(), property.getName());
+                    members.put(property.getSetter().getMember(), metadata);
                 }
             }
             return new PropertyNames(Map.copyOf(members), Map.copyOf(internalNames));
+        }
+
+        private JsonProperty.Access propertyAccess(BeanPropertyDefinition property) {
+            AnnotationIntrospector introspector = direction == Direction.INPUT
+                    ? mapper.getDeserializationConfig().getAnnotationIntrospector()
+                    : mapper.getSerializationConfig().getAnnotationIntrospector();
+            AnnotatedMember[] members = {
+                property.getGetter(), property.getSetter(), property.getField(), property.getConstructorParameter()
+            };
+            for (AnnotatedMember member : members) {
+                if (member == null) {
+                    continue;
+                }
+                JsonProperty.Access access = introspector.findPropertyAccess(member);
+                if (access != null && access != JsonProperty.Access.AUTO) {
+                    return access;
+                }
+            }
+            return JsonProperty.Access.AUTO;
         }
     }
 
