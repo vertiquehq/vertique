@@ -3,9 +3,9 @@
 
 package dev.vertique.micrometer.cache;
 
+import dagger.Binds;
 import dagger.BindsOptionalOf;
 import dagger.Module;
-import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.micrometer.MetricsConfig;
@@ -35,11 +35,9 @@ public abstract class MicrometerCacheModule {
      * Contributes {@link CacheMetricsObserver} to the cache observer multibinding set.
      *
      * @param observer the singleton cache metrics observer
-     * @return the observer cast to the cache observer SPI type
+     * @return the observer exposed through the cache observer SPI type
      */
-    @Provides
+    @Binds
     @IntoSet
-    static CacheObserver cacheMetricsObserver(CacheMetricsObserver observer) {
-        return observer;
-    }
+    abstract CacheObserver cacheMetricsObserver(CacheMetricsObserver observer);
 }

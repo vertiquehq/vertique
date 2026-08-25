@@ -3,8 +3,8 @@
 
 package dev.vertique.opentelemetry;
 
+import dagger.Binds;
 import dagger.Module;
-import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dev.vertique.cache.spi.CacheObserver;
 
@@ -15,9 +15,7 @@ public abstract class OpenTelemetryCacheModule {
     private OpenTelemetryCacheModule() {}
 
     /** Contributes the cache tracing observer to the provider-neutral cache observer set. */
-    @Provides
+    @Binds
     @IntoSet
-    static CacheObserver cacheTracingObserver(CacheTracingObserver observer) {
-        return observer;
-    }
+    abstract CacheObserver cacheTracingObserver(CacheTracingObserver observer);
 }
