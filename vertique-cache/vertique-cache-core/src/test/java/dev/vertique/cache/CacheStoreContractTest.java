@@ -73,9 +73,11 @@ public abstract class CacheStoreContractTest {
         await(store().put(KEY, expected, MutableValue.class, Duration.ZERO));
 
         expected.tags().add("changed-after-put");
-        MutableValue first = (MutableValue) await(store().get(KEY, MutableValue.class)).orElseThrow();
+        MutableValue first =
+                (MutableValue) await(store().get(KEY, MutableValue.class)).orElseThrow();
         first.tags().add("changed-after-get");
-        MutableValue second = (MutableValue) await(store().get(KEY, MutableValue.class)).orElseThrow();
+        MutableValue second =
+                (MutableValue) await(store().get(KEY, MutableValue.class)).orElseThrow();
 
         assertEquals(new MutableValue("before", List.of("one")), second);
         assertNotSame(first, second);

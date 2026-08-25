@@ -15,24 +15,13 @@ class CacheOperationalLimitsTest {
 
     @Test
     void rejectsTtlAboveMaximum() throws NoSuchMethodException {
-        var config = new CacheConfig(
-                true,
-                CacheMode.LOCAL,
-                60,
-                120,
-                "vertx",
-                1_024,
-                1_048_576,
-                10_000,
-                100,
-                Map.of());
+        var config = new CacheConfig(true, CacheMode.LOCAL, 60, 120, "vertx", 1_024, 1_048_576, 10_000, 100, Map.of());
         var method = Target.class.getDeclaredMethod("value");
         var metadata = CacheTestFixtures.metadata(method, "unused");
 
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> new CacheableAspect(new CacheTestFixtures.RecordingStore(), config, Set.of())
-                        .interceptor(metadata, method.getAnnotation(Cacheable.class)));
+        assertThrows(IllegalArgumentException.class, () -> new CacheableAspect(
+                        new CacheTestFixtures.RecordingStore(), config, Set.of())
+                .interceptor(metadata, method.getAnnotation(Cacheable.class)));
     }
 
     static final class Target {
