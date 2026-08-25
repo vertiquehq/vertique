@@ -42,42 +42,38 @@ public abstract class CacheStoreContractTest {
         await(store.clear(OTHER_REGION));
     }
 
-    protected final CacheStore store() {
-        return store;
-    }
-
     @Test
     void allProvidersSatisfyCoreSemantics() throws Exception {
-        assertEquals(Optional.empty(), await(store().get(KEY, String.class)));
+        assertEquals(Optional.empty(), await(store.get(KEY, String.class)));
 
-        await(store().put(KEY, "alice", String.class, Duration.ZERO));
-        await(store().put(OTHER_KEY, "bob", String.class, Duration.ZERO));
-        await(store().put(OTHER_REGION_KEY, "order-1", String.class, Duration.ZERO));
-        await(store().put(new CacheKey(REGION, "NONE", "null"), null, String.class, Duration.ZERO));
+        await(store.put(KEY, "alice", String.class, Duration.ZERO));
+        await(store.put(OTHER_KEY, "bob", String.class, Duration.ZERO));
+        await(store.put(OTHER_REGION_KEY, "order-1", String.class, Duration.ZERO));
+        await(store.put(new CacheKey(REGION, "NONE", "null"), null, String.class, Duration.ZERO));
 
-        assertEquals(Optional.of("alice"), await(store().get(KEY, String.class)));
-        assertEquals(Optional.empty(), await(store().get(new CacheKey(REGION, "NONE", "null"), String.class)));
+        assertEquals(Optional.of("alice"), await(store.get(KEY, String.class)));
+        assertEquals(Optional.empty(), await(store.get(new CacheKey(REGION, "NONE", "null"), String.class)));
 
-        await(store().evict(KEY));
-        assertEquals(Optional.empty(), await(store().get(KEY, String.class)));
-        assertEquals(Optional.of("bob"), await(store().get(OTHER_KEY, String.class)));
+        await(store.evict(KEY));
+        assertEquals(Optional.empty(), await(store.get(KEY, String.class)));
+        assertEquals(Optional.of("bob"), await(store.get(OTHER_KEY, String.class)));
 
-        await(store().clear(REGION));
-        assertEquals(Optional.empty(), await(store().get(OTHER_KEY, String.class)));
-        assertEquals(Optional.of("order-1"), await(store().get(OTHER_REGION_KEY, String.class)));
+        await(store.clear(REGION));
+        assertEquals(Optional.empty(), await(store.get(OTHER_KEY, String.class)));
+        assertEquals(Optional.of("order-1"), await(store.get(OTHER_REGION_KEY, String.class)));
     }
 
     @Test
     void allProvidersIsolateMutableValues() throws Exception {
         MutableValue expected = new MutableValue("before", List.of("one"));
-        await(store().put(KEY, expected, MutableValue.class, Duration.ZERO));
+        await(store.put(KEY, expected, MutableValue.class, Duration.ZERO));
 
         expected.tags().add("changed-after-put");
         MutableValue first =
-                (MutableValue) await(store().get(KEY, MutableValue.class)).orElseThrow();
+                (MutableValue) await(store.get(KEY, MutableValue.class)).orElseThrow();
         first.tags().add("changed-after-get");
         MutableValue second =
-                (MutableValue) await(store().get(KEY, MutableValue.class)).orElseThrow();
+                (MutableValue) await(store.get(KEY, MutableValue.class)).orElseThrow();
 
         assertEquals(new MutableValue("before", List.of("one")), second);
         assertNotSame(first, second);
@@ -88,16 +84,16 @@ public abstract class CacheStoreContractTest {
         Type declaredType = listOf(MutableValue.class);
         List<MutableValue> expected = List.of(new MutableValue("alice", List.of("admin")));
 
-        await(store().put(KEY, expected, declaredType, Duration.ZERO));
+        await(store.put(KEY, expected, declaredType, Duration.ZERO));
 
-        assertEquals(Optional.of(expected), await(store().get(KEY, declaredType)));
+        assertEquals(Optional.of(expected), await(store.get(KEY, declaredType)));
     }
 
     @Test
     void allProvidersFailOpenOnCodecFailure() throws Exception {
-        await(store().put(KEY, "not-an-integer", String.class, Duration.ZERO));
+        await(store.put(KEY, "not-an-integer", String.class, Duration.ZERO));
 
-        Future<Optional<Object>> failedOrMiss = store().get(KEY, Integer.class);
+        Future<Optional<Object>> failedOrMiss = store.get(KEY, Integer.class);
         Optional<Object> recovered = await(failedOrMiss.recover(ignored -> Future.succeededFuture(Optional.empty())));
 
         assertTrue(recovered.isEmpty(), "a codec failure must never expose an arbitrarily typed value");
@@ -106,18 +102,18 @@ public abstract class CacheStoreContractTest {
 
     @Test
     void allProvidersHandleRepeatableEviction() throws Exception {
-        await(store().put(KEY, "alice", String.class, Duration.ZERO));
-        await(store().put(OTHER_KEY, "bob", String.class, Duration.ZERO));
+        await(store.put(KEY, "alice", String.class, Duration.ZERO));
+        await(store.put(OTHER_KEY, "bob", String.class, Duration.ZERO));
 
         assertDoesNotThrow(() -> {
-            await(store().evict(KEY));
-            await(store().evict(KEY));
-            await(store().clear(REGION));
-            await(store().clear(REGION));
+            await(store.evict(KEY));
+            await(store.evict(KEY));
+            await(store.clear(REGION));
+            await(store.clear(REGION));
         });
 
-        assertEquals(Optional.empty(), await(store().get(KEY, String.class)));
-        assertEquals(Optional.empty(), await(store().get(OTHER_KEY, String.class)));
+        assertEquals(Optional.empty(), await(store.get(KEY, String.class)));
+        assertEquals(Optional.empty(), await(store.get(OTHER_KEY, String.class)));
     }
 
     protected static <T> T await(Future<T> future) throws Exception {

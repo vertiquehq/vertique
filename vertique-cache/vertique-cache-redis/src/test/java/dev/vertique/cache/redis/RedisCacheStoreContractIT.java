@@ -4,8 +4,6 @@
 package dev.vertique.cache.redis;
 
 import static dev.vertique.cache.redis.RedisTestFixtures.REDIS_CONFIG;
-import static dev.vertique.cache.redis.RedisTestFixtures.REGION;
-import static dev.vertique.cache.redis.RedisTestFixtures.await;
 import static dev.vertique.cache.redis.RedisTestFixtures.cacheConfig;
 import static dev.vertique.cache.redis.RedisTestFixtures.profiles;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -49,8 +47,6 @@ import org.testcontainers.utility.DockerImageName;
 public class RedisCacheStoreContractIT extends dev.vertique.cache.CacheStoreContractTest {
     private static final String REDIS_IMAGE =
             "redis:7.2.4-alpine@sha256:c8bb255c3559b3e458766db810aa7b3c7af1235b204cfdb304e79ff388fe1a5a";
-    private static final CacheKey KEY = new CacheKey(REGION, "NONE", "alice");
-    private static final CacheKey OTHER_KEY = new CacheKey(REGION, "NONE", "bob");
 
     @Container
     static final GenericContainer<?> REDIS =
