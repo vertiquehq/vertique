@@ -152,6 +152,9 @@ public final class CacheableAspect implements AspectProvider<Cacheable> {
             return entry.ttlSeconds();
         }
         long requested = annotation.ttlSeconds() >= 0 ? annotation.ttlSeconds() : config.defaultTtlSeconds();
+        if (annotation.ttlSeconds() > config.maxTtlSeconds()) {
+            throw new IllegalArgumentException("cache TTL exceeds maxTtlSeconds: " + annotation.name());
+        }
         return Math.min(requested, config.maxTtlSeconds());
     }
 
