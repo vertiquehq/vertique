@@ -15,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.cache.spi.CacheKey;
+import dev.vertique.cache.spi.CacheStore;
 import dev.vertique.redis.RedisClientRegistry;
 import dev.vertique.redis.RedisConnectionConfig;
 import dev.vertique.redis.RedisConnectionsConfig;
@@ -45,7 +46,7 @@ import org.testcontainers.utility.DockerImageName;
 @Testcontainers
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
-public class RedisCacheStoreContractIT {
+public class RedisCacheStoreContractIT extends dev.vertique.cache.CacheStoreContractTest {
     private static final String REDIS_IMAGE =
             "redis:7.2.4-alpine@sha256:c8bb255c3559b3e458766db810aa7b3c7af1235b204cfdb304e79ff388fe1a5a";
     private static final CacheKey KEY = new CacheKey(REGION, "NONE", "alice");
@@ -59,6 +60,11 @@ public class RedisCacheStoreContractIT {
     private static RedisCacheStore store;
     private static RedisAPI commands;
     private static Vertx vertx;
+
+    @Override
+    protected CacheStore createStore() {
+        return store;
+    }
 
     @BeforeAll
     static void setUp(Vertx hostVertx, io.vertx.junit5.VertxTestContext context) throws Exception {
