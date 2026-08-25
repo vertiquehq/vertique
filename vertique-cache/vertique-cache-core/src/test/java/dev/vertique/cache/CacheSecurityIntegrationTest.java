@@ -56,7 +56,10 @@ class CacheSecurityIntegrationTest {
 
         trace.clear();
         CacheKey hitKey = new CacheKey(new CacheRegion("cache", "profiles", 1), "NONE", "hit");
-        store.put(hitKey, "cached-value", String.class, java.time.Duration.ofSeconds(60)).join();
+        store.put(hitKey, "cached-value", String.class, java.time.Duration.ofSeconds(60))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
         trace.clear();
         Object hit = Invocations.run(
                         this,
