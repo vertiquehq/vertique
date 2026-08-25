@@ -129,15 +129,40 @@ class CacheAnnotationProcessorTest {
     }
 
     @Test
-    @DisplayName("REST streaming and transport results are rejected")
-    void restStreamingAndTransportResultsAreRejected() {
+    @DisplayName("REST Buffer results are rejected")
+    void restBufferResultsAreRejected() {
+        ProcessorTestHarness.run(
+                        new CacheAnnotationProcessor(), SourceFiles.inline("com.example.BufferCacheableBean", """
+                                package com.example;
+
+                                import dev.vertique.cache.Cacheable;
+                                import io.vertx.core.buffer.Buffer;
+                                import jakarta.inject.Inject;
+                                import jakarta.ws.rs.GET;
+
+                                public class BufferCacheableBean {
+                                    @Inject
+                                    public BufferCacheableBean() {}
+
+                                    @GET
+                                    @Cacheable(name = "users", key = "{0}")
+                                    public Buffer buffer(String id) {
+                                        return null;
+                                    }
+                                }
+                                """))
+                .assertFailed()
+                .assertErrorMessage("REST cacheable methods must return an entity result");
+    }
+
+    @Test
+    @DisplayName("REST streaming results are rejected")
+    void restStreamingResultsAreRejected() {
         ProcessorTestHarness.run(
                         new CacheAnnotationProcessor(), SourceFiles.inline("com.example.StreamingCacheableBean", """
                                 package com.example;
 
                                 import dev.vertique.cache.Cacheable;
-                                import io.vertx.core.buffer.Buffer;
-                                import io.vertx.core.http.HttpServerResponse;
                                 import io.vertx.core.streams.ReadStream;
                                 import jakarta.inject.Inject;
                                 import jakarta.ws.rs.GET;
@@ -148,15 +173,30 @@ class CacheAnnotationProcessorTest {
 
                                     @GET
                                     @Cacheable(name = "users", key = "{0}")
-                                    public Buffer buffer(String id) {
-                                        return null;
-                                    }
-
-                                    @GET
-                                    @Cacheable(name = "users", key = "{0}")
                                     public ReadStream<String> stream(String id) {
                                         return null;
                                     }
+                                }
+                """))
+                .assertFailed()
+                .assertErrorMessage("REST cacheable methods must return an entity result");
+    }
+
+    @Test
+    @DisplayName("REST transport response results are rejected")
+    void restTransportResponseResultsAreRejected() {
+        ProcessorTestHarness.run(
+                        new CacheAnnotationProcessor(), SourceFiles.inline("com.example.TransportCacheableBean", """
+                                package com.example;
+
+                                import dev.vertique.cache.Cacheable;
+                                import io.vertx.core.http.HttpServerResponse;
+                                import jakarta.inject.Inject;
+                                import jakarta.ws.rs.GET;
+
+                                public class TransportCacheableBean {
+                                    @Inject
+                                    public TransportCacheableBean() {}
 
                                     @GET
                                     @Cacheable(name = "users", key = "{0}")
@@ -167,6 +207,53 @@ class CacheAnnotationProcessorTest {
                                 """))
                 .assertFailed()
                 .assertErrorMessage("REST cacheable methods must return an entity result");
+    }
+
+    @Test
+    @DisplayName("REST transport subtypes are rejected")
+    void restTransportSubtypesAreRejected() {
+        ProcessorTestHarness.run(
+                        new CacheAnnotationProcessor(),
+                        SourceFiles.inline("com.example.TransportSubtypeCacheableBean", """
+                                package com.example;
+
+                                import dev.vertique.cache.Cacheable;
+                                import io.vertx.core.Future;
+                                import io.vertx.core.streams.ReadStream;
+                                import jakarta.inject.Inject;
+                                import jakarta.ws.rs.GET;
+                                import jakarta.ws.rs.core.Response;
+                                import java.util.concurrent.Flow;
+
+                                public class TransportSubtypeCacheableBean {
+                                    @Inject
+                                    public TransportSubtypeCacheableBean() {}
+
+                                    @GET
+                                    @Cacheable(name = "users", key = "{0}")
+                                    public CustomResponse response(String id) {
+                                        return null;
+                                    }
+
+                                    @GET
+                                    @Cacheable(name = "users", key = "{0}")
+                                    public Future<CustomPublisher> publisher(String id) {
+                                        return null;
+                                    }
+
+                                    @GET
+                                    @Cacheable(name = "users", key = "{0}")
+                                    public CustomStream stream(String id) {
+                                        return null;
+                                    }
+                                }
+
+                                abstract class CustomResponse extends Response {}
+                                interface CustomPublisher extends Flow.Publisher<String> {}
+                                interface CustomStream extends ReadStream<String> {}
+                                """))
+                .assertFailed()
+                .assertErrorMessage("REST cacheable");
     }
 
     @Test

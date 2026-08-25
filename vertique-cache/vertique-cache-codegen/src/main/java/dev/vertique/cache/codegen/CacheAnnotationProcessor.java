@@ -314,22 +314,35 @@ public final class CacheAnnotationProcessor extends AbstractProcessor {
             return;
         }
         DeclaredType declared = (DeclaredType) result;
-        TypeElement type = (TypeElement) declared.asElement();
         String erased = types.erasure(declared).toString();
-        if (UNSUPPORTED_REST_RESULTS.contains(erased)) {
+        if (isUnsupportedRestResult(declared)) {
             error(method, "REST cacheable methods must return an entity result, not " + erased);
             return;
         }
         if (FUTURE_FQN.equals(erased) && declared.getTypeArguments().size() == 1) {
             TypeMirror entity = declared.getTypeArguments().getFirst();
-            if (entity.getKind() == TypeKind.DECLARED
-                    && UNSUPPORTED_REST_RESULTS.contains(types.erasure(entity).toString())) {
+            if (isUnsupportedRestResult(entity)) {
                 error(method, "REST cacheable Future result must contain an entity, not " + entity);
             }
         }
-        if (type.getQualifiedName().contentEquals("io.vertx.core.streams.ReadStream")) {
-            error(method, "REST cacheable methods must not return streaming results");
+    }
+
+    private boolean isUnsupportedRestResult(TypeMirror type) {
+        if (type.getKind() != TypeKind.DECLARED) {
+            return false;
         }
+        String erased = types.erasure(type).toString();
+        if (UNSUPPORTED_REST_RESULTS.contains(erased)) {
+            return true;
+        }
+        for (String unsupported : UNSUPPORTED_REST_RESULTS) {
+            TypeElement unsupportedType = elements.getTypeElement(unsupported);
+            if (unsupportedType != null
+                    && types.isAssignable(types.erasure(type), types.erasure(unsupportedType.asType()))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean hasGetAnnotation(ExecutableElement method) {

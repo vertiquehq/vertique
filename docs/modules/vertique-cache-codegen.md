@@ -3,7 +3,7 @@
 > **Audience:** Vertique framework contributors and source agents
 > **Public contract:** `vertique-cache-codegen/src/main/resources/META-INF/vertique/module.md`
 
-This module owns the future cache annotation processor boundary and must keep generated application types separate from runtime providers.
+This module owns the cache annotation processor boundary and must keep generated application types separate from runtime providers.
 
 ## Source Map
 

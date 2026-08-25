@@ -23,12 +23,14 @@ import java.util.Optional;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-/** Proves the cache boundary remains inside an already-authorized invocation chain. */
+/** Proves the cache boundary remains inside an already-authorized invocation composition. */
 class CacheSecurityIntegrationTest {
 
     @Test
+    @DisplayName("authorization precedes cache lookup on hits and misses")
     void authorizationRunsOnHitAndMiss() throws Exception {
         List<String> trace = new ArrayList<>();
         TracingStore store = new TracingStore(trace);
