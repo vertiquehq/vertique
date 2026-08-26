@@ -4,12 +4,15 @@
 package dev.vertique.cache;
 
 import dagger.Binds;
+import dagger.BindsOptionalOf;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.Multibinds;
 import dev.vertique.aop.AspectProvider;
 import dev.vertique.cache.config.CacheConfig;
+import dev.vertique.cache.spi.CacheIdentityResolver;
 import dev.vertique.cache.spi.CacheStore;
+import dev.vertique.context.ContextRuntimeModule;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.config.JsonConfigPaths;
@@ -19,7 +22,7 @@ import java.util.Map;
 import java.util.Set;
 
 /** Dagger configuration contribution shared by all cache providers. */
-@Module
+@Module(includes = ContextRuntimeModule.class)
 public abstract class CacheCoreModule {
     @Multibinds
     abstract Map<CacheMode, CacheStore> cacheStores();
@@ -30,8 +33,8 @@ public abstract class CacheCoreModule {
     @Multibinds
     abstract Set<dev.vertique.cache.spi.CacheObserver> cacheObservers();
 
-    @Multibinds
-    abstract Set<dev.vertique.cache.spi.CacheIdentityResolver> cacheIdentityResolvers();
+    @BindsOptionalOf
+    abstract CacheIdentityResolver optionalCacheIdentityResolver();
 
     @Binds
     abstract AspectProvider<Cacheable> bindCacheableAspect(CacheableAspect aspect);

@@ -15,8 +15,12 @@ The module is selected before provider modules in the reactor and supplies the n
 
 The cache aspect remains inside the framework authorization boundary. Authorization must
 run before a lookup on both hits and misses; a hit may skip the target method only after
-that outer boundary has completed. Cache core does not own authorization or read transport
-security state directly. `CacheObserver` is the neutral observation seam for operation
+that outer boundary has completed. For identity-scoped annotations, the standard
+`DefaultCacheIdentityResolver` reads the current `SecurityContext` from `ContextHolder`
+and derives the canonical caller component from its actor and subject fields. Missing or
+unavailable identity bypasses the cache unless the annotation explicitly opts into the anonymous
+bucket. Cache core does not authorize the caller; it only prevents cache-key reuse across the
+resolved identity buckets. `CacheObserver` is the neutral observation seam for operation
 observations and for bounded cleanup outcomes through its default `onCleanup` method;
 cache-core does not depend on Micrometer or any other telemetry implementation.
 

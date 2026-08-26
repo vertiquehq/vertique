@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Alpha
 > **Package:** `dev.vertique.cache`
 > **Artifact:** `vertique-cache-core`
-> **Depends on:** `vertique-aop`, `vertique-core`
+> **Depends on:** `vertique-aop`, `vertique-core`, `vertique-security-core`
 
 `vertique-cache-core` is the provider-neutral foundation for annotation-driven method-result caching. This artifact establishes the cache API boundary independently of local and Redis storage implementations.
 
@@ -40,10 +40,15 @@ empty by default and receives redacted operation, provider, cache, outcome, and 
 data without becoming a cache or telemetry dependency. The same observer seam exposes
 redacted cleanup outcomes through `CacheObserver.onCleanup(CacheCleanupObservation)`; the
 default method keeps operation-only observers source-compatible. Identity-scoped annotations use
-the provider-neutral `CacheIdentityResolver` multibinding. Exactly one resolver must
-provide a canonical identity component for authenticated requests; unavailable or
-ambiguous identity bypasses the cache unless `CACHE_AS_ANONYMOUS` is explicitly selected.
-Identity components must use the same canonical characters accepted by `CacheKey`.
+the standard `DefaultCacheIdentityResolver`, contributed by `CacheCoreModule`, to read
+the current `SecurityContext` from the framework `ContextHolder`. `ACTOR` uses the actor,
+`EFFECTIVE_PRINCIPAL` uses the subject when present and otherwise the actor, and
+`ACTOR_AND_SUBJECT` preserves both dimensions. Missing context or identity fails closed for
+identity-scoped caching unless `CACHE_AS_ANONYMOUS` is explicitly selected. `NONE` remains a
+shared bucket and must only be used for data that is safe to share across callers. Identity
+components use the same canonical characters accepted by `CacheKey`. `CacheIdentityResolver` is
+the provider-neutral runtime seam; the standard graph uses `DefaultCacheIdentityResolver` and
+allows one explicitly supplied resolver to replace it.
 
 ## Conformance and operational limits
 
@@ -78,3 +83,5 @@ dependencies, packaged module-documentation parity, and regeneration of cache an
 |---|---|
 | `vertique-aop` | Method interception runtime boundary |
 | `vertique-core` | Framework foundations and shared configuration/runtime contracts |
+| `vertique-context` | Vert.x context propagation and `ContextHolder` runtime binding |
+| `vertique-security-core` | Provider-neutral `SecurityContext` and caller identity contracts |

@@ -30,7 +30,7 @@ public final class CacheableAspect implements AspectProvider<Cacheable> {
     private final CacheStoreResolver stores;
     private final CacheConfig config;
     private final Set<CacheObserver> observers;
-    private final Set<CacheIdentityResolver> identityResolvers;
+    private final Optional<CacheIdentityResolver> identityResolver;
 
     public CacheableAspect(CacheStore store, CacheConfig config) {
         this(store, config, Set.of(), Set.of());
@@ -45,7 +45,12 @@ public final class CacheableAspect implements AspectProvider<Cacheable> {
             CacheConfig config,
             Set<CacheObserver> observers,
             Set<CacheIdentityResolver> identityResolvers) {
-        this(CacheStoreResolver.fixed(store), config, observers, identityResolvers);
+        this.stores = CacheStoreResolver.fixed(store);
+        this.config = config;
+        this.observers = Set.copyOf(observers);
+        this.identityResolver = identityResolvers.size() == 1
+                ? Optional.of(identityResolvers.iterator().next())
+                : Optional.empty();
     }
 
     @Inject
@@ -53,11 +58,12 @@ public final class CacheableAspect implements AspectProvider<Cacheable> {
             CacheStoreResolver stores,
             CacheConfig config,
             Set<CacheObserver> observers,
-            Set<CacheIdentityResolver> identityResolvers) {
+            DefaultCacheIdentityResolver defaultResolver,
+            Optional<CacheIdentityResolver> customResolver) {
         this.stores = stores;
         this.config = config;
         this.observers = Set.copyOf(observers);
-        this.identityResolvers = Set.copyOf(identityResolvers);
+        this.identityResolver = Optional.of(customResolver.orElse(defaultResolver));
     }
 
     @Override
@@ -170,15 +176,12 @@ public final class CacheableAspect implements AspectProvider<Cacheable> {
         if (annotation.identity() == CacheIdentity.NONE) {
             return Optional.of("NONE");
         }
-        if (identityResolvers.size() != 1) {
-            return annotation.anonymous() == AnonymousCachePolicy.CACHE_AS_ANONYMOUS
-                    ? Optional.of("ANONYMOUS")
-                    : Optional.empty();
+        if (identityResolver.isEmpty()) {
+            return anonymousComponent(annotation);
         }
         try {
-            return identityResolvers
-                    .iterator()
-                    .next()
+            return identityResolver
+                    .orElseThrow()
                     .resolve(annotation.identity())
                     .filter(component -> !component.isBlank())
                     .or(() -> annotation.anonymous() == AnonymousCachePolicy.CACHE_AS_ANONYMOUS
@@ -187,6 +190,12 @@ public final class CacheableAspect implements AspectProvider<Cacheable> {
         } catch (RuntimeException unavailable) {
             return Optional.empty();
         }
+    }
+
+    private Optional<String> anonymousComponent(Cacheable annotation) {
+        return annotation.anonymous() == AnonymousCachePolicy.CACHE_AS_ANONYMOUS
+                ? Optional.of("ANONYMOUS")
+                : Optional.empty();
     }
 
     private static Type valueType(MethodMetadata target) {

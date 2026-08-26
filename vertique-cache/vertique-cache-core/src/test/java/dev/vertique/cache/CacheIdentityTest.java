@@ -4,15 +4,74 @@
 package dev.vertique.cache;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 import dev.vertique.cache.config.CacheConfig;
 import dev.vertique.cache.spi.CacheIdentityResolver;
+import dev.vertique.core.context.ContextHolder;
+import dev.vertique.core.context.ContextValue;
+import dev.vertique.security.AuthenticationState;
+import dev.vertique.security.DefaultAuthMethod;
+import dev.vertique.security.PrincipalRef;
+import dev.vertique.security.PrincipalType;
+import dev.vertique.security.SecurityContext;
+import dev.vertique.security.SecurityIdentity;
+import dev.vertique.security.authz.AuthorizationClaims;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class CacheIdentityTest {
+
+    @Test
+    void contextIdentityIsReadByTheAspectAndIncludedInTheKey() throws NoSuchMethodException {
+        var method = Target.class.getDeclaredMethod("current");
+        var metadata = CacheTestFixtures.metadata(method, "unused");
+        var holder = new MutableContextHolder(securityContext("service-1", "user-1"));
+        var store = new CacheTestFixtures.RecordingStore();
+        CacheIdentityResolver resolver = new DefaultCacheIdentityResolver(holder);
+
+        new CacheableAspect(store, CacheConfig.defaults(), Set.of(), Set.of(resolver))
+                .interceptor(metadata, Target.annotation(CacheIdentity.ACTOR_AND_SUBJECT, AnonymousCachePolicy.BYPASS))
+                .intercept(CacheTestFixtures.invocation(metadata, new Object[0], new AtomicInteger()))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
+
+        assertEquals("actor:SERVICE:service-1~subject:USER:user-1", store.lastKey.identityComponent());
+    }
+
+    @Test
+    void contextIdentitySeparatesCallersUsingTheSameSelector() throws NoSuchMethodException {
+        var method = Target.class.getDeclaredMethod("current");
+        var metadata = CacheTestFixtures.metadata(method, "unused");
+        var holder = new MutableContextHolder(securityContext("service-1", null));
+        var store = new CacheTestFixtures.RecordingStore();
+        var calls = new AtomicInteger();
+        CacheIdentityResolver resolver = new DefaultCacheIdentityResolver(holder);
+        var interceptor = new CacheableAspect(store, CacheConfig.defaults(), Set.of(), Set.of(resolver))
+                .interceptor(metadata, Target.annotation(CacheIdentity.ACTOR, AnonymousCachePolicy.BYPASS));
+
+        interceptor
+                .intercept(CacheTestFixtures.invocation(metadata, new Object[0], calls))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
+        String firstKey = store.lastKey.identityComponent();
+
+        holder.context = securityContext("service-2", null);
+        interceptor
+                .intercept(CacheTestFixtures.invocation(metadata, new Object[0], calls))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
+
+        assertNotEquals(firstKey, store.lastKey.identityComponent());
+        assertEquals(2, calls.get(), "a different caller must not receive the first caller's value");
+    }
 
     @Test
     void authenticatedIdentityComponentsAreCanonicalAndDistinct() throws NoSuchMethodException {
@@ -112,6 +171,54 @@ class CacheIdentityTest {
         @Cacheable(name = "profile", key = "me")
         String current() {
             return "unused";
+        }
+    }
+
+    private static SecurityContext securityContext(String actorId, String subjectId) {
+        PrincipalRef actor = new PrincipalRef(PrincipalType.SERVICE, actorId, Map.of());
+        Optional<PrincipalRef> subject = subjectId == null
+                ? Optional.empty()
+                : Optional.of(new PrincipalRef(PrincipalType.USER, subjectId, Map.of()));
+        SecurityIdentity identity = new SecurityIdentity(actor, subject, Optional.empty(), Optional.empty());
+        return new SecurityContext() {
+            @Override
+            public SecurityIdentity identity() {
+                return identity;
+            }
+
+            @Override
+            public AuthenticationState authentication() {
+                return new AuthenticationState(
+                        DefaultAuthMethod.none(), List.of(), Optional.empty(), Optional.empty(), Map.of());
+            }
+
+            @Override
+            public AuthorizationClaims authorization() {
+                return AuthorizationClaims.empty();
+            }
+
+            @Override
+            public Optional<dev.vertique.security.origin.RequestOrigin> origin() {
+                return Optional.empty();
+            }
+        };
+    }
+
+    private static final class MutableContextHolder implements ContextHolder {
+        private SecurityContext context;
+
+        private MutableContextHolder(SecurityContext context) {
+            this.context = context;
+        }
+
+        @Override
+        public <T> Optional<T> current(Class<T> type) {
+            return type.isInstance(context) ? Optional.of(type.cast(context)) : Optional.empty();
+        }
+
+        @Override
+        public <T extends ContextValue> Scope bind(Class<T> type, T value) {
+            throw new UnsupportedOperationException("test holder is read-only");
         }
     }
 }

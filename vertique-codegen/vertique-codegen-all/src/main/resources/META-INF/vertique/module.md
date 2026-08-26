@@ -35,6 +35,7 @@ The facade declares these compile dependencies in deterministic order:
 10. `vertique-codegen-sanitization`
 11. `vertique-codegen-aop`
 12. `vertique-codegen-events`
+13. `vertique-cache-codegen`
 
 All processors remain non-claiming and ignore compilations that do not use their supported
 annotations. The facade adds no runtime Java API, annotations, SPI, or configuration keys.
@@ -59,7 +60,7 @@ SPI. Additions require updating the ordered dependency list and the facade disco
 
 ## Dependencies
 
-The twelve processor leaves above are the facade's complete direct dependency set. Every leaf
+The thirteen processor leaves above are the facade's complete direct dependency set. Every leaf
 excludes transitive `org.projectlombok:lombok`, so resolving the facade cannot activate Lombok's
 annotation processor through a processor leaf's runtime dependencies. Applications that use
 Lombok declare and append it explicitly.

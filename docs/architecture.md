@@ -64,7 +64,7 @@ compile time.
 The standalone `vertique-app-parent` is the public Maven boundary for applications. It
 imports `vertique-bom` and places only Dagger plus the dependency-only
 `vertique-codegen-all` facade on the compiler processor path. The facade resolves the
-closed set of Vertique-owned processor leaves transitively; those leaves remain build
+closed set of Vertique-owned processor leaves, including cache code generation, transitively; those leaves remain build
 tools and never become application runtime dependencies. Custom-parent consumers use
 the same boundary explicitly by importing the BOM and configuring the same two
 versionless processor paths. Lombok is outside that default boundary and requires an

@@ -326,7 +326,7 @@ framework's own scanners provide the implementations.
 | `parameters()` | `List<ParameterMetadata>` | reflection-free |
 | `findAnnotation(Class<A>)` | `Optional<A>` | reflection-free |
 | `hasAnnotation(Class<? extends Annotation>)` | `boolean` | reflection-free |
-| `genericReturnType()` | `Type` | reflective |
+| `genericReturnType()` | `Type` | reflection-free on generated metadata; reflective on scan metadata |
 | `asMethod()` | `Method` | reflective |
 
 `ParameterMetadata`:
@@ -343,10 +343,10 @@ framework's own scanners provide the implementations.
 
 #### Invariants & Gotchas
 
-- The reflection-free group — including both annotation lookups — is safe on the critical path and
-  needs no GraalVM `reflect-config.json` entry. The reflective group does: calling
-  `asMethod()`, `genericReturnType()`, `ParameterMetadata.genericType()`, or `annotationsLazy()` in
-  a native image requires a reflection entry for the declaring class.
+- The reflection-free group — including both annotation lookups and generated
+  `genericReturnType()` — is safe on the critical path and needs no GraalVM `reflect-config.json`
+  entry. `asMethod()`, `ParameterMetadata.genericType()`, and `annotationsLazy()` remain reflective;
+  the scan-path implementation of `genericReturnType()` is reflective too.
 - On the codegen path, annotation lookups query compile-time-captured annotation literals, not live
   runtime annotations. An annotation added after compilation — by a dynamic proxy or a bytecode
   agent — is invisible. Only `@Retention(RUNTIME)` annotations are ever visible.

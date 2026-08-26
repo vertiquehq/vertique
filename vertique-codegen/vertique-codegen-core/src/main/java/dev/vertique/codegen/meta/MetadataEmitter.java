@@ -16,7 +16,9 @@ import com.palantir.javapoet.TypeSpec;
 import com.palantir.javapoet.WildcardTypeName;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
+import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.lang.reflect.WildcardType;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -25,7 +27,9 @@ import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
+import javax.lang.model.type.ArrayType;
 import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Types;
 
@@ -58,8 +62,10 @@ import javax.lang.model.util.Types;
  * {@code PARAM_<p>_ANNOTATION_<i>} literal constants and passed to the nested
  * {@code ParameterMetadataImpl}, whose parameter-level {@code findAnnotation} matches the looked-up
  * {@code type} against each literal's {@code annotationType()} — never {@code Parameter.getAnnotation}.
- * The opt-in reflective-accessor group ({@code asMethod}, {@code genericReturnType},
- * {@code genericType}) is still stubbed. The constant-only core accessors are fully real.
+ * The opt-in reflective-accessor group ({@code asMethod}, {@code genericType}) remains stubbed;
+ * {@code genericReturnType()} is emitted as a reflection-free {@link Type} graph so generated
+ * consumers can inspect declared payload types without a method lookup. The constant-only core
+ * accessors are fully real.
  */
 public final class MetadataEmitter {
 
@@ -209,7 +215,7 @@ public final class MetadataEmitter {
 
         return builder.addMethod(findAnnotation(methodAnnotations, literalFieldNames))
                 .addMethod(hasAnnotation())
-                .addMethod(genericReturnTypeStub())
+                .addMethod(genericReturnTypeAccessor(method, types))
                 .addMethod(asMethodStub())
                 .addType(parameterMetadataImpl(paramImpl));
     }
@@ -465,20 +471,18 @@ public final class MetadataEmitter {
     }
 
     /**
-     * Emits a {@code genericReturnType} accessor from the reflective-accessor group.
+     * Emits a {@code genericReturnType} accessor as a reflection-free {@link Type} graph.
      *
-     * <p>Not part of the reflection-free guarantee; throws {@link UnsupportedOperationException}
-     * until the reflective-accessor group is implemented (Phase 2).
+     * <p>Declared type arguments are represented by generated {@link ParameterizedType} instances,
+     * while reifiable types use class literals. This keeps generated cache proxies independent of
+     * reflective method lookup while still exposing the declared payload type to serializers.
      */
-    private static MethodSpec genericReturnTypeStub() {
+    private static MethodSpec genericReturnTypeAccessor(ExecutableElement method, Types types) {
         return MethodSpec.methodBuilder("genericReturnType")
                 .addAnnotation(Override.class)
                 .addModifiers(Modifier.PUBLIC)
                 .returns(Type.class)
-                .addStatement(
-                        "throw new $T($S)",
-                        UnsupportedOperationException.class,
-                        "genericReturnType is part of the reflective-accessor group (Phase 2)")
+                .addStatement("return $L", genericTypeExpression(method.getReturnType(), types))
                 .build();
     }
 
@@ -866,6 +870,95 @@ public final class MetadataEmitter {
             return ClassName.get(element);
         }
         return TypeName.get(erased);
+    }
+
+    /** Emits a runtime {@link Type} value corresponding to a compile-time type mirror. */
+    private static CodeBlock genericTypeExpression(TypeMirror mirror, Types types) {
+        return switch (mirror.getKind()) {
+            case ARRAY -> genericArrayOrClassExpression((ArrayType) mirror, types);
+            case DECLARED -> declaredTypeExpression((DeclaredType) mirror, types);
+            case WILDCARD -> wildcardTypeExpression((javax.lang.model.type.WildcardType) mirror, types);
+            case TYPEVAR -> erasedTypeClassExpression(mirror, types);
+            case INTERSECTION ->
+                genericTypeExpression(
+                        ((javax.lang.model.type.IntersectionType) mirror)
+                                .getBounds()
+                                .get(0),
+                        types);
+            default -> erasedTypeClassExpression(mirror, types);
+        };
+    }
+
+    private static CodeBlock declaredTypeExpression(DeclaredType declared, Types types) {
+        if (declared.getTypeArguments().isEmpty()) {
+            return CodeBlock.of("$T.class", ClassName.get((TypeElement) declared.asElement()));
+        }
+        CodeBlock arguments = declared.getTypeArguments().stream()
+                .map(argument -> genericTypeExpression(argument, types))
+                .collect(CodeBlock.joining(", "));
+        CodeBlock owner = declared.getEnclosingType().getKind() == TypeKind.NONE
+                ? CodeBlock.of("null")
+                : genericTypeExpression(declared.getEnclosingType(), types);
+        return CodeBlock.builder()
+                .add("new $T() {", ParameterizedType.class)
+                .add(
+                        "\n@Override public $T[] getActualTypeArguments() { return new $T[] {$L}; }",
+                        Type.class,
+                        Type.class,
+                        arguments)
+                .add("\n@Override public $T getRawType() { return $T.class; }", Type.class, ClassName.get((TypeElement)
+                        declared.asElement()))
+                .add("\n@Override public $T getOwnerType() { return $L; }", Type.class, owner)
+                .add("\n}")
+                .build();
+    }
+
+    private static CodeBlock genericArrayOrClassExpression(ArrayType array, Types types) {
+        if (isReifiable(array.getComponentType())) {
+            return erasedTypeClassExpression(array, types);
+        }
+        return CodeBlock.builder()
+                .add("new $T() {", java.lang.reflect.GenericArrayType.class)
+                .add(
+                        "\n@Override public $T getGenericComponentType() { return $L; }",
+                        Type.class,
+                        genericTypeExpression(array.getComponentType(), types))
+                .add("\n}")
+                .build();
+    }
+
+    private static CodeBlock wildcardTypeExpression(javax.lang.model.type.WildcardType wildcard, Types types) {
+        CodeBlock upper = wildcard.getExtendsBound() == null
+                ? CodeBlock.of("$T.class", Object.class)
+                : genericTypeExpression(wildcard.getExtendsBound(), types);
+        CodeBlock lower = wildcard.getSuperBound() == null
+                ? CodeBlock.of("")
+                : genericTypeExpression(wildcard.getSuperBound(), types);
+        CodeBlock lowerArray = wildcard.getSuperBound() == null
+                ? CodeBlock.of("new $T[0]", Type.class)
+                : CodeBlock.of("new $T[] {$L}", Type.class, lower);
+        return CodeBlock.builder()
+                .add("new $T() {", WildcardType.class)
+                .add(
+                        "\n@Override public $T[] getUpperBounds() { return new $T[] {$L}; }",
+                        Type.class,
+                        Type.class,
+                        upper)
+                .add("\n@Override public $T[] getLowerBounds() { return $L; }", Type.class, lowerArray)
+                .add("\n}")
+                .build();
+    }
+
+    private static CodeBlock erasedTypeClassExpression(TypeMirror mirror, Types types) {
+        return CodeBlock.of("$T.class", erasedTypeName(mirror, types));
+    }
+
+    private static boolean isReifiable(TypeMirror mirror) {
+        return switch (mirror.getKind()) {
+            case ARRAY -> isReifiable(((ArrayType) mirror).getComponentType());
+            case DECLARED -> ((DeclaredType) mirror).getTypeArguments().isEmpty();
+            default -> true;
+        };
     }
 
     /** Returns the {@code Class<?>} type name used uniformly for type accessors. */

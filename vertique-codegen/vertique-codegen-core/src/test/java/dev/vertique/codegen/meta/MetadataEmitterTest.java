@@ -23,6 +23,7 @@ import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.NoType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Types;
@@ -156,6 +157,40 @@ class MetadataEmitterTest {
         assertTrue(
                 source.contains("PARAM_0_ANNOTATION_0)"),
                 "the ParameterMetadataImpl construction should pass the literal field as a trailing argument");
+    }
+
+    @Test
+    @DisplayName("emits a reflection-free generic return type for parameterized methods")
+    void emitsGenericReturnTypeForParameterizedMethod() {
+        Types types = mock(Types.class);
+
+        TypeElement service = mockTypeElement("com.example.Service", "Service");
+        TypeElement future = mockTypeElement("io.vertx.core.Future", "Future");
+        TypeMirror stringMirror = mockDeclaredType("java.lang.String", "String");
+        DeclaredType rawFuture = (DeclaredType) future.asType();
+        DeclaredType futureOfString = mock(DeclaredType.class);
+        NoType noOwner = mock(NoType.class);
+        when(futureOfString.getKind()).thenReturn(TypeKind.DECLARED);
+        when(futureOfString.asElement()).thenReturn(future);
+        doReturn(List.of(stringMirror)).when(futureOfString).getTypeArguments();
+        when(futureOfString.getEnclosingType()).thenReturn(noOwner);
+        when(noOwner.getKind()).thenReturn(TypeKind.NONE);
+        when(types.erasure(futureOfString)).thenReturn(rawFuture);
+        lenient().when(types.erasure(stringMirror)).thenReturn(stringMirror);
+
+        ExecutableElement probe = mockMethod("probe", service, futureOfString, List.of());
+
+        JavaFile file = MetadataEmitter.emitMethodMetadata(probe, GENERATED_NAME, types);
+        String source = file.toString();
+
+        assertTrue(source.contains("genericReturnType"), "the metadata impl should implement the accessor");
+        assertTrue(source.contains("ParameterizedType"), "parameterized returns need a Type graph");
+        assertTrue(source.contains("getActualTypeArguments"), "the payload type must be retained");
+        assertTrue(source.contains("Future.class"), "the raw return type should be emitted as a class literal");
+        assertTrue(source.contains("String.class"), "the generic payload should be emitted as a class literal");
+        assertFalse(
+                source.contains("genericReturnType is part of the reflective-accessor group"),
+                "generated cache metadata must not retain the old throwing stub");
     }
 
     // --- helpers (Mockito-stubbed javax.lang.model elements) ---

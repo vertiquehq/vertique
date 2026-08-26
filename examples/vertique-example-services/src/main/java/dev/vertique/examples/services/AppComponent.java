@@ -11,8 +11,11 @@ import dev.vertique.core.VertxModule;
 import dev.vertique.core.lifecycle.CoreLifecycleStepsModule;
 import dev.vertique.examples.services.resource.GeneratedJaxRsResourcesModule;
 import dev.vertique.examples.services.security.AuthzEventCollector;
+import dev.vertique.examples.services.service.GeneratedAopModule;
+import dev.vertique.examples.services.service.GeneratedCacheModule;
 import dev.vertique.examples.services.service.GeneratedServicesModule;
 import dev.vertique.management.ManagementModule;
+import dev.vertique.rest.auth.jwt.JwtAuthModule;
 import dev.vertique.rest.jaxrs.RestModule;
 import dev.vertique.rest.validation.RestValidationModule;
 import dev.vertique.security.runtime.authz.SecurityAuthzModule;
@@ -49,9 +52,14 @@ import jakarta.inject.Singleton;
  *   <li>{@link ManagementModule} — Health check endpoints on management port</li>
  *   <li>{@link CoreLifecycleStepsModule} — framework {@code CONFIGURE}/{@code VALIDATE} lifecycle
  *       steps (Jackson configuration + compose-validator harness)</li>
+ *   <li>{@link JwtAuthModule} — JWT bearer authentication, authorization, and security context</li>
  *   <li>{@link AppModule} — Application-specific configuration bindings</li>
  *   <li>{@link GeneratedJaxRsResourcesModule} — auto-generated {@code @JaxRsResources} bindings
  *       produced by {@code vertique-codegen-jaxrs} at compile time</li>
+ *   <li>{@link GeneratedAopModule} — auto-generated AOP proxy bindings for cache-aware service
+ *       handlers</li>
+ *   <li>{@link GeneratedCacheModule} — auto-generated cache metadata and local Caffeine provider
+ *       composition produced by {@code vertique-cache-codegen}</li>
  *   <li>{@link GeneratedServicesModule} — auto-generated singleton typed-client and
  *       {@code ServiceContractContributor} bindings produced by
  *       {@code vertique-codegen-services} at compile time. Drives
@@ -64,9 +72,7 @@ import jakarta.inject.Singleton;
  *       ({@link dev.vertique.examples.services.service.AuthzProbeService})</li>
  * </ul>
  *
- * <p>Authentication modules ({@code AuthModule}, {@code SecurityModule}) are intentionally
- * excluded — this example focuses on service dispatch, not authentication. However,
- * {@link SecurityAuthzModule} (authorization engine only) and
+ * <p>{@link SecurityAuthzModule} (authorization engine only) and
  * {@link SecurityEventsModule} (security event emitter) are included so that the
  * {@link dev.vertique.services.interceptor.ServiceAuthorizationInterceptor} wired by
  * {@link DispatchModule} has a live {@link dev.vertique.security.authz.Authorizer}
@@ -85,7 +91,10 @@ import jakarta.inject.Singleton;
             CoreLifecycleStepsModule.class,
             AppModule.class,
             GeneratedJaxRsResourcesModule.class,
+            GeneratedAopModule.class,
+            GeneratedCacheModule.class,
             GeneratedServicesModule.class,
+            JwtAuthModule.class,
             SecurityAuthzModule.class,
             SecurityEventsModule.class,
             AuthzModule.class
