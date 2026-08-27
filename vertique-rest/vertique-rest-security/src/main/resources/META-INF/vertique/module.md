@@ -357,6 +357,19 @@ deny — a contract-violating decision point or `Authorizer` resolves a fail-clo
 caller, using it to authorize a tool invocation against the caller's already-resolved
 `SecurityContext` instead of a Vert.x route.
 
+**Gate deadline (issue #417, `AuthorizationGateConfig`).** Every role/scope and action gate future
+`decide` (and every handler `SecurityPolicyEnforcer` builds) awaits is bounded by a deadline — a
+non-blocking future from an app-provided `AuthorizationDecisionPoint` or `Authorizer` that simply
+never resolves (a remote PDP or OPA sidecar with no timeout of its own) would otherwise stall the
+caller indefinitely, which is a real failure for a caller with no `RoutingContext` idle timeout to
+fall back on (an MCP `tools/list` scan). Exceeding the deadline fails closed exactly like any other
+gate contract violation: `AuthzReasonCodes.INTERNAL_AUTHZ_ERROR`, one emitted
+`AuthorizationDecisionEvent`, no propagation of the stalled future. See
+[Configuration](#configuration) for the operator key and default. A general resilience/circuit-breaker
+module (issue #453) is the intended longer-term successor for bounding and recovering from a
+misbehaving decision point or authorizer; `AuthorizationGateConfig` is scoped to this one timeout
+value in the meantime.
+
 ### `JaxRsSecurityContext`
 
 Bridges the framework context to `jakarta.ws.rs.core.SecurityContext` so standard JAX-RS code works
@@ -680,6 +693,39 @@ Resolution rules:
 A non-empty `trustedProxyCidrs` is what makes forwarded headers trustworthy. Setting
 `trustForwardedScheme` or `trustForwardedHost` without it changes nothing.
 
+### Authorization gate deadline (`AuthorizationGateConfig`)
+
+`AuthorizationGateConfig` bounds every `SecurityPolicyEnforcer#decide` role/scope and action gate
+future (issue #417). By default `SecurityPolicyEnforcer` uses
+`AuthorizationGateConfig.DEFAULT_GATE_DEADLINE_MS` (`5000`) — no application wiring is required to get
+this default. To config-drive it instead, install `AuthorizationGateConfigModule` alongside
+`AuthModule`:
+
+```java
+@Component(modules = {..., AuthModule.class, AuthorizationGateConfigModule.class})
+public interface AppComponent { ... }
+```
+
+```yaml
+security:
+  authz:
+    gateDeadlineMs: 5000
+```
+
+| Component | Config key | Default | Meaning |
+|---|---|---|---|
+| `gateDeadlineMs` | `security.authz.gateDeadlineMs` | `5000` | Milliseconds bounding every role/scope and action gate future; must be `> 0` |
+
+This is one shared value for every transport that reuses `SecurityPolicyEnforcer` — REST
+(`AuthorizationContributor`), WebSocket (`WebSocketMount`), and MCP (`McpPolicyEnforcer`) all observe
+the same configured deadline; there is no per-transport override. A gate that exceeds the deadline
+fails closed with `AuthzReasonCodes.INTERNAL_AUTHZ_ERROR`, exactly like any other gate contract
+violation (see [Request-time outcomes](#request-time-outcomes)).
+
+An application may instead bind `AuthorizationGateConfig` programmatically (a `@Provides` method
+returning a constructed instance) rather than installing `AuthorizationGateConfigModule`, if it needs
+the value from a source other than the standard config file.
+
 ---
 
 ## Failures, Constraints, and Common Mistakes
@@ -706,7 +752,7 @@ There is no warn-only mode. Every validation failure stops startup.
 | 401 | `AUTHENTICATION_REQUIRED` | No `SecurityContext` bound, or an anonymous actor on an `AuthenticatedOnly` or `Constrained` route |
 | 403 | `DENY_ALL` | `@DenyAll` |
 | 403 | the decision's own code | The decision point denied |
-| 403 | `INTERNAL_AUTHZ_ERROR` | The decision point or `Authorizer` threw, returned a `null` future, or resolved to a `null` decision — fail-closed |
+| 403 | `INTERNAL_AUTHZ_ERROR` | The decision point or `Authorizer` threw, returned a `null` future, resolved to a `null` decision, or exceeded the configured [gate deadline](#authorization-gate-deadline-authorizationgateconfig) — fail-closed |
 | 503 | — | A provider failed during the opt-in [Vert.x authorization import](#vertx-authorization-import-opt-in) — fail-closed: the `SecurityContext` is never bound and no partially imported claim is observable. The problem detail is the generic `Authorization is temporarily unavailable`; the failing provider id is logged, never returned |
 | — | `PERMITTED` | Both gates passed |
 

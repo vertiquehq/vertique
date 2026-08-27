@@ -89,7 +89,7 @@ class SecurityPolicyEnforcerGateTimeoutContextTest {
                 NO_OP_CONTEXT_HOLDER,
                 NO_OP_SECURITY_RUNTIME,
                 Optional.empty(),
-                TEST_GATE_DEADLINE_MS);
+                Optional.of(new AuthorizationGateConfig(TEST_GATE_DEADLINE_MS)));
         SecurityPolicy.Constrained policy = new SecurityPolicy.Constrained(List.of("ops"), List.of(), false);
 
         Context requestContext = vertx.getOrCreateContext();

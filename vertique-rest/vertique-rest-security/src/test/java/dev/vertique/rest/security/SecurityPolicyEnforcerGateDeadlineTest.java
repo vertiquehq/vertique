@@ -51,9 +51,10 @@ import org.junit.jupiter.api.Test;
  * OPA sidecar under load) left the future {@code decide()} returns pending forever: on the MCP path
  * there is no {@code RoutingContext} idle timeout to eventually reclaim it.
  *
- * <p>Uses the package-private gate-deadline test seam ({@link SecurityPolicyEnforcer#SecurityPolicyEnforcer(
- * Optional, Optional, Set, SecurityEventEmitter, ContextHolder, SecurityRuntime, Optional, long)}) so
- * this proof completes in milliseconds rather than {@link SecurityPolicyEnforcer#DEFAULT_GATE_DEADLINE_MS}.
+ * <p>Uses the public {@link AuthorizationGateConfig}-carrying constructor ({@link
+ * SecurityPolicyEnforcer#SecurityPolicyEnforcer(
+ * Optional, Optional, Set, SecurityEventEmitter, ContextHolder, SecurityRuntime, Optional, Optional)}) so
+ * this proof completes in milliseconds rather than {@link AuthorizationGateConfig#DEFAULT_GATE_DEADLINE_MS}.
  * The {@code tools/list} scan-termination half of TP-001 — asserting the decision-point invocation
  * count across a multi-candidate scan, not just elapsed time — lives in {@code vertique-mcp-server}
  * (module boundary: {@code McpRequestDispatcher} is not visible here), in
@@ -86,11 +87,65 @@ class SecurityPolicyEnforcerGateDeadlineTest {
      */
     private static final long AWAIT_BOUND_MS = 3_000L;
 
+    /**
+     * R42 (issue #417's deferred configurability half): the gate deadline threaded through the
+     * PUBLIC {@link AuthorizationGateConfig} construction path — not the package-private test-only
+     * seam {@link #enforcerWith} still uses above. Deliberately far below {@link
+     * AuthorizationGateConfig#DEFAULT_GATE_DEADLINE_MS} so a hung gate denies fast rather than
+     * merely eventually.
+     */
+    private static final long CONFIGURED_GATE_DEADLINE_MS = 50L;
+
+    /**
+     * Comfortably larger than {@link #CONFIGURED_GATE_DEADLINE_MS} so a correctly-bounded gate
+     * always settles well within it, yet an order of magnitude below the old fixed 5s default —
+     * the decisive assertion below is that the deny arrives fast, not merely that it arrives.
+     */
+    private static final long CONFIGURED_AWAIT_BOUND_MS = 1_000L;
+
     @Test
     @DisplayName("shouldFailClosedOnceWhenAGateExceedsTheDeadline")
     void shouldFailClosedOnceWhenAGateExceedsTheDeadline() throws Exception {
         assertRoleScopeGateTimesOutAndFailsClosedOnce();
         assertActionGateTimesOutAndFailsClosedOnce();
+    }
+
+    /**
+     * R42: an enforcer constructed through the PUBLIC {@code @Inject} constructor with a configured
+     * {@link AuthorizationGateConfig} (50ms) must deny a hung role/scope gate fast — well under the
+     * old fixed 5s default — proving the deadline is genuinely operator-configurable rather than
+     * reachable only through the package-private test seam (issue #417's deferred question).
+     */
+    @Test
+    @DisplayName("shouldFailClosedFastWhenConstructedWithAConfiguredGateDeadline")
+    void shouldFailClosedFastWhenConstructedWithAConfiguredGateDeadline() throws Exception {
+        List<AuthorizationDecisionEvent> events = new ArrayList<>();
+        NeverCompletingDecisionPoint dp = new NeverCompletingDecisionPoint();
+        RecordingAuthorizer authorizer = RecordingAuthorizer.throwing(); // must not be consulted
+        SecurityPolicyEnforcer enforcer = new SecurityPolicyEnforcer(
+                Optional.of(dp),
+                Optional.empty(),
+                Set.of(),
+                capturingEmitter(events),
+                NO_OP_CONTEXT_HOLDER,
+                NO_OP_SECURITY_RUNTIME,
+                Optional.ofNullable(authorizer),
+                Optional.of(new AuthorizationGateConfig(CONFIGURED_GATE_DEADLINE_MS)));
+        SecurityPolicy.Constrained policy = new SecurityPolicy.Constrained(List.of("ops"), List.of(), false);
+
+        long startNanos = System.nanoTime();
+        Future<AuthorizationDecision> result =
+                enforcer.decide(aliceContext(Set.of("ops")), policy, Optional.empty(), TOOL_RESOURCE, MCP_ORIGIN);
+        AuthorizationDecision decision =
+                result.toCompletionStage().toCompletableFuture().get(CONFIGURED_AWAIT_BOUND_MS, TimeUnit.MILLISECONDS);
+        long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;
+
+        assertThat(decision.permitted()).isFalse();
+        assertThat(decision.reasonCode()).isEqualTo(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR);
+        assertThat(events).hasSize(1);
+        assertThat(elapsedMs)
+                .as("the configured 50ms deadline must deny well under the old fixed 5s default")
+                .isLessThan(1_000L);
     }
 
     /**
@@ -216,7 +271,7 @@ class SecurityPolicyEnforcerGateDeadlineTest {
                 NO_OP_CONTEXT_HOLDER,
                 NO_OP_SECURITY_RUNTIME,
                 Optional.ofNullable(authorizer),
-                TEST_GATE_DEADLINE_MS);
+                Optional.of(new AuthorizationGateConfig(TEST_GATE_DEADLINE_MS)));
     }
 
     // --- Test doubles ---

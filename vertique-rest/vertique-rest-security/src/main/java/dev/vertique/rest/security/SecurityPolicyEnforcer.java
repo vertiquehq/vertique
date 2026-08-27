@@ -96,17 +96,6 @@ import lombok.extern.slf4j.Slf4j;
 @Singleton
 public class SecurityPolicyEnforcer {
 
-    /**
-     * The default bound, in milliseconds, on every {@link #decide} role/scope and action gate future
-     * (issue #417). An app-provided {@link AuthorizationDecisionPoint} (a remote PDP, an OPA sidecar)
-     * or {@link Authorizer} is documented as "must not block", but a non-blocking future that simply
-     * never resolves is not blocking — so nothing previously caught it, and the caller (a {@code
-     * tools/list} scan with no {@code RoutingContext} to fall back on) hung forever. Chosen to match
-     * {@code PrincipalAuthorityResolutionConfig#DEFAULT_RESOLUTION_TIMEOUT_MS} — enough headroom for a
-     * genuine remote call without hanging authorization indefinitely.
-     */
-    static final long DEFAULT_GATE_DEADLINE_MS = 5_000L;
-
     private final AuthorizationDecisionPoint decisionPoint;
     private final SecurityRuntime securityRuntime;
     private final SecurityEventEmitter emitter;
@@ -125,22 +114,19 @@ public class SecurityPolicyEnforcer {
 
     /**
      * The bound, in milliseconds, on every {@link #decide} gate future — {@link
-     * #DEFAULT_GATE_DEADLINE_MS} for the {@code @Inject}-constructed instance every application
-     * receives; overridable only through the package-private test seam below (issue #417).
+     * AuthorizationGateConfig#DEFAULT_GATE_DEADLINE_MS} by default, operator-configurable via the
+     * {@code security.authz} config section (issue #417, R42).
      */
     private final long gateDeadlineMs;
 
     /**
-     * Creates a new enforcer.
+     * Creates a new enforcer with the framework-default {@link AuthorizationGateConfig} (issue
+     * #417's fixed pre-R42 deadline, byte-identical to before R42). Equivalent to the eight-argument
+     * constructor with {@link Optional#empty()} for {@code authorizationGateConfig}.
      *
-     * <p>The {@link AuthorizationDecisionPoint} is resolved using the priority chain described in
-     * the class-level javadoc:
-     * <ol>
-     *   <li>App-provided {@code AuthorizationDecisionPoint} override (optional)</li>
-     *   <li>App-provided {@code AuthorizationPolicy} (sync, optional) → wrapped as
-     *       {@link SyncPolicyDecisionPoint}</li>
-     *   <li>Default {@link VertxProviderDecisionPoint} (framework default)</li>
-     * </ol>
+     * <p>Not {@code @Inject}-annotated — hand-wiring call sites (tests, {@code WebSocketMount}'s
+     * manually-constructed instance before R42) that do not need to thread a configured deadline use
+     * this overload; Dagger itself always resolves the eight-argument constructor below.
      *
      * @param authorizationDecisionPoint optional app-provided async decision point; takes precedence
      *                                   over everything else
@@ -160,7 +146,6 @@ public class SecurityPolicyEnforcer {
      *                                   can pass startup validation — slice 11). Must not be {@code null};
      *                                   {@link Optional#empty()} signals "engine absent".
      */
-    @Inject
     public SecurityPolicyEnforcer(
             Optional<AuthorizationDecisionPoint> authorizationDecisionPoint,
             Optional<AuthorizationPolicy> authorizationPolicy,
@@ -177,24 +162,40 @@ public class SecurityPolicyEnforcer {
                 contextHolder,
                 securityRuntime,
                 authorizer,
-                DEFAULT_GATE_DEADLINE_MS);
+                Optional.empty());
     }
 
     /**
-     * As the seven-argument constructor above, but with an explicit {@link #decide} gate deadline
-     * instead of the fixed {@link #DEFAULT_GATE_DEADLINE_MS} every application receives.
+     * As the seven-argument constructor above, but with an explicit, operator-configurable {@link
+     * #decide} gate deadline instead of the framework default (issue #417, R42).
      *
-     * <p>Test-only seam (issue #417 TP-001): lets a proof exercise the fail-closed timeout path
-     * deterministically, in milliseconds rather than {@value #DEFAULT_GATE_DEADLINE_MS}. Package-private
-     * — not part of the frozen public inventory (this project has no {@code @VisibleForTesting}
-     * annotation; this note records the intent, mirroring {@code DefaultBoundRequest}'s established
-     * convention).
+     * <p>{@code @Inject}-constructed instances receive {@code Optional<AuthorizationGateConfig>} —
+     * empty unless the application installs {@link AuthorizationGateConfigModule} (or binds {@link
+     * AuthorizationGateConfig} some other way), in which case it defaults to {@link
+     * AuthorizationGateConfig#defaults()} (byte-identical to the pre-R42 hardcoded constant).
      *
-     * @param gateDeadlineMs the bound, in milliseconds, on the role/scope and action gate futures;
-     *                       must be positive
-     * @throws IllegalArgumentException if {@code gateDeadlineMs} is not positive
+     * @param authorizationDecisionPoint optional app-provided async decision point; takes precedence
+     *                                   over everything else
+     * @param authorizationPolicy        optional app-provided sync authorization policy; used when no
+     *                                   async override is present
+     * @param authorizationProviders     Vert.x authorization provider set for the default decision
+     *                                   point
+     * @param emitter                    the security event emitter used to emit the one
+     *                                   {@link AuthorizationDecisionEvent} per authorization attempt
+     * @param contextHolder              the context holder for reading the ambient
+     *                                   {@link dev.vertique.core.correlation.CorrelationContext}
+     * @param securityRuntime            the security runtime for reading the current
+     *                                   {@link dev.vertique.security.SecurityContext}
+     * @param authorizer                 the optional core action {@link Authorizer} used to evaluate the
+     *                                   {@code @RequiresAction} gate; empty when the authorization engine
+     *                                   is not installed (in which case no {@code @RequiresAction} route
+     *                                   can pass startup validation — slice 11). Must not be {@code null};
+     *                                   {@link Optional#empty()} signals "engine absent".
+     * @param authorizationGateConfig    the optional operator-configured gate deadline; empty defaults
+     *                                   to {@link AuthorizationGateConfig#defaults()}
      */
-    SecurityPolicyEnforcer(
+    @Inject
+    public SecurityPolicyEnforcer(
             Optional<AuthorizationDecisionPoint> authorizationDecisionPoint,
             Optional<AuthorizationPolicy> authorizationPolicy,
             Set<AuthorizationProvider> authorizationProviders,
@@ -202,7 +203,7 @@ public class SecurityPolicyEnforcer {
             ContextHolder contextHolder,
             SecurityRuntime securityRuntime,
             Optional<Authorizer> authorizer,
-            long gateDeadlineMs) {
+            Optional<AuthorizationGateConfig> authorizationGateConfig) {
         Objects.requireNonNull(authorizationDecisionPoint, "authorizationDecisionPoint");
         Objects.requireNonNull(authorizationPolicy, "authorizationPolicy");
         Objects.requireNonNull(authorizationProviders, "authorizationProviders");
@@ -210,10 +211,9 @@ public class SecurityPolicyEnforcer {
         this.contextHolder = Objects.requireNonNull(contextHolder, "contextHolder");
         this.securityRuntime = Objects.requireNonNull(securityRuntime, "securityRuntime");
         this.authorizer = Objects.requireNonNull(authorizer, "authorizer").orElse(null);
-        if (gateDeadlineMs <= 0) {
-            throw new IllegalArgumentException("gateDeadlineMs must be positive, got: " + gateDeadlineMs);
-        }
-        this.gateDeadlineMs = gateDeadlineMs;
+        this.gateDeadlineMs = Objects.requireNonNull(authorizationGateConfig, "authorizationGateConfig")
+                .orElseGet(AuthorizationGateConfig::defaults)
+                .gateDeadlineMs();
 
         if (authorizationDecisionPoint.isPresent()) {
             this.decisionPoint = authorizationDecisionPoint.get();

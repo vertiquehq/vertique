@@ -265,6 +265,7 @@ public class WebSocketMount implements RouterMount {
                     channelIdentityManager,
                     authorizer,
                     actionRegistry,
+                    Optional.empty(),
                     Optional.empty());
         }
 
@@ -329,6 +330,14 @@ public class WebSocketMount implements RouterMount {
          *                                       so contributed providers are consulted during identity
          *                                       resolution at upgrade time. Absent → the import step
          *                                       is skipped.
+         * @param authorizationGateConfig        optional operator-configured {@link
+         *                                       SecurityPolicyEnforcer#decide} gate deadline (issue
+         *                                       #417, R42); empty defaults to {@link
+         *                                       dev.vertique.rest.security.AuthorizationGateConfig#defaults()}.
+         *                                       Threaded into the enforcer so the WebSocket upgrade
+         *                                       gate honors the same operator-configured deadline as
+         *                                       REST and MCP — a single knob across all three
+         *                                       transports.
          */
         @Inject
         public Factory(
@@ -348,7 +357,8 @@ public class WebSocketMount implements RouterMount {
                 Optional<ChannelIdentityManager> channelIdentityManager,
                 Optional<Authorizer> authorizer,
                 Optional<ActionRegistry> actionRegistry,
-                Optional<VertxAuthorizationImporter> vertxAuthorizationImporter) {
+                Optional<VertxAuthorizationImporter> vertxAuthorizationImporter,
+                Optional<dev.vertique.rest.security.AuthorizationGateConfig> authorizationGateConfig) {
             this.messageCodec = messageCodec;
             this.routeAuthHandlers = routeAuthHandlers;
             this.sortedInterceptors = requestInterceptors.stream()
@@ -372,7 +382,10 @@ public class WebSocketMount implements RouterMount {
                         // composed and enforced once at upgrade (FR-AUTHZ-048, ADR-0115). Empty when the
                         // authz engine is absent — in which case no @RequiresAction endpoint passes the
                         // scanner's startup validation, so the enforcer never reads it.
-                        authorizer);
+                        authorizer,
+                        // Thread the operator-configured gate deadline (issue #417, R42) so the
+                        // WebSocket upgrade gate honors the same deadline as REST and MCP.
+                        authorizationGateConfig);
                 this.identityResolutionMiddleware = new IdentityResolutionMiddleware(
                         identityResolvers,
                         claimMapper,
