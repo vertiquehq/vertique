@@ -35,6 +35,7 @@ import dev.vertique.security.SecurityIdentity;
 import dev.vertique.security.resolver.SecurityIdentityResolutionContext;
 import dev.vertique.security.resolver.SecurityIdentityResolver;
 import dev.vertique.security.runtime.events.SecurityEventEmitter;
+import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
@@ -76,7 +77,6 @@ public class McpSettlementRaceCharacterizationIT {
     private static final int LARGE_RESULT_CHARS = 1_000_000;
     private static final String LARGE_RESULT = "x".repeat(LARGE_RESULT_CHARS);
     private static final long ASYNC_TIMEOUT_SECONDS = 5;
-    private static final long DOUBLE_SETTLE_GRACE_MS = 100;
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("seeds")
@@ -99,7 +99,12 @@ public class McpSettlementRaceCharacterizationIT {
                 fixture.completeTool("late");
                 fixture.awaitLateCompletionReachedFramework();
             }
-            Thread.sleep(DOUBLE_SETTLE_GRACE_MS);
+            // Deterministic replacement for a fixed sleep: a marker task queued on the exact Vert.x
+            // context the request ran on only resolves once every task already queued ahead of it —
+            // including a stalled write's recovery redispatch and any late-completion continuation —
+            // has itself run to completion. Draining that context is therefore equivalent to (and
+            // strictly tighter than) waiting out a fixed grace period.
+            fixture.drainRequestContext();
             fixture.observer().assertExactlyOneTerminalThenOneCompletion();
         }
     }
@@ -317,6 +322,18 @@ public class McpSettlementRaceCharacterizationIT {
             tool.awaitResultHandler();
         }
 
+        /**
+         * Deterministically drains the exact Vert.x context the request ran on: a marker task queued
+         * on that context only resolves once every task already queued ahead of it has itself run,
+         * which is what a fixed {@code Thread.sleep} grace period previously approximated.
+         */
+        private void drainRequestContext() throws Exception {
+            Context requestContext = tool.requestContext();
+            CompletableFuture<Void> marker = new CompletableFuture<>();
+            requestContext.runOnContext(ignored -> marker.complete(null));
+            marker.get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        }
+
         private RecordingObserver observer() {
             return observer;
         }
@@ -353,6 +370,7 @@ public class McpSettlementRaceCharacterizationIT {
             private final Promise<McpToolResult<?>> result = Promise.promise();
             private final CompletableFuture<Void> invoked = new CompletableFuture<>();
             private final CompletableFuture<Void> resultHandler = new CompletableFuture<>();
+            private volatile Context requestContext;
 
             @Override
             public McpToolDescriptor descriptor() {
@@ -361,6 +379,10 @@ public class McpSettlementRaceCharacterizationIT {
 
             @Override
             public McpPreparedToolCall prepare(Map<String, Object> arguments, McpCancellationSignal cancellation) {
+                // Captured here rather than in invoke(): prepare() runs synchronously within
+                // invokeAndRespond, unambiguously on the request-owning context, before any
+                // application-supplied future could ever introduce an off-context detour.
+                requestContext = Vertx.currentContext();
                 return new McpPreparedToolCall() {
                     @Override
                     public Map<String, Object> normalizedArguments() {
@@ -385,6 +407,10 @@ public class McpSettlementRaceCharacterizationIT {
 
             private void awaitResultHandler() throws Exception {
                 await(resultHandler);
+            }
+
+            private Context requestContext() {
+                return requestContext;
             }
 
             private static void await(CompletableFuture<Void> signal) throws Exception {

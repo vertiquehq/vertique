@@ -30,7 +30,7 @@ import org.junit.jupiter.api.Timeout;
 
 /**
  * T020 TP-002 — the fixed lifecycle callback order holds across a successful call, a tool-error call,
- * and a rejected call: {@code open -> onToolInput -> onToolOutput -> onTerminal -> onCompleted}, each
+ * and a rejected call: {@code open -> onToolInput -> onTerminal -> onToolOutput -> onCompleted}, each
  * applicable callback exactly once, with a rejected call skipping the two value callbacks while still
  * delivering exactly one terminal and one completion.
  *
@@ -74,7 +74,7 @@ class McpLifecycleObservationIT {
     }
 
     @Test
-    @DisplayName("delivers open -> onToolInput -> onToolOutput -> onTerminal -> onCompleted exactly once per request")
+    @DisplayName("delivers open -> onToolInput -> onTerminal -> onToolOutput -> onCompleted exactly once per request")
     void shouldOrderEveryCallbackExactlyOncePerRequest() throws Exception {
         // Given: a port-0 server with one capability-implementing observer and one plain observer, a
         // successful-call tool, and a tool-error-call tool.
@@ -115,11 +115,11 @@ class McpLifecycleObservationIT {
                 .hasSize(3);
         assertThat(capableSessions.get(0).events())
                 .as("DECISIVE: the successful call's exact ordered callback sequence")
-                .containsExactly("open", "onToolInput", "onToolOutput", "onTerminal", "onCompleted");
+                .containsExactly("open", "onToolInput", "onTerminal", "onToolOutput", "onCompleted");
         assertThat(capableSessions.get(1).events())
                 .as("DECISIVE: the tool-error call's exact ordered callback sequence — a completed "
                         + "tool-error result still runs the full value-observation pipeline")
-                .containsExactly("open", "onToolInput", "onToolOutput", "onTerminal", "onCompleted");
+                .containsExactly("open", "onToolInput", "onTerminal", "onToolOutput", "onCompleted");
         assertThat(capableSessions.get(2).events())
                 .as("DECISIVE: the rejected call skips both value callbacks but still delivers exactly "
                         + "one terminal and one completion")
