@@ -24,6 +24,10 @@ public interface McpCancellationSignal {
     /**
      * Reports whether the call has already been cancelled.
      *
+     * <p>Safe to poll from any thread, including an application worker thread backing the tool
+     * invocation, not only the request-owning Vert.x context. A callback-style consumer should prefer
+     * {@link #cancelled()} instead.
+     *
      * @return {@code true} once the call is cancelled
      */
     boolean isCancelled();

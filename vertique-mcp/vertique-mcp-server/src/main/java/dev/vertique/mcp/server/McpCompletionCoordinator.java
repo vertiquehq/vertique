@@ -527,7 +527,12 @@ final class McpCompletionCoordinator {
      */
     private static final class McpRequestCancellationSignal implements McpCancellationSignal {
         private final Promise<Void> cancelled = Promise.promise();
-        private boolean cancelledFlag;
+
+        // This one field alone crosses the context boundary by design: application workers backing a
+        // tool invocation may poll isCancelled() from any thread, not only the request-owning Vert.x
+        // context. Every other latch in this coordinator stays context-confined — do not "clean this
+        // up" into consistency with them.
+        private volatile boolean cancelledFlag;
 
         @Override
         public boolean isCancelled() {

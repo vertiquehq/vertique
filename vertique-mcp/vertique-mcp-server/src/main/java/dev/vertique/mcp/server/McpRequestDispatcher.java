@@ -1993,6 +1993,19 @@ final class McpRequestDispatcher {
                         writeSseFallback(context, envelope, security, toolName, invokeFailure);
                         return;
                     }
+                    if (result == null) {
+                        // Mirrors runRequestInterceptors/runToolInterceptors' own null-returned-future guard
+                        // (~1038, ~1081): a well-behaved McpPreparedToolCall#invoke never returns null, but a
+                        // non-compliant one must not be allowed to NPE uncaught out of anchoredOnContext below
+                        // and strand the request with no response, no terminal, and no completion.
+                        writeSseFallback(
+                                context,
+                                envelope,
+                                security,
+                                toolName,
+                                new NullPointerException(prepared.getClass().getName() + "#invoke returned null"));
+                        return;
+                    }
                     anchoredOnContext(result, owningContext).onComplete(ar -> {
                         if (ar.failed() || ar.result() == null) {
                             writeSseFallback(

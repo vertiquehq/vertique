@@ -14,6 +14,7 @@ import dev.vertique.rest.core.config.HttpConfig;
 import io.vertx.core.MultiMap;
 import jakarta.annotation.Nullable;
 import java.io.UncheckedIOException;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -284,13 +285,17 @@ final class McpProtocolCodec {
     }
 
     /**
-     * Reports whether {@code headers} carries {@code headerName} with a value exactly equal
+     * Reports whether {@code headers} carries {@code headerName} exactly once with a value equal
      * (case-sensitively) to {@code expected}. The header name lookup is case-insensitive per {@link
-     * MultiMap#get(String)}'s own contract; an absent header never matches.
+     * MultiMap#get(String)}'s own contract; an absent header never matches. A header sent with more
+     * than one value never matches either, even when every occurrence is identical to {@code
+     * expected}: duplicates are rejected to prevent intermediary/backend header-desync, where a
+     * proxy or gateway forwards a different one of the duplicated values than the one this codec
+     * observed.
      */
     private static boolean headerMatches(MultiMap headers, String headerName, String expected) {
-        String actual = headers.get(headerName);
-        return actual != null && actual.equals(expected);
+        List<String> values = headers.getAll(headerName);
+        return values.size() == 1 && values.get(0).equals(expected);
     }
 
     private static CodecError negotiationError() {

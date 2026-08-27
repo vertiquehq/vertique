@@ -38,19 +38,19 @@ generic JSON configuration keys for it. Request body size is enforced from `http
 also bounds the maximum decodable envelope document length. A configured `jsonProfile` is validated during composition even
 if MCP is disabled, preventing a latent invalid deployment configuration.
 
-**Transport liveness is not provided out of the box, and startup enforces that at least one bound
-exists.** MCP arms no whole-request deadline of its own; it relies entirely on the shared
-`HttpConfig` idle/read/write timeouts to
-ever close a stalled or abandoned connection. Those three settings — `http.idleTimeoutSeconds`,
-`http.readIdleTimeoutSeconds`, and `http.writeIdleTimeoutSeconds` — all **default to `0`, which
-disables them**. Left unset, a hanging request-interceptor, a hanging tool-interceptor, a hanging
-tool handler, or a client that simply stops reading mid-response could hold its connection, and the
-MCP request lifecycle observation opened for it, open indefinitely — reachable by an unauthenticated
-caller against any `@PermitAll` tool. `McpServerConfigValidator` closes this at composition: **an
-enabled MCP mount refuses to start unless at least one of the three `HttpConfig` liveness timeouts is
-greater than zero**, naming all three keys in the `ConfigurationException` message when none is set.
-Set at least one non-zero `HttpConfig` timeout for any MCP deployment — the mount will not start
-otherwise.
+**Transport liveness is not provided out of the box, and startup enforces that at least one qualifying
+bound exists.** MCP arms no whole-request deadline of its own; it relies entirely on the shared
+`HttpConfig` idle/read timeouts to ever close a stalled or abandoned connection.
+`http.idleTimeoutSeconds` and `http.readIdleTimeoutSeconds` both **default to `0`, which disables
+them**. Left unset, a hanging request-interceptor, a hanging tool-interceptor, a hanging tool handler,
+or a client that simply stops reading mid-response could hold its connection, and the MCP request
+lifecycle observation opened for it, open indefinitely — reachable by an unauthenticated caller
+against any `@PermitAll` tool. `McpServerConfigValidator` closes this at composition: **an enabled MCP
+mount refuses to start unless `http.idleTimeoutSeconds` or `http.readIdleTimeoutSeconds` is greater
+than zero.** `http.writeIdleTimeoutSeconds` does not qualify on its own (repair task R33): it fires
+only while a write is actually in flight, so it cannot reclaim a connection that opens and then never
+reads or writes again. Set at least one of the two qualifying `HttpConfig` timeouts for any MCP
+deployment — the mount will not start otherwise.
 
 **Configuration keys are flat under `mcp`.** `McpServerConfig` is bound from the `mcp` section by
 Jackson using the field names exactly as declared: `mcp.outputMaxBytes`, `mcp.ingressMaxTokens`,
@@ -287,7 +287,11 @@ protocol negotiation. `MCP-Protocol-Version` and
 `params._meta`'s `io.modelcontextprotocol/protocolVersion` and the envelope's `method`.
 `Mcp-Name` is required and compared with `params.name` only for `tools/call`; `server/discover` and
 `tools/list` have no name-shaped identifier, so they accept either an absent or unsolicited
-`Mcp-Name`. The per-method `_meta` shape and supported protocol version must satisfy Phase-1 policy,
+`Mcp-Name`. Any one of these routing headers sent more than once — even with every occurrence
+identical — fails negotiation rather than matching on the first observed value (repair task R33): a
+duplicated header is rejected to prevent intermediary/backend header-desync, where a proxy or gateway
+forwards a different one of the duplicated values than the one this codec observed. The per-method
+`_meta` shape and supported protocol version must satisfy Phase-1 policy,
 and `tools/call.params` must carry neither reserved multi-round-trip field
 `inputResponses`/`requestState`. A missing applicable header, header/body disagreement, or Phase-1
 negotiation-policy violation is exclusively `-32020` *Header/body mismatch*, mapped to HTTP 400

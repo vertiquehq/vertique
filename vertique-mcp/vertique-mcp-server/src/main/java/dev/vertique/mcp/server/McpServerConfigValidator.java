@@ -35,11 +35,11 @@ final class McpServerConfigValidator {
                 config.authenticationScheme() == null
                         || !config.authenticationScheme().isBlank(),
                 "mcp.authenticationScheme");
-        requireRange(config.outputMaxBytes(), 1_024, 16_777_216, "mcp.output.maxBytes");
+        requireRange(config.outputMaxBytes(), 1_024, 16_777_216, "mcp.outputMaxBytes");
         requireTokenBudget(config.ingressMaxTokens(), "mcp.ingressMaxTokens");
         requireTokenBudget(config.outputMaxTokens(), "mcp.outputMaxTokens");
-        requireRange(config.toolsPageSize(), 1, 500, "mcp.tools.pageSize");
-        requireRange(config.toolsTtlMs(), 0, 3_600_000, "mcp.tools.ttlMs");
+        requireRange(config.toolsPageSize(), 1, 500, "mcp.toolsPageSize");
+        requireRange(config.toolsTtlMs(), 0, 3_600_000, "mcp.toolsTtlMs");
         validateOrigins(config.allowedOrigins());
     }
 
@@ -97,21 +97,23 @@ final class McpServerConfigValidator {
      * <p>MCP arms no whole-request deadline of its own (the T007 amendment removed {@code
      * mcp.request.timeoutMs}): the only thing that can ever reclaim a hanging {@code
      * McpRequestInterceptor}, a hanging {@code McpToolInterceptor}, a hanging tool handler, or a
-     * client that stops reading mid-response is the shared {@link HttpConfig} idle/read/write
-     * timeout behavior. Every one of {@link HttpConfig#idleTimeoutSeconds()}, {@link
-     * HttpConfig#readIdleTimeoutSeconds()}, and {@link HttpConfig#writeIdleTimeoutSeconds()} defaults
-     * to {@code 0} ("disabled"), so a default deployment provides no deadline at all — an
-     * unauthenticated caller can strand a {@code @PermitAll} tool's connection, coordinator, and every
-     * open observation indefinitely. This is the one place that closes that gap: an enabled mount
-     * refuses to start unless at least one of the three is armed.
+     * client that stops reading mid-response is the shared {@link HttpConfig} idle/read timeout
+     * behavior. Both {@link HttpConfig#idleTimeoutSeconds()} and {@link
+     * HttpConfig#readIdleTimeoutSeconds()} default to {@code 0} ("disabled"), so a default deployment
+     * provides no deadline at all — an unauthenticated caller can strand a {@code @PermitAll} tool's
+     * connection, coordinator, and every open observation indefinitely. This is the one place that
+     * closes that gap: an enabled mount refuses to start unless at least one of the two is armed.
+     * {@link HttpConfig#writeIdleTimeoutSeconds()} alone does not qualify (repair task R33 defect 4):
+     * it fires only while a write is actually in flight, so it cannot reclaim a connection that opens
+     * and then never reads or writes again.
      *
      * @param config the bounded configuration to validate
      * @param routeAuthHandlers every registered optional-authentication-capable handler
      * @param registry the immutable tool registry built before this validation runs
      * @param httpConfig the shared HTTP configuration whose liveness timeouts are checked
      * @throws ConfigurationException if any check {@link #validate(McpServerConfig, Set,
-     *     McpToolRegistry)} performs fails, or if the mount is enabled and every {@link HttpConfig}
-     *     liveness timeout is zero
+     *     McpToolRegistry)} performs fails, or if the mount is enabled and both {@link
+     *     HttpConfig#idleTimeoutSeconds()} and {@link HttpConfig#readIdleTimeoutSeconds()} are zero
      */
     void validate(
             McpServerConfig config,
@@ -123,15 +125,15 @@ final class McpServerConfigValidator {
         if (!config.enabled()) {
             return;
         }
-        boolean anyLivenessTimeoutArmed = httpConfig.idleTimeoutSeconds() > 0
-                || httpConfig.readIdleTimeoutSeconds() > 0
-                || httpConfig.writeIdleTimeoutSeconds() > 0;
+        boolean anyLivenessTimeoutArmed =
+                httpConfig.idleTimeoutSeconds() > 0 || httpConfig.readIdleTimeoutSeconds() > 0;
         require(
                 anyLivenessTimeoutArmed,
-                "http.idleTimeoutSeconds, http.readIdleTimeoutSeconds, http.writeIdleTimeoutSeconds "
-                        + "(at least one must be greater than zero while mcp is enabled, so a hanging "
-                        + "interceptor, tool handler, or non-reading client cannot strand a connection "
-                        + "indefinitely)");
+                "http.idleTimeoutSeconds or http.readIdleTimeoutSeconds must be greater than zero while "
+                        + "mcp is enabled, so a hanging interceptor, tool handler, or non-reading client "
+                        + "cannot strand a connection indefinitely (http.writeIdleTimeoutSeconds alone does "
+                        + "not satisfy this gate: a write timer cannot reclaim a hung handler that never "
+                        + "writes)");
     }
 
     /**
