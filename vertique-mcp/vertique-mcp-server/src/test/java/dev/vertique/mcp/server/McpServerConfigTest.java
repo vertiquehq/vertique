@@ -19,12 +19,14 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RoutingContext;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -39,6 +41,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * {@code McpJsonProfileDefaultValidator} and is covered exhaustively by
  * {@code McpJsonProfileDefaultValidatorTest}; duplicating them here would pin the wrong owner.
  */
+@Timeout(value = 20, unit = TimeUnit.SECONDS)
 class McpServerConfigTest {
     private static final int MAX_INSTRUCTIONS_CHARS = 16_384;
 
@@ -336,10 +339,33 @@ class McpServerConfigTest {
 
         @ParameterizedTest(name = "{0}")
         @MethodSource("dev.vertique.mcp.server.McpServerConfigTest#armedLivenessTimeoutRows")
-        @DisplayName("accepts an enabled mount when at least one HttpConfig liveness timeout is armed")
+        @DisplayName("accepts an enabled mount when at least one qualifying HttpConfig liveness timeout is armed")
         void shouldAcceptEnabledMountWithAnyLivenessTimeoutArmed(String row, HttpConfig httpConfig) {
             assertThatCode(() -> validator.validate(enabled(), Set.of(), emptyRegistry, httpConfig))
                     .doesNotThrowAnyException();
+        }
+
+        /**
+         * Repair task R33 defect 4: {@code writeIdleTimeoutSeconds} alone never bounds a client that
+         * opens a connection and then neither reads nor writes again — it fires only while a write is
+         * actually in flight — so it must not, by itself, satisfy the liveness gate. RED today: the
+         * validator's current {@code anyLivenessTimeoutArmed} check ORs in {@code
+         * writeIdleTimeoutSeconds() > 0} unconditionally, so this configuration is wrongly accepted.
+         */
+        @Test
+        @DisplayName("rejects an enabled mount when only HttpConfig.writeIdleTimeoutSeconds is armed (R33 defect 4)")
+        void shouldRejectEnabledMountWithOnlyWriteIdleTimeoutArmed() {
+            assertThatThrownBy(() -> validator.validate(
+                            enabled(),
+                            Set.of(),
+                            emptyRegistry,
+                            HttpConfig.builder().writeIdleTimeoutSeconds(30).build()))
+                    .as("RED today (R33 defect 4): a write-idle timeout alone must not satisfy the MCP "
+                            + "liveness gate")
+                    .isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("http.idleTimeoutSeconds")
+                    .hasMessageContaining("http.readIdleTimeoutSeconds")
+                    .hasMessageContaining("http.writeIdleTimeoutSeconds");
         }
 
         @Test
@@ -355,6 +381,11 @@ class McpServerConfigTest {
         }
     }
 
+    /**
+     * The two liveness timeouts that qualify a mount on their own (R33 defect 4 removed {@code
+     * writeIdleTimeoutSeconds} from this set — see {@code
+     * shouldRejectEnabledMountWithOnlyWriteIdleTimeoutArmed}).
+     */
     private static Stream<Arguments> armedLivenessTimeoutRows() {
         return Stream.of(
                 Arguments.of(
@@ -362,10 +393,7 @@ class McpServerConfigTest {
                         HttpConfig.builder().idleTimeoutSeconds(30).build()),
                 Arguments.of(
                         "readIdleTimeoutSeconds only",
-                        HttpConfig.builder().readIdleTimeoutSeconds(30).build()),
-                Arguments.of(
-                        "writeIdleTimeoutSeconds only",
-                        HttpConfig.builder().writeIdleTimeoutSeconds(30).build()));
+                        HttpConfig.builder().readIdleTimeoutSeconds(30).build()));
     }
 
     /**
@@ -431,21 +459,27 @@ class McpServerConfigTest {
                                 property.key())));
     }
 
-    /** The contract's bounded numeric properties, with the exact ranges the validator enforces. */
+    /**
+     * The contract's bounded numeric properties, with the exact ranges the validator enforces.
+     *
+     * <p>Repair task R33 defect 3: the three key literals below are the <em>corrected</em> emitted
+     * key names ({@code mcp.outputMaxBytes}, {@code mcp.toolsPageSize}, {@code mcp.toolsTtlMs}) — RED
+     * today, since {@link McpServerConfigValidator} still emits the stale dotted forms ({@code
+     * mcp.output.maxBytes}, {@code mcp.tools.pageSize}, {@code mcp.tools.ttlMs}), which do not
+     * substring-match these corrected literals in {@code shouldRejectValuePastBound}'s {@code
+     * hasMessageContaining(key)} assertion.
+     */
     private static Stream<NumericProperty> numericProperties() {
         return Stream.of(
                 new NumericProperty(
-                        "mcp.output.maxBytes",
+                        "mcp.outputMaxBytes",
                         1_024,
                         16_777_216,
                         (builder, value) -> builder.outputMaxBytes(Math.toIntExact(value))),
                 new NumericProperty(
-                        "mcp.tools.pageSize",
-                        1,
-                        500,
-                        (builder, value) -> builder.toolsPageSize(Math.toIntExact(value))),
+                        "mcp.toolsPageSize", 1, 500, (builder, value) -> builder.toolsPageSize(Math.toIntExact(value))),
                 new NumericProperty(
-                        "mcp.tools.ttlMs", 0, 3_600_000, McpServerConfig.McpServerConfigBuilder::toolsTtlMs));
+                        "mcp.toolsTtlMs", 0, 3_600_000, McpServerConfig.McpServerConfigBuilder::toolsTtlMs));
     }
 
     // --- Row tables: identity and instructions (W4) ---

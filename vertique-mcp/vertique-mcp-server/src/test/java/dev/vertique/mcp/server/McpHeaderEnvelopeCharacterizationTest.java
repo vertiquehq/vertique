@@ -36,6 +36,7 @@ import io.vertx.core.MultiMap;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.http.HttpServerResponse;
+import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RequestBody;
 import io.vertx.ext.web.RoutingContext;
@@ -56,6 +57,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 
 /** T030's fixed characterization of the frozen header and JSON-RPC envelope classifier. */
+@Timeout(value = 20, unit = TimeUnit.SECONDS)
 class McpHeaderEnvelopeCharacterizationTest {
 
     private static final List<String> SEED_RESOURCES =
@@ -145,7 +147,19 @@ class McpHeaderEnvelopeCharacterizationTest {
             JsonObject json = new JsonObject(line);
             MultiMap headers = MultiMap.caseInsensitiveMultiMap();
             JsonObject encodedHeaders = json.getJsonObject("headers");
-            encodedHeaders.fieldNames().forEach(name -> headers.set(name, encodedHeaders.getString(name)));
+            // Repair task R33 defect 1: a header value encoded as a JSON array (rather than the usual
+            // plain string) represents a single header name sent with more than one value on the wire —
+            // MultiMap#add appends each one as its own entry instead of MultiMap#set overwriting the
+            // header, so headerMatches's own MultiMap#getAll(String) sees the same duplication a real
+            // client's repeated header line would produce.
+            encodedHeaders.fieldNames().forEach(name -> {
+                Object value = encodedHeaders.getValue(name);
+                if (value instanceof JsonArray values) {
+                    values.forEach(entry -> headers.add(name, (String) entry));
+                } else {
+                    headers.set(name, (String) value);
+                }
+            });
             return new Seed(
                     json.getString("id"),
                     json.getString("body"),

@@ -44,9 +44,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
@@ -74,6 +76,7 @@ import org.mockito.ArgumentCaptor;
  * {@code -32602}, not protocol-version negotiation failures, so they deliberately do not share this
  * matrix's {@code -32020} assertion.
  */
+@Timeout(value = 20, unit = TimeUnit.SECONDS)
 class McpProtocolNegotiationTest {
 
     private static final String PROTOCOL_VERSION = "2026-07-28";
@@ -113,6 +116,29 @@ class McpProtocolNegotiationTest {
      */
     private static final String UNSUPPORTED_VERSION_ROW = "shouldRejectAnUnsupportedProtocolVersionBeforeDispatch";
 
+    /**
+     * Repair task R33 defect 1: {@code headerMatches} (~{@code McpProtocolCodec} line 291) reads only
+     * {@link MultiMap#get(String)}, which silently returns the <em>first</em> value of a duplicated
+     * header and never notices the duplication itself. This row duplicates {@code Mcp-Method} with an
+     * identical repeated value — a value that agrees with the negotiated body on both occurrences — so
+     * the only fact that can make this row fail is the duplication itself, never a value mismatch. RED
+     * today: the first value matches, so negotiation wrongly succeeds and this fully valid-looking
+     * {@code server/discover} request reaches the interceptor stage exactly like {@link #BASELINE_ROW}.
+     */
+    private static final String DUPLICATE_METHOD_HEADER_ROW = "shouldRejectADuplicatedMcpMethodHeaderBeforeDispatch";
+
+    /** Repair task R33 defect 1, the {@code MCP-Protocol-Version} sibling of {@link #DUPLICATE_METHOD_HEADER_ROW}. */
+    private static final String DUPLICATE_PROTOCOL_VERSION_HEADER_ROW =
+            "shouldRejectADuplicatedProtocolVersionHeaderBeforeDispatch";
+
+    /**
+     * Repair task R33 defect 1, the {@code tools/call} {@code Mcp-Name} sibling of {@link
+     * #DUPLICATE_METHOD_HEADER_ROW}. {@code Mcp-Name} is the one required header this codec only checks
+     * for {@code tools/call}, so this row is the only one of the three that can observe the defect on
+     * that header at all.
+     */
+    private static final String DUPLICATE_NAME_HEADER_ROW = "shouldRejectADuplicatedToolsCallNameHeaderBeforeDispatch";
+
     private static Stream<String> r05Tp001Rows() {
         return Stream.of(
                 BASELINE_ROW,
@@ -121,7 +147,10 @@ class McpProtocolNegotiationTest {
                 BLANK_CALL_PROTOCOL_VERSION_ROW,
                 RESERVED_FIELD_ROW,
                 CONTROL_CHARACTER_ROW,
-                UNSUPPORTED_VERSION_ROW);
+                UNSUPPORTED_VERSION_ROW,
+                DUPLICATE_METHOD_HEADER_ROW,
+                DUPLICATE_PROTOCOL_VERSION_HEADER_ROW,
+                DUPLICATE_NAME_HEADER_ROW);
     }
 
     @ParameterizedTest(name = "{0}")
@@ -136,6 +165,9 @@ class McpProtocolNegotiationTest {
             case RESERVED_FIELD_ROW -> shouldRejectAToolsCallReservedFieldBeforeDispatch();
             case CONTROL_CHARACTER_ROW -> shouldRejectAControlCharacterInProtocolVersionBeforeDispatch();
             case UNSUPPORTED_VERSION_ROW -> shouldRejectAnUnsupportedProtocolVersionBeforeDispatch();
+            case DUPLICATE_METHOD_HEADER_ROW -> shouldRejectADuplicatedMcpMethodHeaderBeforeDispatch();
+            case DUPLICATE_PROTOCOL_VERSION_HEADER_ROW -> shouldRejectADuplicatedProtocolVersionHeaderBeforeDispatch();
+            case DUPLICATE_NAME_HEADER_ROW -> shouldRejectADuplicatedToolsCallNameHeaderBeforeDispatch();
             default -> throw new IllegalArgumentException("unknown R05 TP-001 row: " + row);
         }
     }
@@ -353,6 +385,37 @@ class McpProtocolNegotiationTest {
         Outcome outcome = drive(discoverBody(), headers);
 
         assertRejectedBeforeDispatch(outcome, "a header value that disagrees with the negotiated body value");
+    }
+
+    // --- Repair task R33 defect 1: duplicated routing headers ---
+
+    private void shouldRejectADuplicatedMcpMethodHeaderBeforeDispatch() {
+        MultiMap headers = standardHeaders("server/discover");
+        headers.add(HEADER_METHOD, "server/discover");
+
+        Outcome outcome = drive(discoverBody(), headers);
+
+        assertRejectedBeforeDispatch(outcome, "a duplicated Mcp-Method header, even with an identical repeated value");
+    }
+
+    private void shouldRejectADuplicatedProtocolVersionHeaderBeforeDispatch() {
+        MultiMap headers = standardHeaders("server/discover");
+        headers.add(HEADER_PROTOCOL_VERSION, PROTOCOL_VERSION);
+
+        Outcome outcome = drive(discoverBody(), headers);
+
+        assertRejectedBeforeDispatch(
+                outcome, "a duplicated MCP-Protocol-Version header, even with an identical repeated value");
+    }
+
+    private void shouldRejectADuplicatedToolsCallNameHeaderBeforeDispatch() {
+        MultiMap headers = validHeaders("tools/call", KNOWN_TOOL);
+        headers.add(HEADER_NAME, KNOWN_TOOL);
+
+        Outcome outcome = drive(toolsCallBody(KNOWN_TOOL), headers);
+
+        assertRejectedBeforeDispatch(
+                outcome, "a duplicated Mcp-Name header on tools/call, even with an identical repeated value");
     }
 
     private void shouldRejectABlankToolsCallProtocolVersionBeforeDispatch() {
