@@ -12,6 +12,7 @@ import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpServer;
+import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.client.HttpRequest;
 import io.vertx.ext.web.client.HttpResponse;
@@ -139,6 +140,21 @@ class McpGeneratedGenericStructuredOutputIT {
                         .getString("display_name"))
                 .as("the selected profile's output name must reach the wire through the generated writer")
                 .isEqualTo("hello");
+        // R37 (review finding C4): a structured result with no handler-authored text must still carry
+        // exactly one canonical-JSON text item alongside structuredContent (contract §4.3's SHOULD for
+        // backwards compatibility). DECISIVE: pre-fix, "content" serializes as an empty array here —
+        // the structured adaptation carries no text content (McpToolResult.structured(...) itself is
+        // correctly empty; the encoder never derived a canonical text item from the normalized value).
+        JsonArray validContent = validResult.getJsonArray("content");
+        softly.assertThat(validContent)
+                .as("DECISIVE: a structured result must carry exactly one canonical-JSON text item")
+                .hasSize(1);
+        softly.assertThat(validContent.getJsonObject(0).getString("type")).isEqualTo("text");
+        Object canonicalText = new JsonArray(validContent.getJsonObject(0).getString("text")).getList();
+        softly.assertThat(canonicalText)
+                .as("the canonical text must parse to the exact same value as structuredContent — the "
+                        + "three representations (schema validation, observation, wire embed) cannot drift")
+                .isEqualTo(validResult.getJsonArray("structuredContent").getList());
         softly.assertThat(fixture.observedOutput().toString())
                 .as("the output observer receives the same profile-normalized name")
                 .contains("display_name")

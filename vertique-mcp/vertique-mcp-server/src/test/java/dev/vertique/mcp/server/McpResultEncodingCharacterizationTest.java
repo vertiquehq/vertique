@@ -118,6 +118,18 @@ class McpResultEncodingCharacterizationTest {
                 assertThat(new String(actual.payload(), UTF_8))
                         .contains(new String(corpusRow(seed.value()).renderedUtf8(), UTF_8));
             }
+            if (seed.kind() == ResultKind.TEXT_AND_STRUCTURED) {
+                // DECISIVE (R37): a handler-authored explicit text item is left exactly as authored —
+                // no canonical text is ever appended once result.textContent() is already non-empty.
+                var content = envelope.getJsonObject("result").getJsonArray("content");
+                assertThat(content)
+                        .as("no canonical text may be appended alongside explicit text")
+                        .hasSize(1);
+                assertThat(content.getJsonObject(0).getString("text")).isEqualTo(seed.value());
+                assertThat(envelope.getJsonObject("result").containsKey("structuredContent"))
+                        .as("the explicit-text result must still carry its structured content")
+                        .isTrue();
+            }
         } else {
             assertThat(envelope.containsKey("result")).isFalse();
             assertThat(envelope.getJsonObject("error").getInteger("code")).isEqualTo(-32603);
@@ -163,7 +175,8 @@ class McpResultEncodingCharacterizationTest {
         TEXT,
         ERROR,
         CORPUS,
-        STRUCTURED_LITERAL
+        STRUCTURED_LITERAL,
+        TEXT_AND_STRUCTURED
     }
 
     private enum ExpectedShape {
@@ -284,6 +297,16 @@ class McpResultEncodingCharacterizationTest {
                 case CORPUS ->
                     McpToolResult.structured(
                             new CountingStructuredValue(corpusValue(seed.value()), rawSerializationAttempts));
+                // R37: a handler-authored explicit text item alongside structured content must reach
+                // the wire exactly as authored — no canonical text is ever appended when
+                // result.textContent() is already non-empty. Bypasses the named factories deliberately
+                // (McpToolResult's own canonical constructor accepts this combination even though no
+                // factory produces it) to construct the one shape the encoder must leave untouched.
+                case TEXT_AND_STRUCTURED ->
+                    new McpToolResult<>(
+                            List.of(seed.value()),
+                            new CountingStructuredValue(seed.value(), rawSerializationAttempts),
+                            false);
             };
         }
 
