@@ -88,14 +88,17 @@ import java.util.Set;
  * <p>The dispatcher wires the framework-owned strict codec onto the live request path, enforces the
  * method/origin/content-type/accept admission checks, registers the disconnect/reset settlement seam,
  * and bounds the response write at {@code mcp.output.maxBytes}. MCP arms no whole-request deadline of
- * its own: transport liveness is meant to come from the shared {@link HttpConfig} idle/read/write
+ * its own: transport liveness is meant to come from the shared {@link HttpConfig} idle/read-idle
  * timeouts, so an idle or slow connection is closed by the shared HTTP layer and reaches this
  * dispatcher through the ordinary disconnect/reset settlement path (T007) — <strong>but only when at
- * least one of those three timeouts is actually armed</strong>. Every one of them defaults to
- * {@code 0} ("disabled"), so this bound is not automatic: {@link McpServerConfigValidator} refuses to
- * start an enabled mount unless at least one is nonzero, and that startup gate — not the default
- * configuration — is what makes this dispatcher's liveness claim true for every mount that actually
- * runs.
+ * least one of those two qualifying timeouts is actually armed</strong>. {@code
+ * http.writeIdleTimeoutSeconds} does not qualify on its own: it fires only while a write is actually
+ * in flight, so it cannot reclaim a connection that opens and then never reads or writes again. Both
+ * qualifying timeouts default to {@code 0} ("disabled"), so this bound is not automatic: {@link
+ * McpServerConfigValidator} refuses to start an enabled mount unless at least one of {@code
+ * http.idleTimeoutSeconds} / {@code http.readIdleTimeoutSeconds} is nonzero, and that startup gate —
+ * not the default configuration — is what makes this dispatcher's liveness claim true for every mount
+ * that actually runs.
  *
  * <p>{@code tools/call} (T012) resolves the requested name through the immutable {@link
  * McpToolRegistry}, reauthorizes the resolved descriptor through {@link McpPolicyEnforcer#decide}
@@ -587,27 +590,33 @@ final class McpRequestDispatcher {
      * preserves that fixture's fully synchronous behavior instead of forcing it through a {@code
      * Promise} indirection it never asked for.
      *
-     * <p>{@code future.isComplete()} at the moment this method is called (repair task R32 defect 2) is
-     * also an identity no-op, for the same reason: a future that has already settled by the time its
-     * caller composes onto it can only have done so on whatever thread is executing this very call —
-     * no application thread hop has actually occurred yet, so completing inline here crosses no
-     * confinement boundary this method exists to guard. This is what keeps a fixture that drives every
-     * interceptor and invocation through already-resolved futures (e.g. {@code Future.succeededFuture()}
-     * mocks) fully synchronous end to end, exactly like it was before anchoring existed, without weakening
-     * the guarantee for a future that is still pending here: only a future that is genuinely still
-     * incomplete at this point can later settle on an arbitrary application thread, which is exactly the
-     * case the {@link Vertx#currentContext()} check below exists to catch and redirect.
+     * <p><strong>{@code future.isComplete()} is not a no-op case (repair task R47, phase-exit review
+     * C1).</strong> Per Vert.x 5.1.6's {@code FutureBase#emitResult}, a completed future dispatches
+     * every listener attached to it on the future's <em>own</em> context — via {@code
+     * context.execute(...)} when the attaching thread is not already running on that context — not on
+     * whatever thread happens to be executing the attaching call. A future minted from and completed on
+     * some other, foreign Vert.x context (a memoized permit, a cached client response) is therefore
+     * still bound to that foreign context even after it has settled, and composing onto it directly
+     * would dispatch this dispatcher's continuation — and everything chained after it, including {@link
+     * McpCompletionCoordinator}'s context-confined settlement latches — on the foreign event loop
+     * instead of the request-owning one. Only a genuinely context-less completed future (e.g. {@code
+     * Future.succeededFuture()}) emits its listener inline, on the attaching thread; that case is
+     * already handled correctly by the pending branch below, whose handler-time {@link
+     * Vertx#currentContext()} check finds the attaching thread already on {@code owningContext} (for a
+     * real request) or finds no context at all (for a synchronous fixture) and completes {@code
+     * anchored} inline either way. There is accordingly no fast path that can be taken purely from
+     * {@code future.isComplete()}: every future — settled or not, context-bound or not — must be routed
+     * through the {@code onComplete} handler below.
      *
      * @param future the application-origin future to re-anchor
      * @param owningContext the request's owning Vert.x context, or {@code null} when none was
      *     established for this request
      * @param <T> the future's result type
      * @return a future that settles identically to {@code future}, but always on {@code owningContext}
-     *     when non-null and {@code future} is not yet complete; {@code future} itself, unchanged,
-     *     when {@code owningContext} is {@code null} or {@code future} is already complete
+     *     when non-null; {@code future} itself, unchanged, when {@code owningContext} is {@code null}
      */
     private static <T> Future<T> anchoredOnContext(Future<T> future, @Nullable Context owningContext) {
-        if (owningContext == null || future.isComplete()) {
+        if (owningContext == null) {
             return future;
         }
         Promise<T> anchored = Promise.promise();
@@ -1994,13 +2003,22 @@ final class McpRequestDispatcher {
                     null,
                     null);
             return;
-        } catch (RuntimeException | StackOverflowError prepareFailure) {
+        } catch (RuntimeException | StackOverflowError | LinkageError prepareFailure) {
             // R13: invoker.prepare() (stages 2-4, the generated fixed input boundary) walks the
             // envelope-permitted 1,000-level-deep argument tree — the same depth stage 5's comment
             // above already calls out as StackOverflowError-capable — and may itself invoke
             // application-supplied Bean Validation constraint code. A RuntimeException-only catch here
             // would let a native-recursion StackOverflowError escape before beginWrite is ever called:
             // no response, no terminal, no completion.
+            //
+            // R47 (phase-exit review): stage 4's default-provider fallback (McpBeanValidation's lazy
+            // holder) is only reached when no application Validator is bound; on a deployment where the
+            // Bean Validation provider is a runtime-scoped dependency the application never pulled in
+            // (present at compile time, absent on the runtime classpath), resolving that provider throws
+            // a LinkageError (e.g. NoClassDefFoundError), not a RuntimeException. Excluding it here would
+            // let exactly that classpath gap strand the request with no response, no terminal, and no
+            // completion, instead of yielding the same bounded SSE fallback every other stage-2-4 failure
+            // already gets.
             writeSseFallback(context, envelope, security, toolName, prepareFailure);
             return;
         }
@@ -2910,9 +2928,12 @@ final class McpRequestDispatcher {
         // coordinator on the same request-owning context, and McpCompletionCoordinator's
         // completeOnContext drives finishWrite from there when it finds settlement already claimed by
         // this beginWrite — so a stalled end() cannot strand the request past that bound. The bound
-        // itself is not automatic (idleTimeoutSeconds/readIdleTimeoutSeconds/writeIdleTimeoutSeconds
-        // all default to 0/disabled); McpServerConfigValidator's startup gate is what guarantees an
-        // enabled mount always has at least one of them armed, which is what makes this comment true.
+        // itself is not automatic: idleTimeoutSeconds/readIdleTimeoutSeconds both default to
+        // 0/disabled, and writeIdleTimeoutSeconds does not qualify on its own — it fires only while a
+        // write is actually in flight, so it cannot reclaim a connection that opens and then never
+        // reads or writes again. McpServerConfigValidator's startup gate is what guarantees an enabled
+        // mount always has at least one of the two qualifying timeouts armed, which is what makes this
+        // comment true.
         if (coordinator != null && !coordinator.beginWrite(terminal)) {
             return false;
         }
@@ -3079,7 +3100,7 @@ final class McpRequestDispatcher {
      */
     static final class OutputCapExceededException extends TechnicalException {
         OutputCapExceededException() {
-            super("MCP response exceeded mcp.output.maxBytes");
+            super("MCP response exceeded mcp.outputMaxBytes");
         }
     }
 }

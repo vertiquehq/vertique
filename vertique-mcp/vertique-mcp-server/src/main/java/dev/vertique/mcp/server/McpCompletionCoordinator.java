@@ -558,8 +558,17 @@ final class McpCompletionCoordinator {
      * <p>{@link #cancel()} is called only from {@link #finishWrite} and the abort branch of {@link
      * #completeOnContext}, both already guarded by {@code completionEmitted} so this fires at most
      * once; the idempotent check here is a defensive second guard, not load-bearing. Every call site
-     * runs on the request-owning context (the same invariant every other settlement field relies on),
-     * so a handler registered through {@link #cancelled()} observes it on that same context.
+     * runs on the request-owning context (the same invariant every other settlement field relies on).
+     *
+     * <p>{@code cancelled} is a plain, context-less {@link Promise} (repair task R47, phase-exit
+     * review), so {@link #cancelled()} carries no context affinity of its own: a handler registered
+     * through it before {@link #cancel()} fires is invoked inline, synchronously, from within {@code
+     * cancel()}'s call — and therefore does observe the request-owning context, since {@code cancel()}
+     * always runs there — but a handler registered after {@code cancelled} has already completed runs
+     * inline on whichever thread performs that late registration, which need not be the request-owning
+     * context at all. What {@link Future} actually guarantees here is ordering (cancellation is
+     * observed no earlier than {@link #cancel()} ran), not context affinity; a caller that needs the
+     * latter must anchor the returned future onto the request-owning context itself.
      */
     private static final class McpRequestCancellationSignal implements McpCancellationSignal {
         private final Promise<Void> cancelled = Promise.promise();

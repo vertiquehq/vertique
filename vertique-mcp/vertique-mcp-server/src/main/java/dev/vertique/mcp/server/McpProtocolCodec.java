@@ -317,17 +317,20 @@ final class McpProtocolCodec {
      * #META_PROTOCOL_VERSION}'s {@code io.modelcontextprotocol/} prefix.
      *
      * <p>Returns {@code null} — and never fails the request — for every anomaly, each logged once as
-     * a bounded, non-leaking WARN diagnostic (never the raw {@code traceparent}/{@code tracestate}
+     * a bounded, non-leaking DEBUG diagnostic (never the raw {@code traceparent}/{@code tracestate}
      * value): an absent or non-string {@code traceparent}; syntax that does not match {@link
      * #TRACEPARENT_PATTERN}'s bounded W3C wire format; an all-zero trace or span id (rejected by
      * {@link McpTraceContext}'s own compact constructor); or a {@code tracestate} rejected by that
      * same constructor's bounds (blank, over its character cap, or carrying a non-printable-ASCII
      * character). A present but non-string {@code tracestate} is silently treated as absent rather
-     * than as an anomaly, since {@code tracestate} alone is optional by the W3C spec.
+     * than as an anomaly, since {@code tracestate} alone is optional by the W3C spec. DEBUG, not WARN,
+     * because every anomaly here is client-triggerable at will by an anonymous, unauthenticated caller
+     * (repair task R47) — WARN stays reserved for a framework or application contract violation.
      *
-     * <p>Called at most once per request, from {@link McpRequestDispatcher#dispatch} — independent of
-     * {@link #validateOfficialParams}/{@link #validateNegotiation} outcome, since a malformed or
-     * absent body trace reference must never affect protocol admission.
+     * <p>Called at most once per request, from {@link McpRequestDispatcher#dispatch}. Extraction never
+     * affects admission; it runs after negotiation ({@link #validateOfficialParams}/{@link
+     * #validateNegotiation}) has already succeeded, so a malformed or absent body trace reference can
+     * never itself reject a request.
      *
      * @param envelope a successfully decoded envelope, as {@link Decoded#envelope()} carries it
      * @return the normalized W3C trace reference, or {@code null} when none is present or valid
@@ -348,7 +351,7 @@ final class McpProtocolCodec {
         }
         Matcher matcher = TRACEPARENT_PATTERN.matcher(traceparentNode.asText());
         if (!matcher.matches()) {
-            log.warn("Ignoring malformed body _meta.traceparent syntax");
+            log.debug("Ignoring malformed body _meta.traceparent syntax");
             return null;
         }
         String traceId = matcher.group(1);
@@ -360,8 +363,8 @@ final class McpProtocolCodec {
             return new McpTraceContext(traceId, spanId, sampled, traceState);
         } catch (IllegalArgumentException rejected) {
             // Never logs the rejection's own message or the offending value: only its occurrence
-            // matters, matching McpCompletionCoordinator's established non-leaking WARN convention.
-            log.warn("Ignoring invalid body _meta trace context");
+            // matters, matching McpCompletionCoordinator's established non-leaking log convention.
+            log.debug("Ignoring invalid body _meta trace context");
             return null;
         }
     }

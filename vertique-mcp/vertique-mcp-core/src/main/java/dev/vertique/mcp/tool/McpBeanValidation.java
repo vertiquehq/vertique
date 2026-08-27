@@ -19,6 +19,13 @@ import java.util.Set;
  * default validator factory and its {@link Validator} are documented thread-safe and reusable across
  * concurrent validations, so one process-wide instance is correct, not merely convenient.
  *
+ * <p>The default factory is built lazily, on first use, by {@link DefaultValidatorHolder} (repair task
+ * R47, phase-exit review): when the application's Dagger graph binds its own {@link Validator}, {@link
+ * #validate(Object, Optional)} never touches the holder class, so classloading never triggers the
+ * default provider's bootstrap (and, on a classpath with no Bean Validation provider present, never
+ * throws). Only a request that genuinely falls back to the default — no bound {@link Validator} — pays
+ * the bootstrap cost, and only once, on the first such request.
+ *
  * <p>This type performs no traversal, resolution, or request-time processing of its own beyond
  * delegating to the shared {@link Validator} — it exists solely to own that one shared instance and
  * expose it through a single bounded operation. Public because {@code prepare()} is generated into an
@@ -28,23 +35,7 @@ import java.util.Set;
  */
 public final class McpBeanValidation {
 
-    private static final Validator VALIDATOR =
-            Validation.buildDefaultValidatorFactory().getValidator();
-
     private McpBeanValidation() {}
-
-    /**
-     * Validates {@code value} against its declared Jakarta Bean Validation constraints using the one
-     * shared, thread-safe {@link Validator}.
-     *
-     * @param value the materialized tool-argument carrier to validate; must not be {@code null}
-     * @param <T> the carrier type
-     * @return the set of constraint violations, empty when {@code value} satisfies every declared
-     *     constraint
-     */
-    public static <T> Set<ConstraintViolation<T>> validate(T value) {
-        return VALIDATOR.validate(value);
-    }
 
     /**
      * Validates {@code value} through {@code validator} when present, falling back to the one shared
@@ -54,8 +45,9 @@ public final class McpBeanValidation {
      * when the application's Dagger graph binds a {@link Validator} — for example one backed by a
      * Dagger-aware {@link jakarta.validation.ConstraintValidatorFactory} that can resolve an
      * {@code @Inject}-only {@link jakarta.validation.ConstraintValidator} — tool-input Bean Validation
-     * runs through it; when the binding is absent, behavior is byte-for-byte identical to {@link
-     * #validate(Object)}.
+     * runs through it, and the default factory in {@link DefaultValidatorHolder} is never initialized
+     * (repair task R47). When the binding is absent, {@link DefaultValidatorHolder#VALIDATOR} is
+     * resolved and validation runs through the default {@link Validator}.
      *
      * @param value the materialized tool-argument carrier to validate; must not be {@code null}
      * @param validator the optionally application-bound {@link Validator}; must not be {@code null}
@@ -65,6 +57,24 @@ public final class McpBeanValidation {
      *     constraint
      */
     public static <T> Set<ConstraintViolation<T>> validate(T value, Optional<Validator> validator) {
-        return validator.orElse(VALIDATOR).validate(value);
+        return validator.orElseGet(DefaultValidatorHolder::validator).validate(value);
+    }
+
+    /**
+     * Lazily builds and holds the one process-wide default {@link Validator}, initialized only on
+     * first access to {@link #validator()} — the classic initialization-on-demand holder idiom, which
+     * relies on the JVM's class-initialization guarantees for thread safety without any explicit
+     * locking (repair task R47, phase-exit review): a bound application {@link Validator} must never
+     * cause this class to be loaded or initialized.
+     */
+    private static final class DefaultValidatorHolder {
+        private static final Validator VALIDATOR =
+                Validation.buildDefaultValidatorFactory().getValidator();
+
+        private DefaultValidatorHolder() {}
+
+        private static Validator validator() {
+            return VALIDATOR;
+        }
     }
 }

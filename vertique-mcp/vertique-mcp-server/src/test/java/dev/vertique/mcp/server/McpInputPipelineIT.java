@@ -559,7 +559,7 @@ class McpInputPipelineIT {
 
             // Stage 4 — Bean Validation on the materialized carrier (contract §4.7 point 4).
             beanValidationAttempted.incrementAndGet();
-            if (!McpBeanValidation.validate(materialized).isEmpty()) {
+            if (!McpBeanValidation.validate(materialized, Optional.empty()).isEmpty()) {
                 throw new McpInputRejectionException("Invalid tool arguments: constraint validation failed");
             }
 

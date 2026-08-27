@@ -57,6 +57,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
@@ -94,6 +96,17 @@ class McpLifecycleFactsTest {
     private static final String PROTOCOL_VERSION = "2026-07-28";
     private static final String KNOWN_TOOL = "greet";
 
+    /**
+     * Bounded wait for a request-owning-context-anchored dispatch to settle its terminal (repair task
+     * R47): {@link McpRequestDispatcher#dispatch} composes every application-origin future through
+     * {@code anchoredOnContext}, which — correctly, post-repair — always routes settlement through
+     * {@code owningContext} rather than completing inline on whatever thread called {@code dispatch}.
+     * This fixture drives {@code dispatch} via {@link Context#runOnContext} and awaits the terminal
+     * callback instead of asserting immediately after the (now asynchronous-with-respect-to-the-test-
+     * thread) call returns.
+     */
+    private static final long TERMINAL_WAIT_SECONDS = 5;
+
     private static final String SUCCESS_ROW = "shouldCarryFactsOnASuccessfulToolCall";
     private static final String DENIAL_ROW = "shouldCarryFactsOnAPolicyDeniedToolCall";
     private static final String AUTHENTICATION_FAILURE_ROW = "shouldCarryFactsOnAnAuthenticationRejection";
@@ -125,7 +138,8 @@ class McpLifecycleFactsTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("r05Tp002Rows")
     @DisplayName("R05 TP-002: every terminal path carries the negotiated version, correlation, and authorization")
-    void shouldCarryNegotiatedVersionCorrelationAndAuthorizationToEveryTerminal(String row) {
+    void shouldCarryNegotiatedVersionCorrelationAndAuthorizationToEveryTerminal(String row)
+            throws InterruptedException {
         switch (row) {
             case SUCCESS_ROW -> shouldCarryFactsOnASuccessfulToolCall();
             case DENIAL_ROW -> shouldCarryFactsOnAPolicyDeniedToolCall();
@@ -138,11 +152,11 @@ class McpLifecycleFactsTest {
 
     // --- Success ---
 
-    private void shouldCarryFactsOnASuccessfulToolCall() {
+    private void shouldCarryFactsOnASuccessfulToolCall() throws InterruptedException {
         Fixture fixture =
                 build(AuthorizationDecision.permit("PERMITTED"), FakeInvoker.succeeding(McpToolResult.text("ok")));
 
-        fixture.dispatcher.dispatch(fixture.context);
+        dispatchOnContext(fixture);
 
         McpRequestTerminalEvent terminal = onlyTerminal(fixture);
         assertThat(terminal.outcome()).isEqualTo(McpOutcome.SUCCESS);
@@ -155,11 +169,11 @@ class McpLifecycleFactsTest {
 
     // --- Denial ---
 
-    private void shouldCarryFactsOnAPolicyDeniedToolCall() {
+    private void shouldCarryFactsOnAPolicyDeniedToolCall() throws InterruptedException {
         Fixture fixture = build(
                 AuthorizationDecision.deny("ROLE_MISSING"), FakeInvoker.succeeding(McpToolResult.text("unreachable")));
 
-        fixture.dispatcher.dispatch(fixture.context);
+        dispatchOnContext(fixture);
 
         McpRequestTerminalEvent terminal = onlyTerminal(fixture);
         assertThat(terminal.outcome()).isEqualTo(McpOutcome.REJECTED);
@@ -197,10 +211,10 @@ class McpLifecycleFactsTest {
 
     // --- Lifecycle-observed failure: a handler throw inside an otherwise-authorized call ---
 
-    private void shouldCarryFactsOnAHandlerFailureInsideAnAuthorizedCall() {
+    private void shouldCarryFactsOnAHandlerFailureInsideAnAuthorizedCall() throws InterruptedException {
         Fixture fixture = build(AuthorizationDecision.permit("PERMITTED"), FakeInvoker.throwingOnPrepare());
 
-        fixture.dispatcher.dispatch(fixture.context);
+        dispatchOnContext(fixture);
 
         McpRequestTerminalEvent terminal = onlyTerminal(fixture);
         assertThat(terminal.outcome()).isEqualTo(McpOutcome.FAILED);
@@ -215,13 +229,13 @@ class McpLifecycleFactsTest {
 
     // --- Interceptor rejection (negotiation already completed; no policy evaluation ever runs) ---
 
-    private void shouldCarryFactsOnAnInterceptorRejectedRequest() {
+    private void shouldCarryFactsOnAnInterceptorRejectedRequest() throws InterruptedException {
         Fixture fixture = build(
                 AuthorizationDecision.permit("PERMITTED"),
                 FakeInvoker.succeeding(McpToolResult.text("unreachable")),
                 Set.of(new RejectingInterceptor()));
 
-        fixture.dispatcher.dispatch(fixture.context);
+        dispatchOnContext(fixture);
 
         McpRequestTerminalEvent terminal = onlyTerminal(fixture);
         assertThat(terminal.outcome()).isEqualTo(McpOutcome.REJECTED);
@@ -266,6 +280,20 @@ class McpLifecycleFactsTest {
                 .as("exactly one terminal event must be published per request")
                 .hasSize(1);
         return fixture.observer.terminals.get(0).event();
+    }
+
+    /**
+     * Drives {@link McpRequestDispatcher#dispatch} on {@code fixture}'s own request-owning context
+     * (repair task R47) and awaits the terminal callback, rather than asserting immediately after a
+     * call that — correctly, post-repair — no longer completes synchronously on the calling thread.
+     */
+    private static void dispatchOnContext(Fixture fixture) throws InterruptedException {
+        Context vertxContext = fixture.context.vertx().getOrCreateContext();
+        vertxContext.runOnContext(ignored -> fixture.dispatcher.dispatch(fixture.context));
+        assertThat(fixture.observer.awaitTerminal())
+                .as("the request-owning context must run the dispatch and settle the terminal within "
+                        + "the bounded wait")
+                .isTrue();
     }
 
     // --- Fixture construction ---
@@ -318,6 +346,7 @@ class McpLifecycleFactsTest {
 
     private static final class RecordingObserver implements McpRequestLifecycleObserver, McpRequestObservation {
         private final List<McpRequestTerminalObservation> terminals = new ArrayList<>();
+        private final CountDownLatch terminalLatch = new CountDownLatch(1);
 
         @Override
         public McpRequestObservation open(Instant startedAt) {
@@ -327,11 +356,16 @@ class McpLifecycleFactsTest {
         @Override
         public void onTerminal(McpRequestTerminalObservation observation) {
             terminals.add(observation);
+            terminalLatch.countDown();
         }
 
         @Override
         public void onCompleted(McpRequestCompletedEvent event) {
             // not needed for this proof
+        }
+
+        private boolean awaitTerminal() throws InterruptedException {
+            return terminalLatch.await(TERMINAL_WAIT_SECONDS, TimeUnit.SECONDS);
         }
     }
 

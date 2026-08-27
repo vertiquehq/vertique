@@ -90,14 +90,15 @@ limits, validation, observation, or terminal encoding.
 `McpBeanValidation`, `McpInputRejectionException`, and `McpValueTrees` are further generated-runtime
 support types, public for the same reason `McpToolInvoker` is: `prepare` is generated into an
 arbitrary application package, which cannot reach a package-private framework type in a different
-module. `McpBeanValidation.validate(carrier)` is the one shared, thread-safe Jakarta Bean Validation
-`Validator` every generated `prepare()` calls for its Bean Validation stage when the application's
-Dagger graph binds no `Validator` of its own. `McpBeanValidation.validate(carrier, Optional<Validator>)`
-is the seam a generated invoker's constructor-injected `Optional<jakarta.validation.Validator>`
-routes through instead when the graph does bind one — for example, `vertique-mcp-server`'s
-`@BindsOptionalOf Validator` resolved to an application-bound, Dagger-aware `Validator` that can
-construct an `@Inject`-only `ConstraintValidator`; absent, its behavior is byte-for-byte identical to
-the single-argument overload.
+module. `McpBeanValidation.validate(carrier, Optional<Validator>)` is the single seam every generated
+`prepare()` calls for its Bean Validation stage, through its constructor-injected
+`Optional<jakarta.validation.Validator>`: when the application's Dagger graph binds a `Validator` —
+for example, `vertique-mcp-server`'s `@BindsOptionalOf Validator` resolved to an application-bound,
+Dagger-aware `Validator` that can construct an `@Inject`-only `ConstraintValidator` — validation runs
+through it, and the shared, thread-safe default Jakarta Bean Validation `Validator` is never built.
+When the graph binds no `Validator` of its own, the call falls back to that one shared default
+instance, built lazily on first use so a deployment with a bound `Validator` never pays its
+provider-discovery bootstrap cost.
 `McpInputRejectionException` signals that a `tools/call` argument tree failed input-policy
 application, materialization, or Bean Validation; its message is always a fixed, non-interpolated
 literal, since it is returned to the caller verbatim. `McpValueTrees.deepUnmodifiableMap(map)` builds

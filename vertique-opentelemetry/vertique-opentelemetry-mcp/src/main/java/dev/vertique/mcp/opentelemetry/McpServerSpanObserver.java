@@ -297,7 +297,10 @@ final class McpServerSpanObserver implements McpRequestLifecycleObserver {
             }
             span.addLink(bodySpanContext);
         } catch (Exception e) {
-            log.warn(
+            // DEBUG, not WARN (repair task R47): the body trace context is client-supplied and
+            // syntactically unvalidated at this layer, so a malformed value is client-triggerable at
+            // will by an anonymous caller — not a framework or application contract violation.
+            log.debug(
                     "McpServerSpanObserver failed to parse the body trace context: {}",
                     e.getClass().getName());
         }

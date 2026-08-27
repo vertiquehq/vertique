@@ -12,6 +12,7 @@ import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.rest.security.AuthorizationDecisionPoint;
+import dev.vertique.rest.security.AuthorizationGateConfig;
 import dev.vertique.rest.security.IdentityResolutionMiddleware;
 import dev.vertique.rest.security.SecurityClaimMapper;
 import dev.vertique.rest.security.SecurityPolicyEnforcer;
@@ -333,7 +334,7 @@ public class WebSocketMount implements RouterMount {
          * @param authorizationGateConfig        optional operator-configured {@link
          *                                       SecurityPolicyEnforcer#decide} gate deadline (issue
          *                                       #417, R42); empty defaults to {@link
-         *                                       dev.vertique.rest.security.AuthorizationGateConfig#defaults()}.
+         *                                       AuthorizationGateConfig#defaults()}.
          *                                       Threaded into the enforcer so the WebSocket upgrade
          *                                       gate honors the same operator-configured deadline as
          *                                       REST and MCP — a single knob across all three
@@ -358,7 +359,7 @@ public class WebSocketMount implements RouterMount {
                 Optional<Authorizer> authorizer,
                 Optional<ActionRegistry> actionRegistry,
                 Optional<VertxAuthorizationImporter> vertxAuthorizationImporter,
-                Optional<dev.vertique.rest.security.AuthorizationGateConfig> authorizationGateConfig) {
+                Optional<AuthorizationGateConfig> authorizationGateConfig) {
             this.messageCodec = messageCodec;
             this.routeAuthHandlers = routeAuthHandlers;
             this.sortedInterceptors = requestInterceptors.stream()

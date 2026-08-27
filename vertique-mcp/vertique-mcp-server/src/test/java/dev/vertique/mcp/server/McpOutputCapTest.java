@@ -56,6 +56,6 @@ class McpOutputCapTest {
     @DisplayName("the failure message never carries a payload or serialized value")
     void shouldNotLeakPayloadInFailure() {
         OutputCapExceededException failure = new OutputCapExceededException();
-        assertThat(failure.getMessage()).isEqualTo("MCP response exceeded mcp.output.maxBytes");
+        assertThat(failure.getMessage()).isEqualTo("MCP response exceeded mcp.outputMaxBytes");
     }
 }

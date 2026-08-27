@@ -27,7 +27,11 @@ import java.util.Objects;
  * @param method the recognized method class this request is about to dispatch to
  * @param securityContext the established caller security context; never {@code null}
  * @param correlation the correlation context snapshot, when captured for this request
- * @param bodyTraceContext the normalized W3C trace reference, when captured for this request
+ * @param bodyTraceContext the normalized W3C trace reference, when captured for this request.
+ *     <strong>Untrusted (repair task R47, adjudication D004):</strong> client-supplied,
+ *     syntactically validated only — it carries the same trust posture as the HTTP {@code
+ *     traceparent} header, which an anonymous caller already fully controls. Never use it as an
+ *     input to an authorization, tenancy, or rate-limiting decision.
  */
 public record McpRequestContext(
         McpMethod method,
