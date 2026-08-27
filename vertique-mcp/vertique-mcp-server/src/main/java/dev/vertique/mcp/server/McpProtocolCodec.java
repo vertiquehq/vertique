@@ -10,12 +10,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.node.NullNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import dev.vertique.mcp.interceptor.McpTraceContext;
 import dev.vertique.rest.core.config.HttpConfig;
 import io.vertx.core.MultiMap;
 import jakarta.annotation.Nullable;
 import java.io.UncheckedIOException;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Strict, bounded final-2026 JSON-RPC codec for the MCP wire layer.
@@ -39,6 +43,7 @@ import java.util.Set;
  * tools/call} MRTR fields — is {@link #validateNegotiation}; it runs only after official params
  * validation. Neither step depends on interceptors, tool lookup, or authorization.
  */
+@Slf4j
 final class McpProtocolCodec {
 
     /** The bounded set of final-2026 request methods this server envelope-validates. */
@@ -81,6 +86,26 @@ final class McpProtocolCodec {
     private static final String META_FIELD = "_meta";
     private static final String META_PROTOCOL_VERSION = "io.modelcontextprotocol/protocolVersion";
     private static final String META_CLIENT_CAPABILITIES = "io.modelcontextprotocol/clientCapabilities";
+
+    /**
+     * The plain, un-prefixed {@code _meta} keys repair task R39's body trace-context extraction
+     * reads (MCP 2026-07-28 §_meta, OpenTelemetry trace context) — deliberately distinct from the
+     * {@code io.modelcontextprotocol/}-prefixed negotiation keys above: W3C trace propagation is a
+     * Vertique-owned extension of the same {@code _meta} object, not an official MCP protocol field.
+     * {@code baggage} is reserved upstream too but has no consumer here and is never read.
+     */
+    private static final String META_TRACEPARENT = "traceparent";
+
+    private static final String META_TRACESTATE = "tracestate";
+
+    /**
+     * The bounded W3C {@code traceparent} wire format {@link #extractBodyTraceContext} accepts:
+     * {@code 00-<32 lowercase hex trace id>-<16 lowercase hex span id>-<2 hex flags>}. Any other
+     * shape — including an unsupported version field — is malformed syntax and yields no trace
+     * context.
+     */
+    private static final Pattern TRACEPARENT_PATTERN =
+            Pattern.compile("00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})");
 
     /**
      * The two {@code tools/call} {@code CallToolRequestParams} fields the official schema permits for
@@ -282,6 +307,63 @@ final class McpProtocolCodec {
             return NegotiationResult.failed(negotiationError());
         }
         return NegotiationResult.ok(protocolVersion);
+    }
+
+    /**
+     * Extracts this request's optional body trace reference from {@code params._meta.traceparent} /
+     * {@code params._meta.tracestate} (repair task R39). MCP 2026-07-28 §_meta, OpenTelemetry trace
+     * context reserves these exact un-prefixed keys for W3C trace-context propagation — see {@link
+     * #META_TRACEPARENT}'s own note on why they are never namespaced under {@link
+     * #META_PROTOCOL_VERSION}'s {@code io.modelcontextprotocol/} prefix.
+     *
+     * <p>Returns {@code null} — and never fails the request — for every anomaly, each logged once as
+     * a bounded, non-leaking WARN diagnostic (never the raw {@code traceparent}/{@code tracestate}
+     * value): an absent or non-string {@code traceparent}; syntax that does not match {@link
+     * #TRACEPARENT_PATTERN}'s bounded W3C wire format; an all-zero trace or span id (rejected by
+     * {@link McpTraceContext}'s own compact constructor); or a {@code tracestate} rejected by that
+     * same constructor's bounds (blank, over its character cap, or carrying a non-printable-ASCII
+     * character). A present but non-string {@code tracestate} is silently treated as absent rather
+     * than as an anomaly, since {@code tracestate} alone is optional by the W3C spec.
+     *
+     * <p>Called at most once per request, from {@link McpRequestDispatcher#dispatch} — independent of
+     * {@link #validateOfficialParams}/{@link #validateNegotiation} outcome, since a malformed or
+     * absent body trace reference must never affect protocol admission.
+     *
+     * @param envelope a successfully decoded envelope, as {@link Decoded#envelope()} carries it
+     * @return the normalized W3C trace reference, or {@code null} when none is present or valid
+     */
+    @Nullable
+    McpTraceContext extractBodyTraceContext(JsonNode envelope) {
+        JsonNode params = envelope.get("params");
+        if (params == null || !params.isObject()) {
+            return null;
+        }
+        JsonNode meta = params.get(META_FIELD);
+        if (meta == null || !meta.isObject()) {
+            return null;
+        }
+        JsonNode traceparentNode = meta.get(META_TRACEPARENT);
+        if (traceparentNode == null || !traceparentNode.isTextual()) {
+            return null;
+        }
+        Matcher matcher = TRACEPARENT_PATTERN.matcher(traceparentNode.asText());
+        if (!matcher.matches()) {
+            log.warn("Ignoring malformed body _meta.traceparent syntax");
+            return null;
+        }
+        String traceId = matcher.group(1);
+        String spanId = matcher.group(2);
+        boolean sampled = (Integer.parseInt(matcher.group(3), 16) & 0x1) == 1;
+        JsonNode traceStateNode = meta.get(META_TRACESTATE);
+        String traceState = traceStateNode != null && traceStateNode.isTextual() ? traceStateNode.asText() : null;
+        try {
+            return new McpTraceContext(traceId, spanId, sampled, traceState);
+        } catch (IllegalArgumentException rejected) {
+            // Never logs the rejection's own message or the offending value: only its occurrence
+            // matters, matching McpCompletionCoordinator's established non-leaking WARN convention.
+            log.warn("Ignoring invalid body _meta trace context");
+            return null;
+        }
     }
 
     /**

@@ -308,6 +308,37 @@ reset — so an MCP request leaves no upload file behind after it ends.
 The module does not use an MCP Java SDK. It depends on `vertique-mcp-core` for the stable lifecycle
 boundary and owns the HTTP/router composition only.
 
+## Body trace-context extraction
+
+Repair task R39. `McpProtocolCodec#extractBodyTraceContext` reads this request's optional body
+trace reference from `params._meta.traceparent` / `params._meta.tracestate` — the plain,
+un-prefixed keys MCP 2026-07-28's `_meta` reserves for W3C trace-context propagation
+(OpenTelemetry trace context), deliberately distinct from the `io.modelcontextprotocol/`-prefixed
+negotiation keys `validateNegotiation` reads from the same `_meta` object: W3C trace propagation is
+a Vertique-owned extension of `_meta`, not an official MCP protocol field. `baggage` is reserved
+upstream too but has no consumer here and is never read.
+
+`traceparent` must match the bounded W3C wire format `00-<32 lowercase hex trace id>-<16 lowercase
+hex span id>-<2 hex flags>`; `tracestate`, when present, is bounded by `McpTraceContext`'s own rules
+(non-blank, at most 512 characters, printable ASCII only). Extraction is total and never fails the
+request: an absent or non-string `traceparent`, syntax that does not match the wire format above, an
+all-zero trace or span id, or a `tracestate` outside those bounds all yield no body trace context
+rather than an error response, each logged once as a bounded, non-leaking WARN diagnostic (never the
+raw `traceparent`/`tracestate` value). Extraction runs at most once per request, in
+`McpRequestDispatcher#dispatch`, independent of negotiation's own outcome — a malformed or absent
+body trace reference never affects protocol admission.
+
+The extracted, optional `McpTraceContext` reaches every consumer of this request's
+`McpRequestContext` — both the pre-dispatch [request interceptor stage](#request-interceptor-stage)
+and the post-validation [tool interceptor stage](#tool-interceptor-stage) — and the terminal
+observation `McpCompletionCoordinator` publishes at settlement
+(`McpRequestTerminalObservation#bodyTraceContext`), captured once via a package-private
+`bindBodyTraceContext` call from `dispatch` immediately after extraction. That terminal-carried
+value is what the `vertique-opentelemetry-mcp` adapter's `McpServerSpanObserver` reads to add at
+most one `Span#addLink` for a valid, distinct body trace reference — a body reference identical to
+the HTTP `traceparent` header is meant to be a self-reference and add no link; see that module's own
+`module.md` for the adapter's linking mechanics and policy.
+
 ## Request interceptor stage
 
 Once — and only once — the envelope decodes successfully, its official per-method `params` schema

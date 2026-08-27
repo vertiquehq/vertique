@@ -26,6 +26,7 @@ import dev.vertique.mcp.interceptor.McpRequestContext;
 import dev.vertique.mcp.interceptor.McpRequestInterceptor;
 import dev.vertique.mcp.interceptor.McpToolInterceptor;
 import dev.vertique.mcp.interceptor.McpToolInvocationContext;
+import dev.vertique.mcp.interceptor.McpTraceContext;
 import dev.vertique.mcp.lifecycle.McpAuthorizationSummary;
 import dev.vertique.mcp.lifecycle.McpErrorType;
 import dev.vertique.mcp.lifecycle.McpMethod;
@@ -274,6 +275,16 @@ final class McpRequestDispatcher {
      * "authorization is present only after an actual policy evaluation."
      */
     private static final String AUTHORIZATION_KEY = KEY_PREFIX + ".authorization";
+
+    /**
+     * Routing-context key for this request's optional body trace reference (repair task R39),
+     * extracted at most once — in {@link #dispatch}, via {@link McpProtocolCodec#extractBodyTraceContext}
+     * — and read by {@link #invokeAndRespond} through {@link #bodyTraceContextOf} to populate the
+     * second {@link McpRequestContext} construction site on the same request. {@code null} (the key
+     * either absent or explicitly stored as {@code null}) whenever the request body carried no valid
+     * {@code params._meta.traceparent}, exactly like {@link #bodyTraceContextOf} reports it.
+     */
+    private static final String BODY_TRACE_CONTEXT_KEY = KEY_PREFIX + ".bodyTraceContext";
 
     /**
      * Compact, insertion-order-preserving success encoder, canonicalized identically to the codec's
@@ -704,6 +715,17 @@ final class McpRequestDispatcher {
     }
 
     /**
+     * Returns this request's optional body trace reference (repair task R39), or {@code null} when
+     * {@link #dispatch} never stored one — either because it has not yet run, or because {@link
+     * McpProtocolCodec#extractBodyTraceContext} found no valid {@code params._meta.traceparent} for
+     * this request.
+     */
+    @Nullable
+    private static McpTraceContext bodyTraceContextOf(RoutingContext context) {
+        return context.get(BODY_TRACE_CONTEXT_KEY);
+    }
+
+    /**
      * Enforces the mandatory {@code Content-Type} admission check: every admitted request is a POST
      * carrying the protocol's required JSON-RPC body, so an absent header is HTTP 415 exactly like a
      * present one whose media type (parameters such as {@code ; charset=utf-8} stripped,
@@ -847,8 +869,19 @@ final class McpRequestDispatcher {
             return;
         }
         context.put(PROTOCOL_VERSION_KEY, negotiation.protocolVersion());
+        // R39: extracted exactly once per request, independent of negotiation's own outcome — a
+        // malformed or absent body trace reference never affects protocol admission. Stored under
+        // BODY_TRACE_CONTEXT_KEY (read by invokeAndRespond's own McpRequestContext construction site
+        // through bodyTraceContextOf) and bound onto the coordinator (when one exists — a fixture
+        // dispatch that bypasses begin() has none) so the terminal observation carries it too.
+        McpTraceContext bodyTraceContext = codec.extractBodyTraceContext(envelope);
+        context.put(BODY_TRACE_CONTEXT_KEY, bodyTraceContext);
+        McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
+        if (coordinator != null) {
+            coordinator.bindBodyTraceContext(bodyTraceContext);
+        }
         McpRequestContext requestContext =
-                new McpRequestContext(method, establishedSecurityContext(), correlationOf(context), null);
+                new McpRequestContext(method, establishedSecurityContext(), correlationOf(context), bodyTraceContext);
         Context owningContext = requestOwningContext(context);
         anchoredOnContext(runRequestInterceptors(0, requestContext, owningContext), owningContext)
                 .onComplete(ar -> {
@@ -1932,7 +1965,11 @@ final class McpRequestDispatcher {
         // terminal-event and interceptor site on this request reads, never a hardcoded null — a tool
         // interceptor observes the same correlation the terminal event for this request will carry.
         McpToolInvocationContext toolContext = new McpToolInvocationContext(
-                new McpRequestContext(McpMethod.TOOLS_CALL, establishedSecurityContext(), correlationOf(context), null),
+                new McpRequestContext(
+                        McpMethod.TOOLS_CALL,
+                        establishedSecurityContext(),
+                        correlationOf(context),
+                        bodyTraceContextOf(context)),
                 invoker.descriptor());
         // T018: the opt-in, capability-gated value-observation callback fires here — after Bean
         // Validation (prepare() above already ran it) but strictly before the tool-interceptor stage
