@@ -155,8 +155,14 @@ public class McpDiscoverIT {
         CompletableFuture<Void> closed = new CompletableFuture<>();
         Future<Void> serverClose = server != null ? server.close() : Future.succeededFuture();
         Future<Void> clientClose = rawClient != null ? rawClient.close() : Future.succeededFuture();
-        Future.join(serverClose, clientClose)
-                .onComplete(ignored -> vertx.close().onComplete(result -> closed.complete(null)));
+        Future.join(serverClose, clientClose).onComplete(joined -> vertx.close().onComplete(vertxResult -> {
+            Throwable failure = joined.failed() ? joined.cause() : vertxResult.cause();
+            if (failure != null) {
+                closed.completeExceptionally(failure);
+            } else {
+                closed.complete(null);
+            }
+        }));
         closed.get(10, TimeUnit.SECONDS);
         fixture = null;
         server = null;

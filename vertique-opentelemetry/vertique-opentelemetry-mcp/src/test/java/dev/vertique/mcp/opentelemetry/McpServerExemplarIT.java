@@ -69,15 +69,13 @@ class McpServerExemplarIT {
                 started != null && started.server() != null ? started.server().close() : Future.succeededFuture();
         Future<Void> clientClose = rawClient != null ? rawClient.close() : Future.succeededFuture();
         Future.join(serverClose, clientClose)
-                .onComplete(ignored -> {
+                .compose(ignored -> {
                     if (started != null && started.sdk() != null) {
                         started.sdk().close();
                     }
                     GlobalOpenTelemetry.resetForTest();
                     Vertx vertx = started != null ? started.vertx() : null;
-                    if (vertx != null) {
-                        vertx.close();
-                    }
+                    return vertx != null ? vertx.close() : Future.<Void>succeededFuture();
                 })
                 .toCompletionStage()
                 .toCompletableFuture()

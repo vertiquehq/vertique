@@ -14,8 +14,10 @@ import dev.vertique.mcp.tool.McpToolAnnotations;
 import dev.vertique.mcp.tool.McpToolDescriptor;
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 /**
  * T009 — effective profile selection drives schema generation, end to end through
@@ -28,6 +30,7 @@ import org.junit.jupiter.api.Test;
  * different profiles over the exact same input carrier type publish two different input schemas.
  */
 @DisplayName("MCP JSON profile selection — T009 schema-generation binding")
+@Timeout(value = 20, unit = TimeUnit.SECONDS)
 class McpJsonProfileIT {
 
     record AmountInput(@JsonProperty("amount") BigDecimal argument0) {}

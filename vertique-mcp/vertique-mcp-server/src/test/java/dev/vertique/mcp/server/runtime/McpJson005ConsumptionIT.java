@@ -13,8 +13,10 @@ import dev.vertique.mcp.tool.McpToolAnnotations;
 import dev.vertique.mcp.tool.McpToolDescriptor;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 /**
  * T009 — end-to-end consumption of JSON-005's {@code generateCanonical(Type)} through
@@ -30,6 +32,7 @@ import org.junit.jupiter.api.Test;
  * output).
  */
 @DisplayName("MCP JSON-005 consumption — T009 end-to-end")
+@Timeout(value = 20, unit = TimeUnit.SECONDS)
 class McpJson005ConsumptionIT {
 
     record Address(String city, String street) {}

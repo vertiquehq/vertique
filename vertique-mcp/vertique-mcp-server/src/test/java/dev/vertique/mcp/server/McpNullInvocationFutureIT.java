@@ -50,6 +50,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -96,10 +97,19 @@ class McpNullInvocationFutureIT {
     private Vertx vertx;
 
     @AfterEach
-    void tearDown() {
-        if (vertx != null) {
-            vertx.close();
+    void tearDown() throws Exception {
+        if (vertx == null) {
+            return;
         }
+        CompletableFuture<Void> closed = new CompletableFuture<>();
+        vertx.close().onComplete(result -> {
+            if (result.failed()) {
+                closed.completeExceptionally(result.cause());
+            } else {
+                closed.complete(null);
+            }
+        });
+        closed.get(10, TimeUnit.SECONDS);
     }
 
     @Test

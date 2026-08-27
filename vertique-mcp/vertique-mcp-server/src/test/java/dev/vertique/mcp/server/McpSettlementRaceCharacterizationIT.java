@@ -341,7 +341,14 @@ public class McpSettlementRaceCharacterizationIT {
         @Override
         public void close() throws Exception {
             CompletableFuture<Void> closed = new CompletableFuture<>();
-            server.close().onComplete(ignored -> vertx.close().onComplete(result -> closed.complete(null)));
+            server.close().onComplete(joined -> vertx.close().onComplete(vertxResult -> {
+                Throwable failure = joined.failed() ? joined.cause() : vertxResult.cause();
+                if (failure != null) {
+                    closed.completeExceptionally(failure);
+                } else {
+                    closed.complete(null);
+                }
+            }));
             closed.get(10, TimeUnit.SECONDS);
         }
 

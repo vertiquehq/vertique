@@ -12,8 +12,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 /**
  * T008 TP-002 — generated carriers materialize through the effective JSON profile mapper.
@@ -34,6 +36,7 @@ import org.junit.jupiter.api.Test;
  * bound to the effective profile's mapper.
  */
 @DisplayName("MCP generated input carriers — T008 TP-002")
+@Timeout(value = 20, unit = TimeUnit.SECONDS)
 class McpGeneratedInputCarrierIT {
 
     /** The selected profile for the {@code Optional<T>} carrier. Sensitivity swaps this to "vertx". */

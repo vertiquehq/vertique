@@ -264,7 +264,7 @@ public class WebSocketSecurityPipelineIT {
     static void tearDown(VertxTestContext ctx) {
         Future<?> s = server != null ? server.close() : Future.succeededFuture();
         Future<?> c = wsClient != null ? wsClient.close() : Future.succeededFuture();
-        Future.join(s, c).onComplete(ar -> ctx.completeNow());
+        Future.join(s, c).onComplete(ctx.succeeding(ar -> ctx.completeNow()));
     }
 
     // --- Connect helpers ---

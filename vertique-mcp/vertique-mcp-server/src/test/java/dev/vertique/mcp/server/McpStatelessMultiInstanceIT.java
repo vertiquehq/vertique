@@ -86,7 +86,14 @@ public class McpStatelessMultiInstanceIT {
         Future<Void> closeB = serverB != null ? serverB.close() : Future.succeededFuture();
         Future<Void> closeClient = rawClient != null ? rawClient.close() : Future.succeededFuture();
         Future.join(closeA, closeB, closeClient)
-                .onComplete(ignored -> vertx.close().onComplete(result -> closed.complete(null)));
+                .onComplete(joined -> vertx.close().onComplete(vertxResult -> {
+                    Throwable failure = joined.failed() ? joined.cause() : vertxResult.cause();
+                    if (failure != null) {
+                        closed.completeExceptionally(failure);
+                    } else {
+                        closed.complete(null);
+                    }
+                }));
         closed.get(10, TimeUnit.SECONDS);
         serverA = null;
         serverB = null;

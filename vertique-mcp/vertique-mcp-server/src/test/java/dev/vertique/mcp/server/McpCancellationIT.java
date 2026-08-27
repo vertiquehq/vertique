@@ -118,7 +118,14 @@ class McpCancellationIT {
     void tearDown() throws Exception {
         CompletableFuture<Void> closed = new CompletableFuture<>();
         Future<Void> serverClose = server != null ? server.close() : Future.succeededFuture();
-        serverClose.onComplete(ignored -> vertx.close().onComplete(result -> closed.complete(null)));
+        serverClose.onComplete(joined -> vertx.close().onComplete(vertxResult -> {
+            Throwable failure = joined.failed() ? joined.cause() : vertxResult.cause();
+            if (failure != null) {
+                closed.completeExceptionally(failure);
+            } else {
+                closed.complete(null);
+            }
+        }));
         closed.get(10, TimeUnit.SECONDS);
         fixture = null;
         server = null;

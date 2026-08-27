@@ -18,13 +18,16 @@ import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mockito;
 
 @ExtendWith(VertxExtension.class)
+@Timeout(value = 20, unit = TimeUnit.SECONDS)
 class JwtOptionalRouteAuthIT {
 
     private static final String KEY = "test-secret-key-with-at-least-256-bits-of-padding-for-hs256-signing";
