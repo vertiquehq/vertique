@@ -23,12 +23,29 @@ import java.util.regex.Pattern;
  * and the immutable registry digest invalidates a cursor across deployments. Pagination is not an
  * authority boundary, so a cursor secret is disproportionate.
  *
+ * <p><strong>Two-form anchor grammar (R40/C5).</strong> The {@code lastScannedToolName} field carries
+ * exactly one of two mutually exclusive, syntactically disjoint forms — disjoint because the tool-name
+ * grammar {@code [A-Za-z0-9_.-]{1,128}} never contains {@code '#'}:
+ *
+ * <ul>
+ *   <li><strong>Name form</strong> — a syntactically valid tool name ({@link
+ *       McpToolDescriptor#isValidName}), used when a page fills by reaching {@code pageSize} or the
+ *       registry is exhausted. It is only a lexicographic position hint: the next page resumes at the
+ *       first registry name strictly greater than it, and it need not be a current registry member.
+ *   <li><strong>Position form</strong> — {@code "#"} followed by a bounded non-negative decimal index
+ *       (no leading zero unless the value is exactly {@code "0"}, at most 10 digits, in {@code int}
+ *       range), used only when a page's examination budget exhausts before the page fills. It encodes
+ *       the index of the <em>next unexamined</em> candidate in the digest-pinned registry order — never
+ *       the last examined candidate — so a denied candidate examined right at the budget boundary is
+ *       never named in the cursor. The registry digest binding guarantees the index refers to the same
+ *       registry order on resume.
+ * </ul>
+ *
  * <p>{@link #decode} bounds the encoded token before Base64 decoding and decoded bytes before JSON
- * parsing. It accepts an anchor only when it is a syntactically valid tool name. It deliberately does
- * not require that name to be in the current registry: the anchor is only a lexicographic position
- * hint, so membership validation would expose a registry-name oracle. Every rejection collapses to
- * {@link Decoded#isInvalid()} with no detail, so callers emit the same indistinguishable {@code
- * -32602} response.
+ * parsing. It accepts an anchor only when it satisfies one of the two forms above. For the name form it
+ * deliberately does not require that name to be in the current registry: membership validation would
+ * expose a registry-name oracle. Every rejection collapses to {@link Decoded#isInvalid()} with no
+ * detail, so callers emit the same indistinguishable {@code -32602} response.
  *
  * <p>Not part of the application-facing public surface: package-private per the frozen artifact
  * inventory, matching {@link McpToolRegistry} and {@link McpSchemaRegistry}.
@@ -46,6 +63,12 @@ final class McpCursorCodec {
     private static final String FIELD_REGISTRY_DIGEST = "registryDigest";
     private static final String FIELD_LAST_SCANNED_TOOL_NAME = "lastScannedToolName";
     private static final ObjectMapper DEFAULT_MAPPER = new ObjectMapper();
+
+    /** Prefix marking the opaque scan-position anchor form (R40/C5); never a valid tool-name character. */
+    private static final String POSITION_ANCHOR_PREFIX = "#";
+
+    /** Bounded decimal grammar for the scan-position anchor form: no leading zero, at most 10 digits. */
+    private static final Pattern POSITION_ANCHOR = Pattern.compile("#(0|[1-9][0-9]{0,9})");
 
     private final int maxDecodedBytes;
     private final long maxEncodedChars;
@@ -80,7 +103,8 @@ final class McpCursorCodec {
     }
 
     /**
-     * Encodes an unsigned, non-expiring cursor naming the last examined candidate.
+     * Encodes an unsigned, non-expiring cursor naming the last examined candidate — the page-full and
+     * registry-exhausted anchor form.
      *
      * @param lastScannedToolName the last candidate examined; must be a syntactically valid tool name
      * @param registryDigest the current immutable SHA-256 registry digest
@@ -91,6 +115,27 @@ final class McpCursorCodec {
         requireValidAnchor(lastScannedToolName);
         requireValidDigest(registryDigest);
         return serializeCanonicalNode(canonicalNode(lastScannedToolName, registryDigest), "cursor encoding failed");
+    }
+
+    /**
+     * Encodes an unsigned, non-expiring cursor carrying an opaque scan-position anchor (R40/C5) — the
+     * budget-exhaustion anchor form, emitted instead of the last examined candidate's name so a
+     * denied-but-examined candidate is never disclosed.
+     *
+     * @param nextUnexaminedIndex the zero-based index, in the digest-pinned registry order, of the next
+     *     unexamined candidate; must not be negative
+     * @param registryDigest the current immutable SHA-256 registry digest
+     * @return the opaque, canonical, base64url-encoded cursor token without padding
+     * @throws IllegalArgumentException if {@code nextUnexaminedIndex} is negative or the digest is
+     *     outside the cursor grammar
+     */
+    String encodePosition(int nextUnexaminedIndex, String registryDigest) {
+        if (nextUnexaminedIndex < 0) {
+            throw new IllegalArgumentException("nextUnexaminedIndex must not be negative");
+        }
+        requireValidDigest(registryDigest);
+        String anchor = POSITION_ANCHOR_PREFIX + nextUnexaminedIndex;
+        return serializeCanonicalNode(canonicalNode(anchor, registryDigest), "cursor encoding failed");
     }
 
     /**
@@ -130,7 +175,7 @@ final class McpCursorCodec {
         if (!PROTOCOL_VERSION.equals(version)
                 || !isValidDigest(digest)
                 || !registryDigest.equals(digest)
-                || !McpToolDescriptor.isValidName(lastScannedToolName)
+                || !isValidAnchor(lastScannedToolName)
                 || !cursor.equals(canonicalToken(lastScannedToolName, digest))) {
             return Decoded.invalid();
         }
@@ -195,10 +240,31 @@ final class McpCursorCodec {
         }
     }
 
-    /** Rejects an invalid anchor supplied to the encoder. */
+    /** Rejects an invalid name-form anchor supplied to {@link #encode}. */
     private static void requireValidAnchor(String lastScannedToolName) {
         if (!McpToolDescriptor.isValidName(lastScannedToolName)) {
             throw new IllegalArgumentException("lastScannedToolName must be a valid tool name");
+        }
+    }
+
+    /** Reports whether {@code anchor} satisfies either the name form or the position form (R40/C5). */
+    private static boolean isValidAnchor(@Nullable String anchor) {
+        return McpToolDescriptor.isValidName(anchor) || isValidPositionAnchor(anchor);
+    }
+
+    /**
+     * Reports whether {@code anchor} is the bounded {@code "#<index>"} scan-position form, including
+     * that the parsed index fits in {@code int} range.
+     */
+    private static boolean isValidPositionAnchor(@Nullable String anchor) {
+        if (anchor == null || !POSITION_ANCHOR.matcher(anchor).matches()) {
+            return false;
+        }
+        try {
+            Integer.parseInt(anchor.substring(POSITION_ANCHOR_PREFIX.length()));
+            return true;
+        } catch (NumberFormatException outOfIntRange) {
+            return false;
         }
     }
 
@@ -234,6 +300,29 @@ final class McpCursorCodec {
          */
         static Decoded invalid() {
             return new Decoded(null, true);
+        }
+
+        /**
+         * Reports whether this valid decode's anchor is the opaque scan-position form (R40/C5) rather
+         * than a tool-name lexicographic position hint.
+         *
+         * @return {@code true} when {@link #anchor()} is the {@code "#<index>"} position form
+         */
+        boolean isPositional() {
+            return anchor != null && anchor.startsWith(POSITION_ANCHOR_PREFIX);
+        }
+
+        /**
+         * Parses this decode's scan-position index.
+         *
+         * @return the zero-based next-unexamined-candidate index this anchor carries
+         * @throws IllegalStateException if this decode is not {@link #isPositional()}
+         */
+        int positionIndex() {
+            if (!isPositional()) {
+                throw new IllegalStateException("anchor is not a position-form anchor");
+            }
+            return Integer.parseInt(anchor.substring(POSITION_ANCHOR_PREFIX.length()));
         }
     }
 

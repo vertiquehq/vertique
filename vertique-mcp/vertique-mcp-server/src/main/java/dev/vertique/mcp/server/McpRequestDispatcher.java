@@ -1365,9 +1365,11 @@ final class McpRequestDispatcher {
      * indistinguishable {@code -32602} response {@link McpPolicyEnforcer#unknownOrUnauthorizedError()}
      * produces for a denied or unknown tool (issue #420), never a distinct code or status.
      *
-     * <p>A valid cursor anchor is a lexicographic position hint, not a registry membership proof: a
-     * nonmember anchor resumes at the first registry name strictly greater than the anchor. A cursor is
-     * emitted only after this scan examined at least one candidate and candidates remain.
+     * <p>A valid cursor anchor is one of two forms (R40/C5, see {@link McpCursorCodec}): a name-form
+     * anchor is a lexicographic position hint, not a registry membership proof — a nonmember anchor
+     * resumes at the first registry name strictly greater than it; a position-form anchor resumes the
+     * scan directly at its digest-pinned registry index. A cursor is emitted only after this scan
+     * examined at least one candidate and candidates remain.
      *
      * @param context the request context
      * @param envelope the validated {@code tools/list} request envelope
@@ -1385,6 +1387,7 @@ final class McpRequestDispatcher {
             return;
         }
         String anchor = null;
+        Integer positionAnchorIndex = null;
         if (cursorNode != null) {
             McpCursorCodec.Decoded decoded = cursorCodec.decode(cursorNode.asText(), toolRegistry.digest());
             if (decoded.isInvalid()) {
@@ -1392,10 +1395,16 @@ final class McpRequestDispatcher {
                         context, envelope, security, McpMethod.TOOLS_LIST, McpRequestTerminalEvent.UNKNOWN_TOOL_NAME);
                 return;
             }
-            anchor = decoded.anchor();
+            if (decoded.isPositional()) {
+                positionAnchorIndex = decoded.positionIndex();
+            } else {
+                anchor = decoded.anchor();
+            }
         }
         List<String> names = List.copyOf(toolRegistry.descriptorsByName().keySet());
-        int startIndex = anchor != null ? firstIndexStrictlyAfter(names, anchor) : 0;
+        int startIndex = positionAnchorIndex != null
+                ? positionAnchorIndex
+                : anchor != null ? firstIndexStrictlyAfter(names, anchor) : 0;
         int pageSize = config.toolsPageSize();
         int budget = pageSize * EXAMINATION_BUDGET_MULTIPLIER;
         // establishedSecurityContext() (never null) rather than the raw securityRuntime.current():
@@ -1473,12 +1482,24 @@ final class McpRequestDispatcher {
         int currentExamined = examined;
         String currentLastExaminedName = lastExaminedName;
         while (true) {
-            if (currentVisible.size() >= pageSize || currentExamined >= budget || currentIndex >= names.size()) {
-                boolean candidatesRemain = currentIndex < names.size();
-                return Future.succeededFuture(new ScanResult(
-                        List.copyOf(currentVisible),
-                        candidatesRemain ? currentLastExaminedName : null,
-                        ScanOutcome.COMPLETED));
+            boolean pageFull = currentVisible.size() >= pageSize;
+            boolean budgetExhausted = currentExamined >= budget;
+            boolean registryExhausted = currentIndex >= names.size();
+            if (pageFull || budgetExhausted || registryExhausted) {
+                boolean candidatesRemain = !registryExhausted;
+                NextAnchor nextAnchor = null;
+                if (candidatesRemain) {
+                    // R40 (C5): a page that fills (even simultaneously with budget exhaustion) still
+                    // anchors on its own last emitted, permitted candidate — that name is already in
+                    // the returned page, so naming it discloses nothing new. Only when the budget
+                    // exhausts before the page fills does the anchor switch to the opaque position
+                    // form, naming the next unexamined index instead of the last examined (possibly
+                    // denied) candidate.
+                    nextAnchor =
+                            pageFull ? NextAnchor.ofName(currentLastExaminedName) : NextAnchor.ofPosition(currentIndex);
+                }
+                return Future.succeededFuture(
+                        new ScanResult(List.copyOf(currentVisible), nextAnchor, ScanOutcome.COMPLETED));
             }
             String name = names.get(currentIndex);
             if (cancellation.isCancelled()) {
@@ -1547,7 +1568,7 @@ final class McpRequestDispatcher {
 
     /** One bounded page's outcome: the visible tools, next-page anchor, and settlement state. */
     private record ScanResult(
-            List<McpToolDescriptor> visible, @Nullable String nextAnchor, ScanOutcome outcome) {
+            List<McpToolDescriptor> visible, @Nullable NextAnchor nextAnchor, ScanOutcome outcome) {
 
         /** Creates the response-suppressed outcome for a client-disconnected request. */
         private static ScanResult cancelled() {
@@ -1557,6 +1578,31 @@ final class McpRequestDispatcher {
         /** Creates the fail-whole-list outcome for authorization infrastructure failure. */
         private static ScanResult authorizationFailure() {
             return new ScanResult(List.of(), null, ScanOutcome.AUTHORIZATION_FAILURE);
+        }
+    }
+
+    /**
+     * The next-page cursor anchor a completed scan produced (R40/C5): either the last emitted,
+     * permitted candidate's own name (page-full or registry-exhausted), or an opaque scan-position
+     * index (budget-exhaustion) that never discloses an examined-but-denied candidate's name. Exactly
+     * one of {@code name} and {@code positionIndex} is non-null. Mirrors {@link McpCursorCodec}'s
+     * two-form anchor grammar.
+     */
+    private record NextAnchor(
+            @Nullable String name, @Nullable Integer positionIndex) {
+
+        /** Creates the page-full/registry-exhausted form naming the last emitted permitted candidate. */
+        private static NextAnchor ofName(String name) {
+            return new NextAnchor(name, null);
+        }
+
+        /** Creates the budget-exhaustion form carrying the next unexamined candidate's index. */
+        private static NextAnchor ofPosition(int index) {
+            return new NextAnchor(null, index);
+        }
+
+        private boolean isPositional() {
+            return positionIndex != null;
         }
     }
 
@@ -1680,8 +1726,12 @@ final class McpRequestDispatcher {
         ObjectNode result0 = OUTPUT_ENCODER.createObjectNode();
         result0.put("resultType", COMPLETE_RESULT_TYPE);
         result0.set("tools", tools);
-        if (result.nextAnchor() != null) {
-            result0.put("nextCursor", cursorCodec.encode(result.nextAnchor(), toolRegistry.digest()));
+        NextAnchor nextAnchor = result.nextAnchor();
+        if (nextAnchor != null) {
+            String cursor = nextAnchor.isPositional()
+                    ? cursorCodec.encodePosition(nextAnchor.positionIndex(), toolRegistry.digest())
+                    : cursorCodec.encode(nextAnchor.name(), toolRegistry.digest());
+            result0.put("nextCursor", cursor);
         }
         result0.put("ttlMs", config.toolsTtlMs());
         result0.put("cacheScope", PRIVATE_CACHE_SCOPE);

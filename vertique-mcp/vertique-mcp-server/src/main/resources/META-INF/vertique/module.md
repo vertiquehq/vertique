@@ -772,13 +772,25 @@ evaluations, and ignores an in-flight decision when it later settles; it sends n
 authorization SPI remains cooperative: MCP does not claim to forcibly cancel the in-flight operation.
 
 The cursor is an unsigned, non-expiring, unpadded base64url encoding of canonical JSON with exactly
-three fields, in order: `protocolVersion`, `registryDigest`, and `lastScannedToolName`. The anchor is
-a bounded syntactically valid tool name and only a lexicographic resume-position hint: the next page
-starts at the first registry name strictly greater than it. It need not be a current registry member,
-so decoding does not expose tool-name membership. A forged valid anchor may skip entries for its
-caller, but it cannot include an unauthorized tool because each examined candidate is reauthorized.
-The registry digest invalidates stale cursors across deployments; there is no signature, expiry,
-attempt count, sentinel, or retry state.
+three fields, in order: `protocolVersion`, `registryDigest`, and `lastScannedToolName`. That field
+carries one of two mutually exclusive, syntactically disjoint forms (R40/C5): a bounded syntactically
+valid tool name, or an opaque `"#<index>"` scan-position anchor — disjoint because the tool-name
+grammar never contains `#`.
+
+- **Name form** — used when a page fills by reaching `mcp.toolsPageSize` or the registry is
+  exhausted. It names the last emitted, permitted candidate and is only a lexicographic
+  resume-position hint: the next page starts at the first registry name strictly greater than it. It
+  need not be a current registry member, so decoding does not expose tool-name membership.
+- **Position form** — used only when a page's examination budget exhausts before the page fills. It
+  carries the index, in the digest-pinned registry order, of the *next unexamined* candidate — never
+  the last examined one — so a denied candidate examined right at the budget boundary is never named
+  in the cursor. The next page resumes the scan directly at that index.
+
+A forged valid anchor, of either form, may skip entries for its caller, but it cannot include an
+unauthorized tool because each examined candidate is reauthorized. The registry digest invalidates
+stale cursors across deployments, including binding a position-form anchor to the exact registry
+order it was computed against; there is no signature, expiry, attempt count, sentinel, or retry
+state.
 
 The decoder rejects an encoded token longer than the exact unpadded-base64 representation of its
 2,048-byte budget before decoding, bounds decoded bytes again before parsing, and rejects an invalid
