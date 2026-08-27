@@ -31,20 +31,21 @@ import io.vertx.core.Future;
  *
  * <p>Named implementors include an application tenant-entitlement guard and a maintenance-window
  * guard. Future optional capability is added only through a default method or a separate SPI; this
- * interface's one published abstract-shaped method never gains a sibling.
+ * interface's one published abstract method never gains a sibling.
  *
  * <p>Register implementations via Dagger set multibinding ({@code @IntoSet}).
  *
  * @see OrderedExtension
  * @see McpRequestContext
  */
+@FunctionalInterface
 public interface McpRequestInterceptor extends OrderedExtension {
 
     /**
      * Runs this interceptor's pre-dispatch check for one request.
      *
      * <p>Called exactly once per applicable request, on the request's owning Vert.x context. Must
-     * not block and must never return {@code null}. The default implementation always permits.
+     * not block and must never return {@code null}.
      *
      * <p>The returned future may complete on any thread — an implementation backed by a plain,
      * context-unaware {@link io.vertx.core.Promise} is under no obligation to settle it from Vert.x at
@@ -56,7 +57,5 @@ public interface McpRequestInterceptor extends OrderedExtension {
      * @return a {@link Future} that succeeds to permit the request, or fails to reject it; never
      *     {@code null}
      */
-    default Future<Void> beforeRequest(McpRequestContext context) {
-        return Future.succeededFuture();
-    }
+    Future<Void> beforeRequest(McpRequestContext context);
 }

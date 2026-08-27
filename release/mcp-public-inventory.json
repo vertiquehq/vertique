@@ -40,10 +40,10 @@
           "public final java.lang.String dev.vertique.mcp.interceptor.McpRequestContext.toString()"
         ],
         "dev.vertique.mcp.interceptor.McpRequestInterceptor": [
-          "public default io.vertx.core.Future<java.lang.Void> dev.vertique.mcp.interceptor.McpRequestInterceptor.beforeRequest(dev.vertique.mcp.interceptor.McpRequestContext)"
+          "public abstract io.vertx.core.Future<java.lang.Void> dev.vertique.mcp.interceptor.McpRequestInterceptor.beforeRequest(dev.vertique.mcp.interceptor.McpRequestContext)"
         ],
         "dev.vertique.mcp.interceptor.McpToolInterceptor": [
-          "public default io.vertx.core.Future<java.lang.Void> dev.vertique.mcp.interceptor.McpToolInterceptor.beforeInvocation(dev.vertique.mcp.interceptor.McpToolInvocationContext)"
+          "public abstract io.vertx.core.Future<java.lang.Void> dev.vertique.mcp.interceptor.McpToolInterceptor.beforeInvocation(dev.vertique.mcp.interceptor.McpToolInvocationContext)"
         ],
         "dev.vertique.mcp.interceptor.McpToolInvocationContext": [
           "public dev.vertique.mcp.interceptor.McpRequestContext dev.vertique.mcp.interceptor.McpToolInvocationContext.request()",
@@ -213,7 +213,8 @@
           "public static final dev.vertique.mcp.tool.McpAccessMode dev.vertique.mcp.tool.McpAccessMode.RESTRICTED"
         ],
         "dev.vertique.mcp.tool.McpBeanValidation": [
-          "public static <T> java.util.Set<jakarta.validation.ConstraintViolation<T>> dev.vertique.mcp.tool.McpBeanValidation.validate(T)"
+          "public static <T> java.util.Set<jakarta.validation.ConstraintViolation<T>> dev.vertique.mcp.tool.McpBeanValidation.validate(T)",
+          "public static <T> java.util.Set<jakarta.validation.ConstraintViolation<T>> dev.vertique.mcp.tool.McpBeanValidation.validate(T,java.util.Optional<jakarta.validation.Validator>)"
         ],
         "dev.vertique.mcp.tool.McpInputRejectionException": [
           "public dev.vertique.mcp.tool.McpInputRejectionException(java.lang.String)",

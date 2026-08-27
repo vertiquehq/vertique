@@ -32,13 +32,14 @@ import io.vertx.core.Future;
  *
  * <p>Named implementors include a per-tool entitlement guard and a data-loss-prevention guard.
  * Future optional capability is added only through a default method or a separate SPI; this
- * interface's one published abstract-shaped method never gains a sibling.
+ * interface's one published abstract method never gains a sibling.
  *
  * <p>Register implementations via Dagger set multibinding ({@code @IntoSet}).
  *
  * @see OrderedExtension
  * @see McpToolInvocationContext
  */
+@FunctionalInterface
 public interface McpToolInterceptor extends OrderedExtension {
 
     /**
@@ -46,7 +47,7 @@ public interface McpToolInterceptor extends OrderedExtension {
      *
      * <p>Called exactly once per applicable {@code tools/call} request, on the request's owning
      * Vert.x context, after Bean Validation has already run and before the generated invocation runs.
-     * Must not block and must never return {@code null}. The default implementation always permits.
+     * Must not block and must never return {@code null}.
      *
      * <p>The returned future may complete on any thread — an implementation backed by a plain,
      * context-unaware {@link io.vertx.core.Promise} is under no obligation to settle it from Vert.x at
@@ -57,7 +58,5 @@ public interface McpToolInterceptor extends OrderedExtension {
      * @return a {@link Future} that succeeds to permit the call, or fails to reject it; never
      *     {@code null}
      */
-    default Future<Void> beforeInvocation(McpToolInvocationContext context) {
-        return Future.succeededFuture();
-    }
+    Future<Void> beforeInvocation(McpToolInvocationContext context);
 }
