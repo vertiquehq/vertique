@@ -21,7 +21,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -124,89 +123,47 @@ class McpServerConfigTest {
     }
 
     /**
-     * R02 TP-002 (issue #424) — the whole-request-timeout property and the four JSON-limit properties
-     * (the pre-T007 {@code requestTimeoutMs}, {@code jsonMaxDepth}, {@code jsonMaxPropertiesPerObject},
-     * {@code jsonMaxItemsPerArray}, and {@code jsonMaxStringChars} fields) were removed in the T007
-     * architecture rebaseline: transport liveness is now shared {@code HttpConfig} behavior and
-     * JSON-RPC envelope limits are Jackson's own bounded {@code StreamReadConstraints} inside the
-     * private envelope codec, not a consumer-visible MCP configuration surface.
+     * R43 — the six implementation-era spellings ({@code requestTimeoutMs}, {@code jsonMaxDepth},
+     * {@code jsonMaxPropertiesPerObject}, {@code jsonMaxItemsPerArray}, {@code jsonMaxStringChars},
+     * and {@code toolsListDeadlineMs}) never shipped in any release and carried a one-release
+     * rejection machinery (issue #424, R02 TP-002) that protected an installed base of zero. R43
+     * removed that machinery: every one of these spellings is now an ordinary unrecognized property
+     * that falls into {@link McpServerConfig}'s class-level {@code ignoreUnknown = true}
+     * forward-compatible path exactly like any other unknown key.
      *
-     * <p>T007's own proof for this (superseded by the rows below) loaded configuration through a
-     * bespoke test-local {@code ObjectMapper} and asserted only that the five fields were absent from
-     * {@link McpServerConfig}'s declared properties — which is exactly why the silent-ignore behaviour
-     * issue #424 reports survived a green gate: a test-local mapper proves nothing about what the
-     * <strong>production</strong> configuration loader does with a key it no longer recognizes. Every
-     * row below is driven through {@link McpServerConfigRetiredKeyRejectionTestFixture#configParser()},
+     * <p>Every row below is driven through {@link McpServerConfigUnknownKeyTestFixture#configParser()},
      * the real {@code dev.vertique.config.parser.DefaultConfigParser} over the real lenient
      * {@code dev.vertique.config.parser.DefaultConfigMapper} — the same class every other Dagger
      * boundary provider (for example {@code RestCoreModule#httpConfig}) injects to parse a config
-     * section in production.
+     * section in production — so this proves what the <strong>production</strong> configuration
+     * loader does with a key it does not recognize, not merely what a test-local mapper would do.
      */
     @Nested
-    @DisplayName("retired configuration keys (R02 TP-002, issue #424)")
-    class RetiredConfigurationKeys {
-
-        @Test
-        @DisplayName("rejects the retired tools/list deadline through the production mapper")
-        void shouldRejectTheRetiredToolsListDeadlineThroughTheProductionMapper() {
-            assertThatThrownBy(() -> McpServerConfigRetiredKeyRejectionTestFixture.parse(Set.of("toolsListDeadlineMs")))
-                    .as("the retired flat MCP key must not be silently ignored or rebound")
-                    .isInstanceOf(ConfigurationException.class)
-                    .hasMessageContaining("mcp.toolsListDeadlineMs")
-                    .hasMessageContaining("per-decision authorization timeouts")
-                    .hasMessageContaining("shared HTTP liveness");
-        }
+    @DisplayName("unknown and formerly retired configuration keys (R43)")
+    class UnknownAndFormerlyRetiredKeys {
 
         @ParameterizedTest(name = "{0}")
-        @MethodSource("dev.vertique.mcp.server.McpServerConfigTest#retiredKeys")
-        @DisplayName("fails startup naming the retired key's successor")
-        void shouldFailStartupOnARetiredKeyThroughTheProductionMapper(String retiredKey, String expectedGuidance) {
-            assertThatThrownBy(() -> McpServerConfigRetiredKeyRejectionTestFixture.parse(Set.of(retiredKey)))
-                    .as("a retired key must fail startup through the production configuration mapper")
-                    .isInstanceOf(ConfigurationException.class)
-                    .hasMessageContaining("mcp." + retiredKey)
-                    .hasMessageContaining(expectedGuidance);
+        @MethodSource("dev.vertique.mcp.server.McpServerConfigTest#formerlyRetiredKeys")
+        @DisplayName("silently ignores a formerly retired key spelling through the production mapper")
+        void shouldSilentlyIgnoreAFormerlyRetiredKeyThroughTheProductionMapper(String formerlyRetiredKey) {
+            McpServerConfig loaded = McpServerConfigUnknownKeyTestFixture.parse(Set.of(formerlyRetiredKey));
+
+            assertThatCode(() -> validator.validate(loaded))
+                    .as("a formerly retired key must compose and validate like any other unknown key")
+                    .doesNotThrowAnyException();
         }
 
         @Test
         @DisplayName("an ordinary unknown key stays forward-compatible through the production mapper")
         void shouldIgnoreAnOrdinaryUnknownKeyThroughTheProductionMapper() {
-            McpServerConfig loaded = McpServerConfigRetiredKeyRejectionTestFixture.parseWithOrdinaryUnknownKey();
+            McpServerConfig loaded = McpServerConfigUnknownKeyTestFixture.parseWithOrdinaryUnknownKey();
 
             assertThatCode(() -> validator.validate(loaded))
                     .as("a config carrying only an ordinary unknown key must still bind and validate")
                     .doesNotThrowAnyException();
             assertThat(loaded.outputMaxBytes())
                     .as("a retained bounded key supplied alongside the ordinary unknown key still binds")
-                    .isEqualTo(McpServerConfigRetiredKeyRejectionTestFixture.RETAINED_OUTPUT_MAX_BYTES);
-        }
-
-        /**
-         * Sensitivity — removing one retired key from the tracked set must move the observed
-         * rejection count by exactly one, in both directions: this cannot pass by coincidence (for
-         * example, by every key failing regardless of name, or by none failing).
-         */
-        @ParameterizedTest(name = "omitting {0}")
-        @MethodSource("dev.vertique.mcp.server.McpServerConfigTest#retiredKeyNames")
-        @DisplayName("sensitivity: omitting exactly one retired key drops the rejection count by exactly one")
-        void shouldMoveRejectionCountByExactlyOneWhenOneRetiredKeyIsOmitted(String omittedKey) {
-            long fullRejectionCount = McpServerConfigRetiredKeyRejectionTestFixture.REMOVED_JAVA_PROPERTIES.stream()
-                    .filter(McpServerConfigRetiredKeyRejectionTestFixture::rejectedAlone)
-                    .count();
-            Set<String> withOneOmitted = McpServerConfigRetiredKeyRejectionTestFixture.REMOVED_JAVA_PROPERTIES.stream()
-                    .filter(key -> !key.equals(omittedKey))
-                    .collect(Collectors.toUnmodifiableSet());
-            long reducedRejectionCount = withOneOmitted.stream()
-                    .filter(McpServerConfigRetiredKeyRejectionTestFixture::rejectedAlone)
-                    .count();
-
-            assertThat(fullRejectionCount)
-                    .as("every one of the five retired keys must independently fail when tested alone")
-                    .isEqualTo(5);
-            assertThat(reducedRejectionCount)
-                    .as("omitting exactly " + omittedKey + " from the tracked set must drop the rejection "
-                            + "count by exactly one")
-                    .isEqualTo(fullRejectionCount - 1);
+                    .isEqualTo(McpServerConfigUnknownKeyTestFixture.RETAINED_OUTPUT_MAX_BYTES);
         }
     }
 
@@ -613,18 +570,15 @@ class McpServerConfigTest {
                 Arguments.of("a null mount", null));
     }
 
-    /** Each retired key paired with a substring its replacement-guidance message must contain. */
-    private static Stream<Arguments> retiredKeys() {
+    /** The six implementation-era spellings R43 stopped rejecting; see {@link UnknownAndFormerlyRetiredKeys}. */
+    private static Stream<String> formerlyRetiredKeys() {
         return Stream.of(
-                Arguments.of("requestTimeoutMs", "http.idleTimeoutSeconds"),
-                Arguments.of("jsonMaxDepth", "StreamReadConstraints"),
-                Arguments.of("jsonMaxPropertiesPerObject", "StreamReadConstraints"),
-                Arguments.of("jsonMaxItemsPerArray", "StreamReadConstraints"),
-                Arguments.of("jsonMaxStringChars", "StreamReadConstraints"));
-    }
-
-    private static Stream<String> retiredKeyNames() {
-        return McpServerConfigRetiredKeyRejectionTestFixture.REMOVED_JAVA_PROPERTIES.stream();
+                "requestTimeoutMs",
+                "jsonMaxDepth",
+                "jsonMaxPropertiesPerObject",
+                "jsonMaxItemsPerArray",
+                "jsonMaxStringChars",
+                "toolsListDeadlineMs");
     }
 
     // --- Fixtures ---
@@ -677,27 +631,19 @@ class McpServerConfigTest {
     }
 
     /**
-     * R02 TP-002 framework wiring (issue #424). Builds a raw JSON {@code mcp} section carrying the
-     * real pre-removal Jackson binding names the T007 rebaseline removed, alongside a valid enabled
-     * configuration and the retained bounded properties, and drives every parse through the real
-     * {@code dev.vertique.config.parser.DefaultConfigParser} over the real lenient
+     * R43 framework wiring. Builds a raw JSON {@code mcp} section carrying unrecognized property
+     * names — including the six formerly retired spellings (issue #424, R02 TP-002) — alongside a
+     * valid enabled configuration and the retained bounded properties, and drives every parse
+     * through the real {@code dev.vertique.config.parser.DefaultConfigParser} over the real lenient
      * {@code dev.vertique.config.parser.DefaultConfigMapper} — the production configuration mapper —
      * rather than a bespoke test-local {@code ObjectMapper}.
      */
-    private static final class McpServerConfigRetiredKeyRejectionTestFixture {
-
-        /** The real pre-removal {@code McpServerConfig} field names the T007 rebaseline removed. */
-        static final Set<String> REMOVED_JAVA_PROPERTIES = Set.of(
-                "requestTimeoutMs",
-                "jsonMaxDepth",
-                "jsonMaxPropertiesPerObject",
-                "jsonMaxItemsPerArray",
-                "jsonMaxStringChars");
+    private static final class McpServerConfigUnknownKeyTestFixture {
 
         static final int RETAINED_OUTPUT_MAX_BYTES = 4_096;
         static final int RETAINED_TOOLS_PAGE_SIZE = 50;
 
-        private McpServerConfigRetiredKeyRejectionTestFixture() {}
+        private McpServerConfigUnknownKeyTestFixture() {}
 
         /**
          * Creates a lenient {@link ConfigParser} instance for test-side config parsing — the same
@@ -712,23 +658,21 @@ class McpServerConfigTest {
 
         /**
          * Parses an {@code mcp} section carrying a valid enabled configuration, the retained bounded
-         * properties, and every one of {@code retiredKeys} (each set to an arbitrary value), through
+         * properties, and every one of {@code unknownKeys} (each set to an arbitrary value), through
          * the production {@link #configParser()}.
          *
-         * @param retiredKeys the retired property names to include in the parsed section
-         * @return the parsed configuration, when parsing does not throw
-         * @throws ConfigurationException if the production mapper rejects any supplied retired key
+         * @param unknownKeys the unrecognized property names to include in the parsed section
+         * @return the parsed configuration
          */
-        static McpServerConfig parse(Set<String> retiredKeys) {
+        static McpServerConfig parse(Set<String> unknownKeys) {
             JsonObject section = baseSection();
-            retiredKeys.forEach(key -> section.put(key, 999));
+            unknownKeys.forEach(key -> section.put(key, 999));
             return configParser().parse(section, McpServerConfig.class);
         }
 
         /**
          * Parses an {@code mcp} section carrying a valid enabled configuration, the retained bounded
-         * properties, and one ordinary unrecognized key that is <strong>not</strong> one of the five
-         * retired keys — proving ordinary forward compatibility survives this fix.
+         * properties, and one ordinary unrecognized key — proving ordinary forward compatibility.
          *
          * @return the parsed configuration
          */
@@ -736,22 +680,6 @@ class McpServerConfigTest {
             JsonObject section = baseSection();
             section.put("someFutureUnrecognizedFeatureFlag", true);
             return configParser().parse(section, McpServerConfig.class);
-        }
-
-        /**
-         * Reports whether parsing {@code retiredKey} alone (alongside the valid base configuration)
-         * through the production mapper throws {@link ConfigurationException}.
-         *
-         * @param retiredKey the single retired property name to test
-         * @return {@code true} when the production mapper rejects it
-         */
-        static boolean rejectedAlone(String retiredKey) {
-            try {
-                parse(Set.of(retiredKey));
-                return false;
-            } catch (ConfigurationException expected) {
-                return true;
-            }
         }
 
         private static JsonObject baseSection() {

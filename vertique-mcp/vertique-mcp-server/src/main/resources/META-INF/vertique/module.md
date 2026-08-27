@@ -75,14 +75,17 @@ HTTP `400` with JSON-RPC code `-32700`, before dispatch. Independently, the disp
 `config.outputMaxTokens()` to the reparse of bytes already bounded by `mcp.outputMaxBytes`; there is
 no separate fixed node or parser-token limit.
 
-**Retired configuration keys fail startup.** For one release, `McpServerConfig` rejects each exact
-flat spelling `mcp.requestTimeoutMs`, `mcp.jsonMaxDepth`, `mcp.jsonMaxPropertiesPerObject`,
-`mcp.jsonMaxItemsPerArray`, `mcp.jsonMaxStringChars`, and `mcp.toolsListDeadlineMs` with a
-`ConfigurationException` that names the key and its guidance; it does not silently ignore any of
-them. `toolsListDeadlineMs` has no replacement MCP setting: per-decision authorization timeouts and
-the shared HTTP liveness settings own the remaining bounds. The removed JSON-shape settings likewise
-have no direct replacement because the private envelope codec uses Jackson's frozen
-`StreamReadConstraints` (see [Bounded JSON-RPC envelope codec](#bounded-json-rpc-envelope-codec)).
+**Former implementation-era keys are ordinary unknown keys.** `mcp.requestTimeoutMs`,
+`mcp.jsonMaxDepth`, `mcp.jsonMaxPropertiesPerObject`, `mcp.jsonMaxItemsPerArray`,
+`mcp.jsonMaxStringChars`, and `mcp.toolsListDeadlineMs` were implementation-era spellings that never
+shipped in any release; supplying any of them is silently ignored exactly like any other unrecognized
+key (see the forward-compatibility note above), not rejected. Where their underlying concern still
+matters, it moved elsewhere rather than surviving as an MCP setting: whole-request liveness is
+`http.idleTimeoutSeconds` / `http.readIdleTimeoutSeconds` / `http.writeIdleTimeoutSeconds`; JSON-shape
+limits are Jackson's own frozen `StreamReadConstraints` inside the private envelope codec (see
+[Bounded JSON-RPC envelope codec](#bounded-json-rpc-envelope-codec)); and the `toolsListDeadlineMs`
+concern is owned jointly by per-decision authorization timeouts and the shared HTTP liveness
+settings, with no direct replacement MCP setting.
 
 ## Stateless HTTP contract
 
