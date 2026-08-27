@@ -58,21 +58,21 @@ import lombok.extern.slf4j.Slf4j;
  * RequestMetaObject} field this attribute mirrors is a per-request negotiated fact, not a server
  * constant.
  *
- * <p>It then <em>would</em> add at most one {@link Span#addLink(SpanContext) link} for the request's
- * optional body trace context ({@link McpRequestTerminalObservation#bodyTraceContext()}): a link is
- * added only when the body trace context is present, structurally convertible into a valid
- * OpenTelemetry {@link SpanContext}, and distinct (different trace id or span id) from the captured
- * HTTP span's own context — a body context identical to the HTTP span's own context adds no link,
- * since it would be a self-reference rather than a genuine cross-boundary correlation. Malformed body
- * trace data (a {@code traceState} that does not parse as W3C {@code key=value} entries) is caught,
- * logged at WARN with a bounded diagnostic (the exception class name only — never the raw trace
- * data), and produces no link; every other enrichment attribute is still recorded. <b>This path
- * exists but is not yet fed (P05 review remediation):</b> {@code McpCompletionCoordinator} always
- * constructs {@link McpRequestTerminalObservation} with a {@code null} body trace context, so {@link
- * #addBodyTraceLink} never runs today — connecting a real source is deferred, because it means
- * accepting a client-supplied trace reference, and doing so without deliberately deciding how to
- * bound the trust placed in it would open a trace-correlation-spoofing surface. No span status is
- * ever set here: transport status remains owned by Vert.x HTTP tracing (contract §4.10).
+ * <p>It also adds at most one {@link Span#addLink(SpanContext) link} for the request's optional body
+ * trace context ({@link McpRequestTerminalObservation#bodyTraceContext()}, populated by {@code
+ * McpCompletionCoordinator} from the request body's {@code params._meta.traceparent}/{@code
+ * tracestate}, R39): a link is added only when the body trace context is present, structurally
+ * convertible into a valid OpenTelemetry {@link SpanContext}, and from a <em>different trace</em> than
+ * the captured HTTP span's own trace id. A body reference sharing the captured span's trace id is
+ * suppressed as a self-reference rather than linked — this catches a body context identical to the
+ * HTTP {@code traceparent} header that established this request's parent, since that header shares
+ * the captured span's trace id (only the span id differs: the captured span's own span id is freshly
+ * minted at {@code open} and never equals its parent's). Suppression therefore compares trace id only,
+ * never full span identity — see {@link #addBodyTraceLink}. Malformed body trace data (a {@code
+ * traceState} that does not parse as W3C {@code key=value} entries) is caught, logged at WARN with a
+ * bounded diagnostic (the exception class name only — never the raw trace data), and produces no
+ * link; every other enrichment attribute is still recorded. No span status is ever set here: transport
+ * status remains owned by Vert.x HTTP tracing (contract §4.10).
  *
  * <p><b>Completion scope (R06, issue #435).</b> The session returned by {@link #open} also implements
  * {@link dev.vertique.mcp.lifecycle.McpCompletionScope}: {@code openCompletionScope()} re-makes the
@@ -255,7 +255,14 @@ final class McpServerSpanObserver implements McpRequestLifecycleObserver {
 
     /**
      * Adds exactly one {@link Span#addLink(SpanContext) link} to {@code span} when {@code body}
-     * converts to a valid, distinct {@link SpanContext} — and none otherwise.
+     * converts to a valid {@link SpanContext} from a <em>different trace</em> than the captured HTTP
+     * span's own trace — and none otherwise.
+     *
+     * <p>Suppression compares trace id only, never full span identity: the HTTP {@code traceparent}
+     * header that established this request's parent context shares the captured span's trace id (the
+     * captured span's own span id is freshly minted at {@code open} and never equals its parent's), so
+     * a body reference identical to that HTTP header is recognized as a self-reference by trace id
+     * alone.
      *
      * <p>Any failure while interpreting {@code body} (currently: a {@code traceState} that does not
      * parse as W3C {@code key=value} entries) is caught here so a malformed body-trace value never
@@ -264,7 +271,7 @@ final class McpServerSpanObserver implements McpRequestLifecycleObserver {
      *
      * @param span the span captured at {@code open}, already enriched with the bounded attributes
      * @param httpSpanContext {@code span}'s own captured {@link SpanContext}, used to detect a
-     *     self-referential body trace context
+     *     same-trace (self-referential) body trace context
      * @param body the request's optional, already-validated body trace context; never {@code null}
      */
     private static void addBodyTraceLink(Span span, SpanContext httpSpanContext, McpTraceContext body) {
@@ -276,9 +283,16 @@ final class McpServerSpanObserver implements McpRequestLifecycleObserver {
             if (!bodySpanContext.isValid()) {
                 return;
             }
-            if (isSameSpan(bodySpanContext, httpSpanContext)) {
-                // A body trace context identical to the HTTP span's own context is a self-reference,
-                // not a genuine cross-boundary correlation — no link is added for it.
+            if (isSameTrace(bodySpanContext, httpSpanContext)) {
+                // A body trace context sharing this request's trace id is part of this request's own
+                // trace, not a genuine cross-boundary correlation — no link is added for it. The HTTP
+                // traceparent header that established this request's parent context shares the
+                // captured span's trace id (only the span id differs, since the captured span's own
+                // span id is freshly minted at open and never equals its parent's), so a body
+                // reference identical to that HTTP header — the self-reference case this suppression
+                // exists to catch — would never match on span id. Suppression therefore keys on trace
+                // id alone; comparing full span identity would miss the HTTP-header self-reference and
+                // wrongly add a link for it.
                 return;
             }
             span.addLink(bodySpanContext);
@@ -289,8 +303,8 @@ final class McpServerSpanObserver implements McpRequestLifecycleObserver {
         }
     }
 
-    private static boolean isSameSpan(SpanContext a, SpanContext b) {
-        return a.getTraceId().equals(b.getTraceId()) && a.getSpanId().equals(b.getSpanId());
+    private static boolean isSameTrace(SpanContext a, SpanContext b) {
+        return a.getTraceId().equals(b.getTraceId());
     }
 
     /**
