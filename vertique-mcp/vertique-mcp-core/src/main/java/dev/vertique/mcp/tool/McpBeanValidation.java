@@ -6,6 +6,7 @@ package dev.vertique.mcp.tool;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validation;
 import jakarta.validation.Validator;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -43,5 +44,27 @@ public final class McpBeanValidation {
      */
     public static <T> Set<ConstraintViolation<T>> validate(T value) {
         return VALIDATOR.validate(value);
+    }
+
+    /**
+     * Validates {@code value} through {@code validator} when present, falling back to the one shared
+     * default {@link Validator} otherwise (R38/W7).
+     *
+     * <p>This is the seam a generated invoker's constructor-injected {@code Optional<Validator>} uses:
+     * when the application's Dagger graph binds a {@link Validator} — for example one backed by a
+     * Dagger-aware {@link jakarta.validation.ConstraintValidatorFactory} that can resolve an
+     * {@code @Inject}-only {@link jakarta.validation.ConstraintValidator} — tool-input Bean Validation
+     * runs through it; when the binding is absent, behavior is byte-for-byte identical to {@link
+     * #validate(Object)}.
+     *
+     * @param value the materialized tool-argument carrier to validate; must not be {@code null}
+     * @param validator the optionally application-bound {@link Validator}; must not be {@code null}
+     *     itself (use {@link Optional#empty()}, never a {@code null} reference)
+     * @param <T> the carrier type
+     * @return the set of constraint violations, empty when {@code value} satisfies every declared
+     *     constraint
+     */
+    public static <T> Set<ConstraintViolation<T>> validate(T value, Optional<Validator> validator) {
+        return validator.orElse(VALIDATOR).validate(value);
     }
 }

@@ -3,6 +3,7 @@
 
 package dev.vertique.mcp.server;
 
+import dagger.BindsOptionalOf;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
@@ -19,6 +20,7 @@ import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.security.IdentityResolutionMiddleware;
 import dev.vertique.security.authz.Authorizer;
 import jakarta.inject.Singleton;
+import jakarta.validation.Validator;
 import java.util.Optional;
 import java.util.Set;
 
@@ -58,6 +60,14 @@ public abstract class McpServerModule {
      */
     @Multibinds
     abstract Set<McpToolInvoker> toolInvokers();
+
+    /**
+     * Declares the optional application-bound {@link Validator} (R38/W7): when present, generated tool
+     * invokers route tool-input Bean Validation through it; when absent, they fall back to {@code
+     * vertique-mcp-core}'s zero-config {@code McpBeanValidation} default.
+     */
+    @BindsOptionalOf
+    abstract Validator validator();
 
     /**
      * Builds the one immutable, global-name-ordered tool registry {@link McpRequestDispatcher}'s {@code

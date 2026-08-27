@@ -666,6 +666,21 @@ generated invoker's `prepare(...)` returns exposes exactly `normalizedArguments(
 the descriptor, cancellation signal, effective mapper, and generated input carrier are closure-captured
 implementation detail, never a getter or any other public member.
 
+### Optional Bean Validation `Validator` binding
+
+`McpServerModule` declares `@BindsOptionalOf Validator` (R38/W7), so composition succeeds whether or
+not the application's own Dagger graph binds a `jakarta.validation.Validator`. Every generated
+invoker's constructor additionally accepts `Optional<Validator>` and threads it into stage 4 of the
+[Request-time input pipeline](#request-time-input-pipeline) through
+`McpBeanValidation.validate(carrier, validator)`: when the graph binds a `Validator` — for example an
+application-composed, Dagger-aware one whose `ConstraintValidatorFactory` can resolve an
+`@Inject`-only `ConstraintValidator` — tool-input Bean Validation runs through it; when the graph
+binds none, behavior is byte-for-byte identical to `vertique-mcp-core`'s zero-config
+`McpBeanValidation` default. This module adds `hibernate-validator` and `org.glassfish.expressly` as
+runtime-scoped dependencies (not compile) so that zero-config default has a Jakarta Bean Validation
+provider on the classpath of every MCP application, even one that composes no `Validator` binding of
+its own — `vertique-mcp-core` itself declares only the Bean Validation API at compile scope.
+
 ### What is not here yet
 
 This version composes the immutable tool and schema registries, the effective profile, the hardened

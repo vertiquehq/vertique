@@ -16,6 +16,7 @@ import dev.vertique.mcp.server.runtime.McpToolRuntimeFactory;
 import dev.vertique.mcp.server.runtime.McpToolRuntimeFactoryTestSupport;
 import dev.vertique.mcp.tool.McpToolInvoker;
 import java.lang.reflect.Constructor;
+import java.util.Optional;
 import java.util.Set;
 import javax.tools.JavaFileObject;
 
@@ -25,7 +26,7 @@ import javax.tools.JavaFileObject;
  * parameter, so {@link dev.vertique.codegen.mcp.McpToolInvokerEmitter} emits the generated same-package
  * {@code OptionalProbe} canary and the constructor call to {@code McpToolRuntime
  * #verifyOptionalMaterialization} — with the real {@link McpToolProcessor}, and constructs the
- * resulting generated {@code ProbeTools_register_McpToolInvoker} through its real three-argument
+ * resulting generated {@code ProbeTools_register_McpToolInvoker} through its real four-argument
  * {@code @Inject} constructor via reflection, against a caller-chosen {@link McpToolRuntimeFactory}.
  *
  * <p>Construction is the proof point: the canary runs inside the generated invoker's constructor,
@@ -101,10 +102,11 @@ final class McpOptionalMaterializationCanaryTestFixture {
                 });
 
         Constructor<?> invokerConstructor = invokerClass.getDeclaredConstructor(
-                toolsClass, McpToolRuntimeFactory.class, InputObjectProcessor.class);
+                toolsClass, McpToolRuntimeFactory.class, InputObjectProcessor.class, Optional.class);
         invokerConstructor.setAccessible(true);
         try {
-            return (McpToolInvoker) invokerConstructor.newInstance(toolsInstance, runtimes, processor);
+            return (McpToolInvoker)
+                    invokerConstructor.newInstance(toolsInstance, runtimes, processor, Optional.empty());
         } catch (java.lang.reflect.InvocationTargetException wrapped) {
             // The generated invoker's own constructor is the direct caller of
             // McpToolRuntime#verifyOptionalMaterialization; reflection wraps whatever it throws.

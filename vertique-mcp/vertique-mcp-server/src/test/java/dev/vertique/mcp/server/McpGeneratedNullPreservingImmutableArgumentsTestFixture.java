@@ -19,6 +19,7 @@ import dev.vertique.mcp.tool.McpToolInvoker;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import java.lang.reflect.Constructor;
+import java.util.Optional;
 import java.util.Set;
 import javax.tools.JavaFileObject;
 
@@ -28,7 +29,7 @@ import javax.tools.JavaFileObject;
  * application source — a required record-typed parameter and an {@code Optional<T>} parameter,
  * neither carrying any {@code @Canonicalize}/{@code @Sanitize} annotation — with the real {@link
  * McpToolProcessor}, and loads the resulting generated {@code NullableTools_register_McpToolInvoker}
- * through its real three-argument {@code @Inject} constructor, exactly like {@link
+ * through its real four-argument {@code @Inject} constructor, exactly like {@link
  * McpGeneratedParameterizedToolITFixture} but without the HTTP layer: this proof only needs {@link
  * McpToolInvoker#prepare}, never the dispatcher or a live request.
  *
@@ -110,9 +111,9 @@ final class McpGeneratedNullPreservingImmutableArgumentsTestFixture {
         McpToolRuntimeFactory runtimes =
                 McpToolRuntimeFactoryTestSupport.factory(Set.of(new OptionalMaterializingProfile()), "strict");
         Constructor<?> invokerConstructor = invokerClass.getDeclaredConstructor(
-                toolsClass, McpToolRuntimeFactory.class, InputObjectProcessor.class);
+                toolsClass, McpToolRuntimeFactory.class, InputObjectProcessor.class, Optional.class);
         invokerConstructor.setAccessible(true);
-        return (McpToolInvoker) invokerConstructor.newInstance(toolsInstance, runtimes, processor);
+        return (McpToolInvoker) invokerConstructor.newInstance(toolsInstance, runtimes, processor, Optional.empty());
     }
 
     /**

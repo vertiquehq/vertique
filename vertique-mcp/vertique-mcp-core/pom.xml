@@ -37,20 +37,14 @@ SPDX-License-Identifier: EUPL-1.2
              pipeline (contract §4.7) and must be public so generated code in an arbitrary application
              package can reach it — relocated here from vertique-mcp-server, which is not on that
              package's compile path. Resolved directly, not through vertique-validation, since MCP
-             needs only jakarta.validation.Validator#validate. -->
+             needs only jakarta.validation.Validator#validate. R38/W7: this module needs only the
+             Jakarta Bean Validation API at compile time — Validation.buildDefaultValidatorFactory()
+             discovers a provider (e.g. Hibernate Validator) via ServiceLoader at runtime, so a
+             provider dependency belongs to whichever module puts an MCP application on the classpath
+             (vertique-mcp-server), not here. -->
         <dependency>
             <groupId>jakarta.validation</groupId>
             <artifactId>jakarta.validation-api</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.hibernate.validator</groupId>
-            <artifactId>hibernate-validator</artifactId>
-        </dependency>
-        <!-- Hibernate Validator's default message interpolator needs a jakarta.el implementation at
-             runtime (matches vertique-validation's established pattern for the same provider). -->
-        <dependency>
-            <groupId>org.glassfish.expressly</groupId>
-            <artifactId>expressly</artifactId>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>

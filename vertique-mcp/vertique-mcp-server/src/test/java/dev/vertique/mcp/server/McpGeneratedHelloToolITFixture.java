@@ -187,7 +187,7 @@ final class McpGeneratedHelloToolITFixture {
         Class<?> invokerClass = result.loadGeneratedClass(INVOKER_FQN);
         Object toolsInstance = toolsClass.getDeclaredConstructor().newInstance();
         Constructor<?> invokerConstructor = invokerClass.getDeclaredConstructor(
-                toolsClass, McpToolRuntimeFactory.class, InputObjectProcessor.class);
+                toolsClass, McpToolRuntimeFactory.class, InputObjectProcessor.class, Optional.class);
         invokerConstructor.setAccessible(true);
         return (McpToolInvoker) invokerConstructor.newInstance(
                 toolsInstance,
@@ -198,7 +198,8 @@ final class McpGeneratedHelloToolITFixture {
                         },
                         sanitizerType -> {
                             throw new IllegalArgumentException("unresolvable sanitizer " + sanitizerType);
-                        }));
+                        }),
+                Optional.empty());
     }
 
     private static IdentityResolutionMiddleware identityResolution(SecurityRuntime securityRuntime) {

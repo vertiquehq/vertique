@@ -288,9 +288,10 @@ final class McpGeneratedGenericStructuredOutputITFixture {
         Class<?> toolsClass = result.loadGeneratedClass(TOOLS_SOURCE_FQN);
         Class<?> invokerClass = result.loadGeneratedClass(invokerFqn);
         Constructor<?> invokerConstructor = invokerClass.getDeclaredConstructor(
-                toolsClass, McpToolRuntimeFactory.class, InputObjectProcessor.class);
+                toolsClass, McpToolRuntimeFactory.class, InputObjectProcessor.class, Optional.class);
         invokerConstructor.setAccessible(true);
-        return (McpToolInvoker) invokerConstructor.newInstance(toolsInstance, runtimeFactory, inputProcessor);
+        return (McpToolInvoker)
+                invokerConstructor.newInstance(toolsInstance, runtimeFactory, inputProcessor, Optional.empty());
     }
 
     private static JsonMapperProfile snakeProfile() {

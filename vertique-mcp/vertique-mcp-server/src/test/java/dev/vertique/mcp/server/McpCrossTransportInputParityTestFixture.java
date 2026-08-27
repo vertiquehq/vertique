@@ -15,6 +15,7 @@ import dev.vertique.mcp.tool.McpToolInvoker;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import java.lang.reflect.Constructor;
+import java.util.Optional;
 import javax.tools.JavaFileObject;
 
 /**
@@ -22,7 +23,7 @@ import javax.tools.JavaFileObject;
  * one real {@code com.example.parity.ParityTools} application source — a single parameter typed as the
  * <strong>published</strong> {@link dev.vertique.input.processing.testkit.CrossTransportFixtureLevel1}
  * corpus record, not a locally re-declared lookalike — with the real {@link McpToolProcessor}, and
- * loads the resulting generated {@code ParityTools_echo_McpToolInvoker} through its real three-argument
+ * loads the resulting generated {@code ParityTools_echo_McpToolInvoker} through its real four-argument
  * {@code @Inject} constructor. This is the same construction path {@link
  * McpGeneratedNullPreservingImmutableArgumentsTestFixture} uses, applied to the shared corpus type
  * instead of a locally declared one, so the proof runs the real generated stage-2 INP-001 call against
@@ -93,9 +94,9 @@ final class McpCrossTransportInputParityTestFixture {
 
         McpToolRuntimeFactory runtimes = McpToolRuntimeFactoryTestSupport.factory();
         Constructor<?> invokerConstructor = invokerClass.getDeclaredConstructor(
-                toolsClass, McpToolRuntimeFactory.class, InputObjectProcessor.class);
+                toolsClass, McpToolRuntimeFactory.class, InputObjectProcessor.class, Optional.class);
         invokerConstructor.setAccessible(true);
-        return (McpToolInvoker) invokerConstructor.newInstance(toolsInstance, runtimes, processor);
+        return (McpToolInvoker) invokerConstructor.newInstance(toolsInstance, runtimes, processor, Optional.empty());
     }
 
     /** A cancellation signal that never fires, standing in for the completion coordinator's real one. */

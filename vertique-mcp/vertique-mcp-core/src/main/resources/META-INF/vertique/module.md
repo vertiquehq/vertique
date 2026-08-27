@@ -10,7 +10,7 @@ SPDX-License-Identifier: EUPL-1.2
 > `dev.vertique.mcp.interceptor`
 > **Artifact:** `vertique-mcp-core`
 > **Depends on:** `vertique-core`, `vertique-security-core`, `jakarta.annotation-api`,
-> `jakarta.validation-api`, `hibernate-validator`, `org.glassfish.expressly`
+> `jakarta.validation-api`
 
 `vertique-mcp-core` owns the stable public API for authoring Model Context Protocol tools, plus
 Model Context Protocol lifecycle facts and neutral per-request observation. It contains the tool
@@ -91,7 +91,13 @@ limits, validation, observation, or terminal encoding.
 support types, public for the same reason `McpToolInvoker` is: `prepare` is generated into an
 arbitrary application package, which cannot reach a package-private framework type in a different
 module. `McpBeanValidation.validate(carrier)` is the one shared, thread-safe Jakarta Bean Validation
-`Validator` every generated `prepare()` calls for its Bean Validation stage.
+`Validator` every generated `prepare()` calls for its Bean Validation stage when the application's
+Dagger graph binds no `Validator` of its own. `McpBeanValidation.validate(carrier, Optional<Validator>)`
+(R38/W7) is the seam a generated invoker's constructor-injected `Optional<jakarta.validation.Validator>`
+routes through instead when the graph does bind one — for example, `vertique-mcp-server`'s
+`@BindsOptionalOf Validator` resolved to an application-bound, Dagger-aware `Validator` that can
+construct an `@Inject`-only `ConstraintValidator`; absent, its behavior is byte-for-byte identical to
+the single-argument overload.
 `McpInputRejectionException` signals that a `tools/call` argument tree failed input-policy
 application, materialization, or Bean Validation; its message is always a fixed, non-interpolated
 literal, since it is returned to the caller verbatim. `McpValueTrees.deepUnmodifiableMap(map)` builds
@@ -212,8 +218,11 @@ already threads through the per-request `McpRequestObservation` sessions this mo
 ## Dependency boundary
 
 This module consumes only the public core correlation snapshot, the security snapshot and
-`ActionRef` types, `io.vertx.core.Future`, and the Jakarta Bean Validation API and its default
-provider (resolved directly, not through `vertique-validation`, since `McpBeanValidation` needs only
-`jakarta.validation.Validator#validate`). Runtime dispatch, HTTP integration, schema generation, tool
-registration, authorization enforcement, and observability adapters belong to separately packaged
-modules and must not be introduced here.
+`ActionRef` types, `io.vertx.core.Future`, and the Jakarta Bean Validation API (resolved directly,
+not through `vertique-validation`, since `McpBeanValidation` needs only
+`jakarta.validation.Validator#validate`). It declares no Bean Validation provider dependency
+(R38/W7): `Validation.buildDefaultValidatorFactory()` discovers one via `ServiceLoader` at runtime,
+so a provider (e.g. Hibernate Validator) is a runtime concern of whichever module puts an MCP
+application on the classpath — `vertique-mcp-server` — not of this API-only module. Runtime
+dispatch, HTTP integration, schema generation, tool registration, authorization enforcement, and
+observability adapters belong to separately packaged modules and must not be introduced here.

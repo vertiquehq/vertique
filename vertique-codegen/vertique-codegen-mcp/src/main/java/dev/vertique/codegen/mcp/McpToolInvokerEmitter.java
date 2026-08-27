@@ -46,13 +46,16 @@ import javax.lang.model.type.TypeMirror;
  *
  *     private final WeatherTools tool;
  *     private final InputObjectProcessor inputProcessor;
+ *     private final Optional<Validator> validator;
  *     private final McpToolRuntime<Input> runtime;
  *
  *     @Inject
  *     WeatherTools_lookup_McpToolInvoker(
- *             WeatherTools tool, McpToolRuntimeFactory runtimes, InputObjectProcessor inputProcessor) {
+ *             WeatherTools tool, McpToolRuntimeFactory runtimes, InputObjectProcessor inputProcessor,
+ *             Optional<Validator> validator) {
  *         this.tool = tool;
  *         this.inputProcessor = inputProcessor;
+ *         this.validator = validator;
  *         this.runtime = runtimes.create(
  *                 "weather.lookup", null, "…", new McpToolAnnotations(…), Input.class,
  *                 WeatherReport.class, PARAMETERS, JSON_PROFILE, new McpToolAccess(…));
@@ -82,7 +85,7 @@ import javax.lang.model.type.TypeMirror;
  *             throw new McpInputRejectionException("Invalid tool arguments: materialization failed", malformed);
  *         }
  *
- *         if (!McpBeanValidation.validate(input).isEmpty()) {
+ *         if (!McpBeanValidation.validate(input, validator).isEmpty()) {
  *             throw new McpInputRejectionException("Invalid tool arguments: constraint validation failed");
  *         }
  *
@@ -115,7 +118,10 @@ import javax.lang.model.type.TypeMirror;
  * handler ever runs: stage 2 canonicalization/sanitization through the injected
  * {@code InputObjectProcessor} at {@code InputLocation.PAYLOAD} with the runtime's own
  * wire-to-Java field name resolver, stage 3 materialization through {@code McpToolRuntime
- * #materializeArguments}, and stage 4 Bean Validation through {@code McpBeanValidation#validate}. A
+ * #materializeArguments}, and stage 4 Bean Validation through {@code McpBeanValidation#validate}, routed
+ * through the constructor-injected {@code Optional<jakarta.validation.Validator>} when the application's
+ * Dagger graph binds one (R38/W7, {@code McpServerModule}'s {@code @BindsOptionalOf Validator}) and
+ * falling back to {@code vertique-mcp-core}'s zero-config default otherwise. A
  * stage 2–4 failure is signalled by the public {@code dev.vertique.mcp.tool.McpInputRejectionException}
  * carrying a fixed, non-interpolated literal message — never a Bean Validation
  * {@code ConstraintViolation#getMessage()}, which Hibernate Validator interpolates through EL and
@@ -151,6 +157,7 @@ final class McpToolInvokerEmitter {
     private static final ClassName INPUT_LOCATION = ClassName.get("dev.vertique.core.sanitization", "InputLocation");
     private static final ClassName INPUT_OBJECT_PROCESSOR =
             ClassName.get("dev.vertique.input.processing", "InputObjectProcessor");
+    private static final ClassName JAKARTA_VALIDATOR = ClassName.get("jakarta.validation", "Validator");
     private static final ClassName EFFECTIVE_INPUT_POLICIES =
             ClassName.get("dev.vertique.input.processing", "EffectiveInputPolicies");
     private static final ClassName MCP_TOOL_RUNTIME_FACTORY =
@@ -194,6 +201,7 @@ final class McpToolInvokerEmitter {
     private static final String RUNTIME_FIELD = "runtime";
     private static final String RUNTIMES_PARAM = "runtimes";
     private static final String INPUT_PROCESSOR_FIELD = "inputProcessor";
+    private static final String VALIDATOR_FIELD = "validator";
     private static final String ARGUMENTS_PARAM = "arguments";
     private static final String CANCELLATION_PARAM = "cancellation";
     private static final String NORMALIZED_ARGUMENTS = "normalizedArguments";
@@ -260,6 +268,11 @@ final class McpToolInvokerEmitter {
         invoker.addField(toolType, TOOL_FIELD, Modifier.PRIVATE, Modifier.FINAL)
                 .addField(INPUT_OBJECT_PROCESSOR, INPUT_PROCESSOR_FIELD, Modifier.PRIVATE, Modifier.FINAL)
                 .addField(
+                        ParameterizedTypeName.get(OPTIONAL, JAKARTA_VALIDATOR),
+                        VALIDATOR_FIELD,
+                        Modifier.PRIVATE,
+                        Modifier.FINAL)
+                .addField(
                         ParameterizedTypeName.get(MCP_TOOL_RUNTIME, inputType),
                         RUNTIME_FIELD,
                         Modifier.PRIVATE,
@@ -309,16 +322,21 @@ final class McpToolInvokerEmitter {
                                 + "@param $L the Dagger-managed type declaring the tool method\n"
                                 + "@param $L builds this tool's schema-and-mapper runtime binding once, during\n"
                                 + "    composition\n"
-                                + "@param $L the mandatory stage-2 canonicalization/sanitization engine\n",
+                                + "@param $L the mandatory stage-2 canonicalization/sanitization engine\n"
+                                + "@param $L the optional application-bound stage-4 Bean Validation {@code Validator}\n"
+                                + "    (R38/W7); empty falls back to {@code McpBeanValidation}'s zero-config default\n",
                         TOOL_FIELD,
                         RUNTIMES_PARAM,
-                        INPUT_PROCESSOR_FIELD)
+                        INPUT_PROCESSOR_FIELD,
+                        VALIDATOR_FIELD)
                 .addAnnotation(JAKARTA_INJECT)
                 .addParameter(toolType, TOOL_FIELD)
                 .addParameter(MCP_TOOL_RUNTIME_FACTORY, RUNTIMES_PARAM)
                 .addParameter(INPUT_OBJECT_PROCESSOR, INPUT_PROCESSOR_FIELD)
+                .addParameter(ParameterizedTypeName.get(OPTIONAL, JAKARTA_VALIDATOR), VALIDATOR_FIELD)
                 .addStatement("this.$N = $N", TOOL_FIELD, TOOL_FIELD)
                 .addStatement("this.$N = $N", INPUT_PROCESSOR_FIELD, INPUT_PROCESSOR_FIELD)
+                .addStatement("this.$N = $N", VALIDATOR_FIELD, VALIDATOR_FIELD)
                 .addStatement("this.$N = $L", RUNTIME_FIELD, runtimeCreation(model, inputType));
 
         if (optionalReaching) {
@@ -439,10 +457,13 @@ final class McpToolInvokerEmitter {
                 "throw new $T($S, $N)", MCP_INPUT_REJECTION_EXCEPTION, MATERIALIZATION_MESSAGE, MALFORMED_VAR);
         prepare.endControlFlow();
 
-        // Stage 4 — Bean Validation on the materialized carrier (contract §4.7 point 4). The rejection
+        // Stage 4 — Bean Validation on the materialized carrier (contract §4.7 point 4), routed through
+        // the constructor-injected Optional<Validator> when the application's Dagger graph binds one
+        // (R38/W7), falling back to McpBeanValidation's zero-config default otherwise. The rejection
         // message is a fixed literal, never a ConstraintViolation#getMessage(): Hibernate Validator
         // interpolates message templates through EL, and the dispatcher returns this text verbatim.
-        prepare.beginControlFlow("if (!$T.validate($N).isEmpty())", MCP_BEAN_VALIDATION, INPUT_FIELD);
+        prepare.beginControlFlow(
+                "if (!$T.validate($N, $N).isEmpty())", MCP_BEAN_VALIDATION, INPUT_FIELD, VALIDATOR_FIELD);
         prepare.addStatement("throw new $T($S)", MCP_INPUT_REJECTION_EXCEPTION, BEAN_VALIDATION_MESSAGE);
         prepare.endControlFlow();
 

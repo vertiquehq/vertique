@@ -208,7 +208,8 @@
       "public static final dev.vertique.mcp.tool.McpAccessMode dev.vertique.mcp.tool.McpAccessMode.RESTRICTED"
     ],
     "dev.vertique.mcp.tool.McpBeanValidation": [
-      "public static <T> java.util.Set<jakarta.validation.ConstraintViolation<T>> dev.vertique.mcp.tool.McpBeanValidation.validate(T)"
+      "public static <T> java.util.Set<jakarta.validation.ConstraintViolation<T>> dev.vertique.mcp.tool.McpBeanValidation.validate(T)",
+      "public static <T> java.util.Set<jakarta.validation.ConstraintViolation<T>> dev.vertique.mcp.tool.McpBeanValidation.validate(T,java.util.Optional<jakarta.validation.Validator>)"
     ],
     "dev.vertique.mcp.tool.McpInputRejectionException": [
       "public dev.vertique.mcp.tool.McpInputRejectionException(java.lang.String)",

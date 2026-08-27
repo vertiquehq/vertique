@@ -75,6 +75,17 @@ tool registry** — a tool that is not bound here does not exist at runtime. The
 derived from the invoker instance rather than rebuilt, so the published descriptor set and the
 dispatchable invoker set cannot drift apart.
 
+### Generated invoker constructor threads an optional Bean Validation `Validator` (R38/W7)
+
+Every generated invoker's `@Inject` constructor additionally accepts
+`java.util.Optional<jakarta.validation.Validator>`, resolved from the application's Dagger graph
+through `vertique-mcp-server`'s `McpServerModule.@BindsOptionalOf Validator` — no source change is
+required in `GeneratedMcpToolsModule` itself, since Dagger resolves the parameter directly when
+constructing the invoker, the same way it already resolves `InputObjectProcessor`. `prepare()`'s
+stage 4 Bean Validation call routes through it: `McpBeanValidation.validate(input, validator)`, which
+falls back to `vertique-mcp-core`'s zero-config static default when the optional binding is absent —
+so a composition that binds no `Validator` at all sees byte-for-byte unchanged behavior.
+
 ### Where the generated module lands
 
 The module is emitted into the longest common package prefix of every tool's declaring type.

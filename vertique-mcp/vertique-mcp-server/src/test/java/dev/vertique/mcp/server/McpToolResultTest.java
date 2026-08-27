@@ -27,6 +27,7 @@ import java.lang.reflect.RecordComponent;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -342,7 +343,7 @@ class McpToolResultTest {
         String invokerFqn = TOOLS_FQN + "_" + methodName + "_McpToolInvoker";
         Class<?> invokerClass = compilation.loadGeneratedClass(invokerFqn);
         Constructor<?> constructor = invokerClass.getDeclaredConstructor(
-                toolsClass, McpToolRuntimeFactory.class, InputObjectProcessor.class);
+                toolsClass, McpToolRuntimeFactory.class, InputObjectProcessor.class, Optional.class);
         constructor.setAccessible(true);
         return (McpToolInvoker) constructor.newInstance(
                 toolsInstance,
@@ -353,7 +354,8 @@ class McpToolResultTest {
                         },
                         sanitizerType -> {
                             throw new IllegalArgumentException("unresolvable sanitizer " + sanitizerType);
-                        }));
+                        }),
+                Optional.empty());
     }
 
     private static McpToolResult<?> await(Future<McpToolResult<?>> future)

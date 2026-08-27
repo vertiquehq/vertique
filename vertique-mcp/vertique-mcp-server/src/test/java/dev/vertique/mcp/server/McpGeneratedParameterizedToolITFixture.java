@@ -43,9 +43,10 @@ import javax.tools.JavaFileObject;
  * compiles one real, parameterized {@code com.example.greeting.GreetingTools} application source —
  * declaring a real {@code @Sanitize} chain and a real Jakarta Bean Validation {@code @NotBlank}
  * constraint directly on the tool parameter — with the real {@link McpToolProcessor}, loads the
- * resulting generated {@code GreetingTools_compose_McpToolInvoker} through its real three-argument
+ * resulting generated {@code GreetingTools_compose_McpToolInvoker} through its real four-argument
  * {@code @Inject} constructor (tool bean, {@link McpToolRuntimeFactory}, {@link
- * InputObjectProcessor}), and mounts it behind one real port-0 stateless Streamable HTTP server —
+ * InputObjectProcessor}, {@code Optional<jakarta.validation.Validator>}), and mounts it behind one
+ * real port-0 stateless Streamable HTTP server —
  * exactly {@link McpGeneratedHelloToolITFixture}'s shape, extended to a real parameterized tool so
  * the mandatory input-processing pipeline (contract §4.7) runs against genuine annotation-processor
  * output rather than a hand-written stand-in.
@@ -251,11 +252,12 @@ final class McpGeneratedParameterizedToolITFixture {
 
     /**
      * Loads the generated {@code GreetingTools} and {@code UpperCaseSanitizer} beans and constructs
-     * the generated invoker through its real three-argument {@code @Inject} constructor: the tool
-     * bean, a real {@link McpToolRuntimeFactory}, and a real {@link InputObjectProcessor} whose
+     * the generated invoker through its real four-argument {@code @Inject} constructor: the tool
+     * bean, a real {@link McpToolRuntimeFactory}, a real {@link InputObjectProcessor} whose
      * sanitizer resolver returns the loaded {@code UpperCaseSanitizer} instance for its own generated
-     * type — proving the resolved chain the emitter copied onto the carrier component actually reaches
-     * the real engine, not a hand-written stand-in.
+     * type, and an empty {@code Optional<jakarta.validation.Validator>} — proving the resolved chain
+     * the emitter copied onto the carrier component actually reaches the real engine, not a
+     * hand-written stand-in.
      */
     private McpToolInvoker loadInvoker() throws Exception {
         Class<?> toolsClass = result.loadGeneratedClass(TOOLS_SOURCE_FQN);
@@ -277,10 +279,10 @@ final class McpGeneratedParameterizedToolITFixture {
                 });
 
         Constructor<?> invokerConstructor = invokerClass.getDeclaredConstructor(
-                toolsClass, McpToolRuntimeFactory.class, InputObjectProcessor.class);
+                toolsClass, McpToolRuntimeFactory.class, InputObjectProcessor.class, Optional.class);
         invokerConstructor.setAccessible(true);
-        return (McpToolInvoker)
-                invokerConstructor.newInstance(toolsInstance, McpToolRuntimeFactoryTestSupport.factory(), processor);
+        return (McpToolInvoker) invokerConstructor.newInstance(
+                toolsInstance, McpToolRuntimeFactoryTestSupport.factory(), processor, Optional.empty());
     }
 
     private static IdentityResolutionMiddleware identityResolution(SecurityRuntime securityRuntime) {
