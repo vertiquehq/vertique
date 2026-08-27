@@ -2400,6 +2400,22 @@ final class McpRequestDispatcher {
      * writes a directly-serialized {@code BigDecimal} losslessly (as plain text, {@code
      * WRITE_BIGDECIMAL_AS_PLAIN}) — so no intermediate tree-node materialization ever touches the
      * value's numeric precision.
+     *
+     * <p><strong>R37 (review finding C4).</strong> Upstream MCP's {@code CallToolResult} SHOULD carry
+     * text content even when structured content is present, for backwards compatibility with clients
+     * that only read {@code content}. When the handler contributed no text of its own ({@code
+     * result.textContent()} is empty) and structured content exists, this method appends exactly one
+     * synthesized text item: the canonical JSON rendering of {@code normalizedStructuredContent},
+     * produced through the very same {@link #OUTPUT_ENCODER} instance and configuration {@code
+     * putPOJO}'s deferred serialization below uses for the {@code structuredContent} member. Reusing
+     * the identical encoder against the identical already-normalized value — never {@code
+     * result.structuredContent()}, the raw application object — is what keeps the duplicated text
+     * byte-for-byte reproducible from the embedded structured value; it is not a second, independent
+     * serialization decision that could drift from it. A handler-supplied explicit text alongside
+     * structured content is left exactly as authored: no canonical text is ever appended when {@code
+     * result.textContent()} is non-empty. The appended item is ordinary content of the {@code content}
+     * array built here, so it is bounded by {@link #encodeCapped}'s cap accounting exactly like every
+     * other byte of this response — no separate accounting exists for it.
      */
     private ObjectNode toolCallResponse(
             JsonNode envelope, McpToolResult<?> result, @Nullable Object normalizedStructuredContent) {
@@ -2408,6 +2424,12 @@ final class McpRequestDispatcher {
             ObjectNode item = OUTPUT_ENCODER.createObjectNode();
             item.put("type", "text");
             item.put("text", text);
+            content.add(item);
+        }
+        if (result.textContent().isEmpty() && normalizedStructuredContent != null) {
+            ObjectNode item = OUTPUT_ENCODER.createObjectNode();
+            item.put("type", "text");
+            item.put("text", canonicalStructuredText(normalizedStructuredContent));
             content.add(item);
         }
         ObjectNode serverInfo = OUTPUT_ENCODER.createObjectNode();
@@ -2429,6 +2451,27 @@ final class McpRequestDispatcher {
         JsonNode id = envelope.get("id");
         response.set("id", id != null ? id : NullNode.getInstance());
         return response;
+    }
+
+    /**
+     * Renders {@code normalizedStructuredContent} as canonical JSON text for {@link
+     * #toolCallResponse}'s R37 duplicated text item, through the exact same {@link #OUTPUT_ENCODER}
+     * instance {@code putPOJO}'s deferred {@code structuredContent} serialization uses — so the two
+     * representations of the same already-normalized value can never diverge in spelling.
+     *
+     * @param normalizedStructuredContent the T020 single-pass normalized value; never {@code null}
+     * @return the canonical JSON serialization of {@code normalizedStructuredContent}
+     */
+    private static String canonicalStructuredText(Object normalizedStructuredContent) {
+        try {
+            return OUTPUT_ENCODER.writeValueAsString(normalizedStructuredContent);
+        } catch (IOException encodeFailure) {
+            // Re-serializing an already-normalized Map/List/scalar value this exact encoder just wrote
+            // once as structuredContent cannot fail on I/O or type coercion; a failure here is a
+            // programming error, not a wire condition — mirrors normalizeStructuredContent's own
+            // IOException-to-UncheckedIOException conversion.
+            throw new UncheckedIOException(encodeFailure);
+        }
     }
 
     /**

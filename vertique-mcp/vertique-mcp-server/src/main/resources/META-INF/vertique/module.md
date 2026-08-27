@@ -438,6 +438,18 @@ embed — nothing re-serializes the original application object a second time. A
 output schema, or a text-only/structured-content-free result, is trivially valid: there is nothing to
 normalize or validate.
 
+**A structured result with no handler-authored text also carries one canonical-JSON text item**, for
+backwards compatibility with clients that read only `content` (the upstream MCP `CallToolResult`
+SHOULD, 2026-07-28). When `McpToolResult#textContent()` is empty and structured content is present,
+the wire `content` array gets exactly one synthesized `{"type":"text",...}` item whose text is the
+canonical JSON serialization of that same already-normalized value — never a second serialization of
+the raw application object — so it cannot drift from the `structuredContent` member it mirrors. A
+handler that supplies its own explicit text alongside structured content is left exactly as authored:
+no canonical text is ever appended when `textContent()` is already non-empty. The duplicated text is
+ordinary response content, so it is bounded by the same `mcp.outputMaxBytes` terminal-message cap
+described below; a structured value that alone fits comfortably under the cap can still push the
+complete response over it once its canonical text duplicate is counted.
+
 **The `mcp.outputMaxBytes` cap independently bounds both output representations.** Normalization
 serializes a handler's raw structured value exactly once through the generated invoker's effective-
 profile `McpStructuredOutputWriter` into the same byte-counting sink (`CappedOutputStream`, via
