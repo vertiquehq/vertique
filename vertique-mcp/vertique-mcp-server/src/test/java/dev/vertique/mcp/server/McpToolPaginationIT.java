@@ -270,6 +270,104 @@ class McpToolPaginationIT {
         assertInvalidCursor(nonCanonical, "a structurally non-canonical cursor");
     }
 
+    /**
+     * R40 (C5): the budget-exhaustion cursor anchor must never disclose a denied candidate's name.
+     *
+     * <p>Reuses the twelve-tool fixture's decisive layout: {@code tool01}–{@code tool09} are {@code
+     * @DenyAll} and the {@code 4 * pageSize = 8} examination budget for page 1 exhausts on the eighth
+     * candidate, {@code tool09}'s predecessor {@code tool08} — a denied tool — before any visible tool
+     * is ever reached. Today the emitted {@code nextCursor} names that denied candidate verbatim
+     * (finding C5); the fix replaces it with an opaque scan position that is not a registry name at
+     * all, so this asserts the broader "not any name" property rather than pinning the fix's exact
+     * grammar.
+     */
+    @Test
+    @DisplayName("R40 (C5): a budget-exhaustion cursor anchor must not disclose a denied tool's name")
+    void shouldNotDiscloseADeniedToolNameWhenTheExaminationBudgetExhausts() throws Exception {
+        startServer();
+
+        JsonObject page1 = listToolsResult(await(listTools(BEARER_ALICE, null)));
+        assertThat(page1.getJsonArray("tools"))
+                .as("all nine leading @DenyAll candidates are exhausted before any visible tool")
+                .isEmpty();
+        String cursor = page1.getString("nextCursor");
+        assertThat(cursor)
+                .as("a page that exhausts its budget mid-scan must still carry nextCursor")
+                .isNotNull();
+
+        String rawAnchor = McpToolPaginationITFixture.decodeRawAnchor(cursor);
+
+        // DECISIVE (RED today): the eighth examined candidate is tool08 (@DenyAll), so today's
+        // encoded anchor equals "tool08" verbatim — the exact disclosure finding C5 describes.
+        assertThat(rawAnchor)
+                .as("the budget-exhaustion anchor must never equal the denied candidate's own name")
+                .isNotEqualTo("tool08");
+
+        // Fix-shape-agnostic guard: not merely "not that one name" but "not any registry name at
+        // all" on this path, so this proof does not overfit the fix's exact positional grammar.
+        assertThat(McpToolPaginationITFixture.registryToolNames())
+                .as("the budget-exhaustion anchor must not be any registry tool name at all")
+                .doesNotContain(rawAnchor);
+    }
+
+    /**
+     * Resumption equivalence: paging through cursors to completion must visit every permitted tool
+     * exactly once, in registry order — regardless of whether a budget-exhaustion anchor names a
+     * candidate or is an opaque scan position, since both must resume scanning at the same place.
+     * Holds before and after R40's fix.
+     */
+    @Test
+    @DisplayName("paging through cursors to completion visits every permitted tool exactly once, in order")
+    void shouldVisitEveryPermittedToolExactlyOnceAcrossCursorResumption() throws Exception {
+        startServer();
+
+        List<String> visited = new ArrayList<>();
+        String cursor = null;
+        int pages = 0;
+        do {
+            JsonObject page = listToolsResult(await(listTools(BEARER_ALICE, cursor)));
+            visited.addAll(toolNames(page));
+            cursor = page.getString("nextCursor");
+            pages++;
+            // Bound: a twelve-candidate registry can never legitimately need more than twelve pages
+            // to drain; this guards against an infinite loop if a regression stops the anchor from
+            // advancing rather than looping the test itself.
+        } while (cursor != null && pages <= 12);
+
+        assertThat(pages)
+                .as("pagination must terminate within the registry's own candidate count")
+                .isLessThanOrEqualTo(12);
+        assertThat(visited)
+                .as("the concatenated visible sequence equals every permitted tool, in registry order, exactly once")
+                .containsExactly("tool10", "tool11", "tool12");
+    }
+
+    /**
+     * Page-full anchor unchanged: a page that fills purely by reaching {@code pageSize} (never
+     * exhausting the examination budget) must still anchor on the last emitted, permitted tool's own
+     * name — existing behavior, unaffected by R40. Page 2 of the twelve-tool fixture is decisive: it
+     * resumes at {@code tool09} (denied, examined but not budget-exhausting), then fills on {@code
+     * tool10} and {@code tool11} (both permitted) after examining only 3 of the 8-candidate budget.
+     */
+    @Test
+    @DisplayName("a page that fills before the budget exhausts still anchors on the last emitted permitted tool")
+    void shouldAnchorOnTheLastEmittedPermittedToolWhenThePageFillsBeforeBudgetExhaustion() throws Exception {
+        startServer();
+
+        String cursor1 = listToolsResult(await(listTools(BEARER_ALICE, null))).getString("nextCursor");
+        JsonObject page2 = listToolsResult(await(listTools(BEARER_ALICE, cursor1)));
+        assertThat(toolNames(page2))
+                .as("page 2 fills on the two permitted candidates after resuming past the budget-exhaustion anchor")
+                .containsExactly("tool10", "tool11");
+        String cursor2 = page2.getString("nextCursor");
+        assertThat(cursor2).as("tool12 still remains after this filled page").isNotNull();
+
+        String rawAnchor2 = McpToolPaginationITFixture.decodeRawAnchor(cursor2);
+        assertThat(rawAnchor2)
+                .as("a page-full anchor (no budget exhaustion) is unchanged: the last emitted permitted tool's name")
+                .isEqualTo("tool11");
+    }
+
     // --- Wire helpers ---
 
     private void startServer() throws Exception {
@@ -420,6 +518,29 @@ class McpToolPaginationIT {
 
         String registryDigest() {
             return McpToolRegistry.build(twelveToolRegistry()).digest();
+        }
+
+        /** Every tool name the twelve-tool fixture registry publishes, in no particular order. */
+        static Set<String> registryToolNames() {
+            Set<String> names = new LinkedHashSet<>();
+            for (McpToolInvoker invoker : twelveToolRegistry()) {
+                names.add(invoker.descriptor().name());
+            }
+            return names;
+        }
+
+        /**
+         * Decodes {@code cursor}'s raw {@code lastScannedToolName} field verbatim, without routing
+         * through {@link McpCursorCodec#decode} — R40 (C5): the fixed-shape codec validates that the
+         * field is *syntactically* a valid tool name, which a synthetic decimal position string would
+         * also satisfy, so this reads the field exactly as the wire cursor carries it instead, the same
+         * way a caller inspecting the deliberately unsigned cursor could.
+         */
+        static String decodeRawAnchor(String cursor) throws Exception {
+            byte[] decoded = java.util.Base64.getUrlDecoder().decode(cursor);
+            JsonNode node = new ObjectMapper().readTree(decoded);
+            JsonNode anchor = node.get("lastScannedToolName");
+            return anchor != null ? anchor.asText() : null;
         }
 
         static String cursor(String lastScannedToolName, String registryDigest) throws Exception {
