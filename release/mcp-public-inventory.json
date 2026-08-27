@@ -481,8 +481,7 @@
           "public io.vertx.core.Future<dev.vertique.security.authz.AuthorizationDecision> dev.vertique.rest.security.SecurityPolicyEnforcer.decide(dev.vertique.security.SecurityContext,dev.vertique.rest.core.security.SecurityPolicy,java.util.Optional<dev.vertique.security.authz.ActionRef>,dev.vertique.security.authz.ResourceRef,dev.vertique.security.authz.InvocationOrigin)",
           "public io.vertx.core.Handler<io.vertx.ext.web.RoutingContext> dev.vertique.rest.security.SecurityPolicyEnforcer.createHandler(dev.vertique.rest.core.security.SecurityPolicy$Constrained,java.lang.String)",
           "public io.vertx.core.Handler<io.vertx.ext.web.RoutingContext> dev.vertique.rest.security.SecurityPolicyEnforcer.createHandler(dev.vertique.rest.core.security.SecurityPolicy)",
-          "public io.vertx.core.Handler<io.vertx.ext.web.RoutingContext> dev.vertique.rest.security.SecurityPolicyEnforcer.createHandler(dev.vertique.rest.core.security.SecurityPolicy,java.util.Optional<dev.vertique.security.authz.ActionRef>)",
-          "public static final java.lang.String dev.vertique.rest.security.SecurityPolicyEnforcer.GATE_TIMEOUT_ATTRIBUTE"
+          "public io.vertx.core.Handler<io.vertx.ext.web.RoutingContext> dev.vertique.rest.security.SecurityPolicyEnforcer.createHandler(dev.vertique.rest.core.security.SecurityPolicy,java.util.Optional<dev.vertique.security.authz.ActionRef>)"
         ],
         "dev.vertique.rest.security.SyncPolicyDecisionPoint": [
           "public dev.vertique.rest.security.SyncPolicyDecisionPoint(dev.vertique.security.authz.AuthorizationPolicy)",

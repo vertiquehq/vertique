@@ -40,7 +40,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -107,19 +106,6 @@ public class SecurityPolicyEnforcer {
      * genuine remote call without hanging authorization indefinitely.
      */
     static final long DEFAULT_GATE_DEADLINE_MS = 5_000L;
-
-    /**
-     * The {@link AuthorizationDecision#safeAttributes()} key set to {@link Boolean#TRUE} when a
-     * fail-closed {@link AuthzReasonCodes#INTERNAL_AUTHZ_ERROR} deny from {@link #decide} was caused
-     * specifically by the gate deadline elapsing — as opposed to a synchronous throw, a null future, a
-     * failed future for another reason, or a null decision, all of which resolve immediately and carry
-     * no amplification risk. The MCP {@code McpRequestDispatcher}'s {@code tools/list} scan (a
-     * different module; not linked here to avoid a cross-module javadoc reference) reads this key to
-     * stop examining further candidates on the first genuine timeout, rather than paying {@link
-     * #DEFAULT_GATE_DEADLINE_MS} again for every remaining one (issue #417). Absent
-     * — never {@link Boolean#FALSE} — on every decision that is not this specific fail-closed case.
-     */
-    public static final String GATE_TIMEOUT_ATTRIBUTE = "gateTimedOut";
 
     private final AuthorizationDecisionPoint decisionPoint;
     private final SecurityRuntime securityRuntime;
@@ -564,9 +550,7 @@ public class SecurityPolicyEnforcer {
         roleScopeFuture.onComplete(roleScopeAr -> {
             if (roleScopeAr.failed()) {
                 log.warn("Authorization decision point failed", roleScopeAr.cause());
-                boolean gateTimedOut = roleScopeAr.cause() instanceof TimeoutException;
-                completeOnCallerContext(
-                        promise, callerContext, failClosedInternalError(authzRequest, correlation, gateTimedOut));
+                completeOnCallerContext(promise, callerContext, failClosedInternalError(authzRequest, correlation));
                 return;
             }
             AuthorizationDecision roleScope = roleScopeAr.result();
@@ -613,7 +597,6 @@ public class SecurityPolicyEnforcer {
             // Bound the action gate exactly like the role/scope gate above (issue #417): the same
             // amplification risk applies to a hanging Authorizer, not only a hanging decision point.
             actionFuture.timeout(gateDeadlineMs, TimeUnit.MILLISECONDS).onComplete(actionAr -> {
-                boolean actionGateTimedOut = actionAr.failed() && actionAr.cause() instanceof TimeoutException;
                 AuthorizationDecision actionResult = actionAr.succeeded() ? actionAr.result() : null;
                 // The Authorizer contract forbids a failed future for a normal deny and forbids a
                 // null decision; fail closed (INTERNAL_AUTHZ_ERROR) if a misbehaving impl does either.
@@ -621,9 +604,6 @@ public class SecurityPolicyEnforcer {
                         ? actionResult
                         : AuthorizationDecision.deny(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR);
                 AuthorizationDecision decision = combinedDecision(roleScope, actionDecision);
-                if (actionGateTimedOut) {
-                    decision = withGateTimeoutAttribute(decision);
-                }
                 emitDecision(authzRequest, decision, correlation);
                 completeOnCallerContext(promise, callerContext, decision);
             });
@@ -658,10 +638,10 @@ public class SecurityPolicyEnforcer {
     /**
      * Fail-closed deny used by {@link #decide} when a gate violates its contract (the
      * {@link AuthorizationDecisionPoint} or the {@link Authorizer} throws synchronously, returns a
-     * {@code null} future, or resolves to a {@code null} decision). Emits exactly one combined deny
-     * event whose top-level reason is {@link AuthzReasonCodes#INTERNAL_AUTHZ_ERROR} — mirroring
-     * {@link #internalErrorDenyComposed}, but returning the decision instead of failing a
-     * {@link RoutingContext} closed.
+     * {@code null} future, resolves to a {@code null} decision, or exceeds its deadline). Emits
+     * exactly one combined deny event whose top-level reason is
+     * {@link AuthzReasonCodes#INTERNAL_AUTHZ_ERROR} — mirroring {@link #internalErrorDenyComposed},
+     * but returning the decision instead of failing a {@link RoutingContext} closed.
      *
      * <p>The action gate is recorded as not evaluated ({@code action == null} into
      * {@link #combinedDecision}), matching the existing role/scope-gate-failure shape.
@@ -674,51 +654,10 @@ public class SecurityPolicyEnforcer {
      */
     private AuthorizationDecision failClosedInternalError(
             AuthorizationRequest authzRequest, CorrelationContext correlation) {
-        return failClosedInternalError(authzRequest, correlation, false);
-    }
-
-    /**
-     * As {@link #failClosedInternalError(AuthorizationRequest, CorrelationContext)}, but additionally
-     * marks the emitted/returned decision with {@link #GATE_TIMEOUT_ATTRIBUTE} when {@code
-     * gateTimedOut} is {@code true} — the role/scope-gate-deadline branch of {@link #decide} (issue
-     * #417) is the only caller that passes {@code true}; every pre-existing contract-violation branch
-     * (synchronous throw, null future, null decision) passes {@code false} and is unaffected.
-     *
-     * @param authzRequest  the request that was being evaluated, carried on the emitted event; must
-     *                      not be {@code null}
-     * @param correlation   the correlation captured at call entry; must not be {@code null}
-     * @param gateTimedOut  {@code true} when this fail-closed deny was caused by the gate deadline
-     *                      elapsing rather than a synchronous contract violation
-     * @return the fail-closed {@link AuthzReasonCodes#INTERNAL_AUTHZ_ERROR} deny decision; never
-     *     {@code null}
-     */
-    private AuthorizationDecision failClosedInternalError(
-            AuthorizationRequest authzRequest, CorrelationContext correlation, boolean gateTimedOut) {
         AuthorizationDecision decision =
                 roleScopeOnlyDecision(AuthorizationDecision.deny(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR));
-        if (gateTimedOut) {
-            decision = withGateTimeoutAttribute(decision);
-        }
         emitDecision(authzRequest, decision, correlation);
         return decision;
-    }
-
-    /**
-     * Returns a copy of {@code decision} with {@link #GATE_TIMEOUT_ATTRIBUTE} set to {@link
-     * Boolean#TRUE} in its {@code safeAttributes}, preserving every other field verbatim.
-     *
-     * @param decision the decision to mark; must not be {@code null}
-     * @return the marked decision; never {@code null}
-     */
-    private static AuthorizationDecision withGateTimeoutAttribute(AuthorizationDecision decision) {
-        Map<String, Object> attributes = new HashMap<>(decision.safeAttributes());
-        attributes.put(GATE_TIMEOUT_ATTRIBUTE, Boolean.TRUE);
-        return new AuthorizationDecision(
-                decision.permitted(),
-                decision.reasonCode(),
-                decision.policyId(),
-                decision.policyVersion(),
-                Map.copyOf(attributes));
     }
 
     /**

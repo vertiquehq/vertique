@@ -120,8 +120,6 @@ class SecurityPolicyEnforcerGateTimeoutContextTest {
         assertThat(settledDecision.get().permitted())
                 .as("the gate deadline must still fail closed")
                 .isFalse();
-        assertThat(settledDecision.get().safeAttributes().get(SecurityPolicyEnforcer.GATE_TIMEOUT_ATTRIBUTE))
-                .isEqualTo(Boolean.TRUE);
 
         // DECISIVE: the returned future's completion handler must run on the exact same request-owning
         // context (and therefore the same pinned event-loop thread) decide() was called from — not on

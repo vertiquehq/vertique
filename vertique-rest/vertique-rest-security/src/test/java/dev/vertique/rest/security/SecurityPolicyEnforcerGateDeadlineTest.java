@@ -57,7 +57,9 @@ import org.junit.jupiter.api.Test;
  * The {@code tools/list} scan-termination half of TP-001 — asserting the decision-point invocation
  * count across a multi-candidate scan, not just elapsed time — lives in {@code vertique-mcp-server}
  * (module boundary: {@code McpRequestDispatcher} is not visible here), in
- * {@code McpToolsListGateTimeoutTerminatesScanIT}.
+ * {@code McpToolsListAuthorizationInfrastructureFailureIT}: it proves the scan aborts the whole list on
+ * the first {@code INTERNAL_AUTHZ_ERROR} candidate regardless of cause (a failed future there; a
+ * gate-deadline timeout here), since the scan keys off the reason code alone.
  */
 class SecurityPolicyEnforcerGateDeadlineTest {
 
@@ -112,13 +114,7 @@ class SecurityPolicyEnforcerGateDeadlineTest {
 
         assertThat(decision.permitted()).isFalse();
         assertThat(decision.reasonCode()).isEqualTo(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR);
-        assertThat(decision.safeAttributes().get(SecurityPolicyEnforcer.GATE_TIMEOUT_ATTRIBUTE))
-                .as("the deny must be attributable specifically to the gate deadline, not a generic "
-                        + "contract violation")
-                .isEqualTo(Boolean.TRUE);
         assertThat(events).hasSize(1);
-        assertThat(events.get(0).decision().safeAttributes().get(SecurityPolicyEnforcer.GATE_TIMEOUT_ATTRIBUTE))
-                .isEqualTo(Boolean.TRUE);
         assertThat(dp.callCount())
                 .as("the hanging decision point is invoked exactly once")
                 .isEqualTo(1);
@@ -148,8 +144,6 @@ class SecurityPolicyEnforcerGateDeadlineTest {
 
         assertThat(decision.permitted()).isFalse();
         assertThat(decision.reasonCode()).isEqualTo(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR);
-        assertThat(decision.safeAttributes().get(SecurityPolicyEnforcer.GATE_TIMEOUT_ATTRIBUTE))
-                .isEqualTo(Boolean.TRUE);
         assertThat(events).hasSize(1);
         assertThat(dp.callCount()).as("the role/scope gate must still run once").isEqualTo(1);
         assertThat(authorizer.callCount())
