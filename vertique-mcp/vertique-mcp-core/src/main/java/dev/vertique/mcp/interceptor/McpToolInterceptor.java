@@ -48,6 +48,11 @@ public interface McpToolInterceptor extends OrderedExtension {
      * Vert.x context, after Bean Validation has already run and before the generated invocation runs.
      * Must not block and must never return {@code null}. The default implementation always permits.
      *
+     * <p>The returned future may complete on any thread — an implementation backed by a plain,
+     * context-unaware {@link io.vertx.core.Promise} is under no obligation to settle it from Vert.x at
+     * all. The framework re-anchors its continuation back onto the request's owning Vert.x context
+     * before acting on the outcome, so this method never needs to re-anchor itself.
+     *
      * @param context the immutable, argument-free descriptor snapshot for this call
      * @return a {@link Future} that succeeds to permit the call, or fails to reject it; never
      *     {@code null}

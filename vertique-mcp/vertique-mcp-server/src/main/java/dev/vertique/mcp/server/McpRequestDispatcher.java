@@ -55,9 +55,11 @@ import dev.vertique.security.SecurityIdentity;
 import dev.vertique.security.authz.AuthorizationDecision;
 import dev.vertique.security.authz.AuthzReasonCodes;
 import io.vertx.core.AsyncResult;
+import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Promise;
+import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClosedException;
 import io.vertx.core.http.HttpMethod;
@@ -228,6 +230,16 @@ final class McpRequestDispatcher {
     private static final String KEY_PREFIX = McpRequestDispatcher.class.getName();
     private static final String COMPLETION_COORDINATOR_KEY = KEY_PREFIX + ".completionCoordinator";
     private static final String STARTED_AT_KEY = KEY_PREFIX + ".startedAt";
+
+    /**
+     * Routing-context key for the request-owning Vert.x {@link Context} {@link #begin} materializes
+     * for {@link McpCompletionCoordinator} (repair task R32 defect 1) — the same context every
+     * application-origin future this dispatcher composes onto (an interceptor's {@code beforeRequest}/
+     * {@code beforeInvocation}, or {@code prepared.invoke()}) is re-anchored onto via {@link
+     * #anchoredOnContext} before any continuation attaches, so a later stage's own invocation always
+     * observes it too, regardless of what thread completed the upstream future.
+     */
+    private static final String REQUEST_CONTEXT_KEY = KEY_PREFIX + ".requestContext";
 
     /**
      * Routing-context key for a snapshot of this request's live {@link CorrelationContext} (R05, issue
@@ -506,11 +518,95 @@ final class McpRequestDispatcher {
     void begin(RoutingContext context) {
         Instant startedAt = startedAt(context);
         bindCorrelation(context);
-        McpCompletionCoordinator coordinator = new McpCompletionCoordinator(
-                context.vertx().getOrCreateContext(), lifecycleObservers, completedListeners, startedAt);
+        Context owningContext = context.vertx().getOrCreateContext();
+        McpCompletionCoordinator coordinator =
+                new McpCompletionCoordinator(owningContext, lifecycleObservers, completedListeners, startedAt);
         context.put(COMPLETION_COORDINATOR_KEY, coordinator);
+        context.put(REQUEST_CONTEXT_KEY, owningContext);
         registerSettlementHooks(context, coordinator, startedAt);
         context.next();
+    }
+
+    /**
+     * Returns the request-owning Vert.x {@link Context} {@link #begin} materialized for this request,
+     * or {@code null} when {@link #begin} never ran for it (repair task R32 defect 2).
+     *
+     * <p>Deliberately never falls back to {@code context.vertx().getOrCreateContext()}: that fallback
+     * has two failure modes. First, a lightweight test {@link RoutingContext} fixture that bypasses
+     * {@link #begin} routinely returns {@code null} from {@link RoutingContext#vertx()} too, which the
+     * fallback then dereferences directly, NPE-ing every such fixture dispatch. Second, even when
+     * {@code vertx()} is non-null, {@code getOrCreateContext()} called here — at dispatch time, not
+     * request-start time — is not guaranteed to return the same {@link Context} the calling thread is
+     * already running on, so anchoring onto it would force an unwanted asynchronous redispatch instead
+     * of completing inline. Returning {@code null} here and treating it as an identity no-op in {@link
+     * #anchoredOnContext} keeps a fixture dispatch that never called {@link #begin} fully synchronous,
+     * exactly like it was before anchoring existed. On the real server path {@link #begin} always runs
+     * before this method is ever consulted (see {@code McpRouterMount}'s route wiring, which places
+     * {@code dispatcher::begin} strictly before {@code dispatcher::dispatch} in the same handler chain),
+     * so every admitted, non-fixture request already has {@link #REQUEST_CONTEXT_KEY} populated here.
+     */
+    @Nullable
+    private static Context requestOwningContext(RoutingContext context) {
+        return context.get(REQUEST_CONTEXT_KEY);
+    }
+
+    /**
+     * Re-anchors {@code future} onto {@code owningContext} before any continuation ever attaches to
+     * it (repair task R32 defect 1).
+     *
+     * <p><strong>Invariant restored.</strong> {@link McpCompletionCoordinator}'s settlement latches
+     * ({@code beginWrite}/{@code finishWrite}/{@code settle}) are confined to the request-owning
+     * context — every field they mutate is documented as touched only from there. An
+     * application-supplied future (an interceptor's {@code beforeRequest}/{@code beforeInvocation}, or
+     * a tool's {@code invoke()}) carries no such obligation: a plain, context-unaware {@link Promise}
+     * completed from a raw thread would otherwise run every continuation this dispatcher composes onto
+     * it — including a later interceptor's own invocation — off that context, silently breaking the
+     * confinement every later stage relies on.
+     *
+     * <p>Mirrors {@link McpCompletionCoordinator}'s own {@code settle} inline-or-redispatch idiom:
+     * when {@code future} settles while already running on {@code owningContext}, the continuation
+     * completes inline, with no forced extra asynchronous hop (some settlement-race proofs depend on
+     * that inline ordering); otherwise it is redispatched onto {@code owningContext} via {@link
+     * Context#runOnContext}.
+     *
+     * <p>{@code owningContext == null} (repair task R32 defect 2) is an identity no-op: {@code future}
+     * is returned unchanged. This is exactly the case where {@link #requestOwningContext} found no
+     * context {@link #begin} stored — a fixture dispatch that bypasses the real router chain — and it
+     * preserves that fixture's fully synchronous behavior instead of forcing it through a {@code
+     * Promise} indirection it never asked for.
+     *
+     * <p>{@code future.isComplete()} at the moment this method is called (repair task R32 defect 2) is
+     * also an identity no-op, for the same reason: a future that has already settled by the time its
+     * caller composes onto it can only have done so on whatever thread is executing this very call —
+     * no application thread hop has actually occurred yet, so completing inline here crosses no
+     * confinement boundary this method exists to guard. This is what keeps a fixture that drives every
+     * interceptor and invocation through already-resolved futures (e.g. {@code Future.succeededFuture()}
+     * mocks) fully synchronous end to end, exactly like it was before anchoring existed, without weakening
+     * the guarantee for a future that is still pending here: only a future that is genuinely still
+     * incomplete at this point can later settle on an arbitrary application thread, which is exactly the
+     * case the {@link Vertx#currentContext()} check below exists to catch and redirect.
+     *
+     * @param future the application-origin future to re-anchor
+     * @param owningContext the request's owning Vert.x context, or {@code null} when none was
+     *     established for this request
+     * @param <T> the future's result type
+     * @return a future that settles identically to {@code future}, but always on {@code owningContext}
+     *     when non-null and {@code future} is not yet complete; {@code future} itself, unchanged,
+     *     when {@code owningContext} is {@code null} or {@code future} is already complete
+     */
+    private static <T> Future<T> anchoredOnContext(Future<T> future, @Nullable Context owningContext) {
+        if (owningContext == null || future.isComplete()) {
+            return future;
+        }
+        Promise<T> anchored = Promise.promise();
+        future.onComplete(ar -> {
+            if (Vertx.currentContext() == owningContext) {
+                anchored.handle(ar);
+            } else {
+                owningContext.runOnContext(ignored -> anchored.handle(ar));
+            }
+        });
+        return anchored.future();
     }
 
     /**
@@ -752,22 +848,24 @@ final class McpRequestDispatcher {
         context.put(PROTOCOL_VERSION_KEY, negotiation.protocolVersion());
         McpRequestContext requestContext =
                 new McpRequestContext(method, establishedSecurityContext(), correlationOf(context), null);
-        runRequestInterceptors(0, requestContext).onComplete(ar -> {
-            if (ar.failed()) {
-                writeInterceptorRejection(context, envelope, method, security);
-                return;
-            }
-            // dispatchByMethod's own write*() methods are the ones that actually schedule work and
-            // settle the request; a RuntimeException or StackOverflowError escaping synchronously from
-            // here — before any of them ever calls beginWrite — would otherwise strand the request with
-            // no response, no terminal, and no completion (see the stage-7 guard in invokeAndRespond for
-            // the same class of risk on the tools/call path).
-            try {
-                dispatchByMethod(context, envelope, method, security);
-            } catch (RuntimeException | StackOverflowError dispatchFailure) {
-                writeDispatchByMethodFailure(context, envelope, method, security, dispatchFailure);
-            }
-        });
+        Context owningContext = requestOwningContext(context);
+        anchoredOnContext(runRequestInterceptors(0, requestContext, owningContext), owningContext)
+                .onComplete(ar -> {
+                    if (ar.failed()) {
+                        writeInterceptorRejection(context, envelope, method, security);
+                        return;
+                    }
+                    // dispatchByMethod's own write*() methods are the ones that actually schedule work and
+                    // settle the request; a RuntimeException or StackOverflowError escaping synchronously from
+                    // here — before any of them ever calls beginWrite — would otherwise strand the request with
+                    // no response, no terminal, and no completion (see the stage-7 guard in invokeAndRespond for
+                    // the same class of risk on the tools/call path).
+                    try {
+                        dispatchByMethod(context, envelope, method, security);
+                    } catch (RuntimeException | StackOverflowError dispatchFailure) {
+                        writeDispatchByMethodFailure(context, envelope, method, security, dispatchFailure);
+                    }
+                });
     }
 
     /**
@@ -913,10 +1011,13 @@ final class McpRequestDispatcher {
      * @param index the next interceptor to run, in {@link #orderedRequestInterceptors} order
      * @param requestContext the immutable, payload-free pre-dispatch snapshot every interceptor in the
      *     chain observes
+     * @param owningContext the request's owning Vert.x context, threaded through so every
+     *     interceptor's returned future is re-anchored onto it (repair task R32 defect 1) before the
+     *     next interceptor is ever invoked
      * @return a future that succeeds once every interceptor has permitted, or fails with the first
      *     rejection's cause
      */
-    private Future<Void> runRequestInterceptors(int index, McpRequestContext requestContext) {
+    private Future<Void> runRequestInterceptors(int index, McpRequestContext requestContext, Context owningContext) {
         if (index >= orderedRequestInterceptors.size()) {
             return Future.succeededFuture();
         }
@@ -938,7 +1039,11 @@ final class McpRequestDispatcher {
             return Future.failedFuture(
                     new NullPointerException(interceptor.getClass().getName() + "#beforeRequest returned null"));
         }
-        return outcome.compose(ignored -> runRequestInterceptors(index + 1, requestContext));
+        // R32 defect 1: outcome is application-origin and carries no obligation to settle on
+        // owningContext, so the next interceptor's own beforeRequest invocation below — composed
+        // directly onto it — must not run until it is re-anchored there.
+        return anchoredOnContext(outcome, owningContext)
+                .compose(ignored -> runRequestInterceptors(index + 1, requestContext, owningContext));
     }
 
     /**
@@ -953,10 +1058,13 @@ final class McpRequestDispatcher {
      * @param index the next interceptor to run, in {@link #orderedToolInterceptors} order
      * @param toolContext the immutable, argument-free descriptor snapshot every interceptor in the
      *     chain observes
+     * @param owningContext the request's owning Vert.x context, threaded through so every
+     *     interceptor's returned future is re-anchored onto it (repair task R32 defect 1) before the
+     *     next interceptor is ever invoked
      * @return a future that succeeds once every interceptor has permitted, or fails with the first
      *     rejection's cause
      */
-    private Future<Void> runToolInterceptors(int index, McpToolInvocationContext toolContext) {
+    private Future<Void> runToolInterceptors(int index, McpToolInvocationContext toolContext, Context owningContext) {
         if (index >= orderedToolInterceptors.size()) {
             return Future.succeededFuture();
         }
@@ -974,7 +1082,10 @@ final class McpRequestDispatcher {
             return Future.failedFuture(
                     new NullPointerException(interceptor.getClass().getName() + "#beforeInvocation returned null"));
         }
-        return outcome.compose(ignored -> runToolInterceptors(index + 1, toolContext));
+        // R32 defect 1: mirrors runRequestInterceptors above — outcome is application-origin and must
+        // be re-anchored before the next interceptor's own beforeInvocation is invoked from it.
+        return anchoredOnContext(outcome, owningContext)
+                .compose(ignored -> runToolInterceptors(index + 1, toolContext, owningContext));
     }
 
     /**
@@ -1777,6 +1888,9 @@ final class McpRequestDispatcher {
         // already uses.
         McpCancellationSignal cancellation =
                 coordinator != null ? coordinator.cancellation() : NoOpCancellationSignal.INSTANCE;
+        // R32 defect 1: the same request-owning context every interceptor outcome and the invocation
+        // result below are re-anchored onto (see anchoredOnContext).
+        Context owningContext = requestOwningContext(context);
         McpPreparedToolCall prepared;
         try {
             prepared = invoker.prepare(arguments, cancellation);
@@ -1845,92 +1959,105 @@ final class McpRequestDispatcher {
                 return;
             }
         }
-        runToolInterceptors(0, toolContext).onComplete(interceptorResult -> {
-            if (interceptorResult.failed()) {
-                // The interceptor stage rejected before the handler ever ran: no output to observe.
-                writeToolResult(
-                        context,
-                        envelope,
-                        security,
-                        toolName,
-                        McpToolResult.error(TOOL_INTERCEPTOR_REJECTED_MESSAGE),
-                        null,
-                        McpErrorType.INTERCEPTOR,
-                        null,
-                        null);
-                return;
-            }
-            Future<McpToolResult<?>> result;
-            try {
-                result = prepared.invoke();
-            } catch (RuntimeException | StackOverflowError invokeFailure) {
-                // R13: prepared.invoke() is the generated call directly into the application's own tool
-                // handler — the most direct lifecycle callback on this whole path. A RuntimeException-only
-                // catch left a recursing handler free to strand the request exactly like the already-fixed
-                // stage 5/7 callbacks below.
-                writeSseFallback(context, envelope, security, toolName, invokeFailure);
-                return;
-            }
-            result.onComplete(ar -> {
-                if (ar.failed() || ar.result() == null) {
-                    writeSseFallback(
-                            context,
-                            envelope,
-                            security,
-                            toolName,
-                            ar.failed() ? ar.cause() : new NullPointerException("tool result"));
-                    return;
-                }
-                // R04 (closing #426/#427): every complete result is normalized exactly once — bounded by
-                // mcp.output.maxBytes as bytes are produced, exactly like the terminal write below —
-                // validated against the advertised output schema, encoded into the bounded terminal
-                // envelope, offered to the opt-in output observation only once that envelope exists, and
-                // only then handed to the single terminal writer (contract §4.7 stage 7). The raw
-                // application value is converted to its bounded, JSON-compatible canonical shape here —
-                // once — and that exact same value is reused below for schema validation, the observation
-                // callback, and the wire embed; nothing downstream re-serializes the original application
-                // object. writeToolResult (not this block) publishes the output observation, strictly
-                // after its own encodeCapped call succeeds — see its Javadoc — so an observer can never
-                // see a value the wire cap or the schema check would still reject.
-                //
-                McpToolResult<?> toolResult = ar.result();
-                Object normalizedOutput;
-                try {
-                    normalizedOutput = normalizeStructuredContent(invoker, toolResult.structuredContent());
-                } catch (RuntimeException | StackOverflowError serializationFailure) {
-                    // This boundary owns only the sole raw-value serialization and bounded-byte
-                    // reparse. Byte/token exhaustion, cyclic or non-finite output, and recursion are
-                    // therefore serialization failures, never generic handler failures.
-                    writeSseFallback(
-                            context, envelope, security, toolName, serializationFailure, McpErrorType.SERIALIZATION);
-                    return;
-                }
-                try {
-                    if (!outputSchemaValid(toolName, normalizedOutput)) {
-                        // The schema-invalid value never reaches writeToolResult/encodeCapped: it is
-                        // rejected here, before any wire byte is produced and before the output
-                        // observation fires, so an invalid structured result never reaches the wire or a
-                        // capable session.
-                        writeOutputValidationFailure(context, envelope, security, toolName);
+        anchoredOnContext(runToolInterceptors(0, toolContext, owningContext), owningContext)
+                .onComplete(interceptorResult -> {
+                    if (interceptorResult.failed()) {
+                        // The interceptor stage rejected before the handler ever ran: no output to observe.
+                        writeToolResult(
+                                context,
+                                envelope,
+                                security,
+                                toolName,
+                                McpToolResult.error(TOOL_INTERCEPTOR_REJECTED_MESSAGE),
+                                null,
+                                McpErrorType.INTERCEPTOR,
+                                null,
+                                null);
                         return;
                     }
-                    writeToolResult(
-                            context,
-                            envelope,
-                            security,
-                            toolName,
-                            toolResult,
-                            normalizedOutput,
-                            McpErrorType.HANDLER,
-                            coordinator,
-                            toolContext);
-                } catch (RuntimeException | StackOverflowError downstreamFailure) {
-                    // Schema infrastructure, observation, and other callbacks after normalization are
-                    // not serialization failures. Keep their existing internal classification.
-                    writeSseFallback(context, envelope, security, toolName, downstreamFailure);
-                }
-            });
-        });
+                    // A disconnect can race the pending tool-interceptor gate: cancellation already fired
+                    // means the disconnect settlement path already published this request's terminal and
+                    // completion, so invoking the tool now would run application code for a request no client
+                    // will ever observe, and no response may be written.
+                    if (cancellation.isCancelled()) {
+                        return;
+                    }
+                    Future<McpToolResult<?>> result;
+                    try {
+                        result = prepared.invoke();
+                    } catch (RuntimeException | StackOverflowError invokeFailure) {
+                        // R13: prepared.invoke() is the generated call directly into the application's own tool
+                        // handler — the most direct lifecycle callback on this whole path. A RuntimeException-only
+                        // catch left a recursing handler free to strand the request exactly like the already-fixed
+                        // stage 5/7 callbacks below.
+                        writeSseFallback(context, envelope, security, toolName, invokeFailure);
+                        return;
+                    }
+                    anchoredOnContext(result, owningContext).onComplete(ar -> {
+                        if (ar.failed() || ar.result() == null) {
+                            writeSseFallback(
+                                    context,
+                                    envelope,
+                                    security,
+                                    toolName,
+                                    ar.failed() ? ar.cause() : new NullPointerException("tool result"));
+                            return;
+                        }
+                        // R04 (closing #426/#427): every complete result is normalized exactly once — bounded by
+                        // mcp.output.maxBytes as bytes are produced, exactly like the terminal write below —
+                        // validated against the advertised output schema, encoded into the bounded terminal
+                        // envelope, offered to the opt-in output observation only once that envelope exists, and
+                        // only then handed to the single terminal writer (contract §4.7 stage 7). The raw
+                        // application value is converted to its bounded, JSON-compatible canonical shape here —
+                        // once — and that exact same value is reused below for schema validation, the observation
+                        // callback, and the wire embed; nothing downstream re-serializes the original application
+                        // object. writeToolResult (not this block) publishes the output observation, strictly
+                        // after its own encodeCapped call succeeds — see its Javadoc — so an observer can never
+                        // see a value the wire cap or the schema check would still reject.
+                        //
+                        McpToolResult<?> toolResult = ar.result();
+                        Object normalizedOutput;
+                        try {
+                            normalizedOutput = normalizeStructuredContent(invoker, toolResult.structuredContent());
+                        } catch (RuntimeException | StackOverflowError serializationFailure) {
+                            // This boundary owns only the sole raw-value serialization and bounded-byte
+                            // reparse. Byte/token exhaustion, cyclic or non-finite output, and recursion are
+                            // therefore serialization failures, never generic handler failures.
+                            writeSseFallback(
+                                    context,
+                                    envelope,
+                                    security,
+                                    toolName,
+                                    serializationFailure,
+                                    McpErrorType.SERIALIZATION);
+                            return;
+                        }
+                        try {
+                            if (!outputSchemaValid(toolName, normalizedOutput)) {
+                                // The schema-invalid value never reaches writeToolResult/encodeCapped: it is
+                                // rejected here, before any wire byte is produced and before the output
+                                // observation fires, so an invalid structured result never reaches the wire or a
+                                // capable session.
+                                writeOutputValidationFailure(context, envelope, security, toolName);
+                                return;
+                            }
+                            writeToolResult(
+                                    context,
+                                    envelope,
+                                    security,
+                                    toolName,
+                                    toolResult,
+                                    normalizedOutput,
+                                    McpErrorType.HANDLER,
+                                    coordinator,
+                                    toolContext);
+                        } catch (RuntimeException | StackOverflowError downstreamFailure) {
+                            // Schema infrastructure, observation, and other callbacks after normalization are
+                            // not serialization failures. Keep their existing internal classification.
+                            writeSseFallback(context, envelope, security, toolName, downstreamFailure);
+                        }
+                    });
+                });
     }
 
     /**
@@ -2137,13 +2264,20 @@ final class McpRequestDispatcher {
      * rejection (malformed arguments, input-schema, input-processing, tool-interceptor) passes {@code
      * null} for both, since no handler ever ran and there is no output value to observe. When both are
      * given, the opt-in {@code onToolOutput} observation is published here — strictly after {@link
-     * #encodeCapped} has successfully produced the bounded terminal envelope below, and strictly before
-     * {@link #writeSse} commits any byte to the wire. This ordering is the fix: an observer only ever
-     * receives a value that also reached the wire, never one the cap or the output-schema check (already
-     * run by the caller before this method) would still reject. Gated on {@code
-     * coordinator.hasValueObservers()} before the observation is even constructed, for the same reason
-     * {@link #invokeAndRespond}'s {@code onToolInput} publish is: {@link McpToolOutputObservation}'s
-     * compact constructor deep-copies the entire normalized result tree.
+     * #encodeCapped} has successfully produced the bounded terminal envelope below, and strictly after
+     * {@link #writeSse} reports that this write actually won the coordinator's first-observed-wins
+     * settlement race (repair task R32 defect 3). An earlier revision published unconditionally once
+     * {@code encodeCapped} succeeded — strictly before the {@link #writeSse} call, the only place
+     * {@code beginWrite} ever runs — so a request whose client had already disconnected before the
+     * tool's result resolved still delivered the observation even though {@code beginWrite} was
+     * guaranteed to lose and the write itself was correctly suppressed. This ordering is the actual fix:
+     * an observer only ever receives a value once this write has genuinely committed to being the one
+     * the client's connection is still receiving, never one the cap, the output-schema check (already
+     * run by the caller before this method), or a settlement that beat this write to the coordinator
+     * would still suppress. Gated on {@code coordinator.hasValueObservers()} before the observation is
+     * even constructed, for the same reason {@link #invokeAndRespond}'s {@code onToolInput} publish is:
+     * {@link McpToolOutputObservation}'s compact constructor deep-copies the entire normalized result
+     * tree.
      *
      * @param coordinator the request's completion coordinator, or {@code null} when this call site never
      *     publishes an output observation
@@ -2167,11 +2301,14 @@ final class McpRequestDispatcher {
             writeSseFallback(context, envelope, security, toolName, overCap, McpErrorType.SERIALIZATION);
             return;
         }
-        if (coordinator != null && toolContext != null && coordinator.hasValueObservers()) {
+        McpRequestTerminalEvent terminal = toolResultTerminal(context, security, toolName, result, errorType);
+        boolean written = writeSse(context, 200, payload, terminal);
+        // R32 defect 3: publish only once this write has actually won beginWrite's settlement race — a
+        // prior disconnect/reset settlement means the client never received this value, so no observer
+        // may either.
+        if (written && coordinator != null && toolContext != null && coordinator.hasValueObservers()) {
             coordinator.publishToolOutput(new McpToolOutputObservation(toolContext, normalizedStructuredContent));
         }
-        McpRequestTerminalEvent terminal = toolResultTerminal(context, security, toolName, result, errorType);
-        writeSse(context, 200, payload, terminal);
     }
 
     /**
@@ -2327,10 +2464,15 @@ final class McpRequestDispatcher {
      * two-phase logical-settlement-before-byte-write ordering, the coordinator's first-observed-wins
      * guard, and the completion accounting are identical to the JSON write paths. Framing and writing
      * happen in the same call, so no byte of this SSE message reaches the wire before it is complete.
+     *
+     * @return {@code true} when this call won the coordinator's first-observed-wins settlement race
+     *     and the write proceeded, {@code false} when a prior settlement already claimed it and this
+     *     write was suppressed (repair task R32 defect 3 — {@link #writeToolResult} uses this to gate
+     *     its output observation)
      */
-    private static void writeSse(
+    private static boolean writeSse(
             RoutingContext context, int status, byte[] jsonPayload, McpRequestTerminalEvent terminal) {
-        write(context, status, sseFrame(jsonPayload), terminal);
+        return write(context, status, sseFrame(jsonPayload), terminal);
     }
 
     /** Frames one complete JSON-RPC message as a single {@code event: message} / {@code data:} SSE block. */
@@ -2606,8 +2748,11 @@ final class McpRequestDispatcher {
     // write path directly, stubbing HttpServerResponse#end(...) to return a Promise-backed future the
     // test owns and completes explicitly — no socket, no timing dependency. This is the only visibility
     // change; the write orchestration itself (beginWrite before the byte write, finishWrite after) is
-    // unchanged from the T004/P03 behavior.
-    static void write(RoutingContext context, int status, @Nullable byte[] body, McpRequestTerminalEvent terminal) {
+    // unchanged from the T004/P03 behavior. The boolean return (repair task R32 defect 3) reports only
+    // whether this call won beginWrite's settlement race and the write proceeded — every pre-existing
+    // caller ignores it exactly as it ignored the previous void return; only writeSse/writeToolResult
+    // observe it, to gate the output observation on the write having actually won.
+    static boolean write(RoutingContext context, int status, @Nullable byte[] body, McpRequestTerminalEvent terminal) {
         McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
         // Logical settlement precedes the byte write: beginWrite publishes the terminal and claims
         // the shared first-observed latch. If a settlement (disconnect or reset) already won, the
@@ -2625,7 +2770,7 @@ final class McpRequestDispatcher {
         // all default to 0/disabled); McpServerConfigValidator's startup gate is what guarantees an
         // enabled mount always has at least one of them armed, which is what makes this comment true.
         if (coordinator != null && !coordinator.beginWrite(terminal)) {
-            return;
+            return false;
         }
         context.response().setStatusCode(status);
         Handler<AsyncResult<Void>> onEnd = result -> {
@@ -2640,11 +2785,12 @@ final class McpRequestDispatcher {
         };
         if (body == null) {
             context.response().end().onComplete(onEnd);
-            return;
+            return true;
         }
         // end(body) sets Content-Length, so the response is framed by length instead of relying on
         // connection-close framing the way a separate write() + end() pair does.
         context.response().end(Buffer.buffer(body)).onComplete(onEnd);
+        return true;
     }
 
     /**

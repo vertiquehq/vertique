@@ -46,6 +46,12 @@ public interface McpRequestInterceptor extends OrderedExtension {
      * <p>Called exactly once per applicable request, on the request's owning Vert.x context. Must
      * not block and must never return {@code null}. The default implementation always permits.
      *
+     * <p>The returned future may complete on any thread — an implementation backed by a plain,
+     * context-unaware {@link io.vertx.core.Promise} is under no obligation to settle it from Vert.x at
+     * all. The framework re-anchors its continuation, and every later interceptor's own invocation,
+     * back onto the request's owning Vert.x context before acting on the outcome, so this method never
+     * needs to re-anchor itself.
+     *
      * @param context the immutable, payload-free pre-dispatch snapshot
      * @return a {@link Future} that succeeds to permit the request, or fails to reject it; never
      *     {@code null}

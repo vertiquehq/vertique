@@ -403,7 +403,10 @@ callback-scoped use remains a documented obligation on implementors.
 
 `onToolOutput` is delivered the same way, through `McpCompletionCoordinator#publishToolOutput`,
 strictly after the [Bounded output pipeline](#bounded-output-pipeline) has normalized and validated
-the result **and** successfully encoded the bounded terminal envelope — never merely after validation.
+the result, successfully encoded the bounded terminal envelope, **and** the write has won logical
+settlement — never merely after validation. On the written path the callback therefore follows the
+terminal event, and a result superseded by a disconnect or reset settlement produces no output
+callback: an observer only ever receives a value that also reached the wire.
 It fires for every completed result — success or tool error alike — carrying the normalized structured
 value (`@Nullable`, absent for a text-only result); a schema-invalid value, or a value the byte or
 token cap rejects, never reaches this callback. Delivery is capability-gated identically to
@@ -415,10 +418,10 @@ every `onToolOutput` call has returned.
 Every completed `tools/call` result is normalized exactly once, bounded by
 `mcp.outputMaxBytes` as bytes are produced and by `mcp.outputMaxTokens` while those bytes are reparsed,
 validated against the tool's advertised output schema, encoded into the bounded terminal envelope,
-offered to the opt-in `onToolOutput` observation only once that envelope exists, and only then handed
-to the single terminal writer ([Cancellation and
-write-phase settlement](#cancellation-and-write-phase-settlement)) — in that fixed order, introducing
-no second streaming, writing, completion, or settlement path.
+handed to the single terminal writer ([Cancellation and
+write-phase settlement](#cancellation-and-write-phase-settlement)), and offered to the opt-in
+`onToolOutput` observation only once that writer has won settlement — in that fixed order,
+introducing no second streaming, writing, completion, or settlement path.
 
 Every successfully transported `tools/call` result carries the final-protocol discriminator
 `resultType: "complete"`, including a handler result whose `isError` value is `true`. A protocol-level
@@ -458,9 +461,10 @@ infinity values are rejected during the sole serialization pass rather than bein
 quoted strings.
 
 The output-value observation (`onToolOutput`) is published only after the terminal envelope has been
-successfully encoded — never before. A capable session can therefore never observe a structured value
-the wire cap or the output-schema check would still reject: both halves of the cap, and the schema
-check, always run to completion before `publishToolOutput` is ever reached.
+successfully encoded **and** the write has won logical settlement — never before. A capable session
+can therefore never observe a structured value the wire cap, the output-schema check, or a competing
+disconnect settlement would still suppress: both halves of the cap, the schema check, and the
+settlement race always resolve before `publishToolOutput` is ever reached.
 `McpOutputPipelineIT#shouldBoundNormalizationAndNotifyOnlyAfterBothChecks` proves this two ways — an
 application value whose own size exceeds the cap aborts during normalization, well before the value's
 full extent is visited, and a value that only exceeds the cap once fully enveloped is never published
