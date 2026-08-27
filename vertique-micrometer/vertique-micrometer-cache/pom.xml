@@ -16,8 +16,8 @@ SPDX-License-Identifier: EUPL-1.2
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
-    <artifactId>vertique-cache-micrometer</artifactId>
-    <name>Vertique Cache Micrometer Adapter</name>
+    <artifactId>vertique-micrometer-cache</artifactId>
+    <name>Vertique Micrometer Cache Adapter</name>
     <description>Micrometer metrics adapter for provider-neutral cache observations</description>
 
     <dependencies>

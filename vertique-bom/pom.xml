@@ -237,11 +237,6 @@ SPDX-License-Identifier: EUPL-1.2
             </dependency>
             <dependency>
                 <groupId>dev.vertique</groupId>
-                <artifactId>vertique-cache-micrometer</artifactId>
-                <version>${project.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>dev.vertique</groupId>
                 <artifactId>vertique-cache-opentelemetry</artifactId>
                 <version>${project.version}</version>
             </dependency>
@@ -458,6 +453,11 @@ SPDX-License-Identifier: EUPL-1.2
             <dependency>
                 <groupId>dev.vertique</groupId>
                 <artifactId>vertique-config-azure-keyvault</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-micrometer-cache</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

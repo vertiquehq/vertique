@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.cache.micrometer;
+package dev.vertique.micrometer.cache;
 
 import dev.vertique.cache.spi.CacheCleanupObservation;
 import dev.vertique.cache.spi.CacheObservation;

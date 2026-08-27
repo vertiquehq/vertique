@@ -1,14 +1,14 @@
 # Developing Vertique Micrometer Cache
 
 > **Audience:** Vertique framework contributors and source agents
-> **Public contract:** `vertique-cache-micrometer/src/main/resources/META-INF/vertique/module.md`
+> **Public contract:** `vertique-micrometer/vertique-micrometer-cache/src/main/resources/META-INF/vertique/module.md`
 
 This module owns the Micrometer implementation of the provider-neutral cache observation seam.
 It is an optional adapter: cache-core, cache-caffeine, and cache-redis remain Micrometer-free.
 
 ## Source Map
 
-- `dev.vertique.cache.micrometer` — cache metrics adapter package.
+- `dev.vertique.micrometer.cache` — cache metrics adapter package.
 - `MicrometerCacheModule` — explicit Dagger contribution module.
 - `CacheMetricsObserver` — operation timer and cleanup counter implementation.
 
@@ -34,7 +34,7 @@ failures so telemetry remains fail-open.
 Focused adapter proof:
 
 ```text
-./mvnw -ntp -pl vertique-cache/vertique-cache-micrometer -am test
+./mvnw -ntp -pl vertique-micrometer/vertique-micrometer-cache -am test
 ```
 
 The tests cover Dagger contribution, disabled metrics, bounded operation dimensions, and

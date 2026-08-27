@@ -14,7 +14,6 @@ SPDX-License-Identifier: EUPL-1.2
 | `vertique-cache-core` | [module.md](../vertique-cache/vertique-cache-core/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-cache-caffeine` | [module.md](../vertique-cache/vertique-cache-caffeine/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-cache-redis` | [module.md](../vertique-cache/vertique-cache-redis/src/main/resources/META-INF/vertique/module.md) |
-| `vertique-cache-micrometer` | [module.md](../vertique-cache/vertique-cache-micrometer/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-cache-opentelemetry` | [module.md](../vertique-cache/vertique-cache-opentelemetry/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-codegen-all` | [module.md](../vertique-codegen/vertique-codegen-all/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-codegen-aop` | [module.md](../vertique-codegen/vertique-codegen-aop/src/main/resources/META-INF/vertique/module.md) |
@@ -66,6 +65,7 @@ SPDX-License-Identifier: EUPL-1.2
 | `vertique-localization` | [module.md](../vertique-localization/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-logging` | [module.md](../vertique-logging/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-management` | [module.md](../vertique-management/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-micrometer-cache` | [module.md](../vertique-micrometer/vertique-micrometer-cache/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-micrometer-core` | [module.md](../vertique-micrometer/vertique-micrometer-core/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-micrometer-registry-prometheus` | [module.md](../vertique-micrometer/vertique-micrometer-registry-prometheus/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-micrometer-rest` | [module.md](../vertique-micrometer/vertique-micrometer-rest/src/main/resources/META-INF/vertique/module.md) |
