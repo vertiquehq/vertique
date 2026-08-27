@@ -3,6 +3,8 @@
 
 package dev.vertique.mcp.tool;
 
+import dev.vertique.core.exception.ValidationException;
+
 /**
  * Signals that a {@code tools/call} argument tree failed one of the fixed request-time input stages
  * (contract §4.7): INP-001 canonicalization/sanitization, materialization through the effective
@@ -15,12 +17,17 @@ package dev.vertique.mcp.tool;
  * rejection settles as the bounded text-only {@code isError=true} tool-error outcome the contract
  * requires, never the internal-error fallback a genuine bug produces.
  *
+ * <p>Extends the core {@link ValidationException} semantic root (java-conventions.md § Exception
+ * Classes; ADR-0112) rather than raw {@link RuntimeException}, so a caller catching input-validation
+ * failures at a REST-style boundary receives this without a separate MCP-specific catch clause or
+ * default-mapping rule.
+ *
  * <p>{@link #getMessage()} must already be a safe, bounded message: it is returned to the caller
  * verbatim as the tool-error text content. Public because {@code prepare()} is generated into an
  * arbitrary application package that cannot reach a package-private framework type; application code
  * should not construct or catch this type directly.
  */
-public final class McpInputRejectionException extends RuntimeException {
+public final class McpInputRejectionException extends ValidationException {
 
     /**
      * Creates a rejection carrying the exact safe message returned to the caller.

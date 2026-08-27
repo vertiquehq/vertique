@@ -18,6 +18,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.correlation.CorrelationContext;
 import dev.vertique.core.correlation.CorrelationContextSnapshot;
+import dev.vertique.core.exception.TechnicalException;
 import dev.vertique.core.extension.ExtensionPhase;
 import dev.vertique.core.extension.OrderedExtension;
 import dev.vertique.correlation.CorrelationContextFactory;
@@ -2932,8 +2933,21 @@ final class McpRequestDispatcher {
         }
     }
 
-    /** Signals that a response exceeded {@code mcp.output.maxBytes} while being serialized. */
-    static final class OutputCapExceededException extends RuntimeException {
+    /**
+     * Signals that a response exceeded {@code mcp.output.maxBytes} while being serialized.
+     *
+     * <p><strong>R34/W13 adjudication:</strong> this sentinel never escapes {@link
+     * McpRequestDispatcher} during real request handling — every catch site in this class converts it
+     * into a bounded {@code isError} or internal-fallback response before returning, and it is never
+     * rethrown past this class. It does not, however, take the standard's {@code private} inner-sentinel
+     * exemption (java-conventions.md § Exception Classes), because it is deliberately referenced from
+     * outside this class for direct white-box testing of {@link CappedOutputStream} across three test
+     * classes in this package — a {@code private} nested type would be inaccessible to those sibling
+     * top-level test classes (nestmate access does not extend across separate top-level classes). It
+     * therefore takes {@link TechnicalException} as its semantic root instead, consistent with the 500
+     * {@link McpErrorType#SERIALIZATION} classification every catch site already gives it.
+     */
+    static final class OutputCapExceededException extends TechnicalException {
         OutputCapExceededException() {
             super("MCP response exceeded mcp.output.maxBytes");
         }
