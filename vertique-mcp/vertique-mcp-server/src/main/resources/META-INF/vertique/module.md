@@ -577,7 +577,11 @@ Composition fails before any route mounts for any of these:
   capability is absent still fails composition regardless of registry content.
 
 Every one of these failures raises exactly one bounded startup error naming the offending
-configuration key or tool. The published registry order never depends on contribution order, and the
+configuration key or tool. A registry with no contributed tools at all is not one of these failures
+— composition still succeeds — but it is unconditionally logged as one WARN naming the mount path
+and both likely causes: `GeneratedMcpToolsModule` not installed in the application's Dagger
+component, or `vertique-codegen-mcp` absent from the annotation-processor path in a pre-facade,
+off-parent setup. The published registry order never depends on contribution order, and the
 registry exposes a stable digest — computed from the exact tool name and schema content of every
 entry, in global name order — that the `tools/list` cursor codec binds to invalidate a stale cursor
 across deployments (see

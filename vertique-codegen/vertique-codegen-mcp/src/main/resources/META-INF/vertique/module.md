@@ -29,10 +29,12 @@ Add this processor whenever an application publishes MCP tools with `@McpTool`. 
 source implements) and `vertique-mcp-server` (which injects the generated multibindings and composes
 the runtime).
 
-This processor is **not** part of the `vertique-codegen-all` facade, so neither
-`vertique-app-parent` nor a `vertique-codegen-all` entry activates it. Every application that uses
-`@McpTool` adds `vertique-codegen-mcp` explicitly to its `annotationProcessorPaths` alongside
-Dagger (the version comes from `vertique-bom`); without that entry no MCP source is generated and
+This processor is part of the `vertique-codegen-all` facade: it is activated automatically by a
+`vertique-codegen-all` dependency and, transitively, by `vertique-app-parent`. An explicit
+`vertique-codegen-mcp` entry in `annotationProcessorPaths` is only needed in an off-parent setup
+that does not depend on `vertique-codegen-all` — for example a module that assembles its
+annotation-processor path by hand (the version still comes from `vertique-bom`). Without the
+processor on the path, whether via the facade or an explicit entry, no MCP source is generated and
 the application composes with an empty tool set.
 
 The processor emits no runtime Dagger module of its own and contributes nothing to the application
@@ -216,7 +218,9 @@ package; `-Avertique.codegen.package` only pins which package that is.
 ### Forgetting to install `GeneratedMcpToolsModule`
 
 The processor writes the module but cannot install it. Without the module in the application's Dagger
-component, the server composes with an empty tool set and no error is reported by the compiler.
+component, the server composes with an empty tool set and no error is reported by the compiler —
+`vertique-mcp-server` logs one unconditional WARN naming both this cause and the alternative
+(`vertique-codegen-mcp` absent from the processor path in a pre-facade, off-parent setup).
 
 ### Assuming the carrier component name tells you the protocol name
 

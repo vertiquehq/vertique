@@ -15,8 +15,10 @@ import io.vertx.ext.web.Router;
 import io.vertx.ext.web.handler.BodyHandler;
 import java.util.Optional;
 import java.util.Set;
+import lombok.extern.slf4j.Slf4j;
 
 /** Installs the one validated MCP Router mount owned by the server module. */
+@Slf4j
 final class McpRouterMount implements RouterMount {
     private final McpServerConfig config;
     private final McpServerConfigValidator configValidator;
@@ -72,6 +74,18 @@ final class McpRouterMount implements RouterMount {
         // production mount point: this constructor. Test fixtures that exercise a narrower slice of
         // McpServerConfigValidator call its narrower overloads directly.
         configValidator.validate(config, routeAuthHandlers, toolRegistry, httpConfig, authorizer);
+        if (toolRegistry.invokersByName().isEmpty()) {
+            // Unconditional, not gated behind config: an empty registry is valid composition (an
+            // unconfigured registry with no tools is allowed, see McpServerConfigValidator), but it is
+            // never what an application publishing @McpTool methods intended, so both likely root causes
+            // are named here rather than left for the application developer to rediscover.
+            log.warn(
+                    "MCP tool registry at {} is empty: no tools are reachable. Likely causes: "
+                            + "GeneratedMcpToolsModule is not installed in the application's Dagger component, "
+                            + "or vertique-codegen-mcp is absent from the annotation-processor path (pre-facade "
+                            + "setups that do not depend on vertique-codegen-all)",
+                    config.mountPath());
+        }
         this.identityEstablisher = new McpIdentityEstablisher(config, routeAuthHandlers, identityResolutionMiddleware);
     }
 
