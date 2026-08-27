@@ -93,7 +93,7 @@ arbitrary application package, which cannot reach a package-private framework ty
 module. `McpBeanValidation.validate(carrier)` is the one shared, thread-safe Jakarta Bean Validation
 `Validator` every generated `prepare()` calls for its Bean Validation stage when the application's
 Dagger graph binds no `Validator` of its own. `McpBeanValidation.validate(carrier, Optional<Validator>)`
-(R38/W7) is the seam a generated invoker's constructor-injected `Optional<jakarta.validation.Validator>`
+is the seam a generated invoker's constructor-injected `Optional<jakarta.validation.Validator>`
 routes through instead when the graph does bind one — for example, `vertique-mcp-server`'s
 `@BindsOptionalOf Validator` resolved to an application-bound, Dagger-aware `Validator` that can
 construct an `@Inject`-only `ConstraintValidator`; absent, its behavior is byte-for-byte identical to
@@ -220,8 +220,8 @@ already threads through the per-request `McpRequestObservation` sessions this mo
 This module consumes only the public core correlation snapshot, the security snapshot and
 `ActionRef` types, `io.vertx.core.Future`, and the Jakarta Bean Validation API (resolved directly,
 not through `vertique-validation`, since `McpBeanValidation` needs only
-`jakarta.validation.Validator#validate`). It declares no Bean Validation provider dependency
-(R38/W7): `Validation.buildDefaultValidatorFactory()` discovers one via `ServiceLoader` at runtime,
+`jakarta.validation.Validator#validate`). It declares no Bean Validation provider dependency:
+`Validation.buildDefaultValidatorFactory()` discovers one via `ServiceLoader` at runtime,
 so a provider (e.g. Hibernate Validator) is a runtime concern of whichever module puts an MCP
 application on the classpath — `vertique-mcp-server` — not of this API-only module. Runtime
 dispatch, HTTP integration, schema generation, tool registration, authorization enforcement, and

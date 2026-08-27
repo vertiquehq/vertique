@@ -74,7 +74,7 @@ are declared as internal, Vertique-owned `AttributeKey` constants on `McpServerS
 **At most one body-trace link, never a child span.** When the request's terminal observation carries
 a non-null `bodyTraceContext` (a normalized W3C trace reference extracted by `McpProtocolCodec` from
 the request body's `params._meta.traceparent`/`tracestate` and bound onto `McpCompletionCoordinator`
-by `McpRequestDispatcher`, R39), the observer converts it into an OpenTelemetry `SpanContext` and adds
+by `McpRequestDispatcher`), the observer converts it into an OpenTelemetry `SpanContext` and adds
 exactly one `Span#addLink` when that context is valid and from a *different trace* than the HTTP
 span's own captured trace id. A body trace context sharing the HTTP span's own trace id is suppressed
 as a self-reference and adds no link — this is the shape a body reference identical to the HTTP

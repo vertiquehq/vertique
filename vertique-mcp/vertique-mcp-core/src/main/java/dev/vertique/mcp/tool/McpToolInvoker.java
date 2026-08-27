@@ -32,6 +32,8 @@ public interface McpToolInvoker {
      *
      * <p>Generated invokers always return their runtime-bound writer. The empty default exists only
      * for hand-written framework fixtures, which retain the server's neutral compatibility writer.
+     * Inheriting the empty default routes structured-output serialization through that neutral
+     * compatibility writer, not the tool's selected JSON profile.
      *
      * @return the generated runtime's structured-output writer, or empty for a hand-written fixture
      */

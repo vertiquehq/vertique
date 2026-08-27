@@ -77,7 +77,7 @@ tool registry** — a tool that is not bound here does not exist at runtime. The
 derived from the invoker instance rather than rebuilt, so the published descriptor set and the
 dispatchable invoker set cannot drift apart.
 
-### Generated invoker constructor threads an optional Bean Validation `Validator` (R38/W7)
+### Generated invoker constructor threads an optional Bean Validation `Validator`
 
 Every generated invoker's `@Inject` constructor additionally accepts
 `java.util.Optional<jakarta.validation.Validator>`, resolved from the application's Dagger graph

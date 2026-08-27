@@ -23,6 +23,23 @@ import java.lang.annotation.Target;
  * <p>The four hint members carry the tool annotations advertised to clients. They are hints only:
  * a client may not rely on them for safety, and the framework does not enforce them.
  *
+ * <p><strong>Execution contract.</strong> The annotated method is invoked on the request-owning
+ * Vert.x event loop and must not block it: offload blocking work (I/O, CPU-bound computation, a
+ * synchronous client call) onto a worker thread or a non-blocking client instead of running it
+ * inline. The returned {@link io.vertx.core.Future} may complete on any thread — a worker thread,
+ * an executor callback, a different event loop — and the framework re-anchors the result back onto
+ * the request-owning context before continuing; a handler does not need to hop contexts itself. A
+ * long-running or cooperative handler should poll
+ * {@link dev.vertique.mcp.tool.McpCancellationSignal#isCancelled()} or observe
+ * {@link dev.vertique.mcp.tool.McpCancellationSignal#cancelled()} to stop work promptly once the
+ * call is cancelled; the framework cannot forcibly stop a handler that ignores the signal.
+ *
+ * <p><strong>Security: an unannotated tool is public.</strong> A tool method carrying no
+ * authorization annotation — no {@code @PermitAll}, {@code @DenyAll}, {@code @RolesAllowed}, or
+ * {@code @RequiresAction} — is permitted to every anonymous and authenticated caller, exactly as an
+ * unannotated REST resource method is. The absence of an annotation is not a safe default for a
+ * side-effecting tool; annotate it explicitly with the access requirement it needs.
+ *
  * <pre>{@code
  * @Singleton
  * public class WeatherTools {

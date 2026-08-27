@@ -47,7 +47,7 @@ or a client that simply stops reading mid-response could hold its connection, an
 lifecycle observation opened for it, open indefinitely — reachable by an unauthenticated caller
 against any `@PermitAll` tool. `McpServerConfigValidator` closes this at composition: **an enabled MCP
 mount refuses to start unless `http.idleTimeoutSeconds` or `http.readIdleTimeoutSeconds` is greater
-than zero.** `http.writeIdleTimeoutSeconds` does not qualify on its own (repair task R33): it fires
+than zero.** `http.writeIdleTimeoutSeconds` does not qualify on its own: it fires
 only while a write is actually in flight, so it cannot reclaim a connection that opens and then never
 reads or writes again. Set at least one of the two qualifying `HttpConfig` timeouts for any MCP
 deployment — the mount will not start otherwise.
@@ -291,7 +291,7 @@ protocol negotiation. `MCP-Protocol-Version` and
 `Mcp-Name` is required and compared with `params.name` only for `tools/call`; `server/discover` and
 `tools/list` have no name-shaped identifier, so they accept either an absent or unsolicited
 `Mcp-Name`. Any one of these routing headers sent more than once — even with every occurrence
-identical — fails negotiation rather than matching on the first observed value (repair task R33): a
+identical — fails negotiation rather than matching on the first observed value: a
 duplicated header is rejected to prevent intermediary/backend header-desync, where a proxy or gateway
 forwards a different one of the duplicated values than the one this codec observed. The per-method
 `_meta` shape and supported protocol version must satisfy Phase-1 policy,
@@ -313,7 +313,7 @@ boundary and owns the HTTP/router composition only.
 
 ## Body trace-context extraction
 
-Repair task R39. `McpProtocolCodec#extractBodyTraceContext` reads this request's optional body
+`McpProtocolCodec#extractBodyTraceContext` reads this request's optional body
 trace reference from `params._meta.traceparent` / `params._meta.tracestate` — the plain,
 un-prefixed keys MCP 2026-07-28's `_meta` reserves for W3C trace-context propagation
 (OpenTelemetry trace context), deliberately distinct from the `io.modelcontextprotocol/`-prefixed
@@ -706,7 +706,7 @@ implementation detail, never a getter or any other public member.
 
 ### Optional Bean Validation `Validator` binding
 
-`McpServerModule` declares `@BindsOptionalOf Validator` (R38/W7), so composition succeeds whether or
+`McpServerModule` declares `@BindsOptionalOf Validator`, so composition succeeds whether or
 not the application's own Dagger graph binds a `jakarta.validation.Validator`. Every generated
 invoker's constructor additionally accepts `Optional<Validator>` and threads it into stage 4 of the
 [Request-time input pipeline](#request-time-input-pipeline) through
@@ -773,7 +773,7 @@ authorization SPI remains cooperative: MCP does not claim to forcibly cancel the
 
 The cursor is an unsigned, non-expiring, unpadded base64url encoding of canonical JSON with exactly
 three fields, in order: `protocolVersion`, `registryDigest`, and `lastScannedToolName`. That field
-carries one of two mutually exclusive, syntactically disjoint forms (R40/C5): a bounded syntactically
+carries one of two mutually exclusive, syntactically disjoint forms: a bounded syntactically
 valid tool name, or an opaque `"#<index>"` scan-position anchor — disjoint because the tool-name
 grammar never contains `#`.
 
@@ -826,13 +826,23 @@ unknown name and a `@DenyAll` tool are externally indistinguishable, matching th
 guarantee above.
 
 The bytes are identical, but the *path* to them used to differ: an unknown name resolved from a plain
-registry-map lookup, while a denied name additionally traversed `McpPolicyEnforcer#decide`. With an
-application-supplied asynchronous policy decision point, that gap is measurable and would let a caller
-recover the same existence oracle the shared `-32602` response exists to close by timing the response
-instead of reading it. An unresolved name is therefore evaluated against a synthetic, never-registered
-`@DenyAll` placeholder descriptor through the identical decision point, so both paths carry the same
-asynchronous latency shape. The terminal event recorded for an unresolved name always carries the
-bounded `UNKNOWN` placeholder, never the caller-supplied string — an unresolved name touches no real
+registry-map lookup, while a denied name additionally traversed `McpPolicyEnforcer#decide`. An
+unresolved name is therefore evaluated against a synthetic, never-registered `@DenyAll` placeholder
+descriptor through the identical decision point, so it is timing-indistinguishable from a real
+`@DenyAll` tool: both settle synchronously inside the shared `SecurityPolicyEnforcer`, with no
+authorization decision point round trip.
+
+**Threat model, stated honestly.** That synchronous-settlement guarantee does not extend to every
+denial shape. A `RESTRICTED` tool's denial resolves through the same enforcer but may reach an
+application-supplied, genuinely asynchronous `AuthorizationDecisionPoint` — including a remote one —
+whose latency an unknown name's synthetic `@DenyAll` evaluation never pays. A caller with a timing
+side channel may therefore distinguish a denied `RESTRICTED` tool name from an unknown name, even
+though the response bytes remain identical. Closing that residual gap would require deliberately
+padding the fast path's latency to match the slowest configured decision point — a designed
+latency-padding feature, not a documentation fix — and is tracked as an accepted residual risk
+(issue #420) rather than claimed as delivered here. The terminal event recorded for an unresolved
+name always carries the bounded `UNKNOWN` placeholder, never the caller-supplied string — an
+unresolved name touches no real
 `McpToolDescriptor`, so nothing would otherwise bound it before it reached every lifecycle observer
 and listener as internal telemetry except the wire's own very large string limit.
 
@@ -910,6 +920,12 @@ own `ResourceRef("mcp-tool", <toolName>, {})` and `InvocationOrigin.of(DispatchB
 application `AuthorizationDecisionPoint`, `AuthorizationPolicy`, or `Authorizer` override therefore
 applies to MCP tools as well as REST resources, and a custom implementation may legitimately return
 a different decision per transport.
+
+**Security: an unannotated tool is public.** A tool method carrying no authorization annotation — no
+`@PermitAll`, `@DenyAll`, `@RolesAllowed`, or `@RequiresAction` — is permitted to every anonymous and
+authenticated caller, exactly as an unannotated REST resource method is. The absence of an annotation
+is not a safe default for a side-effecting tool; annotate it explicitly with the access requirement
+it needs.
 
 The mapping from a tool's declared access to its effective authorization result is frozen:
 
