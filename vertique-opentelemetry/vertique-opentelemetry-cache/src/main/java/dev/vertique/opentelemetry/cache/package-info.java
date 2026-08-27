@@ -2,4 +2,4 @@
 // SPDX-License-Identifier: EUPL-1.2
 
 /** OpenTelemetry adapter for provider-neutral cache observations. */
-package dev.vertique.cache.opentelemetry;
+package dev.vertique.opentelemetry.cache;

@@ -6,8 +6,8 @@ SPDX-License-Identifier: EUPL-1.2
 # OpenTelemetry Cache Module
 
 > **Status:** Beta
-> **Package:** `dev.vertique.cache.opentelemetry`
-> **Artifact:** `vertique-cache-opentelemetry`
+> **Package:** `dev.vertique.opentelemetry.cache`
+> **Artifact:** `vertique-opentelemetry-cache`
 > **Depends on:** `vertique-cache-core`, `vertique-opentelemetry-core`
 
 Provides the optional OpenTelemetry adapter for provider-neutral cache observations. Install

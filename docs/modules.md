@@ -14,7 +14,6 @@ SPDX-License-Identifier: EUPL-1.2
 | `vertique-cache-core` | [module.md](../vertique-cache/vertique-cache-core/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-cache-caffeine` | [module.md](../vertique-cache/vertique-cache-caffeine/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-cache-redis` | [module.md](../vertique-cache/vertique-cache-redis/src/main/resources/META-INF/vertique/module.md) |
-| `vertique-cache-opentelemetry` | [module.md](../vertique-cache/vertique-cache-opentelemetry/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-codegen-all` | [module.md](../vertique-codegen/vertique-codegen-all/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-codegen-aop` | [module.md](../vertique-codegen/vertique-codegen-aop/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-codegen-application` | [module.md](../vertique-codegen/vertique-codegen-application/src/main/resources/META-INF/vertique/module.md) |
@@ -70,6 +69,7 @@ SPDX-License-Identifier: EUPL-1.2
 | `vertique-micrometer-registry-prometheus` | [module.md](../vertique-micrometer/vertique-micrometer-registry-prometheus/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-micrometer-rest` | [module.md](../vertique-micrometer/vertique-micrometer-rest/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-micrometer-services` | [module.md](../vertique-micrometer/vertique-micrometer-services/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-opentelemetry-cache` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-cache/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-opentelemetry-core` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-core/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-opentelemetry-prometheus` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-prometheus/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-opentelemetry-rest` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-rest/src/main/resources/META-INF/vertique/module.md) |

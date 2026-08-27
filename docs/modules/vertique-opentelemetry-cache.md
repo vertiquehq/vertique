@@ -1,7 +1,7 @@
-# Developing Vertique Cache OpenTelemetry
+# Developing Vertique OpenTelemetry Cache
 
 > **Audience:** Vertique framework contributors and source agents
-> **Public contract:** `vertique-cache-opentelemetry/src/main/resources/META-INF/vertique/module.md`
+> **Public contract:** `vertique-opentelemetry/vertique-opentelemetry-cache/src/main/resources/META-INF/vertique/module.md`
 
 This module owns the OpenTelemetry implementation of the provider-neutral cache observation seam.
 It is an optional cache-family adapter; cache-core and cache providers remain independent of
@@ -9,7 +9,7 @@ OpenTelemetry.
 
 ## Source Map
 
-- `dev.vertique.cache.opentelemetry.CacheTracingObserver` — bounded cache span observer.
+- `dev.vertique.opentelemetry.cache.CacheTracingObserver` — bounded cache span observer.
 - `OpenTelemetryCacheModule` — explicit Dagger contribution module.
 
 ## Runtime or Build Flow
@@ -31,7 +31,7 @@ cache behavior depend on telemetry success.
 Focused adapter proof:
 
 ```text
-./mvnw -ntp -pl vertique-cache/vertique-cache-opentelemetry -am test
+./mvnw -ntp -pl vertique-opentelemetry/vertique-opentelemetry-cache -am test
 ```
 
 The tests cover bounded span attributes, fail-open tracer behavior, and Dagger multibinding.

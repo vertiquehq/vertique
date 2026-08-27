@@ -10,8 +10,8 @@
         <version>${revision}</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
-    <artifactId>vertique-cache-opentelemetry</artifactId>
-    <name>Vertique Cache OpenTelemetry Adapter</name>
+    <artifactId>vertique-opentelemetry-cache</artifactId>
+    <name>Vertique OpenTelemetry Cache Adapter</name>
     <description>OpenTelemetry adapter for provider-neutral cache observations</description>
     <dependencies>
         <dependency>
