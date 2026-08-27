@@ -81,7 +81,7 @@ observers. Applications opt into each cache adapter's Dagger module explicitly.
 Before editing, these commands were green on `e23317a1`:
 
 ```text
-./mvnw -ntp -pl vertique-cache/vertique-cache-codegen -am test
+./mvnw -ntp -pl vertique-codegen/vertique-codegen-cache -am test
 ./mvnw -ntp -pl vertique-micrometer/vertique-micrometer-cache -am test
 ./mvnw -ntp -pl vertique-opentelemetry/vertique-opentelemetry-core -am test
 ```

@@ -75,7 +75,7 @@ and APIs have never shipped.
 Baseline ref: `7b847df7`.
 
 ```text
-./mvnw -ntp -pl vertique-cache/vertique-cache-core,vertique-cache/vertique-cache-codegen,vertique-cache/vertique-cache-caffeine,vertique-cache/vertique-cache-micrometer,vertique-cache/vertique-cache-opentelemetry -am -Dtest=CacheContractsTest,CacheOperationalLimitsTest,CacheResolutionTest,CacheAnnotationProcessorTest,CaffeineCacheStoreTest,CacheStoreContractTest,CacheObserverTest,MicrometerCacheModuleTest,OpenTelemetryCacheModuleTest -Dsurefire.failIfNoSpecifiedTests=false test
+./mvnw -ntp -pl vertique-cache/vertique-cache-core,vertique-codegen/vertique-codegen-cache,vertique-cache/vertique-cache-caffeine,vertique-micrometer/vertique-micrometer-cache,vertique-opentelemetry/vertique-opentelemetry-cache -am -Dtest=CacheContractsTest,CacheOperationalLimitsTest,CacheResolutionTest,CacheAnnotationProcessorTest,CaffeineCacheStoreTest,CacheStoreContractTest,CacheObserverTest,MicrometerCacheModuleTest,OpenTelemetryCacheModuleTest -Dsurefire.failIfNoSpecifiedTests=false test
 ```
 
 Result: green; the selected cache/core/codegen/Caffeine/Micrometer/OpenTelemetry tests
