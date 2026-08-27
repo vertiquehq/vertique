@@ -1,13 +1,13 @@
-# Developing Vertique Cache Codegen
+# Developing Vertique Codegen Cache
 
 > **Audience:** Vertique framework contributors and source agents
-> **Public contract:** `vertique-cache-codegen/src/main/resources/META-INF/vertique/module.md`
+> **Public contract:** `vertique-codegen/vertique-codegen-cache/src/main/resources/META-INF/vertique/module.md`
 
 This module owns the cache annotation processor boundary and must keep generated application types separate from runtime providers.
 
 ## Source Map
 
-- `dev.vertique.cache.codegen` — cache processor package root.
+- `dev.vertique.codegen.cache` — cache processor package root.
 
 ## Runtime or Build Flow
 
@@ -21,12 +21,12 @@ they are never treated as cacheable transport values.
 ## Load-Bearing Invariants
 
 - Processor code depends on neutral cache contracts, never on Caffeine or Redis implementation details.
-- The module remains a consumable build artifact; the cache family aggregator is not BOM-managed.
+- The module remains a consumable build artifact; the `vertique-codegen` family aggregator is not itself consumed.
 
 ## Testing
 
-Processor behavior is outside T001. The foundation proof selects this module through the cache family aggregator.
+Processor behavior is proven by the leaf tests and by facade discovery through `vertique-codegen-all`.
 
 ```text
-./mvnw -ntp -pl vertique-cache/vertique-cache-codegen -am test
+./mvnw -ntp -pl vertique-codegen/vertique-codegen-cache -am test
 ```

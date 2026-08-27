@@ -56,7 +56,7 @@ class ProcessorFacadeDiscoveryTest {
                     "dev.vertique.codegen.sanitization.processor.SanitizationProcessor"),
             new FacadeLeaf("vertique-codegen-aop", "dev.vertique.codegen.aop.AopProcessor"),
             new FacadeLeaf("vertique-codegen-events", "dev.vertique.codegen.events.EventsProcessor"),
-            new FacadeLeaf("vertique-cache-codegen", "dev.vertique.cache.codegen.CacheAnnotationProcessor"));
+            new FacadeLeaf("vertique-codegen-cache", "dev.vertique.codegen.cache.CacheAnnotationProcessor"));
 
     @Test
     void facadePomDeclaresExactlyFrozenLeaves() throws Exception {

@@ -35,7 +35,7 @@ The facade declares these compile dependencies in deterministic order:
 10. `vertique-codegen-sanitization`
 11. `vertique-codegen-aop`
 12. `vertique-codegen-events`
-13. `vertique-cache-codegen`
+13. `vertique-codegen-cache`
 
 All processors remain non-claiming and ignore compilations that do not use their supported
 annotations. The facade adds no runtime Java API, annotations, SPI, or configuration keys.

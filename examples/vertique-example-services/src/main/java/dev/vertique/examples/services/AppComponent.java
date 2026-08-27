@@ -59,7 +59,7 @@ import jakarta.inject.Singleton;
  *   <li>{@link GeneratedAopModule} — auto-generated AOP proxy bindings for cache-aware service
  *       handlers</li>
  *   <li>{@link GeneratedCacheModule} — auto-generated cache metadata and local Caffeine provider
- *       composition produced by {@code vertique-cache-codegen}</li>
+ *       composition produced by {@code vertique-codegen-cache}</li>
  *   <li>{@link GeneratedServicesModule} — auto-generated singleton typed-client and
  *       {@code ServiceContractContributor} bindings produced by
  *       {@code vertique-codegen-services} at compile time. Drives

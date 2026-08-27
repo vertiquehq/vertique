@@ -11,7 +11,6 @@ SPDX-License-Identifier: EUPL-1.2
 | `vertique-application` | [module.md](../vertique-application/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-application-test` | [module.md](../vertique-application-test/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-bootstrap` | [module.md](../vertique-bootstrap/src/main/resources/META-INF/vertique/module.md) |
-| `vertique-cache-codegen` | [module.md](../vertique-cache/vertique-cache-codegen/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-cache-core` | [module.md](../vertique-cache/vertique-cache-core/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-cache-caffeine` | [module.md](../vertique-cache/vertique-cache-caffeine/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-cache-redis` | [module.md](../vertique-cache/vertique-cache-redis/src/main/resources/META-INF/vertique/module.md) |
@@ -20,6 +19,7 @@ SPDX-License-Identifier: EUPL-1.2
 | `vertique-codegen-all` | [module.md](../vertique-codegen/vertique-codegen-all/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-codegen-aop` | [module.md](../vertique-codegen/vertique-codegen-aop/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-codegen-application` | [module.md](../vertique-codegen/vertique-codegen-application/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-codegen-cache` | [module.md](../vertique-codegen/vertique-codegen-cache/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-codegen-core` | [module.md](../vertique-codegen/vertique-codegen-core/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-codegen-cron` | [module.md](../vertique-codegen/vertique-codegen-cron/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-codegen-dagger` | [module.md](../vertique-codegen/vertique-codegen-dagger/src/main/resources/META-INF/vertique/module.md) |

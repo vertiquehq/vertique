@@ -2,4 +2,4 @@
 // SPDX-License-Identifier: EUPL-1.2
 
 /** Compile-time processing support for annotation-driven cache metadata. */
-package dev.vertique.cache.codegen;
+package dev.vertique.codegen.cache;

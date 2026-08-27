@@ -184,10 +184,6 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
-            <artifactId>vertique-cache-codegen</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>dev.vertique</groupId>
             <artifactId>vertique-cache-caffeine</artifactId>
         </dependency>
         <dependency>
@@ -309,6 +305,10 @@ SPDX-License-Identifier: EUPL-1.2
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-codegen-application</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-codegen-cache</artifactId>
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>

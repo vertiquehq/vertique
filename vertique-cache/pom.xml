@@ -16,7 +16,6 @@
     <description>Annotation-driven cache support family: contracts, code generation, storage providers, and optional adapters</description>
     <modules>
         <module>vertique-cache-core</module>
-        <module>vertique-cache-codegen</module>
         <module>vertique-cache-caffeine</module>
         <module>vertique-cache-redis</module>
         <module>vertique-cache-micrometer</module>

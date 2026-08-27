@@ -10,8 +10,8 @@
         <version>${revision}</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
-    <artifactId>vertique-cache-codegen</artifactId>
-    <name>Vertique Cache Codegen</name>
+    <artifactId>vertique-codegen-cache</artifactId>
+    <name>Vertique Codegen Cache</name>
     <description>Compile-time processor support for annotation-driven cache metadata</description>
     <dependencies>
         <dependency><groupId>dev.vertique</groupId><artifactId>vertique-cache-core</artifactId></dependency>

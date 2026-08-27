@@ -6,11 +6,11 @@ SPDX-License-Identifier: EUPL-1.2
 # Cache Codegen
 
 > **Status:** Alpha
-> **Package:** `dev.vertique.cache.codegen`
-> **Artifact:** `vertique-cache-codegen`
+> **Package:** `dev.vertique.codegen.cache`
+> **Artifact:** `vertique-codegen-cache`
 > **Depends on:** `vertique-cache-core`, `vertique-codegen-core`
 
-`vertique-cache-codegen` is the build-time module boundary for cache annotation validation and generated cache metadata. It remains separate from the provider-neutral runtime and from storage providers. It is an annotation-processor artifact, not a runtime dependency.
+`vertique-codegen-cache` is the build-time module boundary for cache annotation validation and generated cache metadata. It remains separate from the provider-neutral runtime and from storage providers. It is an annotation-processor artifact, not a runtime dependency.
 
 ## When To Use It
 
@@ -74,7 +74,7 @@ from the consuming application sources; stale generated output is not a runtime 
 dependency. Run the processor proof with:
 
 ```text
-./mvnw -ntp -pl vertique-cache/vertique-cache-codegen -am verify
+./mvnw -ntp -pl vertique-codegen/vertique-codegen-cache -am verify
 ```
 
 The package-level clean build also verifies dependency/BOM parity and packaged module-documentation
