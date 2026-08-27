@@ -8,27 +8,38 @@
 The cache family is still unreleased. Its compatibility constructors and
 provider-specific names must describe the intended first public shape instead of
 preserving pre-release history. Cache-owned integrations must also comply with the
-repository's package and layering standards: cache adapters belong under
-`dev.vertique.cache.*`, while provider-wide Micrometer and OpenTelemetry cores remain
-cache-agnostic.
+repository's package and layering standards: cache-specific artifacts live under the
+provider family that supplies their integration boundary, while provider-wide
+Micrometer and OpenTelemetry cores remain cache-agnostic.
+
+The module-family placement was amended on 2026-08-27: cache code generation now
+belongs to `vertique-codegen`, cache Micrometer integration to `vertique-micrometer`,
+and cache OpenTelemetry integration to `vertique-opentelemetry`.
 
 ## Target structure
 
 ```text
 vertique-cache/
 ├── vertique-cache-core
-├── vertique-cache-codegen
 ├── vertique-cache-caffeine
-├── vertique-cache-redis
-├── vertique-cache-micrometer
-└── vertique-cache-opentelemetry
+└── vertique-cache-redis
+
+vertique-codegen/
+└── vertique-codegen-cache
+
+vertique-micrometer/
+└── vertique-micrometer-cache
+
+vertique-opentelemetry/
+└── vertique-opentelemetry-cache
 ```
 
 Target Java ownership:
 
 - `dev.vertique.cache.caffeine` — Caffeine store and `CacheCaffeineModule`.
-- `dev.vertique.cache.micrometer` — cache Micrometer observer and module.
-- `dev.vertique.cache.opentelemetry` — cache tracing observer and module.
+- `dev.vertique.micrometer.cache` — cache Micrometer observer and module.
+- `dev.vertique.opentelemetry.cache` — cache tracing observer and module.
+- `dev.vertique.codegen.cache` — cache annotation processor.
 - `dev.vertique.micrometer` and `dev.vertique.opentelemetry` — provider-wide concerns only.
 
 ## Approved breaking changes
@@ -37,7 +48,8 @@ Target Java ownership:
   `CacheEntryConfig`; all repository callers use the profile-aware records.
 - Rename `vertique-cache-injvm` to `vertique-cache-caffeine`.
 - Rename `CacheInJvmModule` to `CacheCaffeineModule` and update generated code references.
-- Move cache adapter packages to the cache-owned namespaces above.
+- Move cache codegen, Micrometer, and OpenTelemetry adapters to their provider-family
+  modules and package bases above.
 - Remove cache-adapter installation and ownership claims from provider-core canonical docs;
   document them only in the cache adapter module references.
 
@@ -75,18 +87,20 @@ passed with no failures.
    run cache-core and provider serialization tests.
 2. Rename the Caffeine module, Dagger module, package, and generated code reference;
    run cache-codegen and Caffeine graph/store tests.
-3. Move Micrometer and OpenTelemetry cache packages and update their module docs;
-   remove provider-core cache documentation; run both adapter test sets.
-4. Reconcile reactor/BOM/publication/coverage/module-index/standards/docs references;
+3. Move cache codegen to `vertique-codegen-cache`, including its package base and
+   processor registration; run processor and facade discovery tests.
+4. Move the Micrometer and OpenTelemetry cache adapters to their provider-family
+   modules, including package bases and module docs; run both adapter test sets.
+5. Reconcile reactor/BOM/publication/coverage/module-index/standards/docs references;
    run publication/module-doc contracts and mechanical absence checks.
-5. Run formatting, affected-module verification, full verification, simplification once,
+6. Run formatting, affected-module verification, full verification, simplification once,
    and an explicit architecture/boundary review.
 
 ## Mechanical completion checks
 
 ```text
 rg -n 'CacheInJvmModule|vertique-cache-injvm|dev\.vertique\.cache\.injvm' --glob '!**/target/**' --glob '!**/graphify-out/**' .
-rg -n 'dev\.vertique\.micrometer\.cache|dev\.vertique\.opentelemetry' vertique-cache vertique-micrometer/vertique-micrometer-core vertique-opentelemetry/vertique-opentelemetry-core
+rg -n 'dev\.vertique\.cache\.(codegen|micrometer|opentelemetry)' --glob '!**/target/**' --glob '!**/graphify-out/**' .
 rg -n 'pre-profile|preprofile|Compatibility constructor|Compatibility constructor retaining' vertique-cache docs/modules/vertique-cache* --glob '!**/target/**' --glob '!**/graphify-out/**'
 rg -n 'CacheObserver|CacheMetricsObserver|CacheTracingObserver|vertique-cache-(micrometer|opentelemetry)' vertique-micrometer/vertique-micrometer-core vertique-opentelemetry/vertique-opentelemetry-core
 ```
