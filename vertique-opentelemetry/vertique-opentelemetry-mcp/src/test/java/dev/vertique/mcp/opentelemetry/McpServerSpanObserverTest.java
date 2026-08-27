@@ -195,6 +195,15 @@ class McpServerSpanObserverTest {
 
     // --- shouldAddNoLinkForAMatchingBodyContext ---
 
+    /**
+     * R39 repair: the body reference here deliberately shares only the captured span's <em>trace</em>
+     * id, with a <em>different</em> span id (the span id an HTTP {@code traceparent} header's parent
+     * context would carry) — the shape a real HTTP-header self-reference actually takes, since the
+     * captured span's own span id is freshly minted at {@code open} and never equals its parent's.
+     * Suppression must therefore key on trace id alone: comparing full span identity (trace id
+     * <em>and</em> span id, as the pre-fix implementation did) would miss this case and wrongly add a
+     * link for the request's own HTTP parent.
+     */
     private void shouldAddNoLinkForAMatchingBodyContext() {
         try (TracerFixture fixture = TracerFixture.create()) {
             Span httpSpan = fixture.startSpan("http-server-span-matching-link");
@@ -204,15 +213,17 @@ class McpServerSpanObserverTest {
                 session = observer.open(STARTED_AT);
             }
 
-            // Given: a body trace context identical to the HTTP span's own captured context.
+            // Given: a body trace context sharing the HTTP span's own trace id but carrying a
+            // different span id — the shape of the request's own HTTP-header parent context, not the
+            // span's own context.
             SpanContext httpContext = httpSpan.getSpanContext();
-            McpTraceContext matchingBody =
-                    new McpTraceContext(httpContext.getTraceId(), httpContext.getSpanId(), true, null);
+            McpTraceContext matchingBody = new McpTraceContext(httpContext.getTraceId(), DISTINCT_SPAN_ID, true, null);
             session.onTerminal(terminalObservation(successTerminal(), matchingBody));
             httpSpan.end();
 
             assertThat(((ReadableSpan) httpSpan).toSpanData().getLinks())
-                    .as("DECISIVE: zero links for a body trace context identical to the HTTP span's own context")
+                    .as("DECISIVE: zero links for a body trace context sharing the captured span's own "
+                            + "trace id, even with a different span id (e.g. the HTTP parent context)")
                     .isEmpty();
             assertThat(((ReadableSpan) httpSpan).getAttribute(McpServerSpanObserver.VERTIQUE_MCP_OUTCOME))
                     .as("the rest of enrichment must still happen even though the link is skipped")
