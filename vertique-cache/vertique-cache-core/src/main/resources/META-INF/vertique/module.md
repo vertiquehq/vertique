@@ -10,7 +10,9 @@ SPDX-License-Identifier: EUPL-1.2
 > **Artifact:** `vertique-cache-core`
 > **Depends on:** `vertique-aop`, `vertique-core`, `vertique-security-core`
 
-`vertique-cache-core` is the provider-neutral foundation for annotation-driven method-result caching. This artifact establishes the cache API boundary independently of local and Redis storage implementations.
+`vertique-cache-core` is the provider-neutral foundation for annotation-driven and programmatic
+method-result caching. Injected `CacheBuilder` creates immutable `Cache<K,V>` handles; both
+callers use the same cache-aside runtime and no provider implementation is exposed.
 
 ## When To Use It
 
@@ -18,7 +20,19 @@ Use this artifact when an application or provider module needs the provider-neut
 
 ## Core Concepts
 
-Cache annotations and storage contracts are kept separate from provider details. Local and clustered implementations depend on this module; this module does not depend on Caffeine, Redis, or a serialization engine.
+Cache annotations, the `CacheBuilder`/`Cache` application API, and storage contracts are kept
+separate from provider details. Local and clustered implementations depend on this module; this
+module does not depend on Caffeine, Redis, or a serialization engine. Application code supplies
+logical inputs and selector functions, never `CacheStore`, `ResolvedCacheKey`, or provider keys.
+
+```java
+Cache<ProductQuery, Product> products = cacheBuilder
+        .cache("products", Product.class)
+        .key("{tenantId}:{productId}", ProductQuery::tenantId, ProductQuery::productId)
+        .identity(CacheIdentity.EFFECTIVE_PRINCIPAL)
+        .ttl(Duration.ofMinutes(5))
+        .build();
+```
 
 ## Configuration
 
@@ -32,10 +46,11 @@ provider in cache observations.
 
 ## Runtime behavior
 
-The cache aspects are fail-open: disabled caches, invalid or oversized keys, backend
+The cache runtime is fail-open: disabled caches, invalid or oversized keys, backend
 failures, and observer failures preserve the business invocation. A successful local
 miss may populate the provider-neutral `CacheStore`; a hit skips the target after the
-outer framework authorization boundary has run. The optional `CacheObserver` set is
+outer framework authorization boundary has run. Programmatic callers must invoke the handle
+only after their application authorization decision. The optional `CacheObserver` set is
 empty by default and receives redacted operation, provider, cache, outcome, and duration
 data without becoming a cache or telemetry dependency. The same observer seam exposes
 redacted cleanup outcomes through `CacheObserver.onCleanup(CacheCleanupObservation)`; the
@@ -46,7 +61,7 @@ the current `SecurityContext` from the framework `ContextHolder`. `ACTOR` uses t
 `ACTOR_AND_SUBJECT` preserves both dimensions. Missing context or identity fails closed for
 identity-scoped caching unless `CACHE_AS_ANONYMOUS` is explicitly selected. `NONE` remains a
 shared bucket and must only be used for data that is safe to share across callers. Identity
-components use the same canonical characters accepted by `CacheKey`. `CacheIdentityResolver` is
+components use version-2 type framing and canonical characters. `CacheIdentityResolver` is
 the provider-neutral runtime seam; the standard graph uses `DefaultCacheIdentityResolver` and
 allows one explicitly supplied resolver to replace it.
 
@@ -55,7 +70,9 @@ allows one explicitly supplied resolver to replace it.
 The provider-neutral `CacheStoreContractTest` runs the same contract against the Caffeine and
 Redis providers, covering hits, misses, TTL, clear, failure handling, declared types, value
 isolation, and repeatable eviction. Core operational validation rejects an oversized canonical
-key before a provider operation. Core does not validate values before provider work: Caffeine and
+key before a provider operation. Resolved providers consume `ResolvedCacheKey` and
+`CacheValueDescriptor`; the legacy `CacheKey` overloads remain only as a temporary Alpha bridge.
+Core does not validate values before provider work: Caffeine and
 Redis serialize values in their provider implementations and then enforce `maxValueBytes` on the
 serialized bytes; those provider failures are handled by the cache core's fail-open path. An
 explicit annotation TTL above `maxTtlSeconds` is rejected with

@@ -92,12 +92,12 @@ public final class T011CacheCompositionFixtures {
         @Inject
         public CacheableService() {}
 
-        @Cacheable(name = "profiles", key = "{0}", mode = CacheMode.LOCAL)
+        @Cacheable(name = "profiles", key = "{0}", mode = CacheMode.LOCAL, identity = CacheIdentity.NONE)
         public Future<String> local(String ignoredKey) {
             return Future.succeededFuture("local-business-result-" + localCalls.incrementAndGet());
         }
 
-        @Cacheable(name = "clustered-profiles", key = "{0}", mode = CacheMode.CLUSTERED)
+        @Cacheable(name = "clustered-profiles", key = "{0}", mode = CacheMode.CLUSTERED, identity = CacheIdentity.NONE)
         public Future<String> clustered(String ignoredKey) {
             return Future.succeededFuture("clustered-business-result-" + clusteredCalls.incrementAndGet());
         }

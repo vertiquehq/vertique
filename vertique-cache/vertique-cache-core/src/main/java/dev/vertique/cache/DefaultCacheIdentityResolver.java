@@ -45,6 +45,11 @@ public final class DefaultCacheIdentityResolver implements CacheIdentityResolver
         };
     }
 
+    @Override
+    public Optional<SecurityIdentity> current() {
+        return contextHolder.current(SecurityContext.class).map(SecurityContext::identity);
+    }
+
     private static String actorAndSubjectComponent(SecurityIdentity identity) {
         String subject = identity.subject()
                 .map(DefaultCacheIdentityResolver::principalValue)

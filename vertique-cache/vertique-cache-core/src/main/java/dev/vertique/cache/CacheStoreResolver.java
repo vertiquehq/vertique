@@ -35,10 +35,14 @@ final class CacheStoreResolver {
             if (hasStore != hasProviderId) {
                 throw new IllegalStateException("cache provider binding is incomplete for mode " + mode);
             }
-            if (hasProviderId && providerIds.get(mode).isBlank()) {
-                throw new IllegalStateException("cache provider id is blank for mode " + mode);
+            if (hasProviderId && !validProviderId(providerIds.get(mode))) {
+                throw new IllegalStateException("cache provider id is invalid for mode " + mode);
             }
         }
+    }
+
+    private static boolean validProviderId(String id) {
+        return id != null && id.matches("[a-z][a-z0-9-]{0,31}") && !id.equals("none");
     }
 
     CacheStoreSelection resolve(CacheMode mode) {

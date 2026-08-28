@@ -9,10 +9,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.aop.Invocation;
 import dev.vertique.cache.config.CacheConfig;
-import dev.vertique.cache.spi.CacheKey;
 import dev.vertique.cache.spi.CacheObservation;
 import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.cache.spi.CacheStore;
+import dev.vertique.cache.spi.CacheValueDescriptor;
+import dev.vertique.cache.spi.ResolvedCacheKey;
 import dev.vertique.core.codegen.MethodMetadata;
 import dev.vertique.core.codegen.ParameterMetadata;
 import dev.vertique.core.codegen.ReflectiveMethodMetadata;
@@ -214,7 +215,7 @@ class CacheAspectTest {
         private boolean failGets;
 
         @Override
-        public Future<Optional<Object>> get(CacheKey key, Type declaredType) {
+        public Future<Optional<Object>> get(ResolvedCacheKey key, CacheValueDescriptor value) {
             getCalls++;
             if (failGets) {
                 return Future.failedFuture("backend unavailable");
@@ -223,14 +224,14 @@ class CacheAspectTest {
         }
 
         @Override
-        public Future<Void> put(CacheKey key, Object value, Type declaredType, Duration ttl) {
+        public Future<Void> put(ResolvedCacheKey key, CacheValueDescriptor descriptor, Object value, Duration ttl) {
             putCalls++;
             values.put(key.canonical(), value);
             return Future.succeededFuture();
         }
 
         @Override
-        public Future<Void> evict(CacheKey key) {
+        public Future<Void> evict(ResolvedCacheKey key) {
             values.remove(key.canonical());
             return Future.succeededFuture();
         }

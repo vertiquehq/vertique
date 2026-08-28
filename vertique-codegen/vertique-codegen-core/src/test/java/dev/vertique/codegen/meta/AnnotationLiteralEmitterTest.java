@@ -44,12 +44,8 @@ import org.mockito.quality.Strictness;
 /**
  * Unit tests for {@link AnnotationLiteralEmitter}'s rejection / backstop parity (P2R2-W2).
  *
- * <p>{@code firstUnsupportedAttribute} rejects nested-annotation members and arrays of them; the
- * helper's documented contract is that {@code firstUnsupportedAttribute} ⟺ what the emit / guard
- * path refuses. These tests prove the parity for the <em>array-of-nested-annotation</em> shape: the
- * pre-check flags it, and the emit-time backstop ({@code arrayComponentGuard}, reached even on the
- * empty-array path) rejects it loudly rather than silently emitting a {@code new NestedAnn[0]}
- * literal.
+ * <p>{@code firstUnsupportedAttribute} rejects unsupported primitive members before emission. Nested
+ * annotation values are materialized recursively so repeatable annotation containers can be emitted.
  *
  * <p>Following the codegen-core convention (see {@code MetadataEmitterTest}), all
  * {@link javax.lang.model} elements are Mockito stubs — this module deliberately avoids a dependency
@@ -97,25 +93,25 @@ class AnnotationLiteralEmitterTest {
     }
 
     @Test
-    @DisplayName("firstUnsupportedAttribute flags an array-of-nested-annotation member")
-    void firstUnsupportedAttributeFlagsNestedAnnotationArray() {
-        ArrayType nestedArray = mockNestedAnnotationArray();
-        ExecutableElement member = mockMember("nestedList", nestedArray);
+    @DisplayName("firstUnsupportedAttribute flags an array of unsupported primitive values")
+    void firstUnsupportedAttributeFlagsUnsupportedPrimitiveArray() {
+        ArrayType nestedArray = mockPrimitiveArray(TypeKind.CHAR);
+        ExecutableElement member = mockMember("values", nestedArray);
         TypeElement annotationType = mockAnnotationTypeWithMembers(List.of(member));
 
         Optional<UnsupportedAttribute> result = AnnotationLiteralEmitter.firstUnsupportedAttribute(annotationType);
 
-        assertTrue(result.isPresent(), "an array-of-nested-annotation member must be flagged as unsupported");
+        assertTrue(result.isPresent(), "an array of unsupported primitive values must be flagged");
         assertTrue(
-                result.get().member().equals("nestedList"),
-                "the flagged member must be the nested-annotation array member 'nestedList', got: " + result.get());
+                result.get().member().equals("values"),
+                "the flagged member must be the primitive array member 'values', got: " + result.get());
     }
 
     @Test
-    @DisplayName("the emit/guard path rejects an empty array-of-nested-annotation member (parity with the pre-check)")
-    void emitPathRejectsNestedAnnotationArray() {
-        ArrayType nestedArray = mockNestedAnnotationArray();
-        ExecutableElement member = mockMember("nestedList", nestedArray);
+    @DisplayName("the emit/guard path rejects an empty array of unsupported primitive values")
+    void emitPathRejectsUnsupportedPrimitiveArray() {
+        ArrayType nestedArray = mockPrimitiveArray(TypeKind.CHAR);
+        ExecutableElement member = mockMember("values", nestedArray);
 
         AnnotationMirror mirror = mock(AnnotationMirror.class);
         AnnotationValue emptyArrayValue = mock(AnnotationValue.class);
@@ -131,11 +127,11 @@ class AnnotationLiteralEmitterTest {
         Types types = mock(Types.class);
 
         // The emit/guard path (constructorArgs -> arrayLiteral -> arrayComponentGuard, reached even on
-        // the empty-array branch) must refuse the nested-annotation component, matching the pre-check.
+        // the empty-array branch) must refuse the unsupported primitive component.
         assertThrows(
                 UnsupportedOperationException.class,
                 () -> AnnotationLiteralEmitter.constructorArgs(mirror, elements, types),
-                "the emit path must reject an array-of-nested-annotation member, not silently emit new NestedAnn[0]");
+                "the emit path must reject an unsupported primitive array");
     }
 
     // --- helpers (Mockito-stubbed javax.lang.model elements) ---
@@ -146,17 +142,17 @@ class AnnotationLiteralEmitterTest {
      *
      * @return the mock array type of a nested annotation
      */
-    private static ArrayType mockNestedAnnotationArray() {
+    private static ArrayType mockPrimitiveArray(TypeKind kind) {
         Element nestedElement = mock(Element.class);
-        lenient().when(nestedElement.getKind()).thenReturn(ElementKind.ANNOTATION_TYPE);
+        lenient().when(nestedElement.getKind()).thenReturn(ElementKind.CLASS);
 
         DeclaredType nested = mock(DeclaredType.class);
-        lenient().when(nested.getKind()).thenReturn(TypeKind.DECLARED);
-        lenient().when(nested.asElement()).thenReturn(nestedElement);
 
         ArrayType array = mock(ArrayType.class);
         lenient().when(array.getKind()).thenReturn(TypeKind.ARRAY);
-        lenient().when(array.getComponentType()).thenReturn(nested);
+        TypeMirror component = mock(TypeMirror.class);
+        lenient().when(component.getKind()).thenReturn(kind);
+        lenient().when(array.getComponentType()).thenReturn(component);
         return array;
     }
 

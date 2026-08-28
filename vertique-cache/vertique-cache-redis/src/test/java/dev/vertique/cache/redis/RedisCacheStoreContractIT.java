@@ -56,6 +56,7 @@ public class RedisCacheStoreContractIT extends dev.vertique.cache.CacheStoreCont
     private static RedisCacheStore store;
     private static RedisAPI commands;
     private static Vertx vertx;
+    private static final CacheKey OTHER_REDIS_KEY = new CacheKey(REGION, "NONE", "bob");
 
     @Override
     protected CacheStore createStore() {
@@ -107,33 +108,33 @@ public class RedisCacheStoreContractIT extends dev.vertique.cache.CacheStoreCont
     @Test
     @DisplayName("returns a miss for an absent Redis entry")
     void getMissReturnsEmpty() throws Exception {
-        assertEquals(Optional.empty(), await(store.get(KEY, Profile.class)));
+        assertEquals(Optional.empty(), await(store.get(RedisTestFixtures.KEY, Profile.class)));
     }
 
     @Test
     @DisplayName("attaches a finite expiration to a Redis write")
     void finiteTtlExpiresEntry() throws Exception {
-        await(store.put(KEY, new Profile("Alice", 3), Profile.class, Duration.ofMillis(100)));
+        await(store.put(RedisTestFixtures.KEY, new Profile("Alice", 3), Profile.class, Duration.ofMillis(100)));
         String generation = generationToken();
-        String physicalKey = RedisCacheKey.entry(KEY, generation, REDIS_CONFIG, cacheConfig());
+        String physicalKey = RedisCacheKey.entry(RedisTestFixtures.KEY, generation, REDIS_CONFIG, cacheConfig());
         Response ttl = await(commands.pttl(physicalKey));
 
         assertNotNull(ttl);
         assertTrue(ttl.toLong() > 0, "finite writes must use a positive Redis millisecond TTL");
-        assertEquals(Optional.empty(), await(awaitMiss(KEY)));
+        assertEquals(Optional.empty(), await(awaitMiss(RedisTestFixtures.KEY)));
     }
 
     @Test
     @DisplayName("writes with zero TTL without an expiration")
     void zeroTtlDoesNotExpire() throws Exception {
-        await(store.put(KEY, new Profile("Alice", 3), Profile.class, Duration.ZERO));
+        await(store.put(RedisTestFixtures.KEY, new Profile("Alice", 3), Profile.class, Duration.ZERO));
         String generation = generationToken();
-        String physicalKey = RedisCacheKey.entry(KEY, generation, REDIS_CONFIG, cacheConfig());
+        String physicalKey = RedisCacheKey.entry(RedisTestFixtures.KEY, generation, REDIS_CONFIG, cacheConfig());
         Response ttl = await(commands.pttl(physicalKey));
 
         assertNotNull(ttl);
         assertEquals(-1L, ttl.toLong(), "zero-TTL writes must not attach PX expiration");
-        assertEquals(Optional.of(new Profile("Alice", 3)), await(store.get(KEY, Profile.class)));
+        assertEquals(Optional.of(new Profile("Alice", 3)), await(store.get(RedisTestFixtures.KEY, Profile.class)));
     }
 
     @Test
@@ -141,19 +142,19 @@ public class RedisCacheStoreContractIT extends dev.vertique.cache.CacheStoreCont
     void evictRemovesExactKey() throws Exception {
         Profile alice = new Profile("Alice", 3);
         Profile bob = new Profile("Bob", 4);
-        await(store.put(KEY, alice, Profile.class, Duration.ZERO));
-        await(store.put(OTHER_KEY, bob, Profile.class, Duration.ZERO));
+        await(store.put(RedisTestFixtures.KEY, alice, Profile.class, Duration.ZERO));
+        await(store.put(OTHER_REDIS_KEY, bob, Profile.class, Duration.ZERO));
 
-        await(store.evict(KEY));
+        await(store.evict(RedisTestFixtures.KEY));
 
-        assertEquals(Optional.empty(), await(store.get(KEY, Profile.class)));
-        assertEquals(Optional.of(bob), await(store.get(OTHER_KEY, Profile.class)));
+        assertEquals(Optional.empty(), await(store.get(RedisTestFixtures.KEY, Profile.class)));
+        assertEquals(Optional.of(bob), await(store.get(OTHER_REDIS_KEY, Profile.class)));
     }
 
     @Test
     @DisplayName("clear replaces the generation with an opaque token")
     void generationClearUsesOpaqueToken() throws Exception {
-        await(store.put(KEY, new Profile("Alice", 3), Profile.class, Duration.ZERO));
+        await(store.put(RedisTestFixtures.KEY, new Profile("Alice", 3), Profile.class, Duration.ZERO));
         String before = generationToken();
 
         await(store.clear(REGION));
@@ -161,19 +162,19 @@ public class RedisCacheStoreContractIT extends dev.vertique.cache.CacheStoreCont
         String after = generationToken();
         assertNotEquals(before, after);
         assertTrue(!after.isBlank(), "the replacement generation must be non-blank");
-        assertEquals(Optional.empty(), await(store.get(KEY, Profile.class)));
+        assertEquals(Optional.empty(), await(store.get(RedisTestFixtures.KEY, Profile.class)));
     }
 
     @Test
     @DisplayName("recreating generation state cannot make an old entry reachable")
     void generationKeyRecreationCannotResurrectOldEntries() throws Exception {
-        await(store.put(KEY, new Profile("Alice", 3), Profile.class, Duration.ZERO));
+        await(store.put(RedisTestFixtures.KEY, new Profile("Alice", 3), Profile.class, Duration.ZERO));
         String oldGeneration = generationToken();
         String generationKey = RedisCacheKey.generation(REGION, REDIS_CONFIG, cacheConfig());
-        String oldPhysicalKey = RedisCacheKey.entry(KEY, oldGeneration, REDIS_CONFIG, cacheConfig());
+        String oldPhysicalKey = RedisCacheKey.entry(RedisTestFixtures.KEY, oldGeneration, REDIS_CONFIG, cacheConfig());
 
         await(commands.del(List.of(generationKey)));
-        assertEquals(Optional.empty(), await(store.get(KEY, Profile.class)));
+        assertEquals(Optional.empty(), await(store.get(RedisTestFixtures.KEY, Profile.class)));
 
         String recreatedGeneration = generationToken();
         assertNotEquals(oldGeneration, recreatedGeneration);
@@ -183,7 +184,7 @@ public class RedisCacheStoreContractIT extends dev.vertique.cache.CacheStoreCont
     @Test
     @DisplayName("an in-flight old-generation lookup may complete old but later lookup uses new generation")
     void inFlightReadMayReturnOldValueButLaterReadUsesNewGeneration() throws Exception {
-        await(store.put(KEY, new Profile("Alice", 3), Profile.class, Duration.ZERO));
+        await(store.put(RedisTestFixtures.KEY, new Profile("Alice", 3), Profile.class, Duration.ZERO));
         BarrierRedisCommandClient barrier =
                 new BarrierRedisCommandClient(VertxRedisCommandClient.from(registry, REDIS_CONFIG.connection()));
         RedisCacheStore blockedStore = new RedisCacheStore(
@@ -193,13 +194,13 @@ public class RedisCacheStoreContractIT extends dev.vertique.cache.CacheStoreCont
                 profiles("vertx", new ObjectMapper()),
                 new VertxRedisDeadline(vertx));
 
-        Future<Optional<Object>> oldLookup = blockedStore.get(KEY, Profile.class);
+        Future<Optional<Object>> oldLookup = blockedStore.get(RedisTestFixtures.KEY, Profile.class);
         assertTrue(barrier.awaitEntryReadStarted(), "lookup must reach the controllable entry read");
         await(store.clear(REGION));
         barrier.releaseEntryRead();
 
         assertEquals(Optional.of(new Profile("Alice", 3)), await(oldLookup));
-        assertEquals(Optional.empty(), await(store.get(KEY, Profile.class)));
+        assertEquals(Optional.empty(), await(store.get(RedisTestFixtures.KEY, Profile.class)));
     }
 
     @Test
@@ -207,9 +208,9 @@ public class RedisCacheStoreContractIT extends dev.vertique.cache.CacheStoreCont
     void putThenGetReturnsEquivalentValue() throws Exception {
         Profile expected = new Profile("Alice", 3);
 
-        await(store.put(KEY, expected, Profile.class, Duration.ZERO));
+        await(store.put(RedisTestFixtures.KEY, expected, Profile.class, Duration.ZERO));
 
-        assertEquals(Optional.of(expected), await(store.get(KEY, Profile.class)));
+        assertEquals(Optional.of(expected), await(store.get(RedisTestFixtures.KEY, Profile.class)));
     }
 
     private static String generationToken() throws Exception {

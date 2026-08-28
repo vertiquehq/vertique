@@ -22,7 +22,7 @@ public @interface Cacheable {
 
     long ttlSeconds() default -1;
 
-    CacheIdentity identity() default CacheIdentity.NONE;
+    CacheIdentity identity() default CacheIdentity.EFFECTIVE_PRINCIPAL;
 
     AnonymousCachePolicy anonymous() default AnonymousCachePolicy.BYPASS;
 }

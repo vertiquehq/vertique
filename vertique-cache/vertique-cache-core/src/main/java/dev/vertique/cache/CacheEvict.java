@@ -25,6 +25,7 @@ public @interface CacheEvict {
     /** Container for repeatable eviction declarations. */
     @Target(ElementType.METHOD)
     @Retention(RetentionPolicy.RUNTIME)
+    @Aspect(ordering = 100)
     @interface List {
         CacheEvict[] value();
     }

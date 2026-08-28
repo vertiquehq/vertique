@@ -8,8 +8,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import dev.vertique.cache.config.CacheConfig;
 import dev.vertique.cache.config.CacheEntryConfig;
-import dev.vertique.cache.spi.CacheKey;
 import dev.vertique.cache.spi.CacheRegion;
+import dev.vertique.cache.spi.ResolvedCacheKey;
 import dev.vertique.core.codegen.MethodMetadata;
 import dev.vertique.core.codegen.ParameterMetadata;
 import java.lang.reflect.Method;
@@ -30,14 +30,14 @@ class CacheContractsTest {
 
         assertEquals(CacheMode.DEFAULT, cacheable.mode());
         assertEquals(-1, cacheable.ttlSeconds());
-        assertEquals(CacheIdentity.NONE, cacheable.identity());
+        assertEquals(CacheIdentity.EFFECTIVE_PRINCIPAL, cacheable.identity());
         assertEquals(AnonymousCachePolicy.BYPASS, cacheable.anonymous());
     }
 
     @Test
     @DisplayName("cache keys use the canonical region and selector shape")
     void cacheKeysUseCanonicalShape() {
-        var key = new CacheKey(new CacheRegion("cache", "profile", 1), "actor:USER:alice", "user-42");
+        var key = new ResolvedCacheKey(new CacheRegion("cache", "profile", 1), "actor:USER:alice", "user-42");
 
         assertEquals("cache:v1:profile:actor:USER:alice:user-42", key.canonical());
     }

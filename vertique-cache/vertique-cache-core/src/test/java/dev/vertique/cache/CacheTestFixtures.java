@@ -4,9 +4,10 @@
 package dev.vertique.cache;
 
 import dev.vertique.aop.Invocation;
-import dev.vertique.cache.spi.CacheKey;
 import dev.vertique.cache.spi.CacheRegion;
 import dev.vertique.cache.spi.CacheStore;
+import dev.vertique.cache.spi.CacheValueDescriptor;
+import dev.vertique.cache.spi.ResolvedCacheKey;
 import dev.vertique.core.codegen.MethodMetadata;
 import dev.vertique.core.codegen.ParameterMetadata;
 import dev.vertique.core.codegen.ReflectiveMethodMetadata;
@@ -92,14 +93,14 @@ final class CacheTestFixtures {
         int evictCalls;
         int clearCalls;
         Duration lastTtl;
-        CacheKey lastKey;
+        ResolvedCacheKey lastKey;
         boolean failGets;
         boolean failPuts;
         boolean failEvictions;
         boolean failClear;
 
         @Override
-        public Future<Optional<Object>> get(CacheKey key, Type declaredType) {
+        public Future<Optional<Object>> get(ResolvedCacheKey key, CacheValueDescriptor value) {
             getCalls++;
             lastKey = key;
             if (failGets) {
@@ -109,7 +110,7 @@ final class CacheTestFixtures {
         }
 
         @Override
-        public Future<Void> put(CacheKey key, Object value, Type declaredType, Duration ttl) {
+        public Future<Void> put(ResolvedCacheKey key, CacheValueDescriptor descriptor, Object value, Duration ttl) {
             putCalls++;
             lastKey = key;
             lastTtl = ttl;
@@ -121,7 +122,7 @@ final class CacheTestFixtures {
         }
 
         @Override
-        public Future<Void> evict(CacheKey key) {
+        public Future<Void> evict(ResolvedCacheKey key) {
             evictCalls++;
             if (failEvictions) {
                 return Future.failedFuture("evict failed");

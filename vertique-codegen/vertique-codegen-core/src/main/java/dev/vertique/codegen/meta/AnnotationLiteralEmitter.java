@@ -123,7 +123,7 @@ public final class AnnotationLiteralEmitter {
      * @return {@code true} when the type is an unsupported scalar primitive or a nested annotation
      */
     private static boolean isUnsupportedMemberType(TypeMirror type) {
-        return isUnsupportedScalarKind(type.getKind()) || isAnnotationType(type);
+        return isUnsupportedScalarKind(type.getKind());
     }
 
     /** Returns {@code true} for the scalar primitive kinds this emitter cannot render ({@code char/float/double}). */
@@ -422,13 +422,6 @@ public final class AnnotationLiteralEmitter {
                     + "', which is not yet supported by AnnotationLiteralEmitter"
                     + " (char/float/double land in Phase 2 slice 2.1).");
         }
-        if (isAnnotationType(componentType)) {
-            throw new UnsupportedOperationException("Annotation member '" + member
-                    + "' is an array of nested-annotation type '"
-                    + TypeName.get(componentType)
-                    + "', which is not supported by AnnotationLiteralEmitter"
-                    + " (nested-annotation members are rejected, not materialized, in v1).");
-        }
     }
 
     /** Builds the per-member equality check against {@code other.<member>()}. */
@@ -470,7 +463,7 @@ public final class AnnotationLiteralEmitter {
         Map<? extends ExecutableElement, ? extends AnnotationValue> values =
                 elements.getElementValuesWithDefaults(mirror);
         List<CodeBlock> args = values.entrySet().stream()
-                .map(e -> valueLiteral(e.getKey().getReturnType(), e.getValue(), types))
+                .map(e -> valueLiteral(e.getKey().getReturnType(), e.getValue(), elements, types))
                 .toList();
         return CodeBlock.join(args, ", ");
     }
@@ -494,10 +487,11 @@ public final class AnnotationLiteralEmitter {
      * @throws UnsupportedOperationException if the member is a not-yet-supported primitive kind or a
      *                                       nested-annotation member
      */
-    private static CodeBlock valueLiteral(TypeMirror memberType, AnnotationValue value, Types types) {
+    private static CodeBlock valueLiteral(
+            TypeMirror memberType, AnnotationValue value, Elements elements, Types types) {
         Object raw = value.getValue();
         if (memberType.getKind() == TypeKind.ARRAY) {
-            return arrayLiteral((ArrayType) memberType, raw, types);
+            return arrayLiteral((ArrayType) memberType, raw, elements, types);
         }
         if (isClassMember(memberType)) {
             // Class<?> attribute — value is a TypeMirror; emit <Erased>.class
@@ -524,11 +518,8 @@ public final class AnnotationLiteralEmitter {
         }
         // Nested-annotation member — the raw value is an AnnotationMirror. Never String.valueOf it
         // (that emits the mirror's toString() as broken code); a clean rejection is the v1 contract.
-        if (isAnnotationType(memberType) || raw instanceof AnnotationMirror) {
-            throw new UnsupportedOperationException("Annotation member of nested-annotation type '"
-                    + TypeName.get(memberType)
-                    + "' is not supported by AnnotationLiteralEmitter"
-                    + " (nested-annotation members are rejected, not materialized, in v1).");
+        if (raw instanceof AnnotationMirror nested) {
+            return nestedLiteral(nested, elements, types);
         }
         // int / long / boolean / short / byte — toString yields a valid literal
         return CodeBlock.of("$L", String.valueOf(raw));
@@ -548,7 +539,7 @@ public final class AnnotationLiteralEmitter {
      * @return the {@link CodeBlock} for the array initializer
      * @throws UnsupportedOperationException if an element is a not-yet-supported component kind
      */
-    private static CodeBlock arrayLiteral(ArrayType arrayType, Object raw, Types types) {
+    private static CodeBlock arrayLiteral(ArrayType arrayType, Object raw, Elements processingElements, Types types) {
         TypeMirror component = arrayType.getComponentType();
         // Guard the component kind up front — before erasing it for the new T[...] element type — so an
         // unsupported component (a char/float/double primitive or a nested-annotation type) is refused
@@ -558,14 +549,84 @@ public final class AnnotationLiteralEmitter {
         TypeName componentTypeName = TypeName.get(types.erasure(component));
 
         @SuppressWarnings("unchecked")
-        List<? extends AnnotationValue> elements = (List<? extends AnnotationValue>) raw;
+        List<? extends AnnotationValue> values = (List<? extends AnnotationValue>) raw;
 
-        if (elements.isEmpty()) {
+        if (values.isEmpty()) {
             return CodeBlock.of("new $T[0]", componentTypeName);
         }
 
-        List<CodeBlock> elementLiterals =
-                elements.stream().map(e -> valueLiteral(component, e, types)).toList();
+        List<CodeBlock> elementLiterals = values.stream()
+                .map(e -> valueLiteral(component, e, processingElements, types))
+                .toList();
         return CodeBlock.of("new $T[]{$L}", componentTypeName, CodeBlock.join(elementLiterals, ", "));
+    }
+
+    /** Emits a self-contained annotation literal expression for a nested annotation member. */
+    private static CodeBlock nestedLiteral(AnnotationMirror mirror, Elements elements, Types types) {
+        TypeElement annotationType = (TypeElement) mirror.getAnnotationType().asElement();
+        Map<? extends ExecutableElement, ? extends AnnotationValue> values =
+                elements.getElementValuesWithDefaults(mirror);
+        CodeBlock.Builder expression = CodeBlock.builder().add("new $T() {\n", ClassName.get(annotationType));
+        for (Map.Entry<? extends ExecutableElement, ? extends AnnotationValue> entry : values.entrySet()) {
+            ExecutableElement member = entry.getKey();
+            expression.add(
+                    "@Override public $T $N() { return $L; }\n",
+                    TypeName.get(member.getReturnType()),
+                    member.getSimpleName().toString(),
+                    valueLiteral(member.getReturnType(), entry.getValue(), elements, types));
+        }
+        expression.add(
+                "@Override public $T annotationType() { return $T.class; }\n",
+                ParameterizedTypeName.get(
+                        ClassName.get(Class.class), WildcardTypeName.subtypeOf(ClassName.get(Annotation.class))),
+                ClassName.get(annotationType));
+        expression.add(
+                "@Override public boolean equals(Object other) { return other instanceof $T that && ",
+                ClassName.get(annotationType));
+        boolean first = true;
+        for (ExecutableElement member : values.keySet()) {
+            if (!first) expression.add(" && ");
+            first = false;
+            String name = member.getSimpleName().toString();
+            if (member.getReturnType().getKind() == TypeKind.ARRAY) {
+                expression.add("$T.equals($N(), that.$N())", Arrays.class, name, name);
+            } else if (member.getReturnType().getKind().isPrimitive()) {
+                expression.add("$N() == that.$N()", name, name);
+            } else {
+                expression.add("$T.equals($N(), that.$N())", java.util.Objects.class, name, name);
+            }
+        }
+        expression.add(";}\n@Override public int hashCode() { return ");
+        first = true;
+        for (ExecutableElement member : values.keySet()) {
+            if (!first) expression.add(" + ");
+            first = false;
+            String name = member.getSimpleName().toString();
+            CodeBlock valueHash = member.getReturnType().getKind() == TypeKind.ARRAY
+                    ? CodeBlock.of("$T.hashCode($N())", Arrays.class, name)
+                    : member.getReturnType().getKind().isPrimitive()
+                            ? CodeBlock.of(
+                                    "$T.valueOf($N()).hashCode()",
+                                    boxedType(member.getReturnType().getKind()),
+                                    name)
+                            : CodeBlock.of("$T.hashCode($N())", java.util.Objects.class, name);
+            expression.add("((127 * $S.hashCode()) ^ $L)", name, valueHash);
+        }
+        expression.add("; }\n}");
+        return expression.build();
+    }
+
+    private static Class<?> boxedType(TypeKind kind) {
+        return switch (kind) {
+            case BOOLEAN -> Boolean.class;
+            case BYTE -> Byte.class;
+            case SHORT -> Short.class;
+            case INT -> Integer.class;
+            case LONG -> Long.class;
+            case CHAR -> Character.class;
+            case FLOAT -> Float.class;
+            case DOUBLE -> Double.class;
+            default -> throw new IllegalArgumentException("not a primitive type: " + kind);
+        };
     }
 }

@@ -5,6 +5,11 @@
 
 This module owns the provider-neutral cache package boundary. Provider implementations must depend inward on this module and must not introduce provider types into its public contracts.
 
+`CacheBuilder` and immutable `Cache<K,V>` are the application-facing API. Builder definitions
+resolve policy once, while identity is read from the current security context for every
+identity-scoped operation. Programmatic and annotation callers share the `Cache` behavior owner;
+the aspects only adapt metadata and invocation arguments.
+
 ## Source Map
 
 - `dev.vertique.cache` — cache core package root.
@@ -31,6 +36,8 @@ cache-core does not depend on Micrometer or any other telemetry implementation.
   adapters consume it through `CacheObserver` rather than adding provider or Micrometer types.
 - Aggregator POMs remain non-consumable and are not added to the BOM.
 - Provider selection stays behind the cache-core resolver; aspects do not know provider implementation classes.
+- Providers consume `ResolvedCacheKey` and `CacheValueDescriptor`; application code cannot supply
+  a resolved identity-bearing key through the builder API.
 
 ## Testing
 

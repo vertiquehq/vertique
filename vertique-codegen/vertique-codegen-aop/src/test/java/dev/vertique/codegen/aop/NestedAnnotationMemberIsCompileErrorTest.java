@@ -11,8 +11,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * P2-W3 test: a runtime-retained method annotation carrying a <strong>nested-annotation</strong>
- * member ({@link TestNestedAnnotationAttr#nested()}) on an intercepted method MUST be a clean compile
- * error — never broken generated code.
+ * member ({@link TestNestedAnnotationAttr#nested()}) on an intercepted method must compile through
+ * the recursive literal emitter.
  *
  * <p>{@code AnnotationLiteralEmitter.isUnsupportedScalarKind}/{@code firstUnsupportedAttribute}
  * rejected only {@code char}/{@code float}/{@code double} (and arrays of those); they did not reject
@@ -21,12 +21,8 @@ import org.junit.jupiter.api.Test;
  * String/Class/enum/primitive/array branches and fell through to {@code String.valueOf(raw)}, emitting
  * the mirror's {@code toString()} as uncompilable generated code.
  *
- * <p><strong>Expected RED behavior:</strong> before the fix, the method-annotation materialization
- * renders {@code String.valueOf(@TestNestedMember(...))} into the proxy's literal constructor args,
- * producing broken source that fails {@code javac} with a confusing message — not the clean
- * {@code Diagnostics.error} naming the offending member, so {@code assertErrorMessage("nested")} is
- * not satisfied. After the fix, {@code firstUnsupportedAttribute} detects the nested-annotation kind
- * and routes it through {@code Diagnostics.error}, failing the compilation cleanly.
+ * <p>The generated anonymous nested literal preserves the annotation's runtime shape without using
+ * reflection at invocation time.
  */
 class NestedAnnotationMemberIsCompileErrorTest {
 
@@ -56,12 +52,8 @@ class NestedAnnotationMemberIsCompileErrorTest {
     }
 
     @Test
-    @DisplayName("a nested-annotation member on an intercepted method is a clean compile error, not broken code")
-    void nestedAnnotationMemberProducesCompileError() {
-        ProcessorTestHarness.run(new AopProcessor(), nestedAnnotationBean())
-                .assertFailed()
-                // The diagnostic must name the offending member so the user can locate it. GREEN
-                // wording is open, but the message must identify the unsupported member.
-                .assertErrorMessage("nested");
+    @DisplayName("a nested-annotation member on an intercepted method compiles")
+    void nestedAnnotationMemberCompiles() {
+        ProcessorTestHarness.run(new AopProcessor(), nestedAnnotationBean()).assertSuccess();
     }
 }

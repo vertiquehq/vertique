@@ -18,9 +18,27 @@ public final class CacheKeyRenderer {
 
     /** Renders positional or named scalar selectors from a generated method metadata view. */
     public static String render(String template, MethodMetadata metadata, Object[] arguments) {
+        return render(template, metadata, arguments, CacheKeyRenderer::encode);
+    }
+
+    /** Renders selectors using the caller's canonical scalar encoding policy. */
+    static String renderCanonical(
+            String template,
+            MethodMetadata metadata,
+            Object[] arguments,
+            java.util.function.Function<Object, String> encoder) {
+        return render(template, metadata, arguments, encoder);
+    }
+
+    private static String render(
+            String template,
+            MethodMetadata metadata,
+            Object[] arguments,
+            java.util.function.Function<Object, String> encoder) {
         Objects.requireNonNull(template, "template");
         Objects.requireNonNull(metadata, "metadata");
         Objects.requireNonNull(arguments, "arguments");
+        Objects.requireNonNull(encoder, "encoder");
         StringBuilder output = new StringBuilder(template.length());
         for (int index = 0; index < template.length(); index++) {
             char character = template.charAt(index);
@@ -35,7 +53,7 @@ public final class CacheKeyRenderer {
                     throw new IllegalArgumentException("cache key contains an unmatched '{'");
                 }
                 String selector = template.substring(index + 1, end);
-                output.append(encode(value(selector, metadata, arguments)));
+                output.append(encoder.apply(value(selector, metadata, arguments)));
                 index = end;
             } else if (character == '}') {
                 if (index + 1 < template.length() && template.charAt(index + 1) == '}') {

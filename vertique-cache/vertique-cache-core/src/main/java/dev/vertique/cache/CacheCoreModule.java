@@ -19,6 +19,7 @@ import dev.vertique.core.config.JsonConfigPaths;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /** Dagger configuration contribution shared by all cache providers. */
@@ -33,6 +34,9 @@ public abstract class CacheCoreModule {
     @Multibinds
     abstract Set<dev.vertique.cache.spi.CacheObserver> cacheObservers();
 
+    @Multibinds
+    abstract Set<dev.vertique.cache.spi.GeneratedCacheMetadata> generatedCacheMetadata();
+
     @BindsOptionalOf
     abstract CacheIdentityResolver optionalCacheIdentityResolver();
 
@@ -41,6 +45,28 @@ public abstract class CacheCoreModule {
 
     @Binds
     abstract AspectProvider<CacheEvict> bindCacheEvictAspect(CacheEvictAspect aspect);
+
+    @Binds
+    abstract AspectProvider<CacheEvict.List> bindCacheEvictListAspect(CacheEvictListAspect aspect);
+
+    @Provides
+    @Singleton
+    static CacheBuilder cacheBuilder(
+            CacheStoreResolver stores,
+            CacheConfig config,
+            Set<dev.vertique.cache.spi.CacheObserver> observers,
+            DefaultCacheIdentityResolver defaultResolver,
+            Optional<CacheIdentityResolver> customResolver,
+            Set<dev.vertique.cache.spi.GeneratedCacheMetadata> generatedMetadata) {
+        return new CacheBuilder(
+                stores,
+                config,
+                observers,
+                Optional.of(customResolver.orElse(defaultResolver)),
+                generatedMetadata,
+                2,
+                false);
+    }
 
     @Provides
     @Singleton

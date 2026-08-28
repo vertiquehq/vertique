@@ -9,12 +9,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import dev.vertique.aop.Aspect;
 import dev.vertique.aop.Invocations;
 import dev.vertique.aop.MethodInterceptor;
-import dev.vertique.cache.spi.CacheKey;
 import dev.vertique.cache.spi.CacheRegion;
 import dev.vertique.cache.spi.CacheStore;
+import dev.vertique.cache.spi.CacheValueDescriptor;
+import dev.vertique.cache.spi.ResolvedCacheKey;
 import io.vertx.core.Future;
 import java.lang.reflect.Method;
-import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -54,9 +54,12 @@ class CacheSecurityIntegrationTest {
         assertEquals(List.of("authorize", "lookup", "put"), trace);
 
         trace.clear();
-        CacheKey hitKey = new CacheKey(new CacheRegion("cache", "profiles", 1), "NONE", "hit");
-        T011CacheCompositionFixtures.await(
-                store.put(hitKey, "cached-value", String.class, java.time.Duration.ofSeconds(60)));
+        ResolvedCacheKey hitKey = new ResolvedCacheKey(new CacheRegion("cache", "profiles", 1), "NONE", "hit");
+        T011CacheCompositionFixtures.await(store.put(
+                hitKey,
+                new CacheValueDescriptor(String.class, "vertx"),
+                "cached-value",
+                java.time.Duration.ofSeconds(60)));
         trace.clear();
         Object hit = T011CacheCompositionFixtures.await(Invocations.run(
                 this,
@@ -103,20 +106,21 @@ class CacheSecurityIntegrationTest {
         }
 
         @Override
-        public Future<Optional<Object>> get(CacheKey key, Type declaredType) {
+        public Future<Optional<Object>> get(ResolvedCacheKey key, CacheValueDescriptor value) {
             trace.add("lookup");
             return Future.succeededFuture(Optional.ofNullable(values.get(key.canonical())));
         }
 
         @Override
-        public Future<Void> put(CacheKey key, Object value, Type declaredType, java.time.Duration ttl) {
+        public Future<Void> put(
+                ResolvedCacheKey key, CacheValueDescriptor descriptor, Object value, java.time.Duration ttl) {
             trace.add("put");
             values.put(key.canonical(), value);
             return Future.succeededFuture();
         }
 
         @Override
-        public Future<Void> evict(CacheKey key) {
+        public Future<Void> evict(ResolvedCacheKey key) {
             values.remove(key.canonical());
             return Future.succeededFuture();
         }

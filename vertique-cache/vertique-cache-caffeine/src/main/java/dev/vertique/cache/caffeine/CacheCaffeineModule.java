@@ -12,6 +12,7 @@ import dev.vertique.cache.CacheModeKey;
 import dev.vertique.cache.CacheProviderIdKey;
 import dev.vertique.cache.config.CacheConfig;
 import dev.vertique.cache.spi.CacheStore;
+import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.json.JsonRuntimeModule;
 import jakarta.inject.Singleton;
 
@@ -22,8 +23,8 @@ public final class CacheCaffeineModule {
     @IntoMap
     @CacheModeKey(CacheMode.LOCAL)
     @Singleton
-    static CacheStore cacheStore(CacheConfig config) {
-        return new CaffeineCacheStore(config);
+    static CacheStore cacheStore(CacheConfig config, JsonMapperProfileRegistry profiles) {
+        return new CaffeineCacheStore(config, profiles);
     }
 
     @Provides

@@ -321,16 +321,24 @@ class CacheAnnotationProcessorTest {
                                     @Inject
                                     public DeepCacheableBean() {}
 
-                                    @Cacheable(name = "users", key = "{user.a.b.c.d}")
+                                    @Cacheable(name = "users", key = "{user.a.b.c.d.e.f.g.h}")
                                     public String byUser(User user) {
                                         return "value";
                                     }
 
-                                    public record User(String a) {}
+                                    public record User(A a) {}
+                                    public record A(B b) {}
+                                    public record B(C c) {}
+                                    public record C(D d) {}
+                                    public record D(E e) {}
+                                    public record E(F f) {}
+                                    public record F(G g) {}
+                                    public record G(H h) {}
+                                    public record H(String value) {}
                                 }
                                 """))
                 .assertFailed()
-                .assertErrorMessage("limited to three properties");
+                .assertErrorMessage("limited to eight segments including the root parameter");
     }
 
     @Test

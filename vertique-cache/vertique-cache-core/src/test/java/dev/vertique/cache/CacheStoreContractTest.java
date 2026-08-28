@@ -8,9 +8,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.vertique.cache.spi.CacheKey;
 import dev.vertique.cache.spi.CacheRegion;
 import dev.vertique.cache.spi.CacheStore;
+import dev.vertique.cache.spi.CacheValueDescriptor;
+import dev.vertique.cache.spi.ResolvedCacheKey;
 import io.vertx.core.Future;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
@@ -27,9 +28,9 @@ import org.junit.jupiter.api.Test;
 public abstract class CacheStoreContractTest {
     protected static final CacheRegion REGION = new CacheRegion("cache", "profiles", 1);
     protected static final CacheRegion OTHER_REGION = new CacheRegion("cache", "orders", 1);
-    protected static final CacheKey KEY = new CacheKey(REGION, "NONE", "alice");
-    protected static final CacheKey OTHER_KEY = new CacheKey(REGION, "NONE", "bob");
-    protected static final CacheKey OTHER_REGION_KEY = new CacheKey(OTHER_REGION, "NONE", "order-1");
+    protected static final ResolvedCacheKey KEY = new ResolvedCacheKey(REGION, "NONE", "alice");
+    protected static final ResolvedCacheKey OTHER_KEY = new ResolvedCacheKey(REGION, "NONE", "bob");
+    protected static final ResolvedCacheKey OTHER_REGION_KEY = new ResolvedCacheKey(OTHER_REGION, "NONE", "order-1");
 
     private CacheStore store;
 
@@ -46,37 +47,38 @@ public abstract class CacheStoreContractTest {
     @Test
     @DisplayName("all providers satisfy core semantics")
     void allProvidersSatisfyCoreSemantics() throws Exception {
-        assertEquals(Optional.empty(), await(store.get(KEY, String.class)));
+        assertEquals(Optional.empty(), await(store.get(KEY, descriptor(String.class))));
 
-        await(store.put(KEY, "alice", String.class, Duration.ZERO));
-        await(store.put(OTHER_KEY, "bob", String.class, Duration.ZERO));
-        await(store.put(OTHER_REGION_KEY, "order-1", String.class, Duration.ZERO));
-        await(store.put(new CacheKey(REGION, "NONE", "null"), null, String.class, Duration.ZERO));
+        await(store.put(KEY, descriptor(String.class), "alice", Duration.ZERO));
+        await(store.put(OTHER_KEY, descriptor(String.class), "bob", Duration.ZERO));
+        await(store.put(OTHER_REGION_KEY, descriptor(String.class), "order-1", Duration.ZERO));
+        ResolvedCacheKey nullKey = new ResolvedCacheKey(REGION, "NONE", "null");
+        await(store.put(nullKey, descriptor(String.class), null, Duration.ZERO));
 
-        assertEquals(Optional.of("alice"), await(store.get(KEY, String.class)));
-        assertEquals(Optional.empty(), await(store.get(new CacheKey(REGION, "NONE", "null"), String.class)));
+        assertEquals(Optional.of("alice"), await(store.get(KEY, descriptor(String.class))));
+        assertEquals(Optional.empty(), await(store.get(nullKey, descriptor(String.class))));
 
         await(store.evict(KEY));
-        assertEquals(Optional.empty(), await(store.get(KEY, String.class)));
-        assertEquals(Optional.of("bob"), await(store.get(OTHER_KEY, String.class)));
+        assertEquals(Optional.empty(), await(store.get(KEY, descriptor(String.class))));
+        assertEquals(Optional.of("bob"), await(store.get(OTHER_KEY, descriptor(String.class))));
 
         await(store.clear(REGION));
-        assertEquals(Optional.empty(), await(store.get(OTHER_KEY, String.class)));
-        assertEquals(Optional.of("order-1"), await(store.get(OTHER_REGION_KEY, String.class)));
+        assertEquals(Optional.empty(), await(store.get(OTHER_KEY, descriptor(String.class))));
+        assertEquals(Optional.of("order-1"), await(store.get(OTHER_REGION_KEY, descriptor(String.class))));
     }
 
     @Test
     @DisplayName("all providers isolate mutable values")
     void allProvidersIsolateMutableValues() throws Exception {
         MutableValue expected = new MutableValue("before", List.of("one"));
-        await(store.put(KEY, expected, MutableValue.class, Duration.ZERO));
+        await(store.put(KEY, descriptor(MutableValue.class), expected, Duration.ZERO));
 
         expected.tags().add("changed-after-put");
-        MutableValue first =
-                (MutableValue) await(store.get(KEY, MutableValue.class)).orElseThrow();
+        MutableValue first = (MutableValue)
+                await(store.get(KEY, descriptor(MutableValue.class))).orElseThrow();
         first.tags().add("changed-after-get");
-        MutableValue second =
-                (MutableValue) await(store.get(KEY, MutableValue.class)).orElseThrow();
+        MutableValue second = (MutableValue)
+                await(store.get(KEY, descriptor(MutableValue.class))).orElseThrow();
 
         assertEquals(new MutableValue("before", List.of("one")), second);
         assertNotSame(first, second);
@@ -88,17 +90,17 @@ public abstract class CacheStoreContractTest {
         Type declaredType = listOf(MutableValue.class);
         List<MutableValue> expected = List.of(new MutableValue("alice", List.of("admin")));
 
-        await(store.put(KEY, expected, declaredType, Duration.ZERO));
+        await(store.put(KEY, descriptor(declaredType), expected, Duration.ZERO));
 
-        assertEquals(Optional.of(expected), await(store.get(KEY, declaredType)));
+        assertEquals(Optional.of(expected), await(store.get(KEY, descriptor(declaredType))));
     }
 
     @Test
     @DisplayName("all providers fail open on codec failure")
     void allProvidersFailOpenOnCodecFailure() throws Exception {
-        await(store.put(KEY, "not-an-integer", String.class, Duration.ZERO));
+        await(store.put(KEY, descriptor(String.class), "not-an-integer", Duration.ZERO));
 
-        Future<Optional<Object>> failedOrMiss = store.get(KEY, Integer.class);
+        Future<Optional<Object>> failedOrMiss = store.get(KEY, descriptor(Integer.class));
         Optional<Object> recovered = await(failedOrMiss.recover(ignored -> Future.succeededFuture(Optional.empty())));
 
         assertTrue(recovered.isEmpty(), "a codec failure must never expose an arbitrarily typed value");
@@ -108,8 +110,8 @@ public abstract class CacheStoreContractTest {
     @Test
     @DisplayName("all providers handle repeatable eviction")
     void allProvidersHandleRepeatableEviction() throws Exception {
-        await(store.put(KEY, "alice", String.class, Duration.ZERO));
-        await(store.put(OTHER_KEY, "bob", String.class, Duration.ZERO));
+        await(store.put(KEY, descriptor(String.class), "alice", Duration.ZERO));
+        await(store.put(OTHER_KEY, descriptor(String.class), "bob", Duration.ZERO));
 
         assertDoesNotThrow(() -> {
             await(store.evict(KEY));
@@ -118,12 +120,16 @@ public abstract class CacheStoreContractTest {
             await(store.clear(REGION));
         });
 
-        assertEquals(Optional.empty(), await(store.get(KEY, String.class)));
-        assertEquals(Optional.empty(), await(store.get(OTHER_KEY, String.class)));
+        assertEquals(Optional.empty(), await(store.get(KEY, descriptor(String.class))));
+        assertEquals(Optional.empty(), await(store.get(OTHER_KEY, descriptor(String.class))));
     }
 
     protected static <T> T await(Future<T> future) throws Exception {
         return future.toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
+    }
+
+    private static CacheValueDescriptor descriptor(Type type) {
+        return new CacheValueDescriptor(type, "vertx");
     }
 
     private static Type listOf(Type elementType) {
