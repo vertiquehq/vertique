@@ -46,7 +46,7 @@ public final class Timeout {
      * @return a future settled by the supplier or timeout fence
      */
     public <T> Future<T> execute(Supplier<Future<T>> operation) {
-        return resilience.executeTimeout(operationKey, configuration, operation);
+        return resilience.executeTimeout(operationKey, configuration, operation, null);
     }
 
     String operationKey() {

@@ -329,6 +329,35 @@ class ResiliencePolicyExecutionTest {
     }
 
     @Test
+    @DisplayName("concurrent logical executions keep independent Vert.x retry state")
+    void concurrentExecutionsDoNotShareRetryState(Vertx vertx) throws Exception {
+        resilience = Resilience.create(vertx);
+        ResiliencePipeline pipeline = resilience
+                .pipeline("concurrent-retry")
+                .retry(retry -> retry.maxRetries(1)
+                        .backoff(RetryBackoff.fixed(0L))
+                        .retryOn(Set.of(IllegalStateException.class)))
+                .build();
+
+        List<Future<String>> results = new ArrayList<>();
+        List<AtomicInteger> attempts = new ArrayList<>();
+        for (int index = 0; index < 64; index++) {
+            AtomicInteger executionAttempts = new AtomicInteger();
+            attempts.add(executionAttempts);
+            results.add(pipeline.execute(() -> executionAttempts.getAndIncrement() == 0
+                    ? Future.failedFuture(new IllegalStateException("retryable"))
+                    : Future.succeededFuture("ok")));
+        }
+
+        for (Future<String> result : results) {
+            assertEquals("ok", await(result));
+        }
+        for (AtomicInteger executionAttempts : attempts) {
+            assertEquals(2, executionAttempts.get());
+        }
+    }
+
+    @Test
     @DisplayName("known, unknown, and saturated budgets retain agreement without arithmetic wraparound")
     void executionBudgetUsesUnknownAndSaturatingArithmetic() {
         RetryConfig exponentialRetry = RetryConfig.builder()

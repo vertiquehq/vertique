@@ -39,12 +39,14 @@ timeout, retry, and circuit breaker. `ResilienceAnnotations.NONE` is the shared 
 `hasAny()` is the convenient test for whether a declaration is present.
 
 The executable foundation is application-scoped. Create one `Resilience` for the application graph
-and construct timeout/retry/breaker/bulkhead components or pipelines from that owner. A timeout is
-a per-supplier-attempt fence backed by a Vert.x timer; it does not cancel the supplier's underlying
-future. Retry delays are outside the per-attempt timeout, and retry callbacks receive zero-based
-ordinals. A pipeline is fixed-order typed composition state and must contain at least one concern.
+and construct timeout/retry/breaker/bulkhead components or pipelines from that owner. Timeout and
+retry execution is backed by isolated Vert.x 5.1.6 CircuitBreaker engines; a timeout is a
+per-supplier-attempt fence and does not cancel the supplier's underlying future. Retry delays are
+outside the per-attempt timeout, and public retry callbacks receive zero-based ordinals. A pipeline
+is fixed-order typed composition state and must contain at least one concern.
 A circuit breaker is an independently executable local component: it admits one logical execution,
-counts its final result once, disables Vert.x's own timeout and retry behavior, and admits one
+counts its final result once, disables Vert.x's own timeout and retry behavior for the authoritative
+breaker, and admits one
 no-retry half-open probe after reset. A bulkhead admits whole logical executions with either
 immediate rejection or a FIFO bounded queue. Stateful components never share state by equal names.
 
@@ -135,9 +137,9 @@ construction label. `operationKey()` exposes that derived key for correlation.
 `execute(Supplier<Future<T>>)` captures the current Vert.x context. If there is no current context,
 the runtime uses a fallback context created from its supplied `Vertx`. Supplier invocation,
 timeout settlement, and completion callbacks remain on the selected context. Timeout, supplier
-completion, and runtime close race through a settle-once fence: exactly one outcome wins, timers are
-cancelled on settlement, and a late supplier completion is ignored. Neither timeout nor close
-cancels the supplier's underlying future.
+completion, and runtime close race through a settle-once fence: exactly one outcome wins, private
+engine resources are closed on settlement, and a late supplier completion is ignored. Neither
+timeout nor close cancels the supplier's underlying future.
 
 Closing a runtime is asynchronous and idempotent: repeated `close()` calls return the same terminal
 future. Close fences active public executions with `ResilienceClosedException`, cancels runtime-owned
@@ -155,8 +157,9 @@ when a consumer's retry configuration delegates eligibility to a policy.
 
 `Retry.builder(resilience, operationName)` creates an independently executable retry component.
 `ResiliencePipeline.Builder.retry(...)` accepts a prebuilt `Retry` or an inline retry builder. Retry
-is opt-in, starts at attempt zero, and performs at most `maxRetries + 1` attempts. `abortOn` wins
-over `retryOn`; delays are scheduled between attempts and do not consume the per-attempt timeout.
+is opt-in, starts at attempt zero, and performs at most `maxRetries + 1` attempts through the
+Vert.x CircuitBreaker retry engine. `abortOn` wins over `retryOn`; delays are scheduled between
+attempts and do not consume the per-attempt timeout.
 Callback failures become cause-free `ResiliencePolicyException` values with only safe callback-kind
 and exception-class metadata. Fatal `Error` values are rethrown.
 

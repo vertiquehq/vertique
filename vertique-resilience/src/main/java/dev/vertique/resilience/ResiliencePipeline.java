@@ -175,12 +175,16 @@ public final class ResiliencePipeline {
                             resilience.executionContext(),
                             new CircuitOpenException(operationKey, circuitBreaker.stateKey())));
         }
-        Supplier<Future<T>> retryOrTimeout = retryConfiguration != null
-                ? () -> resilience.executeRetry(
-                        operationKey, retryConfiguration, timeoutConfiguration, operation, observation)
-                : timeoutConfiguration != null
-                        ? () -> resilience.executeTimeout(operationKey, timeoutConfiguration, operation, observation)
-                        : () -> observation.executeAttempt(operation);
+        Supplier<Future<T>> retryOrTimeout = timeoutConfiguration != null || retryConfiguration != null
+                ? () -> resilience.executeCircuitBreakerPolicy(
+                        operationKey,
+                        timeoutConfiguration,
+                        retryConfiguration,
+                        operation,
+                        observation,
+                        contextOpen,
+                        executionRegistrar)
+                : () -> observation.executeAttempt(operation);
         Supplier<Future<T>> protectedOperation = circuitBreaker == null
                 ? retryOrTimeout
                 : () -> circuitBreaker.execute(

@@ -246,15 +246,7 @@ public final class Resilience {
         Objects.requireNonNull(configuration, "configuration");
         Objects.requireNonNull(operation, "operation");
 
-        Context selectedContext = executionContext();
-
-        int attemptOrdinal = observation == null ? 0 : observation.attemptStarted();
-        TimeoutExecution<T> execution = scheduleTimeout(
-                selectedContext, operationKey, configuration.timeoutMs(), operation, observation, attemptOrdinal);
-        if (execution == null) {
-            return failedOnContext(selectedContext, operationKey);
-        }
-        return execution.future();
+        return executeCircuitBreakerPolicy(operationKey, configuration, null, operation, observation, () -> true, null);
     }
 
     <T> Future<T> executeRetry(
@@ -275,50 +267,31 @@ public final class Resilience {
         Objects.requireNonNull(retryConfiguration, "retryConfiguration");
         Objects.requireNonNull(operation, "operation");
 
-        Context selectedContext = executionContext();
-
-        Retry.Execution<T> execution;
-        synchronized (lifecycleMonitor) {
-            if (closed) {
-                return failedOnContext(selectedContext, operationKey);
-            }
-            execution = new Retry.Execution<>(
-                    this,
-                    selectedContext,
-                    operationKey,
-                    retryConfiguration,
-                    timeoutConfiguration,
-                    operation,
-                    observation);
-            activeExecutions.add(execution);
-        }
-        selectedContext.runOnContext(ignored -> execution.start());
-        return execution.future();
+        return executeCircuitBreakerPolicy(
+                operationKey, timeoutConfiguration, retryConfiguration, operation, observation, () -> true, null);
     }
 
-    <T> TimeoutExecution<T> scheduleTimeout(
-            Context context, String operationKey, long timeoutMs, Supplier<Future<T>> operation) {
-        return scheduleTimeout(context, operationKey, timeoutMs, operation, null, 0);
-    }
-
-    <T> TimeoutExecution<T> scheduleTimeout(
-            Context context,
+    <T> Future<T> executeCircuitBreakerPolicy(
             String operationKey,
-            long timeoutMs,
+            TimeoutConfig timeoutConfiguration,
+            RetryConfig retryConfiguration,
             Supplier<Future<T>> operation,
             ResilienceExecutionObservation observation,
-            int attemptOrdinal) {
-        TimeoutExecution<T> execution;
-        synchronized (lifecycleMonitor) {
-            if (closed) {
-                return null;
-            }
-            execution = new TimeoutExecution<>(
-                    this, context, operationKey, timeoutMs, operation, observation, attemptOrdinal);
-            activeExecutions.add(execution);
+            BooleanSupplier contextOpen,
+            Consumer<Runnable> executionRegistrar) {
+        Objects.requireNonNull(operationKey, "operationKey");
+        if (timeoutConfiguration == null && retryConfiguration == null) {
+            throw new IllegalArgumentException("timeout or retry configuration is required");
         }
-        context.runOnContext(ignored -> execution.start());
-        return execution;
+        return CircuitBreakerPolicyExecution.execute(
+                this,
+                operationKey,
+                timeoutConfiguration,
+                retryConfiguration,
+                operation,
+                observation,
+                contextOpen,
+                executionRegistrar);
     }
 
     Vertx vertx() {
@@ -333,6 +306,10 @@ public final class Resilience {
         }
     }
 
+    boolean isClosed() {
+        return closed;
+    }
+
     void remove(RuntimeExecution execution) {
         activeExecutions.remove(execution);
         completeCloseIfIdle();
@@ -345,6 +322,17 @@ public final class Resilience {
             }
             activeExecutions.add(Objects.requireNonNull(execution, "execution"));
             return true;
+        }
+    }
+
+    <T> T startIfOpen(RuntimeExecution execution, Supplier<T> start) {
+        Objects.requireNonNull(execution, "execution");
+        Objects.requireNonNull(start, "start");
+        synchronized (lifecycleMonitor) {
+            if (closed || !activeExecutions.contains(execution)) {
+                return null;
+            }
+            return start.get();
         }
     }
 
