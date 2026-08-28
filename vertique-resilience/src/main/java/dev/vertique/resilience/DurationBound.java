@@ -3,7 +3,6 @@
 
 package dev.vertique.resilience;
 
-import java.util.Objects;
 import java.util.OptionalLong;
 
 /** A typed upper bound for a resilience execution duration. */
@@ -43,16 +42,8 @@ public sealed interface DurationBound permits DurationBound.Known, DurationBound
         }
     }
 
-    /**
-     * A finite-duration shape whose maximum cannot be computed.
-     *
-     * @param reason reason the maximum is unavailable
-     */
-    record Unknown(ExecutionBudgetUnknownReason reason) implements DurationBound {
-        public Unknown {
-            Objects.requireNonNull(reason, "reason");
-        }
-    }
+    /** A finite-duration shape whose maximum cannot be computed. */
+    record Unknown() implements DurationBound {}
 
     /** A duration with no finite upper bound. */
     record Unbounded() implements DurationBound {}

@@ -66,7 +66,7 @@ public record ResolvedResiliencePolicy(
 
         RetryBackoff backoff = retry.orElseThrow().backoff();
         if (backoff instanceof RetryBackoff.Custom) {
-            return new DurationBound.Unknown(ExecutionBudgetUnknownReason.CUSTOM_BACKOFF);
+            return new DurationBound.Unknown();
         }
 
         long delayBudget = maximumDelayBudget(backoff, retry.orElseThrow().maxRetries());
