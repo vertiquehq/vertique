@@ -87,6 +87,16 @@ limits are Jackson's own frozen `StreamReadConstraints` inside the private envel
 concern is owned jointly by per-decision authorization timeouts and the shared HTTP liveness
 settings, with no direct replacement MCP setting.
 
+## Conformance
+
+This module is Alpha maturity. It implements exactly 4 of the 37 server-leg scored scenarios in the
+upstream Model Context Protocol conformance suite's frozen `2026-07-28` requirement set —
+`tools-list`, `tools-call-simple-text`, `tools-call-error`, and `dns-rebinding-protection` — each run
+to zero failures with no expected-failure baseline. The remaining 33 scored scenarios, and protocol
+capabilities this module does not implement (tasks, subscriptions, resources, prompts, rich
+tool-result content), are out of scope entirely, not partially implemented. This module claims
+conformance only to that scoped four-scenario partition, never to the full requirement set.
+
 ## Stateless HTTP contract
 
 The mount is stateless and multi-instance: it establishes no session, emits no cookie or affinity
@@ -333,8 +343,10 @@ hex span id>-<2 hex flags>`; `tracestate`, when present, is bounded by `McpTrace
 (non-blank, at most 512 characters, printable ASCII only). Extraction is total and never fails the
 request: an absent or non-string `traceparent`, syntax that does not match the wire format above, an
 all-zero trace or span id, or a `tracestate` outside those bounds all yield no body trace context
-rather than an error response, each logged once as a bounded, non-leaking WARN diagnostic (never the
-raw `traceparent`/`tracestate` value). Extraction runs at most once per request, in
+rather than an error response, each logged once as a bounded, non-leaking DEBUG diagnostic (never the
+raw `traceparent`/`tracestate` value) — a client-triggerable event on this anonymous-reachable path,
+not a framework or application contract violation, so it does not warrant WARN. Extraction runs at
+most once per request, in
 `McpRequestDispatcher#dispatch`, independent of negotiation's own outcome — a malformed or absent
 body trace reference never affects protocol admission.
 
