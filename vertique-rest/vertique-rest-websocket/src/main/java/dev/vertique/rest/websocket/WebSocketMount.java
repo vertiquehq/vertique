@@ -156,13 +156,20 @@ public class WebSocketMount implements RouterMount {
     // --- Factory ---
 
     /**
-     * Factory for creating {@link WebSocketMount} instances. Holds all shared framework services
-     * injected once by Dagger and reused across multiple mount instances.
+     * Factory for creating {@link WebSocketMount} instances. This factory itself is the one Dagger
+     * {@code @Singleton} injected once and reused across multiple mount instances; most of the shared
+     * services it holds are Dagger-injected constructor arguments, held as-is.
      *
-     * <p>The security components ({@link SecurityPolicyEnforcer} and
-     * {@link IdentityResolutionMiddleware}) are constructed lazily inside the factory constructor
-     * based on the available optional bindings. When the security module is absent, these remain
-     * {@code null} and all WebSocket endpoints operate without authentication or authorization.
+     * <p>The {@link SecurityPolicyEnforcer} is the one exception to "held as-is": it is not itself a
+     * Dagger-injected value, but a separate instance this factory constructor constructs on the spot
+     * from the injected pieces (the decision point, policy, providers, emitter, and gate config) —
+     * identically configured to, but never the same object as, the Dagger {@code @Singleton}
+     * {@link dev.vertique.rest.security.AuthorizationContributor} injects for JAX-RS routes (see
+     * {@link SecurityPolicyEnforcer}'s own class Javadoc). {@link IdentityResolutionMiddleware} is
+     * constructed the same way. Both are
+     * constructed lazily inside the factory constructor based on the available optional bindings; when
+     * the security module is absent, both remain {@code null} and all WebSocket endpoints operate
+     * without authentication or authorization.
      *
      * <p>Inject this factory into application modules to create one or more WebSocket mounts
      * without having to declare each individual dependency.

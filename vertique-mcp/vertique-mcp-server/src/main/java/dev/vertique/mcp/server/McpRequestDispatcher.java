@@ -290,6 +290,30 @@ final class McpRequestDispatcher {
     private static final String BODY_TRACE_CONTEXT_KEY = KEY_PREFIX + ".bodyTraceContext";
 
     /**
+     * Routing-context key for this request's classified {@link McpMethod} (repair task R48, W3),
+     * stored once in {@link #dispatch} immediately after {@link #classifyMethod} runs and read by
+     * {@link #settlementTerminal} through {@link #classifiedMethodOf} so a disconnect/reset abort
+     * terminal reports the identity the dispatcher had legitimately already established, rather than
+     * always inventing {@link McpMethod#OTHER}. {@code null} only before {@link #dispatch} ever ran
+     * for this request (e.g. a cheap-admission rejection); {@link #classifiedMethodOf} reports {@link
+     * McpMethod#OTHER} for that case, matching every other pre-dispatch abort's existing identity.
+     */
+    private static final String METHOD_KEY = KEY_PREFIX + ".method";
+
+    /**
+     * Routing-context key for the resolved {@code tools/call} tool name (repair task R48, W3), stored
+     * once in {@link #writeToolsCall} immediately once the requested name resolves to a real,
+     * registry-validated {@link McpToolDescriptor} — never the raw, caller-supplied candidate string,
+     * which is unbounded except by the wire's own string-length limit — and read by {@link
+     * #settlementTerminal} through {@link #resolvedToolNameOf}. {@code null} whenever no tool was ever
+     * resolved for this request (every non-{@code tools/call} method, and a {@code tools/call} whose
+     * name never matched a registered tool); {@link #resolvedToolNameOf} reports {@link
+     * McpRequestTerminalEvent#UNKNOWN_TOOL_NAME} for that case, matching the never-invent rule every
+     * other unresolved-name terminal in this class already follows.
+     */
+    private static final String RESOLVED_TOOL_NAME_KEY = KEY_PREFIX + ".resolvedToolName";
+
+    /**
      * Compact, insertion-order-preserving success encoder, canonicalized identically to the codec's
      * encoder ({@code WRITE_BIGDECIMAL_AS_PLAIN}). The response is streamed through a byte-bounded
      * {@link CappedOutputStream} so serialization stops at {@code mcp.output.maxBytes} as bytes are
@@ -631,6 +655,33 @@ final class McpRequestDispatcher {
     }
 
     /**
+     * <strong>The systematic settlement-guard invariant (repair task R48, C1).</strong> Reports
+     * whether {@code context}'s request has already settled — a disconnect, a stream reset, or a
+     * failed write, published through {@link #registerSettlementHooks} — so that no further
+     * application-visible work may run for it.
+     *
+     * <p>Every async-stage continuation on the {@code tools/call} (and shared pre-dispatch) path must
+     * call this at entry, before any side effect it would otherwise perform — SSE selection, the input
+     * pipeline, {@code publishToolInput}, an interceptor or tool invocation, output normalization, or a
+     * response write — and return immediately, without writing anything, when it reports {@code true}.
+     * A settled request's lifecycle emission is already owned by the disconnect/reset settlement path;
+     * a guarded return here is deliberately silent and must never itself construct or write a terminal
+     * event. {@link #writeToolsList} already models this exact idiom inline for its own stage.
+     *
+     * <p>Safe to call from any continuation reached on this request: repair task R32's context-
+     * anchoring guarantee ({@link #anchoredOnContext}) keeps every such continuation running on the
+     * request's own owning Vert.x context, the same context {@link McpCompletionCoordinator}'s
+     * cancellation signal is confined to, so this synchronous read never races a concurrent mutation.
+     *
+     * @param context the request context
+     * @return {@code true} when this request has already settled and must do no further work
+     */
+    private static boolean isSettled(RoutingContext context) {
+        McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
+        return coordinator != null && coordinator.cancellation().isCancelled();
+    }
+
+    /**
      * Establishes the one live {@link CorrelationContext} for this request (R09, merge blocker 2;
      * contract §4.7 stage 2 — "establish correlation ... before optional authentication") and binds it
      * onto the shared {@code ContextHolder} substrate — the same mechanism REST's {@code
@@ -732,6 +783,27 @@ final class McpRequestDispatcher {
     @Nullable
     private static McpTraceContext bodyTraceContextOf(RoutingContext context) {
         return context.get(BODY_TRACE_CONTEXT_KEY);
+    }
+
+    /**
+     * Returns this request's classified {@link McpMethod} (repair task R48, W3), or {@link
+     * McpMethod#OTHER} when {@link #dispatch} never stored one for this request — matching the
+     * pre-dispatch identity every other abort terminal in this class already carries.
+     */
+    private static McpMethod classifiedMethodOf(RoutingContext context) {
+        McpMethod stored = context.get(METHOD_KEY);
+        return stored != null ? stored : McpMethod.OTHER;
+    }
+
+    /**
+     * Returns this request's resolved {@code tools/call} tool name (repair task R48, W3), or {@link
+     * McpRequestTerminalEvent#UNKNOWN_TOOL_NAME} when {@link #writeToolsCall} never resolved one for
+     * this request — the never-invent rule: the raw, caller-supplied candidate string is never
+     * retained or returned here.
+     */
+    private static String resolvedToolNameOf(RoutingContext context) {
+        String stored = context.get(RESOLVED_TOOL_NAME_KEY);
+        return stored != null ? stored : McpRequestTerminalEvent.UNKNOWN_TOOL_NAME;
     }
 
     /**
@@ -864,6 +936,10 @@ final class McpRequestDispatcher {
         }
         JsonNode envelope = decoded.envelope();
         McpMethod method = classifyMethod(envelope.get("method").asText());
+        // R48 (W3): stored immediately after classification so a disconnect/reset abort terminal for
+        // this request — however far it later progresses — reports the identity already legitimately
+        // known here, rather than always inventing McpMethod.OTHER (see settlementTerminal).
+        context.put(METHOD_KEY, method);
         McpProtocolCodec.ParamsValidationResult paramsValidation = codec.validateOfficialParams(envelope);
         if (paramsValidation.isError()) {
             writePreDispatchProtocolRejection(context, envelope, method, security, paramsValidation.error());
@@ -892,8 +968,13 @@ final class McpRequestDispatcher {
         McpRequestContext requestContext =
                 new McpRequestContext(method, establishedSecurityContext(), correlationOf(context), bodyTraceContext);
         Context owningContext = requestOwningContext(context);
-        anchoredOnContext(runRequestInterceptors(0, requestContext, owningContext), owningContext)
+        anchoredOnContext(runRequestInterceptors(0, requestContext, owningContext, context), owningContext)
                 .onComplete(ar -> {
+                    // R48 (C1): the settlement guard — a disconnect/reset can settle this request while the
+                    // interceptor chain is still pending, and neither branch below may run once it has.
+                    if (isSettled(context)) {
+                        return;
+                    }
                     if (ar.failed()) {
                         writeInterceptorRejection(context, envelope, method, security);
                         return;
@@ -1057,10 +1138,13 @@ final class McpRequestDispatcher {
      * @param owningContext the request's owning Vert.x context, threaded through so every
      *     interceptor's returned future is re-anchored onto it (repair task R32 defect 1) before the
      *     next interceptor is ever invoked
+     * @param context the request context, threaded through so each per-hop compose can check the
+     *     settlement guard (repair task R48, C1) before advancing to the next interceptor
      * @return a future that succeeds once every interceptor has permitted, or fails with the first
      *     rejection's cause
      */
-    private Future<Void> runRequestInterceptors(int index, McpRequestContext requestContext, Context owningContext) {
+    private Future<Void> runRequestInterceptors(
+            int index, McpRequestContext requestContext, Context owningContext, RoutingContext context) {
         if (index >= orderedRequestInterceptors.size()) {
             return Future.succeededFuture();
         }
@@ -1085,8 +1169,15 @@ final class McpRequestDispatcher {
         // R32 defect 1: outcome is application-origin and carries no obligation to settle on
         // owningContext, so the next interceptor's own beforeRequest invocation below — composed
         // directly onto it — must not run until it is re-anchored there.
-        return anchoredOnContext(outcome, owningContext)
-                .compose(ignored -> runRequestInterceptors(index + 1, requestContext, owningContext));
+        return anchoredOnContext(outcome, owningContext).compose(ignored -> {
+            // R48 (C1): the settlement guard, checked between hops — a disconnect/reset can settle this
+            // request while one interceptor's future is still pending; the chain must not advance once
+            // it has.
+            if (isSettled(context)) {
+                return Future.succeededFuture();
+            }
+            return runRequestInterceptors(index + 1, requestContext, owningContext, context);
+        });
     }
 
     /**
@@ -1104,10 +1195,13 @@ final class McpRequestDispatcher {
      * @param owningContext the request's owning Vert.x context, threaded through so every
      *     interceptor's returned future is re-anchored onto it (repair task R32 defect 1) before the
      *     next interceptor is ever invoked
+     * @param context the request context, threaded through so each per-hop compose can check the
+     *     settlement guard (repair task R48, C1) before advancing to the next interceptor
      * @return a future that succeeds once every interceptor has permitted, or fails with the first
      *     rejection's cause
      */
-    private Future<Void> runToolInterceptors(int index, McpToolInvocationContext toolContext, Context owningContext) {
+    private Future<Void> runToolInterceptors(
+            int index, McpToolInvocationContext toolContext, Context owningContext, RoutingContext context) {
         if (index >= orderedToolInterceptors.size()) {
             return Future.succeededFuture();
         }
@@ -1127,8 +1221,15 @@ final class McpRequestDispatcher {
         }
         // R32 defect 1: mirrors runRequestInterceptors above — outcome is application-origin and must
         // be re-anchored before the next interceptor's own beforeInvocation is invoked from it.
-        return anchoredOnContext(outcome, owningContext)
-                .compose(ignored -> runToolInterceptors(index + 1, toolContext, owningContext));
+        return anchoredOnContext(outcome, owningContext).compose(ignored -> {
+            // R48 (C1): mirrors runRequestInterceptors above — the settlement guard, checked between
+            // hops, so a disconnect/reset that settles this request while one tool interceptor's
+            // future is still pending stops the chain from advancing to the next.
+            if (isSettled(context)) {
+                return Future.succeededFuture();
+            }
+            return runToolInterceptors(index + 1, toolContext, owningContext, context);
+        });
     }
 
     /**
@@ -1878,6 +1979,11 @@ final class McpRequestDispatcher {
      * @param security the established security snapshot, recorded on the terminal event
      */
     private void writeToolsCall(RoutingContext context, JsonNode envelope, @Nullable SecurityContextSnapshot security) {
+        // R48 (C1): the settlement guard, mirroring writeToolsList's own entry check for this sibling
+        // stage.
+        if (isSettled(context)) {
+            return;
+        }
         JsonNode nameNode = envelope.get("params").get("name");
         if (nameNode == null || !nameNode.isTextual() || nameNode.asText().isBlank()) {
             writeUnknownOrUnauthorized(
@@ -1892,6 +1998,11 @@ final class McpRequestDispatcher {
         SecurityContext caller = establishedSecurityContext();
         if (invoker == null) {
             policyEnforcer.decide(UNKNOWN_TOOL_PLACEHOLDER_DESCRIPTOR, caller).onComplete(ar -> {
+                // R48 (C1): the settlement guard — a disconnect/reset can settle this request while
+                // this synthetic-placeholder decision is still pending.
+                if (isSettled(context)) {
+                    return;
+                }
                 // R05 (issue #431): a real policy evaluation occurred — against the synthetic
                 // placeholder, exactly like a known-but-denied name — so its summary is recorded
                 // like every other actual decision, even though ar.result() here is always a
@@ -1907,7 +2018,18 @@ final class McpRequestDispatcher {
             });
             return;
         }
+        // R48 (W3): stored only once the requested name resolved to a real, registry-validated
+        // descriptor — never the raw caller-supplied toolName — so a later abort terminal for this
+        // request (see settlementTerminal/resolvedToolNameOf) can report the real tool name instead of
+        // always inventing UNKNOWN_TOOL_NAME.
+        context.put(RESOLVED_TOOL_NAME_KEY, invoker.descriptor().name());
         policyEnforcer.decide(invoker.descriptor(), caller).onComplete(ar -> {
+            // R48 (C1): the settlement guard — this is the seam McpToolsCallDisconnectAcrossAuthorizationIT
+            // pins: a disconnect/reset can settle this request while the real authorization decision is
+            // still pending, and no branch below (deny, permit, or invocation) may run once it has.
+            if (isSettled(context)) {
+                return;
+            }
             if (ar.failed()) {
                 // McpPolicyEnforcer#decide never fails per its own contract; defended here so a
                 // contract-violating extension cannot escape as an unhandled exception. No invocation
@@ -1957,6 +2079,11 @@ final class McpRequestDispatcher {
             @Nullable SecurityContextSnapshot security,
             String toolName,
             McpToolInvoker invoker) {
+        // R48 (C1): the settlement guard, entered before SSE selection and any input work — this is the
+        // second of the two seams McpToolsCallDisconnectAcrossAuthorizationIT's mutation proof targets.
+        if (isSettled(context)) {
+            return;
+        }
         selectSse(context);
         Map<String, Object> arguments = argumentsOf(envelope);
         if (!schemaValid(toolName, arguments)) {
@@ -2065,9 +2192,15 @@ final class McpRequestDispatcher {
                 return;
             }
         }
-        anchoredOnContext(runToolInterceptors(0, toolContext, owningContext), owningContext)
+        anchoredOnContext(runToolInterceptors(0, toolContext, owningContext, context), owningContext)
                 .onComplete(interceptorResult -> {
                     if (interceptorResult.failed()) {
+                        // R48 (C1): the settlement guard, on the rejection branch — a disconnect/reset can
+                        // settle this request while the tool-interceptor chain is still pending, and the
+                        // rejection response below must never be written once it has.
+                        if (isSettled(context)) {
+                            return;
+                        }
                         // The interceptor stage rejected before the handler ever ran: no output to observe.
                         writeToolResult(
                                 context,
@@ -2113,6 +2246,13 @@ final class McpRequestDispatcher {
                         return;
                     }
                     anchoredOnContext(result, owningContext).onComplete(ar -> {
+                        // R48 (C1): the settlement guard, before any normalization/output work — a
+                        // disconnect/reset can settle this request while the invocation future is still
+                        // pending, and no branch below (failure fallback, normalization, schema validation,
+                        // or the terminal write) may run once it has.
+                        if (isSettled(context)) {
+                            return;
+                        }
                         if (ar.failed() || ar.result() == null) {
                             writeSseFallback(
                                     context,
@@ -2759,6 +2899,14 @@ final class McpRequestDispatcher {
      * Synthesizes the cancelled terminal facts for a disconnect, reset, or timeout settlement from the
      * captured request facts.
      *
+     * <p>Repair task R48 (W3): the reported method and tool name are the identity this dispatcher had
+     * legitimately already established at the point of settlement — {@link #classifiedMethodOf} and
+     * {@link #resolvedToolNameOf} — never an invented value and never the caller-supplied raw tool-name
+     * string. A settlement that lands before {@link #dispatch} ever classified the method, or before
+     * {@link #writeToolsCall} ever resolved a tool, still reports {@link McpMethod#OTHER}/{@link
+     * McpRequestTerminalEvent#UNKNOWN_TOOL_NAME} — exactly their pre-R48 fallback values — because
+     * those two accessors themselves fall back to them.
+     *
      * @param context the request context whose established security snapshot is captured
      * @param startedAt the instant the request began
      * @param errorType the transport or timeout error classification
@@ -2769,8 +2917,8 @@ final class McpRequestDispatcher {
         return McpRequestTerminalEvent.cancelled(
                 startedAt,
                 Instant.now(),
-                McpMethod.OTHER,
-                McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
+                classifiedMethodOf(context),
+                resolvedToolNameOf(context),
                 errorType,
                 0,
                 null,

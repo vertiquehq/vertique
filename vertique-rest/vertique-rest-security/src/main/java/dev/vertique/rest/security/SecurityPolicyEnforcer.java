@@ -89,8 +89,12 @@ import lombok.extern.slf4j.Slf4j;
  *       upstream; this decision point itself still evaluates claims only.</li>
  * </ol>
  *
- * <p>Used by both {@link AuthorizationContributor} (JAX-RS routes) and the WebSocket module
- * for consistent authorization enforcement across transports.
+ * <p>Used by both {@link AuthorizationContributor} (JAX-RS routes) and the WebSocket module for
+ * consistent authorization enforcement across transports — but not as one shared instance.
+ * {@link AuthorizationContributor} injects the single Dagger {@code @Singleton} this class declares
+ * above; {@code WebSocketMount.Factory} constructs its own, separate instance from the same
+ * constructor arguments (including the same operator-configured {@link AuthorizationGateConfig}), so
+ * each transport enforces identically-configured policy through its own instance, not a shared one.
  */
 @Slf4j
 @Singleton
@@ -124,9 +128,12 @@ public class SecurityPolicyEnforcer {
      * #417's fixed pre-R42 deadline, byte-identical to before R42). Equivalent to the eight-argument
      * constructor with {@link Optional#empty()} for {@code authorizationGateConfig}.
      *
-     * <p>Not {@code @Inject}-annotated — hand-wiring call sites (tests, {@code WebSocketMount}'s
-     * manually-constructed instance before R42) that do not need to thread a configured deadline use
-     * this overload; Dagger itself always resolves the eight-argument constructor below.
+     * <p>Not {@code @Inject}-annotated — hand-wiring call sites (chiefly tests) that do not need to
+     * thread a configured deadline use this overload. {@code WebSocketMount.Factory} still
+     * hand-constructs its own {@link SecurityPolicyEnforcer} instance — that never changed at R42 —
+     * but always through the eight-argument constructor below, threading the same operator-configured
+     * {@link AuthorizationGateConfig} REST and MCP use, not this deadline-less overload. Dagger itself
+     * always resolves the eight-argument constructor too.
      *
      * @param authorizationDecisionPoint optional app-provided async decision point; takes precedence
      *                                   over everything else

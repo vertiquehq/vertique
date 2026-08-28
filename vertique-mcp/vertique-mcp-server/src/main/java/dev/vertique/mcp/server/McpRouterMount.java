@@ -74,11 +74,18 @@ final class McpRouterMount implements RouterMount {
         // production mount point: this constructor. Test fixtures that exercise a narrower slice of
         // McpServerConfigValidator call its narrower overloads directly.
         configValidator.validate(config, routeAuthHandlers, toolRegistry, httpConfig, authorizer);
-        if (toolRegistry.invokersByName().isEmpty()) {
-            // Unconditional, not gated behind config: an empty registry is valid composition (an
-            // unconfigured registry with no tools is allowed, see McpServerConfigValidator), but it is
-            // never what an application publishing @McpTool methods intended, so both likely root causes
-            // are named here rather than left for the application developer to rediscover.
+        if (config.enabled() && toolRegistry.invokersByName().isEmpty()) {
+            // Gated behind config.enabled() (repair task R48, S1): an empty registry is valid
+            // composition (an unconfigured registry with no tools is allowed, see
+            // McpServerConfigValidator), but it is never what an application publishing @McpTool
+            // methods intended, so both likely root causes are named here rather than left for the
+            // application developer to rediscover — but only when this mount actually runs. A disabled
+            // mount (config.enabled() == false) never installs any route (see createRouter's own
+            // early-return below) and its empty registry is therefore never reachable, so warning about
+            // it here — as an earlier revision unconditionally did — was pure noise for the common
+            // "MCP not turned on for this application" composition. Read once, from this constructor
+            // parameter, so the warning still fires exactly once per enabled mount, regardless of how
+            // many times createRouter is later called.
             log.warn(
                     "MCP tool registry at {} is empty: no tools are reachable. Likely causes: "
                             + "GeneratedMcpToolsModule is not installed in the application's Dagger component, "

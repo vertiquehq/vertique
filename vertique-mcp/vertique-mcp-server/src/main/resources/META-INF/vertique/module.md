@@ -133,7 +133,14 @@ path — a successful write, a client disconnect, or a response-stream reset. Th
 precedes the completion, and any later signal after the first settlement wins is suppressed, so a
 disconnect that races a late handler result cannot produce a second terminal. A disconnect or reset
 before the first response byte records an uncommitted (`responseCommitted=false`)
-`DISCONNECTED`/`RESET` completion. MCP arms no whole-request timer of its own: transport liveness
+`DISCONNECTED`/`RESET` completion. That abort terminal's `method`/`toolName` report the identity
+already legitimately established at the point of settlement — the classified method as soon as
+`server/discover`/`tools/list`/`tools/call` is recognized, and, for `tools/call`, the resolved tool
+name once a real, registry-validated descriptor is found — falling back to `OTHER`/the bounded
+`UNKNOWN` placeholder only when settlement lands before that fact was ever established. The
+caller-supplied raw tool-name string is never retained for this purpose, matching the same
+never-invent rule the unresolved-name rejection terminal below already follows. MCP arms no
+whole-request timer of its own: transport liveness
 comes from the shared `HttpConfig` idle/read/write timeouts — guaranteed armed for every mount that
 actually starts by the startup gate described above — so an idle or slow connection is closed by the
 shared HTTP layer and reaches MCP through this same disconnect/reset settlement path, classified as
@@ -578,10 +585,14 @@ Composition fails before any route mounts for any of these:
 
 Every one of these failures raises exactly one bounded startup error naming the offending
 configuration key or tool. A registry with no contributed tools at all is not one of these failures
-— composition still succeeds — but it is unconditionally logged as one WARN naming the mount path
-and both likely causes: `GeneratedMcpToolsModule` not installed in the application's Dagger
-component, or `vertique-codegen-mcp` absent from the annotation-processor path in a pre-facade,
-off-parent setup. The published registry order never depends on contribution order, and the
+— composition still succeeds — but, when the mount is enabled (`mcp.enabled=true`), it is logged as
+one WARN naming the mount path and both likely causes: `GeneratedMcpToolsModule` not installed in
+the application's Dagger component, or `vertique-codegen-mcp` absent from the annotation-processor
+path in a pre-facade, off-parent setup. A disabled mount (`mcp.enabled=false`, the default) never
+installs any route and its empty registry is therefore never reachable, so this WARN does not fire
+for it — an empty registry on an unconfigured, disabled MCP composition is silent, not a startup-log
+false positive for the common "MCP not turned on" case. The published registry order never depends
+on contribution order, and the
 registry exposes a stable digest — computed from the exact tool name and schema content of every
 entry, in global name order — that the `tools/list` cursor codec binds to invalidate a stale cursor
 across deployments (see
