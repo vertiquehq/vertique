@@ -5,6 +5,11 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Vertique Micrometer Resilience Adapter
 
+> **Status:** Beta
+> **Package:** `dev.vertique.micrometer.resilience`
+> **Artifact:** `vertique-micrometer-resilience`
+> **Depends on:** `vertique-resilience`, `vertique-micrometer-core`, Micrometer, Dagger
+
 `dev.vertique:vertique-micrometer-resilience` is an optional Micrometer adapter for the common
 resilience runtime. Install `MicrometerResilienceModule` alongside `ResilienceModule` and
 `MicrometerModule` in the application Dagger component:

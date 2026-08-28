@@ -80,6 +80,23 @@ The `vertique-starter` POM aggregator and `vertique-starter-integration-tests` m
 non-consumable reactor infrastructure: neither is published through the BOM, and neither carries a
 canonical module reference or a [module index](docs/modules.md) row.
 
+## Resilience
+
+[`vertique-resilience`](vertique-resilience/src/main/resources/META-INF/vertique/module.md) owns
+the canonical `dev.vertique.resilience.annotation` vocabulary and the common timeout, retry,
+circuit-breaker, bulkhead, execution-budget, and observer runtime. REST and Services consume that
+runtime through their own adapters; their current framework configuration exposes timeout, retry,
+and circuit-breaker policy, while bulkhead configuration remains a programmatic runtime capability
+until those adapters explicitly adopt it. [`vertique-micrometer-resilience`](vertique-micrometer/vertique-micrometer-resilience/src/main/resources/META-INF/vertique/module.md)
+is the optional observer adapter for the shared Micrometer registry. Durable jobs and
+`RedisDeadline` keep their own retry/deadline semantics and do not install a common resilience
+pipeline implicitly.
+
+Fatal JVM `Error` values are rethrown and are not retried or counted as ordinary failures. The
+runtime's cleanup path intentionally accepts the Vert.x 5.1.6 consequence that a fatal error can
+reset accumulated closed-state breaker failures and close a half-open breaker before rethrowing
+the same fatal value.
+
 ## Application Archetypes
 
 Each application archetype generates a functional starting application on one or more starter
