@@ -9,17 +9,18 @@ import dev.vertique.resilience.BackoffStrategy;
 /**
  * Typed per-client retry override read from {@code restClient.{name}.retry}.
  *
- * <p>Only the backoff strategy is configurable at the client level; {@code maxRetries}/{@code
- * retryOn}/{@code abortOn} remain per-method via the {@code @Retry} annotation. The
+ * <p>The client-level retry block may override the retry count and backoff strategy. The
+ * {@code retryOn}/{@code abortOn} filters remain on the {@code @Retry} annotation. The
  * {@code backoffStrategy} is the fully-qualified class name of a {@link BackoffStrategy}
  * implementation with a public no-arg constructor. It is validated at parse time — the class must be
  * loadable and assignable to {@link BackoffStrategy} — so a typo or wrong type fails fast at startup
  * rather than at first client build.
  *
+ * @param maxRetries the client-level retry count override, or {@code null} when not overridden
  * @param backoffStrategy the fully-qualified class name of a {@link BackoffStrategy} implementation,
- *     or {@code null}/blank when not overridden (the builder-level strategy applies)
+ *     or {@code null}/blank when not overridden
  */
-public record RestClientRetryConfig(String backoffStrategy) {
+public record RestClientRetryConfig(Integer maxRetries, String backoffStrategy) {
 
     /**
      * Compact validator: when {@code backoffStrategy} is present and non-blank, the named class must
@@ -30,6 +31,10 @@ public record RestClientRetryConfig(String backoffStrategy) {
      *     {@link BackoffStrategy}
      */
     public RestClientRetryConfig {
+        if (maxRetries != null && (maxRetries < 0 || maxRetries > 100)) {
+            throw new ConfigurationException(
+                    "restClient.<name>.retry.maxRetries must be between 0 and 100, got " + maxRetries);
+        }
         if (backoffStrategy != null && !backoffStrategy.isBlank()) {
             Class<?> cls;
             try {

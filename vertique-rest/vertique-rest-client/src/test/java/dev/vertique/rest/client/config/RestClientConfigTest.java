@@ -222,11 +222,11 @@ class RestClientConfigTest {
                                 "svc",
                                 new JsonObject().put("circuitBreaker", new JsonObject().put("resetTimeoutMs", 0)))));
 
-        // maxRetries must be >= 0
+        // retry.maxRetries must be between 0 and 100
         assertThrows(
                 ConfigurationException.class,
                 () -> parse(new JsonObject()
-                        .put("svc", new JsonObject().put("circuitBreaker", new JsonObject().put("maxRetries", -1)))));
+                        .put("svc", new JsonObject().put("retry", new JsonObject().put("maxRetries", -1)))));
 
         // Valid values accepted.
         JsonObject valid = new JsonObject()
@@ -238,13 +238,13 @@ class RestClientConfigTest {
                                         new JsonObject()
                                                 .put("maxFailures", 3)
                                                 .put("timeoutMs", 1000)
-                                                .put("resetTimeoutMs", 2000)
-                                                .put("maxRetries", 0)));
+                                                .put("resetTimeoutMs", 2000))
+                                .put("retry", new JsonObject().put("maxRetries", 0)));
         RestClientCircuitBreakerConfig cb = client(valid, "svc").circuitBreaker();
         assertEquals(3, cb.maxFailures());
         assertEquals(1000L, cb.timeoutMs());
         assertEquals(2000L, cb.resetTimeoutMs());
-        assertEquals(0, cb.maxRetries());
+        assertEquals(0, client(valid, "svc").retry().maxRetries());
     }
 
     // --- readTimeoutMs positivity ---

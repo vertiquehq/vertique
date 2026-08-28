@@ -598,27 +598,27 @@ class ClientInterfaceScannerTest {
     }
 
     @Test
-    @DisplayName("Method with @Retry(maxRetries=5) produces RetryConfig with maxRetries=5")
+    @DisplayName("Method with @Retry(maxRetries=5) produces canonical retry declarations")
     void methodLevelRetryProducesRetryConfig() {
         Map<Method, ClientMethodMeta> metas = ClientInterfaceScanner.scan(MethodLevelRetryClient.class);
         Map<String, ClientMethodMeta> byName = indexByMethodName(metas);
 
         ClientMethodMeta withRetry = byName.get("withRetry");
-        assertThat(withRetry.resilience()).isNotNull();
-        assertThat(withRetry.resilience().retry()).isNotNull();
-        assertThat(withRetry.resilience().retry().maxRetries()).isEqualTo(5);
-        assertThat(withRetry.resilience().retry().backoffClass()).isEqualTo(NoDelayBackoff.class);
+        assertThat(withRetry.resilienceAnnotations().retry()).isPresent();
+        assertThat(withRetry.resilienceAnnotations().retry().orElseThrow().maxRetries())
+                .isEqualTo(5);
+        assertThat(withRetry.resilienceAnnotations().retry().orElseThrow().backoffClass())
+                .isEqualTo(NoDelayBackoff.class);
     }
 
     @Test
-    @DisplayName("Method without @Retry has null retryConfig")
+    @DisplayName("Method without @Retry has no retry declaration")
     void methodWithoutRetryHasNullRetryConfig() {
         Map<Method, ClientMethodMeta> metas = ClientInterfaceScanner.scan(MethodLevelRetryClient.class);
         Map<String, ClientMethodMeta> byName = indexByMethodName(metas);
 
         ClientMethodMeta noRetry = byName.get("noRetry");
-        // No resilience config at all — resilience is null
-        assertThat(noRetry.resilience()).isNull();
+        assertThat(noRetry.resilienceAnnotations().retry()).isEmpty();
     }
 
     @Test
@@ -628,9 +628,9 @@ class ClientInterfaceScannerTest {
         Map<String, ClientMethodMeta> byName = indexByMethodName(metas);
 
         ClientMethodMeta inherited = byName.get("inherited");
-        assertThat(inherited.resilience()).isNotNull();
-        assertThat(inherited.resilience().retry()).isNotNull();
-        assertThat(inherited.resilience().retry().maxRetries()).isEqualTo(3);
+        assertThat(inherited.resilienceAnnotations().retry()).isPresent();
+        assertThat(inherited.resilienceAnnotations().retry().orElseThrow().maxRetries())
+                .isEqualTo(3);
     }
 
     @Test
@@ -640,10 +640,10 @@ class ClientInterfaceScannerTest {
         Map<String, ClientMethodMeta> byName = indexByMethodName(metas);
 
         ClientMethodMeta override = byName.get("overrideRetry");
-        assertThat(override.resilience()).isNotNull();
-        assertThat(override.resilience().retry()).isNotNull();
+        assertThat(override.resilienceAnnotations().retry()).isPresent();
         // Method-level maxRetries=1 must override interface-level maxRetries=3
-        assertThat(override.resilience().retry().maxRetries()).isEqualTo(1);
+        assertThat(override.resilienceAnnotations().retry().orElseThrow().maxRetries())
+                .isEqualTo(1);
     }
 
     // --- @Url tests ---

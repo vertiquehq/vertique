@@ -12,6 +12,7 @@ import dev.vertique.core.util.GeneratedCompanions;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.resilience.BackoffStrategy;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.resilience.annotation.CircuitBreaker;
 import dev.vertique.rest.client.config.RestClientCircuitBreakerConfig;
 import dev.vertique.rest.client.config.RestClientConfig;
@@ -48,7 +49,9 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -108,6 +111,18 @@ public final class RestClientBuilder {
     // --- Builder state ---
 
     private final Vertx vertx;
+
+    @Nullable
+    private Resilience suppliedResilience;
+
+    @Nullable
+    private Resilience ownedResilience;
+
+    private volatile boolean closed;
+
+    private final List<BuiltClientResources> builtClients = new CopyOnWriteArrayList<>();
+
+    private final AtomicReference<io.vertx.core.Future<Void>> closeFuture = new AtomicReference<>();
 
     @Nullable
     private String baseUrl;
@@ -220,6 +235,14 @@ public final class RestClientBuilder {
      */
     public static RestClientBuilder create(Vertx vertx) {
         return new RestClientBuilder(vertx);
+    }
+
+    /** Creates a non-owning builder backed by an existing application resilience runtime. */
+    public static RestClientBuilder create(Vertx vertx, Resilience resilience) {
+        java.util.Objects.requireNonNull(resilience, "resilience");
+        RestClientBuilder builder = new RestClientBuilder(vertx);
+        builder.suppliedResilience = resilience;
+        return builder;
     }
 
     // --- Fluent setters ---
@@ -636,6 +659,9 @@ public final class RestClientBuilder {
      */
     @SuppressWarnings("unchecked")
     public <T> T build(Class<T> clientInterface) {
+        if (closed) {
+            throw new IllegalStateException("REST client builder is closed");
+        }
         if (clientInterface == null) {
             throw new IllegalArgumentException("Client interface must not be null");
         }
@@ -701,9 +727,6 @@ public final class RestClientBuilder {
                 if (cbConfig.resetTimeoutMs() != null) {
                     effectiveCb.setResetTimeout(cbConfig.resetTimeoutMs());
                 }
-                if (cbConfig.maxRetries() != null) {
-                    effectiveCb.setMaxRetries(cbConfig.maxRetries());
-                }
             }
 
             // Override pool
@@ -741,9 +764,8 @@ public final class RestClientBuilder {
                 effectiveWebClientOptions = applyWebClientConfig(effectiveWebClientOptions, webClientConfig);
             }
 
-            // Override retry config (backoff strategy only — maxRetries/retryOn/abortOn are
-            // per-method via @Retry annotation; client-level override is a future enhancement). The
-            // FQCN was validated loadable + assignable at parse time, so instantiation here only fails
+            // Override retry config. The FQCN was validated loadable + assignable at parse time, so
+            // instantiation here only fails
             // on a no-arg-constructor problem, which is surfaced as a RestClientException.
             RestClientRetryConfig retryConfig = effectiveConfig.retry();
             if (retryConfig != null
@@ -825,17 +847,6 @@ public final class RestClientBuilder {
         // Build WebClient
         WebClient webClient = buildWebClient(effectiveWebClientOptions, effectivePoolOptions);
 
-        // Create circuit breaker if configured
-        io.vertx.circuitbreaker.CircuitBreaker circuitBreaker = null;
-        if (effectiveCb != null) {
-            circuitBreaker = io.vertx.circuitbreaker.CircuitBreaker.create(clientName, vertx, effectiveCb);
-            log.debug(
-                    "Created circuit breaker '{}' for {} (maxFailures={})",
-                    clientName,
-                    clientInterface.getSimpleName(),
-                    effectiveCb.getMaxFailures());
-        }
-
         log.debug(
                 "Building REST client proxy for {} with baseUrl={}", clientInterface.getSimpleName(), resolvedBaseUrl);
 
@@ -845,14 +856,17 @@ public final class RestClientBuilder {
 
         RestClientInterceptorChain interceptorChain =
                 new RestClientInterceptorChain(clientName, sortedByPriority(List.copyOf(interceptors)));
-        RestClientResilienceResolver resilienceResolver = new RestClientResilienceResolver(
+        Resilience runtime = resilienceRuntime();
+        RestClientResiliencePipelineFactory resilienceFactory = new RestClientResiliencePipelineFactory(
+                runtime,
                 clientName,
+                clientInterface,
                 effectiveReadTimeoutMs,
-                defaultExpectation,
-                circuitBreaker,
                 effectiveRetryPolicy,
                 effectiveBackoffStrategy,
-                vertx);
+                effectiveConfig,
+                effectiveCb,
+                methodMetas);
 
         RestClientDispatcher dispatcher = new DefaultRestClientDispatcher(
                 webClient,
@@ -861,7 +875,8 @@ public final class RestClientBuilder {
                 interceptorChain,
                 exceptionMapper,
                 effectiveMapper,
-                resilienceResolver,
+                defaultExpectation,
+                resilienceFactory,
                 beanValidator,
                 clientName,
                 sortedCapturers(List.copyOf(contextCapturers)),
@@ -872,31 +887,97 @@ public final class RestClientBuilder {
         // '$' → '_') so nested clients (Outer$Inner) resolve to Outer_Inner_RestClientProxy,
         // matching exactly what the annotation processor emits. Catches both
         // ReflectiveOperationException and LinkageError (static-initialiser failures).
-        return GeneratedCompanions.instantiate(
-                        clientInterface,
-                        "_RestClientProxy",
-                        new Class<?>[] {RestClientDispatcher.class, BeanParamAccessorRegistry.class, Map.class},
-                        new Object[] {dispatcher, beanParamAccessorRegistry, methodMetas},
-                        (fqn, e) -> new RestClientConfigurationException(
-                                "Generated proxy %s present but failed to instantiate".formatted(fqn), e))
-                .map(proxy -> {
-                    log.debug("Using generated static proxy for {}", clientInterface.getSimpleName());
-                    return proxy;
-                })
-                .orElseGet(() -> {
-                    log.debug(
-                            "Generated proxy not found; falling back to JDK reflective proxy for {}",
-                            clientInterface.getSimpleName());
-                    RestClientProxy handler = new RestClientProxy(
-                            dispatcher,
-                            methodMetas,
-                            effectiveMapper,
-                            beanParamAccessorRegistry,
-                            clientName,
-                            effectiveResolver);
-                    return (T) Proxy.newProxyInstance(
-                            clientInterface.getClassLoader(), new Class<?>[] {clientInterface}, handler);
-                });
+        T builtProxy;
+        try {
+            builtProxy = GeneratedCompanions.instantiate(
+                            clientInterface,
+                            "_RestClientProxy",
+                            new Class<?>[] {RestClientDispatcher.class, BeanParamAccessorRegistry.class, Map.class},
+                            new Object[] {dispatcher, beanParamAccessorRegistry, methodMetas},
+                            (fqn, e) -> new RestClientConfigurationException(
+                                    "Generated proxy %s present but failed to instantiate".formatted(fqn), e))
+                    .map(proxy -> {
+                        log.debug("Using generated static proxy for {}", clientInterface.getSimpleName());
+                        return proxy;
+                    })
+                    .orElseGet(() -> {
+                        log.debug(
+                                "Generated proxy not found; falling back to JDK reflective proxy for {}",
+                                clientInterface.getSimpleName());
+                        RestClientProxy handler = new RestClientProxy(
+                                dispatcher,
+                                methodMetas,
+                                effectiveMapper,
+                                beanParamAccessorRegistry,
+                                clientName,
+                                effectiveResolver);
+                        return (T) Proxy.newProxyInstance(
+                                clientInterface.getClassLoader(), new Class<?>[] {clientInterface}, handler);
+                    });
+        } catch (RuntimeException | Error failure) {
+            resilienceFactory.close();
+            webClient.close();
+            throw failure;
+        }
+        builtClients.add(new BuiltClientResources(resilienceFactory, webClient));
+        return builtProxy;
+    }
+
+    /** Closes this builder's client contexts and WebClients, then any runtime it owns. */
+    public io.vertx.core.Future<Void> close() {
+        io.vertx.core.Future<Void> existing = closeFuture.get();
+        if (existing != null) {
+            return existing;
+        }
+        synchronized (this) {
+            existing = closeFuture.get();
+            if (existing != null) {
+                return existing;
+            }
+            closed = true;
+            List<io.vertx.core.Future<Void>> contextClosures = builtClients.stream()
+                    .map(BuiltClientResources::closeContext)
+                    .toList();
+            io.vertx.core.Future<Void> contexts = contextClosures.isEmpty()
+                    ? io.vertx.core.Future.succeededFuture()
+                    : io.vertx.core.Future.all(contextClosures).mapEmpty();
+            io.vertx.core.Future<Void> result = contexts.compose(ignored -> {
+                builtClients.forEach(BuiltClientResources::closeWebClient);
+                Resilience owned = ownedResilience();
+                return owned == null ? io.vertx.core.Future.succeededFuture() : owned.close();
+            });
+            closeFuture.set(result);
+            return result;
+        }
+    }
+
+    private Resilience resilienceRuntime() {
+        if (suppliedResilience != null) {
+            return suppliedResilience;
+        }
+        if (ownedResilience == null) {
+            synchronized (this) {
+                if (ownedResilience == null) {
+                    ownedResilience = Resilience.create(vertx);
+                }
+            }
+        }
+        return ownedResilience;
+    }
+
+    @Nullable
+    private Resilience ownedResilience() {
+        return suppliedResilience == null ? ownedResilience : null;
+    }
+
+    private record BuiltClientResources(RestClientResiliencePipelineFactory resilienceFactory, WebClient webClient) {
+        io.vertx.core.Future<Void> closeContext() {
+            return resilienceFactory.close();
+        }
+
+        void closeWebClient() {
+            webClient.close();
+        }
     }
 
     /**

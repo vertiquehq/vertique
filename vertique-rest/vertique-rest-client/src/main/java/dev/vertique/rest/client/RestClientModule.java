@@ -15,6 +15,8 @@ import dev.vertique.core.lifecycle.ComposeValidator;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.json.JsonRuntimeModule;
+import dev.vertique.resilience.Resilience;
+import dev.vertique.resilience.dagger.ResilienceModule;
 import dev.vertique.rest.client.config.RestClientConfig;
 import dev.vertique.rest.client.config.RestClientDefaults;
 import dev.vertique.rest.client.interceptor.RestClientContextCapturer;
@@ -62,7 +64,7 @@ import java.util.Set;
  *       set is the default (only the built-in {@code vertx} profile).</li>
  * </ul>
  */
-@Module(includes = {JsonRuntimeModule.class, RestCoreModule.class})
+@Module(includes = {JsonRuntimeModule.class, RestCoreModule.class, ResilienceModule.class})
 public abstract class RestClientModule {
 
     // --- Multibindings ---
@@ -182,7 +184,8 @@ public abstract class RestClientModule {
             JsonMapperProfileRegistry jsonMapperProfileRegistry,
             RestClientDefaults restClientDefaults,
             JsonConfig jsonConfig,
-            ParamConversionResolver paramConversionResolver) {
+            ParamConversionResolver paramConversionResolver,
+            Resilience resilience) {
         return new RestClientFactory(
                 vertx,
                 interceptors,
@@ -193,7 +196,8 @@ public abstract class RestClientModule {
                 jsonMapperProfileRegistry,
                 restClientDefaults.jsonProfile(),
                 jsonConfig,
-                paramConversionResolver);
+                paramConversionResolver,
+                resilience);
     }
 
     /**

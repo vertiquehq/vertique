@@ -4,15 +4,13 @@
 package dev.vertique.rest.client.meta;
 
 import dev.vertique.core.codegen.MethodMetadata;
-import dev.vertique.resilience.BackoffStrategy;
+import dev.vertique.resilience.annotation.ResilienceAnnotations;
 import dev.vertique.rest.client.HttpClientResponse;
-import io.vertx.circuitbreaker.CircuitBreakerOptions;
 import io.vertx.core.Expectation;
 import io.vertx.core.http.HttpResponseHead;
 import jakarta.annotation.Nullable;
 import java.lang.reflect.Type;
 import java.util.List;
-import java.util.Set;
 
 /**
  * Immutable metadata for a single JAX-RS client interface method discovered at startup.
@@ -67,8 +65,13 @@ public record ClientMethodMeta(
         String consumesMediaType,
         String producesMediaType,
         @Nullable Expectation<HttpResponseHead> expectation,
-        @Nullable ResilienceConfig resilience,
+        ResilienceAnnotations resilienceAnnotations,
         boolean hasUrlParam) {
+
+    /** Returns the canonical resilience declarations resolved for this method. */
+    public ResilienceAnnotations resilienceAnnotations() {
+        return resilienceAnnotations;
+    }
 
     /**
      * Returns the full generic response type {@code T} unwrapped from {@code Future<T>} (or {@code X}
@@ -83,36 +86,4 @@ public record ClientMethodMeta(
     public Type responseGenericType() {
         return responseType;
     }
-
-    /**
-     * Groups per-method resilience overrides for circuit breaker, timeout, and retry configuration.
-     *
-     * @param circuitBreaker Vert.x circuit breaker options derived from {@code @CircuitBreaker} on
-     *     the method; {@code null} if no method-level circuit breaker annotation is present
-     * @param timeoutMs the per-method request timeout in milliseconds derived from {@code @Timeout};
-     *     {@code -1L} means no method-level timeout override (use the builder default)
-     * @param retry retry configuration derived from {@code @Retry} on the method or interface;
-     *     {@code null} if no {@code @Retry} annotation is present
-     */
-    public record ResilienceConfig(
-            @Nullable CircuitBreakerOptions circuitBreaker,
-            long timeoutMs,
-            @Nullable RetryConfig retry) {}
-
-    /**
-     * Immutable retry configuration derived from the {@link dev.vertique.resilience.annotation.Retry}
-     * annotation placed on a method or its declaring interface.
-     *
-     * @param maxRetries maximum number of retry attempts after the initial failure
-     * @param backoffClass the {@link BackoffStrategy} class to instantiate; use
-     *     {@link BackoffStrategy.Default} to inherit the builder-level strategy
-     * @param retryOn exception types that trigger a retry; empty means delegate to the builder-level
-     *     {@link dev.vertique.rest.client.RestClientRetryPolicy}
-     * @param abortOn exception types that immediately abort retries; highest priority filter
-     */
-    public record RetryConfig(
-            int maxRetries,
-            Class<? extends BackoffStrategy> backoffClass,
-            Set<Class<? extends Throwable>> retryOn,
-            Set<Class<? extends Throwable>> abortOn) {}
 }

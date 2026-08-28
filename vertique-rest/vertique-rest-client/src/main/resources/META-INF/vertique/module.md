@@ -145,6 +145,7 @@ and the optional `BeanValidator`.
 | Method | Description |
 |--------|-------------|
 | `create(Vertx)` | Static factory; equivalent to `new RestClientBuilder(vertx)` |
+| `create(Vertx, Resilience)` | Static factory backed by a supplied, non-owned application resilience runtime |
 | `baseUrl(String)` | Base URL for all requests; overrides `@RestClient#value()`, overridden by external config |
 | `readTimeout(long, TimeUnit)` | Default request timeout (default 30 s); overridden per method by `@Timeout` |
 | `objectMapper(ObjectMapper)` | Explicit Jackson mapper; wins over every JSON-profile source |
@@ -167,6 +168,7 @@ and the optional `BeanValidator`.
 | `beanParamAccessorRegistry(BeanParamAccessorRegistry)` | Overrides the process-wide generated-accessor cache; intended for tests |
 | `config(RestClientConfig)` | Typed per-client overrides; an explicit call wins over the name lookup in the seeded index |
 | `build(Class<T>)` | Scans, validates, and returns the typed proxy |
+| `close()` | Closes builder-created client contexts and WebClients, then the builder-owned runtime; idempotent |
 
 ```java
 // Standalone
@@ -183,6 +185,11 @@ UserClient client = factory.builder()
         .baseUrl("http://user-service:8080")
         .build(UserClient.class);
 ```
+
+Standalone builders own the resilience runtime they create and should be closed when the client
+lifetime ends. Builders created with `create(Vertx, Resilience)` and builders returned by
+`RestClientFactory` do not own the supplied/application runtime; closing them releases only their
+client contexts and WebClients. `close()` is deterministic and idempotent.
 
 ### `RestClientFactory`
 
@@ -742,18 +749,18 @@ fields are optional; an absent field falls through to the builder or annotation 
 | `restClient.{name}.circuitBreaker.maxFailures` | int | 5 | Failures before the circuit opens |
 | `restClient.{name}.circuitBreaker.timeoutMs` | long | -1 | Per-attempt timeout inside the breaker; -1 = none |
 | `restClient.{name}.circuitBreaker.resetTimeoutMs` | long | 10000 | Time before half-open (ms) |
-| `restClient.{name}.circuitBreaker.maxRetries` | int | 3 | Retry attempts inside the breaker |
 | `restClient.{name}.pool.http1MaxSize` | int | 5 | HTTP/1.1 pool size |
 | `restClient.{name}.pool.http2MaxSize` | int | 1 | HTTP/2 pool size |
 | `restClient.{name}.pool.maxWaitQueueSize` | int | -1 | Requests queued for a connection; -1 = unbounded |
 | `restClient.{name}.pool.eventLoopSize` | int | 0 | Event-loop threads for the pool; 0 = reuse current |
 | `restClient.{name}.pool.cleanerPeriodMs` | int | 1000 | Pool cleaner interval (ms); non-positive disables |
 | `restClient.{name}.pool.maxLifetimeSeconds` | int | 0 | Max connection lifetime (s); 0 = no limit |
+| `restClient.{name}.retry.maxRetries` | int | — | Client-level retry count override, from 0 through 100 |
 | `restClient.{name}.retry.backoffStrategy` | String | — | FQCN of a `BackoffStrategy` with a public no-arg constructor, instantiated at `build()` |
 | `restClient.defaults.jsonProfile` | String | — | Boundary-wide default profile id for every REST client |
 
-> The `retry` block carries **only** `backoffStrategy`. Retry count comes from
-> `circuitBreaker.maxRetries`; `retryOn` and `abortOn` live on `@Retry` and are not read from config.
+> The `retry` block carries `maxRetries` and `backoffStrategy`. `retryOn` and `abortOn` live on
+> `@Retry` and are not read from config. `maxRetries` is bounded to 100.
 
 ### `webClient` options
 
@@ -803,9 +810,9 @@ A raw Vert.x duration key is **rejected**, not silently accepted: writing `conne
         "verifyHost": true,
         "trustAll": false
       },
-      "circuitBreaker": { "maxFailures": 3, "timeoutMs": 10000, "resetTimeoutMs": 30000, "maxRetries": 1 },
+      "circuitBreaker": { "maxFailures": 3, "timeoutMs": 10000, "resetTimeoutMs": 30000 },
       "pool": { "http1MaxSize": 10, "http2MaxSize": 5, "maxWaitQueueSize": 100, "maxLifetimeSeconds": 300 },
-      "retry": { "backoffStrategy": "com.example.AggressiveBackoff" }
+      "retry": { "maxRetries": 1, "backoffStrategy": "com.example.AggressiveBackoff" }
     },
     "secureClient": {
       "webClient": {
@@ -992,7 +999,6 @@ interface AppComponent {
 | `dev.vertique:vertique-rest-core` | `ParamConversionResolver`, `ParamConverterRegistry`, `ConversionContext`, `ParamSource`, and `RestCoreModule` — the outbound half of the conversion stack `rest-jaxrs` uses inbound |
 | `dev.vertique:vertique-json` | `JsonMapperProfileRegistry`, `JsonConfig`, and `JsonRuntimeModule` for named mapper profiles |
 | `io.vertx:vertx-web-client` | `WebClient`, `WebClientOptions`, `PoolOptions` |
-| `io.vertx:vertx-circuit-breaker` | The breaker behind `@CircuitBreaker` |
 | `jakarta.ws.rs:jakarta.ws.rs-api` | The JAX-RS annotations that describe each interface |
 | `jakarta.annotation:jakarta.annotation-api` | `@Nullable` on API signatures |
 | `com.google.dagger:dagger` | `@Module` / `@Multibinds` declarations |
