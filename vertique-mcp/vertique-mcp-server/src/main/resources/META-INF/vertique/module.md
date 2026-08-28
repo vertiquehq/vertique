@@ -52,6 +52,13 @@ only while a write is actually in flight, so it cannot reclaim a connection that
 reads or writes again. Set at least one of the two qualifying `HttpConfig` timeouts for any MCP
 deployment — the mount will not start otherwise.
 
+**HTTP/2 residual.** The idle/read timers are connection-level: on a multiplexed HTTP/2
+connection, traffic on any sibling stream resets them, so a hung request on such a connection is
+**not** reclaimed by these timers (characterized against a real transport; an HTTP/1.1 connection
+with the same hung request is reclaimed as documented). Until a per-request deadline exists,
+deployments exposing the mount over HTTP/2 should bound streams at a fronting proxy
+(per-stream/route timeouts) or restrict the mount to HTTP/1.1.
+
 **Configuration keys are flat under `mcp`.** `McpServerConfig` is bound from the `mcp` section by
 Jackson using the field names exactly as declared: `mcp.outputMaxBytes`, `mcp.ingressMaxTokens`,
 `mcp.outputMaxTokens`, `mcp.toolsPageSize`, `mcp.toolsTtlMs`, and `mcp.jsonProfile`, not dotted

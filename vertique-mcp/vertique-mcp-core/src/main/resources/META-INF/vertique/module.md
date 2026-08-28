@@ -137,7 +137,11 @@ observe-only, synchronous, non-blocking, and failure-isolated by the server runt
 
 Applications that only need a post-transport callback can contribute an
 `McpRequestCompletedListener`. Listener order is unspecified and listener failures cannot alter a
-request outcome.
+request outcome. Choose the listener when a stateless, allocation-free completion hook suffices —
+it receives the same completion event (terminal facts included) with no per-request session
+object; choose the observer SPI whenever per-request state, the pre-write terminal callback, or
+opt-in value observation is needed. The listener mirrors REST's request-completed listener
+deliberately.
 
 `McpTraceContext` is the optional normalized W3C trace reference associated with a terminal
 observation. It carries no baggage.
