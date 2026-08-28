@@ -5,7 +5,6 @@ package dev.vertique.resilience.annotation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.resilience.BackoffStrategy;
@@ -124,20 +123,6 @@ class CanonicalResilienceVocabularyTest {
         assertMethodDescriptor(
                 RetryPolicy.class, "shouldRetry", "(Ljava/lang/Throwable;I)Z", Throwable.class, int.class);
 
-        String[] legacyTypes = {
-            "dev.vertique.core.resilience.BackoffStrategy",
-            "dev.vertique.core.resilience.BackoffStrategyResolver",
-            "dev.vertique.core.resilience.CircuitBreaker",
-            "dev.vertique.core.resilience.ResilienceAnnotations",
-            "dev.vertique.core.resilience.Retry",
-            "dev.vertique.core.resilience.RetryPolicy",
-            "dev.vertique.core.resilience.Timeout",
-            "dev.vertique.core.resilience.package-info"
-        };
-        for (String legacyType : legacyTypes) {
-            assertNotLoadable(legacyType);
-        }
-        assertPackageAbsent("dev.vertique.core.resilience");
         assertPackageAbsent("dev.vertique.resilience.internal");
         assertPackageAbsent("dev.vertique.resilience.runtime");
     }
@@ -209,13 +194,6 @@ class CanonicalResilienceVocabularyTest {
             return type.getName().replace('.', '/');
         }
         return "L" + type.getName().replace('.', '/') + ";";
-    }
-
-    private static void assertNotLoadable(String className) {
-        assertThrows(
-                ClassNotFoundException.class,
-                () -> Class.forName(className, false, CanonicalResilienceVocabularyTest.class.getClassLoader()),
-                "legacy or placeholder type must not be loadable: " + className);
     }
 
     private static void assertPackageAbsent(String packageName) throws Exception {

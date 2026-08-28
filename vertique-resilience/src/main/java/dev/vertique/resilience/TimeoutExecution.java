@@ -65,7 +65,7 @@ final class TimeoutExecution<T> implements Resilience.RuntimeExecution {
         }
     }
 
-    public void close() {
+    public void requestClose() {
         startClaimed.compareAndSet(false, true);
         context.runOnContext(ignored -> {
             settleClosed();

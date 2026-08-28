@@ -8,14 +8,14 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.resilience`
 > **Artifact:** `vertique-resilience`
-> **Depends on:** `vertique-core`, `vertx-core`, Dagger, `jakarta.inject-api`
+> **Depends on:** `vertique-core`, `vertx-core`, `vertx-circuit-breaker`, Dagger, `jakarta.inject-api`
 
 `vertique-resilience` provides the shared resilience vocabulary and runtime foundation used by
 Vertique consumers. It contains type and method annotations for timeout, retry, and circuit-breaker
 declarations; immutable metadata snapshots for resolved declarations; retry contracts; and an
-application-scoped runtime with executable timeout/retry policy composition, deterministic policy
-resolution, and execution budgets. Circuit-breaker and bulkhead behavior remains outside this slice;
-policies containing those concerns are rejected eagerly at the structured factory boundary.
+application-scoped runtime with executable timeout/retry/circuit-breaker policy composition,
+deterministic policy resolution, and execution budgets. Bulkhead behavior remains outside this slice;
+policies containing that concern are rejected eagerly at the structured factory boundary.
 
 ---
 
@@ -42,7 +42,10 @@ The executable foundation is application-scoped. Create one `Resilience` for the
 and construct timeout/retry components or pipelines from that owner. A timeout is a per-supplier-
 attempt fence backed by a Vert.x timer; it does not cancel the supplier's underlying future. Retry
 delays are outside the per-attempt timeout, and retry callbacks receive zero-based ordinals. A
-pipeline is fixed-order typed composition state and must contain at least one supported concern.
+pipeline is fixed-order typed composition state and must contain at least one concern. A circuit
+breaker is an independently executable local component: it admits one logical execution, counts its
+final result once, disables Vert.x's own timeout and retry behavior, and admits one no-retry
+half-open probe after reset. It never shares state by equal names.
 
 ---
 
@@ -95,14 +98,26 @@ ResiliencePipeline prebuilt = resilience.pipeline("payment-prebuilt")
         .build();
 
 Future<String> result = prebuilt.execute(() -> client.call());
+
+CircuitBreaker breaker = CircuitBreaker.builder(resilience, "payment-state")
+        .maxFailures(5)
+        .resetTimeout(Duration.ofSeconds(10))
+        .build();
+ResiliencePipeline protectedCall = resilience.pipeline("payment-call")
+        .retry(retry -> retry.maxRetries(1))
+        .circuitBreaker(breaker)
+        .build();
 ```
 
 Timeout durations must be positive and exactly representable in milliseconds. `Duration` values
 that are zero, negative, sub-millisecond, or too large for a millisecond `long` are rejected;
 `TimeoutConfig.ofMillis` likewise requires a positive value. Every timeout duration setter and every
 pipeline timeout setter may be used once, and each builder is single-use. A pipeline must configure
-at least one timeout or retry concern before `build()`. A prebuilt timeout or retry must belong to
-the same `Resilience` runtime as the pipeline; a foreign owner is rejected eagerly.
+at least one timeout, retry, or circuit-breaker concern before `build()`. A prebuilt timeout, retry,
+or circuit breaker must belong to the same `Resilience` runtime as the pipeline; a foreign owner is
+rejected eagerly. Reusing the same prebuilt breaker instance is the only sharing mechanism. Inline
+breaker construction is local to its pipeline, and separately built breakers remain isolated even
+when their construction names are equal.
 
 Operation names are construction-time inputs only. The runtime requires a non-empty valid-Unicode
 name no larger than 4,096 UTF-8 bytes, then derives an opaque SHA-256 operation key; raw names are
@@ -146,9 +161,27 @@ unbounded inputs remain explicit.
 
 Framework adapters use `ResilienceAdapterSupport.pipeline(AdapterOperationIdentity,
 ResolvedResiliencePolicy)` for the stable structured entry point. It derives the opaque key internally,
-accepts timeout-only, retry-only, and combined supported policies, and rejects empty, breaker-bearing,
-or bulkhead-bearing policies before state, timers, or suppliers are started. No raw-key overload or
-standalone public identity derivation is provided.
+accepts timeout-only and retry-only policies, and rejects empty or bulkhead-bearing policies before
+state, timers, or suppliers are started. For breaker policies, create a `ResilienceAdapterContext`
+with `newContext()`. Its classifier overload maps only adapter-final failures into breaker
+accounting; classifier failures preserve the original failure and count conservatively. Contexts
+own breakers and fence active public futures on `close()`. Equal structured identities in separate
+contexts do not share state. No raw-key overload or standalone public identity derivation is
+provided.
+
+### Circuit breaker and adapter context
+
+`CircuitBreaker.builder(resilience, stateName)` creates a standalone local breaker. The component
+builder accepts a positive failure threshold and `Duration` reset timeout. `execute` can be used
+directly or a prebuilt breaker can be placed in a pipeline. Inline pipeline construction creates a
+pipeline-local breaker. A pipeline uses its own operation key in `CircuitOpenException`, while the
+breaker contributes only its state key; direct breaker execution uses the state key for both.
+
+Framework adapters should obtain `ResilienceAdapterContext` from
+`ResilienceAdapterSupport.newContext()`. The context creates structured-identity breakers and
+explicitly tracks same-owner prebuilt reuse. Its classifier overload is the adapter-only failure
+classification seam; application builders do not expose it. `close()` is idempotent, closes owned
+breakers, and fences active timeout/retry/breaker pipeline futures with `ResilienceClosedException`.
 
 ### Runtime exception surface
 
@@ -158,8 +191,9 @@ Runtime failures use two sealed public roots: `ResilienceException` extends
 `dev.vertique.core.exception.UnavailableException` and permits `ResilienceClosedException`,
 `CircuitOpenException`, `BulkheadRejectedException`, and `BulkheadQueueTimeoutException`.
 `CircuitOpenException`, `BulkheadRejectedException`, and `BulkheadQueueTimeoutException` are part of
-the published exception surface, but T002 rejects circuit-breaker and bulkhead policies rather than
-executing them; T003 and T004 own those behaviors.
+the published exception surface. `CircuitOpenException` carries the derived pipeline operation key
+and breaker state key; direct breaker execution uses its state key for both values. Bulkhead policy
+execution remains owned by T004.
 
 `ResilienceTimeoutException` exposes the validated derived operation key and `timeoutMs`;
 `ResilienceClosedException` exposes the validated derived operation key. Public exception messages

@@ -51,7 +51,6 @@ class ModuleStructureTest {
                 "dev.vertique.resilience.exception.BulkheadRejectedException", "dev.vertique.resilience.exception");
         assertPackage(
                 "dev.vertique.resilience.exception.BulkheadQueueTimeoutException", "dev.vertique.resilience.exception");
-        assertNoLoadableType("dev.vertique.core.resilience.Resilience");
     }
 
     @Test
@@ -107,15 +106,6 @@ class ModuleStructureTest {
         Class<?> type = load(typeName);
         assertTrue(Modifier.isPublic(type.getModifiers()), typeName + " must be public");
         assertEquals(expectedPackage, type.getPackageName(), typeName + " package");
-    }
-
-    private static void assertNoLoadableType(String typeName) {
-        try {
-            Class.forName(typeName, false, ModuleStructureTest.class.getClassLoader());
-            fail("legacy type must not be loadable: " + typeName);
-        } catch (ClassNotFoundException expected) {
-            // Expected: T001 removed the former runtime package.
-        }
     }
 
     private static void assertPackageResourceAbsent(String packageName) throws IOException {

@@ -220,13 +220,13 @@ public final class Retry {
         }
 
         @Override
-        public void close() {
+        public void requestClose() {
             closeRequested.set(true);
             startClaimed.compareAndSet(false, true);
             cancelRetryTimer();
             TimeoutExecution<T> attempt = currentAttempt;
             if (attempt != null) {
-                attempt.close();
+                attempt.requestClose();
             }
             context.runOnContext(ignored -> settleClosed());
         }

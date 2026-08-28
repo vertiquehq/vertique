@@ -44,4 +44,9 @@ public final class ResilienceAdapterSupport {
         return resilience.adapterPipeline(
                 Objects.requireNonNull(identity, "identity"), Objects.requireNonNull(policy, "policy"));
     }
+
+    /** Creates a new opaque lifecycle boundary for adapter-owned state. */
+    public ResilienceAdapterContext newContext() {
+        return new ResilienceAdapterContext(resilience);
+    }
 }

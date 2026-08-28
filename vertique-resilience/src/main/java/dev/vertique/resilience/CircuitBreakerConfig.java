@@ -3,6 +3,8 @@
 
 package dev.vertique.resilience;
 
+import java.time.Duration;
+
 /** Complete immutable circuit-breaker configuration. */
 public final class CircuitBreakerConfig {
 
@@ -33,6 +35,14 @@ public final class CircuitBreakerConfig {
     }
 
     static CircuitBreakerConfig of(int maxFailures, long resetTimeoutMs) {
+        return new CircuitBreakerConfig(maxFailures, resetTimeoutMs);
+    }
+
+    static CircuitBreakerConfig of(int maxFailures, Duration resetTimeout) {
+        if (resetTimeout == null) {
+            throw new NullPointerException("resetTimeout");
+        }
+        long resetTimeoutMs = resetTimeout.toMillis();
         return new CircuitBreakerConfig(maxFailures, resetTimeoutMs);
     }
 

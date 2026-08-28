@@ -1,0 +1,224 @@
+// SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+// SPDX-License-Identifier: EUPL-1.2
+
+package dev.vertique.resilience.adapter;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import dev.vertique.resilience.CircuitBreaker;
+import dev.vertique.resilience.CircuitBreakerConfig;
+import dev.vertique.resilience.Resilience;
+import dev.vertique.resilience.ResiliencePipeline;
+import dev.vertique.resilience.ResolvedResiliencePolicy;
+import dev.vertique.resilience.TimeoutConfig;
+import dev.vertique.resilience.exception.CircuitOpenException;
+import dev.vertique.resilience.exception.ResilienceClosedException;
+import dev.vertique.resilience.exception.ResiliencePolicyException;
+import io.vertx.core.Future;
+import io.vertx.core.Promise;
+import io.vertx.core.Vertx;
+import io.vertx.junit5.VertxExtension;
+import java.lang.reflect.Method;
+import java.time.Duration;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.extension.ExtendWith;
+
+/** T003 TP-002 proof for explicit adapter-context and prebuilt-component ownership. */
+@ExtendWith(VertxExtension.class)
+@Timeout(value = 10, unit = TimeUnit.SECONDS)
+class ResilienceAdapterContextTest {
+
+    private Resilience resilience;
+
+    @AfterEach
+    void closeRuntime() throws Exception {
+        if (resilience != null) {
+            await(resilience.close());
+        }
+    }
+
+    @Test
+    @DisplayName("only one explicitly reused breaker shares state and context close fences work")
+    void sharesOnlyOneExplicitComponentInstance(Vertx vertx) throws Exception {
+        resilience = Resilience.create(vertx);
+        ResilienceAdapterSupport support = resilience.adapterSupport();
+        ResilienceAdapterContext context = support.newContext();
+        CircuitBreakerConfig config =
+                CircuitBreakerConfig.builder().maxFailures(1).build();
+        AdapterOperationIdentity stateIdentity = new AdapterOperationIdentity("rest-client", List.of("shared"));
+        CircuitBreaker shared = context.circuitBreaker(stateIdentity, config);
+        ResiliencePipeline first = context.pipeline(operation("first"), timeoutPolicy(), shared, failure -> true);
+        ResiliencePipeline second = context.pipeline(operation("second"), timeoutPolicy(), shared, failure -> true);
+
+        awaitFailure(first.execute(() -> Future.failedFuture(new IllegalStateException("first"))));
+        assertInstanceOf(
+                CircuitOpenException.class, awaitFailure(second.execute(() -> Future.succeededFuture("late"))));
+
+        ResilienceAdapterContext isolatedContext = support.newContext();
+        CircuitBreaker isolated = isolatedContext.circuitBreaker(stateIdentity, config);
+        ResiliencePipeline isolatedPipeline =
+                isolatedContext.pipeline(operation("isolated"), timeoutPolicy(), isolated, failure -> true);
+        assertTrue(await(isolatedPipeline.execute(() -> Future.succeededFuture("isolated")))
+                .equals("isolated"));
+
+        CircuitBreaker activeBreaker =
+                context.circuitBreaker(new AdapterOperationIdentity("rest-client", List.of("active")), config);
+        ResiliencePipeline activePipeline =
+                context.pipeline(operation("active"), longTimeoutPolicy(), activeBreaker, failure -> true);
+        Promise<String> pending = Promise.promise();
+        Future<String> active = activePipeline.execute(pending::future);
+        await(context.close());
+        assertInstanceOf(ResilienceClosedException.class, awaitFailure(active));
+        assertThrows(IllegalStateException.class, () -> context.circuitBreaker(stateIdentity, config));
+        pending.complete("late");
+        await(isolatedContext.close());
+    }
+
+    @Test
+    @DisplayName("classifier and policy overloads enforce breaker presence and fail closed")
+    void validatesClassifierAndPolicyBoundaries(Vertx vertx) throws Exception {
+        resilience = Resilience.create(vertx);
+        ResilienceAdapterContext context = resilience.adapterSupport().newContext();
+        AdapterOperationIdentity identity = operation("validation");
+        CircuitFailureClassifier classifier = failure -> true;
+
+        assertThrows(ResiliencePolicyException.class, () -> context.pipeline(identity, timeoutPolicy(), classifier));
+        ResiliencePolicyException unsupported = assertInstanceOf(
+                ResiliencePolicyException.class, assertThrows(ResiliencePolicyException.class, () -> resilience
+                        .adapterSupport()
+                        .pipeline(
+                                identity,
+                                new ResolvedResiliencePolicy(
+                                        Optional.empty(),
+                                        Optional.empty(),
+                                        Optional.of(
+                                                CircuitBreakerConfig.builder().build()),
+                                        Optional.empty()))));
+        assertTrue(unsupported.getMessage().contains("Invalid resilience policy"));
+    }
+
+    @Test
+    @DisplayName("a classifier can exclude a final failure from breaker accounting")
+    void classifierControlsFinalFailureAccounting(Vertx vertx) throws Exception {
+        resilience = Resilience.create(vertx);
+        ResilienceAdapterContext context = resilience.adapterSupport().newContext();
+        CircuitBreaker breaker = context.circuitBreaker(
+                new AdapterOperationIdentity("rest-client", List.of("classified")),
+                CircuitBreakerConfig.builder().maxFailures(1).build());
+        ResiliencePipeline pipeline =
+                context.pipeline(operation("classified"), timeoutPolicy(), breaker, failure -> false);
+
+        awaitFailure(pipeline.execute(() -> Future.failedFuture(new IllegalStateException("ignored"))));
+        assertEquals("accepted", await(pipeline.execute(() -> Future.succeededFuture("accepted"))));
+        await(context.close());
+    }
+
+    @Test
+    @DisplayName("a classifier failure preserves the original failure and opens conservatively")
+    void classifierFailureCountsOriginalFailure(Vertx vertx) throws Exception {
+        resilience = Resilience.create(vertx);
+        ResilienceAdapterContext context = resilience.adapterSupport().newContext();
+        CircuitBreaker breaker = context.circuitBreaker(
+                new AdapterOperationIdentity("rest-client", List.of("classifier-failure")),
+                CircuitBreakerConfig.builder().maxFailures(1).build());
+        ResiliencePipeline pipeline =
+                context.pipeline(operation("classifier-failure"), timeoutPolicy(), breaker, failure -> {
+                    throw new IllegalStateException("classifier failure");
+                });
+        IllegalArgumentException original = new IllegalArgumentException("original");
+
+        assertInstanceOf(
+                IllegalArgumentException.class, awaitFailure(pipeline.execute(() -> Future.failedFuture(original))));
+        assertInstanceOf(
+                CircuitOpenException.class, awaitFailure(pipeline.execute(() -> Future.succeededFuture("late"))));
+    }
+
+    @Test
+    @DisplayName("context close fences pipelines that do not use a breaker")
+    void contextCloseFencesTimeoutOnlyPipeline(Vertx vertx) throws Exception {
+        resilience = Resilience.create(vertx);
+        ResilienceAdapterContext context = resilience.adapterSupport().newContext();
+        ResiliencePipeline pipeline = context.pipeline(operation("timeout-only"), longTimeoutPolicy());
+        Promise<String> pending = Promise.promise();
+        Future<String> active = pipeline.execute(pending::future);
+
+        await(context.close());
+        assertInstanceOf(ResilienceClosedException.class, awaitFailure(active));
+        pending.complete("late");
+    }
+
+    @Test
+    @DisplayName("adapter factories expose structured identities and no application classifier hook")
+    void publicSurfaceHasNoRawAdapterKeysOrApplicationClassifier() {
+        assertFalse(hasPublicMethodWithStringParameter(Resilience.class, "adapterPipeline"));
+        assertFalse(hasPublicMethodWithStringParameter(Resilience.class, "adapterCircuitBreaker"));
+        assertFalse(Arrays.stream(ResiliencePipeline.Builder.class.getMethods())
+                .anyMatch(method -> method.getName().equals("recordFailureWhen")));
+    }
+
+    @Test
+    @DisplayName("shared breaker rejects a breaker owned by another runtime")
+    void rejectsForeignSharedBreaker(Vertx vertx) throws Exception {
+        resilience = Resilience.create(vertx);
+        Resilience foreignRuntime = Resilience.create(vertx);
+        try {
+            CircuitBreaker foreign =
+                    CircuitBreaker.builder(foreignRuntime, "foreign").build();
+            ResilienceAdapterContext context = resilience.adapterSupport().newContext();
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () -> context.pipeline(operation("foreign"), timeoutPolicy(), foreign, failure -> true));
+            await(context.close());
+        } finally {
+            await(foreignRuntime.close());
+        }
+    }
+
+    private static boolean hasPublicMethodWithStringParameter(Class<?> type, String name) {
+        return Arrays.stream(type.getMethods())
+                .filter(method -> method.getName().equals(name))
+                .map(Method::getParameterTypes)
+                .anyMatch(parameters -> Arrays.stream(parameters).anyMatch(String.class::equals));
+    }
+
+    private static AdapterOperationIdentity operation(String name) {
+        return new AdapterOperationIdentity("rest-client.method", List.of("client", name));
+    }
+
+    private static ResolvedResiliencePolicy timeoutPolicy() {
+        return new ResolvedResiliencePolicy(
+                Optional.of(TimeoutConfig.ofMillis(500)), Optional.empty(), Optional.empty(), Optional.empty());
+    }
+
+    private static ResolvedResiliencePolicy longTimeoutPolicy() {
+        return new ResolvedResiliencePolicy(
+                Optional.of(TimeoutConfig.ofMillis(Duration.ofHours(1).toMillis())),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty());
+    }
+
+    private static Throwable awaitFailure(Future<?> future) throws Exception {
+        try {
+            await(future);
+        } catch (Exception failure) {
+            return failure.getCause() == null ? failure : failure.getCause();
+        }
+        throw new AssertionError("expected failure");
+    }
+
+    private static <T> T await(Future<T> future) throws Exception {
+        return future.toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
+    }
+}

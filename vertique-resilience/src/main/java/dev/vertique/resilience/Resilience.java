@@ -4,6 +4,7 @@
 package dev.vertique.resilience;
 
 import dev.vertique.resilience.adapter.AdapterOperationIdentity;
+import dev.vertique.resilience.adapter.CircuitFailureClassifier;
 import dev.vertique.resilience.adapter.ResilienceAdapterSupport;
 import dev.vertique.resilience.exception.ResilienceClosedException;
 import io.vertx.core.Context;
@@ -16,6 +17,8 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
 
@@ -92,6 +95,60 @@ public final class Resilience {
     }
 
     /**
+     * Framework-only bridge for an explicitly owned adapter circuit-breaker context.
+     *
+     * @param identity structured adapter identity
+     * @param policy policy without the breaker concern
+     * @param circuitBreaker same-owner breaker instance
+     * @param classifier adapter final-failure classifier
+     * @param contextOpen context lifecycle predicate
+     * @param executionRegistrar active execution close registrar
+     * @return executable adapter pipeline
+     */
+    public ResiliencePipeline adapterPipeline(
+            AdapterOperationIdentity identity,
+            ResolvedResiliencePolicy policy,
+            CircuitBreaker circuitBreaker,
+            CircuitFailureClassifier classifier,
+            BooleanSupplier contextOpen,
+            Consumer<Runnable> executionRegistrar) {
+        return ResiliencePipeline.fromAdapterPolicy(
+                this, identity, policy, circuitBreaker, classifier, contextOpen, executionRegistrar);
+    }
+
+    /**
+     * Framework-only bridge for an adapter context without a circuit-breaker concern.
+     *
+     * @param identity structured adapter identity
+     * @param policy resolved timeout/retry policy
+     * @param contextOpen context lifecycle predicate
+     * @param executionRegistrar active execution close registrar
+     * @return executable adapter pipeline
+     */
+    public ResiliencePipeline adapterPipeline(
+            AdapterOperationIdentity identity,
+            ResolvedResiliencePolicy policy,
+            BooleanSupplier contextOpen,
+            Consumer<Runnable> executionRegistrar) {
+        return ResiliencePipeline.fromAdapterPolicy(
+                this, identity, policy, null, null, contextOpen, executionRegistrar);
+    }
+
+    /**
+     * Framework-only bridge for creating an adapter-owned breaker from structured identity.
+     *
+     * @param identity structured adapter state identity
+     * @param configuration breaker configuration
+     * @return runtime-owned breaker
+     */
+    public CircuitBreaker adapterCircuitBreaker(AdapterOperationIdentity identity, CircuitBreakerConfig configuration) {
+        Objects.requireNonNull(identity, "identity");
+        Objects.requireNonNull(configuration, "configuration");
+        ensureOpenForConstruction();
+        return CircuitBreaker.forAdapterIdentity(this, identity, configuration);
+    }
+
+    /**
      * Starts construction of a pipeline for an application operation identity.
      *
      * @param operationName raw construction-time operation identity
@@ -137,9 +194,9 @@ public final class Resilience {
         }
 
         if (executions.isEmpty()) {
-            shutdown.complete();
+            shutdown.tryComplete();
         } else {
-            executions.forEach(RuntimeExecution::close);
+            executions.forEach(RuntimeExecution::requestClose);
         }
         return shutdown.future();
     }
@@ -214,6 +271,21 @@ public final class Resilience {
         completeCloseIfIdle();
     }
 
+    boolean register(RuntimeExecution execution) {
+        synchronized (lifecycleMonitor) {
+            if (closed) {
+                return false;
+            }
+            activeExecutions.add(Objects.requireNonNull(execution, "execution"));
+            return true;
+        }
+    }
+
+    /** Returns whether a breaker belongs to this runtime owner. */
+    public boolean owns(CircuitBreaker circuitBreaker) {
+        return circuitBreaker != null && circuitBreaker.resilience() == this;
+    }
+
     long setTimer(long delayMs, Handler<Long> handler) {
         return timerScheduler.setTimer(delayMs, handler);
     }
@@ -238,19 +310,19 @@ public final class Resilience {
         shutdown.tryComplete();
     }
 
-    private Context executionContext() {
+    Context executionContext() {
         Context currentContext = Vertx.currentContext();
         return currentContext == null ? fallbackContext : currentContext;
     }
 
-    private <T> Future<T> failedOnContext(Context context, String operationKey) {
+    <T> Future<T> failedOnContext(Context context, String operationKey) {
         Promise<T> result = Promise.promise();
         context.runOnContext(ignored -> result.tryFail(new ResilienceClosedException(operationKey)));
         return result.future();
     }
 
     interface RuntimeExecution {
-        void close();
+        void requestClose();
     }
 
     interface TimerScheduler {

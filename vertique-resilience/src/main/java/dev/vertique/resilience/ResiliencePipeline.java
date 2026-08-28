@@ -4,6 +4,7 @@
 package dev.vertique.resilience;
 
 import dev.vertique.resilience.adapter.AdapterOperationIdentity;
+import dev.vertique.resilience.adapter.CircuitFailureClassifier;
 import dev.vertique.resilience.exception.ResiliencePolicyException;
 import dev.vertique.resilience.exception.ResiliencePolicyFailureReason;
 import io.vertx.core.Future;
@@ -12,6 +13,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.Objects;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -22,16 +24,28 @@ public final class ResiliencePipeline {
     private final String operationKey;
     private final TimeoutConfig timeoutConfiguration;
     private final RetryConfig retryConfiguration;
+    private final CircuitBreaker circuitBreaker;
+    private final CircuitFailureClassifier circuitFailureClassifier;
+    private final BooleanSupplier contextOpen;
+    private final Consumer<Runnable> executionRegistrar;
 
     private ResiliencePipeline(
             Resilience resilience,
             String operationKey,
             TimeoutConfig timeoutConfiguration,
-            RetryConfig retryConfiguration) {
+            RetryConfig retryConfiguration,
+            CircuitBreaker circuitBreaker,
+            CircuitFailureClassifier circuitFailureClassifier,
+            BooleanSupplier contextOpen,
+            Consumer<Runnable> executionRegistrar) {
         this.resilience = resilience;
         this.operationKey = operationKey;
         this.timeoutConfiguration = timeoutConfiguration;
         this.retryConfiguration = retryConfiguration;
+        this.circuitBreaker = circuitBreaker;
+        this.circuitFailureClassifier = circuitFailureClassifier;
+        this.contextOpen = contextOpen;
+        this.executionRegistrar = executionRegistrar;
     }
 
     /**
@@ -62,7 +76,62 @@ public final class ResiliencePipeline {
                 resilience,
                 operationKey,
                 policy.timeout().orElse(null),
-                policy.retry().orElse(null));
+                policy.retry().orElse(null),
+                null,
+                null,
+                () -> true,
+                null);
+    }
+
+    static ResiliencePipeline fromAdapterPolicy(
+            Resilience resilience,
+            AdapterOperationIdentity identity,
+            ResolvedResiliencePolicy policy,
+            CircuitBreaker circuitBreaker,
+            CircuitFailureClassifier classifier,
+            BooleanSupplier contextOpen) {
+        Objects.requireNonNull(resilience, "resilience");
+        Objects.requireNonNull(identity, "identity");
+        Objects.requireNonNull(policy, "policy");
+        Objects.requireNonNull(contextOpen, "contextOpen");
+        if (policy.isEmpty()) {
+            throw new IllegalStateException("a pipeline must configure at least one concern");
+        }
+        if (policy.circuitBreaker().isPresent() || policy.bulkhead().isPresent()) {
+            throw new ResiliencePolicyException(ResiliencePolicyFailureReason.INVALID_CONFIGURATION);
+        }
+        resilience.ensureOpenForConstruction();
+        return new ResiliencePipeline(
+                resilience,
+                deriveAdapterOperationKey(identity),
+                policy.timeout().orElse(null),
+                policy.retry().orElse(null),
+                circuitBreaker,
+                classifier,
+                contextOpen,
+                null);
+    }
+
+    static ResiliencePipeline fromAdapterPolicy(
+            Resilience resilience,
+            AdapterOperationIdentity identity,
+            ResolvedResiliencePolicy policy,
+            CircuitBreaker circuitBreaker,
+            CircuitFailureClassifier classifier,
+            BooleanSupplier contextOpen,
+            Consumer<Runnable> executionRegistrar) {
+        Objects.requireNonNull(executionRegistrar, "executionRegistrar");
+        ResiliencePipeline base =
+                fromAdapterPolicy(resilience, identity, policy, circuitBreaker, classifier, contextOpen);
+        return new ResiliencePipeline(
+                base.resilience,
+                base.operationKey,
+                base.timeoutConfiguration,
+                base.retryConfiguration,
+                base.circuitBreaker,
+                base.circuitFailureClassifier,
+                base.contextOpen,
+                executionRegistrar);
     }
 
     /**
@@ -83,10 +152,37 @@ public final class ResiliencePipeline {
      */
     public <T> Future<T> execute(Supplier<Future<T>> operation) {
         Objects.requireNonNull(operation, "operation");
-        if (retryConfiguration != null) {
-            return resilience.executeRetry(operationKey, retryConfiguration, timeoutConfiguration, operation);
+        if (!contextOpen.getAsBoolean()) {
+            return resilience.failedOnContext(resilience.executionContext(), operationKey);
         }
-        return resilience.executeTimeout(operationKey, timeoutConfiguration, operation);
+        Supplier<Future<T>> retryOrTimeout = () -> retryConfiguration != null
+                ? resilience.executeRetry(operationKey, retryConfiguration, timeoutConfiguration, operation)
+                : resilience.executeTimeout(operationKey, timeoutConfiguration, operation);
+        if (circuitBreaker != null) {
+            return circuitBreaker.execute(
+                    operationKey, circuitFailureClassifier, retryOrTimeout, contextOpen, executionRegistrar);
+        }
+        Future<T> outcome = retryOrTimeout.get();
+        return executionRegistrar == null ? outcome : fenceContext(outcome);
+    }
+
+    private <T> Future<T> fenceContext(Future<T> outcome) {
+        io.vertx.core.Promise<T> result = io.vertx.core.Promise.promise();
+        io.vertx.core.Context context = resilience.executionContext();
+        executionRegistrar.accept(
+                () -> result.tryFail(new dev.vertique.resilience.exception.ResilienceClosedException(operationKey)));
+        outcome.onComplete(ignored -> context.runOnContext(done -> {
+            if (contextOpen.getAsBoolean()) {
+                if (outcome.succeeded()) {
+                    result.tryComplete(outcome.result());
+                } else {
+                    result.tryFail(outcome.cause());
+                }
+            } else {
+                result.tryFail(new dev.vertique.resilience.exception.ResilienceClosedException(operationKey));
+            }
+        }));
+        return result.future();
     }
 
     /** Builder for one immutable fixed-order resilience pipeline. */
@@ -96,6 +192,7 @@ public final class ResiliencePipeline {
         private final String operationKey;
         private Timeout timeout;
         private Retry retry;
+        private CircuitBreaker circuitBreaker;
         private boolean built;
 
         Builder(Resilience resilience, String operationKey) {
@@ -157,6 +254,23 @@ public final class ResiliencePipeline {
             return this;
         }
 
+        /** Adds a prebuilt circuit breaker concern. */
+        public Builder circuitBreaker(CircuitBreaker value) {
+            ensureCircuitBreakerNotConfigured();
+            circuitBreaker = Objects.requireNonNull(value, "circuitBreaker");
+            return this;
+        }
+
+        /** Builds an inline circuit breaker concern with this pipeline's state identity. */
+        public Builder circuitBreaker(Consumer<CircuitBreaker.Builder> configuration) {
+            ensureCircuitBreakerNotConfigured();
+            Objects.requireNonNull(configuration, "configuration");
+            CircuitBreaker.Builder builder = CircuitBreaker.builderForDerivedKey(resilience, operationKey);
+            configuration.accept(builder);
+            circuitBreaker = builder.build();
+            return this;
+        }
+
         /**
          * Builds the pipeline after validating concern ownership and completeness.
          *
@@ -166,7 +280,7 @@ public final class ResiliencePipeline {
             ensureMutable();
             built = true;
             resilience.ensureOpenForConstruction();
-            if (timeout == null && retry == null) {
+            if (timeout == null && retry == null && circuitBreaker == null) {
                 throw new IllegalStateException("a pipeline must configure at least one concern");
             }
             if (timeout != null && timeout.resilience() != resilience) {
@@ -175,11 +289,18 @@ public final class ResiliencePipeline {
             if (retry != null && retry.resilience() != resilience) {
                 throw new IllegalArgumentException("pipeline concerns must share the owning runtime");
             }
+            if (circuitBreaker != null && circuitBreaker.resilience() != resilience) {
+                throw new IllegalArgumentException("pipeline concerns must share the owning runtime");
+            }
             return new ResiliencePipeline(
                     resilience,
                     operationKey,
                     timeout == null ? null : timeout.configuration(),
-                    retry == null ? null : retry.configuration());
+                    retry == null ? null : retry.configuration(),
+                    circuitBreaker,
+                    null,
+                    () -> true,
+                    null);
         }
 
         private void ensureMutable() {
@@ -201,9 +322,16 @@ public final class ResiliencePipeline {
                 throw new IllegalStateException("retry concern already configured");
             }
         }
+
+        private void ensureCircuitBreakerNotConfigured() {
+            ensureMutable();
+            if (circuitBreaker != null) {
+                throw new IllegalStateException("circuit-breaker concern already configured");
+            }
+        }
     }
 
-    private static String deriveAdapterOperationKey(AdapterOperationIdentity identity) {
+    static String deriveAdapterOperationKey(AdapterOperationIdentity identity) {
         MessageDigest digest = newSha256();
         digest.update((byte) 0x01);
 
