@@ -102,7 +102,7 @@ public final class ResiliencePipeline {
         Objects.requireNonNull(identity, "identity");
         Objects.requireNonNull(policy, "policy");
         Objects.requireNonNull(contextOpen, "contextOpen");
-        if (policy.isEmpty()) {
+        if (policy.isEmpty() && circuitBreaker == null) {
             throw new IllegalStateException("a pipeline must configure at least one concern");
         }
         if (policy.circuitBreaker().isPresent() || policy.bulkhead().isPresent()) {

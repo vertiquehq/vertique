@@ -109,6 +109,24 @@ class ResilienceAdapterContextTest {
     }
 
     @Test
+    @DisplayName("supports a circuit-only adapter policy")
+    void supportsCircuitOnlyPolicy(Vertx vertx) throws Exception {
+        resilience = Resilience.create(vertx);
+        ResilienceAdapterContext context = resilience.adapterSupport().newContext();
+        ResolvedResiliencePolicy circuitOnly = new ResolvedResiliencePolicy(
+                Optional.empty(),
+                Optional.empty(),
+                Optional.of(CircuitBreakerConfig.builder().maxFailures(1).build()),
+                Optional.empty());
+
+        ResiliencePipeline pipeline = context.pipeline(operation("circuit-only"), circuitOnly, failure -> true);
+        awaitFailure(pipeline.execute(() -> Future.failedFuture(new IllegalStateException("first"))));
+        assertInstanceOf(
+                CircuitOpenException.class, awaitFailure(pipeline.execute(() -> Future.succeededFuture("closed"))));
+        await(context.close());
+    }
+
+    @Test
     @DisplayName("a classifier can exclude a final failure from breaker accounting")
     void classifierControlsFinalFailureAccounting(Vertx vertx) throws Exception {
         resilience = Resilience.create(vertx);
