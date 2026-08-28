@@ -13,6 +13,7 @@ final class ResilienceIdentity {
 
     private static final byte VERSION = 0x01;
     private static final String OPERATION_KIND = "application.operation";
+    private static final String STATE_KIND = "application.state";
     private static final int MAX_UTF8_BYTES = 4_096;
 
     private ResilienceIdentity() {}
@@ -28,6 +29,19 @@ final class ResilienceIdentity {
         updateLength(digest, component.length);
         digest.update(component);
         return "application:operation:" + java.util.HexFormat.of().formatHex(digest.digest());
+    }
+
+    static String applicationStateKey(String stateName) {
+        Objects.requireNonNull(stateName, "stateName");
+        byte[] component = validate(stateName);
+        MessageDigest digest = sha256();
+        digest.update(VERSION);
+        updateLength(digest, STATE_KIND.length());
+        digest.update(STATE_KIND.getBytes(StandardCharsets.UTF_8));
+        updateLength(digest, 1);
+        updateLength(digest, component.length);
+        digest.update(component);
+        return "application:state:" + java.util.HexFormat.of().formatHex(digest.digest());
     }
 
     private static byte[] validate(String value) {

@@ -5,6 +5,7 @@ package dev.vertique.resilience;
 
 import dev.vertique.resilience.adapter.AdapterOperationIdentity;
 import dev.vertique.resilience.adapter.CircuitFailureClassifier;
+import dev.vertique.resilience.exception.CircuitOpenException;
 import dev.vertique.resilience.exception.ResiliencePolicyException;
 import dev.vertique.resilience.exception.ResiliencePolicyFailureReason;
 import io.vertx.core.Future;
@@ -25,6 +26,7 @@ public final class ResiliencePipeline {
     private final TimeoutConfig timeoutConfiguration;
     private final RetryConfig retryConfiguration;
     private final CircuitBreaker circuitBreaker;
+    private final Bulkhead bulkhead;
     private final CircuitFailureClassifier circuitFailureClassifier;
     private final BooleanSupplier contextOpen;
     private final Consumer<Runnable> executionRegistrar;
@@ -35,6 +37,7 @@ public final class ResiliencePipeline {
             TimeoutConfig timeoutConfiguration,
             RetryConfig retryConfiguration,
             CircuitBreaker circuitBreaker,
+            Bulkhead bulkhead,
             CircuitFailureClassifier circuitFailureClassifier,
             BooleanSupplier contextOpen,
             Consumer<Runnable> executionRegistrar) {
@@ -43,6 +46,7 @@ public final class ResiliencePipeline {
         this.timeoutConfiguration = timeoutConfiguration;
         this.retryConfiguration = retryConfiguration;
         this.circuitBreaker = circuitBreaker;
+        this.bulkhead = bulkhead;
         this.circuitFailureClassifier = circuitFailureClassifier;
         this.contextOpen = contextOpen;
         this.executionRegistrar = executionRegistrar;
@@ -79,6 +83,7 @@ public final class ResiliencePipeline {
                 policy.retry().orElse(null),
                 null,
                 null,
+                null,
                 () -> true,
                 null);
     }
@@ -107,6 +112,7 @@ public final class ResiliencePipeline {
                 policy.timeout().orElse(null),
                 policy.retry().orElse(null),
                 circuitBreaker,
+                null,
                 classifier,
                 contextOpen,
                 null);
@@ -129,6 +135,7 @@ public final class ResiliencePipeline {
                 base.timeoutConfiguration,
                 base.retryConfiguration,
                 base.circuitBreaker,
+                base.bulkhead,
                 base.circuitFailureClassifier,
                 base.contextOpen,
                 executionRegistrar);
@@ -155,12 +162,28 @@ public final class ResiliencePipeline {
         if (!contextOpen.getAsBoolean()) {
             return resilience.failedOnContext(resilience.executionContext(), operationKey);
         }
-        Supplier<Future<T>> retryOrTimeout = () -> retryConfiguration != null
-                ? resilience.executeRetry(operationKey, retryConfiguration, timeoutConfiguration, operation)
-                : resilience.executeTimeout(operationKey, timeoutConfiguration, operation);
+        if (circuitBreaker != null && circuitBreaker.isOpenForAdmission()) {
+            return resilience.failedOnContext(
+                    resilience.executionContext(), new CircuitOpenException(operationKey, circuitBreaker.stateKey()));
+        }
+        Supplier<Future<T>> retryOrTimeout = retryConfiguration != null
+                ? () -> resilience.executeRetry(operationKey, retryConfiguration, timeoutConfiguration, operation)
+                : timeoutConfiguration != null
+                        ? () -> resilience.executeTimeout(operationKey, timeoutConfiguration, operation)
+                        : operation;
+        Supplier<Future<T>> protectedOperation = circuitBreaker == null
+                ? retryOrTimeout
+                : () -> circuitBreaker.execute(
+                        operationKey, circuitFailureClassifier, retryOrTimeout, contextOpen, executionRegistrar);
+        if (bulkhead != null) {
+            return bulkhead.execute(
+                    operationKey,
+                    protectedOperation,
+                    contextOpen,
+                    executionRegistrar == null ? ignored -> {} : executionRegistrar);
+        }
         if (circuitBreaker != null) {
-            return circuitBreaker.execute(
-                    operationKey, circuitFailureClassifier, retryOrTimeout, contextOpen, executionRegistrar);
+            return protectedOperation.get();
         }
         Future<T> outcome = retryOrTimeout.get();
         return executionRegistrar == null ? outcome : fenceContext(outcome);
@@ -193,6 +216,7 @@ public final class ResiliencePipeline {
         private Timeout timeout;
         private Retry retry;
         private CircuitBreaker circuitBreaker;
+        private Bulkhead bulkhead;
         private boolean built;
 
         Builder(Resilience resilience, String operationKey) {
@@ -271,6 +295,23 @@ public final class ResiliencePipeline {
             return this;
         }
 
+        /** Adds a prebuilt bulkhead concern. */
+        public Builder bulkhead(Bulkhead value) {
+            ensureBulkheadNotConfigured();
+            bulkhead = Objects.requireNonNull(value, "bulkhead");
+            return this;
+        }
+
+        /** Builds an inline bulkhead concern with this pipeline's state identity. */
+        public Builder bulkhead(Consumer<Bulkhead.Builder> configuration) {
+            ensureBulkheadNotConfigured();
+            Objects.requireNonNull(configuration, "configuration");
+            Bulkhead.Builder builder = Bulkhead.builderForDerivedKey(resilience, operationKey);
+            configuration.accept(builder);
+            bulkhead = builder.build();
+            return this;
+        }
+
         /**
          * Builds the pipeline after validating concern ownership and completeness.
          *
@@ -280,7 +321,7 @@ public final class ResiliencePipeline {
             ensureMutable();
             built = true;
             resilience.ensureOpenForConstruction();
-            if (timeout == null && retry == null && circuitBreaker == null) {
+            if (timeout == null && retry == null && circuitBreaker == null && bulkhead == null) {
                 throw new IllegalStateException("a pipeline must configure at least one concern");
             }
             if (timeout != null && timeout.resilience() != resilience) {
@@ -292,12 +333,16 @@ public final class ResiliencePipeline {
             if (circuitBreaker != null && circuitBreaker.resilience() != resilience) {
                 throw new IllegalArgumentException("pipeline concerns must share the owning runtime");
             }
+            if (bulkhead != null && bulkhead.resilience() != resilience) {
+                throw new IllegalArgumentException("pipeline concerns must share the owning runtime");
+            }
             return new ResiliencePipeline(
                     resilience,
                     operationKey,
                     timeout == null ? null : timeout.configuration(),
                     retry == null ? null : retry.configuration(),
                     circuitBreaker,
+                    bulkhead,
                     null,
                     () -> true,
                     null);
@@ -327,6 +372,13 @@ public final class ResiliencePipeline {
             ensureMutable();
             if (circuitBreaker != null) {
                 throw new IllegalStateException("circuit-breaker concern already configured");
+            }
+        }
+
+        private void ensureBulkheadNotConfigured() {
+            ensureMutable();
+            if (bulkhead != null) {
+                throw new IllegalStateException("bulkhead concern already configured");
             }
         }
     }

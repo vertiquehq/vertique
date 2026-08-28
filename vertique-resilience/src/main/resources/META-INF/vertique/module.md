@@ -13,9 +13,9 @@ SPDX-License-Identifier: EUPL-1.2
 `vertique-resilience` provides the shared resilience vocabulary and runtime foundation used by
 Vertique consumers. It contains type and method annotations for timeout, retry, and circuit-breaker
 declarations; immutable metadata snapshots for resolved declarations; retry contracts; and an
-application-scoped runtime with executable timeout/retry/circuit-breaker policy composition,
-deterministic policy resolution, and execution budgets. Bulkhead behavior remains outside this slice;
-policies containing that concern are rejected eagerly at the structured factory boundary.
+application-scoped runtime with executable timeout/retry/circuit-breaker/bulkhead policy composition,
+deterministic policy resolution, and execution budgets. Framework adapter policies containing a
+bulkhead remain rejected eagerly until downstream adapter cutovers own that boundary.
 
 ---
 
@@ -39,13 +39,14 @@ timeout, retry, and circuit breaker. `ResilienceAnnotations.NONE` is the shared 
 `hasAny()` is the convenient test for whether a declaration is present.
 
 The executable foundation is application-scoped. Create one `Resilience` for the application graph
-and construct timeout/retry components or pipelines from that owner. A timeout is a per-supplier-
-attempt fence backed by a Vert.x timer; it does not cancel the supplier's underlying future. Retry
-delays are outside the per-attempt timeout, and retry callbacks receive zero-based ordinals. A
-pipeline is fixed-order typed composition state and must contain at least one concern. A circuit
-breaker is an independently executable local component: it admits one logical execution, counts its
-final result once, disables Vert.x's own timeout and retry behavior, and admits one no-retry
-half-open probe after reset. It never shares state by equal names.
+and construct timeout/retry/breaker/bulkhead components or pipelines from that owner. A timeout is
+a per-supplier-attempt fence backed by a Vert.x timer; it does not cancel the supplier's underlying
+future. Retry delays are outside the per-attempt timeout, and retry callbacks receive zero-based
+ordinals. A pipeline is fixed-order typed composition state and must contain at least one concern.
+A circuit breaker is an independently executable local component: it admits one logical execution,
+counts its final result once, disables Vert.x's own timeout and retry behavior, and admits one
+no-retry half-open probe after reset. A bulkhead admits whole logical executions with either
+immediate rejection or a FIFO bounded queue. Stateful components never share state by equal names.
 
 ---
 
@@ -113,8 +114,8 @@ Timeout durations must be positive and exactly representable in milliseconds. `D
 that are zero, negative, sub-millisecond, or too large for a millisecond `long` are rejected;
 `TimeoutConfig.ofMillis` likewise requires a positive value. Every timeout duration setter and every
 pipeline timeout setter may be used once, and each builder is single-use. A pipeline must configure
-at least one timeout, retry, or circuit-breaker concern before `build()`. A prebuilt timeout, retry,
-or circuit breaker must belong to the same `Resilience` runtime as the pipeline; a foreign owner is
+at least one timeout, retry, circuit-breaker, or bulkhead concern before `build()`. A prebuilt
+timeout, retry, breaker, or bulkhead must belong to the same `Resilience` runtime as the pipeline; a foreign owner is
 rejected eagerly. Reusing the same prebuilt breaker instance is the only sharing mechanism. Inline
 breaker construction is local to its pipeline, and separately built breakers remain isolated even
 when their construction names are equal.
@@ -183,6 +184,21 @@ explicitly tracks same-owner prebuilt reuse. Its classifier overload is the adap
 classification seam; application builders do not expose it. `close()` is idempotent, closes owned
 breakers, and fences active timeout/retry/breaker pipeline futures with `ResilienceClosedException`.
 
+### Bulkhead execution
+
+`Bulkhead.builder(resilience, stateName)` creates a local capacity component. Use `reject()` for
+immediate `BulkheadRejectedException`, or `queue(maxQueueSize, queueTimeout)` for FIFO bounded
+waiting. A permit covers the complete logical execution, including retries and backoff. Queue
+capacity counts waiting calls only; `maxQueueSize` is limited to `1..1024` and queue timeout to
+`1..60_000` milliseconds. Queued suppliers run on the context captured at `execute`, and every
+terminal path cancels its timer, releases its permit, and ignores late supplier completion. Inline
+bulkheads are pipeline-local; only explicitly reusing a same-owner prebuilt instance shares
+capacity. The pipeline performs the fast breaker-open check before bulkhead admission and the
+authoritative breaker recheck after a queued call is admitted.
+
+Framework adapter factories continue to reject bulkhead-bearing resolved policies in this slice;
+Services and REST cutover tasks own the decision to expose adapter bulkhead configuration.
+
 ### Runtime exception surface
 
 Runtime failures use two sealed public roots: `ResilienceException` extends
@@ -192,8 +208,9 @@ Runtime failures use two sealed public roots: `ResilienceException` extends
 `CircuitOpenException`, `BulkheadRejectedException`, and `BulkheadQueueTimeoutException`.
 `CircuitOpenException`, `BulkheadRejectedException`, and `BulkheadQueueTimeoutException` are part of
 the published exception surface. `CircuitOpenException` carries the derived pipeline operation key
-and breaker state key; direct breaker execution uses its state key for both values. Bulkhead policy
-execution remains owned by T004.
+and breaker state key; direct breaker execution uses its state key for both. Bulkhead policy
+execution is available for programmatic pipelines; framework adapter policies remain rejected until
+the downstream cutover tasks own that boundary.
 
 `ResilienceTimeoutException` exposes the validated derived operation key and `timeoutMs`;
 `ResilienceClosedException` exposes the validated derived operation key. Public exception messages

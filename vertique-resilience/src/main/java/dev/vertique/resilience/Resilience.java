@@ -316,8 +316,12 @@ public final class Resilience {
     }
 
     <T> Future<T> failedOnContext(Context context, String operationKey) {
+        return failedOnContext(context, new ResilienceClosedException(operationKey));
+    }
+
+    <T> Future<T> failedOnContext(Context context, Throwable failure) {
         Promise<T> result = Promise.promise();
-        context.runOnContext(ignored -> result.tryFail(new ResilienceClosedException(operationKey)));
+        context.runOnContext(ignored -> result.tryFail(Objects.requireNonNull(failure, "failure")));
         return result.future();
     }
 

@@ -132,6 +132,10 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
         return closed.get();
     }
 
+    boolean isOpenForAdmission() {
+        return engine.state() == io.vertx.circuitbreaker.CircuitBreakerState.OPEN;
+    }
+
     /** Builder for one immutable breaker component. */
     public static final class Builder {
         private final Resilience resilience;
