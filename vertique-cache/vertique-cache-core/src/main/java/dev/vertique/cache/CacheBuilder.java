@@ -412,7 +412,7 @@ public final class CacheBuilder {
                 }
             }
             if (literal.length() > 0) nodes.add(new Literal(literal.toString()));
-            if (functions != componentCount || functions == 0)
+            if (functions != componentCount)
                 throw new IllegalArgumentException("cache key component count mismatch");
             int previousToken = -1;
             for (int i = 0; i < nodes.size(); i++) {
