@@ -56,7 +56,7 @@ final class RedisCleanupJobTestSupport {
 
     static List<String> oldGenerationKeys(String generation) {
         return List.of(
-                "it:v1:cache:v1:profiles:g" + generation + ":NONE:alice",
-                "it:v1:cache:v1:profiles:g" + generation + ":NONE:bob");
+                "it:v1:cache:v2:profiles:g" + generation + ":NONE:alice",
+                "it:v1:cache:v2:profiles:g" + generation + ":NONE:bob");
     }
 }

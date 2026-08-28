@@ -6,6 +6,7 @@ package dev.vertique.cache.redis;
 import static dev.vertique.cache.redis.RedisTestFixtures.KEY;
 import static dev.vertique.cache.redis.RedisTestFixtures.await;
 import static dev.vertique.cache.redis.RedisTestFixtures.cacheConfig;
+import static dev.vertique.cache.redis.RedisTestFixtures.descriptor;
 import static dev.vertique.cache.redis.RedisTestFixtures.profiles;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -41,7 +42,7 @@ public class RedisEventLoopIT {
                 profiles("vertx", new ObjectMapper()),
                 new VertxRedisDeadline(vertx));
 
-        Future<Optional<Object>> operation = store.get(KEY, String.class);
+        Future<Optional<Object>> operation = store.get(KEY, descriptor(String.class));
         assertTrue(commands.awaitEntryReadStarted(), "the provider must reach the controllable backend read");
 
         CountDownLatch eventLoopMarker = new CountDownLatch(1);

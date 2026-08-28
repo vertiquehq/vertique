@@ -24,23 +24,18 @@ public final class CacheableAspect implements AspectProvider<Cacheable> {
         this.builder = builder;
     }
 
-    /** Compatibility constructor retained while the Alpha cache SPI is migrated. */
-    public CacheableAspect(CacheStore store, CacheConfig config) {
-        this(CacheBuilder.forLegacyTesting(store, config, java.util.Set.of(), java.util.Set.of()));
-    }
-
-    /** Compatibility constructor retained while the Alpha cache SPI is migrated. */
+    /** Direct construction hook for isolated adapter tests. */
     public CacheableAspect(CacheStore store, CacheConfig config, Set<CacheObserver> observers) {
-        this(CacheBuilder.forLegacyTesting(store, config, observers, java.util.Set.of()));
+        this(CacheBuilder.forTesting(store, config, observers, Set.of()));
     }
 
-    /** Compatibility constructor retained while the Alpha cache SPI is migrated. */
+    /** Direct construction hook for isolated adapter tests with a custom identity resolver. */
     public CacheableAspect(
             CacheStore store,
             CacheConfig config,
             Set<CacheObserver> observers,
             Set<CacheIdentityResolver> identityResolvers) {
-        this(CacheBuilder.forLegacyTesting(store, config, observers, identityResolvers));
+        this(CacheBuilder.forTesting(store, config, observers, identityResolvers));
     }
 
     @Override

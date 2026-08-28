@@ -42,28 +42,28 @@ class RedisCleanupJobTest {
                         RedisCleanupTestFixtures.page(
                                 "0",
                                 true,
-                                "it:v1:cache:v1:profiles:gOLD:NONE:alice",
-                                "it:v1:cache:v1:profiles:gCURRENT:NONE:bob"));
+                                "it:v1:cache:v2:profiles:gOLD:NONE:alice",
+                                "it:v1:cache:v2:profiles:gCURRENT:NONE:bob"));
         RedisCleanupTestFixtures.RecordingCommands commands = new RedisCleanupTestFixtures.RecordingCommands();
         commands.values.put(RedisCacheKey.generation(RedisTestFixtures.REGION, REDIS_CONFIG, cacheConfig()), "CURRENT");
         topology.physicallyPresent.addAll(
-                List.of("it:v1:cache:v1:profiles:gOLD:NONE:alice", "it:v1:cache:v1:profiles:gCURRENT:NONE:bob"));
+                List.of("it:v1:cache:v2:profiles:gOLD:NONE:alice", "it:v1:cache:v2:profiles:gCURRENT:NONE:bob"));
 
         await(RedisCleanupJobTestSupport.job(topology, commands).sweep());
 
         assertEquals(1, topology.unlinks.size());
         assertEquals(
-                List.of("it:v1:cache:v1:profiles:gOLD:NONE:alice"),
+                List.of("it:v1:cache:v2:profiles:gOLD:NONE:alice"),
                 topology.unlinks.get(0).keys());
-        assertTrue(topology.physicallyPresent.contains("it:v1:cache:v1:profiles:gCURRENT:NONE:bob"));
+        assertTrue(topology.physicallyPresent.contains("it:v1:cache:v2:profiles:gCURRENT:NONE:bob"));
     }
 
     @Test
     @DisplayName("scans every primary and unlinks asynchronously without DEL")
     void scansEveryRedisPrimaryOrNode() throws Exception {
         RedisCleanupTestFixtures.FakeTopology topology = new RedisCleanupTestFixtures.FakeTopology()
-                .pages(NODE_A, RedisCleanupTestFixtures.page("a1", true, "it:v1:cache:v1:profiles:gOLD:NONE:a"))
-                .pages(NODE_B, RedisCleanupTestFixtures.page("b1", true, "it:v1:cache:v1:profiles:gOLD:NONE:b"));
+                .pages(NODE_A, RedisCleanupTestFixtures.page("a1", true, "it:v1:cache:v2:profiles:gOLD:NONE:a"))
+                .pages(NODE_B, RedisCleanupTestFixtures.page("b1", true, "it:v1:cache:v2:profiles:gOLD:NONE:b"));
         RedisCleanupTestFixtures.RecordingCommands commands = new RedisCleanupTestFixtures.RecordingCommands();
 
         await(RedisCleanupJobTestSupport.job(topology, commands).sweep());
@@ -81,12 +81,12 @@ class RedisCleanupJobTest {
     @Test
     @DisplayName("deduplicates keys repeated across pages and primaries")
     void deduplicatesKeysAcrossPagesAndNodes() throws Exception {
-        String duplicate = "it:v1:cache:v1:profiles:gOLD:NONE:duplicate";
+        String duplicate = "it:v1:cache:v2:profiles:gOLD:NONE:duplicate";
         RedisCleanupTestFixtures.FakeTopology topology = new RedisCleanupTestFixtures.FakeTopology()
                 .pages(
                         NODE_A,
                         RedisCleanupTestFixtures.page("a2", false, duplicate),
-                        RedisCleanupTestFixtures.page("0", true, duplicate, "it:v1:cache:v1:profiles:gOLD:NONE:a"))
+                        RedisCleanupTestFixtures.page("0", true, duplicate, "it:v1:cache:v2:profiles:gOLD:NONE:a"))
                 .pages(NODE_B, RedisCleanupTestFixtures.page("0", true, duplicate));
 
         await(RedisCleanupJobTestSupport.job(topology, new RedisCleanupTestFixtures.RecordingCommands())
@@ -94,14 +94,14 @@ class RedisCleanupJobTest {
 
         List<String> deleted =
                 topology.unlinks.stream().flatMap(call -> call.keys().stream()).toList();
-        assertEquals(List.of(duplicate, "it:v1:cache:v1:profiles:gOLD:NONE:a"), deleted);
+        assertEquals(List.of(duplicate, "it:v1:cache:v2:profiles:gOLD:NONE:a"), deleted);
     }
 
     @Test
     @DisplayName("stops scanning at ten thousand keys")
     void enforcesTenThousandKeyBudget() throws Exception {
         String[] keys = java.util.stream.IntStream.range(0, MAX_KEYS_PER_SWEEP + 1)
-                .mapToObj(index -> "it:v1:cache:v1:profiles:gOLD:NONE:key-" + index)
+                .mapToObj(index -> "it:v1:cache:v2:profiles:gOLD:NONE:key-" + index)
                 .toArray(String[]::new);
         RedisCleanupTestFixtures.FakeTopology topology = new RedisCleanupTestFixtures.FakeTopology()
                 .pages(NODE_A, new RedisScanPage("next", List.of(keys), false));
@@ -119,7 +119,7 @@ class RedisCleanupJobTest {
     void enforcesFiveSecondSweepBudget() throws Exception {
         RedisCleanupTestFixtures.MutableClock clock = new RedisCleanupTestFixtures.MutableClock(0);
         RedisCleanupTestFixtures.FakeTopology topology = new RedisCleanupTestFixtures.FakeTopology()
-                .pages(NODE_A, RedisCleanupTestFixtures.page("next", false, "it:v1:cache:v1:profiles:gOLD:NONE:a"));
+                .pages(NODE_A, RedisCleanupTestFixtures.page("next", false, "it:v1:cache:v2:profiles:gOLD:NONE:a"));
         topology.nextScan = Future.succeededFuture(RedisCleanupTestFixtures.page("next", false));
         RedisCleanupJob job = RedisCleanupJobTestSupport.job(
                 topology, new RedisCleanupTestFixtures.RecordingCommands(), Set.of(), () -> 0, () -> {
@@ -155,7 +155,7 @@ class RedisCleanupJobTest {
     @DisplayName("two workers can sweep the same keys without a lock or duplicate command effect")
     void multipleWorkersAreIdempotent() throws Exception {
         RedisCleanupTestFixtures.FakeTopology topology = new RedisCleanupTestFixtures.FakeTopology()
-                .pages(NODE_A, RedisCleanupTestFixtures.page("0", true, "it:v1:cache:v1:profiles:gOLD:NONE:a"));
+                .pages(NODE_A, RedisCleanupTestFixtures.page("0", true, "it:v1:cache:v2:profiles:gOLD:NONE:a"));
         RedisCleanupTestFixtures.RecordingCommands commands = new RedisCleanupTestFixtures.RecordingCommands();
         RedisCleanupJob first = RedisCleanupJobTestSupport.job(topology, commands);
         RedisCleanupJob second = RedisCleanupJobTestSupport.job(topology, commands);
@@ -210,7 +210,7 @@ class RedisCleanupJobTest {
     void recordsScannedDeletedBacklogAndFailureOutcomes() throws Exception {
         RedisCleanupTestFixtures.RecordingObserver observer = new RedisCleanupTestFixtures.RecordingObserver();
         RedisCleanupTestFixtures.FakeTopology topology = new RedisCleanupTestFixtures.FakeTopology()
-                .pages(NODE_A, RedisCleanupTestFixtures.page("0", true, "it:v1:cache:v1:profiles:gOLD:NONE:a"));
+                .pages(NODE_A, RedisCleanupTestFixtures.page("0", true, "it:v1:cache:v2:profiles:gOLD:NONE:a"));
 
         await(RedisCleanupJobTestSupport.job(
                         topology,

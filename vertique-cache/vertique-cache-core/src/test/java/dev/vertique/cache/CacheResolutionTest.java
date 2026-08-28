@@ -75,7 +75,12 @@ class CacheResolutionTest {
     }
 
     static final class Target {
-        @Cacheable(name = "profile", key = "{0}", mode = CacheMode.CLUSTERED, ttlSeconds = 1)
+        @Cacheable(
+                name = "profile",
+                key = "{0}",
+                mode = CacheMode.CLUSTERED,
+                ttlSeconds = 1,
+                identity = CacheIdentity.NONE)
         String value(String user) {
             return "unused";
         }

@@ -41,7 +41,7 @@ class CacheIdentityTest {
                 .toCompletableFuture()
                 .join();
 
-        assertEquals("actor:SERVICE:service-1~subject:USER:user-1", store.lastKey.identityComponent());
+        assertEquals("i2:S7:SERVICE9:service-114:USER6:user-1", store.lastKey.identityComponent());
     }
 
     @Test
@@ -77,12 +77,8 @@ class CacheIdentityTest {
     void authenticatedIdentityComponentsAreCanonicalAndDistinct() throws NoSuchMethodException {
         var method = Target.class.getDeclaredMethod("current");
         var metadata = CacheTestFixtures.metadata(method, "unused");
-        CacheIdentityResolver resolver = identity -> switch (identity) {
-            case ACTOR -> Optional.of("actor:USER:alice");
-            case EFFECTIVE_PRINCIPAL -> Optional.of("principal:USER:alice");
-            case ACTOR_AND_SUBJECT -> Optional.of("actor:USER:service~subject:USER:alice");
-            case NONE -> Optional.of("NONE");
-        };
+        CacheIdentityResolver resolver =
+                () -> Optional.of(securityContext("service", "alice").identity());
 
         for (CacheIdentity identity :
                 Set.of(CacheIdentity.ACTOR, CacheIdentity.EFFECTIVE_PRINCIPAL, CacheIdentity.ACTOR_AND_SUBJECT)) {
@@ -96,7 +92,14 @@ class CacheIdentityTest {
                     .toCompletableFuture()
                     .join();
             assertEquals(1, store.getCalls, () -> "cache lookup was bypassed for " + identity);
-            assertEquals(resolver.resolve(identity).orElseThrow(), store.lastKey.identityComponent());
+            assertEquals(
+                    switch (identity) {
+                        case ACTOR -> "i2:P7:SERVICE7:service";
+                        case EFFECTIVE_PRINCIPAL -> "i2:P4:USER5:alice";
+                        case ACTOR_AND_SUBJECT -> "i2:S7:SERVICE7:service14:USER5:alice";
+                        case NONE -> "i2:N";
+                    },
+                    store.lastKey.identityComponent());
         }
     }
 
@@ -104,7 +107,7 @@ class CacheIdentityTest {
     void anonymousBypassAndOptInUseSeparateBuckets() throws NoSuchMethodException {
         var method = Target.class.getDeclaredMethod("current");
         var metadata = CacheTestFixtures.metadata(method, "unused");
-        CacheIdentityResolver anonymous = identity -> Optional.empty();
+        CacheIdentityResolver anonymous = Optional::empty;
         var bypassStore = new CacheTestFixtures.RecordingStore();
         var bypassCalls = new AtomicInteger();
 
@@ -125,7 +128,7 @@ class CacheIdentityTest {
                 .toCompletableFuture()
                 .join();
 
-        assertEquals("ANONYMOUS", optInStore.lastKey.identityComponent());
+        assertEquals("i2:A", optInStore.lastKey.identityComponent());
     }
 
     static final class Target {

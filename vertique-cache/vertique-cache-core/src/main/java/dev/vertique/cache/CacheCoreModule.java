@@ -59,13 +59,7 @@ public abstract class CacheCoreModule {
             Optional<CacheIdentityResolver> customResolver,
             Set<dev.vertique.cache.spi.GeneratedCacheMetadata> generatedMetadata) {
         return new CacheBuilder(
-                stores,
-                config,
-                observers,
-                Optional.of(customResolver.orElse(defaultResolver)),
-                generatedMetadata,
-                2,
-                false);
+                stores, config, observers, Optional.of(customResolver.orElse(defaultResolver)), generatedMetadata);
     }
 
     @Provides

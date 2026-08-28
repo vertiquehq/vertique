@@ -5,8 +5,6 @@ package dev.vertique.cache.redis;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.cache.config.CacheConfig;
-import dev.vertique.cache.config.CacheEntryConfig;
-import dev.vertique.cache.spi.CacheKey;
 import dev.vertique.cache.spi.CacheRegion;
 import dev.vertique.cache.spi.CacheStore;
 import dev.vertique.cache.spi.CacheValueDescriptor;
@@ -20,7 +18,6 @@ import io.vertx.core.Vertx;
 import io.vertx.redis.client.Response;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
-import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
@@ -87,40 +84,20 @@ public final class RedisCacheStore implements CacheStore {
     }
 
     @Override
-    @Deprecated
-    public Future<Optional<Object>> get(CacheKey key, Type declaredType) {
-        return getResolved(
-                new ResolvedCacheKey(key.region(), key.identityComponent(), key.selector()),
-                new CacheValueDescriptor(declaredType, profileName(key.region())),
-                false);
-    }
-
-    @Override
     public Future<Optional<Object>> get(ResolvedCacheKey key, CacheValueDescriptor value) {
-        return getResolved(key, value, true);
+        return getResolved(key, value);
     }
 
-    private Future<Optional<Object>> getResolved(
-            ResolvedCacheKey key, CacheValueDescriptor value, boolean strictDecode) {
+    private Future<Optional<Object>> getResolved(ResolvedCacheKey key, CacheValueDescriptor value) {
         if (!cacheConfig.enabled()) {
             return Future.succeededFuture(Optional.empty());
         }
         try {
             return bounded(generation(key).compose(token -> redis.get(entryKey(key, token))))
-                    .compose(response -> decode(response, key.region(), value, strictDecode));
+                    .compose(response -> decode(response, key.region(), value));
         } catch (RuntimeException failure) {
             return Future.failedFuture(failure);
         }
-    }
-
-    @Override
-    @Deprecated
-    public Future<Void> put(CacheKey key, Object value, Type declaredType, Duration ttl) {
-        return putResolved(
-                new ResolvedCacheKey(key.region(), key.identityComponent(), key.selector()),
-                new CacheValueDescriptor(declaredType, profileName(key.region())),
-                value,
-                ttl);
     }
 
     @Override
@@ -153,12 +130,6 @@ public final class RedisCacheStore implements CacheStore {
         } catch (RuntimeException failure) {
             return Future.failedFuture(failure);
         }
-    }
-
-    @Override
-    @Deprecated
-    public Future<Void> evict(CacheKey key) {
-        return evict(new ResolvedCacheKey(key.region(), key.identityComponent(), key.selector()));
     }
 
     @Override
@@ -232,8 +203,7 @@ public final class RedisCacheStore implements CacheStore {
         }
     }
 
-    private Future<Optional<Object>> decode(
-            Response response, CacheRegion region, CacheValueDescriptor value, boolean strictDecode) {
+    private Future<Optional<Object>> decode(Response response, CacheRegion region, CacheValueDescriptor value) {
         String json = response == null ? null : response.toString();
         if (json == null || "null".equalsIgnoreCase(json)) {
             return Future.succeededFuture(Optional.empty());
@@ -245,16 +215,11 @@ public final class RedisCacheStore implements CacheStore {
                     ? Future.succeededFuture(Optional.empty())
                     : Future.succeededFuture(Optional.of(decoded));
         } catch (Exception failure) {
-            return strictDecode ? Future.failedFuture(failure) : Future.succeededFuture(Optional.empty());
+            return Future.failedFuture(failure);
         }
     }
 
     private ObjectMapper mapper(String profile) {
         return profiles.mapper(JsonProfileId.of(profile));
-    }
-
-    private String profileName(CacheRegion region) {
-        CacheEntryConfig entry = cacheConfig.caches().get(region.name());
-        return entry != null && entry.jsonProfile() != null ? entry.jsonProfile() : cacheConfig.jsonProfile();
     }
 }

@@ -84,8 +84,12 @@ class CacheContractsTest {
         MethodMetadata metadata = metadata("user");
 
         assertEquals(
-                "user/%C3%85sa/true",
-                CacheKeyRenderer.render("user/{user.name}/{0.active}", metadata, new Object[] {new User("Åsa", true)}));
+                "user/k2S%C3%85sa/k2Ztrue",
+                CacheKeyRenderer.renderCanonical(
+                        "user/{user.name}/{0.active}",
+                        metadata,
+                        new Object[] {new User("Åsa", true)},
+                        CacheBuilder::scalar));
     }
 
     @Test
@@ -95,10 +99,12 @@ class CacheContractsTest {
 
         assertThrows(
                 IllegalArgumentException.class,
-                () -> CacheKeyRenderer.render("{user.missing}", metadata, new Object[] {new User("Åsa", true)}));
+                () -> CacheKeyRenderer.renderCanonical(
+                        "{user.missing}", metadata, new Object[] {new User("Åsa", true)}, CacheBuilder::scalar));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> CacheKeyRenderer.render("{user", metadata, new Object[] {new User("Åsa", true)}));
+                () -> CacheKeyRenderer.renderCanonical(
+                        "{user", metadata, new Object[] {new User("Åsa", true)}, CacheBuilder::scalar));
     }
 
     private static MethodMetadata metadata(String parameterName) {

@@ -37,8 +37,6 @@ public final class CacheBuilder {
     private final CacheConfig config;
     private final Set<CacheObserver> observers;
     private final Optional<CacheIdentityResolver> identityResolver;
-    private final int regionVersion;
-    private final boolean legacyObservationOutcomes;
     private final ConcurrentHashMap<String, DefinitionFingerprint> catalog = new ConcurrentHashMap<>();
     private final Map<GeneratedCacheMetadata.OperationId, PreparedOperation> preparedOperations;
 
@@ -47,7 +45,7 @@ public final class CacheBuilder {
             CacheConfig config,
             Set<CacheObserver> observers,
             Optional<CacheIdentityResolver> identityResolver) {
-        this(stores, config, observers, identityResolver, Set.of(), 2, false);
+        this(stores, config, observers, identityResolver, Set.of());
     }
 
     CacheBuilder(
@@ -55,15 +53,11 @@ public final class CacheBuilder {
             CacheConfig config,
             Set<CacheObserver> observers,
             Optional<CacheIdentityResolver> identityResolver,
-            Set<GeneratedCacheMetadata> generatedMetadata,
-            int regionVersion,
-            boolean legacyObservationOutcomes) {
+            Set<GeneratedCacheMetadata> generatedMetadata) {
         this.stores = stores;
         this.config = Objects.requireNonNull(config, "config");
         this.observers = Set.copyOf(observers);
         this.identityResolver = identityResolver;
-        this.regionVersion = regionVersion;
-        this.legacyObservationOutcomes = legacyObservationOutcomes;
         validateGeneratedMetadata(generatedMetadata);
         this.preparedOperations = prepareGeneratedMetadata(generatedMetadata);
     }
@@ -75,17 +69,7 @@ public final class CacheBuilder {
             Set<CacheIdentityResolver> resolvers) {
         Optional<CacheIdentityResolver> resolver =
                 resolvers.size() == 1 ? Optional.of(resolvers.iterator().next()) : Optional.empty();
-        return new CacheBuilder(CacheStoreResolver.fixed(store), config, observers, resolver, Set.of(), 2, false);
-    }
-
-    static CacheBuilder forLegacyTesting(
-            dev.vertique.cache.spi.CacheStore store,
-            CacheConfig config,
-            Set<CacheObserver> observers,
-            Set<CacheIdentityResolver> resolvers) {
-        Optional<CacheIdentityResolver> resolver =
-                resolvers.size() == 1 ? Optional.of(resolvers.iterator().next()) : Optional.empty();
-        return new CacheBuilder(CacheStoreResolver.fixed(store), config, observers, resolver, Set.of(), 1, true);
+        return new CacheBuilder(CacheStoreResolver.fixed(store), config, observers, resolver, Set.of());
     }
 
     public <V> Definition<V> cache(String name, Class<V> valueType) {
@@ -125,13 +109,9 @@ public final class CacheBuilder {
                 ttl,
                 annotationIdentity,
                 annotation.anonymous(),
-                input -> legacyObservationOutcomes
-                        ? CacheKeyRenderer.render(annotation.key(), target, (Object[]) input)
-                        : CacheKeyRenderer.renderCanonical(
-                                annotation.key(), target, (Object[]) input, CacheBuilder::scalar),
-                target.returnType() != Future.class,
-                legacyObservationOutcomes ? 1 : regionVersion,
-                legacyObservationOutcomes);
+                input -> CacheKeyRenderer.renderCanonical(
+                        annotation.key(), target, (Object[]) input, CacheBuilder::scalar),
+                target.returnType() != Future.class);
     }
 
     Cache<Object, Object> eviction(MethodMetadata target, CacheEvict annotation) {
@@ -152,13 +132,9 @@ public final class CacheBuilder {
                 effectiveTtl(annotation.name(), -1),
                 targetIdentity,
                 target.findAnnotation(Cacheable.class).map(Cacheable::anonymous).orElse(AnonymousCachePolicy.BYPASS),
-                input -> legacyObservationOutcomes
-                        ? CacheKeyRenderer.render(annotation.key(), target, (Object[]) input)
-                        : CacheKeyRenderer.renderCanonical(
-                                annotation.key(), target, (Object[]) input, CacheBuilder::scalar),
-                false,
-                legacyObservationOutcomes ? 1 : regionVersion,
-                legacyObservationOutcomes);
+                input -> CacheKeyRenderer.renderCanonical(
+                        annotation.key(), target, (Object[]) input, CacheBuilder::scalar),
+                false);
     }
 
     List<PreparedEviction> evictions(MethodMetadata target) {
@@ -266,9 +242,7 @@ public final class CacheBuilder {
                     effectiveIdentity,
                     effectiveAnonymous,
                     input -> scalar(input),
-                    false,
-                    owner.regionVersion,
-                    owner.legacyObservationOutcomes);
+                    false);
         }
     }
 
@@ -356,13 +330,11 @@ public final class CacheBuilder {
                     identity == null ? CacheIdentity.EFFECTIVE_PRINCIPAL : identity,
                     anonymousPolicy == null ? AnonymousCachePolicy.BYPASS : anonymousPolicy,
                     input -> parsed.render(input, components),
-                    false,
-                    owner.regionVersion,
-                    owner.legacyObservationOutcomes);
+                    false);
         }
     }
 
-    private static String scalar(Object value) {
+    static String scalar(Object value) {
         if (value == null) throw new IllegalArgumentException("cache selector input must not be null");
         return Scalar.encode(value);
     }
@@ -412,8 +384,7 @@ public final class CacheBuilder {
                 }
             }
             if (literal.length() > 0) nodes.add(new Literal(literal.toString()));
-            if (functions != componentCount)
-                throw new IllegalArgumentException("cache key component count mismatch");
+            if (functions != componentCount) throw new IllegalArgumentException("cache key component count mismatch");
             int previousToken = -1;
             for (int i = 0; i < nodes.size(); i++) {
                 if (!(nodes.get(i) instanceof Token)) continue;
@@ -763,9 +734,7 @@ public final class CacheBuilder {
                 declaration.identity(),
                 declaration.anonymous(),
                 selector(declaration.selector()),
-                synchronous,
-                regionVersion,
-                legacyObservationOutcomes);
+                synchronous);
     }
 
     private Cache<Object, Object> buildGeneratedEvictionCache(
@@ -794,9 +763,7 @@ public final class CacheBuilder {
                 target.declaration().identity(),
                 target.declaration().anonymous(),
                 selector,
-                synchronous,
-                regionVersion,
-                legacyObservationOutcomes);
+                synchronous);
     }
 
     private Function<Object, String> selector(GeneratedCacheMetadata.Selector generated) {

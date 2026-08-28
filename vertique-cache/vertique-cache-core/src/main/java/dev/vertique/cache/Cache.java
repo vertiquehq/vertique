@@ -36,7 +36,6 @@ public final class Cache<K, V> {
     private final AnonymousCachePolicy anonymousPolicy;
     private final Function<? super K, String> selector;
     private final boolean asynchronousOnly;
-    private final boolean legacyObservationOutcomes;
 
     Cache(
             CacheStoreResolver stores,
@@ -51,14 +50,12 @@ public final class Cache<K, V> {
             CacheIdentity identity,
             AnonymousCachePolicy anonymousPolicy,
             Function<? super K, String> selector,
-            boolean asynchronousOnly,
-            int regionVersion,
-            boolean legacyObservationOutcomes) {
+            boolean asynchronousOnly) {
         this.stores = stores;
         this.config = config;
         this.observers = Set.copyOf(observers);
         this.identityResolver = identityResolver;
-        this.region = new CacheRegion("cache", name, regionVersion);
+        this.region = new CacheRegion("cache", name, 2);
         this.valueType = valueType;
         this.jsonProfile = jsonProfile;
         this.mode = mode;
@@ -67,7 +64,6 @@ public final class Cache<K, V> {
         this.anonymousPolicy = anonymousPolicy;
         this.selector = selector;
         this.asynchronousOnly = asynchronousOnly;
-        this.legacyObservationOutcomes = legacyObservationOutcomes;
     }
 
     /** Loads a value on a miss and reuses it for subsequent calls. */
@@ -267,18 +263,7 @@ public final class Cache<K, V> {
 
     private String identityComponent() {
         if (identity == CacheIdentity.NONE) {
-            return legacyObservationOutcomes ? "NONE" : "i2:N";
-        }
-        if (legacyObservationOutcomes) {
-            Optional<String> legacy = identityResolver.flatMap(resolver -> {
-                try {
-                    return resolver.resolve(identity);
-                } catch (RuntimeException unavailable) {
-                    return Optional.empty();
-                }
-            });
-            if (legacy.isPresent()) return legacy.get();
-            if (identityResolver.isEmpty()) return "NONE";
+            return "i2:N";
         }
         Optional<SecurityIdentity> typed = identityResolver.flatMap(resolver -> {
             try {
@@ -294,15 +279,7 @@ public final class Cache<K, V> {
             }
             return frameIdentity(current);
         }
-        Optional<String> resolved = identityResolver.flatMap(resolver -> {
-            try {
-                return resolver.resolve(identity);
-            } catch (RuntimeException unavailable) {
-                return Optional.empty();
-            }
-        });
-        return resolved.filter(component -> !component.isBlank())
-                .orElseGet(() -> anonymousPolicy == AnonymousCachePolicy.CACHE_AS_ANONYMOUS ? "ANONYMOUS" : null);
+        return anonymousPolicy == AnonymousCachePolicy.CACHE_AS_ANONYMOUS ? "i2:A" : null;
     }
 
     private String frameIdentity(SecurityIdentity current) {
@@ -375,8 +352,7 @@ public final class Cache<K, V> {
     }
 
     private String outcome(String current) {
-        if (legacyObservationOutcomes && current.equals("success")) return "stored";
-        return legacyObservationOutcomes && current.equals("error") ? "failure" : current;
+        return current;
     }
 
     private static final class CacheDeadlineExceeded extends RuntimeException {

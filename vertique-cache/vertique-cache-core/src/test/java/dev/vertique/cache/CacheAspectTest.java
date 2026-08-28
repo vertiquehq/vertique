@@ -74,7 +74,7 @@ class CacheAspectTest {
         assertEquals(2, targetCalls.get(), "a failed cache get must preserve the business path");
         assertFalse(observations.isEmpty(), "cache failures must be observable");
         assertTrue(observations.stream()
-                .anyMatch(observation -> observation.outcome().contains("fail")));
+                .anyMatch(observation -> observation.outcome().contains("error")));
     }
 
     @Test
@@ -244,7 +244,7 @@ class CacheAspectTest {
     }
 
     static final class Target {
-        @Cacheable(name = "profile", key = "{0}")
+        @Cacheable(name = "profile", key = "{0}", identity = CacheIdentity.NONE)
         String value(String user) {
             return "unused";
         }

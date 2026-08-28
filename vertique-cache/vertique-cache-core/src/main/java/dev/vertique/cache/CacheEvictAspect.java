@@ -25,14 +25,9 @@ public final class CacheEvictAspect implements AspectProvider<CacheEvict> {
         this.builder = builder;
     }
 
-    /** Compatibility constructor retained while the Alpha cache SPI is migrated. */
-    public CacheEvictAspect(CacheStore store, CacheConfig config) {
-        this(CacheBuilder.forLegacyTesting(store, config, java.util.Set.of(), java.util.Set.of()));
-    }
-
-    /** Compatibility constructor retained while the Alpha cache SPI is migrated. */
+    /** Direct construction hook for isolated adapter tests. */
     public CacheEvictAspect(CacheStore store, CacheConfig config, Set<CacheObserver> observers) {
-        this(CacheBuilder.forLegacyTesting(store, config, observers, java.util.Set.of()));
+        this(CacheBuilder.forTesting(store, config, observers, Set.of()));
     }
 
     @Override

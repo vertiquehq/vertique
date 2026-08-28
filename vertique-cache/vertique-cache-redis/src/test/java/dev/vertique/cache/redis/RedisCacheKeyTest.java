@@ -10,8 +10,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-import dev.vertique.cache.spi.CacheKey;
 import dev.vertique.cache.spi.CacheRegion;
+import dev.vertique.cache.spi.ResolvedCacheKey;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -22,7 +22,7 @@ class RedisCacheKeyTest {
     @DisplayName("includes namespace, format version, and opaque generation in physical keys")
     void includesFormatNamespaceAndGeneration() {
         CacheRegion region = new CacheRegion("cache", "profiles", 7);
-        CacheKey key = new CacheKey(region, "ACTOR:alice", "profile");
+        ResolvedCacheKey key = new ResolvedCacheKey(region, "ACTOR:alice", "profile");
 
         assertEquals(
                 "shared:v1:cache:v7:profiles:generation",
@@ -36,7 +36,7 @@ class RedisCacheKeyTest {
     @DisplayName("uses distinct physical keyspaces for Redis format versions")
     void redisFormatVersionsProduceDistinctPhysicalKeys() {
         CacheRegion region = new CacheRegion("cache", "profiles", 7);
-        CacheKey key = new CacheKey(region, "ACTOR:alice", "profile");
+        ResolvedCacheKey key = new ResolvedCacheKey(region, "ACTOR:alice", "profile");
         CacheRedisConfig versionOne = new CacheRedisConfig("primary", "shared", 1);
         CacheRedisConfig versionTwo = new CacheRedisConfig("primary", "shared", 2);
 
@@ -56,7 +56,7 @@ class RedisCacheKeyTest {
     @Test
     @DisplayName("rejects an oversized rendered key before backend access")
     void canonicalKeyIsBoundedBeforeHashing() {
-        CacheKey oversized = new CacheKey(KEY.region(), KEY.identityComponent(), "x".repeat(2_000));
+        ResolvedCacheKey oversized = new ResolvedCacheKey(KEY.region(), KEY.identityComponent(), "x".repeat(2_000));
 
         IllegalArgumentException failure = assertThrows(
                 IllegalArgumentException.class,

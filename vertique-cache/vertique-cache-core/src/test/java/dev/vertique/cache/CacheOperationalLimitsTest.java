@@ -80,12 +80,12 @@ class CacheOperationalLimitsTest {
     }
 
     static final class Target {
-        @Cacheable(name = "profile", key = "constant", ttlSeconds = 121)
+        @Cacheable(name = "profile", key = "constant", ttlSeconds = 121, identity = CacheIdentity.NONE)
         String value() {
             return "unused";
         }
 
-        @Cacheable(name = "profile-at-maximum", key = "constant", ttlSeconds = 120)
+        @Cacheable(name = "profile-at-maximum", key = "constant", ttlSeconds = 120, identity = CacheIdentity.NONE)
         String valueAtMaximum() {
             return "unused";
         }

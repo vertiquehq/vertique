@@ -7,19 +7,11 @@ import dev.vertique.core.codegen.MethodMetadata;
 import dev.vertique.core.codegen.ParameterMetadata;
 import java.lang.reflect.Method;
 import java.lang.reflect.RecordComponent;
-import java.nio.charset.StandardCharsets;
-import java.text.Normalizer;
-import java.util.Locale;
 import java.util.Objects;
 
 /** Renders the deliberately small, non-expression cache-key template language. */
-public final class CacheKeyRenderer {
+final class CacheKeyRenderer {
     private CacheKeyRenderer() {}
-
-    /** Renders positional or named scalar selectors from a generated method metadata view. */
-    public static String render(String template, MethodMetadata metadata, Object[] arguments) {
-        return render(template, metadata, arguments, CacheKeyRenderer::encode);
-    }
 
     /** Renders selectors using the caller's canonical scalar encoding policy. */
     static String renderCanonical(
@@ -153,31 +145,6 @@ public final class CacheKeyRenderer {
                 || value instanceof Enum<?>
                 || value instanceof java.util.UUID
                 || value instanceof java.time.temporal.TemporalAccessor;
-    }
-
-    private static String encode(Object value) {
-        String text = value instanceof Enum<?> enumeration
-                ? enumeration.name().toLowerCase(Locale.ROOT)
-                : String.valueOf(value);
-        text = Normalizer.normalize(text, Normalizer.Form.NFC);
-        StringBuilder encoded = new StringBuilder(text.length());
-        for (byte octet : text.getBytes(StandardCharsets.UTF_8)) {
-            int unsigned = octet & 0xff;
-            if ((unsigned >= 'a' && unsigned <= 'z')
-                    || (unsigned >= 'A' && unsigned <= 'Z')
-                    || (unsigned >= '0' && unsigned <= '9')
-                    || unsigned == '.'
-                    || unsigned == '-'
-                    || unsigned == '_'
-                    || unsigned == '~') {
-                encoded.append((char) unsigned);
-            } else {
-                encoded.append('%');
-                encoded.append(Character.toUpperCase(Character.forDigit(unsigned >>> 4, 16)));
-                encoded.append(Character.toUpperCase(Character.forDigit(unsigned & 0xf, 16)));
-            }
-        }
-        return encoded.toString();
     }
 
     private static boolean isLiteralCharacter(char character) {

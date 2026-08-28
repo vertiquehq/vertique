@@ -11,9 +11,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import dev.vertique.cache.CacheMode;
 import dev.vertique.cache.Cacheable;
 import dev.vertique.cache.config.CacheConfig;
-import dev.vertique.cache.spi.CacheKey;
 import dev.vertique.cache.spi.CacheRegion;
 import dev.vertique.cache.spi.CacheStore;
+import dev.vertique.cache.spi.CacheValueDescriptor;
+import dev.vertique.cache.spi.ResolvedCacheKey;
 import dev.vertique.core.lifecycle.LifecyclePhase;
 import dev.vertique.redis.RedisClientRegistry;
 import dev.vertique.redis.RedisClientShutdownStep;
@@ -21,12 +22,12 @@ import dev.vertique.redis.RedisConnectionConfig;
 import dev.vertique.redis.RedisConnectionsConfig;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
-import java.lang.reflect.Type;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -38,7 +39,8 @@ class CacheLifecycleIT {
     @DisplayName("disabled cache bypasses every backend operation")
     void disabledCacheClosesWithoutBackendAccess() throws Exception {
         ThrowingStore backend = new ThrowingStore();
-        dev.vertique.cache.CacheableAspect aspect = new dev.vertique.cache.CacheableAspect(backend, disabledConfig());
+        dev.vertique.cache.CacheableAspect aspect =
+                new dev.vertique.cache.CacheableAspect(backend, disabledConfig(), Set.of());
         var valueMethod = LifecycleTarget.class.getDeclaredMethod("value");
         Cacheable annotation = valueMethod.getAnnotation(Cacheable.class);
         var metadata = new dev.vertique.core.codegen.ReflectiveMethodMetadata(valueMethod, List.of());
@@ -171,19 +173,19 @@ class CacheLifecycleIT {
         private final AtomicInteger calls = new AtomicInteger();
 
         @Override
-        public Future<Optional<Object>> get(CacheKey key, Type declaredType) {
+        public Future<Optional<Object>> get(ResolvedCacheKey key, CacheValueDescriptor descriptor) {
             calls.incrementAndGet();
             return Future.failedFuture("backend accessed");
         }
 
         @Override
-        public Future<Void> put(CacheKey key, Object value, Type declaredType, Duration ttl) {
+        public Future<Void> put(ResolvedCacheKey key, CacheValueDescriptor descriptor, Object value, Duration ttl) {
             calls.incrementAndGet();
             return Future.failedFuture("backend accessed");
         }
 
         @Override
-        public Future<Void> evict(CacheKey key) {
+        public Future<Void> evict(ResolvedCacheKey key) {
             calls.incrementAndGet();
             return Future.failedFuture("backend accessed");
         }

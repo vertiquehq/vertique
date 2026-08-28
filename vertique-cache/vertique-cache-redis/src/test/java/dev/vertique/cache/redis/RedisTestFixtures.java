@@ -9,8 +9,9 @@ import static org.mockito.Mockito.when;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.cache.CacheMode;
 import dev.vertique.cache.config.CacheConfig;
-import dev.vertique.cache.spi.CacheKey;
 import dev.vertique.cache.spi.CacheRegion;
+import dev.vertique.cache.spi.CacheValueDescriptor;
+import dev.vertique.cache.spi.ResolvedCacheKey;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.json.JsonProfileId;
@@ -22,13 +23,14 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 final class RedisTestFixtures {
-    static final CacheRegion REGION = new CacheRegion("cache", "profiles", 1);
-    static final CacheKey KEY = new CacheKey(REGION, "NONE", "alice");
+    static final CacheRegion REGION = new CacheRegion("cache", "profiles", 2);
+    static final ResolvedCacheKey KEY = new ResolvedCacheKey(REGION, "i2:N", "alice");
     static final CacheRedisConfig REDIS_CONFIG = new CacheRedisConfig("primary", "it", 1);
 
     private RedisTestFixtures() {}
@@ -51,6 +53,18 @@ final class RedisTestFixtures {
                 Map.of(
                         REGION.name(),
                         new dev.vertique.cache.config.CacheEntryConfig(CacheMode.CLUSTERED, -1, profile)));
+    }
+
+    static CacheValueDescriptor descriptor(Class<?> type) {
+        return new CacheValueDescriptor(type, "vertx");
+    }
+
+    static Future<Optional<Object>> get(RedisCacheStore store, ResolvedCacheKey key, Class<?> type) {
+        return store.get(key, descriptor(type));
+    }
+
+    static Future<Void> put(RedisCacheStore store, ResolvedCacheKey key, Object value, Class<?> type, Duration ttl) {
+        return store.put(key, descriptor(type), value, ttl);
     }
 
     static RedisCacheStore store(

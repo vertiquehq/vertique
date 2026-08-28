@@ -7,8 +7,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import dev.vertique.cache.config.CacheConfig;
-import dev.vertique.cache.config.CacheEntryConfig;
-import dev.vertique.cache.spi.CacheKey;
 import dev.vertique.cache.spi.CacheRegion;
 import dev.vertique.cache.spi.CacheStore;
 import dev.vertique.cache.spi.CacheValueDescriptor;
@@ -19,7 +17,6 @@ import dev.vertique.json.DefaultJsonMapperProfileRegistry;
 import io.vertx.core.Future;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
-import java.lang.reflect.Type;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
@@ -49,14 +46,6 @@ public final class CaffeineCacheStore implements CacheStore {
         this.config = config;
         this.profiles = profiles;
         this.clock = clock;
-    }
-
-    @Override
-    @Deprecated
-    public Future<Optional<Object>> get(CacheKey key, Type declaredType) {
-        return getResolved(
-                new ResolvedCacheKey(key.region(), key.identityComponent(), key.selector()),
-                new CacheValueDescriptor(declaredType, profileName(key.region())));
     }
 
     @Override
@@ -93,16 +82,6 @@ public final class CaffeineCacheStore implements CacheStore {
     }
 
     @Override
-    @Deprecated
-    public Future<Void> put(CacheKey key, Object value, Type declaredType, Duration ttl) {
-        return putResolved(
-                new ResolvedCacheKey(key.region(), key.identityComponent(), key.selector()),
-                new CacheValueDescriptor(declaredType, profileName(key.region())),
-                value,
-                ttl);
-    }
-
-    @Override
     public Future<Void> put(ResolvedCacheKey key, CacheValueDescriptor descriptor, Object value, Duration ttl) {
         return putResolved(key, descriptor, value, ttl);
     }
@@ -125,12 +104,6 @@ public final class CaffeineCacheStore implements CacheStore {
         } catch (Exception failure) {
             return Future.failedFuture(failure);
         }
-    }
-
-    @Override
-    @Deprecated
-    public Future<Void> evict(CacheKey key) {
-        return evict(new ResolvedCacheKey(key.region(), key.identityComponent(), key.selector()));
     }
 
     @Override
@@ -161,11 +134,6 @@ public final class CaffeineCacheStore implements CacheStore {
 
     private ObjectMapper mapper(String profile) {
         return profiles.mapper(JsonProfileId.of(profile));
-    }
-
-    private String profileName(CacheRegion region) {
-        CacheEntryConfig entry = config.caches().get(region.name());
-        return entry != null && entry.jsonProfile() != null ? entry.jsonProfile() : config.jsonProfile();
     }
 
     private long deadline(Duration ttl) {

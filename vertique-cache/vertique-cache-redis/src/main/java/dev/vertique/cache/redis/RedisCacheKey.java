@@ -4,7 +4,6 @@
 package dev.vertique.cache.redis;
 
 import dev.vertique.cache.config.CacheConfig;
-import dev.vertique.cache.spi.CacheKey;
 import dev.vertique.cache.spi.CacheRegion;
 import dev.vertique.cache.spi.ResolvedCacheKey;
 import java.nio.charset.StandardCharsets;
@@ -27,16 +26,6 @@ final class RedisCacheKey {
                         + key.region().canonicalPrefix() + ":g" + generation + ":" + key.identityComponent() + ":"
                         + key.selector(),
                 cacheConfig.maxKeyBytes());
-    }
-
-    /** @deprecated Use the resolved-key overload. */
-    @Deprecated
-    static String entry(CacheKey key, String generation, CacheRedisConfig redisConfig, CacheConfig cacheConfig) {
-        return entry(
-                new ResolvedCacheKey(key.region(), key.identityComponent(), key.selector()),
-                generation,
-                redisConfig,
-                cacheConfig);
     }
 
     private static String bounded(String key, int maxKeyBytes) {

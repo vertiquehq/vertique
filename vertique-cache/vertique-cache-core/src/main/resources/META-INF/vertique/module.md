@@ -70,8 +70,9 @@ allows one explicitly supplied resolver to replace it.
 The provider-neutral `CacheStoreContractTest` runs the same contract against the Caffeine and
 Redis providers, covering hits, misses, TTL, clear, failure handling, declared types, value
 isolation, and repeatable eviction. Core operational validation rejects an oversized canonical
-key before a provider operation. Resolved providers consume `ResolvedCacheKey` and
-`CacheValueDescriptor`; the legacy `CacheKey` overloads remain only as a temporary Alpha bridge.
+key before a provider operation. Resolved providers consume only `ResolvedCacheKey` and
+`CacheValueDescriptor`; the pre-release `CacheKey` store contract was removed before mainline
+release, so no compatibility overload is provided.
 Core does not validate values before provider work: Caffeine and
 Redis serialize values in their provider implementations and then enforce `maxValueBytes` on the
 serialized bytes; those provider failures are handled by the cache core's fail-open path. An

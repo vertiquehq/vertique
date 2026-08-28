@@ -54,7 +54,8 @@ class CacheSecurityIntegrationTest {
         assertEquals(List.of("authorize", "lookup", "put"), trace);
 
         trace.clear();
-        ResolvedCacheKey hitKey = new ResolvedCacheKey(new CacheRegion("cache", "profiles", 1), "NONE", "hit");
+        ResolvedCacheKey hitKey =
+                new ResolvedCacheKey(new CacheRegion("cache", "profiles", 2), "i2:N", CacheBuilder.scalar("hit"));
         T011CacheCompositionFixtures.await(store.put(
                 hitKey,
                 new CacheValueDescriptor(String.class, "vertx"),
@@ -133,7 +134,7 @@ class CacheSecurityIntegrationTest {
     }
 
     static final class Target {
-        @Cacheable(name = "profiles", key = "{0}")
+        @Cacheable(name = "profiles", key = "{0}", identity = CacheIdentity.NONE)
         String value(String id) {
             return id;
         }

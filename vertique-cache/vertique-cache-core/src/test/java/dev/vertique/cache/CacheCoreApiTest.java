@@ -11,7 +11,6 @@ import dagger.MapKey;
 import dev.vertique.cache.config.CacheConfig;
 import dev.vertique.cache.config.CacheEntryConfig;
 import dev.vertique.cache.spi.CacheIdentityResolver;
-import dev.vertique.cache.spi.CacheKey;
 import dev.vertique.cache.spi.CacheObservation;
 import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.cache.spi.CacheRegion;
@@ -33,7 +32,6 @@ class CacheCoreApiTest {
             CacheMode.class,
             CacheIdentity.class,
             AnonymousCachePolicy.class,
-            CacheKey.class,
             CacheRegion.class,
             CacheStore.class,
             CacheConfig.class,

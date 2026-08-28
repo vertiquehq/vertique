@@ -6,6 +6,7 @@ package dev.vertique.cache.redis;
 import static dev.vertique.cache.redis.RedisTestFixtures.KEY;
 import static dev.vertique.cache.redis.RedisTestFixtures.await;
 import static dev.vertique.cache.redis.RedisTestFixtures.cacheConfig;
+import static dev.vertique.cache.redis.RedisTestFixtures.descriptor;
 import static dev.vertique.cache.redis.RedisTestFixtures.profiles;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -15,6 +16,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.aop.Invocation;
 import dev.vertique.cache.CacheEvict;
 import dev.vertique.cache.CacheEvictAspect;
+import dev.vertique.cache.CacheIdentity;
 import dev.vertique.cache.Cacheable;
 import dev.vertique.cache.CacheableAspect;
 import dev.vertique.core.codegen.MethodMetadata;
@@ -38,7 +40,7 @@ class RedisCacheStoreTimeoutTest {
         RedisTestFixtures.TimeoutDeadline deadline = new RedisTestFixtures.TimeoutDeadline(BACKEND_DEADLINE);
         RedisCacheStore store = timeoutStore(new RedisTestFixtures.InMemoryRedisCommandClient(), deadline);
 
-        Future<Optional<Object>> operation = store.get(KEY, String.class);
+        Future<Optional<Object>> operation = store.get(KEY, descriptor(String.class));
         assertTrue(operation.failed());
         assertInstanceOf(TimeoutException.class, operation.cause());
         assertEquals(Optional.empty(), await(operation.recover(ignored -> Future.succeededFuture(Optional.empty()))));
@@ -101,7 +103,7 @@ class RedisCacheStoreTimeoutTest {
     private static Future<Object> cacheableInvocation(RedisCacheStore store, Method method) {
         MethodMetadata metadata = new ReflectiveMethodMetadata(method, List.of());
         Invocation invocation = invocation(metadata);
-        return new CacheableAspect(store, cacheConfig())
+        return new CacheableAspect(store, cacheConfig(), java.util.Set.of())
                 .interceptor(metadata, method.getAnnotation(Cacheable.class))
                 .intercept(invocation);
     }
@@ -109,7 +111,7 @@ class RedisCacheStoreTimeoutTest {
     private static Future<Object> evictionInvocation(RedisCacheStore store, Method method) {
         MethodMetadata metadata = new ReflectiveMethodMetadata(method, List.of());
         Invocation invocation = invocation(metadata);
-        return new CacheEvictAspect(store, cacheConfig())
+        return new CacheEvictAspect(store, cacheConfig(), java.util.Set.of())
                 .interceptor(metadata, method.getAnnotation(CacheEvict.class))
                 .intercept(invocation);
     }
@@ -139,7 +141,7 @@ class RedisCacheStoreTimeoutTest {
     }
 
     static final class BusinessTarget {
-        @Cacheable(name = "profiles", key = "constant")
+        @Cacheable(name = "profiles", key = "constant", identity = CacheIdentity.NONE)
         Future<String> load() {
             return Future.succeededFuture("unused");
         }

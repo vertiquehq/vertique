@@ -65,7 +65,7 @@ public class RedisCleanupIT {
     @DisplayName("SCAN returns the physical old-generation key and UNLINK removes it")
     void executesScanAndUnlinkAgainstPinnedRedis() throws Exception {
         String generationKey = RedisCacheKey.generation(REGION, REDIS_CONFIG, cacheConfig());
-        String oldKey = "it:v1:cache:v1:profiles:gOLD:NONE:redis-command-proof";
+        String oldKey = "it:v1:cache:v2:profiles:gOLD:NONE:redis-command-proof";
         await(commands.set(List.of(generationKey, "CURRENT")));
         await(commands.set(List.of(oldKey, "value")));
 
