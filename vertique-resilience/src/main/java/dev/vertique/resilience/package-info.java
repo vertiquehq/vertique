@@ -2,10 +2,13 @@
 // SPDX-License-Identifier: EUPL-1.2
 
 /**
- * Shared resilience policy primitives used by Vertique integrations.
+ * Shared resilience policy primitives and executable runtime foundation used by Vertique
+ * integrations.
  *
- * <p>This package contains pure-Java vocabulary. Runtime construction and execution remain in the
- * consuming modules; the policy types in this package do not depend on a selected execution engine.
+ * <p>The package contains engine-neutral policy vocabulary together with the application-scoped
+ * {@link dev.vertique.resilience.Resilience} runtime, timeout components, and fixed-order
+ * {@link dev.vertique.resilience.ResiliencePipeline} composition. The runtime uses Vert.x contexts
+ * and timers while keeping later policy concerns independently composable.
  *
  * <h2>Policy primitives</h2>
  *
