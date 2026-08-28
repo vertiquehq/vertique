@@ -189,8 +189,7 @@ public final class AnnotationLiteralEmitter {
         ClassName annClass = ClassName.get(annotationType);
         ClassName literalClass = literalClassName(annotationType, elements, generatorNamespace);
 
-        Map<? extends ExecutableElement, ? extends AnnotationValue> values =
-                elements.getElementValuesWithDefaults(mirror);
+        List<Map.Entry<ExecutableElement, AnnotationValue>> values = orderedValues(mirror, elements);
 
         TypeSpec.Builder type = TypeSpec.classBuilder(literalClass.simpleName())
                 .addModifiers(Modifier.PUBLIC, Modifier.FINAL)
@@ -202,7 +201,7 @@ public final class AnnotationLiteralEmitter {
         CodeBlock.Builder equalsChecks = CodeBlock.builder();
         boolean first = true;
 
-        for (Map.Entry<? extends ExecutableElement, ? extends AnnotationValue> entry : values.entrySet()) {
+        for (Map.Entry<ExecutableElement, AnnotationValue> entry : values) {
             String member = entry.getKey().getSimpleName().toString();
             TypeMirror memberType = entry.getKey().getReturnType();
             TypeName fieldType = memberFieldType(memberType, types);
@@ -415,8 +414,12 @@ public final class AnnotationLiteralEmitter {
      *                                       nested-annotation type
      */
     private static void arrayComponentGuard(String member, TypeMirror componentType) {
+        arrayComponentGuard(member, componentType, false);
+    }
+
+    private static void arrayComponentGuard(String member, TypeMirror componentType, boolean nestedAnnotationValue) {
         TypeKind kind = componentType.getKind();
-        if (kind == TypeKind.CHAR || kind == TypeKind.FLOAT || kind == TypeKind.DOUBLE) {
+        if (!nestedAnnotationValue && (kind == TypeKind.CHAR || kind == TypeKind.FLOAT || kind == TypeKind.DOUBLE)) {
             throw new UnsupportedOperationException("Annotation member '" + member + "' is an array of primitive type '"
                     + TypeName.get(componentType)
                     + "', which is not yet supported by AnnotationLiteralEmitter"
@@ -460,10 +463,9 @@ public final class AnnotationLiteralEmitter {
      * @return a {@link CodeBlock} of comma-separated constant literals
      */
     public static CodeBlock constructorArgs(AnnotationMirror mirror, Elements elements, Types types) {
-        Map<? extends ExecutableElement, ? extends AnnotationValue> values =
-                elements.getElementValuesWithDefaults(mirror);
-        List<CodeBlock> args = values.entrySet().stream()
-                .map(e -> valueLiteral(e.getKey().getReturnType(), e.getValue(), elements, types))
+        List<Map.Entry<ExecutableElement, AnnotationValue>> values = orderedValues(mirror, elements);
+        List<CodeBlock> args = values.stream()
+                .map(e -> valueLiteral(e.getKey().getReturnType(), e.getValue(), elements, types, false))
                 .toList();
         return CodeBlock.join(args, ", ");
     }
@@ -488,10 +490,14 @@ public final class AnnotationLiteralEmitter {
      *                                       nested-annotation member
      */
     private static CodeBlock valueLiteral(
-            TypeMirror memberType, AnnotationValue value, Elements elements, Types types) {
+            TypeMirror memberType,
+            AnnotationValue value,
+            Elements elements,
+            Types types,
+            boolean nestedAnnotationValue) {
         Object raw = value.getValue();
         if (memberType.getKind() == TypeKind.ARRAY) {
-            return arrayLiteral((ArrayType) memberType, raw, elements, types);
+            return arrayLiteral((ArrayType) memberType, raw, elements, types, nestedAnnotationValue);
         }
         if (isClassMember(memberType)) {
             // Class<?> attribute — value is a TypeMirror; emit <Erased>.class
@@ -510,7 +516,7 @@ public final class AnnotationLiteralEmitter {
                     enumConstant.getSimpleName().toString());
         }
         TypeKind kind = memberType.getKind();
-        if (kind == TypeKind.CHAR || kind == TypeKind.FLOAT || kind == TypeKind.DOUBLE) {
+        if (!nestedAnnotationValue && (kind == TypeKind.CHAR || kind == TypeKind.FLOAT || kind == TypeKind.DOUBLE)) {
             throw new UnsupportedOperationException("Annotation member of primitive type '"
                     + TypeName.get(memberType)
                     + "' is not yet supported by AnnotationLiteralEmitter"
@@ -539,13 +545,14 @@ public final class AnnotationLiteralEmitter {
      * @return the {@link CodeBlock} for the array initializer
      * @throws UnsupportedOperationException if an element is a not-yet-supported component kind
      */
-    private static CodeBlock arrayLiteral(ArrayType arrayType, Object raw, Elements processingElements, Types types) {
+    private static CodeBlock arrayLiteral(
+            ArrayType arrayType, Object raw, Elements processingElements, Types types, boolean nestedAnnotationValue) {
         TypeMirror component = arrayType.getComponentType();
         // Guard the component kind up front — before erasing it for the new T[...] element type — so an
         // unsupported component (a char/float/double primitive or a nested-annotation type) is refused
         // loudly and consistently for both the empty and non-empty cases, exactly matching
         // firstUnsupportedAttribute (FR-013-09c).
-        arrayComponentGuard("<array>", component);
+        arrayComponentGuard("<array>", component, nestedAnnotationValue);
         TypeName componentTypeName = TypeName.get(types.erasure(component));
 
         @SuppressWarnings("unchecked")
@@ -556,24 +563,52 @@ public final class AnnotationLiteralEmitter {
         }
 
         List<CodeBlock> elementLiterals = values.stream()
-                .map(e -> valueLiteral(component, e, processingElements, types))
+                .map(e -> valueLiteral(component, e, processingElements, types, nestedAnnotationValue))
                 .toList();
         return CodeBlock.of("new $T[]{$L}", componentTypeName, CodeBlock.join(elementLiterals, ", "));
+    }
+
+    /** Returns annotation values in declaration order, matching the generated literal constructor. */
+    private static List<Map.Entry<ExecutableElement, AnnotationValue>> orderedValues(
+            AnnotationMirror mirror, Elements elements) {
+        Map<? extends ExecutableElement, ? extends AnnotationValue> values =
+                elements.getElementValuesWithDefaults(mirror);
+        TypeMirror annotationType = mirror.getAnnotationType();
+        if (!(annotationType instanceof DeclaredType declared)) {
+            return values.entrySet().stream()
+                    .map(entry -> Map.entry(entry.getKey(), entry.getValue()))
+                    .toList();
+        }
+
+        List<Map.Entry<ExecutableElement, AnnotationValue>> ordered = new java.util.ArrayList<>();
+        for (ExecutableElement member : javax.lang.model.util.ElementFilter.methodsIn(
+                declared.asElement().getEnclosedElements())) {
+            AnnotationValue value = values.get(member);
+            if (value != null) {
+                ordered.add(Map.entry(member, value));
+            }
+        }
+        // Keep the Mockito/unit-test fallback and any unusual inherited members deterministic.
+        for (Map.Entry<? extends ExecutableElement, ? extends AnnotationValue> entry : values.entrySet()) {
+            if (ordered.stream().noneMatch(existing -> existing.getKey().equals(entry.getKey()))) {
+                ordered.add(Map.entry(entry.getKey(), entry.getValue()));
+            }
+        }
+        return ordered;
     }
 
     /** Emits a self-contained annotation literal expression for a nested annotation member. */
     private static CodeBlock nestedLiteral(AnnotationMirror mirror, Elements elements, Types types) {
         TypeElement annotationType = (TypeElement) mirror.getAnnotationType().asElement();
-        Map<? extends ExecutableElement, ? extends AnnotationValue> values =
-                elements.getElementValuesWithDefaults(mirror);
+        List<Map.Entry<ExecutableElement, AnnotationValue>> values = orderedValues(mirror, elements);
         CodeBlock.Builder expression = CodeBlock.builder().add("new $T() {\n", ClassName.get(annotationType));
-        for (Map.Entry<? extends ExecutableElement, ? extends AnnotationValue> entry : values.entrySet()) {
+        for (Map.Entry<ExecutableElement, AnnotationValue> entry : values) {
             ExecutableElement member = entry.getKey();
             expression.add(
                     "@Override public $T $N() { return $L; }\n",
                     TypeName.get(member.getReturnType()),
                     member.getSimpleName().toString(),
-                    valueLiteral(member.getReturnType(), entry.getValue(), elements, types));
+                    valueLiteral(member.getReturnType(), entry.getValue(), elements, types, true));
         }
         expression.add(
                 "@Override public $T annotationType() { return $T.class; }\n",
@@ -584,7 +619,8 @@ public final class AnnotationLiteralEmitter {
                 "@Override public boolean equals(Object other) { return other instanceof $T that && ",
                 ClassName.get(annotationType));
         boolean first = true;
-        for (ExecutableElement member : values.keySet()) {
+        for (Map.Entry<ExecutableElement, AnnotationValue> entry : values) {
+            ExecutableElement member = entry.getKey();
             if (!first) expression.add(" && ");
             first = false;
             String name = member.getSimpleName().toString();
@@ -598,7 +634,8 @@ public final class AnnotationLiteralEmitter {
         }
         expression.add(";}\n@Override public int hashCode() { return ");
         first = true;
-        for (ExecutableElement member : values.keySet()) {
+        for (Map.Entry<ExecutableElement, AnnotationValue> entry : values) {
+            ExecutableElement member = entry.getKey();
             if (!first) expression.add(" + ");
             first = false;
             String name = member.getSimpleName().toString();
