@@ -9,10 +9,10 @@ import dev.vertique.core.eventbus.EventBusClient;
 import dev.vertique.core.eventbus.EventBusDispatchException;
 import dev.vertique.core.eventbus.EventBusTimeoutException;
 import dev.vertique.core.eventbus.Result;
-import dev.vertique.core.resilience.CircuitBreaker;
-import dev.vertique.core.resilience.ResilienceAnnotations;
-import dev.vertique.core.resilience.Retry;
-import dev.vertique.core.resilience.Timeout;
+import dev.vertique.resilience.annotation.CircuitBreakerDeclaration;
+import dev.vertique.resilience.annotation.ResilienceAnnotations;
+import dev.vertique.resilience.annotation.RetryDeclaration;
+import dev.vertique.resilience.annotation.TimeoutDeclaration;
 import dev.vertique.services.config.CircuitBreakerOverride;
 import dev.vertique.services.config.RetryOverride;
 import dev.vertique.services.config.ServiceConfig;
@@ -318,8 +318,8 @@ public class ServiceRequestSender {
         }
 
         long perAttemptMs = DEFAULT_SEND_TIMEOUT_MS;
-        Timeout timeout = annotations.timeout();
-        CircuitBreaker cb = annotations.circuitBreaker();
+        TimeoutDeclaration timeout = annotations.timeout().orElse(null);
+        CircuitBreakerDeclaration cb = annotations.circuitBreaker().orElse(null);
         if (timeout != null) {
             TimeoutOverride timeoutOverride = operationConfig != null ? operationConfig.timeout() : null;
             Long valueMs = timeoutOverride != null ? timeoutOverride.valueMs() : null;
@@ -332,7 +332,7 @@ public class ServiceRequestSender {
 
         int maxRetries = 0;
         long totalBackoff = 0;
-        Retry retry = annotations.retry();
+        RetryDeclaration retry = annotations.retry().orElse(null);
         if (retry != null) {
             RetryOverride retryOverride = operationConfig != null ? operationConfig.retry() : null;
             maxRetries = retryOverride != null && retryOverride.maxRetries() != null

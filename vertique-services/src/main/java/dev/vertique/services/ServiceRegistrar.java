@@ -3,7 +3,7 @@
 
 package dev.vertique.services;
 
-import dev.vertique.core.resilience.ResilienceAnnotations;
+import dev.vertique.resilience.annotation.ResilienceAnnotations;
 import dev.vertique.services.dispatch.ServiceMethodDescriptor;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamMeta;

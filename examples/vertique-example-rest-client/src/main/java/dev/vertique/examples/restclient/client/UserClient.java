@@ -3,7 +3,7 @@
 
 package dev.vertique.examples.restclient.client;
 
-import dev.vertique.core.resilience.CircuitBreaker;
+import dev.vertique.resilience.annotation.CircuitBreaker;
 import dev.vertique.rest.client.ExpectedStatus;
 import dev.vertique.rest.client.RestClient;
 import io.vertx.core.Future;

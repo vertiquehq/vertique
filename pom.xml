@@ -49,6 +49,7 @@ SPDX-License-Identifier: EUPL-1.2
         <module>vertique-bom</module>
         <module>vertique-app-parent</module>
         <module>vertique-core</module>
+        <module>vertique-resilience</module>
         <module>vertique-json</module>
         <module>vertique-json-schema</module>
         <module>vertique-security</module>
@@ -247,6 +248,11 @@ SPDX-License-Identifier: EUPL-1.2
             <dependency>
                 <groupId>dev.vertique</groupId>
                 <artifactId>vertique-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-resilience</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

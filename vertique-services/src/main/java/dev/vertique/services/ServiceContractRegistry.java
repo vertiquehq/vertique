@@ -4,10 +4,10 @@
 package dev.vertique.services;
 
 import dev.vertique.core.config.ConfigParser;
-import dev.vertique.core.resilience.CircuitBreaker;
-import dev.vertique.core.resilience.ResilienceAnnotations;
-import dev.vertique.core.resilience.Retry;
-import dev.vertique.core.resilience.Timeout;
+import dev.vertique.resilience.annotation.CircuitBreakerDeclaration;
+import dev.vertique.resilience.annotation.ResilienceAnnotations;
+import dev.vertique.resilience.annotation.RetryDeclaration;
+import dev.vertique.resilience.annotation.TimeoutDeclaration;
 import dev.vertique.services.config.ServiceConfig;
 import dev.vertique.services.config.ServicesConfig.ServiceKey;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
@@ -477,17 +477,17 @@ public class ServiceContractRegistry {
 
         List<String> parts = new java.util.ArrayList<>();
 
-        Timeout timeout = policies.timeout();
+        TimeoutDeclaration timeout = policies.timeout().orElse(null);
         if (timeout != null) {
             parts.add("timeout=" + timeout.unit().toMillis(timeout.value()) + "ms");
         }
 
-        CircuitBreaker cb = policies.circuitBreaker();
+        CircuitBreakerDeclaration cb = policies.circuitBreaker().orElse(null);
         if (cb != null) {
             parts.add("cb=" + cb.maxFailures() + "/" + cb.timeoutMs() + "/" + cb.resetTimeoutMs());
         }
 
-        Retry retry = policies.retry();
+        RetryDeclaration retry = policies.retry().orElse(null);
         if (retry != null) {
             parts.add("retry=" + retry.maxRetries() + "/" + retry.delayMs() + "ms");
         }

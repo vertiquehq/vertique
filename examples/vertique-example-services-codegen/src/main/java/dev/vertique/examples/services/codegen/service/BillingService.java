@@ -3,7 +3,7 @@
 
 package dev.vertique.examples.services.codegen.service;
 
-import dev.vertique.core.resilience.Timeout;
+import dev.vertique.resilience.annotation.Timeout;
 import dev.vertique.services.ServiceContract;
 import dev.vertique.services.ServiceOperation;
 import io.vertx.core.Future;

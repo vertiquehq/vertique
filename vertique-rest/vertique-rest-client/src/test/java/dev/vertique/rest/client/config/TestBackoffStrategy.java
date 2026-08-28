@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.client.config;
 
-import dev.vertique.core.resilience.BackoffStrategy;
+import dev.vertique.resilience.BackoffStrategy;
 
 /**
  * Test fixture: a loadable {@link BackoffStrategy} with a public no-arg constructor, used to verify

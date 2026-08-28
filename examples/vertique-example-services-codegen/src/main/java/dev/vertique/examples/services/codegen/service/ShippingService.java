@@ -3,7 +3,7 @@
 
 package dev.vertique.examples.services.codegen.service;
 
-import dev.vertique.core.resilience.CircuitBreaker;
+import dev.vertique.resilience.annotation.CircuitBreaker;
 import dev.vertique.services.OneWay;
 import dev.vertique.services.ServiceContract;
 import dev.vertique.services.ServiceOperation;

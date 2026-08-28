@@ -162,8 +162,8 @@ Vertique lifecycle do not call a deployment manager directly.
 ```java
 package com.example.users;
 
-import dev.vertique.core.resilience.Retry;
-import dev.vertique.core.resilience.Timeout;
+import dev.vertique.resilience.annotation.Retry;
+import dev.vertique.resilience.annotation.Timeout;
 import dev.vertique.services.OneWay;
 import dev.vertique.services.ServiceContract;
 import dev.vertique.services.ServiceOperation;
@@ -287,7 +287,8 @@ These annotations define the public service protocol:
 | `@ServiceOperation` | Stable operation id and address segment | Required for durable target resolution |
 | `@OneWay` | Fire-and-forget operation | Method must return `Future<Void>` |
 
-Resilience annotations from `dev.vertique.core.resilience` may be placed on contracts or methods.
+Resilience annotations from `dev.vertique.resilience.annotation` may be placed on contracts or
+methods.
 Method annotations override contract-level values.
 
 ### `ServiceHandler<C>`
@@ -366,7 +367,7 @@ authorization bindings are absent.
 ## Resilience
 
 The annotations `@Timeout`, `@Retry`, and `@CircuitBreaker` are defined by
-`dev.vertique:vertique-core` and enforced server-side.
+`dev.vertique:vertique-resilience` and enforced server-side.
 
 Effective policy order is timeout/circuit-breaker around retry. A configured timeout applies per
 attempt. `@Retry.abortOn` wins over `retryOn`; when `retryOn` is empty, failures not matched by
@@ -585,8 +586,10 @@ implementations, typed clients, authorization, and lifecycle wiring.
 
 ## Dependencies
 
-- `dev.vertique:vertique-core` — async results, event-bus envelopes, lifecycle, resilience, and
-  ordered extensions.
+- `dev.vertique:vertique-core` — async results, event-bus envelopes, lifecycle, and ordered
+  extensions.
+- `dev.vertique:vertique-resilience` — canonical resilience annotations, declaration metadata, and
+  retry contracts.
 - `dev.vertique:vertique-context` — typed dispatch-context capture and restoration.
 - `dev.vertique:vertique-correlation` and `dev.vertique:vertique-logging` — correlation and MDC
   propagation.

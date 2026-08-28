@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.client;
 
-import dev.vertique.core.resilience.BackoffStrategy;
+import dev.vertique.resilience.BackoffStrategy;
 import dev.vertique.rest.client.meta.ClientMethodMeta;
 import dev.vertique.rest.client.meta.ClientMethodMeta.ResilienceConfig;
 import dev.vertique.rest.client.meta.ClientMethodMeta.RetryConfig;

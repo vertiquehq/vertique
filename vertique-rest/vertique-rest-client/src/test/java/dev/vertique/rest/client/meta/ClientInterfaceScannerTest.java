@@ -8,8 +8,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import dev.vertique.core.codegen.MethodMetadata;
 import dev.vertique.core.codegen.ParameterMetadata;
-import dev.vertique.core.resilience.BackoffStrategy;
-import dev.vertique.core.resilience.Retry;
+import dev.vertique.resilience.BackoffStrategy;
+import dev.vertique.resilience.annotation.Retry;
 import dev.vertique.rest.client.HttpClientResponse;
 import dev.vertique.rest.client.Url;
 import io.vertx.core.Future;

@@ -192,7 +192,8 @@ UserClient client = factory.builder()
 ### Resilience annotations
 
 `@CircuitBreaker`, `@Retry`, `@Timeout`, and `BackoffStrategy` come from
-`dev.vertique.core.resilience` in `dev.vertique:vertique-core` and are shared with
+`dev.vertique.resilience.annotation` and `dev.vertique.resilience` in
+`dev.vertique:vertique-resilience` and are shared with
 `dev.vertique:vertique-services`. All three annotations are valid on the interface (default for every
 method) and on a method (overrides the interface default).
 
@@ -258,7 +259,7 @@ public class AggressiveBackoff implements BackoffStrategy {
 
 ```java
 @FunctionalInterface
-public interface RestClientRetryPolicy extends dev.vertique.core.resilience.RetryPolicy {
+public interface RestClientRetryPolicy extends dev.vertique.resilience.RetryPolicy {
     boolean shouldRetry(Throwable error, int retryCount);
 }
 ```
@@ -986,7 +987,8 @@ interface AppComponent {
 
 | Dependency | Why |
 |---|---|
-| `dev.vertique:vertique-core` | `OrderedExtension`/`ExtensionPhase` ordering, the exception hierarchy, `FailureMapper` behind the default exception mapper, `ConfigParser`, the `core.resilience` annotations, `core.codegen` metadata SPI, optional `BeanValidator` |
+| `dev.vertique:vertique-core` | `OrderedExtension`/`ExtensionPhase` ordering, the exception hierarchy, `FailureMapper` behind the default exception mapper, `ConfigParser`, `core.codegen` metadata SPI, optional `BeanValidator` |
+| `dev.vertique:vertique-resilience` | Canonical timeout, retry, and circuit-breaker annotations plus backoff and retry contracts |
 | `dev.vertique:vertique-rest-core` | `ParamConversionResolver`, `ParamConverterRegistry`, `ConversionContext`, `ParamSource`, and `RestCoreModule` — the outbound half of the conversion stack `rest-jaxrs` uses inbound |
 | `dev.vertique:vertique-json` | `JsonMapperProfileRegistry`, `JsonConfig`, and `JsonRuntimeModule` for named mapper profiles |
 | `io.vertx:vertx-web-client` | `WebClient`, `WebClientOptions`, `PoolOptions` |

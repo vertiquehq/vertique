@@ -4,7 +4,7 @@
 package dev.vertique.services.dispatch;
 
 import dev.vertique.core.codegen.ParameterMetadata;
-import dev.vertique.core.resilience.ResilienceAnnotations;
+import dev.vertique.resilience.annotation.ResilienceAnnotations;
 import jakarta.annotation.Nullable;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;

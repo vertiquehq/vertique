@@ -17,9 +17,9 @@ import java.lang.annotation.Target;
  * {@code Future.succeededFuture()} immediately after the message is sent.
  *
  * <p>Methods annotated with {@code @OneWay} must return {@code Future<Void>}.
- * Resilience policies ({@link dev.vertique.core.resilience.Timeout @Timeout},
- * {@link dev.vertique.core.resilience.CircuitBreaker @CircuitBreaker},
- * {@link dev.vertique.core.resilience.Retry @Retry}) are still enforced on the
+ * Resilience policies ({@link dev.vertique.resilience.annotation.Timeout @Timeout},
+ * {@link dev.vertique.resilience.annotation.CircuitBreaker @CircuitBreaker},
+ * {@link dev.vertique.resilience.annotation.Retry @Retry}) are still enforced on the
  * server side during processing.
  *
  * <p>Example:

@@ -4,7 +4,7 @@
 package dev.vertique.rest.client.config;
 
 import dev.vertique.core.exception.ConfigurationException;
-import dev.vertique.core.resilience.BackoffStrategy;
+import dev.vertique.resilience.BackoffStrategy;
 
 /**
  * Typed per-client retry override read from {@code restClient.{name}.retry}.

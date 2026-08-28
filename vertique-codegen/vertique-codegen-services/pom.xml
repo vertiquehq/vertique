@@ -27,6 +27,10 @@ SPDX-License-Identifier: EUPL-1.2
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-security-core</artifactId>
         </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-resilience</artifactId>
+        </dependency>
         <!-- APT helpers from CG-001 -->
         <dependency>
             <groupId>dev.vertique</groupId>
@@ -74,7 +78,7 @@ SPDX-License-Identifier: EUPL-1.2
             <scope>test</scope>
         </dependency>
 
-        <!-- For test fixtures: SecurityContext, Body, @DispatchContextValue, resilience annotations -->
+        <!-- For test fixtures: SecurityContext, Body, and @DispatchContextValue -->
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-core</artifactId>

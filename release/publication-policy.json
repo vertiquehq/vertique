@@ -35,7 +35,7 @@
       "packaging": "pom"
     }
   ],
-  "expectedPublishableGavCount": 96,
+  "expectedPublishableGavCount": 97,
   "expectedPublishableGavs": [
     "dev.vertique:vertique-aop",
     "dev.vertique:vertique-app-parent",
@@ -104,6 +104,7 @@
     "dev.vertique:vertique-opentelemetry-rest",
     "dev.vertique:vertique-opentelemetry-services",
     "dev.vertique:vertique-parent",
+    "dev.vertique:vertique-resilience",
     "dev.vertique:vertique-rest-auth-jwt",
     "dev.vertique:vertique-rest-client",
     "dev.vertique:vertique-rest-core",

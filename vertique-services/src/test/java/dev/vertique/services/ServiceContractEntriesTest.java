@@ -8,10 +8,10 @@ import static org.junit.jupiter.api.Assertions.*;
 import dev.vertique.config.parser.DefaultConfigMapper;
 import dev.vertique.config.parser.DefaultConfigParser;
 import dev.vertique.core.config.ConfigParser;
-import dev.vertique.core.resilience.ResilienceAnnotations;
-import dev.vertique.core.resilience.Retry;
-import dev.vertique.core.resilience.Timeout;
 import dev.vertique.core.util.AnnotationResolver;
+import dev.vertique.resilience.annotation.ResilienceAnnotations;
+import dev.vertique.resilience.annotation.Retry;
+import dev.vertique.resilience.annotation.Timeout;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.services.ServiceContractRegistry.ContractEntry;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
@@ -550,8 +550,8 @@ class ServiceContractEntriesTest {
             ContractEntry<?> entry = buildEntryFor(handler, method);
             ResilienceAnnotations resilience = entry.operations().get("execute").resilienceAnnotations();
 
-            assertNotNull(resilience.timeout(), "Expected class-level @Timeout to be resolved");
-            assertEquals(5000L, resilience.timeout().value());
+            assertTrue(resilience.timeout().isPresent(), "Expected class-level @Timeout to be resolved");
+            assertEquals(5000L, resilience.timeout().orElseThrow().value());
         }
 
         @Test
@@ -563,8 +563,8 @@ class ServiceContractEntriesTest {
             ContractEntry<?> entry = buildEntryFor(handler, method);
             ResilienceAnnotations resilience = entry.operations().get("execute").resilienceAnnotations();
 
-            assertNotNull(resilience.retry(), "Expected method-level @Retry to be resolved");
-            assertEquals(2, resilience.retry().maxRetries());
+            assertTrue(resilience.retry().isPresent(), "Expected method-level @Retry to be resolved");
+            assertEquals(2, resilience.retry().orElseThrow().maxRetries());
         }
 
         @Test
@@ -576,10 +576,10 @@ class ServiceContractEntriesTest {
             ContractEntry<?> entry = buildEntryFor(handler, method);
             ResilienceAnnotations resilience = entry.operations().get("execute").resilienceAnnotations();
 
-            assertNotNull(resilience.timeout(), "Expected @Timeout to be resolved");
+            assertTrue(resilience.timeout().isPresent(), "Expected @Timeout to be resolved");
             assertEquals(
                     3000L,
-                    resilience.timeout().value(),
+                    resilience.timeout().orElseThrow().value(),
                     "Method-level @Timeout(3000) should win over class-level @Timeout(10000)");
         }
 
@@ -940,10 +940,13 @@ class ServiceContractEntriesTest {
                     .build();
 
             ResilienceAnnotations resilience = entry.operations().get("compute").resilienceAnnotations();
-            assertNotNull(
-                    resilience.timeout(),
+            assertTrue(
+                    resilience.timeout().isPresent(),
                     "Expected @Timeout from the contract's declaring class, not the handler (which has none)");
-            assertEquals(10000L, resilience.timeout().value(), "Should resolve @Timeout(10000) from TimeoutContract");
+            assertEquals(
+                    10000L,
+                    resilience.timeout().orElseThrow().value(),
+                    "Should resolve @Timeout(10000) from TimeoutContract");
         }
 
         @Test

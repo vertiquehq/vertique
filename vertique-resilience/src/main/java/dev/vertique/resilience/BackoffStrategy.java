@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.core.resilience;
+package dev.vertique.resilience;
 
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -11,28 +11,8 @@ import java.util.concurrent.ThreadLocalRandom;
  * <p>Implementations compute a delay in milliseconds given the 0-based retry count. The strategy
  * is decoupled from retry eligibility — whether to retry is determined by {@link RetryPolicy}.
  *
- * <p>Built-in factories:
- *
- * <ul>
- *   <li>{@link #exponential(long, double, long)} — exponential backoff with jitter (default)</li>
- *   <li>{@link #fixed(long)} — constant delay every retry</li>
- *   <li>{@link #none()} — no delay between retries</li>
- * </ul>
- *
- * <p>Custom strategies are provided as classes with a no-arg constructor and referenced from
- * {@link Retry#backoff()}.
- *
- * <pre>{@code
- * public class AggressiveBackoff implements BackoffStrategy {
- *     @Override
- *     public long delay(int retryCount) {
- *         return Math.min(100L * (long) Math.pow(3, retryCount), 5_000L);
- *     }
- * }
- *
- * @Retry(maxRetries = 5, backoff = AggressiveBackoff.class)
- * @GET Future<User> getUser(@PathParam("id") String id);
- * }</pre>
+ * <p>Built-in factories are provided for exponential, fixed, and no-delay strategies. Custom
+ * strategies are referenced from {@link dev.vertique.resilience.annotation.Retry#backoff()}.
  */
 @FunctionalInterface
 public interface BackoffStrategy {
@@ -45,18 +25,16 @@ public interface BackoffStrategy {
      */
     long delay(int retryCount);
 
-    // --- Built-in factories ---
-
     /**
      * Creates an exponential backoff strategy with random jitter.
      *
-     * <p>Delay formula: {@code min(delayMs × multiplier^retryCount, maxDelayMs) + jitter}, where
-     * jitter is a random value in {@code [0, min(delay, 1000))} milliseconds.
+     * <p>The capped exponential delay is increased by a random value in
+     * {@code [0, min(cappedDelay, 1000))} milliseconds.
      *
-     * @param delayMs the base delay in milliseconds for the first retry (retryCount = 0)
+     * @param delayMs the base delay in milliseconds for the first retry
      * @param multiplier the exponential growth factor; {@code 1.0} produces fixed delay
      * @param maxDelayMs the upper bound on the delay before jitter is added
-     * @return an exponential backoff {@link BackoffStrategy}
+     * @return an exponential backoff strategy
      */
     static BackoffStrategy exponential(long delayMs, double multiplier, long maxDelayMs) {
         return retryCount -> {
@@ -68,33 +46,25 @@ public interface BackoffStrategy {
     }
 
     /**
-     * Creates a fixed-delay backoff strategy that always returns the same delay.
+     * Creates a fixed-delay backoff strategy.
      *
-     * @param delayMs the constant delay in milliseconds between retries
-     * @return a fixed backoff {@link BackoffStrategy}
+     * @param delayMs the constant delay in milliseconds
+     * @return a fixed backoff strategy
      */
     static BackoffStrategy fixed(long delayMs) {
         return retryCount -> delayMs;
     }
 
     /**
-     * Creates a no-delay backoff strategy that retries immediately.
+     * Creates a no-delay backoff strategy.
      *
-     * @return a zero-delay {@link BackoffStrategy}
+     * @return a zero-delay backoff strategy
      */
     static BackoffStrategy none() {
         return retryCount -> 0L;
     }
 
-    // --- Sentinel ---
-
-    /**
-     * Sentinel class used as the default value of {@link Retry#backoff()}.
-     *
-     * <p>When the scanner sees this class as the backoff, it means "use the builder-level strategy"
-     * — the sentinel is never instantiated. Attempting to call {@link #delay} throws
-     * {@link UnsupportedOperationException}.
-     */
+    /** Sentinel class used as the default value of {@link dev.vertique.resilience.annotation.Retry#backoff()}. */
     final class Default implements BackoffStrategy {
 
         private Default() {
@@ -103,7 +73,7 @@ public interface BackoffStrategy {
         }
 
         /**
-         * Always throws — this sentinel class is never instantiated.
+         * Always throws because this sentinel is never instantiated.
          *
          * @param retryCount unused
          * @return never returns

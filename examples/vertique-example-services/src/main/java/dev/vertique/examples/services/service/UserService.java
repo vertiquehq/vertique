@@ -3,8 +3,8 @@
 
 package dev.vertique.examples.services.service;
 
-import dev.vertique.core.resilience.CircuitBreaker;
-import dev.vertique.core.resilience.Timeout;
+import dev.vertique.resilience.annotation.CircuitBreaker;
+import dev.vertique.resilience.annotation.Timeout;
 import dev.vertique.services.OneWay;
 import dev.vertique.services.ServiceContract;
 import dev.vertique.services.ServiceOperation;

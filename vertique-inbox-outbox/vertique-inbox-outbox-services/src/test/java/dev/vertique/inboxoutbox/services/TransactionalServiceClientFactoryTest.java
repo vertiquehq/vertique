@@ -14,10 +14,10 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import dev.vertique.core.resilience.ResilienceAnnotations;
 import dev.vertique.inboxoutbox.DestinationType;
 import dev.vertique.inboxoutbox.OutboxEntry;
 import dev.vertique.inboxoutbox.OutboxService;
+import dev.vertique.resilience.annotation.ResilienceAnnotations;
 import dev.vertique.services.ResolvedServiceTarget;
 import dev.vertique.services.ServiceOperation;
 import dev.vertique.services.ServiceTargetResolver;

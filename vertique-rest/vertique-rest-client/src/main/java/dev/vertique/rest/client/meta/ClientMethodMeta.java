@@ -4,7 +4,7 @@
 package dev.vertique.rest.client.meta;
 
 import dev.vertique.core.codegen.MethodMetadata;
-import dev.vertique.core.resilience.BackoffStrategy;
+import dev.vertique.resilience.BackoffStrategy;
 import dev.vertique.rest.client.HttpClientResponse;
 import io.vertx.circuitbreaker.CircuitBreakerOptions;
 import io.vertx.core.Expectation;
@@ -100,7 +100,7 @@ public record ClientMethodMeta(
             @Nullable RetryConfig retry) {}
 
     /**
-     * Immutable retry configuration derived from the {@link dev.vertique.core.resilience.Retry}
+     * Immutable retry configuration derived from the {@link dev.vertique.resilience.annotation.Retry}
      * annotation placed on a method or its declaring interface.
      *
      * @param maxRetries maximum number of retry attempts after the initial failure

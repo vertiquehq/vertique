@@ -3,12 +3,14 @@
 
 package dev.vertique.services.policy;
 
-import dev.vertique.core.resilience.BackoffStrategy;
-import dev.vertique.core.resilience.BackoffStrategyResolver;
-import dev.vertique.core.resilience.CircuitBreaker;
-import dev.vertique.core.resilience.ResilienceAnnotations;
-import dev.vertique.core.resilience.Retry;
-import dev.vertique.core.resilience.Timeout;
+import dev.vertique.resilience.BackoffStrategy;
+import dev.vertique.resilience.annotation.CircuitBreaker;
+import dev.vertique.resilience.annotation.CircuitBreakerDeclaration;
+import dev.vertique.resilience.annotation.ResilienceAnnotations;
+import dev.vertique.resilience.annotation.Retry;
+import dev.vertique.resilience.annotation.RetryDeclaration;
+import dev.vertique.resilience.annotation.Timeout;
+import dev.vertique.resilience.annotation.TimeoutDeclaration;
 import dev.vertique.services.config.CircuitBreakerOverride;
 import dev.vertique.services.config.RetryOverride;
 import dev.vertique.services.config.ServiceConfig;
@@ -19,7 +21,6 @@ import dev.vertique.services.dispatch.DispatchPipeline;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
 import io.vertx.circuitbreaker.RetryPolicy;
 import io.vertx.core.Vertx;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -84,9 +85,9 @@ public class PolicyChainBuilder {
         }
 
         ServiceOperationConfig overrides = getOverrides(meta);
-        CircuitBreaker cb = policies.circuitBreaker();
-        Retry retry = policies.retry();
-        Timeout timeout = policies.timeout();
+        CircuitBreakerDeclaration cb = policies.circuitBreaker().orElse(null);
+        RetryDeclaration retry = policies.retry().orElse(null);
+        TimeoutDeclaration timeout = policies.timeout().orElse(null);
 
         CircuitBreakerOverride cbOverride = overrides != null ? overrides.circuitBreaker() : null;
         TimeoutOverride timeoutOverride = overrides != null ? overrides.timeout() : null;
@@ -119,8 +120,8 @@ public class PolicyChainBuilder {
 
             // Resolve backoff strategy — custom class wins, then config overrides, then annotation inline params
             BackoffStrategy effectiveBackoff;
-            if (retry.backoff() != BackoffStrategy.Default.class) {
-                effectiveBackoff = BackoffStrategyResolver.resolve(retry, null);
+            if (retry.backoffClass() != BackoffStrategy.Default.class) {
+                effectiveBackoff = instantiateBackoff(retry.backoffClass());
             } else {
                 long delayMs = override(retryOverride != null ? retryOverride.delayMs() : null, retry.delayMs());
                 double backoffMultiplier = override(
@@ -131,10 +132,8 @@ public class PolicyChainBuilder {
             }
 
             // Build retryOn/abortOn sets for eligibility filtering (dedup to tolerate duplicate entries)
-            Set<Class<? extends Throwable>> abortOn =
-                    Arrays.stream(retry.abortOn()).collect(Collectors.toUnmodifiableSet());
-            Set<Class<? extends Throwable>> retryOn =
-                    Arrays.stream(retry.retryOn()).collect(Collectors.toUnmodifiableSet());
+            Set<Class<? extends Throwable>> abortOn = retry.abortOn().stream().collect(Collectors.toUnmodifiableSet());
+            Set<Class<? extends Throwable>> retryOn = retry.retryOn().stream().collect(Collectors.toUnmodifiableSet());
 
             // Compose Vert.x RetryPolicy: eligibility filtering + delay computation
             vertxRetryPolicy = composeVertxRetryPolicy(abortOn, retryOn, effectiveBackoff);
@@ -175,6 +174,22 @@ public class PolicyChainBuilder {
             // 3. Compute delay
             return backoff.delay(retryCount);
         };
+    }
+
+    /**
+     * Instantiates a custom annotation-declared backoff strategy locally for the legacy Services
+     * policy path. The common vocabulary deliberately exposes no public resolver for this concern.
+     *
+     * @param backoffClass the custom strategy class
+     * @return the instantiated strategy
+     * @throws IllegalStateException when the strategy cannot be constructed
+     */
+    private static BackoffStrategy instantiateBackoff(Class<? extends BackoffStrategy> backoffClass) {
+        try {
+            return backoffClass.getDeclaredConstructor().newInstance();
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("Failed to instantiate BackoffStrategy: " + backoffClass.getName(), e);
+        }
     }
 
     /**
