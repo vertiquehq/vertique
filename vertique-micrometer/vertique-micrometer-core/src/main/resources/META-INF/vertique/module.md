@@ -27,7 +27,8 @@ composite whose recording is a safe no-op.
 
 Add `vertique-micrometer-core` to any application that should emit metrics. Pair it with at least
 one backend module (`vertique-micrometer-registry-prometheus`) and install `MicrometerModule` in the
-Dagger `@Component`. Add `vertique-micrometer-rest` or `vertique-micrometer-services` to emit
+Dagger `@Component`. Add `vertique-micrometer-rest`, `vertique-micrometer-services`, or
+`vertique-micrometer-resilience` to emit
 request and dispatch timing from those subsystems.
 
 Do not add this module if the application has no need for metrics — the module adds a runtime

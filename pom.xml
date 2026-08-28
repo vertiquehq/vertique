@@ -662,6 +662,11 @@ SPDX-License-Identifier: EUPL-1.2
                 <artifactId>vertique-micrometer-services</artifactId>
                 <version>${project.version}</version>
             </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-micrometer-resilience</artifactId>
+                <version>${project.version}</version>
+            </dependency>
 
             <!-- OpenTelemetry framework modules -->
             <dependency>

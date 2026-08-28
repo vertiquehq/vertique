@@ -52,7 +52,7 @@ describe('CoverageAggregateContractTest', () => {
   it('aggregateDependencyCountMatchesTheDeclaredLiteral', () => {
     // Deliberately a literal, mirroring expectedPublishableGavCount: a BOM
     // edit cannot move the coverage inventory without touching this number.
-    assert.equal(readPom(AGGREGATE_POM).dependencies.length, 91);
+    assert.equal(readPom(AGGREGATE_POM).dependencies.length, 92);
   });
 
   it('aggregateIsAReactorModuleAndStaysUnpublishable', () => {
