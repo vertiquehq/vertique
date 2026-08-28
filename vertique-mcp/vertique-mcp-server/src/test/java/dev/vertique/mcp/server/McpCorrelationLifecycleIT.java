@@ -51,6 +51,7 @@ import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
@@ -118,13 +119,19 @@ class McpCorrelationLifecycleIT {
 
     private final Vertx vertx = Vertx.vertx();
     private HttpServer server;
+    private HttpClient rawClient;
     private WebClient client;
 
     @AfterEach
     void tearDown() throws Exception {
-        CompletableFuture<Void> closed = new CompletableFuture<>();
+        // R48 W4: the raw HttpClient WebClient wraps must be retained and its close propagated too —
+        // pre-fix, only the server's close was awaited and the wrapped client's underlying connections
+        // were silently discarded, mirroring the R46 teardown discipline (McpToolsListDisconnectIT,
+        // McpDisconnectBeforeInvocationIT) applied to every sibling IT in this package.
         Future<Void> serverClose = server != null ? server.close() : Future.succeededFuture();
-        serverClose.onComplete(joined -> vertx.close().onComplete(vertxResult -> {
+        Future<Void> clientClose = rawClient != null ? rawClient.close() : Future.succeededFuture();
+        CompletableFuture<Void> closed = new CompletableFuture<>();
+        Future.join(serverClose, clientClose).onComplete(joined -> vertx.close().onComplete(vertxResult -> {
             Throwable failure = joined.failed() ? joined.cause() : vertxResult.cause();
             if (failure != null) {
                 closed.completeExceptionally(failure);
@@ -134,6 +141,7 @@ class McpCorrelationLifecycleIT {
         }));
         closed.get(10, TimeUnit.SECONDS);
         server = null;
+        rawClient = null;
         client = null;
     }
 
@@ -267,7 +275,8 @@ class McpCorrelationLifecycleIT {
         router.route(config.mountPath()).subRouter(await(mount.createRouter(vertx)));
         server = await(vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1"));
         int port = server.actualPort();
-        client = WebClient.wrap(vertx.createHttpClient());
+        rawClient = vertx.createHttpClient();
+        client = WebClient.wrap(rawClient);
 
         // --- Drive one authenticated, authorized tools/call request ---
         HttpResponse<Buffer> response = await(callTool(port));

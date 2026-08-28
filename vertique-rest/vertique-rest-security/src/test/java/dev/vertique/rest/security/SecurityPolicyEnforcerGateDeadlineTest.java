@@ -5,6 +5,10 @@ package dev.vertique.rest.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import dev.vertique.config.parser.DefaultConfigMapper;
+import dev.vertique.config.parser.DefaultConfigParser;
+import dev.vertique.core.config.ConfigParser;
+import dev.vertique.core.config.JsonConfigPaths;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
 import dev.vertique.core.context.DispatchBoundary;
@@ -31,6 +35,7 @@ import dev.vertique.security.events.SecurityEventObserver;
 import dev.vertique.security.runtime.events.SecurityEventEmitter;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
+import io.vertx.core.json.JsonObject;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -204,6 +209,81 @@ class SecurityPolicyEnforcerGateDeadlineTest {
         assertThat(authorizer.callCount())
                 .as("the hanging authorizer is invoked exactly once")
                 .isEqualTo(1);
+    }
+
+    /**
+     * R48 proof-gap closure — drives {@code security.authz.gateDeadlineMs} through the REAL config
+     * path: a JSON application config, {@link AuthorizationGateConfigModule}'s own {@code @Provides}
+     * factory method (the exact call Dagger generates for an application that installs the module),
+     * and {@link ConfigParser#parse}, rather than the public {@code @Inject}-constructor test above's
+     * hand-built {@code new AuthorizationGateConfig(CONFIGURED_GATE_DEADLINE_MS)} — closing the
+     * remaining proof gap between "the module parses this shape correctly" ({@code
+     * AuthorizationGateConfigTest}, unit-only) and "the parsed value genuinely bounds a hung gate"
+     * (this method, into observable {@link SecurityPolicyEnforcer#decide} behavior). Mirrors {@code
+     * JwtAuthConfigTest}'s {@code DefaultConfigParser(DefaultConfigMapper.lenient())} construction —
+     * the established test-side {@link ConfigParser} instance shape this module's other config-path
+     * tests use.
+     */
+    @Test
+    @DisplayName("shouldConfigDriveTheGateDeadlineThroughTheParserAndModuleIntoAFastFailClosedDeny")
+    void shouldConfigDriveTheGateDeadlineThroughTheParserAndModuleIntoAFastFailClosedDeny() throws Exception {
+        // Given: a real application config JSON carrying security.authz.gateDeadlineMs, parsed through
+        // the same ConfigParser#parse(JsonObject, Class) seam every real config-driven module uses.
+        JsonObject applicationConfig = new JsonObject()
+                .put(
+                        "security",
+                        new JsonObject()
+                                .put("authz", new JsonObject().put("gateDeadlineMs", CONFIGURED_GATE_DEADLINE_MS)));
+        ConfigParser parser = new DefaultConfigParser(DefaultConfigMapper.lenient());
+        JsonObject authzSection = JsonConfigPaths.navigateObject(applicationConfig, "security", "authz");
+
+        // When: AuthorizationGateConfigModule's own @Provides factory method — the exact call Dagger
+        // generates for an application that installs this module — parses that section.
+        AuthorizationGateConfig configDriven =
+                AuthorizationGateConfigModule.authorizationGateConfig(applicationConfig, parser);
+        assertThat(configDriven.gateDeadlineMs())
+                .as("sanity: the config-path value must genuinely be the configured 50ms, not the "
+                        + "framework default — otherwise the timing assertion below is vacuous")
+                .isEqualTo(CONFIGURED_GATE_DEADLINE_MS);
+        // authzSection is read only to keep JsonConfigPaths.navigateObject's own reachable shape (the
+        // section the module itself resolves internally) visible at this call site; the module call
+        // above re-navigates it independently, exactly as production does.
+        assertThat(authzSection.getLong("gateDeadlineMs")).isEqualTo(CONFIGURED_GATE_DEADLINE_MS);
+
+        // Then: constructing the enforcer with this config-parsed (not hand-built) AuthorizationGateConfig
+        // and driving a hung role/scope gate through it must still deny fast — DECISIVE, the same
+        // sensitivity as shouldFailClosedFastWhenConstructedWithAConfiguredGateDeadline above: a
+        // gateDeadlineMs that silently reverted to the 5s default would blow the bound below.
+        List<AuthorizationDecisionEvent> events = new ArrayList<>();
+        NeverCompletingDecisionPoint dp = new NeverCompletingDecisionPoint();
+        RecordingAuthorizer authorizer = RecordingAuthorizer.throwing(); // must not be consulted
+        SecurityPolicyEnforcer enforcer = new SecurityPolicyEnforcer(
+                Optional.of(dp),
+                Optional.empty(),
+                Set.of(),
+                capturingEmitter(events),
+                NO_OP_CONTEXT_HOLDER,
+                NO_OP_SECURITY_RUNTIME,
+                Optional.ofNullable(authorizer),
+                Optional.of(configDriven));
+        SecurityPolicy.Constrained policy = new SecurityPolicy.Constrained(List.of("ops"), List.of(), false);
+
+        long startNanos = System.nanoTime();
+        Future<AuthorizationDecision> result =
+                enforcer.decide(aliceContext(Set.of("ops")), policy, Optional.empty(), TOOL_RESOURCE, MCP_ORIGIN);
+        AuthorizationDecision decision =
+                result.toCompletionStage().toCompletableFuture().get(CONFIGURED_AWAIT_BOUND_MS, TimeUnit.MILLISECONDS);
+        long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;
+
+        assertThat(decision.permitted()).isFalse();
+        assertThat(decision.reasonCode()).isEqualTo(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR);
+        assertThat(events).hasSize(1);
+        assertThat(elapsedMs)
+                .as("DECISIVE: the config-path-parsed 50ms deadline must deny well under the old fixed "
+                        + "5s default, proving security.authz.gateDeadlineMs genuinely reaches enforcer "
+                        + "behavior through the parser and opt-in module, not merely the record's own "
+                        + "constructor")
+                .isLessThan(1_000L);
     }
 
     // --- Shared fixture construction ---
