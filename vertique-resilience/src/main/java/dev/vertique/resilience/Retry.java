@@ -5,6 +5,7 @@ package dev.vertique.resilience;
 
 import dev.vertique.resilience.exception.ResilienceClosedException;
 import dev.vertique.resilience.exception.ResiliencePolicyException;
+import dev.vertique.resilience.spi.event.ResilienceConcern;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
@@ -184,6 +185,7 @@ public final class Retry {
         private final RetryConfig configuration;
         private final TimeoutConfig timeoutConfiguration;
         private final Supplier<Future<T>> operation;
+        private final ResilienceExecutionObservation observation;
         private final Promise<T> result = Promise.promise();
         private final AtomicBoolean settled = new AtomicBoolean();
         private final AtomicBoolean startClaimed = new AtomicBoolean();
@@ -192,6 +194,7 @@ public final class Retry {
         private volatile TimeoutExecution<T> currentAttempt;
         private volatile long retryTimerId = -1L;
         private int attemptNumber;
+        private boolean policyCallbackFailed;
 
         Execution(
                 Resilience resilience,
@@ -199,13 +202,15 @@ public final class Retry {
                 String operationKey,
                 RetryConfig configuration,
                 TimeoutConfig timeoutConfiguration,
-                Supplier<Future<T>> operation) {
+                Supplier<Future<T>> operation,
+                ResilienceExecutionObservation observation) {
             this.resilience = Objects.requireNonNull(resilience, "resilience");
             this.context = Objects.requireNonNull(context, "context");
             this.operationKey = Objects.requireNonNull(operationKey, "operationKey");
             this.configuration = Objects.requireNonNull(configuration, "configuration");
             this.timeoutConfiguration = timeoutConfiguration;
             this.operation = Objects.requireNonNull(operation, "operation");
+            this.observation = observation;
         }
 
         Future<T> future() {
@@ -237,14 +242,17 @@ public final class Retry {
                 return;
             }
             try {
+                int attemptOrdinal = observation == null ? 0 : observation.attemptStarted();
                 if (timeoutConfiguration == null) {
-                    invokeSupplier(operation);
+                    invokeSupplier(operation, attemptOrdinal);
                 } else {
                     TimeoutExecution<T> timeout = resilience.scheduleTimeout(
                             context,
                             operationKey,
                             timeoutConfiguration.timeoutMs(),
-                            this::invokeSupplierWithoutRethrow);
+                            this::invokeSupplierWithoutRethrow,
+                            observation,
+                            attemptOrdinal);
                     if (timeout == null) {
                         settleClosed();
                         return;
@@ -280,11 +288,14 @@ public final class Retry {
             }
         }
 
-        private void invokeSupplier(Supplier<Future<T>> supplier) {
+        private void invokeSupplier(Supplier<Future<T>> supplier, int attemptOrdinal) {
             Future<T> supplied = null;
             try {
                 supplied = Objects.requireNonNull(supplier.get(), "operation returned null future");
             } catch (Exception failure) {
+                if (observation != null) {
+                    observation.attemptCompleted(attemptOrdinal, failure);
+                }
                 Future<T> failed = Future.failedFuture(failure);
                 failed.onComplete(outcome -> context.runOnContext(ignored -> handleAttempt(outcome)));
                 return;
@@ -296,6 +307,10 @@ public final class Retry {
                     throw fatal;
                 }
                 supplied = Future.failedFuture(fatal);
+            }
+            if (observation != null) {
+                supplied.onComplete(outcome ->
+                        observation.attemptCompleted(attemptOrdinal, outcome.succeeded() ? null : outcome.cause()));
             }
             supplied.onComplete(outcome -> context.runOnContext(ignored -> handleAttempt(outcome)));
         }
@@ -309,6 +324,10 @@ public final class Retry {
                 return;
             }
             Throwable failure = outcome.succeeded() ? null : Objects.requireNonNull(outcome.cause(), "failure");
+            int attemptOrdinal = attemptNumber + 1;
+            if (timeoutConfiguration != null) {
+                // TimeoutExecution owns completion for timed attempts.
+            }
             if (failure == null) {
                 settleSuccess(outcome.result());
                 return;
@@ -319,10 +338,14 @@ public final class Retry {
             }
             int retryCount = attemptNumber;
             if (retryCount >= configuration.maxRetries()) {
+                if (observation != null) observation.retryExhausted(attemptOrdinal, failure);
                 settleFailure(failure);
                 return;
             }
             if (!isEligible(failure, retryCount)) {
+                if (observation != null && !policyCallbackFailed) {
+                    observation.retryExhausted(attemptOrdinal, failure);
+                }
                 settleFailure(failure);
                 return;
             }
@@ -332,6 +355,9 @@ public final class Retry {
                 return;
             }
             attemptNumber++;
+            if (observation != null) {
+                observation.retryScheduled(attemptOrdinal, attemptNumber + 1, delay, failure);
+            }
             scheduleRetry(delay);
         }
 
@@ -355,6 +381,11 @@ public final class Retry {
                 if (isFatal(callbackFailure)) {
                     failFatal((Error) callbackFailure);
                 }
+                policyCallbackFailed = true;
+                if (observation != null) {
+                    observation.policyEvaluationFailed(
+                            ResilienceConcern.RETRY, PolicyCallbackKind.RETRY_ELIGIBILITY, callbackFailure);
+                }
                 settleCallbackFailure(PolicyCallbackKind.RETRY_ELIGIBILITY, callbackFailure, failure);
                 return false;
             }
@@ -373,6 +404,11 @@ public final class Retry {
             } catch (Throwable callbackFailure) {
                 if (isFatal(callbackFailure)) {
                     failFatal((Error) callbackFailure);
+                }
+                policyCallbackFailed = true;
+                if (observation != null) {
+                    observation.policyEvaluationFailed(
+                            ResilienceConcern.RETRY, PolicyCallbackKind.BACKOFF, callbackFailure);
                 }
                 settleCallbackFailure(PolicyCallbackKind.BACKOFF, callbackFailure, failure);
                 return -1L;

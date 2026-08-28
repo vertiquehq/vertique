@@ -48,6 +48,12 @@ counts its final result once, disables Vert.x's own timeout and retry behavior, 
 no-retry half-open probe after reset. A bulkhead admits whole logical executions with either
 immediate rejection or a FIFO bounded queue. Stateful components never share state by equal names.
 
+Resilience observation is opt-in through the `ResilienceObserver` SPI. Observers receive immutable,
+redacted events synchronously on the current Vert.x context. Each observer is isolated from the
+others; a non-fatal observer failure is logged with only the observer class, event kind, and
+exception class, and cannot alter the operation result or resource cleanup. The runtime has no
+hidden event queue, and observer implementations must keep callbacks bounded and offload I/O.
+
 ---
 
 ## Key Classes
@@ -199,6 +205,16 @@ authoritative breaker recheck after a queued call is admitted.
 Framework adapter factories continue to reject bulkhead-bearing resolved policies in this slice;
 Services and REST cutover tasks own the decision to expose adapter bulkhead configuration.
 
+### Resilience observation
+
+`dev.vertique.resilience.spi.ResilienceObserver` consumes the sealed event vocabulary under
+`dev.vertique.resilience.spi.event`. Events expose only derived operation/state keys, positive
+runtime-local execution IDs, enums, safe exception class names, and bounded numeric fields. The
+runtime emits `ExecutionStarted` and `ExecutionCompleted` for every pipeline execution, plus
+attempt, retry, timeout, circuit, and bulkhead events for the applicable path. `Resilience.create`
+accepts an optional observer set for standalone use; Dagger applications contribute observers to
+the `@Multibinds Set<ResilienceObserver>` declared by `ResilienceModule`.
+
 ### Runtime exception surface
 
 Runtime failures use two sealed public roots: `ResilienceException` extends
@@ -234,7 +250,8 @@ Implement `RetryPolicy` when retry eligibility depends on application-specific f
 `dev.vertique.resilience.dagger.ResilienceModule` provides one `@Singleton` `Resilience` for the
 application's `Vertx` binding and contributes one `ApplicationShutdownStep` to the host lifecycle.
 The step invokes the same idempotent runtime `close()` operation during the `CONFIGURE` phase, so
-Dagger-owned applications can share the runtime's closed fencing and timer cleanup.
+Dagger-owned applications can share the runtime's closed fencing and timer cleanup. The module
+also declares the empty-by-default multibound observer set.
 
 ---
 

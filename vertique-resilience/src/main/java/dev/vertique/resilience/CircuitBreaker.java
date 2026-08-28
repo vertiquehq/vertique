@@ -7,6 +7,7 @@ import dev.vertique.resilience.adapter.AdapterOperationIdentity;
 import dev.vertique.resilience.adapter.CircuitFailureClassifier;
 import dev.vertique.resilience.exception.CircuitOpenException;
 import dev.vertique.resilience.exception.ResilienceClosedException;
+import dev.vertique.resilience.spi.event.CircuitState;
 import io.vertx.circuitbreaker.CircuitBreakerOptions;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
@@ -14,6 +15,7 @@ import io.vertx.core.Promise;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -27,6 +29,7 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
     private final AtomicBoolean closed = new AtomicBoolean();
     private final AtomicBoolean closeStarted = new AtomicBoolean();
     private final Promise<Void> closePromise = Promise.promise();
+    private final AtomicReference<CircuitState> lastObservedState = new AtomicReference<>(CircuitState.CLOSED);
 
     private CircuitBreaker(Resilience resilience, String stateKey, CircuitBreakerConfig configuration) {
         this.resilience = Objects.requireNonNull(resilience, "resilience");
@@ -37,6 +40,9 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
                 .setResetTimeout(configuration.resetTimeoutMs())
                 .setMaxRetries(0);
         this.engine = io.vertx.circuitbreaker.CircuitBreaker.create(stateKey, resilience.vertx(), options);
+        this.engine.openHandler(ignored -> publishState(CircuitState.OPEN));
+        this.engine.halfOpenHandler(ignored -> publishState(CircuitState.HALF_OPEN));
+        this.engine.closeHandler(ignored -> publishState(CircuitState.CLOSED));
     }
 
     /**
@@ -83,11 +89,21 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
             Supplier<Future<T>> operation,
             BooleanSupplier contextOpen,
             Consumer<Runnable> executionRegistrar) {
+        return execute(operationKey, classifier, operation, contextOpen, executionRegistrar, null);
+    }
+
+    <T> Future<T> execute(
+            String operationKey,
+            CircuitFailureClassifier classifier,
+            Supplier<Future<T>> operation,
+            BooleanSupplier contextOpen,
+            Consumer<Runnable> executionRegistrar,
+            ResilienceExecutionObservation observation) {
         Objects.requireNonNull(operationKey, "operationKey");
         Objects.requireNonNull(operation, "operation");
         Context context = resilience.executionContext();
-        Execution<T> execution =
-                new Execution<>(context, operationKey, classifier, operation, contextOpen, executionRegistrar);
+        Execution<T> execution = new Execution<>(
+                context, operationKey, classifier, operation, contextOpen, executionRegistrar, observation);
         if (!resilience.register(execution)) {
             return resilience.failedOnContext(context, operationKey);
         }
@@ -107,6 +123,14 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
 
     String stateKey() {
         return stateKey;
+    }
+
+    CircuitState currentState() {
+        return switch (engine.state()) {
+            case CLOSED -> CircuitState.CLOSED;
+            case OPEN -> CircuitState.OPEN;
+            case HALF_OPEN -> CircuitState.HALF_OPEN;
+        };
     }
 
     Resilience resilience() {
@@ -207,6 +231,7 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
         private final Promise<T> result = Promise.promise();
         private final AtomicBoolean settled = new AtomicBoolean();
         private final AtomicBoolean invoked = new AtomicBoolean();
+        private final ResilienceExecutionObservation observation;
 
         private Execution(
                 Context context,
@@ -214,13 +239,15 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
                 CircuitFailureClassifier classifier,
                 Supplier<Future<T>> operation,
                 BooleanSupplier contextOpen,
-                Consumer<Runnable> executionRegistrar) {
+                Consumer<Runnable> executionRegistrar,
+                ResilienceExecutionObservation observation) {
             this.context = context;
             this.operationKey = operationKey;
             this.classifier = classifier;
             this.operation = operation;
             this.contextOpen = contextOpen;
             this.executionRegistrar = executionRegistrar == null ? ignored -> {} : executionRegistrar;
+            this.observation = observation;
             this.executionRegistrar.accept(this::requestClose);
         }
 
@@ -312,6 +339,9 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
             }
             Throwable failure = outcome.cause();
             if (!invoked.get()) {
+                if (observation != null) {
+                    observation.circuitRejected(stateKey, currentState());
+                }
                 settleFailure(new CircuitOpenException(operationKey, stateKey));
                 return;
             }
@@ -359,4 +389,17 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
     }
 
     private record EngineOutcome<T>(T value, Throwable failure) {}
+
+    private void publishState(CircuitState newState) {
+        CircuitState oldState = lastObservedState.getAndSet(newState);
+        if (oldState != newState) {
+            resilience.emit(new dev.vertique.resilience.spi.event.CircuitStateChanged(
+                    stateKey,
+                    oldState,
+                    newState,
+                    engine.failureCount(),
+                    java.util.Optional.empty(),
+                    java.util.OptionalLong.empty()));
+        }
+    }
 }

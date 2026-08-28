@@ -6,12 +6,15 @@ package dev.vertique.resilience.dagger;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
+import dagger.multibindings.Multibinds;
 import dev.vertique.core.lifecycle.ApplicationShutdownStep;
 import dev.vertique.core.lifecycle.LifecyclePhase;
 import dev.vertique.resilience.Resilience;
+import dev.vertique.resilience.spi.ResilienceObserver;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import jakarta.inject.Singleton;
+import java.util.Set;
 
 /** Dagger bindings for the application-scoped resilience runtime and its lifecycle shutdown. */
 @Module
@@ -19,6 +22,10 @@ public abstract class ResilienceModule {
 
     /** Prevents direct construction of the static binding module. */
     private ResilienceModule() {}
+
+    /** Declares the optional application-contributed resilience observer set. */
+    @Multibinds
+    abstract Set<ResilienceObserver> resilienceObservers();
 
     /**
      * Provides the one runtime owned by the application graph.
@@ -28,8 +35,8 @@ public abstract class ResilienceModule {
      */
     @Provides
     @Singleton
-    static Resilience resilience(Vertx vertx) {
-        return Resilience.create(vertx);
+    static Resilience resilience(Vertx vertx, Set<ResilienceObserver> observers) {
+        return Resilience.create(vertx, observers);
     }
 
     /**

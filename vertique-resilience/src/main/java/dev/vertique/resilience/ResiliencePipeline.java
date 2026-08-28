@@ -8,12 +8,15 @@ import dev.vertique.resilience.adapter.CircuitFailureClassifier;
 import dev.vertique.resilience.exception.CircuitOpenException;
 import dev.vertique.resilience.exception.ResiliencePolicyException;
 import dev.vertique.resilience.exception.ResiliencePolicyFailureReason;
+import dev.vertique.resilience.spi.event.ResilienceConcern;
 import io.vertx.core.Future;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.EnumSet;
 import java.util.HexFormat;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -159,34 +162,64 @@ public final class ResiliencePipeline {
      */
     public <T> Future<T> execute(Supplier<Future<T>> operation) {
         Objects.requireNonNull(operation, "operation");
+        ResilienceExecutionObservation observation =
+                new ResilienceExecutionObservation(resilience, operationKey, enabledConcerns());
         if (!contextOpen.getAsBoolean()) {
-            return resilience.failedOnContext(resilience.executionContext(), operationKey);
+            return finish(observation, resilience.failedOnContext(resilience.executionContext(), operationKey));
         }
         if (circuitBreaker != null && circuitBreaker.isOpenForAdmission()) {
-            return resilience.failedOnContext(
-                    resilience.executionContext(), new CircuitOpenException(operationKey, circuitBreaker.stateKey()));
+            observation.circuitRejected(circuitBreaker.stateKey(), circuitBreaker.currentState());
+            return finish(
+                    observation,
+                    resilience.failedOnContext(
+                            resilience.executionContext(),
+                            new CircuitOpenException(operationKey, circuitBreaker.stateKey())));
         }
         Supplier<Future<T>> retryOrTimeout = retryConfiguration != null
-                ? () -> resilience.executeRetry(operationKey, retryConfiguration, timeoutConfiguration, operation)
+                ? () -> resilience.executeRetry(
+                        operationKey, retryConfiguration, timeoutConfiguration, operation, observation)
                 : timeoutConfiguration != null
-                        ? () -> resilience.executeTimeout(operationKey, timeoutConfiguration, operation)
-                        : operation;
+                        ? () -> resilience.executeTimeout(operationKey, timeoutConfiguration, operation, observation)
+                        : () -> observation.executeAttempt(operation);
         Supplier<Future<T>> protectedOperation = circuitBreaker == null
                 ? retryOrTimeout
                 : () -> circuitBreaker.execute(
-                        operationKey, circuitFailureClassifier, retryOrTimeout, contextOpen, executionRegistrar);
+                        operationKey,
+                        circuitFailureClassifier,
+                        retryOrTimeout,
+                        contextOpen,
+                        executionRegistrar,
+                        observation);
         if (bulkhead != null) {
-            return bulkhead.execute(
-                    operationKey,
-                    protectedOperation,
-                    contextOpen,
-                    executionRegistrar == null ? ignored -> {} : executionRegistrar);
+            return finish(
+                    observation,
+                    bulkhead.execute(
+                            operationKey,
+                            protectedOperation,
+                            contextOpen,
+                            executionRegistrar == null ? ignored -> {} : executionRegistrar,
+                            observation));
         }
         if (circuitBreaker != null) {
-            return protectedOperation.get();
+            return finish(observation, protectedOperation.get());
         }
         Future<T> outcome = retryOrTimeout.get();
-        return executionRegistrar == null ? outcome : fenceContext(outcome);
+        Future<T> fenced = executionRegistrar == null ? outcome : fenceContext(outcome);
+        return finish(observation, fenced);
+    }
+
+    private Set<ResilienceConcern> enabledConcerns() {
+        EnumSet<ResilienceConcern> enabled = EnumSet.noneOf(ResilienceConcern.class);
+        if (timeoutConfiguration != null) enabled.add(ResilienceConcern.TIMEOUT);
+        if (retryConfiguration != null) enabled.add(ResilienceConcern.RETRY);
+        if (circuitBreaker != null) enabled.add(ResilienceConcern.CIRCUIT_BREAKER);
+        if (bulkhead != null) enabled.add(ResilienceConcern.BULKHEAD);
+        return Set.copyOf(enabled);
+    }
+
+    private <T> Future<T> finish(ResilienceExecutionObservation observation, Future<T> outcome) {
+        outcome.onComplete(result -> observation.completed(result.succeeded() ? null : result.cause()));
+        return outcome;
     }
 
     private <T> Future<T> fenceContext(Future<T> outcome) {

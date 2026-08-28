@@ -6,6 +6,7 @@ package dev.vertique.resilience;
 import dev.vertique.resilience.exception.BulkheadQueueTimeoutException;
 import dev.vertique.resilience.exception.BulkheadRejectedException;
 import dev.vertique.resilience.exception.ResilienceClosedException;
+import dev.vertique.resilience.spi.event.BulkheadMode;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
@@ -84,13 +85,23 @@ public final class Bulkhead implements Resilience.RuntimeExecution {
             Supplier<Future<T>> operation,
             BooleanSupplier contextOpen,
             Consumer<Runnable> executionRegistrar) {
+        return execute(operationKey, operation, contextOpen, executionRegistrar, null);
+    }
+
+    <T> Future<T> execute(
+            String operationKey,
+            Supplier<Future<T>> operation,
+            BooleanSupplier contextOpen,
+            Consumer<Runnable> executionRegistrar,
+            ResilienceExecutionObservation observation) {
         Objects.requireNonNull(operationKey, "operationKey");
         Objects.requireNonNull(operation, "operation");
         Objects.requireNonNull(contextOpen, "contextOpen");
         Objects.requireNonNull(executionRegistrar, "executionRegistrar");
 
         Context context = resilience.executionContext();
-        Execution<T> execution = new Execution<>(context, operationKey, operation, contextOpen, executionRegistrar);
+        Execution<T> execution =
+                new Execution<>(context, operationKey, operation, contextOpen, executionRegistrar, observation);
         if (!resilience.register(execution)) {
             return resilience.failedOnContext(context, new ResilienceClosedException(operationKey));
         }
@@ -228,6 +239,7 @@ public final class Bulkhead implements Resilience.RuntimeExecution {
         private final String operationKey;
         private final BooleanSupplier contextOpen;
         private final Consumer<Runnable> executionRegistrar;
+        private final ResilienceExecutionObservation observation;
         private final Promise<T> result = Promise.promise();
         private final AtomicBoolean terminal = new AtomicBoolean();
 
@@ -235,18 +247,21 @@ public final class Bulkhead implements Resilience.RuntimeExecution {
         private Supplier<Future<T>> operation;
         private ExecutionState state = ExecutionState.NEW;
         private long queueTimerId = -1L;
+        private long queuedAtNanos;
 
         private Execution(
                 Context context,
                 String operationKey,
                 Supplier<Future<T>> operation,
                 BooleanSupplier contextOpen,
-                Consumer<Runnable> executionRegistrar) {
+                Consumer<Runnable> executionRegistrar,
+                ResilienceExecutionObservation observation) {
             this.context = Objects.requireNonNull(context, "context");
             this.operationKey = Objects.requireNonNull(operationKey, "operationKey");
             this.operation = Objects.requireNonNull(operation, "operation");
             this.contextOpen = contextOpen;
             this.executionRegistrar = executionRegistrar;
+            this.observation = observation;
             this.executionRegistrar.accept(this::requestClose);
         }
 
@@ -269,6 +284,9 @@ public final class Bulkhead implements Resilience.RuntimeExecution {
                     state = ExecutionState.ACTIVE;
                     activeCalls++;
                     supplier = operation;
+                    if (observation != null && configuration instanceof BulkheadConfig.Queue) {
+                        observation.bulkheadAdmitted(0L, activeCalls);
+                    }
                 } else if (configuration instanceof BulkheadConfig.Reject reject) {
                     state = ExecutionState.TERMINAL;
                     clearReferences();
@@ -279,9 +297,17 @@ public final class Bulkhead implements Resilience.RuntimeExecution {
                         state = ExecutionState.TERMINAL;
                         clearReferences();
                         admissionFailure = new BulkheadRejectedException(operationKey, queue.maxConcurrentCalls());
+                        if (observation != null) {
+                            observation.bulkheadRejected(
+                                    BulkheadMode.QUEUE, activeCalls, waiting.size(), queue.maxQueueSize());
+                        }
                     } else {
                         state = ExecutionState.WAITING;
                         waiting.addLast(this);
+                        queuedAtNanos = System.nanoTime();
+                        if (observation != null) {
+                            observation.bulkheadQueued(waiting.size(), queue.maxQueueSize());
+                        }
                         queueTimerId = resilience.setTimer(queue.queueTimeoutMs(), ignored -> {
                             Context queuedContext = context;
                             if (queuedContext != null) {
@@ -292,8 +318,13 @@ public final class Bulkhead implements Resilience.RuntimeExecution {
                 }
             }
             if (admissionFailure != null) {
-                publishFailure(admissionFailure);
+                if (observation != null
+                        && admissionFailure instanceof BulkheadRejectedException
+                        && configuration instanceof BulkheadConfig.Reject reject) {
+                    observation.bulkheadRejected(BulkheadMode.REJECT, activeCalls, 0, reject.maxConcurrentCalls());
+                }
                 onTerminal();
+                publishFailure(admissionFailure);
             } else if (supplier != null) {
                 startSupplier(supplier);
             }
@@ -317,8 +348,8 @@ public final class Bulkhead implements Resilience.RuntimeExecution {
                 clearReferences();
                 failure = new ResilienceClosedException(operationKey);
             }
-            publishFailure(failure);
             onTerminal();
+            publishFailure(failure);
         }
 
         private void timeoutInQueue() {
@@ -332,8 +363,12 @@ public final class Bulkhead implements Resilience.RuntimeExecution {
                 }
             }
             if (timedOut) {
-                publishFailure(new BulkheadQueueTimeoutException(operationKey, queueTimeoutMs()));
+                if (observation != null) {
+                    observation.bulkheadQueueTimedOut(
+                            elapsedQueueMs(), ((BulkheadConfig.Queue) configuration).queueTimeoutMs());
+                }
                 onTerminal();
+                publishFailure(new BulkheadQueueTimeoutException(operationKey, queueTimeoutMs()));
             }
         }
 
@@ -369,16 +404,16 @@ public final class Bulkhead implements Resilience.RuntimeExecution {
             if (!claimTerminalFromActive()) {
                 return;
             }
-            result.tryComplete(value);
             onTerminal();
+            result.tryComplete(value);
         }
 
         private void completeFailure(Throwable failure) {
             if (!claimTerminalFromActive()) {
                 return;
             }
-            result.tryFail(failure);
             onTerminal();
+            result.tryFail(failure);
         }
 
         private boolean claimTerminalFromActive() {
@@ -433,6 +468,9 @@ public final class Bulkhead implements Resilience.RuntimeExecution {
                 admittedContext = context;
             }
             if (admittedContext != null) {
+                if (observation != null) {
+                    observation.bulkheadAdmitted(elapsedQueueMs(), activeCount());
+                }
                 admittedContext.runOnContext(ignored -> startAdmittedSupplier());
             }
         }
@@ -471,6 +509,16 @@ public final class Bulkhead implements Resilience.RuntimeExecution {
 
         private long queueTimeoutMs() {
             return ((BulkheadConfig.Queue) configuration).queueTimeoutMs();
+        }
+
+        private long elapsedQueueMs() {
+            return queuedAtNanos == 0L ? 0L : Math.max(0L, (System.nanoTime() - queuedAtNanos) / 1_000_000L);
+        }
+
+        private int activeCount() {
+            synchronized (stateMonitor) {
+                return activeCalls;
+            }
         }
 
         private boolean isFatal(Throwable failure) {

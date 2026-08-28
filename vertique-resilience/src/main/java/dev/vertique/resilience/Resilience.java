@@ -7,6 +7,8 @@ import dev.vertique.resilience.adapter.AdapterOperationIdentity;
 import dev.vertique.resilience.adapter.CircuitFailureClassifier;
 import dev.vertique.resilience.adapter.ResilienceAdapterSupport;
 import dev.vertique.resilience.exception.ResilienceClosedException;
+import dev.vertique.resilience.spi.ResilienceObserver;
+import dev.vertique.resilience.spi.event.ResilienceEvent;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
@@ -21,6 +23,8 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Application-scoped owner of resilience components, execution contexts, and runtime lifecycle.
@@ -30,25 +34,38 @@ import java.util.function.Supplier;
  */
 public final class Resilience {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(Resilience.class);
+
     private final Vertx vertx;
     private final Context fallbackContext;
     private final TimerScheduler timerScheduler;
     private final DoubleSupplier randomSource;
     private final ResilienceAdapterSupport adapterSupport;
     private final ResiliencePolicyResolver policyResolver;
+    private final Set<ResilienceObserver> observers;
+    private long nextExecutionId;
     private final Object lifecycleMonitor = new Object();
     private final Set<RuntimeExecution> activeExecutions = ConcurrentHashMap.newKeySet();
     private volatile boolean closed;
     private final AtomicReference<Promise<Void>> closePromise = new AtomicReference<>();
 
     private Resilience(Vertx vertx) {
-        this(vertx, new VertxTimerScheduler(vertx), ThreadLocalRandom.current()::nextDouble);
+        this(vertx, new VertxTimerScheduler(vertx), ThreadLocalRandom.current()::nextDouble, Set.of());
     }
 
     Resilience(Vertx vertx, TimerScheduler timerScheduler, DoubleSupplier randomSource) {
+        this(vertx, timerScheduler, randomSource, Set.of());
+    }
+
+    Resilience(
+            Vertx vertx,
+            TimerScheduler timerScheduler,
+            DoubleSupplier randomSource,
+            Set<ResilienceObserver> observers) {
         this.vertx = Objects.requireNonNull(vertx, "vertx");
         this.timerScheduler = Objects.requireNonNull(timerScheduler, "timerScheduler");
         this.randomSource = Objects.requireNonNull(randomSource, "randomSource");
+        this.observers = Set.copyOf(Objects.requireNonNull(observers, "observers"));
         this.fallbackContext = vertx.getOrCreateContext();
         this.adapterSupport = ResilienceAdapterSupport.create(this);
         this.policyResolver = new ResiliencePolicyResolver();
@@ -63,6 +80,21 @@ public final class Resilience {
      */
     public static Resilience create(Vertx vertx) {
         return new Resilience(vertx);
+    }
+
+    /**
+     * Creates a standalone runtime with explicitly contributed synchronous observers.
+     *
+     * @param vertx the Vert.x instance that owns runtime contexts and timers
+     * @param observers resilience-only observers
+     * @return a new resilience runtime
+     */
+    public static Resilience create(Vertx vertx, Set<ResilienceObserver> observers) {
+        return new Resilience(
+                Objects.requireNonNull(vertx, "vertx"),
+                new VertxTimerScheduler(vertx),
+                ThreadLocalRandom.current()::nextDouble,
+                observers);
     }
 
     /**
@@ -202,14 +234,23 @@ public final class Resilience {
     }
 
     <T> Future<T> executeTimeout(String operationKey, TimeoutConfig configuration, Supplier<Future<T>> operation) {
+        return executeTimeout(operationKey, configuration, operation, null);
+    }
+
+    <T> Future<T> executeTimeout(
+            String operationKey,
+            TimeoutConfig configuration,
+            Supplier<Future<T>> operation,
+            ResilienceExecutionObservation observation) {
         Objects.requireNonNull(operationKey, "operationKey");
         Objects.requireNonNull(configuration, "configuration");
         Objects.requireNonNull(operation, "operation");
 
         Context selectedContext = executionContext();
 
-        TimeoutExecution<T> execution =
-                scheduleTimeout(selectedContext, operationKey, configuration.timeoutMs(), operation);
+        int attemptOrdinal = observation == null ? 0 : observation.attemptStarted();
+        TimeoutExecution<T> execution = scheduleTimeout(
+                selectedContext, operationKey, configuration.timeoutMs(), operation, observation, attemptOrdinal);
         if (execution == null) {
             return failedOnContext(selectedContext, operationKey);
         }
@@ -221,6 +262,15 @@ public final class Resilience {
             RetryConfig retryConfiguration,
             TimeoutConfig timeoutConfiguration,
             Supplier<Future<T>> operation) {
+        return executeRetry(operationKey, retryConfiguration, timeoutConfiguration, operation, null);
+    }
+
+    <T> Future<T> executeRetry(
+            String operationKey,
+            RetryConfig retryConfiguration,
+            TimeoutConfig timeoutConfiguration,
+            Supplier<Future<T>> operation,
+            ResilienceExecutionObservation observation) {
         Objects.requireNonNull(operationKey, "operationKey");
         Objects.requireNonNull(retryConfiguration, "retryConfiguration");
         Objects.requireNonNull(operation, "operation");
@@ -233,7 +283,13 @@ public final class Resilience {
                 return failedOnContext(selectedContext, operationKey);
             }
             execution = new Retry.Execution<>(
-                    this, selectedContext, operationKey, retryConfiguration, timeoutConfiguration, operation);
+                    this,
+                    selectedContext,
+                    operationKey,
+                    retryConfiguration,
+                    timeoutConfiguration,
+                    operation,
+                    observation);
             activeExecutions.add(execution);
         }
         selectedContext.runOnContext(ignored -> execution.start());
@@ -242,12 +298,23 @@ public final class Resilience {
 
     <T> TimeoutExecution<T> scheduleTimeout(
             Context context, String operationKey, long timeoutMs, Supplier<Future<T>> operation) {
+        return scheduleTimeout(context, operationKey, timeoutMs, operation, null, 0);
+    }
+
+    <T> TimeoutExecution<T> scheduleTimeout(
+            Context context,
+            String operationKey,
+            long timeoutMs,
+            Supplier<Future<T>> operation,
+            ResilienceExecutionObservation observation,
+            int attemptOrdinal) {
         TimeoutExecution<T> execution;
         synchronized (lifecycleMonitor) {
             if (closed) {
                 return null;
             }
-            execution = new TimeoutExecution<>(this, context, operationKey, timeoutMs, operation);
+            execution = new TimeoutExecution<>(
+                    this, context, operationKey, timeoutMs, operation, observation, attemptOrdinal);
             activeExecutions.add(execution);
         }
         context.runOnContext(ignored -> execution.start());
@@ -300,6 +367,36 @@ public final class Resilience {
             throw new IllegalStateException("random source must return a value in [0, 1)");
         }
         return value;
+    }
+
+    long nextExecutionId() {
+        synchronized (lifecycleMonitor) {
+            return ++nextExecutionId;
+        }
+    }
+
+    void emit(ResilienceEvent event) {
+        Objects.requireNonNull(event, "event");
+        for (ResilienceObserver observer : observers) {
+            try {
+                observer.onEvent(event);
+            } catch (Throwable failure) {
+                if (isFatal(failure)) {
+                    throw (Error) failure;
+                }
+                LOGGER.warn(
+                        "Resilience observer failed observerClass={} eventKind={} exceptionClass={}",
+                        observer.getClass().getName(),
+                        event.getClass().getSimpleName(),
+                        failure.getClass().getName());
+            }
+        }
+    }
+
+    private static boolean isFatal(Throwable failure) {
+        return failure instanceof VirtualMachineError
+                || failure instanceof ThreadDeath
+                || failure instanceof LinkageError;
     }
 
     private void completeCloseIfIdle() {

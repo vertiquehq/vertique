@@ -20,6 +20,8 @@ final class TimeoutExecution<T> implements Resilience.RuntimeExecution {
     private final String operationKey;
     private final long timeoutMs;
     private final Supplier<Future<T>> operation;
+    private final ResilienceExecutionObservation observation;
+    private final int attemptOrdinal;
     private final Promise<T> result = Promise.promise();
     private final AtomicBoolean settled = new AtomicBoolean();
     private final AtomicBoolean startClaimed = new AtomicBoolean();
@@ -31,12 +33,16 @@ final class TimeoutExecution<T> implements Resilience.RuntimeExecution {
             Context context,
             String operationKey,
             long timeoutMs,
-            Supplier<Future<T>> operation) {
+            Supplier<Future<T>> operation,
+            ResilienceExecutionObservation observation,
+            int attemptOrdinal) {
         this.resilience = Objects.requireNonNull(resilience, "resilience");
         this.context = Objects.requireNonNull(context, "context");
         this.operationKey = Objects.requireNonNull(operationKey, "operationKey");
         this.timeoutMs = timeoutMs;
         this.operation = Objects.requireNonNull(operation, "operation");
+        this.observation = observation;
+        this.attemptOrdinal = attemptOrdinal;
     }
 
     Future<T> future() {
@@ -75,6 +81,7 @@ final class TimeoutExecution<T> implements Resilience.RuntimeExecution {
     void failFatal(Error fatal) {
         if (settled.compareAndSet(false, true)) {
             cancelTimer();
+            completeObservation(fatal);
             result.tryFail(fatal);
             resilience.remove(this);
         }
@@ -83,6 +90,7 @@ final class TimeoutExecution<T> implements Resilience.RuntimeExecution {
     private void settleSuccess(T value) {
         if (settled.compareAndSet(false, true)) {
             cancelTimer();
+            completeObservation(null);
             result.tryComplete(value);
             resilience.remove(this);
         }
@@ -91,6 +99,7 @@ final class TimeoutExecution<T> implements Resilience.RuntimeExecution {
     private void settleFailure(Throwable failure) {
         if (settled.compareAndSet(false, true)) {
             cancelTimer();
+            completeObservation(failure);
             result.tryFail(Objects.requireNonNull(failure, "failure"));
             resilience.remove(this);
         }
@@ -99,7 +108,12 @@ final class TimeoutExecution<T> implements Resilience.RuntimeExecution {
     private void settleTimeout() {
         if (settled.compareAndSet(false, true)) {
             cancelTimer();
-            result.tryFail(new ResilienceTimeoutException(operationKey, timeoutMs));
+            if (observation != null) {
+                observation.timeoutTriggered(attemptOrdinal, timeoutMs);
+            }
+            ResilienceTimeoutException failure = new ResilienceTimeoutException(operationKey, timeoutMs);
+            completeObservation(failure);
+            result.tryFail(failure);
             resilience.remove(this);
         }
     }
@@ -107,7 +121,9 @@ final class TimeoutExecution<T> implements Resilience.RuntimeExecution {
     private void settleClosed() {
         if (settled.compareAndSet(false, true)) {
             cancelTimer();
-            result.tryFail(new ResilienceClosedException(operationKey));
+            ResilienceClosedException failure = new ResilienceClosedException(operationKey);
+            completeObservation(failure);
+            result.tryFail(failure);
             resilience.remove(this);
         }
     }
@@ -116,6 +132,12 @@ final class TimeoutExecution<T> implements Resilience.RuntimeExecution {
         if (timerId >= 0) {
             resilience.cancelTimer(timerId);
             timerId = -1;
+        }
+    }
+
+    private void completeObservation(Throwable failure) {
+        if (observation != null) {
+            observation.attemptCompleted(attemptOrdinal, failure);
         }
     }
 }
