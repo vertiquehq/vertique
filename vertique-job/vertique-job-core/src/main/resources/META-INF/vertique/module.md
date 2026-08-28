@@ -236,6 +236,10 @@ job:
 The last two are read here and applied by the scheduling modules' dispatchers, so every queue shares
 one timeout policy.
 
+`BackoffStrategy` describes a durable retry schedule. It is not a common resilience pipeline:
+`JobCompletionHandler` persists the next attempt through `JobRepository`, and schedulers retain
+ownership of watchdog timeouts, claim capacity, and dead-letter transitions.
+
 ### Invariants & Gotchas
 
 - **Retry persistence is all-or-nothing.** A retryable failure records the `FAILED` attempt and
