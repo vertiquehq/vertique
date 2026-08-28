@@ -31,9 +31,11 @@ import dev.vertique.mcp.lifecycle.McpAuthorizationSummary;
 import dev.vertique.mcp.lifecycle.McpErrorType;
 import dev.vertique.mcp.lifecycle.McpMethod;
 import dev.vertique.mcp.lifecycle.McpOutcome;
+import dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
+import dev.vertique.mcp.lifecycle.McpResponseEvidence;
 import dev.vertique.mcp.lifecycle.McpToolInputObservation;
 import dev.vertique.mcp.lifecycle.McpToolOutputObservation;
 import dev.vertique.mcp.lifecycle.McpTransportOutcome;
@@ -919,6 +921,14 @@ final class McpRequestDispatcher {
         // this request — however far it later progresses — reports the identity already legitimately
         // known here, rather than always inventing McpMethod.OTHER (see settlementTerminal).
         context.put(METHOD_KEY, method);
+        // R52 (repair task R52 "audit capture parity"): admission-time raw-evidence capture, on the
+        // mcp.tool.call surface only, before tool-name resolution or authorization — so an opt-in
+        // McpRawEvidenceObservation session observes the raw request even for a request later rejected
+        // before the input pipeline runs (an unknown tool, an authorization denial, a protocol-level
+        // rejection). Gated on hasRawEvidenceObservers() before the evidence record is even built,
+        // exactly like the existing hasValueObservers() gate protects publishToolInput's deep copy: a
+        // deployment with no raw-evidence-capable observer installed pays nothing for this seam.
+        publishRequestAdmittedIfCapable(context, method, envelope, body, security);
         McpProtocolCodec.ParamsValidationResult paramsValidation = codec.validateOfficialParams(envelope);
         if (paramsValidation.isError()) {
             writePreDispatchProtocolRejection(context, envelope, method, security, paramsValidation.error());
@@ -971,6 +981,83 @@ final class McpRequestDispatcher {
                         writeDispatchByMethodFailure(context, envelope, method, security, dispatchFailure);
                     }
                 });
+    }
+
+    /**
+     * Builds and publishes this request's raw admission-time evidence (R52, repair task R52 "audit
+     * capture parity") when {@code method} is {@link McpMethod#TOOLS_CALL} and this request's
+     * coordinator retains at least one {@link
+     * dev.vertique.mcp.lifecycle.McpRawEvidenceObservation}-capable session. A no-op for every other
+     * method (the audit-capture surface this evidence supports is {@code mcp.tool.call} only, exactly
+     * like {@link McpAuditEvidenceCapturer}'s own resolution surface) or when no coordinator exists
+     * (a fixture dispatch that bypasses {@link #begin}) or retains no capable session — in either case
+     * the raw body/header copy below is never built.
+     *
+     * @param context the request context
+     * @param method this request's classified method, as {@link #classifyMethod} produced it
+     * @param envelope the decoded envelope, read only for its {@code id}
+     * @param body the raw request-body bytes already read to decode {@code envelope}
+     * @param security the established security snapshot, read only for its principal id
+     */
+    private static void publishRequestAdmittedIfCapable(
+            RoutingContext context,
+            McpMethod method,
+            JsonNode envelope,
+            byte[] body,
+            @Nullable SecurityContextSnapshot security) {
+        if (method != McpMethod.TOOLS_CALL) {
+            return;
+        }
+        McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
+        if (coordinator == null || !coordinator.hasRawEvidenceObservers()) {
+            return;
+        }
+        coordinator.publishRequestAdmitted(new McpRequestAdmissionEvidence(
+                body,
+                headerMapOf(context.request().headers()),
+                context.request().getHeader("Content-Type"),
+                jsonRpcIdOf(envelope),
+                principalIdOf(security)));
+    }
+
+    /**
+     * Converts a Vert.x {@link io.vertx.core.MultiMap} into a plain, last-value-wins {@code
+     * Map<String, String>}.
+     *
+     * @param multiMap the multi-value map; non-null
+     * @return an unmodifiable map; never null; empty when {@code multiMap} is empty
+     */
+    private static Map<String, String> headerMapOf(io.vertx.core.MultiMap multiMap) {
+        if (multiMap.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, String> result = new LinkedHashMap<>(multiMap.size());
+        multiMap.forEach(entry -> result.put(entry.getKey(), entry.getValue()));
+        return Collections.unmodifiableMap(result);
+    }
+
+    /**
+     * Extracts the decoded envelope's {@code id} in its wire textual form.
+     *
+     * @param envelope the decoded envelope
+     * @return the id's textual form, or {@code null} when absent or explicitly {@code null}
+     */
+    private static @Nullable String jsonRpcIdOf(JsonNode envelope) {
+        JsonNode id = envelope.get("id");
+        if (id == null || id.isNull()) {
+            return null;
+        }
+        return id.isTextual() ? id.asText() : id.toString();
+    }
+
+    /**
+     * Extracts the resolved principal id from {@code security}.
+     *
+     * @param security the established security snapshot, or {@code null} when none was established
+     * @return the actor principal's id, or {@code null} when {@code security} is {@code null}
+     */
+    private static @Nullable String principalIdOf(@Nullable SecurityContextSnapshot security) {
+        return security == null ? null : security.identity().actor().id();
     }
 
     /**
@@ -3061,6 +3148,19 @@ final class McpRequestDispatcher {
         // comment true.
         if (coordinator != null && !coordinator.beginWrite(terminal)) {
             return false;
+        }
+        // R52 (repair task R52 "audit capture parity"): raw response-side evidence, published on the
+        // mcp.tool.call surface only, immediately before the bytes below reach the wire — the single
+        // shared terminal writer, so every settlement path that produces a response (success, a
+        // bounded error, or a rejection) is covered. Gated on hasRawEvidenceObservers() exactly like
+        // the admission-time publish above: a deployment with no raw-evidence-capable observer
+        // installed pays nothing for this seam.
+        if (coordinator != null
+                && coordinator.hasRawEvidenceObservers()
+                && classifiedMethodOf(context) == McpMethod.TOOLS_CALL) {
+            coordinator.publishResponseWritten(new McpResponseEvidence(
+                    body != null ? body : new byte[0],
+                    headerMapOf(context.response().headers())));
         }
         context.response().setStatusCode(status);
         Handler<AsyncResult<Void>> onEnd = result -> {

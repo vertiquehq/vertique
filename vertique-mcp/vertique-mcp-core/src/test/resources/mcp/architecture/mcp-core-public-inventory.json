@@ -109,6 +109,21 @@
       "public static dev.vertique.mcp.lifecycle.McpRequestCompletedEvent dev.vertique.mcp.lifecycle.McpRequestCompletedEvent.writeFailed(dev.vertique.mcp.lifecycle.McpRequestTerminalEvent,java.time.Instant,boolean)",
       "public static dev.vertique.mcp.lifecycle.McpRequestCompletedEvent dev.vertique.mcp.lifecycle.McpRequestCompletedEvent.written(dev.vertique.mcp.lifecycle.McpRequestTerminalEvent,java.time.Instant)"
     ],
+    "dev.vertique.mcp.lifecycle.McpRawEvidenceObservation": [
+      "public default void dev.vertique.mcp.lifecycle.McpRawEvidenceObservation.onRequestAdmitted(dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence)",
+      "public default void dev.vertique.mcp.lifecycle.McpRawEvidenceObservation.onResponseWritten(dev.vertique.mcp.lifecycle.McpResponseEvidence)"
+    ],
+    "dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence": [
+      "public byte[] dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.body()",
+      "public dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence(byte[],java.util.Map<java.lang.String, java.lang.String>,java.lang.String,java.lang.String,java.lang.String)",
+      "public final boolean dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.equals(java.lang.Object)",
+      "public final int dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.hashCode()",
+      "public final java.lang.String dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.toString()",
+      "public java.lang.String dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.contentType()",
+      "public java.lang.String dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.jsonRpcRequestId()",
+      "public java.lang.String dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.principalId()",
+      "public java.util.Map<java.lang.String, java.lang.String> dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.headers()"
+    ],
     "dev.vertique.mcp.lifecycle.McpRequestCompletedListener": [
       "public abstract void dev.vertique.mcp.lifecycle.McpRequestCompletedListener.onCompleted(dev.vertique.mcp.lifecycle.McpRequestCompletedEvent)"
     ],
@@ -118,6 +133,14 @@
     "dev.vertique.mcp.lifecycle.McpRequestObservation": [
       "public default void dev.vertique.mcp.lifecycle.McpRequestObservation.onCompleted(dev.vertique.mcp.lifecycle.McpRequestCompletedEvent)",
       "public default void dev.vertique.mcp.lifecycle.McpRequestObservation.onTerminal(dev.vertique.mcp.lifecycle.McpRequestTerminalObservation)"
+    ],
+    "dev.vertique.mcp.lifecycle.McpResponseEvidence": [
+      "public byte[] dev.vertique.mcp.lifecycle.McpResponseEvidence.body()",
+      "public dev.vertique.mcp.lifecycle.McpResponseEvidence(byte[],java.util.Map<java.lang.String, java.lang.String>)",
+      "public final boolean dev.vertique.mcp.lifecycle.McpResponseEvidence.equals(java.lang.Object)",
+      "public final int dev.vertique.mcp.lifecycle.McpResponseEvidence.hashCode()",
+      "public final java.lang.String dev.vertique.mcp.lifecycle.McpResponseEvidence.toString()",
+      "public java.util.Map<java.lang.String, java.lang.String> dev.vertique.mcp.lifecycle.McpResponseEvidence.headers()"
     ],
     "dev.vertique.mcp.lifecycle.McpRequestTerminalEvent": [
       "public dev.vertique.core.correlation.CorrelationContextSnapshot dev.vertique.mcp.lifecycle.McpRequestTerminalEvent.correlation()",

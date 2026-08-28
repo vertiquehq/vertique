@@ -5,12 +5,15 @@ package dev.vertique.mcp.server;
 
 import dev.vertique.core.correlation.TraceReference;
 import dev.vertique.mcp.lifecycle.McpCompletionScope;
+import dev.vertique.mcp.lifecycle.McpRawEvidenceObservation;
+import dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedEvent;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
+import dev.vertique.mcp.lifecycle.McpResponseEvidence;
 import dev.vertique.mcp.lifecycle.McpToolInputObservation;
 import dev.vertique.mcp.lifecycle.McpToolOutputObservation;
 import dev.vertique.mcp.lifecycle.McpToolValueObservation;
@@ -39,6 +42,7 @@ final class McpCompletionCoordinator {
     private final Context context;
     private final List<McpRequestObservation> observations;
     private final boolean hasValueObservers;
+    private final boolean hasRawEvidenceObservers;
     private final Set<McpRequestCompletedListener> listeners;
     private final InstantSource clock;
     private final McpRequestCancellationSignal cancellationSignal = new McpRequestCancellationSignal();
@@ -97,6 +101,8 @@ final class McpCompletionCoordinator {
         this.observations = openObservers(observers, startedAt);
         this.hasValueObservers =
                 this.observations.stream().anyMatch(session -> session instanceof McpToolValueObservation);
+        this.hasRawEvidenceObservers =
+                this.observations.stream().anyMatch(session -> session instanceof McpRawEvidenceObservation);
         this.listeners = Set.copyOf(listeners);
         this.clock = clock;
     }
@@ -116,6 +122,54 @@ final class McpCompletionCoordinator {
      */
     boolean hasValueObservers() {
         return hasValueObservers;
+    }
+
+    /**
+     * Reports whether any retained session for this request implements the opt-in {@link
+     * McpRawEvidenceObservation} capability (R52, repair task R52 "audit capture parity").
+     *
+     * <p>Computed once at construction from the opened session set, exactly like {@link
+     * #hasValueObservers()}: callers use this to skip building a {@link McpRequestAdmissionEvidence}
+     * or {@link McpResponseEvidence} — and the raw body/header copy each carries — for a request no
+     * capable session will ever see, so a deployment with no audit adapter installed pays nothing for
+     * this seam.
+     *
+     * @return {@code true} when at least one retained session implements {@link
+     *     McpRawEvidenceObservation}
+     */
+    boolean hasRawEvidenceObservers() {
+        return hasRawEvidenceObservers;
+    }
+
+    /**
+     * Delivers {@code evidence} to every retained session that implements the opt-in {@link
+     * McpRawEvidenceObservation} capability, isolating each session's failure exactly like {@link
+     * #publishToolInput} (R52). Least privilege is structural: the {@code instanceof} guard below is
+     * the sole gate, so an ordinary session has no code path through which this method could reach it.
+     *
+     * @param evidence this request's raw admission-time evidence; must not be {@code null}
+     */
+    void publishRequestAdmitted(McpRequestAdmissionEvidence evidence) {
+        observations.forEach(session -> {
+            if (session instanceof McpRawEvidenceObservation capable) {
+                invoke(session, () -> capable.onRequestAdmitted(evidence));
+            }
+        });
+    }
+
+    /**
+     * Delivers {@code evidence} to every retained session that implements the opt-in {@link
+     * McpRawEvidenceObservation} capability, isolating each session's failure exactly like {@link
+     * #publishRequestAdmitted} (R52).
+     *
+     * @param evidence this request's raw response-side evidence; must not be {@code null}
+     */
+    void publishResponseWritten(McpResponseEvidence evidence) {
+        observations.forEach(session -> {
+            if (session instanceof McpRawEvidenceObservation capable) {
+                invoke(session, () -> capable.onResponseWritten(evidence));
+            }
+        });
     }
 
     /**
