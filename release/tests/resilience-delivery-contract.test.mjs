@@ -57,9 +57,8 @@ describe('ResilienceDeliveryContractTest', () => {
     }
     assert.match(configuration, /replay.*idempotency/i);
     assert.match(services, /per supplier attempt/);
-    assert.match(jobs, /durable delivery policy/i);
-    assert.match(jobs, /RedisDeadline/);
-    assert.match(jobs, /do not install common resilience behavior implicitly/i);
+    assert.match(jobs, /retry and dead-letter/i);
+    assert.match(services, /Redis deadline coordination/);
   });
 
   it('documents observability and the accepted fatal breaker consequence', () => {
