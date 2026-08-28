@@ -3,7 +3,14 @@
 
 package dev.vertique.resilience;
 
+import dev.vertique.resilience.adapter.AdapterOperationIdentity;
+import dev.vertique.resilience.exception.ResiliencePolicyException;
+import dev.vertique.resilience.exception.ResiliencePolicyFailureReason;
 import io.vertx.core.Future;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -13,12 +20,49 @@ public final class ResiliencePipeline {
 
     private final Resilience resilience;
     private final String operationKey;
-    private final Timeout timeout;
+    private final TimeoutConfig timeoutConfiguration;
+    private final RetryConfig retryConfiguration;
 
-    private ResiliencePipeline(Resilience resilience, String operationKey, Timeout timeout) {
+    private ResiliencePipeline(
+            Resilience resilience,
+            String operationKey,
+            TimeoutConfig timeoutConfiguration,
+            RetryConfig retryConfiguration) {
         this.resilience = resilience;
         this.operationKey = operationKey;
-        this.timeout = timeout;
+        this.timeoutConfiguration = timeoutConfiguration;
+        this.retryConfiguration = retryConfiguration;
+    }
+
+    /**
+     * Creates the runtime-owned pipeline used by the structured adapter bridge.
+     *
+     * @param resilience owning runtime
+     * @param identity structured adapter operation identity
+     * @param policy complete resolved policy
+     * @return executable timeout/retry pipeline
+     * @throws IllegalStateException if the policy is empty
+     * @throws ResiliencePolicyException if the policy contains a breaker or bulkhead concern
+     */
+    static ResiliencePipeline fromAdapterPolicy(
+            Resilience resilience, AdapterOperationIdentity identity, ResolvedResiliencePolicy policy) {
+        Objects.requireNonNull(resilience, "resilience");
+        Objects.requireNonNull(identity, "identity");
+        Objects.requireNonNull(policy, "policy");
+
+        String operationKey = deriveAdapterOperationKey(identity);
+        if (policy.isEmpty()) {
+            throw new IllegalStateException("a pipeline must configure at least one concern");
+        }
+        if (policy.circuitBreaker().isPresent() || policy.bulkhead().isPresent()) {
+            throw new ResiliencePolicyException(ResiliencePolicyFailureReason.INVALID_CONFIGURATION);
+        }
+        resilience.ensureOpenForConstruction();
+        return new ResiliencePipeline(
+                resilience,
+                operationKey,
+                policy.timeout().orElse(null),
+                policy.retry().orElse(null));
     }
 
     /**
@@ -39,7 +83,10 @@ public final class ResiliencePipeline {
      */
     public <T> Future<T> execute(Supplier<Future<T>> operation) {
         Objects.requireNonNull(operation, "operation");
-        return resilience.executeTimeout(operationKey, timeout.configuration(), operation);
+        if (retryConfiguration != null) {
+            return resilience.executeRetry(operationKey, retryConfiguration, timeoutConfiguration, operation);
+        }
+        return resilience.executeTimeout(operationKey, timeoutConfiguration, operation);
     }
 
     /** Builder for one immutable fixed-order resilience pipeline. */
@@ -48,6 +95,7 @@ public final class ResiliencePipeline {
         private final Resilience resilience;
         private final String operationKey;
         private Timeout timeout;
+        private Retry retry;
         private boolean built;
 
         Builder(Resilience resilience, String operationKey) {
@@ -83,6 +131,33 @@ public final class ResiliencePipeline {
         }
 
         /**
+         * Adds a prebuilt retry concern owned by this pipeline's runtime.
+         *
+         * @param value retry component owned by this pipeline's runtime
+         * @return this builder
+         */
+        public Builder retry(Retry value) {
+            ensureRetryNotConfigured();
+            retry = Objects.requireNonNull(value, "retry");
+            return this;
+        }
+
+        /**
+         * Builds an inline retry concern with this pipeline's operation identity.
+         *
+         * @param configuration consumer of the retry-owned builder
+         * @return this builder
+         */
+        public Builder retry(Consumer<Retry.Builder> configuration) {
+            ensureRetryNotConfigured();
+            Objects.requireNonNull(configuration, "configuration");
+            Retry.Builder retryBuilder = Retry.builderForDerivedKey(resilience, operationKey);
+            configuration.accept(retryBuilder);
+            retry = retryBuilder.build();
+            return this;
+        }
+
+        /**
          * Builds the pipeline after validating concern ownership and completeness.
          *
          * @return the immutable pipeline
@@ -91,13 +166,20 @@ public final class ResiliencePipeline {
             ensureMutable();
             built = true;
             resilience.ensureOpenForConstruction();
-            if (timeout == null) {
-                throw new IllegalStateException("a pipeline must configure a timeout concern");
+            if (timeout == null && retry == null) {
+                throw new IllegalStateException("a pipeline must configure at least one concern");
             }
-            if (timeout.resilience() != resilience) {
+            if (timeout != null && timeout.resilience() != resilience) {
                 throw new IllegalArgumentException("pipeline concerns must share the owning runtime");
             }
-            return new ResiliencePipeline(resilience, operationKey, timeout);
+            if (retry != null && retry.resilience() != resilience) {
+                throw new IllegalArgumentException("pipeline concerns must share the owning runtime");
+            }
+            return new ResiliencePipeline(
+                    resilience,
+                    operationKey,
+                    timeout == null ? null : timeout.configuration(),
+                    retry == null ? null : retry.configuration());
         }
 
         private void ensureMutable() {
@@ -112,5 +194,45 @@ public final class ResiliencePipeline {
                 throw new IllegalStateException("timeout concern already configured");
             }
         }
+
+        private void ensureRetryNotConfigured() {
+            ensureMutable();
+            if (retry != null) {
+                throw new IllegalStateException("retry concern already configured");
+            }
+        }
+    }
+
+    private static String deriveAdapterOperationKey(AdapterOperationIdentity identity) {
+        MessageDigest digest = newSha256();
+        digest.update((byte) 0x01);
+
+        byte[] kind = identity.kind().getBytes(StandardCharsets.UTF_8);
+        updateLength(digest, kind.length);
+        digest.update(kind);
+
+        updateLength(digest, identity.components().size());
+        for (String component : identity.components()) {
+            byte[] encodedComponent = component.getBytes(StandardCharsets.UTF_8);
+            updateLength(digest, encodedComponent.length);
+            digest.update(encodedComponent);
+        }
+
+        return identity.kind().replace('.', ':') + ":" + HexFormat.of().formatHex(digest.digest());
+    }
+
+    private static MessageDigest newSha256() {
+        try {
+            return MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException exception) {
+            throw new AssertionError("SHA-256 is required by the Java runtime", exception);
+        }
+    }
+
+    private static void updateLength(MessageDigest digest, int length) {
+        digest.update((byte) (length >>> 24));
+        digest.update((byte) (length >>> 16));
+        digest.update((byte) (length >>> 8));
+        digest.update((byte) length);
     }
 }

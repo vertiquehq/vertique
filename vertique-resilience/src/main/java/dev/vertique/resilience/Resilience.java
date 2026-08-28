@@ -3,15 +3,20 @@
 
 package dev.vertique.resilience;
 
+import dev.vertique.resilience.adapter.AdapterOperationIdentity;
+import dev.vertique.resilience.adapter.ResilienceAdapterSupport;
 import dev.vertique.resilience.exception.ResilienceClosedException;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
+import io.vertx.core.Handler;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
 
 /**
@@ -24,14 +29,26 @@ public final class Resilience {
 
     private final Vertx vertx;
     private final Context fallbackContext;
+    private final TimerScheduler timerScheduler;
+    private final DoubleSupplier randomSource;
+    private final ResilienceAdapterSupport adapterSupport;
+    private final ResiliencePolicyResolver policyResolver;
     private final Object lifecycleMonitor = new Object();
-    private final Set<TimeoutExecution<?>> activeExecutions = ConcurrentHashMap.newKeySet();
+    private final Set<RuntimeExecution> activeExecutions = ConcurrentHashMap.newKeySet();
     private volatile boolean closed;
     private final AtomicReference<Promise<Void>> closePromise = new AtomicReference<>();
 
     private Resilience(Vertx vertx) {
+        this(vertx, new VertxTimerScheduler(vertx), ThreadLocalRandom.current()::nextDouble);
+    }
+
+    Resilience(Vertx vertx, TimerScheduler timerScheduler, DoubleSupplier randomSource) {
         this.vertx = Objects.requireNonNull(vertx, "vertx");
+        this.timerScheduler = Objects.requireNonNull(timerScheduler, "timerScheduler");
+        this.randomSource = Objects.requireNonNull(randomSource, "randomSource");
         this.fallbackContext = vertx.getOrCreateContext();
+        this.adapterSupport = ResilienceAdapterSupport.create(this);
+        this.policyResolver = new ResiliencePolicyResolver();
     }
 
     /**
@@ -43,6 +60,35 @@ public final class Resilience {
      */
     public static Resilience create(Vertx vertx) {
         return new Resilience(vertx);
+    }
+
+    /**
+     * Returns the framework-adapter facade owned by this runtime.
+     *
+     * @return the runtime-owned adapter support facade
+     */
+    public ResilienceAdapterSupport adapterSupport() {
+        return adapterSupport;
+    }
+
+    /**
+     * Returns the pure resolver owned by this runtime's policy construction surface.
+     *
+     * @return policy resolver
+     */
+    public ResiliencePolicyResolver policyResolver() {
+        return policyResolver;
+    }
+
+    /**
+     * Bridges the runtime-owned adapter facade to structured pipeline construction.
+     *
+     * @param identity structured adapter operation identity
+     * @param policy complete resolved policy
+     * @return executable timeout/retry pipeline
+     */
+    public ResiliencePipeline adapterPipeline(AdapterOperationIdentity identity, ResolvedResiliencePolicy policy) {
+        return ResiliencePipeline.fromAdapterPolicy(this, identity, policy);
     }
 
     /**
@@ -79,7 +125,7 @@ public final class Resilience {
         }
 
         Promise<Void> shutdown = Promise.promise();
-        Set<TimeoutExecution<?>> executions;
+        Set<RuntimeExecution> executions;
         synchronized (lifecycleMonitor) {
             existing = closePromise.get();
             if (existing != null) {
@@ -93,7 +139,7 @@ public final class Resilience {
         if (executions.isEmpty()) {
             shutdown.complete();
         } else {
-            executions.forEach(TimeoutExecution::close);
+            executions.forEach(RuntimeExecution::close);
         }
         return shutdown.future();
     }
@@ -103,22 +149,52 @@ public final class Resilience {
         Objects.requireNonNull(configuration, "configuration");
         Objects.requireNonNull(operation, "operation");
 
-        Context selectedContext = Vertx.currentContext();
-        if (selectedContext == null) {
-            selectedContext = fallbackContext;
-        }
+        Context selectedContext = executionContext();
 
-        TimeoutExecution<T> execution;
+        TimeoutExecution<T> execution =
+                scheduleTimeout(selectedContext, operationKey, configuration.timeoutMs(), operation);
+        if (execution == null) {
+            return failedOnContext(selectedContext, operationKey);
+        }
+        return execution.future();
+    }
+
+    <T> Future<T> executeRetry(
+            String operationKey,
+            RetryConfig retryConfiguration,
+            TimeoutConfig timeoutConfiguration,
+            Supplier<Future<T>> operation) {
+        Objects.requireNonNull(operationKey, "operationKey");
+        Objects.requireNonNull(retryConfiguration, "retryConfiguration");
+        Objects.requireNonNull(operation, "operation");
+
+        Context selectedContext = executionContext();
+
+        Retry.Execution<T> execution;
         synchronized (lifecycleMonitor) {
             if (closed) {
                 return failedOnContext(selectedContext, operationKey);
             }
-            execution =
-                    new TimeoutExecution<>(this, selectedContext, operationKey, configuration.timeoutMs(), operation);
+            execution = new Retry.Execution<>(
+                    this, selectedContext, operationKey, retryConfiguration, timeoutConfiguration, operation);
             activeExecutions.add(execution);
         }
         selectedContext.runOnContext(ignored -> execution.start());
         return execution.future();
+    }
+
+    <T> TimeoutExecution<T> scheduleTimeout(
+            Context context, String operationKey, long timeoutMs, Supplier<Future<T>> operation) {
+        TimeoutExecution<T> execution;
+        synchronized (lifecycleMonitor) {
+            if (closed) {
+                return null;
+            }
+            execution = new TimeoutExecution<>(this, context, operationKey, timeoutMs, operation);
+            activeExecutions.add(execution);
+        }
+        context.runOnContext(ignored -> execution.start());
+        return execution;
     }
 
     Vertx vertx() {
@@ -133,9 +209,25 @@ public final class Resilience {
         }
     }
 
-    void remove(TimeoutExecution<?> execution) {
+    void remove(RuntimeExecution execution) {
         activeExecutions.remove(execution);
         completeCloseIfIdle();
+    }
+
+    long setTimer(long delayMs, Handler<Long> handler) {
+        return timerScheduler.setTimer(delayMs, handler);
+    }
+
+    boolean cancelTimer(long timerId) {
+        return timerScheduler.cancelTimer(timerId);
+    }
+
+    double randomDouble() {
+        double value = randomSource.getAsDouble();
+        if (!Double.isFinite(value) || value < 0.0d || value >= 1.0d) {
+            throw new IllegalStateException("random source must return a value in [0, 1)");
+        }
+        return value;
     }
 
     private void completeCloseIfIdle() {
@@ -146,9 +238,43 @@ public final class Resilience {
         shutdown.tryComplete();
     }
 
+    private Context executionContext() {
+        Context currentContext = Vertx.currentContext();
+        return currentContext == null ? fallbackContext : currentContext;
+    }
+
     private <T> Future<T> failedOnContext(Context context, String operationKey) {
         Promise<T> result = Promise.promise();
         context.runOnContext(ignored -> result.tryFail(new ResilienceClosedException(operationKey)));
         return result.future();
+    }
+
+    interface RuntimeExecution {
+        void close();
+    }
+
+    interface TimerScheduler {
+        long setTimer(long delayMs, Handler<Long> handler);
+
+        boolean cancelTimer(long timerId);
+    }
+
+    private static final class VertxTimerScheduler implements TimerScheduler {
+
+        private final Vertx vertx;
+
+        private VertxTimerScheduler(Vertx vertx) {
+            this.vertx = vertx;
+        }
+
+        @Override
+        public long setTimer(long delayMs, Handler<Long> handler) {
+            return vertx.setTimer(delayMs, handler);
+        }
+
+        @Override
+        public boolean cancelTimer(long timerId) {
+            return vertx.cancelTimer(timerId);
+        }
     }
 }

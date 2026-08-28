@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
 /** Package-private lifecycle and race coordinator shared by direct and pipeline timeout execution. */
-final class TimeoutExecution<T> {
+final class TimeoutExecution<T> implements Resilience.RuntimeExecution {
 
     private final Resilience resilience;
     private final Context context;
@@ -48,7 +48,7 @@ final class TimeoutExecution<T> {
             return;
         }
         try {
-            timerId = resilience.vertx().setTimer(timeoutMs, ignored -> settleTimeout());
+            timerId = resilience.setTimer(timeoutMs, ignored -> settleTimeout());
             Future<T> supplied = Objects.requireNonNull(operation.get(), "operation returned null future");
             supplied.onComplete(outcome -> context.runOnContext(ignored -> {
                 if (outcome.succeeded()) {
@@ -65,7 +65,7 @@ final class TimeoutExecution<T> {
         }
     }
 
-    void close() {
+    public void close() {
         startClaimed.compareAndSet(false, true);
         context.runOnContext(ignored -> {
             settleClosed();
@@ -114,7 +114,7 @@ final class TimeoutExecution<T> {
 
     private void cancelTimer() {
         if (timerId >= 0) {
-            resilience.vertx().cancelTimer(timerId);
+            resilience.cancelTimer(timerId);
             timerId = -1;
         }
     }

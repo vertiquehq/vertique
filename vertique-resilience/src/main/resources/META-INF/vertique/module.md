@@ -13,8 +13,9 @@ SPDX-License-Identifier: EUPL-1.2
 `vertique-resilience` provides the shared resilience vocabulary and runtime foundation used by
 Vertique consumers. It contains type and method annotations for timeout, retry, and circuit-breaker
 declarations; immutable metadata snapshots for resolved declarations; retry contracts; and an
-application-scoped runtime with executable timeout and pipeline composition. This foundation does
-not execute retry, circuit-breaker, or bulkhead policies; those concerns remain outside this slice.
+application-scoped runtime with executable timeout/retry policy composition, deterministic policy
+resolution, and execution budgets. Circuit-breaker and bulkhead behavior remains outside this slice;
+policies containing those concerns are rejected eagerly at the structured factory boundary.
 
 ---
 
@@ -38,10 +39,10 @@ timeout, retry, and circuit breaker. `ResilienceAnnotations.NONE` is the shared 
 `hasAny()` is the convenient test for whether a declaration is present.
 
 The executable foundation is application-scoped. Create one `Resilience` for the application graph
-and construct timeout components or pipelines from that owner. A timeout is a per-supplier-attempt
-fence backed by a Vert.x timer; it does not cancel the supplier's underlying future. A pipeline is
-fixed-order composition state. This module currently executes only its timeout concern, even though
-the public exception vocabulary already includes circuit-breaker and bulkhead failure types.
+and construct timeout/retry components or pipelines from that owner. A timeout is a per-supplier-
+attempt fence backed by a Vert.x timer; it does not cancel the supplier's underlying future. Retry
+delays are outside the per-attempt timeout, and retry callbacks receive zero-based ordinals. A
+pipeline is fixed-order typed composition state and must contain at least one supported concern.
 
 ---
 
@@ -100,8 +101,8 @@ Timeout durations must be positive and exactly representable in milliseconds. `D
 that are zero, negative, sub-millisecond, or too large for a millisecond `long` are rejected;
 `TimeoutConfig.ofMillis` likewise requires a positive value. Every timeout duration setter and every
 pipeline timeout setter may be used once, and each builder is single-use. A pipeline must configure
-one timeout before `build()`. A prebuilt timeout must belong to the same `Resilience` runtime as the
-pipeline; a foreign owner is rejected eagerly.
+at least one timeout or retry concern before `build()`. A prebuilt timeout or retry must belong to
+the same `Resilience` runtime as the pipeline; a foreign owner is rejected eagerly.
 
 Operation names are construction-time inputs only. The runtime requires a non-empty valid-Unicode
 name no larger than 4,096 UTF-8 bytes, then derives an opaque SHA-256 operation key; raw names are
@@ -130,6 +131,25 @@ step.
 interface for a custom strategy. `RetryPolicy` determines whether a failure is eligible for retry
 when a consumer's retry configuration delegates eligibility to a policy.
 
+`Retry.builder(resilience, operationName)` creates an independently executable retry component.
+`ResiliencePipeline.Builder.retry(...)` accepts a prebuilt `Retry` or an inline retry builder. Retry
+is opt-in, starts at attempt zero, and performs at most `maxRetries + 1` attempts. `abortOn` wins
+over `retryOn`; delays are scheduled between attempts and do not consume the per-attempt timeout.
+Callback failures become cause-free `ResiliencePolicyException` values with only safe callback-kind
+and exception-class metadata. Fatal `Error` values are rethrown.
+
+`ResiliencePolicyResolver` resolves immutable policy values using operation override, annotation,
+default, then disabled precedence independently for each concern. `RetryConfig`, `RetryBackoff`,
+`CircuitBreakerConfig`, and `BulkheadConfig` validate eagerly. `ResolvedResiliencePolicy.executionBudget()`
+reports conservative active, queue, and total bounds using saturating arithmetic; unknown or
+unbounded inputs remain explicit.
+
+Framework adapters use `ResilienceAdapterSupport.pipeline(AdapterOperationIdentity,
+ResolvedResiliencePolicy)` for the stable structured entry point. It derives the opaque key internally,
+accepts timeout-only, retry-only, and combined supported policies, and rejects empty, breaker-bearing,
+or bulkhead-bearing policies before state, timers, or suppliers are started. No raw-key overload or
+standalone public identity derivation is provided.
+
 ### Runtime exception surface
 
 Runtime failures use two sealed public roots: `ResilienceException` extends
@@ -138,8 +158,8 @@ Runtime failures use two sealed public roots: `ResilienceException` extends
 `dev.vertique.core.exception.UnavailableException` and permits `ResilienceClosedException`,
 `CircuitOpenException`, `BulkheadRejectedException`, and `BulkheadQueueTimeoutException`.
 `CircuitOpenException`, `BulkheadRejectedException`, and `BulkheadQueueTimeoutException` are part of
-the published exception surface, but this foundation does not execute circuit-breaker or bulkhead
-policies.
+the published exception surface, but T002 rejects circuit-breaker and bulkhead policies rather than
+executing them; T003 and T004 own those behaviors.
 
 `ResilienceTimeoutException` exposes the validated derived operation key and `timeoutMs`;
 `ResilienceClosedException` exposes the validated derived operation key. Public exception messages
