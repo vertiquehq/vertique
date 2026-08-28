@@ -41,6 +41,9 @@ final class McpServerConfigValidator {
         requireRange(config.toolsPageSize(), 1, 500, "mcp.toolsPageSize");
         requireRange(config.toolsTtlMs(), 0, 3_600_000, "mcp.toolsTtlMs");
         validateOrigins(config.allowedOrigins());
+        // Both McpBodyTracePolicy members (IGNORE and LINK) are equally valid; this only guards
+        // against a null value reaching a builder that bypassed the @Builder.Default (R51).
+        require(config.bodyTracePolicy() != null, "mcp.bodyTracePolicy");
     }
 
     /** Validates the selected optional-authentication capability before the MCP mount is created. */

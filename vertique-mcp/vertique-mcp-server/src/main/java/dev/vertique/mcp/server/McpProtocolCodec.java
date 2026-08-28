@@ -10,7 +10,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.node.NullNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import dev.vertique.mcp.interceptor.McpTraceContext;
+import dev.vertique.core.correlation.TraceReference;
 import dev.vertique.rest.core.config.HttpConfig;
 import io.vertx.core.MultiMap;
 import jakarta.annotation.Nullable;
@@ -106,6 +106,13 @@ final class McpProtocolCodec {
      */
     private static final Pattern TRACEPARENT_PATTERN =
             Pattern.compile("00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})");
+
+    /**
+     * The {@link TraceReference#source()} label stamped on every reference {@link
+     * #extractBodyTraceContext} produces (R51; the framework's single trace-reference type, formerly
+     * the MCP-local {@code McpTraceContext}).
+     */
+    private static final String TRACE_REFERENCE_SOURCE = "mcp._meta";
 
     /**
      * The two {@code tools/call} {@code CallToolRequestParams} fields the official schema permits for
@@ -319,24 +326,30 @@ final class McpProtocolCodec {
      * <p>Returns {@code null} — and never fails the request — for every anomaly, each logged once as
      * a bounded, non-leaking DEBUG diagnostic (never the raw {@code traceparent}/{@code tracestate}
      * value): an absent or non-string {@code traceparent}; syntax that does not match {@link
-     * #TRACEPARENT_PATTERN}'s bounded W3C wire format; an all-zero trace or span id (rejected by
-     * {@link McpTraceContext}'s own compact constructor); or a {@code tracestate} rejected by that
-     * same constructor's bounds (blank, over its character cap, or carrying a non-printable-ASCII
+     * #TRACEPARENT_PATTERN}'s bounded W3C wire format; an all-zero trace or span id (rejected here,
+     * since {@link TraceReference} itself is a generic, protocol-agnostic type with no W3C hex-format
+     * opinion of its own); or a {@code tracestate} rejected by {@link TraceReference}'s own compact
+     * constructor bounds (blank, over its character cap, or carrying a non-printable-ASCII
      * character). A present but non-string {@code tracestate} is silently treated as absent rather
      * than as an anomaly, since {@code tracestate} alone is optional by the W3C spec. DEBUG, not WARN,
      * because every anomaly here is client-triggerable at will by an anonymous, unauthenticated caller
      * (repair task R47) — WARN stays reserved for a framework or application contract violation.
      *
-     * <p>Called at most once per request, from {@link McpRequestDispatcher#dispatch}. Extraction never
-     * affects admission; it runs after negotiation ({@link #validateOfficialParams}/{@link
-     * #validateNegotiation}) has already succeeded, so a malformed or absent body trace reference can
-     * never itself reject a request.
+     * <p><strong>Repair task R51.</strong> Returns a core {@link TraceReference} — the framework's
+     * single trace-reference type, replacing the deleted MCP-local {@code McpTraceContext} — stamped
+     * with source label {@value #TRACE_REFERENCE_SOURCE}. The caller invokes this method at most once
+     * per request, from {@link McpRequestDispatcher#dispatch}, and only when {@code
+     * McpServerConfig#bodyTracePolicy()} is {@code McpBodyTracePolicy.LINK}: under the default {@code
+     * IGNORE} policy this method is never called at all, so no parsing, validation, or diagnostic
+     * logging ever runs for the body trace fields. Extraction never affects admission; it runs after
+     * negotiation ({@link #validateOfficialParams}/{@link #validateNegotiation}) has already
+     * succeeded, so a malformed or absent body trace reference can never itself reject a request.
      *
      * @param envelope a successfully decoded envelope, as {@link Decoded#envelope()} carries it
      * @return the normalized W3C trace reference, or {@code null} when none is present or valid
      */
     @Nullable
-    McpTraceContext extractBodyTraceContext(JsonNode envelope) {
+    TraceReference extractBodyTraceContext(JsonNode envelope) {
         JsonNode params = envelope.get("params");
         if (params == null || !params.isObject()) {
             return null;
@@ -356,17 +369,26 @@ final class McpProtocolCodec {
         }
         String traceId = matcher.group(1);
         String spanId = matcher.group(2);
+        if (isAllZero(traceId) || isAllZero(spanId)) {
+            log.debug("Ignoring body _meta.traceparent with an all-zero trace or span id");
+            return null;
+        }
         boolean sampled = (Integer.parseInt(matcher.group(3), 16) & 0x1) == 1;
         JsonNode traceStateNode = meta.get(META_TRACESTATE);
         String traceState = traceStateNode != null && traceStateNode.isTextual() ? traceStateNode.asText() : null;
         try {
-            return new McpTraceContext(traceId, spanId, sampled, traceState);
+            return new TraceReference(traceId, spanId, TRACE_REFERENCE_SOURCE, sampled, traceState);
         } catch (IllegalArgumentException rejected) {
             // Never logs the rejection's own message or the offending value: only its occurrence
             // matters, matching McpCompletionCoordinator's established non-leaking log convention.
             log.debug("Ignoring invalid body _meta trace context");
             return null;
         }
+    }
+
+    /** Reports whether {@code hex} is composed entirely of the character {@code '0'}. */
+    private static boolean isAllZero(String hex) {
+        return hex.chars().allMatch(character -> character == '0');
     }
 
     /**

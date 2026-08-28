@@ -94,6 +94,18 @@ public final class McpServerConfig {
     @Builder.Default
     private final long toolsTtlMs = 300_000;
 
+    /**
+     * Governs whether the request body's optional {@code _meta.traceparent}/{@code tracestate} W3C
+     * trace reference is parsed and, once extracted, linked onto the request's OpenTelemetry span
+     * (repair task R51). Defaults to {@link McpBodyTracePolicy#IGNORE} — mirroring Vert.x's own
+     * {@code TracingPolicy} default-off posture, since the body reference is untrusted, client-
+     * supplied data with no trusted upstream gateway to sanitize it by default (D004). Set to
+     * {@link McpBodyTracePolicy#LINK} only for a deployment behind a header-cleaning gateway or with
+     * first-party callers.
+     */
+    @Builder.Default
+    private final McpBodyTracePolicy bodyTracePolicy = McpBodyTracePolicy.IGNORE;
+
     /** Returns the complete, programmatic MCP default configuration. */
     public static McpServerConfig defaults() {
         return builder().build();

@@ -16,28 +16,30 @@ import java.util.Objects;
  *
  * <p>{@code securityContext} is always non-null: an anonymous endpoint binds a context whose actor
  * is {@code PrincipalType.ANONYMOUS}, authentication method is {@code none}, and claims are empty —
- * downstream interception never uses {@code null} to mean anonymous. {@code correlation} and
- * {@code bodyTraceContext} are optional and present only once the framework has captured them for
- * this request.
+ * downstream interception never uses {@code null} to mean anonymous. {@code correlation} is
+ * optional and present only once the framework has captured it for this request.
  *
  * <p>This record intentionally exposes no request payload, header, or credential accessor: an
  * {@link McpRequestInterceptor} may permit or reject a request, but it can never observe the body it
  * is guarding.
  *
+ * <p><strong>Repair task R51 (trace-reference consolidation).</strong> This record no longer carries
+ * a body trace context: the former {@code bodyTraceContext} component (and the deleted {@code
+ * McpTraceContext} type it exposed) is gone with no replacement — no interceptor ever consumed it,
+ * so the original proportionality finding that it should never have been on this payload-free
+ * record lands after all. The request body's optional, untrusted W3C trace reference — extracted
+ * only when {@code McpBodyTracePolicy.LINK} is configured — now travels solely on the payload-free
+ * terminal lifecycle observation ({@code dev.vertique.mcp.lifecycle.McpRequestTerminalObservation#linkedTrace()}),
+ * never on this pre-dispatch context and never on {@link CorrelationContextSnapshot}.
+ *
  * @param method the recognized method class this request is about to dispatch to
  * @param securityContext the established caller security context; never {@code null}
  * @param correlation the correlation context snapshot, when captured for this request
- * @param bodyTraceContext the normalized W3C trace reference, when captured for this request.
- *     <strong>Untrusted (repair task R47, adjudication D004):</strong> client-supplied,
- *     syntactically validated only — it carries the same trust posture as the HTTP {@code
- *     traceparent} header, which an anonymous caller already fully controls. Never use it as an
- *     input to an authorization, tenancy, or rate-limiting decision.
  */
 public record McpRequestContext(
         McpMethod method,
         SecurityContext securityContext,
-        @Nullable CorrelationContextSnapshot correlation,
-        @Nullable McpTraceContext bodyTraceContext) {
+        @Nullable CorrelationContextSnapshot correlation) {
 
     /**
      * Validates the required fields.

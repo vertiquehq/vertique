@@ -143,8 +143,11 @@ object; choose the observer SPI whenever per-request state, the pre-write termin
 opt-in value observation is needed. The listener mirrors REST's request-completed listener
 deliberately.
 
-`McpTraceContext` is the optional normalized W3C trace reference associated with a terminal
-observation. It carries no baggage.
+`McpRequestTerminalObservation.linkedTrace` is the optional normalized W3C trace reference associated
+with a terminal observation — `dev.vertique.core.correlation.TraceReference`, the framework's single
+trace-reference type. It carries no baggage, and is present only when the MCP server module's
+`mcp.bodyTracePolicy` is `LINK` and a valid `params._meta.traceparent` was found; `null` under the
+default `IGNORE` policy.
 
 ## Request interceptor extension
 
@@ -159,10 +162,13 @@ naming both classes. Named implementors include a tenant-entitlement guard and a
 guard.
 
 `McpRequestContext` is the immutable, payload-free snapshot an interceptor observes: the recognized
-method, the always-non-null established `SecurityContext`, and the optional correlation and body
-trace context. It exposes no request body, header, or credential accessor, and an interceptor can
-never mutate arguments, reorder a fixed stage, or recover a failure another stage produced — it may
-only permit or reject.
+method, the always-non-null established `SecurityContext`, and the optional correlation. It exposes
+no request body, header, or credential accessor, and an interceptor can never mutate arguments,
+reorder a fixed stage, or recover a failure another stage produced — it may only permit or reject.
+This record no longer carries a body-trace-context component: no interceptor ever consumed one, and
+the optional body-borne W3C trace reference now travels solely on the payload-free
+`McpRequestTerminalObservation.linkedTrace()` (see Observation extensions above), never on this
+pre-dispatch context.
 
 ## Tool interceptor extension
 

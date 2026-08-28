@@ -3,7 +3,7 @@
 
 package dev.vertique.mcp.server;
 
-import dev.vertique.mcp.interceptor.McpTraceContext;
+import dev.vertique.core.correlation.TraceReference;
 import dev.vertique.mcp.lifecycle.McpCompletionScope;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedEvent;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
@@ -52,15 +52,17 @@ final class McpCompletionCoordinator {
     private McpRequestTerminalEvent writeTerminal;
 
     /**
-     * This request's optional body trace reference (repair task R39), captured exactly once by
-     * {@link #bindBodyTraceContext} and read only by {@link #publishTerminal}. Mutated only on the
-     * request-owning context, exactly like {@link #settled}/{@link #completionEmitted} above: {@code
-     * McpRequestDispatcher#dispatch} calls {@link #bindBodyTraceContext} synchronously, immediately
-     * after construction, before any interceptor or write-path continuation can observe this
-     * coordinator or trigger a terminal publication.
+     * This request's optional linked trace reference (repair task R39; R51 renamed from {@code
+     * bodyTraceContext} to match {@link McpRequestTerminalObservation#linkedTrace()}), captured
+     * exactly once by {@link #bindLinkedTrace} and read only by {@link #publishTerminal}. {@code
+     * null} whenever {@code McpBodyTracePolicy.IGNORE} is configured (the default) or no valid body
+     * trace reference was extracted. Mutated only on the request-owning context, exactly like
+     * {@link #settled}/{@link #completionEmitted} above: {@code McpRequestDispatcher#dispatch} calls
+     * {@link #bindLinkedTrace} synchronously, immediately after construction, before any interceptor
+     * or write-path continuation can observe this coordinator or trigger a terminal publication.
      */
     @Nullable
-    private McpTraceContext bodyTraceContext;
+    private TraceReference linkedTrace;
 
     McpCompletionCoordinator(
             Context context,
@@ -129,21 +131,21 @@ final class McpCompletionCoordinator {
     }
 
     /**
-     * Captures this request's optional body trace reference (repair task R39), once, for {@link
-     * #publishTerminal} to carry on every terminal observation this coordinator later publishes —
-     * the write-path terminal ({@link #beginWrite}) and every abort-settlement terminal ({@link
-     * #completeOnContext}) alike.
+     * Captures this request's optional linked trace reference (repair task R39; R51), once, for
+     * {@link #publishTerminal} to carry on every terminal observation this coordinator later
+     * publishes — the write-path terminal ({@link #beginWrite}) and every abort-settlement terminal
+     * ({@link #completeOnContext}) alike.
      *
      * <p>Deliberately setter-free in shape: {@code McpRequestDispatcher#dispatch} is this method's
      * sole caller, invoking it exactly once, synchronously, immediately after this coordinator is
      * constructed and before any interceptor or write-path continuation can run — never a
      * general-purpose mutator called an arbitrary number of times over this coordinator's lifetime.
      *
-     * @param bodyTraceContext the normalized W3C trace reference extracted from this request's body,
-     *     or {@code null} when none was captured
+     * @param linkedTrace the normalized W3C trace reference extracted from this request's body, or
+     *     {@code null} when {@code McpBodyTracePolicy.IGNORE} is configured or none was captured
      */
-    void bindBodyTraceContext(@Nullable McpTraceContext bodyTraceContext) {
-        this.bodyTraceContext = bodyTraceContext;
+    void bindLinkedTrace(@Nullable TraceReference linkedTrace) {
+        this.linkedTrace = linkedTrace;
     }
 
     /**
@@ -355,15 +357,15 @@ final class McpCompletionCoordinator {
     /**
      * Publishes the terminal observation to every retained observation, isolating observer failures.
      *
-     * <p>Carries {@link #bodyTraceContext} (repair task R39) — this request's body trace reference,
-     * captured once by {@link #bindBodyTraceContext} — on every terminal this method ever publishes,
-     * whether from the write path ({@link #beginWrite}) or an abort settlement ({@link
+     * <p>Carries {@link #linkedTrace} (repair task R39; R51) — this request's linked trace
+     * reference, captured once by {@link #bindLinkedTrace} — on every terminal this method ever
+     * publishes, whether from the write path ({@link #beginWrite}) or an abort settlement ({@link
      * #completeOnContext}).
      *
      * @param terminal the terminal facts to publish
      */
     private void publishTerminal(McpRequestTerminalEvent terminal) {
-        McpRequestTerminalObservation observation = new McpRequestTerminalObservation(terminal, bodyTraceContext);
+        McpRequestTerminalObservation observation = new McpRequestTerminalObservation(terminal, linkedTrace);
         observations.forEach(item -> invoke(item, () -> item.onTerminal(observation)));
     }
 

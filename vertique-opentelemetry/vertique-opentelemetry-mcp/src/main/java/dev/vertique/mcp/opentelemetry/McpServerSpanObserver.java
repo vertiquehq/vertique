@@ -3,7 +3,7 @@
 
 package dev.vertique.mcp.opentelemetry;
 
-import dev.vertique.mcp.interceptor.McpTraceContext;
+import dev.vertique.core.correlation.TraceReference;
 import dev.vertique.mcp.lifecycle.McpCompletionScope;
 import dev.vertique.mcp.lifecycle.McpMethod;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
@@ -58,21 +58,23 @@ import lombok.extern.slf4j.Slf4j;
  * RequestMetaObject} field this attribute mirrors is a per-request negotiated fact, not a server
  * constant.
  *
- * <p>It also adds at most one {@link Span#addLink(SpanContext) link} for the request's optional body
- * trace context ({@link McpRequestTerminalObservation#bodyTraceContext()}, populated by {@code
+ * <p>It also adds at most one {@link Span#addLink(SpanContext) link} for the request's optional
+ * linked trace reference ({@link McpRequestTerminalObservation#linkedTrace()}, populated by {@code
  * McpCompletionCoordinator} from the request body's {@code params._meta.traceparent}/{@code
- * tracestate}, R39): a link is added only when the body trace context is present, structurally
- * convertible into a valid OpenTelemetry {@link SpanContext}, and from a <em>different trace</em> than
- * the captured HTTP span's own trace id. A body reference sharing the captured span's trace id is
- * suppressed as a self-reference rather than linked — this catches a body context identical to the
- * HTTP {@code traceparent} header that established this request's parent, since that header shares
- * the captured span's trace id (only the span id differs: the captured span's own span id is freshly
- * minted at {@code open} and never equals its parent's). Suppression therefore compares trace id only,
- * never full span identity — see {@link #addBodyTraceLink}. Malformed body trace data (a {@code
- * traceState} that does not parse as W3C {@code key=value} entries) is caught, logged at WARN with a
- * bounded diagnostic (the exception class name only — never the raw trace data), and produces no
- * link; every other enrichment attribute is still recorded. No span status is ever set here: transport
- * status remains owned by Vert.x HTTP tracing (contract §4.10).
+ * tracestate} — R39, and R51's carriage swap onto the core {@link TraceReference} type, present only
+ * when {@code McpBodyTracePolicy.LINK} is configured): a link is added only when the linked trace
+ * reference is present, structurally convertible into a valid OpenTelemetry {@link SpanContext}, and
+ * from a <em>different trace</em> than the captured HTTP span's own trace id. A reference sharing the
+ * captured span's trace id is suppressed as a self-reference rather than linked — this catches a body
+ * context identical to the HTTP {@code traceparent} header that established this request's parent,
+ * since that header shares the captured span's trace id (only the span id differs: the captured
+ * span's own span id is freshly minted at {@code open} and never equals its parent's). Suppression
+ * therefore compares trace id only, never full span identity — see {@link #addBodyTraceLink}.
+ * Malformed body trace data (a {@code traceState} that does not parse as W3C {@code key=value}
+ * entries) is caught, logged at WARN with a bounded diagnostic (the exception class name only — never
+ * the raw trace data), and produces no link; every other enrichment attribute is still recorded. No
+ * span status is ever set here: transport status remains owned by Vert.x HTTP tracing (contract
+ * §4.10).
  *
  * <p><b>Completion scope (R06, issue #435).</b> The session returned by {@link #open} also implements
  * {@link dev.vertique.mcp.lifecycle.McpCompletionScope}: {@code openCompletionScope()} re-makes the
@@ -191,9 +193,9 @@ final class McpServerSpanObserver implements McpRequestLifecycleObserver {
                         "McpServerSpanObserver failed to enrich the captured span: {}",
                         e.getClass().getName());
             }
-            McpTraceContext bodyTraceContext = observation.bodyTraceContext();
-            if (bodyTraceContext != null) {
-                addBodyTraceLink(span, httpSpanContext, bodyTraceContext);
+            TraceReference linkedTrace = observation.linkedTrace();
+            if (linkedTrace != null) {
+                addBodyTraceLink(span, httpSpanContext, linkedTrace);
             }
         }
 
@@ -272,9 +274,9 @@ final class McpServerSpanObserver implements McpRequestLifecycleObserver {
      * @param span the span captured at {@code open}, already enriched with the bounded attributes
      * @param httpSpanContext {@code span}'s own captured {@link SpanContext}, used to detect a
      *     same-trace (self-referential) body trace context
-     * @param body the request's optional, already-validated body trace context; never {@code null}
+     * @param body the request's optional, already-validated linked trace reference; never {@code null}
      */
-    private static void addBodyTraceLink(Span span, SpanContext httpSpanContext, McpTraceContext body) {
+    private static void addBodyTraceLink(Span span, SpanContext httpSpanContext, TraceReference body) {
         try {
             TraceFlags traceFlags = body.sampled() ? TraceFlags.getSampled() : TraceFlags.getDefault();
             TraceState traceState = parseTraceState(body.traceState());

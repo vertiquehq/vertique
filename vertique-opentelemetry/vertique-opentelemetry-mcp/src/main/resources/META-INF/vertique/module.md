@@ -71,19 +71,30 @@ before the terminal write."
 OpenTelemetry semantic-convention names; rather than depending on an incubating semconv artifact, they
 are declared as internal, Vertique-owned `AttributeKey` constants on `McpServerSpanObserver`.
 
-**At most one body-trace link, never a child span.** When the request's terminal observation carries
-a non-null `bodyTraceContext` (a normalized W3C trace reference extracted by `McpProtocolCodec` from
-the request body's `params._meta.traceparent`/`tracestate` and bound onto `McpCompletionCoordinator`
-by `McpRequestDispatcher`), the observer converts it into an OpenTelemetry `SpanContext` and adds
-exactly one `Span#addLink` when that context is valid and from a *different trace* than the HTTP
-span's own captured trace id. A body trace context sharing the HTTP span's own trace id is suppressed
-as a self-reference and adds no link — this is the shape a body reference identical to the HTTP
+**At most one body-trace link, never a child span, and only under `mcp.bodyTracePolicy=LINK`.**
+When the request's terminal observation carries a non-null `linkedTrace` (a
+`dev.vertique.core.correlation.TraceReference` — the framework's single trace-reference type,
+replacing the deleted MCP-local `McpTraceContext` — extracted by `McpProtocolCodec` from the request
+body's `params._meta.traceparent`/`tracestate` and bound onto `McpCompletionCoordinator` by
+`McpRequestDispatcher`), the observer converts it into an OpenTelemetry `SpanContext` and adds exactly
+one `Span#addLink` when that context is valid and from a *different trace* than the HTTP span's own
+captured trace id. A body trace context sharing the HTTP span's own trace id is suppressed as a
+self-reference and adds no link — this is the shape a body reference identical to the HTTP
 `traceparent` header actually takes: the header shares the captured span's trace id (only the span id
 differs, since the captured span's own span id is freshly minted at `open` and never equals its
 parent's), so suppression compares trace id only, never full span identity. Malformed trace-state data
 (not well-formed W3C `key=value` entries) is caught and logged at WARN with a bounded diagnostic — the
 exception class name only, never the raw trace data — and adds no link; every other enrichment
 attribute is still recorded.
+
+**This observer performs no extraction of its own — the policy lives in `vertique-mcp-server`.**
+The MCP server module's `mcp.bodyTracePolicy` defaults to `IGNORE`
+(mirroring Vert.x's own `TracingPolicy` default-off posture): under `IGNORE`, `linkedTrace` is always
+`null` on every terminal observation this observer receives, so no link is ever added and no
+extraction cost is ever paid — regardless of whether this adapter is installed. Set
+`mcp.bodyTracePolicy=LINK` on the MCP server configuration (not on this module) to opt into the
+extraction and linking behavior described above; see `vertique-mcp-server`'s own `module.md`
+("Body trace-context extraction") for the extraction and bounds mechanics.
 
 **Zero-overhead when unconfigured.** Every operation is guarded by `Span#getSpanContext().isValid()`
 (at `open`), `Span#isRecording()` (at enrichment — a late terminal callback can observe a span that
@@ -144,7 +155,9 @@ un-MCP-specific plumbing already shared with REST.
 - `io.opentelemetry:opentelemetry-api` — `Span`, `SpanContext`, `TraceFlags`, `TraceState`,
   `AttributeKey`; no OpenTelemetry SDK dependency (NFR-TEL-002).
 - `dev.vertique:vertique-mcp-core` — `McpRequestLifecycleObserver`, `McpRequestObservation`,
-  `McpRequestTerminalObservation`, `McpRequestTerminalEvent`, `McpTraceContext`, and the bounded
-  lifecycle enums.
+  `McpRequestTerminalObservation`, `McpRequestTerminalEvent`, and the bounded lifecycle enums.
+- `dev.vertique:vertique-core` — `dev.vertique.core.correlation.TraceReference`, the framework's
+  single trace-reference type, referenced directly by this module's main source rather than merely
+  reachable transitively.
 - `com.google.dagger:dagger`, `jakarta.inject:jakarta.inject-api`
 - `org.slf4j:slf4j-api`, `org.projectlombok:lombok` (provided)

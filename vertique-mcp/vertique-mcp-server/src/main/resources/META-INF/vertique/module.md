@@ -61,10 +61,18 @@ deployments exposing the mount over HTTP/2 should bound streams at a fronting pr
 
 **Configuration keys are flat under `mcp`.** `McpServerConfig` is bound from the `mcp` section by
 Jackson using the field names exactly as declared: `mcp.outputMaxBytes`, `mcp.ingressMaxTokens`,
-`mcp.outputMaxTokens`, `mcp.toolsPageSize`, `mcp.toolsTtlMs`, and `mcp.jsonProfile`, not dotted
-nested objects. There is no nested `tools`, `output`, or `json` object. Ordinary unknown keys remain
-deliberately forward-compatible and are silently ignored, so use the declared field names rather
-than dotted prose spellings.
+`mcp.outputMaxTokens`, `mcp.toolsPageSize`, `mcp.toolsTtlMs`, `mcp.bodyTracePolicy`, and
+`mcp.jsonProfile`, not dotted nested objects. There is no nested `tools`, `output`, or `json` object.
+Ordinary unknown keys remain deliberately forward-compatible and are silently ignored, so use the
+declared field names rather than dotted prose spellings.
+
+**`mcp.bodyTracePolicy` governs body-borne trace-reference extraction.** Enum
+`McpBodyTracePolicy`, `IGNORE` (`@Builder.Default`) or `LINK` — mirroring Vert.x's own `TracingPolicy`
+default-off posture. Under the default `IGNORE`, the request body's `params._meta.traceparent`/
+`tracestate` fields are never parsed at all: no extraction, no diagnostic, no OpenTelemetry span
+link, at zero cost. Set `LINK` only for a deployment behind a header-cleaning gateway or with
+first-party callers; see [Body trace-context extraction](#body-trace-context-extraction) for the full
+extraction and carriage mechanics.
 
 **Ingress and output token budgets are independent.** `mcp.ingressMaxTokens` is the parser-token
 budget for one incoming JSON-RPC envelope, and `mcp.outputMaxTokens` is the parser-token budget for
@@ -337,6 +345,13 @@ boundary and owns the HTTP/router composition only.
 
 ## Body trace-context extraction
 
+**`mcp.bodyTracePolicy`.** `IGNORE` (`@Builder.Default`, the default) or `LINK`,
+mirroring Vert.x's own `TracingPolicy` default-off posture. Under `IGNORE`,
+`McpProtocolCodec#extractBodyTraceContext` is never invoked at all: no parsing, no validation, and no
+diagnostic logging ever runs for `params._meta.traceparent`/`tracestate`, and
+`McpRequestTerminalObservation#linkedTrace()` is always `null`. Only under `LINK` does the extraction
+described below run.
+
 `McpProtocolCodec#extractBodyTraceContext` reads this request's optional body
 trace reference from `params._meta.traceparent` / `params._meta.tracestate` — the plain,
 un-prefixed keys MCP 2026-07-28's `_meta` reserves for W3C trace-context propagation
@@ -346,27 +361,30 @@ a Vertique-owned extension of `_meta`, not an official MCP protocol field. `bagg
 upstream too but has no consumer here and is never read.
 
 `traceparent` must match the bounded W3C wire format `00-<32 lowercase hex trace id>-<16 lowercase
-hex span id>-<2 hex flags>`; `tracestate`, when present, is bounded by `McpTraceContext`'s own rules
-(non-blank, at most 512 characters, printable ASCII only). Extraction is total and never fails the
-request: an absent or non-string `traceparent`, syntax that does not match the wire format above, an
-all-zero trace or span id, or a `tracestate` outside those bounds all yield no body trace context
-rather than an error response, each logged once as a bounded, non-leaking DEBUG diagnostic (never the
-raw `traceparent`/`tracestate` value) — a client-triggerable event on this anonymous-reachable path,
-not a framework or application contract violation, so it does not warrant WARN. Extraction runs at
-most once per request, in
-`McpRequestDispatcher#dispatch`, independent of negotiation's own outcome — a malformed or absent
-body trace reference never affects protocol admission.
+hex span id>-<2 hex flags>`; `tracestate`, when present, is bounded by
+`dev.vertique.core.correlation.TraceReference`'s own rules (non-blank, at most 512 characters,
+printable ASCII only) — the framework's single trace-reference type, replacing the deleted MCP-local
+`McpTraceContext`. Extraction is total and never fails the request: an absent or non-string
+`traceparent`, syntax that does not match the wire format above, an all-zero trace or span id
+(rejected by the codec itself, since `TraceReference` carries no W3C hex-format opinion of its own),
+or a `tracestate` outside those bounds all yield no body trace context rather than an error response,
+each logged once as a bounded, non-leaking DEBUG diagnostic (never the raw `traceparent`/`tracestate`
+value) — a client-triggerable event on this anonymous-reachable path, not a framework or application
+contract violation, so it does not warrant WARN. When it runs, extraction happens at most once per
+request, in `McpRequestDispatcher#dispatch`, independent of negotiation's own outcome — a malformed or
+absent body trace reference never affects protocol admission. Every reference this codec produces is
+stamped with source label `mcp._meta`.
 
-The extracted, optional `McpTraceContext` reaches every consumer of this request's
-`McpRequestContext` — both the pre-dispatch [request interceptor stage](#request-interceptor-stage)
-and the post-validation [tool interceptor stage](#tool-interceptor-stage) — and the terminal
-observation `McpCompletionCoordinator` publishes at settlement
-(`McpRequestTerminalObservation#bodyTraceContext`), captured once via a package-private
-`bindBodyTraceContext` call from `dispatch` immediately after extraction. That terminal-carried
-value is what the `vertique-opentelemetry-mcp` adapter's `McpServerSpanObserver` reads to add at
-most one `Span#addLink` for a valid, distinct body trace reference — a body reference identical to
-the HTTP `traceparent` header is meant to be a self-reference and add no link; see that module's own
-`module.md` for the adapter's linking mechanics and policy.
+The extracted, optional `TraceReference` no longer reaches `McpRequestContext` — that record carries no
+body-trace component, and no interceptor ever consumed one. It reaches only the terminal observation
+`McpCompletionCoordinator` publishes at settlement
+(`McpRequestTerminalObservation#linkedTrace()`), captured once via a package-private
+`bindLinkedTrace` call from `dispatch` immediately after extraction (or bound `null` outright when
+the policy is `IGNORE`). That terminal-carried value is what the `vertique-opentelemetry-mcp`
+adapter's `McpServerSpanObserver` reads to add at most one `Span#addLink` for a valid, distinct body
+trace reference — a body reference identical to the HTTP `traceparent` header is meant to be a
+self-reference and add no link; see that module's own `module.md` for the adapter's linking mechanics
+and policy.
 
 ## Request interceptor stage
 

@@ -91,11 +91,14 @@ SPDX-License-Identifier: EUPL-1.2
             <scope>test</scope>
         </dependency>
         <!-- TP-002/TP-003 IT fixtures: full Dagger composition of a real port-0 MCP server, mirroring
-             the exact modules an application installs (contract §4.10's own component example). -->
+             the exact modules an application installs (contract §4.10's own component example).
+             Compile scope (R51): McpServerSpanObserver's main source now imports
+             dev.vertique.core.correlation.TraceReference directly, the framework's single
+             trace-reference type (replacing the deleted MCP-local McpTraceContext), rather than
+             relying on it merely being transitively reachable through vertique-mcp-core. -->
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-core</artifactId>
-            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
