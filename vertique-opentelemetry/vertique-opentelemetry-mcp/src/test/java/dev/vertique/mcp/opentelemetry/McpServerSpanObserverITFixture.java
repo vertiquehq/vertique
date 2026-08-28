@@ -10,6 +10,7 @@ import dagger.multibindings.IntoSet;
 import dev.vertique.context.ContextRuntimeModule;
 import dev.vertique.core.VertxModule;
 import dev.vertique.correlation.CorrelationContextModule;
+import dev.vertique.mcp.server.McpBodyTracePolicy;
 import dev.vertique.mcp.server.McpServerConfig;
 import dev.vertique.mcp.server.McpServerModule;
 import dev.vertique.mcp.tool.McpAccessMode;
@@ -75,9 +76,24 @@ final class McpServerSpanObserverITFixture {
     /**
      * Builds an {@link OpenTelemetrySdk} with {@link Sampler#alwaysOn()} and W3C propagation, wires it
      * into a new Vert.x instance, starts a real port-0 MCP server on it (bound and connected only on
-     * {@value #LOOPBACK}), and returns everything the test owns for cleanup.
+     * {@value #LOOPBACK}) with {@code mcp.bodyTracePolicy=LINK}, and returns everything the test owns
+     * for cleanup.
+     *
+     * <p>R51: {@code McpBodyTracePolicy.LINK} is the correct, deliberate opt-in for this IT class's
+     * existing R39 body-trace-link rows (default {@code IGNORE} would starve every one of them of the
+     * extraction they exist to prove); {@link #start(McpBodyTracePolicy)} exposes the policy for a row
+     * that specifically needs the default.
      */
     static Started start() throws Exception {
+        return start(McpBodyTracePolicy.LINK);
+    }
+
+    /**
+     * Exactly like {@link #start()}, but with the given {@code mcp.bodyTracePolicy} instead of the
+     * fixed {@code LINK} default (R51) — used by the default-policy row that proves {@code IGNORE}
+     * never extracts or links the body trace reference at all.
+     */
+    static Started start(McpBodyTracePolicy bodyTracePolicy) throws Exception {
         InMemorySpanExporter exporter = InMemorySpanExporter.create();
         SdkTracerProvider tracerProvider = SdkTracerProvider.builder()
                 .setSampler(Sampler.alwaysOn())
@@ -93,6 +109,7 @@ final class McpServerSpanObserverITFixture {
 
         TestComponent component = DaggerMcpServerSpanObserverITFixture_TestComponent.builder()
                 .vertxModule(new VertxModule(vertx, new JsonObject()))
+                .fixtureModule(new FixtureModule(bodyTracePolicy))
                 .build();
 
         Router router = Router.router(vertx);
@@ -137,22 +154,36 @@ final class McpServerSpanObserverITFixture {
         interface Builder {
             Builder vertxModule(VertxModule vertxModule);
 
+            Builder fixtureModule(FixtureModule fixtureModule);
+
             TestComponent build();
         }
     }
 
-    /** Supplies the bindings only this fixture needs: config, HTTP timeouts, tool, and bearer auth. */
+    /**
+     * Supplies the bindings only this fixture needs: config, HTTP timeouts, tool, and bearer auth.
+     *
+     * <p>R51: an instance-bound module (like {@link VertxModule} above) rather than a purely static
+     * one, so {@link #start(McpBodyTracePolicy)} can thread its caller-chosen {@code
+     * mcp.bodyTracePolicy} into the built {@link McpServerConfig} through the component builder.
+     */
     @Module
     static final class FixtureModule {
+        private final McpBodyTracePolicy bodyTracePolicy;
+
+        FixtureModule(McpBodyTracePolicy bodyTracePolicy) {
+            this.bodyTracePolicy = bodyTracePolicy;
+        }
 
         @Provides
         @Singleton
-        static McpServerConfig config() {
+        McpServerConfig config() {
             return McpServerConfig.builder()
                     .enabled(true)
                     .serverName("vertique-otel-test")
                     .serverVersion("1.0")
                     .authenticationScheme("bearer")
+                    .bodyTracePolicy(bodyTracePolicy)
                     .build();
         }
 

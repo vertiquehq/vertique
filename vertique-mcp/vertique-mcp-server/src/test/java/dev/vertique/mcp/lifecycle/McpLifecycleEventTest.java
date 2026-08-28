@@ -9,7 +9,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import dev.vertique.core.correlation.CorrelationContextSnapshot;
 import dev.vertique.core.correlation.CorrelationIdentifier;
-import dev.vertique.mcp.interceptor.McpTraceContext;
+import dev.vertique.core.correlation.TraceReference;
 import dev.vertique.security.AuthenticationState;
 import dev.vertique.security.DefaultAuthMethod;
 import dev.vertique.security.SecurityContextSnapshot;
@@ -57,6 +57,7 @@ class McpLifecycleEventTest {
 
     private static final String VALID_TRACE_ID = "0af7651916cd43dd8448eb211c80319c";
     private static final String VALID_SPAN_ID = "b7ad6b7169203331";
+    private static final String TRACE_REFERENCE_SOURCE = "mcp._meta";
 
     private static final Set<McpErrorType> TOOL_ERROR_TYPES =
             EnumSet.of(McpErrorType.INPUT_VALIDATION, McpErrorType.INPUT_PROCESSING, McpErrorType.HANDLER);
@@ -230,7 +231,8 @@ class McpLifecycleEventTest {
         @MethodSource("dev.vertique.mcp.lifecycle.McpLifecycleEventTest#acceptedTraceStateRows")
         @DisplayName("accepts trace state at the documented bound")
         void shouldAcceptTraceStateAtBound(String row, String traceState) {
-            assertThatCode(() -> new McpTraceContext(VALID_TRACE_ID, VALID_SPAN_ID, true, traceState))
+            assertThatCode(() ->
+                            new TraceReference(VALID_TRACE_ID, VALID_SPAN_ID, TRACE_REFERENCE_SOURCE, true, traceState))
                     .doesNotThrowAnyException();
         }
 
@@ -238,7 +240,8 @@ class McpLifecycleEventTest {
         @MethodSource("dev.vertique.mcp.lifecycle.McpLifecycleEventTest#rejectedTraceStateRows")
         @DisplayName("rejects trace state past the documented bound")
         void shouldRejectTraceStatePastBound(String row, String traceState) {
-            assertThatThrownBy(() -> new McpTraceContext(VALID_TRACE_ID, VALID_SPAN_ID, true, traceState))
+            assertThatThrownBy(() ->
+                            new TraceReference(VALID_TRACE_ID, VALID_SPAN_ID, TRACE_REFERENCE_SOURCE, true, traceState))
                     .isInstanceOf(IllegalArgumentException.class);
         }
 

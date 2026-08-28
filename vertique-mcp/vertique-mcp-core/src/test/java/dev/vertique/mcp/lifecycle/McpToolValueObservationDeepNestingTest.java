@@ -35,7 +35,7 @@ class McpToolValueObservationDeepNestingTest {
 
     private final McpToolInvocationContext context = new McpToolInvocationContext(
             new McpRequestContext(
-                    McpMethod.TOOLS_CALL, SecurityContexts.unauthenticated(SecurityIdentity.anonymous()), null, null),
+                    McpMethod.TOOLS_CALL, SecurityContexts.unauthenticated(SecurityIdentity.anonymous()), null),
             new McpToolDescriptor(
                     "deep.nesting.tool",
                     null,

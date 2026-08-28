@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Test;
 class McpInterceptorFunctionalInterfaceTest {
 
     private final McpRequestContext requestContext = new McpRequestContext(
-            McpMethod.TOOLS_CALL, SecurityContexts.unauthenticated(SecurityIdentity.anonymous()), null, null);
+            McpMethod.TOOLS_CALL, SecurityContexts.unauthenticated(SecurityIdentity.anonymous()), null);
 
     private final McpToolInvocationContext invocationContext = new McpToolInvocationContext(
             requestContext,

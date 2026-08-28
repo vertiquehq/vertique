@@ -80,7 +80,7 @@ final class McpValueObservationLeastPrivilegeTestFixture {
                 null,
                 new McpToolAccess(McpAccessMode.PERMIT_ALL, List.of(), null));
         McpRequestContext requestContext = new McpRequestContext(
-                McpMethod.TOOLS_CALL, SecurityContexts.unauthenticated(SecurityIdentity.anonymous()), null, null);
+                McpMethod.TOOLS_CALL, SecurityContexts.unauthenticated(SecurityIdentity.anonymous()), null);
         return new McpToolInvocationContext(requestContext, descriptor);
     }
 

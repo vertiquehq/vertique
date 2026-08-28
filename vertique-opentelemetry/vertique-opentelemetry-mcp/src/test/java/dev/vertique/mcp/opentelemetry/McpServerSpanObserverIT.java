@@ -6,6 +6,7 @@ package dev.vertique.mcp.opentelemetry;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.vertique.mcp.opentelemetry.McpServerSpanObserverITFixture.Started;
+import dev.vertique.mcp.server.McpBodyTracePolicy;
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.trace.SpanContext;
 import io.opentelemetry.api.trace.SpanKind;
@@ -60,7 +61,7 @@ class McpServerSpanObserverIT {
     private static final String HTTP_TRACEPARENT = "00-" + HTTP_TRACE_ID + "-" + HTTP_SPAN_ID + "-01";
     private static final String DISTINCT_BODY_TRACEPARENT = "00-" + BODY_TRACE_ID + "-" + BODY_SPAN_ID + "-01";
 
-    /** {@link dev.vertique.mcp.interceptor.McpTraceContext}'s bound is 512 chars; this is well over it. */
+    /** {@link dev.vertique.core.correlation.TraceReference}'s bound is 512 chars; this is well over it. */
     private static final String OVERSIZED_TRACESTATE = "vendor=" + "x".repeat(600);
 
     private Started started;
@@ -151,7 +152,7 @@ class McpServerSpanObserverIT {
     // `protocolVersion`/`clientCapabilities`, since W3C trace propagation is a Vertique-owned extension,
     // not an official MCP protocol field. `traceparent`'s value is the ordinary W3C wire format
     // (`00-<32 lowercase hex trace id>-<16 lowercase hex span id>-<2 hex flags>`); `tracestate` is the
-    // ordinary W3C tracestate string, bounded by `McpTraceContext`'s own bounds constants.
+    // ordinary W3C tracestate string, bounded by `TraceReference`'s own bounds constants.
 
     @Test
     @DisplayName("R39: a body _meta traceparent distinct from the HTTP header becomes exactly one span link "
@@ -195,6 +196,51 @@ class McpServerSpanObserverIT {
         SpanContext linkContext = links.get(0).getSpanContext();
         assertThat(linkContext.getTraceId()).isEqualTo(BODY_TRACE_ID);
         assertThat(linkContext.getSpanId()).isEqualTo(BODY_SPAN_ID);
+    }
+
+    // --- R51: the default McpBodyTracePolicy.IGNORE never extracts or links the body reference ---
+
+    @Test
+    @DisplayName("R51: under the default mcp.bodyTracePolicy=IGNORE, a valid distinct body traceparent "
+            + "produces no link and no extraction side effect")
+    void shouldAddNoLinkAndNoExtractionUnderTheDefaultIgnorePolicy() throws Exception {
+        // Given: a port-0 MCP server started WITHOUT the LINK opt-in — i.e. McpServerConfig's own
+        // @Builder.Default IGNORE — and the exact same distinct, individually valid body traceparent
+        // shouldAddOneLinkForABodyTraceReferenceDistinctFromTheHttpHeader() proves DOES link under LINK.
+        started = McpServerSpanObserverITFixture.start(McpBodyTracePolicy.IGNORE);
+        rawClient = started.vertx().createHttpClient();
+        client = WebClient.wrap(rawClient);
+
+        HttpResponse<Buffer> response = await(callToolWithBodyTrace(HTTP_TRACEPARENT, DISTINCT_BODY_TRACEPARENT, null));
+        InMemorySpanExporter exporter = started.exporter();
+        await(pollUntilSpanPresent(started.vertx(), exporter, 60, 50));
+
+        assertThat(response.statusCode())
+                .as("a valid tool call must still be admitted under the default policy")
+                .isEqualTo(200);
+        assertThat(sseResult(response.bodyAsString()).getBoolean("isError")).isFalse();
+
+        List<SpanData> spans = exporter.getFinishedSpanItems();
+        assertThat(spans)
+                .as("exactly one span exported — no MCP-created child span")
+                .hasSize(1);
+        SpanData serverSpan = spans.get(0);
+
+        // Then (DECISIVE): no link at all — under IGNORE, McpProtocolCodec#extractBodyTraceContext is
+        // never even called, so a distinct, otherwise-linkable body traceparent produces nothing.
+        assertThat(serverSpan.getLinks())
+                .as("DECISIVE: the default IGNORE policy must never add a body-trace link, even for a "
+                        + "distinct, individually valid body traceparent")
+                .isEmpty();
+
+        // Then: every other enrichment attribute still lands — IGNORE only suppresses the body-trace
+        // extraction/link, never the rest of T022 enrichment. This fixture wires no log-capturing test
+        // appender (mirroring shouldSucceedWithNoLinkForMalformedBodyTraceparentSyntax's own admission
+        // above), so "no extraction cost" is not independently observable here beyond "no link
+        // resulted"; that absence is this test's decisive, fixture-observable proof.
+        assertThat(mcpAttributeCount(serverSpan))
+                .as("the rest of T022 enrichment must still happen under the default policy")
+                .isEqualTo(5);
     }
 
     @Test
@@ -248,12 +294,12 @@ class McpServerSpanObserverIT {
     }
 
     @Test
-    @DisplayName("R39 bounds: an oversized body tracestate beyond McpTraceContext's cap never links and never "
+    @DisplayName("R39 bounds: an oversized body tracestate beyond TraceReference's cap never links and never "
             + "fails the request (trivially green today — the real bounds proof starts once the "
             + "producer extracts it)")
     void shouldSucceedWithNoLinkForOversizedBodyTracestate() throws Exception {
         // Given: a structurally valid, distinct body traceparent, but a tracestate longer than
-        // McpTraceContext's 512-character bound.
+        // TraceReference's 512-character bound.
         started = McpServerSpanObserverITFixture.start();
         rawClient = started.vertx().createHttpClient();
         client = WebClient.wrap(rawClient);
@@ -268,7 +314,7 @@ class McpServerSpanObserverIT {
         List<SpanData> spans = exporter.getFinishedSpanItems();
         assertThat(spans).hasSize(1);
         assertThat(spans.get(0).getLinks())
-                .as("an oversized tracestate must be rejected at McpTraceContext's cap without a link "
+                .as("an oversized tracestate must be rejected at TraceReference's cap without a link "
                         + "or a request failure")
                 .isEmpty();
     }

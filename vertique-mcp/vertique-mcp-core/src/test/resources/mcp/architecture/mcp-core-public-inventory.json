@@ -26,8 +26,7 @@
     ],
     "dev.vertique.mcp.interceptor.McpRequestContext": [
       "public dev.vertique.core.correlation.CorrelationContextSnapshot dev.vertique.mcp.interceptor.McpRequestContext.correlation()",
-      "public dev.vertique.mcp.interceptor.McpRequestContext(dev.vertique.mcp.lifecycle.McpMethod,dev.vertique.security.SecurityContext,dev.vertique.core.correlation.CorrelationContextSnapshot,dev.vertique.mcp.interceptor.McpTraceContext)",
-      "public dev.vertique.mcp.interceptor.McpTraceContext dev.vertique.mcp.interceptor.McpRequestContext.bodyTraceContext()",
+      "public dev.vertique.mcp.interceptor.McpRequestContext(dev.vertique.mcp.lifecycle.McpMethod,dev.vertique.security.SecurityContext,dev.vertique.core.correlation.CorrelationContextSnapshot)",
       "public dev.vertique.mcp.lifecycle.McpMethod dev.vertique.mcp.interceptor.McpRequestContext.method()",
       "public dev.vertique.security.SecurityContext dev.vertique.mcp.interceptor.McpRequestContext.securityContext()",
       "public final boolean dev.vertique.mcp.interceptor.McpRequestContext.equals(java.lang.Object)",
@@ -47,16 +46,6 @@
       "public final boolean dev.vertique.mcp.interceptor.McpToolInvocationContext.equals(java.lang.Object)",
       "public final int dev.vertique.mcp.interceptor.McpToolInvocationContext.hashCode()",
       "public final java.lang.String dev.vertique.mcp.interceptor.McpToolInvocationContext.toString()"
-    ],
-    "dev.vertique.mcp.interceptor.McpTraceContext": [
-      "public boolean dev.vertique.mcp.interceptor.McpTraceContext.sampled()",
-      "public dev.vertique.mcp.interceptor.McpTraceContext(java.lang.String,java.lang.String,boolean,java.lang.String)",
-      "public final boolean dev.vertique.mcp.interceptor.McpTraceContext.equals(java.lang.Object)",
-      "public final int dev.vertique.mcp.interceptor.McpTraceContext.hashCode()",
-      "public final java.lang.String dev.vertique.mcp.interceptor.McpTraceContext.toString()",
-      "public java.lang.String dev.vertique.mcp.interceptor.McpTraceContext.spanId()",
-      "public java.lang.String dev.vertique.mcp.interceptor.McpTraceContext.traceId()",
-      "public java.lang.String dev.vertique.mcp.interceptor.McpTraceContext.traceState()"
     ],
     "dev.vertique.mcp.lifecycle.McpAuthorizationSummary": [
       "public boolean dev.vertique.mcp.lifecycle.McpAuthorizationSummary.permitted()",
@@ -176,9 +165,9 @@
       "public default void dev.vertique.mcp.lifecycle.McpToolValueObservation.onToolOutput(dev.vertique.mcp.lifecycle.McpToolOutputObservation)"
     ],
     "dev.vertique.mcp.lifecycle.McpRequestTerminalObservation": [
-      "public dev.vertique.mcp.interceptor.McpTraceContext dev.vertique.mcp.lifecycle.McpRequestTerminalObservation.bodyTraceContext()",
+      "public dev.vertique.core.correlation.TraceReference dev.vertique.mcp.lifecycle.McpRequestTerminalObservation.linkedTrace()",
       "public dev.vertique.mcp.lifecycle.McpRequestTerminalEvent dev.vertique.mcp.lifecycle.McpRequestTerminalObservation.event()",
-      "public dev.vertique.mcp.lifecycle.McpRequestTerminalObservation(dev.vertique.mcp.lifecycle.McpRequestTerminalEvent,dev.vertique.mcp.interceptor.McpTraceContext)",
+      "public dev.vertique.mcp.lifecycle.McpRequestTerminalObservation(dev.vertique.mcp.lifecycle.McpRequestTerminalEvent,dev.vertique.core.correlation.TraceReference)",
       "public final boolean dev.vertique.mcp.lifecycle.McpRequestTerminalObservation.equals(java.lang.Object)",
       "public final int dev.vertique.mcp.lifecycle.McpRequestTerminalObservation.hashCode()",
       "public final java.lang.String dev.vertique.mcp.lifecycle.McpRequestTerminalObservation.toString()"

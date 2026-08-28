@@ -7,7 +7,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.junit.jupiter.api.Assertions.fail;
 
-import dev.vertique.mcp.interceptor.McpTraceContext;
+import dev.vertique.core.correlation.TraceReference;
 import dev.vertique.mcp.lifecycle.McpMethod;
 import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
@@ -70,6 +70,8 @@ class McpServerSpanObserverTest {
     private static final String DISTINCT_TRACE_ID = "4bf92f3577b34da6a3ce929d0e0e4736";
 
     private static final String DISTINCT_SPAN_ID = "00f067aa0ba902b7";
+
+    private static final String TRACE_REFERENCE_SOURCE = "mcp._meta";
 
     private static java.util.stream.Stream<String> rows() {
         return java.util.stream.Stream.of(
@@ -179,7 +181,8 @@ class McpServerSpanObserverTest {
             }
 
             // Given: a body trace context whose trace/span id are valid and distinct from httpSpan's own.
-            McpTraceContext distinctBody = new McpTraceContext(DISTINCT_TRACE_ID, DISTINCT_SPAN_ID, true, null);
+            TraceReference distinctBody =
+                    new TraceReference(DISTINCT_TRACE_ID, DISTINCT_SPAN_ID, TRACE_REFERENCE_SOURCE, true, null);
             session.onTerminal(terminalObservation(successTerminal(), distinctBody));
             httpSpan.end();
 
@@ -217,7 +220,8 @@ class McpServerSpanObserverTest {
             // different span id — the shape of the request's own HTTP-header parent context, not the
             // span's own context.
             SpanContext httpContext = httpSpan.getSpanContext();
-            McpTraceContext matchingBody = new McpTraceContext(httpContext.getTraceId(), DISTINCT_SPAN_ID, true, null);
+            TraceReference matchingBody =
+                    new TraceReference(httpContext.getTraceId(), DISTINCT_SPAN_ID, TRACE_REFERENCE_SOURCE, true, null);
             session.onTerminal(terminalObservation(successTerminal(), matchingBody));
             httpSpan.end();
 
@@ -243,10 +247,10 @@ class McpServerSpanObserverTest {
             }
 
             // Given: a distinct, otherwise-valid trace/span id, but a traceState string that is not a
-            // well-formed W3C key=value entry — bounds-valid for McpTraceContext, but malformed input
+            // well-formed W3C key=value entry — bounds-valid for TraceReference, but malformed input
             // for the observer's own traceState parser.
-            McpTraceContext malformedBody =
-                    new McpTraceContext(DISTINCT_TRACE_ID, DISTINCT_SPAN_ID, true, "not-a-key-value-pair");
+            TraceReference malformedBody = new TraceReference(
+                    DISTINCT_TRACE_ID, DISTINCT_SPAN_ID, TRACE_REFERENCE_SOURCE, true, "not-a-key-value-pair");
 
             assertThatCode(() -> session.onTerminal(terminalObservation(successTerminal(), malformedBody)))
                     .as("malformed body trace data must never propagate an exception out of onTerminal")
@@ -317,8 +321,8 @@ class McpServerSpanObserverTest {
     }
 
     private static McpRequestTerminalObservation terminalObservation(
-            McpRequestTerminalEvent terminal, McpTraceContext bodyTraceContext) {
-        return new McpRequestTerminalObservation(terminal, bodyTraceContext);
+            McpRequestTerminalEvent terminal, TraceReference linkedTrace) {
+        return new McpRequestTerminalObservation(terminal, linkedTrace);
     }
 
     /**
@@ -330,17 +334,17 @@ class McpServerSpanObserverTest {
             McpRequestObservation session,
             Span currentOnDeliveryThread,
             McpRequestTerminalEvent terminal,
-            McpTraceContext bodyTraceContext)
+            TraceReference linkedTrace)
             throws Exception {
         ExecutorService executor = Executors.newSingleThreadExecutor();
         try {
             executor.submit((java.util.concurrent.Callable<Void>) () -> {
                         if (currentOnDeliveryThread != null) {
                             try (Scope scope = currentOnDeliveryThread.makeCurrent()) {
-                                session.onTerminal(terminalObservation(terminal, bodyTraceContext));
+                                session.onTerminal(terminalObservation(terminal, linkedTrace));
                             }
                         } else {
-                            session.onTerminal(terminalObservation(terminal, bodyTraceContext));
+                            session.onTerminal(terminalObservation(terminal, linkedTrace));
                         }
                         return null;
                     })

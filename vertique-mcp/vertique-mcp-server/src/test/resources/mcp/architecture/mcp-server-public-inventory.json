@@ -9,8 +9,15 @@
     "dev.vertique.mcp.server.runtime"
   ],
   "types": {
+    "dev.vertique.mcp.server.McpBodyTracePolicy": [
+      "public static dev.vertique.mcp.server.McpBodyTracePolicy dev.vertique.mcp.server.McpBodyTracePolicy.valueOf(java.lang.String)",
+      "public static dev.vertique.mcp.server.McpBodyTracePolicy[] dev.vertique.mcp.server.McpBodyTracePolicy.values()",
+      "public static final dev.vertique.mcp.server.McpBodyTracePolicy dev.vertique.mcp.server.McpBodyTracePolicy.IGNORE",
+      "public static final dev.vertique.mcp.server.McpBodyTracePolicy dev.vertique.mcp.server.McpBodyTracePolicy.LINK"
+    ],
     "dev.vertique.mcp.server.McpServerConfig": [
       "public boolean dev.vertique.mcp.server.McpServerConfig.enabled()",
+      "public dev.vertique.mcp.server.McpBodyTracePolicy dev.vertique.mcp.server.McpServerConfig.bodyTracePolicy()",
       "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig.toBuilder()",
       "public int dev.vertique.mcp.server.McpServerConfig.ingressMaxTokens()",
       "public int dev.vertique.mcp.server.McpServerConfig.outputMaxBytes()",
@@ -31,6 +38,7 @@
       "public dev.vertique.mcp.server.McpServerConfig dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.build()",
       "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.allowedOrigins(java.util.Set<java.lang.String>)",
       "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.authenticationScheme(java.lang.String)",
+      "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.bodyTracePolicy(dev.vertique.mcp.server.McpBodyTracePolicy)",
       "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.enabled(boolean)",
       "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.ingressMaxTokens(int)",
       "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.instructions(java.lang.String)",

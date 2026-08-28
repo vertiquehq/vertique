@@ -88,10 +88,13 @@ class McpRequestInterceptorPipelineTest {
 
     /**
      * {@link McpRequestContext} exposes no request-body, header, or credential accessor: its only
-     * record components are {@code method}, {@code securityContext}, {@code correlation}, and {@code
-     * bodyTraceContext}. Established from the type's actual declared shape via reflection, not from an
-     * interceptor fixture merely declining to look — a fixture could always "politely" not read a
-     * payload accessor that exists; only the type's shape proves none exists.
+     * record components are {@code method}, {@code securityContext}, and {@code correlation} — R51
+     * (trace-reference consolidation) removed the former {@code bodyTraceContext} component with no
+     * replacement; no interceptor ever consumed it, and the body trace reference now travels solely
+     * on the payload-free terminal lifecycle observation. Established from the type's actual declared
+     * shape via reflection, not from an interceptor fixture merely declining to look — a fixture
+     * could always "politely" not read a payload accessor that exists; only the type's shape proves
+     * none exists.
      */
     @Test
     @DisplayName("McpRequestContext declares no payload, header, or credential accessor")
@@ -101,8 +104,8 @@ class McpRequestInterceptorPipelineTest {
             componentNames.add(component.getName());
         }
         assertThat(componentNames)
-                .as("the frozen record shape carries only method/securityContext/correlation/bodyTraceContext")
-                .containsExactly("method", "securityContext", "correlation", "bodyTraceContext");
+                .as("the frozen record shape carries only method/securityContext/correlation (R51)")
+                .containsExactly("method", "securityContext", "correlation");
     }
 
     // --- Row 1: zero interceptors dispatch, proving the dispatch counter can increment at all ---
