@@ -37,7 +37,7 @@ public record McpRequestTerminalEvent(
     /**
      * The maximum length of a present {@link #protocolVersion}. Bounded rather than left to the
      * wire's general string cap: this value is a client-supplied {@code
-     * params._meta["io.modelcontextprotocol/protocolVersion"]} candidate (issue #431), and it flows
+     * params._meta["io.modelcontextprotocol/protocolVersion"]} candidate, and it flows
      * unmodified into observability attributes and audit correlation once negotiated, so it must be
      * bounded at the one point every producer shares — this record's own compact constructor —
      * rather than trusted to whatever an individual negotiation-stage caller happens to enforce.

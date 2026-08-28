@@ -14,7 +14,7 @@ import jakarta.inject.Singleton;
 /**
  * Opt-in Dagger module that config-drives {@link AuthorizationGateConfig} — the {@link
  * SecurityPolicyEnforcer#decide} role/scope and action gate deadline — from the {@code
- * security.authz} section of the application config (issue #417, R42).
+ * security.authz} section of the application config.
  *
  * <p>{@link AuthModule} declares {@code Optional<AuthorizationGateConfig>} via {@code
  * @BindsOptionalOf}, defaulting to {@link AuthorizationGateConfig#defaults()} when no module binds

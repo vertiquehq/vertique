@@ -42,7 +42,7 @@ final class McpServerConfigValidator {
         requireRange(config.toolsTtlMs(), 0, 3_600_000, "mcp.toolsTtlMs");
         validateOrigins(config.allowedOrigins());
         // Both McpBodyTracePolicy members (IGNORE and LINK) are equally valid; this only guards
-        // against a null value reaching a builder that bypassed the @Builder.Default (R51).
+        // against a null value reaching a builder that bypassed the @Builder.Default.
         require(config.bodyTracePolicy() != null, "mcp.bodyTracePolicy");
     }
 
@@ -69,7 +69,7 @@ final class McpServerConfigValidator {
      * (unreachable) — because an anonymous-only endpoint can never satisfy a
      * {@link McpAccessMode#RESTRICTED} tool's requirement. This is the registry-visibility seam the
      * composition validator exposes to callers that own a built {@link McpToolRegistry}; it discharges
-     * the T004 red-slice deferral recorded as {@code shouldAllowUnconfiguredPublicOrDenyAllRegistryAndRejectUnconfiguredRestrictedRegistry}.
+     * the deferred registry-visibility check recorded as {@code shouldAllowUnconfiguredPublicOrDenyAllRegistryAndRejectUnconfiguredRestrictedRegistry}.
      *
      * @param config the bounded configuration to validate
      * @param routeAuthHandlers every registered optional-authentication-capable handler
@@ -97,8 +97,8 @@ final class McpServerConfigValidator {
      * additionally refuses to start an enabled MCP mount when the shared HTTP layer arms no liveness
      * timeout at all.
      *
-     * <p>MCP arms no whole-request deadline of its own (the T007 amendment removed {@code
-     * mcp.request.timeoutMs}): the only thing that can ever reclaim a hanging {@code
+     * <p>MCP arms no whole-request deadline of its own ({@code
+     * mcp.request.timeoutMs} does not exist): the only thing that can ever reclaim a hanging {@code
      * McpRequestInterceptor}, a hanging {@code McpToolInterceptor}, a hanging tool handler, or a
      * client that stops reading mid-response is the shared {@link HttpConfig} idle/read timeout
      * behavior. Both {@link HttpConfig#idleTimeoutSeconds()} and {@link
@@ -106,7 +106,7 @@ final class McpServerConfigValidator {
      * provides no deadline at all — an unauthenticated caller can strand a {@code @PermitAll} tool's
      * connection, coordinator, and every open observation indefinitely. This is the one place that
      * closes that gap: an enabled mount refuses to start unless at least one of the two is armed.
-     * {@link HttpConfig#writeIdleTimeoutSeconds()} alone does not qualify (repair task R33 defect 4):
+     * {@link HttpConfig#writeIdleTimeoutSeconds()} alone does not qualify:
      * it fires only while a write is actually in flight, so it cannot reclaim a connection that opens
      * and then never reads or writes again.
      *
@@ -142,7 +142,7 @@ final class McpServerConfigValidator {
     /**
      * Validates exactly as {@link #validate(McpServerConfig, Set, McpToolRegistry)} does, and
      * additionally refuses to start an enabled MCP mount when the registry publishes an {@code
-     * @RequiresAction} tool but no core {@link Authorizer} is installed (issue #421).
+     * @RequiresAction} tool but no core {@link Authorizer} is installed.
      *
      * <p>Without this gate, {@code SecurityPolicyEnforcer.decide} NPEs on its {@code null} authorizer
      * field at the first request for such a tool, and the surrounding fail-closed catch converts that
@@ -173,7 +173,7 @@ final class McpServerConfigValidator {
     /**
      * Validates exactly as {@link #validate(McpServerConfig, Set, McpToolRegistry, HttpConfig)} does,
      * and additionally applies the no-authorizer-for-{@code @RequiresAction} gate documented on
-     * {@link #validate(McpServerConfig, Set, McpToolRegistry, Optional)} (issue #421). This is the
+     * {@link #validate(McpServerConfig, Set, McpToolRegistry, Optional)}. This is the
      * overload {@link McpRouterMount}'s constructor — the one real production mount point — calls, so
      * every check this validator performs runs there together.
      *
@@ -199,8 +199,8 @@ final class McpServerConfigValidator {
 
     /**
      * Rejects, with one bounded configuration error naming every affected tool, an enabled mount whose
-     * registry publishes at least one {@code @RequiresAction} tool while {@code authorizer} is absent
-     * (issue #421). A disabled mount is inert and never checked; an installed authorizer always passes
+     * registry publishes at least one {@code @RequiresAction} tool while {@code authorizer} is absent.
+     * A disabled mount is inert and never checked; an installed authorizer always passes
      * regardless of the registry's contents.
      */
     private static void requireAuthorizerForActionTools(

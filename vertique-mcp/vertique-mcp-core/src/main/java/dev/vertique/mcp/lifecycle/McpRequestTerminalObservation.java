@@ -10,15 +10,15 @@ import java.util.Objects;
 /**
  * Terminal lifecycle facts for one MCP request, together with its optional linked trace reference.
  *
- * <p><strong>Repair task R51 (trace-reference consolidation).</strong> {@code linkedTrace} carries
+ * <p>{@code linkedTrace} carries
  * the request body's optional, untrusted {@code dev.vertique.core.correlation.TraceReference} —
  * extracted from {@code params._meta.traceparent}/{@code tracestate} only when {@code
  * McpBodyTracePolicy.LINK} is configured, and only when a valid, bounded reference is present.
- * This is the framework's single trace-reference type (formerly the MCP-local {@code
- * McpTraceContext}, deleted by R51); this payload-free lifecycle observation remains the reference's
+ * This is the framework's single trace-reference type; this payload-free lifecycle observation
+ * remains the reference's
  * sole carrier — it never reaches the pre-dispatch {@code
  * dev.vertique.mcp.interceptor.McpRequestContext} and never reaches {@code
- * dev.vertique.core.correlation.CorrelationContextSnapshot}, which R51 deliberately does not modify.
+ * dev.vertique.core.correlation.CorrelationContextSnapshot}, which this observation deliberately does not modify.
  * Link-only: never used as an input to identity, authorization, or tenancy decisions.
  *
  * @param event the terminal lifecycle facts; never {@code null}

@@ -10,7 +10,7 @@ import jakarta.inject.Singleton;
 import java.util.Objects;
 
 /**
- * Fails composition when no {@link InputObjectProcessor} binding exists (T014, contract §4.7).
+ * Fails composition when no {@link InputObjectProcessor} binding exists (contract §4.7).
  *
  * <p>Every {@code McpServerModule} composition requires a direct, non-{@code Optional}
  * {@link InputObjectProcessor} binding — Dagger compilation is the startup gate, even when the

@@ -25,7 +25,7 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * {@link McpRequestLifecycleObserver} implementation that captures the current Vert.x HTTP server
  * span at {@link #open} and enriches that exact retained span at logical settlement — never a span
- * resolved from {@code Span.current()} at callback time (T022, contract §4.10 amendment).
+ * resolved from {@code Span.current()} at callback time (contract §4.10 amendment).
  *
  * <p>Contributed to the {@link McpRequestLifecycleObserver} multibinding by {@link
  * McpOpenTelemetryModule}. {@link #open} resolves {@link Span#current()} exactly once and retains
@@ -49,7 +49,7 @@ import lombok.extern.slf4j.Slf4j;
  * are declared as internal, Vertique-owned {@link AttributeKey} constants here rather than pulled
  * from an incubating semconv artifact dependency.
  *
- * <p><b>{@code mcp.protocol.version} (R05, issue #431).</b> Set only when {@link
+ * <p><b>{@code mcp.protocol.version}.</b> Set only when {@link
  * McpRequestTerminalEvent#protocolVersion()} is non-{@code null} — i.e. only when this request's
  * protocol negotiation actually completed (contract §4.7). A request rejected at or before
  * negotiation, or one whose terminal event predates negotiation in the fixed pipeline (a
@@ -61,7 +61,7 @@ import lombok.extern.slf4j.Slf4j;
  * <p>It also adds at most one {@link Span#addLink(SpanContext) link} for the request's optional
  * linked trace reference ({@link McpRequestTerminalObservation#linkedTrace()}, populated by {@code
  * McpCompletionCoordinator} from the request body's {@code params._meta.traceparent}/{@code
- * tracestate} — R39, and R51's carriage swap onto the core {@link TraceReference} type, present only
+ * tracestate}, carried on the core {@link TraceReference} type, present only
  * when {@code McpBodyTracePolicy.LINK} is configured): a link is added only when the linked trace
  * reference is present, structurally convertible into a valid OpenTelemetry {@link SpanContext}, and
  * from a <em>different trace</em> than the captured HTTP span's own trace id. A reference sharing the
@@ -76,7 +76,7 @@ import lombok.extern.slf4j.Slf4j;
  * span status is ever set here: transport status remains owned by Vert.x HTTP tracing (contract
  * §4.10).
  *
- * <p><b>Completion scope (R06, issue #435).</b> The session returned by {@link #open} also implements
+ * <p><b>Completion scope.</b> The session returned by {@link #open} also implements
  * {@link dev.vertique.mcp.lifecycle.McpCompletionScope}: {@code openCompletionScope()} re-makes the
  * captured span current for the duration of the framework's completion dispatch loop ({@code
  * McpCompletionCoordinator}, in {@code vertique-mcp-server}), so a co-installed Micrometer observer's
@@ -101,7 +101,7 @@ final class McpServerSpanObserver implements McpRequestLifecycleObserver {
     static final AttributeKey<String> MCP_METHOD_NAME = AttributeKey.stringKey("mcp.method.name");
 
     /**
-     * Experimental MCP protocol-version attribute key (R05, issue #431). Set only when the request's
+     * Experimental MCP protocol-version attribute key. Set only when the request's
      * terminal event carries a negotiated {@link McpRequestTerminalEvent#protocolVersion()}.
      */
     static final AttributeKey<String> MCP_PROTOCOL_VERSION = AttributeKey.stringKey("mcp.protocol.version");
@@ -137,7 +137,7 @@ final class McpServerSpanObserver implements McpRequestLifecycleObserver {
     /**
      * Captures {@link Span#current()} exactly once, at the moment this method runs, and retains it
      * on the returned session for later enrichment — the one capture point this whole class exists
-     * to prove out (T022, contract §4.10 amendment). Never re-resolves {@code Span.current()} at any
+     * to prove out (contract §4.10 amendment). Never re-resolves {@code Span.current()} at any
      * later callback.
      *
      * @param startedAt unused beyond the SPI contract; enrichment is timestamp-free
@@ -165,7 +165,7 @@ final class McpServerSpanObserver implements McpRequestLifecycleObserver {
      * #open}, so {@link #onTerminal} enriches exactly that span regardless of which thread delivers
      * the terminal callback or what span (if any) is current on it.
      *
-     * <p>Also implements {@link McpCompletionScope} (R06, issue #435): {@link #openCompletionScope()}
+     * <p>Also implements {@link McpCompletionScope}: {@link #openCompletionScope()}
      * re-makes this exact captured span current for the duration of the completion dispatch loop, so a
      * co-installed Micrometer observer's timer recording happens with a valid span current and a
      * registry-level exemplar bridge can attach its trace id — mirroring REST's {@code
@@ -299,7 +299,7 @@ final class McpServerSpanObserver implements McpRequestLifecycleObserver {
             }
             span.addLink(bodySpanContext);
         } catch (Exception e) {
-            // DEBUG, not WARN (repair task R47): the body trace context is client-supplied and
+            // DEBUG, not WARN: the body trace context is client-supplied and
             // syntactically unvalidated at this layer, so a malformed value is client-triggerable at
             // will by an anonymous caller — not a framework or application contract violation.
             log.debug(

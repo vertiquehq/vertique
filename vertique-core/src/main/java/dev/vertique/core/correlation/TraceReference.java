@@ -19,9 +19,8 @@ import java.util.Objects;
  *
  * <p>Instances are safe to share across threads.
  *
- * <p>Repair task R51 (trace-reference consolidation) added {@code sampled} and {@code traceState}
- * as trailing components on the canonical (5-arg) constructor, replacing the former MCP-local
- * {@code dev.vertique.mcp.interceptor.McpTraceContext}: this is now the framework's single
+ * <p>{@code sampled} and {@code traceState}
+ * are trailing components on the canonical (5-arg) constructor. This is the framework's single
  * trace-reference type. {@link #TraceReference(String, String, String)} remains a source-compatible
  * convenience constructor for the three released construction sites, defaulting {@code
  * sampled=false} and {@code traceState=null}.

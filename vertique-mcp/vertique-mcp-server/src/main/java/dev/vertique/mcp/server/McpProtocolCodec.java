@@ -77,7 +77,7 @@ final class McpProtocolCodec {
      */
     private static final String MSG_NEGOTIATION_MISMATCH = "Header/body mismatch";
 
-    // --- Protocol negotiation (contract §4.7, issue #429) ---
+    // --- Protocol negotiation (contract §4.7) ---
 
     private static final String HEADER_PROTOCOL_VERSION = "MCP-Protocol-Version";
     private static final String HEADER_METHOD = "Mcp-Method";
@@ -88,7 +88,7 @@ final class McpProtocolCodec {
     private static final String META_CLIENT_CAPABILITIES = "io.modelcontextprotocol/clientCapabilities";
 
     /**
-     * The plain, un-prefixed {@code _meta} keys repair task R39's body trace-context extraction
+     * The plain, un-prefixed {@code _meta} keys {@link #extractBodyTraceContext}
      * reads (MCP 2026-07-28 §_meta, OpenTelemetry trace context) — deliberately distinct from the
      * {@code io.modelcontextprotocol/}-prefixed negotiation keys above: W3C trace propagation is a
      * Vertique-owned extension of the same {@code _meta} object, not an official MCP protocol field.
@@ -109,8 +109,7 @@ final class McpProtocolCodec {
 
     /**
      * The {@link TraceReference#source()} label stamped on every reference {@link
-     * #extractBodyTraceContext} produces (R51; the framework's single trace-reference type, formerly
-     * the MCP-local {@code McpTraceContext}).
+     * #extractBodyTraceContext} produces — the framework's single trace-reference type.
      */
     private static final String TRACE_REFERENCE_SOURCE = "mcp._meta";
 
@@ -136,12 +135,12 @@ final class McpProtocolCodec {
     /**
      * The bounded set of {@code io.modelcontextprotocol/protocolVersion} values this server actually
      * supports — the single final-2026 version {@code server/discover} itself advertises ({@link
-     * McpCursorCodec#PROTOCOL_VERSION}). Security-review finding (post-R05): {@link #validateNegotiation}
-     * previously compared the header and body values only against each other, never against this set,
-     * so any non-blank, ≤{@value #MAX_PROTOCOL_VERSION_CHARS}-char string negotiated successfully and
-     * then flowed verbatim into every terminal event and the {@code mcp.protocol.version} span
-     * attribute. A negotiation stage that never rejects an unsupported version is not a negotiation
-     * stage.
+     * McpCursorCodec#PROTOCOL_VERSION}). {@link #validateNegotiation}
+     * compares the header and body values against each other and against this set, so a
+     * non-blank, ≤{@value #MAX_PROTOCOL_VERSION_CHARS}-char string that names an unsupported version is
+     * rejected rather than negotiating successfully and
+     * flowing verbatim into every terminal event and the {@code mcp.protocol.version} span
+     * attribute.
      */
     private static final Set<String> SUPPORTED_PROTOCOL_VERSIONS = Set.of(McpCursorCodec.PROTOCOL_VERSION);
 
@@ -221,8 +220,8 @@ final class McpProtocolCodec {
     }
 
     /**
-     * Validates protocol negotiation for one already envelope-validated request (contract §4.7,
-     * issues #429/#438): the universally required {@code MCP-Protocol-Version} / {@code Mcp-Method}
+     * Validates protocol negotiation for one already envelope-validated request (contract §4.7):
+     * the universally required {@code MCP-Protocol-Version} / {@code Mcp-Method}
      * headers and the method-applicable {@code Mcp-Name} header against their body-mirrored values,
      * supported protocol-version policy, and — for {@code tools/call} only — the rejected reserved
      * MRTR fields.
@@ -246,8 +245,7 @@ final class McpProtocolCodec {
      * the contract's "Base64 sentinel values are decoded before comparison" clause: no concrete
      * sentinel syntax is specified anywhere in this feature's governance corpus, and the three values
      * compared here (the fixed protocol-version literal, the fixed method-string enum, and a tool name
-     * already bounded to {@code [A-Za-z0-9_.-]{1,128}} once resolved) never need one — see the R05
-     * evidence for the full reasoning. The vendored schema's {@code x-mcp-header}/{@code Mcp-Param-*}
+     * already bounded to {@code [A-Za-z0-9_.-]{1,128}} once resolved) never need one. The vendored schema's {@code x-mcp-header}/{@code Mcp-Param-*}
      * argument-mirroring mechanism (§4.7 — "Phase 1 emits no {@code x-mcp-header}") is the more
      * plausible owner of that clause, and Phase 1 does not implement it either.
      *
@@ -318,7 +316,7 @@ final class McpProtocolCodec {
 
     /**
      * Extracts this request's optional body trace reference from {@code params._meta.traceparent} /
-     * {@code params._meta.tracestate} (repair task R39). MCP 2026-07-28 §_meta, OpenTelemetry trace
+     * {@code params._meta.tracestate}. MCP 2026-07-28 §_meta, OpenTelemetry trace
      * context reserves these exact un-prefixed keys for W3C trace-context propagation — see {@link
      * #META_TRACEPARENT}'s own note on why they are never namespaced under {@link
      * #META_PROTOCOL_VERSION}'s {@code io.modelcontextprotocol/} prefix.
@@ -333,10 +331,10 @@ final class McpProtocolCodec {
      * character). A present but non-string {@code tracestate} is silently treated as absent rather
      * than as an anomaly, since {@code tracestate} alone is optional by the W3C spec. DEBUG, not WARN,
      * because every anomaly here is client-triggerable at will by an anonymous, unauthenticated caller
-     * (repair task R47) — WARN stays reserved for a framework or application contract violation.
+     * — WARN stays reserved for a framework or application contract violation.
      *
-     * <p><strong>Repair task R51.</strong> Returns a core {@link TraceReference} — the framework's
-     * single trace-reference type, replacing the deleted MCP-local {@code McpTraceContext} — stamped
+     * <p>Returns a core {@link TraceReference} — the framework's
+     * single trace-reference type — stamped
      * with source label {@value #TRACE_REFERENCE_SOURCE}. The caller invokes this method at most once
      * per request, from {@link McpRequestDispatcher#dispatch}, and only when {@code
      * McpServerConfig#bodyTracePolicy()} is {@code McpBodyTracePolicy.LINK}: under the default {@code
@@ -463,21 +461,14 @@ final class McpProtocolCodec {
         }
     }
 
-    // --- Unbounded wire-format helpers: test-only, unreachable from any write path (R14 item 4) ---
+    // --- Unbounded wire-format helpers: test-only, unreachable from any write path ---
     //
     // Every one of the three methods below serializes through an unrestricted writeValueAsBytes: none
-    // of them observes mcp.output.maxBytes. R12 (merge blocker 5) rerouted every dispatcher write path
-    // off them and onto McpRequestDispatcher#boundedErrorResponse, which streams through the capped
-    // stream instead. What remains here exists solely so McpGoldenWireTest and McpCodecFailureTest can
+    // of them observes mcp.output.maxBytes. Every dispatcher write path instead routes through
+    // McpRequestDispatcher#boundedErrorResponse, which streams through the capped
+    // stream. What remains here exists solely so McpGoldenWireTest and McpCodecFailureTest can
     // pin this codec's own canonical error bytes without a dispatcher, a routing context, or a cap in
     // the way.
-    //
-    // R14 item 4 deleted the fourth, errorResponseFor(JsonNode, NegotiationResult): after R12 it had
-    // zero callers in main OR test source, and deleting it makes R12's own documented mutation —
-    // putting codec.errorResponseFor(...) back into writePreDispatchProtocolRejection — fail to COMPILE. That
-    // is the regression protection R12's evidence reported as impossible to obtain: no test can
-    // distinguish the defective and fixed byte output, but a method that no longer exists cannot be
-    // called back into a write path at all.
     //
     // The three survivors are held off every write path by McpBoundedWritePathArchitectureTest, an
     // ArchUnit rule over the compiled production bytecode: no production class other than this one may
@@ -487,7 +478,7 @@ final class McpProtocolCodec {
      * Produces the external JSON-RPC error response for a failing request frame, stamping the
      * original usable request id or a null id, and never leaking internal exception text.
      *
-     * <p><strong>Test-only (R14 item 4).</strong> Bounded in <em>content</em> — the message text is a
+     * <p><strong>Test-only.</strong> Bounded in <em>content</em> — the message text is a
      * fixed constant and never carries internal detail — but not in <em>bytes</em>: it has no {@code
      * mcp.output.maxBytes} check. No production caller exists, and none may be added; see this
      * section's banner comment.
@@ -513,7 +504,7 @@ final class McpProtocolCodec {
      * is analyzed exactly once per request on the {@link #decodeEnvelope} call that produced {@code
      * decoded}.
      *
-     * <p><strong>Test-only (R14 item 4).</strong> Byte-unbounded, exactly like {@link #errorResponse};
+     * <p><strong>Test-only.</strong> Byte-unbounded, exactly like {@link #errorResponse};
      * no production caller exists and none may be added — see this section's banner comment.
      *
      * @param decoded a failed decode this codec already produced for the same request
@@ -532,7 +523,7 @@ final class McpProtocolCodec {
      * Settles an internal codec failure through the pre-encoded internal-error response, written
      * exactly once and never carrying the cause's text.
      *
-     * <p><strong>Test-only (R14 item 4).</strong> Byte-unbounded, exactly like {@link #errorResponse};
+     * <p><strong>Test-only.</strong> Byte-unbounded, exactly like {@link #errorResponse};
      * no production caller exists and none may be added — see this section's banner comment.
      *
      * @param id the original usable request id, or {@code null} when none is available

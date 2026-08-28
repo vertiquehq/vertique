@@ -37,7 +37,7 @@ import java.util.TreeMap;
  * inventory ({@code contracts/type-and-module-inventory.md} § 7), exactly like its owned {@link
  * McpSchemaRegistry}. Its owning proofs ({@code McpSchemaStartupTest},
  * {@code McpOptionalCapabilityStartupTest}) live in this same package for exactly that reason —
- * package-private access requires it, matching {@code McpValidatorConcurrencyTest}'s established T009
+ * package-private access requires it, matching {@code McpValidatorConcurrencyTest}'s established
  * precedent.
  */
 final class McpToolRegistry {

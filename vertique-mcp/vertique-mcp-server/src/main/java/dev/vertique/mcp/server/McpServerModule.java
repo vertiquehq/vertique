@@ -38,16 +38,16 @@ public abstract class McpServerModule {
     abstract Set<McpRequestCompletedListener> completedListeners();
 
     /**
-     * Declares the zero-or-more ordered, rejective pre-dispatch request-interceptor extension set
-     * (T016). {@link McpRequestDispatcher} sorts and validates the contributed set once at
+     * Declares the zero-or-more ordered, rejective pre-dispatch request-interceptor extension set.
+     * {@link McpRequestDispatcher} sorts and validates the contributed set once at
      * construction, so a graph with no contributions resolves an empty ordered chain.
      */
     @Multibinds
     abstract Set<McpRequestInterceptor> requestInterceptors();
 
     /**
-     * Declares the zero-or-more ordered, rejective post-validation tool-interceptor extension set
-     * (T017). {@link McpRequestDispatcher} sorts and validates the contributed set once at
+     * Declares the zero-or-more ordered, rejective post-validation tool-interceptor extension set.
+     * {@link McpRequestDispatcher} sorts and validates the contributed set once at
      * construction, so a graph with no contributions resolves an empty ordered chain.
      */
     @Multibinds
@@ -56,13 +56,13 @@ public abstract class McpServerModule {
     /**
      * Declares the zero-or-more generated tool invoker extension point. {@code vertique-codegen-mcp}
      * contributes into this set; a graph with no generated tools resolves an empty set, so {@link
-     * #toolRegistry} still builds (an empty registry) without a generated module present (T011).
+     * #toolRegistry} still builds (an empty registry) without a generated module present.
      */
     @Multibinds
     abstract Set<McpToolInvoker> toolInvokers();
 
     /**
-     * Declares the optional application-bound {@link Validator} (R38/W7): when present, generated tool
+     * Declares the optional application-bound {@link Validator}: when present, generated tool
      * invokers route tool-input Bean Validation through it; when absent, they fall back to {@code
      * vertique-mcp-core}'s zero-config {@code McpBeanValidation} default.
      */
@@ -71,7 +71,7 @@ public abstract class McpServerModule {
 
     /**
      * Builds the one immutable, global-name-ordered tool registry {@link McpRequestDispatcher}'s {@code
-     * tools/list} listing scans (T010/T011).
+     * tools/list} listing scans.
      */
     @Provides
     @Singleton
@@ -89,7 +89,7 @@ public abstract class McpServerModule {
 
     /**
      * Contributes the mandatory input-processing binding guard to the compose-validation phase
-     * (T014, contract §4.7). Merely constructing {@link McpInputProcessingCompositionValidator}
+     * (contract §4.7). Merely constructing {@link McpInputProcessingCompositionValidator}
      * requires a direct {@link dev.vertique.input.processing.InputObjectProcessor} binding, so a
      * composition that omits one fails Dagger compilation before any route mounts — regardless of
      * how many tools are registered.
@@ -113,7 +113,7 @@ public abstract class McpServerModule {
      *
      * <p>{@code authorizer} threads the optional core {@link Authorizer} into mount validation so a
      * registry publishing an {@code @RequiresAction} tool with no engine installed is rejected here,
-     * before any route mounts (issue #421) — resolved the same way {@code SecurityPolicyEnforcer}
+     * before any route mounts — resolved the same way {@code SecurityPolicyEnforcer}
      * already resolves it, via the {@code AuthModule}-declared optional binding.
      */
     @Provides

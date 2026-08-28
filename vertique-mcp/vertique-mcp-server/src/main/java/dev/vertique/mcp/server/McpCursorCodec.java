@@ -23,7 +23,7 @@ import java.util.regex.Pattern;
  * and the immutable registry digest invalidates a cursor across deployments. Pagination is not an
  * authority boundary, so a cursor secret is disproportionate.
  *
- * <p><strong>Two-form anchor grammar (R40/C5).</strong> The {@code lastScannedToolName} field carries
+ * <p><strong>Two-form anchor grammar.</strong> The {@code lastScannedToolName} field carries
  * exactly one of two mutually exclusive, syntactically disjoint forms — disjoint because the tool-name
  * grammar {@code [A-Za-z0-9_.-]{1,128}} never contains {@code '#'}:
  *
@@ -64,7 +64,7 @@ final class McpCursorCodec {
     private static final String FIELD_LAST_SCANNED_TOOL_NAME = "lastScannedToolName";
     private static final ObjectMapper DEFAULT_MAPPER = new ObjectMapper();
 
-    /** Prefix marking the opaque scan-position anchor form (R40/C5); never a valid tool-name character. */
+    /** Prefix marking the opaque scan-position anchor form; never a valid tool-name character. */
     private static final String POSITION_ANCHOR_PREFIX = "#";
 
     /** Bounded decimal grammar for the scan-position anchor form: no leading zero, at most 10 digits. */
@@ -118,7 +118,7 @@ final class McpCursorCodec {
     }
 
     /**
-     * Encodes an unsigned, non-expiring cursor carrying an opaque scan-position anchor (R40/C5) — the
+     * Encodes an unsigned, non-expiring cursor carrying an opaque scan-position anchor — the
      * budget-exhaustion anchor form, emitted instead of the last examined candidate's name so a
      * denied-but-examined candidate is never disclosed.
      *
@@ -247,7 +247,7 @@ final class McpCursorCodec {
         }
     }
 
-    /** Reports whether {@code anchor} satisfies either the name form or the position form (R40/C5). */
+    /** Reports whether {@code anchor} satisfies either the name form or the position form. */
     private static boolean isValidAnchor(@Nullable String anchor) {
         return McpToolDescriptor.isValidName(anchor) || isValidPositionAnchor(anchor);
     }
@@ -303,7 +303,7 @@ final class McpCursorCodec {
         }
 
         /**
-         * Reports whether this valid decode's anchor is the opaque scan-position form (R40/C5) rather
+         * Reports whether this valid decode's anchor is the opaque scan-position form rather
          * than a tool-name lexicographic position hint.
          *
          * @return {@code true} when {@link #anchor()} is the {@code "#<index>"} position form

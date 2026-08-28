@@ -10,7 +10,7 @@ import java.util.Objects;
 /**
  * Raw, unredacted admission-time evidence for one {@code tools/call} request, delivered once to an
  * opt-in {@link McpRawEvidenceObservation} session through {@link
- * McpRawEvidenceObservation#onRequestAdmitted} (R52, repair task R52 "audit capture parity").
+ * McpRawEvidenceObservation#onRequestAdmitted}.
  *
  * <p>Carries the exact bytes the server already read to parse the JSON-RPC envelope, the exact
  * request headers, and the two identifying facts a forensic audit trail needs — the client-supplied

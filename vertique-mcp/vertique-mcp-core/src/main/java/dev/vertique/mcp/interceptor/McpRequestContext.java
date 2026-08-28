@@ -23,12 +23,10 @@ import java.util.Objects;
  * {@link McpRequestInterceptor} may permit or reject a request, but it can never observe the body it
  * is guarding.
  *
- * <p><strong>Repair task R51 (trace-reference consolidation).</strong> This record no longer carries
- * a body trace context: the former {@code bodyTraceContext} component (and the deleted {@code
- * McpTraceContext} type it exposed) is gone with no replacement — no interceptor ever consumed it,
- * so the original proportionality finding that it should never have been on this payload-free
- * record lands after all. The request body's optional, untrusted W3C trace reference — extracted
- * only when {@code McpBodyTracePolicy.LINK} is configured — now travels solely on the payload-free
+ * <p>This record carries
+ * no body trace context: no interceptor ever needs one, so it stays off this payload-free
+ * record. The request body's optional, untrusted W3C trace reference — extracted
+ * only when {@code McpBodyTracePolicy.LINK} is configured — travels solely on the payload-free
  * terminal lifecycle observation ({@code dev.vertique.mcp.lifecycle.McpRequestTerminalObservation#linkedTrace()}),
  * never on this pre-dispatch context and never on {@link CorrelationContextSnapshot}.
  *

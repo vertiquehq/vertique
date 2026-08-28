@@ -10,7 +10,7 @@ import java.util.Objects;
 /**
  * The bounded, unmodifiable, normalized input argument tree an opt-in {@link
  * McpToolValueObservation} session receives through {@link
- * McpToolValueObservation#onToolInput(McpToolInputObservation)} (T018, contract §4.4).
+ * McpToolValueObservation#onToolInput(McpToolInputObservation)} (contract §4.4).
  *
  * <p>{@code normalizedArguments} is exactly the argument tree {@code McpPreparedToolCall
  * #normalizedArguments()} produced — after schema validation, INP-001 canonicalization and

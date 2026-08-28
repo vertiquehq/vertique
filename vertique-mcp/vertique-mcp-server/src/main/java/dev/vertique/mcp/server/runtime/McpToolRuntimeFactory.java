@@ -43,7 +43,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * application-supplied profile must not enable for a remotely reachable tool are documented in the
  * module reference, not enforced here.
  *
- * <p>Schema construction (T009): for each distinct effective profile used by a tool, this factory
+ * <p>Schema construction: for each distinct effective profile used by a tool, this factory
  * creates or reuses one {@link AnnotationJsonSchemaGenerator#forInputProfile(JsonMapperProfile)}
  * and, when a structured output type is declared, one
  * {@link AnnotationJsonSchemaGenerator#forOutputProfile(JsonMapperProfile)} — never
@@ -184,7 +184,7 @@ public final class McpToolRuntimeFactory {
      * each contribution is asked for its immutable descriptor exactly once. The result is keyed by
      * tool name in global name order, so the published order never depends on contribution order.
      *
-     * <p><strong>T010:</strong> the owned production composition path for the tool registry —
+     * <p>This is the owned production composition path for the tool registry —
      * including this same duplicate-name rule, the compiled {@code McpSchemaRegistry} it now also
      * builds, and the registry-visibility startup rule — is
      * {@code dev.vertique.mcp.server.McpToolRegistry#build(Set)}. That type is package-private per the

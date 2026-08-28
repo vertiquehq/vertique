@@ -8,8 +8,7 @@ import java.util.Objects;
 
 /**
  * Raw, unredacted response-side evidence for one request, delivered once to an opt-in {@link
- * McpRawEvidenceObservation} session through {@link McpRawEvidenceObservation#onResponseWritten}
- * (R52, repair task R52 "audit capture parity").
+ * McpRawEvidenceObservation} session through {@link McpRawEvidenceObservation#onResponseWritten}.
  *
  * <p>Carries the exact bytes the single shared terminal writer is about to send to the wire — the same
  * bounded envelope {@code mcp.output.maxBytes} already caps — and the response headers as they stand

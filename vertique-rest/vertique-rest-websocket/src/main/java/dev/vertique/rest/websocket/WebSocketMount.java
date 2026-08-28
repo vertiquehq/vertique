@@ -205,8 +205,8 @@ public class WebSocketMount implements RouterMount {
         /**
          * Core action {@link Authorizer} passed to {@link WebSocketEndpointRegistrar} so a class-level
          * {@code @RequiresAction} endpoint fails startup (fail-closed) when the {@link ActionRegistry}
-         * is present but the {@code Authorizer} — bound through a separate optional seam — is absent
-         * (finding W2); {@code null} when the authorization engine is absent.
+         * is present but the {@code Authorizer} — bound through a separate optional seam — is absent;
+         * {@code null} when the authorization engine is absent.
          */
         final @Nullable Authorizer authorizer;
 
@@ -339,8 +339,8 @@ public class WebSocketMount implements RouterMount {
          *                                       resolution at upgrade time. Absent → the import step
          *                                       is skipped.
          * @param authorizationGateConfig        optional operator-configured {@link
-         *                                       SecurityPolicyEnforcer#decide} gate deadline (issue
-         *                                       #417, R42); empty defaults to {@link
+         *                                       SecurityPolicyEnforcer#decide} gate deadline;
+         *                                       empty defaults to {@link
          *                                       AuthorizationGateConfig#defaults()}.
          *                                       Threaded into the enforcer so the WebSocket upgrade
          *                                       gate honors the same operator-configured deadline as
@@ -391,7 +391,7 @@ public class WebSocketMount implements RouterMount {
                         // authz engine is absent — in which case no @RequiresAction endpoint passes the
                         // scanner's startup validation, so the enforcer never reads it.
                         authorizer,
-                        // Thread the operator-configured gate deadline (issue #417, R42) so the
+                        // Thread the operator-configured gate deadline so the
                         // WebSocket upgrade gate honors the same deadline as REST and MCP.
                         authorizationGateConfig);
                 this.identityResolutionMiddleware = new IdentityResolutionMiddleware(

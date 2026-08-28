@@ -32,7 +32,7 @@ import java.util.regex.Pattern;
  * optional {@link ActionRef}, supplies the tool {@link ResourceRef} and the MCP
  * {@link InvocationOrigin}, filters denied candidates out of {@code tools/list}, and maps a denied
  * or unknown {@code tools/call} to the same {@code -32602} response so absence and denial are
- * externally indistinguishable (T005; {@code contracts/authorization-and-input-pipeline.md} §
+ * externally indistinguishable ({@code contracts/authorization-and-input-pipeline.md} §
  * Frozen programmatic decision operation).
  *
  * <p><strong>Frozen descriptor mapping</strong> (the frozen authorization matrix):
@@ -47,8 +47,8 @@ import java.util.regex.Pattern;
  * </ul>
  *
  * <p>This class never invokes a tool — denial is decided strictly before any invocation path, and it
- * exposes no invocation method at all. It stays package-private per T005's ownership bound: it adds
- * no public surface to {@code vertique-mcp-server} (enforced by the T006 per-module inventory guard).
+ * exposes no invocation method at all. It stays package-private, adding
+ * no public surface to {@code vertique-mcp-server} (enforced by the per-module inventory guard).
  */
 @Singleton
 class McpPolicyEnforcer {
@@ -70,7 +70,7 @@ class McpPolicyEnforcer {
 
     /**
      * Creates a new MCP policy enforcer backed by the shared {@link SecurityPolicyEnforcer} — the
-     * same singleton the REST {@code AuthorizationContributor} consumes (T005 TP-003).
+     * same singleton the REST {@code AuthorizationContributor} consumes.
      *
      * @param securityPolicyEnforcer the shared enforcer; must not be {@code null}
      */
@@ -124,8 +124,8 @@ class McpPolicyEnforcer {
     /**
      * Builds the bounded external JSON-RPC error payload for both a denied tool and an unknown tool
      * name — always the same code, message, and absent {@code data}, so a caller cannot distinguish
-     * "no such tool" from "you may not call this tool" (the T005 carried obligation; T011/T012 wire
-     * this into the {@code tools/list} and {@code tools/call} responses).
+     * "no such tool" from "you may not call this tool" — wired
+     * into the {@code tools/list} and {@code tools/call} responses.
      *
      * @return the unknown-or-unauthorized {@link McpProtocolCodec.CodecError}; never {@code null} and
      *     never carries {@code data}
@@ -144,8 +144,7 @@ class McpPolicyEnforcer {
 
     /**
      * Maps a real {@link AuthorizationDecision} — the same shape every {@link #decide} call already
-     * produces — to the bounded {@link McpAuthorizationSummary} the lifecycle contract carries (R05,
-     * issue #431).
+     * produces — to the bounded {@link McpAuthorizationSummary} the lifecycle contract carries.
      *
      * <p><strong>Why this cannot simply pass the decision's fields through.</strong> {@link
      * AuthorizationDecision#reasonCode()}'s established vocabulary ({@link
@@ -199,7 +198,7 @@ class McpPolicyEnforcer {
     /**
      * Returns the shared {@link SecurityPolicyEnforcer} this instance was constructed with.
      *
-     * <p>Primarily exposed for testing (T005 TP-003) to verify that the REST authorization
+     * <p>Primarily exposed for testing, to verify that the REST authorization
      * contributor and this class resolve the same singleton instance — mirrors
      * {@link SecurityPolicyEnforcer#decisionPoint()}'s testing-exposure pattern.
      *

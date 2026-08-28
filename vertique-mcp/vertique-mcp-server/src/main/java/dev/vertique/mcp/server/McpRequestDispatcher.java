@@ -92,7 +92,7 @@ import java.util.Set;
  * and bounds the response write at {@code mcp.output.maxBytes}. MCP arms no whole-request deadline of
  * its own: transport liveness is meant to come from the shared {@link HttpConfig} idle/read-idle
  * timeouts, so an idle or slow connection is closed by the shared HTTP layer and reaches this
- * dispatcher through the ordinary disconnect/reset settlement path (T007) — <strong>but only when at
+ * dispatcher through the ordinary disconnect/reset settlement path — <strong>but only when at
  * least one of those two qualifying timeouts is actually armed</strong>. {@code
  * http.writeIdleTimeoutSeconds} does not qualify on its own: it fires only while a write is actually
  * in flight, so it cannot reclaim a connection that opens and then never reads or writes again. Both
@@ -102,7 +102,7 @@ import java.util.Set;
  * not the default configuration — is what makes this dispatcher's liveness claim true for every mount
  * that actually runs.
  *
- * <p>{@code tools/call} (T012) resolves the requested name through the immutable {@link
+ * <p>{@code tools/call} resolves the requested name through the immutable {@link
  * McpToolRegistry}, reauthorizes the resolved descriptor through {@link McpPolicyEnforcer#decide}
  * exactly like {@code tools/list}, and maps an unknown name or a denied decision to the same
  * {@code -32602} JSON response {@link #writeUnknownOrUnauthorized} already produces — no tool is ever
@@ -110,13 +110,13 @@ import java.util.Set;
  * request-scoped SSE ({@code text/event-stream}, {@code X-Accel-Buffering: no}) — unconditionally,
  * before {@link McpToolInvoker#prepare} runs, so the response is committed to SSE framing regardless
  * of how invocation later resolves and never falls back to JSON afterward — and only then runs stage 1
- * of the fixed request-time input pipeline (T015, contract §4.7): the precompiled input schema
- * validator T009 compiled at composition. A schema rejection settles as the bounded text-only {@code
+ * of the fixed request-time input pipeline (contract §4.7): the precompiled input schema
+ * validator compiled at composition. A schema rejection settles as the bounded text-only {@code
  * isError=true} tool-error outcome without ever calling {@code prepare()}. Only once schema validation
  * passes does the dispatcher invoke the generated invoker directly (no reflection); {@code prepare()}
  * itself then owns stages 2–4 (INP-001 canonicalization/sanitization, materialization, Bean
  * Validation), signalling a rejection there through {@link McpInputRejectionException}. Every complete
- * result (T020/R04) is then normalized exactly once, bounded at {@code mcp.output.maxBytes} as bytes
+ * result is then normalized exactly once, bounded at {@code mcp.output.maxBytes} as bytes
  * are produced, validated against the tool's advertised output schema before exposure, encoded into the
  * same bounded terminal envelope, offered to the opt-in {@code onToolOutput} observation only once that
  * envelope exists, and only then handed to the single terminal writer — contract §4.7 stage 7's fixed
@@ -150,13 +150,13 @@ final class McpRequestDispatcher {
      * McpProtocolCodec}'s own private {@code MSG_INTERNAL_ERROR} constant of the same value — this class
      * already redeclares every other codec-classified code/message it needs locally (see {@link
      * #NEGOTIATION_MISMATCH} below) rather than routing a bounded response through a codec call whose own
-     * serialization step is unbounded (R12, merge blocker 5; see {@link #boundedErrorResponse}).
+     * serialization step is unbounded (see {@link #boundedErrorResponse}).
      */
     private static final String INTERNAL_ERROR_MESSAGE = "Internal error";
 
     /**
      * The bounded JSON-RPC server-error-range code {@link McpProtocolCodec#validateNegotiation} settles
-     * a protocol-negotiation failure as (R05, issue #429; contract §4.7 — "Header/body mismatch is HTTP
+     * a protocol-negotiation failure as (contract §4.7 — "Header/body mismatch is HTTP
      * 400 with -32020"). Mirrors {@link McpProtocolCodec}'s own private constant of the same value —
      * this class already redeclares every other codec-classified code above for the same reason: {@link
      * #httpStatusFor} needs it locally.
@@ -164,8 +164,8 @@ final class McpRequestDispatcher {
     private static final int NEGOTIATION_MISMATCH = -32020;
 
     /**
-     * The bounded JSON-RPC server-error-range code (§4.7 "request-interceptor rejection ... return
-     * JSON") a pre-dispatch {@link McpRequestInterceptor} rejection settles as (T016). Reserved
+     * The bounded JSON-RPC server-error-range code a pre-dispatch {@link McpRequestInterceptor}
+     * rejection settles as (§4.7 "request-interceptor rejection ... return JSON"). Reserved
      * strictly for this stage, distinct from the protocol (-3270x/-3260x) and tool-authorization
      * (-32602) codes above.
      */
@@ -180,7 +180,7 @@ final class McpRequestDispatcher {
 
     /**
      * The bounded, non-leaking text returned as the sole content item of a post-validation
-     * {@link McpToolInterceptor} rejection (T017, contract §4.4). SSE was already selected before
+     * {@link McpToolInterceptor} rejection (contract §4.4). SSE was already selected before
      * this stage runs (invocation always follows {@link #selectSse}), so — like a stage 1 schema
      * rejection and a stage 2–4 {@link McpInputRejectionException} — this settles as a bounded
      * text-only {@code isError=true} tool result through {@link #writeToolResult}, never a JSON-RPC
@@ -210,13 +210,13 @@ final class McpRequestDispatcher {
     /**
      * The hard per-page examination cap (§4.7): a page examines at most this many multiples of
      * {@code mcp.tools.pageSize} candidates, bounding the authorization fan-out an unauthenticated
-     * {@code tools/list} scan can trigger (issue #416).
+     * {@code tools/list} scan can trigger.
      */
     private static final int EXAMINATION_BUDGET_MULTIPLIER = 4;
 
     /**
      * The synthetic {@link McpAccessMode#DENY_ALL} descriptor evaluated for an unresolved {@code
-     * tools/call} name (issue #420 residual — existence-oracle-by-timing). A known-but-denied name
+     * tools/call} name (existence-oracle-by-timing). A known-but-denied name
      * reaches {@link McpPolicyEnforcer#decide} before its response is written; short-circuiting an
      * unknown name straight to {@link #writeUnknownOrUnauthorized} without ever reaching that same
      * decision point leaves the two paths' latency measurably different (milliseconds against an
@@ -240,7 +240,7 @@ final class McpRequestDispatcher {
 
     /**
      * Routing-context key for the request-owning Vert.x {@link Context} {@link #begin} materializes
-     * for {@link McpCompletionCoordinator} (repair task R32 defect 1) — the same context every
+     * for {@link McpCompletionCoordinator} — the same context every
      * application-origin future this dispatcher composes onto (an interceptor's {@code beforeRequest}/
      * {@code beforeInvocation}, or {@code prepared.invoke()}) is re-anchored onto via {@link
      * #anchoredOnContext} before any continuation attaches, so a later stage's own invocation always
@@ -249,8 +249,8 @@ final class McpRequestDispatcher {
     private static final String REQUEST_CONTEXT_KEY = KEY_PREFIX + ".requestContext";
 
     /**
-     * Routing-context key for a snapshot of this request's live {@link CorrelationContext} (R05, issue
-     * #431; R09, merge blocker 2), established once in {@link #begin} — via {@link #bindCorrelation} —
+     * Routing-context key for a snapshot of this request's live {@link CorrelationContext},
+     * established once in {@link #begin} — via {@link #bindCorrelation} —
      * contract §4.7 stage 2, "establish correlation ... before optional authentication" — and read by
      * every terminal-event construction site and every tool-interceptor context for the remainder of
      * the request through {@link #correlationOf}. Always a snapshot of the same live context bound onto
@@ -262,7 +262,7 @@ final class McpRequestDispatcher {
 
     /**
      * Routing-context key for this request's negotiated {@code
-     * io.modelcontextprotocol/protocolVersion} (R05, issue #431), set only once {@link
+     * io.modelcontextprotocol/protocolVersion}, set only once {@link
      * McpProtocolCodec#validateNegotiation} succeeds in {@link #dispatch}, and read by every later
      * terminal-event construction site through {@link #protocolVersionOf}. {@code null} whenever
      * negotiation never ran or did not complete — a request rejected at or before negotiation carries
@@ -272,8 +272,8 @@ final class McpRequestDispatcher {
 
     /**
      * Routing-context key for the {@link McpAuthorizationSummary} of the one real {@link
-     * McpPolicyEnforcer#decide} evaluation a {@code tools/call} request's dispatch performs (R05, issue
-     * #431), set in {@link #writeToolsCall} immediately once that decision resolves and read by every
+     * McpPolicyEnforcer#decide} evaluation a {@code tools/call} request's dispatch performs, set in
+     * {@link #writeToolsCall} immediately once that decision resolves and read by every
      * later terminal-event construction site on the same request through {@link #authorizationOf}.
      * {@code null} for every other method, and for a {@code tools/call} request that never reaches an
      * actual policy evaluation (a structurally missing/blank name) — matching contract §4.7's
@@ -282,7 +282,7 @@ final class McpRequestDispatcher {
     private static final String AUTHORIZATION_KEY = KEY_PREFIX + ".authorization";
 
     /**
-     * Routing-context key for this request's classified {@link McpMethod} (repair task R48, W3),
+     * Routing-context key for this request's classified {@link McpMethod},
      * stored once in {@link #dispatch} immediately after {@link #classifyMethod} runs and read by
      * {@link #settlementTerminal} through {@link #classifiedMethodOf} so a disconnect/reset abort
      * terminal reports the identity the dispatcher had legitimately already established, rather than
@@ -293,7 +293,7 @@ final class McpRequestDispatcher {
     private static final String METHOD_KEY = KEY_PREFIX + ".method";
 
     /**
-     * Routing-context key for the resolved {@code tools/call} tool name (repair task R48, W3), stored
+     * Routing-context key for the resolved {@code tools/call} tool name, stored
      * once in {@link #writeToolsCall} immediately once the requested name resolves to a real,
      * registry-validated {@link McpToolDescriptor} — never the raw, caller-supplied candidate string,
      * which is unbounded except by the wire's own string-length limit — and read by {@link
@@ -445,8 +445,8 @@ final class McpRequestDispatcher {
      * Sorts {@code interceptors} by {@link OrderedExtension#comparator()} — phase, then priority,
      * then {@code orderKey} — and validates that no two share the same {@code (phase, priority,
      * orderKey)} triple (contract §4.4), reusing exactly the same ordering and duplicate-key
-     * validation {@link #sortedAndValidatedRequestInterceptors} establishes for the sibling T016
-     * stage. Ordering never falls back to Dagger set iteration: this is the one place that
+     * validation {@link #sortedAndValidatedRequestInterceptors} establishes for the sibling
+     * request-interceptor stage. Ordering never falls back to Dagger set iteration: this is the one place that
      * establishes it, at composition time, before any request reaches {@link #runToolInterceptors}.
      *
      * @param interceptors the contributed tool-interceptor set; must not be {@code null}
@@ -560,7 +560,7 @@ final class McpRequestDispatcher {
 
     /**
      * Returns the request-owning Vert.x {@link Context} {@link #begin} materialized for this request,
-     * or {@code null} when {@link #begin} never ran for it (repair task R32 defect 2).
+     * or {@code null} when {@link #begin} never ran for it.
      *
      * <p>Deliberately never falls back to {@code context.vertx().getOrCreateContext()}: that fallback
      * has two failure modes. First, a lightweight test {@link RoutingContext} fixture that bypasses
@@ -583,7 +583,7 @@ final class McpRequestDispatcher {
 
     /**
      * Re-anchors {@code future} onto {@code owningContext} before any continuation ever attaches to
-     * it (repair task R32 defect 1).
+     * it.
      *
      * <p><strong>Invariant restored.</strong> {@link McpCompletionCoordinator}'s settlement latches
      * ({@code beginWrite}/{@code finishWrite}/{@code settle}) are confined to the request-owning
@@ -600,14 +600,14 @@ final class McpRequestDispatcher {
      * that inline ordering); otherwise it is redispatched onto {@code owningContext} via {@link
      * Context#runOnContext}.
      *
-     * <p>{@code owningContext == null} (repair task R32 defect 2) is an identity no-op: {@code future}
+     * <p>{@code owningContext == null} is an identity no-op: {@code future}
      * is returned unchanged. This is exactly the case where {@link #requestOwningContext} found no
      * context {@link #begin} stored — a fixture dispatch that bypasses the real router chain — and it
      * preserves that fixture's fully synchronous behavior instead of forcing it through a {@code
      * Promise} indirection it never asked for.
      *
-     * <p><strong>{@code future.isComplete()} is not a no-op case (repair task R47, phase-exit review
-     * C1).</strong> Per Vert.x 5.1.6's {@code FutureBase#emitResult}, a completed future dispatches
+     * <p><strong>{@code future.isComplete()} is not a no-op case.</strong> Per Vert.x 5.1.6's {@code
+     * FutureBase#emitResult}, a completed future dispatches
      * every listener attached to it on the future's <em>own</em> context — via {@code
      * context.execute(...)} when the attaching thread is not already running on that context — not on
      * whatever thread happens to be executing the attaching call. A future minted from and completed on
@@ -647,7 +647,7 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * <strong>The systematic settlement-guard invariant (repair task R48, C1).</strong> Reports
+     * <strong>The systematic settlement-guard invariant.</strong> Reports
      * whether {@code context}'s request has already settled — a disconnect, a stream reset, or a
      * failed write, published through {@link #registerSettlementHooks} — so that no further
      * application-visible work may run for it.
@@ -660,7 +660,7 @@ final class McpRequestDispatcher {
      * a guarded return here is deliberately silent and must never itself construct or write a terminal
      * event. {@link #writeToolsList} already models this exact idiom inline for its own stage.
      *
-     * <p>Safe to call from any continuation reached on this request: repair task R32's context-
+     * <p>Safe to call from any continuation reached on this request: the context-
      * anchoring guarantee ({@link #anchoredOnContext}) keeps every such continuation running on the
      * request's own owning Vert.x context, the same context {@link McpCompletionCoordinator}'s
      * cancellation signal is confined to, so this synchronous read never races a concurrent mutation.
@@ -674,8 +674,8 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * Establishes the one live {@link CorrelationContext} for this request (R09, merge blocker 2;
-     * contract §4.7 stage 2 — "establish correlation ... before optional authentication") and binds it
+     * Establishes the one live {@link CorrelationContext} for this request (contract §4.7 stage 2 —
+     * "establish correlation ... before optional authentication") and binds it
      * onto the shared {@code ContextHolder} substrate — the same mechanism REST's {@code
      * CorrelationIngressMiddleware} uses for its own ingress boundary. MCP defines no inbound
      * correlation header of its own, so the context is minted, not resolved, via {@link
@@ -691,14 +691,12 @@ final class McpRequestDispatcher {
      * disconnect, or a stream reset — exactly like every other holder binding on this request, and
      * never leaks onto the next request scheduled on the same event-loop thread.
      *
-     * <p><strong>R09's original claim was false when written; R14 item 5 made it true.</strong> The
-     * last two of those exit paths did not hold: {@link #registerSettlementHooks} overwrote the
-     * single-slot response {@code closeHandler}/{@code exceptionHandler} that Vert.x Web's own routing
-     * context installs to drive its end handlers, so {@link RequestContextLifecycle.Handle#closeAll()}
-     * — and therefore this scope's close — never ran for a disconnect or a reset. Settlement now runs
-     * through {@link RoutingContext#addEndHandler} instead, which is multicast and leaves Vert.x Web's
-     * handlers in place; see {@link #registerSettlementHooks} for the measurement, and {@code
-     * McpDisconnectCleanupIT} for the proof that this scope is genuinely closed on a real disconnect.
+     * <p><strong>A disconnect or a stream reset closes this scope too.</strong> {@link
+     * #registerSettlementHooks} registers through {@link RoutingContext#addEndHandler}, which is
+     * multicast and leaves Vert.x Web's own {@code closeHandler}/{@code exceptionHandler} in place, so
+     * {@link RequestContextLifecycle.Handle#closeAll()} — and therefore this scope's close — reliably
+     * runs on every exit path, including a disconnect and a reset. See {@code
+     * McpDisconnectCleanupIT} for the proof.
      *
      * <p>This is the single live context every downstream consumer reads: {@code
      * IdentityResolutionMiddleware} (via {@code ContextHolder.current(CorrelationContext.class)}, for
@@ -735,7 +733,7 @@ final class McpRequestDispatcher {
      * null} when negotiation never ran or did not complete (contract §4.7 — "emit only when negotiation
      * completed").
      *
-     * <p>Security review finding (post-R05): total by construction — every terminal-event construction
+     * <p>Total by construction — every terminal-event construction
      * site in this class feeds this method's return value straight into a factory that would throw
      * {@link IllegalArgumentException} for a blank, over-length, or control-character-bearing value
      * ({@link McpRequestTerminalEvent}'s own compact constructor). {@link McpProtocolCodec#validateNegotiation}
@@ -767,7 +765,7 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * Returns this request's classified {@link McpMethod} (repair task R48, W3), or {@link
+     * Returns this request's classified {@link McpMethod}, or {@link
      * McpMethod#OTHER} when {@link #dispatch} never stored one for this request — matching the
      * pre-dispatch identity every other abort terminal in this class already carries.
      */
@@ -777,7 +775,7 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * Returns this request's resolved {@code tools/call} tool name (repair task R48, W3), or {@link
+     * Returns this request's resolved {@code tools/call} tool name, or {@link
      * McpRequestTerminalEvent#UNKNOWN_TOOL_NAME} when {@link #writeToolsCall} never resolved one for
      * this request — the never-invent rule: the raw, caller-supplied candidate string is never
      * retained or returned here.
@@ -904,7 +902,7 @@ final class McpRequestDispatcher {
      * before negotiation or application policy. A violation is a JSON-RPC {@code -32602} response over
      * HTTP 400. Only then does header/body and Phase-1 negotiation run; those failures are {@code
      * -32020}. A negotiated request enters the ordered, fail-closed pre-dispatch request-interceptor
-     * stage (T016, contract §4.7 stage 5) before method dispatch, tool lookup, authorization, or
+     * stage (contract §4.7 stage 5) before method dispatch, tool lookup, authorization, or
      * application input processing.
      */
     void dispatch(RoutingContext context) {
@@ -917,11 +915,11 @@ final class McpRequestDispatcher {
         }
         JsonNode envelope = decoded.envelope();
         McpMethod method = classifyMethod(envelope.get("method").asText());
-        // R48 (W3): stored immediately after classification so a disconnect/reset abort terminal for
+        // Stored immediately after classification so a disconnect/reset abort terminal for
         // this request — however far it later progresses — reports the identity already legitimately
         // known here, rather than always inventing McpMethod.OTHER (see settlementTerminal).
         context.put(METHOD_KEY, method);
-        // R52 (repair task R52 "audit capture parity"): admission-time raw-evidence capture, on the
+        // Admission-time raw-evidence capture, on the
         // mcp.tool.call surface only, before tool-name resolution or authorization — so an opt-in
         // McpRawEvidenceObservation session observes the raw request even for a request later rejected
         // before the input pipeline runs (an unknown tool, an authorization denial, a protocol-level
@@ -943,13 +941,13 @@ final class McpRequestDispatcher {
             return;
         }
         context.put(PROTOCOL_VERSION_KEY, negotiation.protocolVersion());
-        // R39/R51: extracted at most once per request, independent of negotiation's own outcome — a
+        // Extracted at most once per request, independent of negotiation's own outcome — a
         // malformed or absent body trace reference never affects protocol admission — and only when
         // mcp.bodyTracePolicy is LINK. Under the default IGNORE policy, extractBodyTraceContext is
         // never called at all: no parse, no diagnostics, no cost. The result is bound onto the
         // coordinator (when one exists — a fixture dispatch that bypasses begin() has none) so the
-        // terminal observation carries it (McpRequestTerminalObservation#linkedTrace()); it no longer
-        // reaches McpRequestContext, which R51 stopped carrying a body trace component at all.
+        // terminal observation carries it (McpRequestTerminalObservation#linkedTrace()); McpRequestContext
+        // does not carry a body trace component.
         TraceReference linkedTrace =
                 config.bodyTracePolicy() == McpBodyTracePolicy.LINK ? codec.extractBodyTraceContext(envelope) : null;
         McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
@@ -961,7 +959,7 @@ final class McpRequestDispatcher {
         Context owningContext = requestOwningContext(context);
         anchoredOnContext(runRequestInterceptors(0, requestContext, owningContext, context), owningContext)
                 .onComplete(ar -> {
-                    // R48 (C1): the settlement guard — a disconnect/reset can settle this request while the
+                    // The settlement guard — a disconnect/reset can settle this request while the
                     // interceptor chain is still pending, and neither branch below may run once it has.
                     if (isSettled(context)) {
                         return;
@@ -984,8 +982,8 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * Builds and publishes this request's raw admission-time evidence (R52, repair task R52 "audit
-     * capture parity") when {@code method} is {@link McpMethod#TOOLS_CALL} and this request's
+     * Builds and publishes this request's raw admission-time evidence
+     * when {@code method} is {@link McpMethod#TOOLS_CALL} and this request's
      * coordinator retains at least one {@link
      * dev.vertique.mcp.lifecycle.McpRawEvidenceObservation}-capable session. A no-op for every other
      * method (the audit-capture surface this evidence supports is {@code mcp.tool.call} only, exactly
@@ -1133,8 +1131,9 @@ final class McpRequestDispatcher {
     /**
      * Settles the defensive, practically-unreachable {@link #dispatchByMethod} default branch through
      * the bounded internal-error fallback, exactly like {@link #writeToolsListFallback}. Bounded through
-     * {@link #boundedErrorResponse} (R12) rather than an unchecked {@link McpProtocolCodec#internalFallback}
-     * call: the earlier revision here built and sent the fallback with no cap check at all.
+     * {@link #boundedErrorResponse} rather than an unchecked {@link McpProtocolCodec#internalFallback}
+     * call, so the fallback response is always subject to the same {@code mcp.output.maxBytes} cap
+     * check as every other terminal writer in this class.
      */
     private void writeDispatchFallback(
             RoutingContext context, JsonNode envelope, @Nullable SecurityContextSnapshot security) {
@@ -1174,8 +1173,8 @@ final class McpRequestDispatcher {
             @Nullable SecurityContextSnapshot security,
             Throwable cause) {
         // cause is deliberately never read, mirroring McpProtocolCodec#internalFallback's own established
-        // convention (R12): only its occurrence mattered before this fix routed the fallback through
-        // boundedErrorResponse, and still only its occurrence matters now.
+        // convention: only its occurrence matters, routed through boundedErrorResponse like every
+        // other terminal writer in this class.
         byte[] fallback = boundedErrorResponse(envelope.get("id"), INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
         McpRequestTerminalEvent terminal = McpRequestTerminalEvent.failed(
                 startedAt(context),
@@ -1204,10 +1203,10 @@ final class McpRequestDispatcher {
      * @param requestContext the immutable, payload-free pre-dispatch snapshot every interceptor in the
      *     chain observes
      * @param owningContext the request's owning Vert.x context, threaded through so every
-     *     interceptor's returned future is re-anchored onto it (repair task R32 defect 1) before the
+     *     interceptor's returned future is re-anchored onto it before the
      *     next interceptor is ever invoked
      * @param context the request context, threaded through so each per-hop compose can check the
-     *     settlement guard (repair task R48, C1) before advancing to the next interceptor
+     *     settlement guard before advancing to the next interceptor
      * @return a future that succeeds once every interceptor has permitted, or fails with the first
      *     rejection's cause
      */
@@ -1221,7 +1220,7 @@ final class McpRequestDispatcher {
         try {
             outcome = interceptor.beforeRequest(requestContext);
         } catch (RuntimeException | StackOverflowError thrown) {
-            // R13 (#440-adjacent isolation sweep): interceptor.beforeRequest is application-supplied
+            // interceptor.beforeRequest is application-supplied
             // lifecycle code, exactly like the stage-5/stage-7 callbacks below — a pathologically deep
             // argument or context graph can drive native-recursion StackOverflowError here just as
             // easily as a RuntimeException. Failing the future (rather than letting it escape
@@ -1234,11 +1233,11 @@ final class McpRequestDispatcher {
             return Future.failedFuture(
                     new NullPointerException(interceptor.getClass().getName() + "#beforeRequest returned null"));
         }
-        // R32 defect 1: outcome is application-origin and carries no obligation to settle on
+        // Outcome is application-origin and carries no obligation to settle on
         // owningContext, so the next interceptor's own beforeRequest invocation below — composed
         // directly onto it — must not run until it is re-anchored there.
         return anchoredOnContext(outcome, owningContext).compose(ignored -> {
-            // R48 (C1): the settlement guard, checked between hops — a disconnect/reset can settle this
+            // The settlement guard, checked between hops — a disconnect/reset can settle this
             // request while one interceptor's future is still pending; the chain must not advance once
             // it has.
             if (isSettled(context)) {
@@ -1250,7 +1249,7 @@ final class McpRequestDispatcher {
 
     /**
      * Runs the ordered post-validation tool-interceptor chain sequentially from {@code index},
-     * short-circuiting at the first rejection (T017, contract §4.4): a synchronous
+     * short-circuiting at the first rejection (contract §4.4): a synchronous
      * {@link McpToolInterceptor#beforeInvocation} throw, a {@code null} returned future, and a future
      * that resolves failed all fail closed the same way — the next interceptor is never invoked and
      * the generated invocation never runs. An empty ordered chain (the zero-interceptor composition)
@@ -1261,10 +1260,10 @@ final class McpRequestDispatcher {
      * @param toolContext the immutable, argument-free descriptor snapshot every interceptor in the
      *     chain observes
      * @param owningContext the request's owning Vert.x context, threaded through so every
-     *     interceptor's returned future is re-anchored onto it (repair task R32 defect 1) before the
+     *     interceptor's returned future is re-anchored onto it before the
      *     next interceptor is ever invoked
      * @param context the request context, threaded through so each per-hop compose can check the
-     *     settlement guard (repair task R48, C1) before advancing to the next interceptor
+     *     settlement guard before advancing to the next interceptor
      * @return a future that succeeds once every interceptor has permitted, or fails with the first
      *     rejection's cause
      */
@@ -1278,7 +1277,7 @@ final class McpRequestDispatcher {
         try {
             outcome = interceptor.beforeInvocation(toolContext);
         } catch (RuntimeException | StackOverflowError thrown) {
-            // R13: mirrors runRequestInterceptors above — interceptor.beforeInvocation is the same
+            // Mirrors runRequestInterceptors above — interceptor.beforeInvocation is the same
             // class of application-supplied lifecycle callback, and a StackOverflowError from it is no
             // less able to strand this request than one from stage 5 or stage 7.
             return Future.failedFuture(thrown);
@@ -1287,10 +1286,10 @@ final class McpRequestDispatcher {
             return Future.failedFuture(
                     new NullPointerException(interceptor.getClass().getName() + "#beforeInvocation returned null"));
         }
-        // R32 defect 1: mirrors runRequestInterceptors above — outcome is application-origin and must
+        // Mirrors runRequestInterceptors above — outcome is application-origin and must
         // be re-anchored before the next interceptor's own beforeInvocation is invoked from it.
         return anchoredOnContext(outcome, owningContext).compose(ignored -> {
-            // R48 (C1): mirrors runRequestInterceptors above — the settlement guard, checked between
+            // Mirrors runRequestInterceptors above — the settlement guard, checked between
             // hops, so a disconnect/reset that settles this request while one tool interceptor's
             // future is still pending stops the chain from advancing to the next.
             if (isSettled(context)) {
@@ -1310,10 +1309,9 @@ final class McpRequestDispatcher {
      * <p>This method is reached from {@link #dispatch} only once {@link McpProtocolCodec#validateNegotiation}
      * has already succeeded — negotiation always completes strictly before {@link #runRequestInterceptors}
      * ever runs — so, unlike {@link #writePreDispatchProtocolRejection}, the terminal event here does carry the
-     * negotiated {@code protocolVersion} via {@link #protocolVersionOf}. (Security review, post-R05: an
-     * earlier revision passed a hardcoded {@code null} on the normal-response branch below while the
-     * over-cap branch correctly used {@link #protocolVersionOf} — the same request reported a version
-     * only when its error response happened to exceed the output cap.)
+     * negotiated {@code protocolVersion} via {@link #protocolVersionOf}, on both the normal-response and
+     * the over-cap branch below, so the reported version never depends on whether the response happened
+     * to exceed the output cap.
      *
      * @param context the request context
      * @param envelope the validated envelope whose id is echoed
@@ -1333,9 +1331,9 @@ final class McpRequestDispatcher {
             // same degrade-to-id-less fallback below when even that cannot fit.
             responseBytes = encodeCapped(errorNode(id, INTERCEPTOR_REJECTED, INTERCEPTOR_REJECTED_MESSAGE));
         } catch (OutputCapExceededException overCap) {
-            // R12: routed through boundedErrorResponse rather than the previous codec.internalFallback(id)
-            // + measure-the-completed-array idiom, which itself fully allocated an id-bearing response
-            // before checking whether it fit.
+            // Routed through boundedErrorResponse, which serializes through the same capped stream every
+            // other terminal writer in this class uses, rather than fully allocating an id-bearing
+            // response before checking whether it fits.
             byte[] fallback = boundedErrorResponse(id, INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
             McpRequestTerminalEvent overCapTerminal = McpRequestTerminalEvent.failed(
                     startedAt(context),
@@ -1393,12 +1391,10 @@ final class McpRequestDispatcher {
         int status = httpStatusFor(code);
         byte[] errorBytes;
         try {
-            // R12 (merge blocker 5): the earlier revision here called codec.errorResponseFor — an
-            // unrestricted writeValueAsBytes — and only then compared the completed array's length
-            // against the cap, so a large client-controlled id allocated the entire response before the
-            // promised cap ever applied. This now serializes once through the same capped stream every
-            // other terminal writer in this class uses, degrading to the id-less internal error below
-            // only when the cap actually trips while bytes are being produced.
+            // Serializes once through the same capped stream every other terminal writer in this class
+            // uses, so a large client-controlled id can never allocate the entire response before the
+            // promised cap applies, degrading to the id-less internal error below only when the cap
+            // actually trips while bytes are being produced.
             errorBytes = encodeCapped(errorNode(envelope.get("id"), code, error.message()));
         } catch (OutputCapExceededException overCap) {
             byte[] fallback = boundedErrorResponse(null, INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
@@ -1443,7 +1439,7 @@ final class McpRequestDispatcher {
         try {
             payload = encodeCapped(discoveryResponse(envelope));
         } catch (OutputCapExceededException overCap) {
-            // R12: boundedErrorResponse serializes the id-bearing attempt through the same capped stream
+            // boundedErrorResponse serializes the id-bearing attempt through the same capped stream
             // and degrades to the minimal id-less internal error — itself encoded the same bounded way,
             // not assumed to fit — only when that attempt also exceeds the cap.
             byte[] fallback = boundedErrorResponse(envelope.get("id"), INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
@@ -1538,12 +1534,12 @@ final class McpRequestDispatcher {
      * McpPolicyEnforcer#decide} — never {@link McpPolicyEnforcer#isVisible}, so exactly one decision
      * (and at most one {@code AuthorizationDecisionEvent}) is produced per candidate. Examination stops
      * at the first of: the page reaching {@code mcp.tools.pageSize} visible tools, examining {@code
-     * 4 * mcp.tools.pageSize} candidates (the fan-out bound, issue #416), or the registry being
+     * 4 * mcp.tools.pageSize} candidates (the fan-out bound), or the registry being
      * exhausted. A present, malformed, or otherwise invalid cursor is rejected with the same
      * indistinguishable {@code -32602} response {@link McpPolicyEnforcer#unknownOrUnauthorizedError()}
-     * produces for a denied or unknown tool (issue #420), never a distinct code or status.
+     * produces for a denied or unknown tool, never a distinct code or status.
      *
-     * <p>A valid cursor anchor is one of two forms (R40/C5, see {@link McpCursorCodec}): a name-form
+     * <p>A valid cursor anchor is one of two forms (see {@link McpCursorCodec}): a name-form
      * anchor is a lexicographic position hint, not a registry membership proof — a nonmember anchor
      * resumes at the first registry name strictly greater than it; a position-form anchor resumes the
      * scan directly at its digest-pinned registry index. A cursor is emitted only after this scan
@@ -1640,7 +1636,7 @@ final class McpRequestDispatcher {
      * still pending. At the maximum budget with every decision completing immediately (the case that
      * would otherwise recurse), this method never grows the call stack past its own single frame.
      *
-     * @param cancellation this request's cancellation signal (T013) — the same signal a cooperative
+     * @param cancellation this request's cancellation signal — the same signal a cooperative
      *     tool handler observes, not a second, invented one; {@link McpCancellationSignal#isCancelled()}
      *     is checked synchronously, never {@link McpCancellationSignal#cancelled()}, since this loop
      *     must never itself wait on a future to learn whether it should stop
@@ -1667,7 +1663,7 @@ final class McpRequestDispatcher {
                 boolean candidatesRemain = !registryExhausted;
                 NextAnchor nextAnchor = null;
                 if (candidatesRemain) {
-                    // R40 (C5): a page that fills (even simultaneously with budget exhaustion) still
+                    // A page that fills (even simultaneously with budget exhaustion) still
                     // anchors on its own last emitted, permitted candidate — that name is already in
                     // the returned page, so naming it discloses nothing new. Only when the budget
                     // exhausts before the page fills does the anchor switch to the opaque position
@@ -1760,7 +1756,7 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * The next-page cursor anchor a completed scan produced (R40/C5): either the last emitted,
+     * The next-page cursor anchor a completed scan produced: either the last emitted,
      * permitted candidate's own name (page-full or registry-exhausted), or an opaque scan-position
      * index (budget-exhaustion) that never discloses an examined-but-denied candidate's name. Exactly
      * one of {@code name} and {@code positionIndex} is non-null. Mirrors {@link McpCursorCodec}'s
@@ -1796,8 +1792,8 @@ final class McpRequestDispatcher {
 
     /**
      * Settles a {@link McpPolicyEnforcer#decide} contract violation through the internal fallback.
-     * Bounded through {@link #boundedErrorResponse} (R12): the earlier revision here sent the fallback
-     * with no cap check at all.
+     * Bounded through {@link #boundedErrorResponse}, so the fallback is always subject to the same
+     * {@code mcp.output.maxBytes} cap check.
      */
     private void writeToolsListFallback(
             RoutingContext context, JsonNode envelope, @Nullable SecurityContextSnapshot security, Throwable cause) {
@@ -1855,8 +1851,8 @@ final class McpRequestDispatcher {
         try {
             payload = encodeCapped(toolsListResponse(envelope, result));
         } catch (OutputCapExceededException overCap) {
-            // R12: see writeDiscovery's identical note — boundedErrorResponse replaces the previous
-            // materialize-then-measure idiom.
+            // boundedErrorResponse serializes through the capped stream rather than materializing the
+            // full response before measuring it — see writeDiscovery's identical note.
             byte[] fallback = boundedErrorResponse(envelope.get("id"), INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
             McpRequestTerminalEvent terminal = McpRequestTerminalEvent.failed(
                     startedAt(context),
@@ -1962,7 +1958,7 @@ final class McpRequestDispatcher {
     /**
      * Writes the same externally indistinguishable {@code -32602} response {@link
      * McpPolicyEnforcer#unknownOrUnauthorizedError()} defines, so an invalid cursor, a denied tool, and
-     * an unknown tool all yield byte-identical bodies and the same HTTP status (issue #420) — the
+     * an unknown tool all yield byte-identical bodies and the same HTTP status — the
      * status comes from the shared {@link #httpStatusFor} mapping, never a bespoke one. Always
      * {@code application/json}: an unknown or denied {@code tools/call} never reaches SSE selection
      * (§4.7 — "unknown tool[s] and authorization denial return JSON").
@@ -1991,7 +1987,7 @@ final class McpRequestDispatcher {
             // same degrade-to-id-less fallback below when even that cannot fit.
             body = encodeCapped(errorNode(id, error.code(), error.message()));
         } catch (OutputCapExceededException overCap) {
-            // R12: see writeDiscovery's identical note.
+            // See writeDiscovery's identical note.
             byte[] fallback = boundedErrorResponse(id, INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
             McpRequestTerminalEvent overCapTerminal = McpRequestTerminalEvent.failed(
                     startedAt(context),
@@ -2026,7 +2022,7 @@ final class McpRequestDispatcher {
     // --- tools/call ---
 
     /**
-     * Resolves, reauthorizes, and dispatches one zero-argument {@code tools/call} request (T012).
+     * Resolves, reauthorizes, and dispatches one zero-argument {@code tools/call} request.
      *
      * <p>A structurally missing/blank name, an unresolved name, or a denied decision all settle
      * through {@link #writeUnknownOrUnauthorized} — the exact same JSON response {@code tools/list}
@@ -2047,7 +2043,7 @@ final class McpRequestDispatcher {
      * @param security the established security snapshot, recorded on the terminal event
      */
     private void writeToolsCall(RoutingContext context, JsonNode envelope, @Nullable SecurityContextSnapshot security) {
-        // R48 (C1): the settlement guard, mirroring writeToolsList's own entry check for this sibling
+        // The settlement guard, mirroring writeToolsList's own entry check for this sibling
         // stage.
         if (isSettled(context)) {
             return;
@@ -2066,12 +2062,12 @@ final class McpRequestDispatcher {
         SecurityContext caller = establishedSecurityContext();
         if (invoker == null) {
             policyEnforcer.decide(UNKNOWN_TOOL_PLACEHOLDER_DESCRIPTOR, caller).onComplete(ar -> {
-                // R48 (C1): the settlement guard — a disconnect/reset can settle this request while
+                // The settlement guard — a disconnect/reset can settle this request while
                 // this synthetic-placeholder decision is still pending.
                 if (isSettled(context)) {
                     return;
                 }
-                // R05 (issue #431): a real policy evaluation occurred — against the synthetic
+                // A real policy evaluation occurred — against the synthetic
                 // placeholder, exactly like a known-but-denied name — so its summary is recorded
                 // like every other actual decision, even though ar.result() here is always a
                 // denial. ar.failed() never happens per McpPolicyEnforcer#decide's own contract
@@ -2086,13 +2082,13 @@ final class McpRequestDispatcher {
             });
             return;
         }
-        // R48 (W3): stored only once the requested name resolved to a real, registry-validated
+        // Stored only once the requested name resolved to a real, registry-validated
         // descriptor — never the raw caller-supplied toolName — so a later abort terminal for this
         // request (see settlementTerminal/resolvedToolNameOf) can report the real tool name instead of
         // always inventing UNKNOWN_TOOL_NAME.
         context.put(RESOLVED_TOOL_NAME_KEY, invoker.descriptor().name());
         policyEnforcer.decide(invoker.descriptor(), caller).onComplete(ar -> {
-            // R48 (C1): the settlement guard — this is the seam McpToolsCallDisconnectAcrossAuthorizationIT
+            // The settlement guard — this is the seam McpToolsCallDisconnectAcrossAuthorizationIT
             // pins: a disconnect/reset can settle this request while the real authorization decision is
             // still pending, and no branch below (deny, permit, or invocation) may run once it has.
             if (isSettled(context)) {
@@ -2107,7 +2103,7 @@ final class McpRequestDispatcher {
                 writeUnknownOrUnauthorized(context, envelope, security, McpMethod.TOOLS_CALL, toolName);
                 return;
             }
-            // R05 (issue #431): recorded for every terminal event this request still produces,
+            // Recorded for every terminal event this request still produces,
             // whether the decision denies (writeUnknownOrUnauthorized below) or permits (every
             // terminal writeToolResult/writeSseFallback eventually reaches inside invokeAndRespond).
             context.put(AUTHORIZATION_KEY, McpPolicyEnforcer.summarize(ar.result()));
@@ -2131,7 +2127,7 @@ final class McpRequestDispatcher {
      * absent or object-valued {@code arguments} member; explicit {@code null} and every other
      * non-object value are rejected as {@code -32602} before SSE selection.
      *
-     * <p>Stage 1 — the precompiled schema validator T009 compiled at composition — runs next, on
+     * <p>Stage 1 — the precompiled schema validator compiled at composition — runs next, on
      * exactly this {@code arguments} tree, before {@code prepare()} is ever called: a schema rejection
      * settles through {@link #writeToolResult} as the bounded text-only {@code isError=true} outcome
      * and never invokes {@code prepare()}. Stages 2–4 (INP-001 canonicalization/sanitization at
@@ -2147,7 +2143,7 @@ final class McpRequestDispatcher {
             @Nullable SecurityContextSnapshot security,
             String toolName,
             McpToolInvoker invoker) {
-        // R48 (C1): the settlement guard, entered before SSE selection and any input work — this is the
+        // The settlement guard, entered before SSE selection and any input work — this is the
         // second of the two seams McpToolsCallDisconnectAcrossAuthorizationIT's mutation proof targets.
         if (isSettled(context)) {
             return;
@@ -2169,14 +2165,14 @@ final class McpRequestDispatcher {
             return;
         }
         McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
-        // T013: the coordinator owns the request's cancellation signal, fired exactly once when the
+        // The coordinator owns the request's cancellation signal, fired exactly once when the
         // request settles as a disconnect, a stream reset, or a failed write. Every admitted request
         // has a coordinator by the time invocation is reached (begin() always constructs one before
         // dispatch); the fallback exists only as the same defensive null-guard the write path below
         // already uses.
         McpCancellationSignal cancellation =
                 coordinator != null ? coordinator.cancellation() : NoOpCancellationSignal.INSTANCE;
-        // R32 defect 1: the same request-owning context every interceptor outcome and the invocation
+        // The same request-owning context every interceptor outcome and the invocation
         // result below are re-anchored onto (see anchoredOnContext).
         Context owningContext = requestOwningContext(context);
         McpPreparedToolCall prepared;
@@ -2199,14 +2195,14 @@ final class McpRequestDispatcher {
                     null);
             return;
         } catch (RuntimeException | StackOverflowError | LinkageError prepareFailure) {
-            // R13: invoker.prepare() (stages 2-4, the generated fixed input boundary) walks the
+            // invoker.prepare() (stages 2-4, the generated fixed input boundary) walks the
             // envelope-permitted 1,000-level-deep argument tree — the same depth stage 5's comment
             // above already calls out as StackOverflowError-capable — and may itself invoke
             // application-supplied Bean Validation constraint code. A RuntimeException-only catch here
             // would let a native-recursion StackOverflowError escape before beginWrite is ever called:
             // no response, no terminal, no completion.
             //
-            // R47 (phase-exit review): stage 4's default-provider fallback (McpBeanValidation's lazy
+            // Stage 4's default-provider fallback (McpBeanValidation's lazy
             // holder) is only reached when no application Validator is bound; on a deployment where the
             // Bean Validation provider is a runtime-scoped dependency the application never pulled in
             // (present at compile time, absent on the runtime classpath), resolving that provider throws
@@ -2217,20 +2213,20 @@ final class McpRequestDispatcher {
             writeSseFallback(context, envelope, security, toolName, prepareFailure);
             return;
         }
-        // T017: the ordered, fail-closed post-validation tool-interceptor stage runs here — strictly
+        // The ordered, fail-closed post-validation tool-interceptor stage runs here — strictly
         // after Bean Validation (prepare() above already ran it) and strictly before the generated
         // invocation (prepared.invoke() below). The context it exposes projects only the pre-dispatch
         // McpRequestContext and the resolved descriptor: no raw or normalized argument ever reaches an
         // interceptor. A rejection settles through the same bounded, SSE-framed writeToolResult path
         // stage 1 and stages 2-4 already use, and prepared.invoke() is never called.
         //
-        // correlationOf(context) (R09, merge blocker 2): the same live-context snapshot every other
+        // correlationOf(context): the same live-context snapshot every other
         // terminal-event and interceptor site on this request reads, never a hardcoded null — a tool
         // interceptor observes the same correlation the terminal event for this request will carry.
         McpToolInvocationContext toolContext = new McpToolInvocationContext(
                 new McpRequestContext(McpMethod.TOOLS_CALL, establishedSecurityContext(), correlationOf(context)),
                 invoker.descriptor());
-        // T018: the opt-in, capability-gated value-observation callback fires here — after Bean
+        // The opt-in, capability-gated value-observation callback fires here — after Bean
         // Validation (prepare() above already ran it) but strictly before the tool-interceptor stage
         // just below (contract §4.4 callback order). Delivered only to a session implementing
         // McpToolValueObservation; the coordinator retains no reference to the observation once every
@@ -2239,7 +2235,7 @@ final class McpRequestDispatcher {
         // compact constructor deep-copies the entire normalized argument tree, so a request with no
         // capable session never pays that copy for an attacker-sized argument tree.
         if (coordinator != null && coordinator.hasValueObservers()) {
-            // Security review (P05 finding #5): mirrors stage 7's guard below. Constructing the
+            // Mirrors stage 7's guard below. Constructing the
             // observation deep-copies the whole normalized argument tree (McpToolInputObservation's
             // compact constructor), and every capable session's onToolInput callback runs
             // synchronously inside publishToolInput (e.g. an audit adapter's String.valueOf on a
@@ -2259,7 +2255,7 @@ final class McpRequestDispatcher {
         anchoredOnContext(runToolInterceptors(0, toolContext, owningContext, context), owningContext)
                 .onComplete(interceptorResult -> {
                     if (interceptorResult.failed()) {
-                        // R48 (C1): the settlement guard, on the rejection branch — a disconnect/reset can
+                        // The settlement guard, on the rejection branch — a disconnect/reset can
                         // settle this request while the tool-interceptor chain is still pending, and the
                         // rejection response below must never be written once it has.
                         if (isSettled(context)) {
@@ -2289,10 +2285,10 @@ final class McpRequestDispatcher {
                     try {
                         result = prepared.invoke();
                     } catch (RuntimeException | StackOverflowError invokeFailure) {
-                        // R13: prepared.invoke() is the generated call directly into the application's own tool
-                        // handler — the most direct lifecycle callback on this whole path. A RuntimeException-only
-                        // catch left a recursing handler free to strand the request exactly like the already-fixed
-                        // stage 5/7 callbacks below.
+                        // prepared.invoke() is the generated call directly into the application's own tool
+                        // handler — the most direct lifecycle callback on this whole path. Catching
+                        // StackOverflowError here, not just RuntimeException, prevents a recursing handler from
+                        // stranding the request, exactly like the stage 5/7 callbacks below.
                         writeSseFallback(context, envelope, security, toolName, invokeFailure);
                         return;
                     }
@@ -2310,7 +2306,7 @@ final class McpRequestDispatcher {
                         return;
                     }
                     anchoredOnContext(result, owningContext).onComplete(ar -> {
-                        // R48 (C1): the settlement guard, before any normalization/output work — a
+                        // The settlement guard, before any normalization/output work — a
                         // disconnect/reset can settle this request while the invocation future is still
                         // pending, and no branch below (failure fallback, normalization, schema validation,
                         // or the terminal write) may run once it has.
@@ -2326,7 +2322,7 @@ final class McpRequestDispatcher {
                                     ar.failed() ? ar.cause() : new NullPointerException("tool result"));
                             return;
                         }
-                        // R04 (closing #426/#427): every complete result is normalized exactly once — bounded by
+                        // Every complete result is normalized exactly once — bounded by
                         // mcp.output.maxBytes as bytes are produced, exactly like the terminal write below —
                         // validated against the advertised output schema, encoded into the bounded terminal
                         // envelope, offered to the opt-in output observation only once that envelope exists, and
@@ -2399,7 +2395,7 @@ final class McpRequestDispatcher {
      * arguments} against {@code toolName}'s precompiled input schema.
      *
      * <p>Never compiles a schema or a validator here — {@link McpSchemaRegistry} compiled every
-     * validator exactly once, at composition, from {@link McpToolRegistry}'s descriptor set (T009);
+     * validator exactly once, at composition, from {@link McpToolRegistry}'s descriptor set;
      * this call only invokes the already-compiled instance. {@code toolName} is guaranteed present in
      * {@link McpToolRegistry#schemaRegistry()} because {@link #writeToolsCall} only reaches this method
      * once a {@link McpToolInvoker} for {@code toolName} was already resolved from the same registry
@@ -2415,11 +2411,11 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * Runs the R04 output stage's single, bounded normalization pass: converts an application handler's
+     * Runs the output stage's single, bounded normalization pass: converts an application handler's
      * structured result value to the one bounded, JSON-compatible canonical shape ({@code Map}/
      * {@code List}/scalar) reused for output-schema validation, the {@code onToolOutput} observation,
-     * and the wire embed — closing #427, "the output cap bounds only the terminal message, not
-     * structured-value normalization".
+     * and the wire embed — the output cap bounds both the terminal message and the structured-value
+     * normalization.
      *
      * <p>Called exactly once per completed invocation, from {@link #invokeAndRespond}'s {@code
      * result.onComplete} handler, before validation, observation, or encoding ever run. Nothing else in
@@ -2433,16 +2429,16 @@ final class McpRequestDispatcher {
      * #encodeCapped}, which aborts with {@link OutputCapExceededException} the moment the running byte
      * count would exceed {@code mcp.output.maxBytes} — before a full byte array, let alone a full tree,
      * is ever materialized. The resulting bounded byte array — never {@code value} itself again — is
-     * then parsed back into the canonical {@code Map}/{@code List}/scalar shape through {@link #normalizationDecoder}, never {@link #OUTPUT_ENCODER}: a plain {@code readValue} loses precision
-     * relative to {@link #encodeCapped}'s own {@code WRITE_BIGDECIMAL_AS_PLAIN} encode (see {@link #normalizationDecoder}'s own javadoc for the two ways that showed up on the wire — R07 item 4).
+     * then parsed back into the canonical {@code Map}/{@code List}/scalar shape through {@link
+     * #normalizationDecoder}, never {@link #OUTPUT_ENCODER}: a plain {@code readValue} loses precision
+     * relative to {@link #encodeCapped}'s own {@code WRITE_BIGDECIMAL_AS_PLAIN} encode (see {@link #normalizationDecoder}'s own javadoc for the two ways that showed up on the wire).
      * This still touches
      * {@code value}'s own state (bean getters, {@code toString}, custom serializers) exactly once: the
-     * parse step reads the bytes {@link #encodeCapped} already produced, not {@code value}. An earlier
-     * remediation attempt rejected an independent byte-counting probe ahead of an unbounded {@code
-     * convertValue} because a probe-then-convert shape serializes {@code value} twice, regressing the
-     * already-frozen T020 TP-001 "normalized exactly once" guarantee ({@code
-     * McpOutputPipelineIT#shouldNormalizeAndValidateAStructuredResultOnce}); reusing {@link
-     * #encodeCapped} as the sole serialization step — parsed once, not re-serialized — keeps that
+     * parse step reads the bytes {@link #encodeCapped} already produced, not {@code value}. A
+     * probe-then-convert shape that serializes {@code value} twice would regress the "normalized
+     * exactly once" guarantee ({@code
+     * McpOutputPipelineIT#shouldNormalizeAndValidateAStructuredResultOnce} pins it); reusing {@link
+     * #encodeCapped} as the sole serialization step — parsed once, not re-serialized — preserves that
      * guarantee while also bounding this stage independently of the terminal-message encode in {@link
      * #writeToolResult}.
      *
@@ -2479,12 +2475,12 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * Runs the T020 output stage's schema-validation gate: validates an already-normalized structured
+     * Runs the output stage's schema-validation gate: validates an already-normalized structured
      * value against {@code toolName}'s precompiled output validator, when the tool publishes a
      * structured output schema.
      *
      * <p>Never compiles a schema or a validator here — {@link McpSchemaRegistry} compiled every output
-     * validator exactly once, at composition, alongside the input validators (T009); this call only
+     * validator exactly once, at composition, alongside the input validators; this call only
      * invokes the already-compiled instance. A tool with no declared output schema, or a {@code null}
      * normalized value (a text-only or structured-content-free result), is trivially valid: there is
      * nothing to validate.
@@ -2508,7 +2504,7 @@ final class McpRequestDispatcher {
 
     /**
      * Settles a schema-invalid structured result through the bounded, non-leaking internal-error
-     * fallback (T020): the invalid value is never embedded in a response, so it never reaches the wire,
+     * fallback: the invalid value is never embedded in a response, so it never reaches the wire,
      * and — because {@link #invokeAndRespond} calls this before publishing the output observation — it
      * never reaches a capable session either. Mirrors {@link #writeSseFallback}'s degrade-to-id-less
      * shape, framed as SSE since SSE was already selected before invocation began.
@@ -2520,9 +2516,9 @@ final class McpRequestDispatcher {
      */
     private void writeOutputValidationFailure(
             RoutingContext context, JsonNode envelope, @Nullable SecurityContextSnapshot security, String toolName) {
-        // R12: boundedErrorResponse serializes the id-bearing attempt through the capped stream and
+        // boundedErrorResponse serializes the id-bearing attempt through the capped stream and
         // degrades to the id-less internal error, itself encoded the same bounded way, only when that
-        // attempt also exceeds the cap — replacing the previous materialize-then-measure idiom.
+        // attempt also exceeds the cap.
         byte[] fallback = boundedErrorResponse(envelope.get("id"), INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
         McpRequestTerminalEvent terminal = McpRequestTerminalEvent.failed(
                 startedAt(context),
@@ -2562,7 +2558,7 @@ final class McpRequestDispatcher {
      * already selected in {@link #invokeAndRespond} before this method is ever reached.
      *
      * <p>{@code normalizedStructuredContent} is the already-normalized, already-schema-validated value
-     * {@link #invokeAndRespond} computed exactly once (T020); this method never re-derives it from
+     * {@link #invokeAndRespond} computed exactly once; this method never re-derives it from
      * {@code result.structuredContent()} and never re-serializes the original application value. Every
      * call site that never carries structured content (a schema, input-processing, or interceptor
      * rejection) passes {@code null}, matching {@code result}'s own {@code null} structured content.
@@ -2581,7 +2577,7 @@ final class McpRequestDispatcher {
      * classified {@link McpOutcome#SUCCESS}/{@link McpErrorType#NONE} regardless of which stage called
      * this method.
      *
-     * <p><strong>R04 (closing #426).</strong> {@code coordinator} and {@code toolContext} are non-{@code
+     * <p>{@code coordinator} and {@code toolContext} are non-{@code
      * null} only for the one call site that reaches this method after an actual invocation completed
      * (the caller in {@link #invokeAndRespond}'s {@code result.onComplete} handler); every earlier-stage
      * rejection (malformed arguments, input-schema, input-processing, tool-interceptor) passes {@code
@@ -2589,15 +2585,12 @@ final class McpRequestDispatcher {
      * given, the opt-in {@code onToolOutput} observation is published here — strictly after {@link
      * #encodeCapped} has successfully produced the bounded terminal envelope below, and strictly after
      * {@link #writeSse} reports that this write actually won the coordinator's first-observed-wins
-     * settlement race (repair task R32 defect 3). An earlier revision published unconditionally once
-     * {@code encodeCapped} succeeded — strictly before the {@link #writeSse} call, the only place
-     * {@code beginWrite} ever runs — so a request whose client had already disconnected before the
-     * tool's result resolved still delivered the observation even though {@code beginWrite} was
-     * guaranteed to lose and the write itself was correctly suppressed. This ordering is the actual fix:
-     * an observer only ever receives a value once this write has genuinely committed to being the one
-     * the client's connection is still receiving, never one the cap, the output-schema check (already
-     * run by the caller before this method), or a settlement that beat this write to the coordinator
-     * would still suppress. Gated on {@code coordinator.hasValueObservers()} before the observation is
+     * settlement race. An observer only ever receives a value once this write has genuinely committed
+     * to being the one the client's connection is still receiving, never one the cap, the output-schema
+     * check (already run by the caller before this method), or a settlement that beat this write to the
+     * coordinator would still suppress: a request whose client had already disconnected before the
+     * tool's result resolved never delivers the observation, since {@code beginWrite} for that write is
+     * guaranteed to lose and the write itself is suppressed. Gated on {@code coordinator.hasValueObservers()} before the observation is
      * even constructed, for the same reason {@link #invokeAndRespond}'s {@code onToolInput} publish is:
      * {@link McpToolOutputObservation}'s compact constructor deep-copies the entire normalized result
      * tree.
@@ -2626,7 +2619,7 @@ final class McpRequestDispatcher {
         }
         McpRequestTerminalEvent terminal = toolResultTerminal(context, security, toolName, result, errorType);
         boolean written = writeSse(context, 200, payload, terminal);
-        // R32 defect 3: publish only once this write has actually won beginWrite's settlement race — a
+        // Publish only once this write has actually won beginWrite's settlement race — a
         // prior disconnect/reset settlement means the client never received this value, so no observer
         // may either.
         if (written && coordinator != null && toolContext != null && coordinator.hasValueObservers()) {
@@ -2692,12 +2685,12 @@ final class McpRequestDispatcher {
      * discriminator, the text content items, the optional structured content, the {@code isError}
      * flag, and the mandatory server-identity {@code _meta}.
      *
-     * <p>Embeds {@code normalizedStructuredContent} — the T020 single-pass normalized value — rather
+     * <p>Embeds {@code normalizedStructuredContent} — the single-pass normalized value — rather
      * than {@code result.structuredContent()}: converting the already-normalized bounded
      * {@code Map}/{@code List}/scalar tree to a {@link JsonNode} is a structural copy, never a second
      * serialization pass over the original application object.
      *
-     * <p><strong>R07 item 4 (security review).</strong> {@code structuredContent} is attached via
+     * <p>{@code structuredContent} is attached via
      * {@link ObjectNode#putPOJO}, not {@link ObjectMapper#valueToTree}: {@code valueToTree} (and {@code
      * convertValue(..., JsonNode.class)}, which shares the same code path) materializes a real {@code
      * BigDecimal}-typed value through Jackson's {@code TokenBuffer}-backed tree construction, which —
@@ -2710,7 +2703,7 @@ final class McpRequestDispatcher {
      * WRITE_BIGDECIMAL_AS_PLAIN}) — so no intermediate tree-node materialization ever touches the
      * value's numeric precision.
      *
-     * <p><strong>R37 (review finding C4).</strong> Upstream MCP's {@code CallToolResult} SHOULD carry
+     * <p>Upstream MCP's {@code CallToolResult} SHOULD carry
      * text content even when structured content is present, for backwards compatibility with clients
      * that only read {@code content}. When the handler contributed no text of its own ({@code
      * result.textContent()} is empty) and structured content exists, this method appends exactly one
@@ -2764,11 +2757,11 @@ final class McpRequestDispatcher {
 
     /**
      * Renders {@code normalizedStructuredContent} as canonical JSON text for {@link
-     * #toolCallResponse}'s R37 duplicated text item, through the exact same {@link #OUTPUT_ENCODER}
+     * #toolCallResponse}'s duplicated text item, through the exact same {@link #OUTPUT_ENCODER}
      * instance {@code putPOJO}'s deferred {@code structuredContent} serialization uses — so the two
      * representations of the same already-normalized value can never diverge in spelling.
      *
-     * @param normalizedStructuredContent the T020 single-pass normalized value; never {@code null}
+     * @param normalizedStructuredContent the single-pass normalized value; never {@code null}
      * @return the canonical JSON serialization of {@code normalizedStructuredContent}
      */
     private static String canonicalStructuredText(Object normalizedStructuredContent) {
@@ -2806,8 +2799,9 @@ final class McpRequestDispatcher {
             String toolName,
             Throwable cause,
             McpErrorType errorType) {
-        // cause is deliberately never read (see writeDispatchByMethodFailure's identical note). R12:
-        // boundedErrorResponse replaces the previous materialize-then-measure idiom.
+        // cause is deliberately never read (see writeDispatchByMethodFailure's identical note).
+        // boundedErrorResponse serializes through the capped stream rather than materializing the
+        // full response before measuring it.
         byte[] fallback = boundedErrorResponse(envelope.get("id"), INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
         McpRequestTerminalEvent terminal = McpRequestTerminalEvent.failed(
                 startedAt(context),
@@ -2833,7 +2827,7 @@ final class McpRequestDispatcher {
      *
      * @return {@code true} when this call won the coordinator's first-observed-wins settlement race
      *     and the write proceeded, {@code false} when a prior settlement already claimed it and this
-     *     write was suppressed (repair task R32 defect 3 — {@link #writeToolResult} uses this to gate
+     *     write was suppressed ({@link #writeToolResult} uses this to gate
      *     its output observation)
      */
     private static boolean writeSse(
@@ -2856,7 +2850,7 @@ final class McpRequestDispatcher {
      * A cancellation signal that is never cancelled, used only as the defensive fallback for a null
      * completion coordinator ({@link #invokeAndRespond} above) — the same null-guard every other
      * coordinator use in this class already applies. Every ordinarily admitted request instead
-     * receives {@link McpCompletionCoordinator#cancellation()} (T013), which fires on disconnect,
+     * receives {@link McpCompletionCoordinator#cancellation()}, which fires on disconnect,
      * reset, or a failed write. {@link #cancelled()} returns a future backed by a {@link Promise} that
      * is deliberately never completed, matching the interface's "never completed otherwise" contract.
      */
@@ -2914,24 +2908,21 @@ final class McpRequestDispatcher {
      * with it. Each settlement drives the coordinator's first-observed-wins guard, so a hook that fires
      * after a normal write is suppressed. MCP arms no whole-request timer of its own: transport liveness
      * is shared {@link HttpConfig} idle/read/write timeout behavior, so an idle or slow connection is
-     * closed by the shared HTTP layer and reaches this same hook (T007), classified as transport
+     * closed by the shared HTTP layer and reaches this same hook, classified as transport
      * cancellation rather than a distinct timeout.
      *
-     * <p><strong>R14 item 5 — why not the response handlers.</strong> This previously called {@code
-     * context.response().closeHandler(...)} and {@code .exceptionHandler(...)}. Both are single-slot
-     * setters: last writer wins. Vert.x Web's {@code RoutingContextImpl} installs its <em>own</em>
-     * response {@code endHandler}, {@code exceptionHandler} and {@code closeHandler} the first time
-     * anything calls {@code addEndHandler} — which {@link RequestContextLifecycle} does, first, for
-     * every request — so registering here silently replaced Vert.x Web's, and every routing-context end
-     * handler stopped firing on this mount for a disconnect or a reset. The victim was {@link
+     * <p><strong>Why not the response handlers.</strong> {@code context.response().closeHandler(...)}
+     * and {@code .exceptionHandler(...)} are single-slot setters: last writer wins. Vert.x Web's {@code
+     * RoutingContextImpl} installs its <em>own</em> response {@code endHandler}, {@code exceptionHandler}
+     * and {@code closeHandler} the first time anything calls {@code addEndHandler} — which {@link
+     * RequestContextLifecycle} does, first, for every request — so registering through those single-slot
+     * setters here would silently replace Vert.x Web's, and every routing-context end handler would stop
+     * firing on this mount for a disconnect or a reset, including {@link
      * RequestContextLifecycle.Handle#closeAll()}: the correlation binding {@link #bindCorrelation}
-     * registers with it, and every other holder binding on the request, were never torn down when a
-     * client vanished. Not cross-request contamination — those bindings live in duplicated-context
-     * storage that dies with the request — but the framework's cleanup contract was disabled here, and
-     * R09's javadoc claiming teardown on "a client disconnect, or a stream reset" was false. Measured
-     * against a real Vert.x 5.1.6 server rather than assumed: with the response handlers overwritten,
-     * neither {@code addEndHandler} nor {@code closeAll} ran for an orderly FIN close or a hard RST;
-     * without the overwrite, both ran for both. {@code McpDisconnectCleanupIT} pins it.
+     * registers with it, and every other holder binding on the request, would never be torn down when a
+     * client vanished. Registering through {@code addEndHandler} instead, which is multicast, keeps both
+     * Vert.x Web's own handlers and this settlement hook firing for every exit path.
+     * {@code McpDisconnectCleanupIT} pins it against a real Vert.x 5.1.6 server.
      *
      * <p><strong>Classification.</strong> The same measurement fixes the transport outcome, which the
      * single {@code AsyncResult} must now carry rather than two separate handlers: Vert.x 5.1.6
@@ -2963,12 +2954,12 @@ final class McpRequestDispatcher {
      * Synthesizes the cancelled terminal facts for a disconnect, reset, or timeout settlement from the
      * captured request facts.
      *
-     * <p>Repair task R48 (W3): the reported method and tool name are the identity this dispatcher had
+     * <p>The reported method and tool name are the identity this dispatcher had
      * legitimately already established at the point of settlement — {@link #classifiedMethodOf} and
      * {@link #resolvedToolNameOf} — never an invented value and never the caller-supplied raw tool-name
      * string. A settlement that lands before {@link #dispatch} ever classified the method, or before
      * {@link #writeToolsCall} ever resolved a tool, still reports {@link McpMethod#OTHER}/{@link
-     * McpRequestTerminalEvent#UNKNOWN_TOOL_NAME} — exactly their pre-R48 fallback values — because
+     * McpRequestTerminalEvent#UNKNOWN_TOOL_NAME}, because
      * those two accessors themselves fall back to them.
      *
      * @param context the request context whose established security snapshot is captured
@@ -3010,18 +3001,14 @@ final class McpRequestDispatcher {
      * {@code -32600}, unknown method to {@code -32601} — and produces the canonical, non-leaking error
      * bytes. The emitted HTTP status is derived from that same code, so status and body always agree.
      * A structurally valid but not-yet-exposed supported method (tools/list, tools/call) has no
-     * classified codec error and settles through the bounded internal-error response; the tool surface
-     * arrives in T006/T007.
+     * classified codec error and settles through the bounded internal-error response.
      *
      * <p>Builds the error node from {@code decoded}'s own already-classified id, code, and message —
      * never by re-analyzing the raw body a second time (that classification is {@link #dispatch}'s one
      * {@code codec.decodeEnvelope} call, reused here, not repeated) — and serializes it exactly once
-     * through the capped stream {@link #encodeCapped} every other terminal writer in this class uses
-     * (R12, merge blocker 5). The earlier revision here called {@link McpProtocolCodec#errorResponseFor},
-     * an unrestricted {@code writeValueAsBytes}, and only then compared the completed array's length
-     * against the cap: this is the "ordinary protocol errors have the same defect" finding named
-     * alongside the negotiation-rejection defect this same repair slice fixes in {@link
-     * #writePreDispatchProtocolRejection}. {@link McpProtocolCodec#errorResponseFor} itself is unchanged and
+     * through the capped stream {@link #encodeCapped} every other terminal writer in this class uses,
+     * so a large client-controlled id can never allocate the full response before the cap is checked.
+     * {@link McpProtocolCodec#errorResponseFor} itself is unchanged and
      * still used directly by {@code McpGoldenWireTest} to pin the codec's own wire-format bytes.
      *
      * @param context the request context
@@ -3070,7 +3057,7 @@ final class McpRequestDispatcher {
     /**
      * The shared JSON-RPC-code-to-HTTP-status mapping. {@code INVALID_PARAMS} ({@code -32602}) maps to
      * {@code 400} here — once, in this one shared factory — so a denied tool, an unknown tool, and an
-     * invalid cursor all resolve the same status alongside the same response body (issue #420);
+     * invalid cursor all resolve the same status alongside the same response body;
      * splitting the mapping per call site would reinstate an existence oracle.
      */
     private static int httpStatusFor(int protocolCode) {
@@ -3118,13 +3105,13 @@ final class McpRequestDispatcher {
                         correlationOf(context)));
     }
 
-    // T013 TP-002: package-private (not private) so McpWritePhaseSettlementTest can drive this exact
+    // Package-private (not private) so McpWritePhaseSettlementTest can drive this exact
     // write path directly, stubbing HttpServerResponse#end(...) to return a Promise-backed future the
-    // test owns and completes explicitly — no socket, no timing dependency. This is the only visibility
-    // change; the write orchestration itself (beginWrite before the byte write, finishWrite after) is
-    // unchanged from the T004/P03 behavior. The boolean return (repair task R32 defect 3) reports only
-    // whether this call won beginWrite's settlement race and the write proceeded — every pre-existing
-    // caller ignores it exactly as it ignored the previous void return; only writeSse/writeToolResult
+    // test owns and completes explicitly — no socket, no timing dependency. The write orchestration
+    // itself (beginWrite before the byte write, finishWrite after) does not depend on this visibility.
+    // The boolean return reports only
+    // whether this call won beginWrite's settlement race and the write proceeded — most callers
+    // ignore it; only writeSse/writeToolResult
     // observe it, to gate the output observation on the write having actually won.
     static boolean write(RoutingContext context, int status, @Nullable byte[] body, McpRequestTerminalEvent terminal) {
         McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
@@ -3132,7 +3119,7 @@ final class McpRequestDispatcher {
         // the shared first-observed latch. If a settlement (disconnect or reset) already won, the
         // client-visible write is superseded and must be suppressed — otherwise a slow handler's late
         // write would reach a client the shared HttpConfig liveness timeout already abandoned.
-        // The admission-rejection path (W4) has no coordinator and writes directly with no
+        // The admission-rejection path has no coordinator and writes directly with no
         // terminal/observation. A slow client (e.g. a stopped TCP receive window) can leave this
         // end(buffer) future pending indefinitely, so the write phase CAN stall. That is not left
         // unbounded PROVIDED the shared HttpConfig liveness bound is actually armed: the
@@ -3149,7 +3136,7 @@ final class McpRequestDispatcher {
         if (coordinator != null && !coordinator.beginWrite(terminal)) {
             return false;
         }
-        // R52 (repair task R52 "audit capture parity"): raw response-side evidence, published on the
+        // Raw response-side evidence, published on the
         // mcp.tool.call surface only, immediately before the bytes below reach the wire — the single
         // shared terminal writer, so every settlement path that produces a response (success, a
         // bounded error, or a rejection) is covered. Gated on hasRawEvidenceObservers() exactly like
@@ -3187,7 +3174,7 @@ final class McpRequestDispatcher {
      * Builds the {@code {jsonrpc, id, error:{code, message}}} JSON-RPC error node every bounded error
      * writer in this class shares, mirroring {@link McpProtocolCodec}'s own private {@code encodeError}
      * field order exactly ({@code jsonrpc}, {@code id}, {@code error} — {@code code}, {@code message})
-     * so a caller that switches from that codec method to this one (R12) produces byte-identical output
+     * so a caller that switches from that codec method to this one produces byte-identical output
      * for the same facts.
      *
      * @param id the request id to echo, or {@code null} to build the id-less shape
@@ -3211,19 +3198,18 @@ final class McpRequestDispatcher {
      * through the same {@link CappedOutputStream} {@link #encodeCapped} already uses for every success
      * payload, degrading to the always-fitting id-less {@link #INTERNAL_ERROR}/{@link
      * #INTERNAL_ERROR_MESSAGE} shape — itself encoded the same bounded way, never assumed to fit without
-     * going through the cap — only when the with-id shape would exceed {@code mcp.output.maxBytes} (R12,
-     * merge blocker 5).
+     * going through the cap — only when the with-id shape would exceed {@code mcp.output.maxBytes}.
      *
-     * <p>Replaces the idiom every error-writing path in this class previously shared: build the full
-     * response through {@link McpProtocolCodec#errorResponseFor} or {@link
-     * McpProtocolCodec#internalFallback} — both an unrestricted {@code writeValueAsBytes} — then compare
-     * the <em>completed</em> array's length against the cap. That idiom always allocated the whole
-     * response, id included, before the promised cap could ever apply: a large client-controlled id (the
-     * only unbounded element in any of these shapes) forced the full allocation regardless of how it was
-     * eventually classified. Those two codec methods are unchanged and still used directly by {@code
-     * McpGoldenWireTest} and {@code McpCodecFailureTest} to pin the codec's own wire-format bytes, which
-     * have no {@code mcp.output.maxBytes} to honor; this dispatcher no longer calls either of them for any
-     * client-facing write — every terminal writer below builds and encodes its own error node instead.
+     * <p>Every error-writing path in this class builds and encodes its own error node this way rather
+     * than through {@link McpProtocolCodec#errorResponseFor} or {@link
+     * McpProtocolCodec#internalFallback} — both an unrestricted {@code writeValueAsBytes} that only
+     * compares the <em>completed</em> array's length against the cap after fully allocating it, so a
+     * large client-controlled id (the only unbounded element in any of these shapes) would force the
+     * full allocation before the cap could ever apply. Those two codec methods remain unchanged and are
+     * still used directly by {@code McpGoldenWireTest} and {@code McpCodecFailureTest} to pin the
+     * codec's own wire-format bytes, which have no {@code mcp.output.maxBytes} to honor; this dispatcher
+     * never calls either of them for a client-facing write — every terminal writer below builds and
+     * encodes its own error node instead.
      *
      * @param id the request id to echo, or {@code null} to build the id-less shape directly
      * @param code the final-spec or implementation-defined JSON-RPC error code
@@ -3248,7 +3234,7 @@ final class McpRequestDispatcher {
      * Encodes a value to canonical UTF-8 bytes, bounding the output at {@code mcp.output.maxBytes} as
      * bytes are produced rather than after the full byte array is materialized. Accepts any
      * Jackson-serializable value — a {@link JsonNode} response envelope (every terminal writer) or a
-     * handler's raw structured-content object ({@link #normalizeStructuredContent}, R04) — so the same
+     * handler's raw structured-content object ({@link #normalizeStructuredContent}) — so the same
      * single mechanism bounds both halves contract §4.3 names: normalization of an application
      * structured value, and the complete terminal message.
      *
@@ -3312,7 +3298,7 @@ final class McpRequestDispatcher {
     /**
      * Signals that a response exceeded {@code mcp.output.maxBytes} while being serialized.
      *
-     * <p><strong>R34/W13 adjudication:</strong> this sentinel never escapes {@link
+     * <p>This sentinel never escapes {@link
      * McpRequestDispatcher} during real request handling — every catch site in this class converts it
      * into a bounded {@code isError} or internal-fallback response before returning, and it is never
      * rethrown past this class. It does not, however, take the standard's {@code private} inner-sentinel

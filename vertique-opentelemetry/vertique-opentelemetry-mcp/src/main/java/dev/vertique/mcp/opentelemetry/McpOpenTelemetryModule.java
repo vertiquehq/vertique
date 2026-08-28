@@ -9,8 +9,8 @@ import dagger.multibindings.IntoSet;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 
 /**
- * Dagger module that contributes the OpenTelemetry MCP server-span observer via multibinding (T022,
- * contract §4.10).
+ * Dagger module that contributes the OpenTelemetry MCP server-span observer via multibinding
+ * (contract §4.10).
  *
  * <p>The only public type in {@code vertique-opentelemetry-mcp}; {@link McpServerSpanObserver} stays
  * package-private per the frozen type inventory.

@@ -5,7 +5,7 @@ package dev.vertique.mcp.lifecycle;
 
 /**
  * Opt-in capability a per-request {@link McpRequestObservation} session may implement to bracket the
- * synchronous completion dispatch loop with an ambient scope (repair R06, issue #435; contract
+ * synchronous completion dispatch loop with an ambient scope (contract
  * §4.10).
  *
  * <p>The motivating use is the Micrometer exemplar obligation the frozen contract freezes: "when a

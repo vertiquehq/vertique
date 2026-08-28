@@ -5,7 +5,7 @@ package dev.vertique.mcp.lifecycle;
 
 /**
  * Opt-in capability a per-request {@link McpRequestObservation} session may implement to also
- * receive the bounded, normalized value tree of a {@code tools/call} invocation (T018, contract
+ * receive the bounded, normalized value tree of a {@code tools/call} invocation (contract
  * §4.4).
  *
  * <p>Least privilege is structural, not a runtime check: the server sends a tool-value callback

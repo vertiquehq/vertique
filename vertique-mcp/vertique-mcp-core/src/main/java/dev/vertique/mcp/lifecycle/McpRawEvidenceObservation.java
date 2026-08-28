@@ -7,8 +7,7 @@ package dev.vertique.mcp.lifecycle;
  * Opt-in capability a per-request {@link McpRequestObservation} session may implement to also receive
  * raw, unredacted request/response evidence — body bytes, headers, and the two per-request identifying
  * facts (the client-supplied JSON-RPC id and the caller's principal id) — below the neutral,
- * payload-free {@link McpRequestObservation}/{@link McpToolValueObservation} contract (R52, repair
- * task R52 "audit capture parity").
+ * payload-free {@link McpRequestObservation}/{@link McpToolValueObservation} contract.
  *
  * <p>Least privilege is structural, exactly like {@link McpToolValueObservation}: the server delivers
  * {@link #onRequestAdmitted}/{@link #onResponseWritten} only to a session whose {@link

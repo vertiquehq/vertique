@@ -24,7 +24,7 @@ import java.util.Deque;
 import java.util.Iterator;
 
 /**
- * Bounded Jackson JSON-RPC envelope codec for the MCP wire layer (T007).
+ * Bounded Jackson JSON-RPC envelope codec for the MCP wire layer.
  *
  * <p>Decodes exactly one complete JSON value and rejects — with a bounded, classified {@link Result}
  * and no partial value — any input that carries duplicate object keys, trailing tokens after a
@@ -32,11 +32,10 @@ import java.util.Iterator;
  * name, an over-large document, or invalid UTF-8 (including a well-formed-looking but non-shortest
  * "overlong" encoding, which {@link #decode} rejects with a strict pre-parse gate before Jackson's own
  * more permissive UTF-8 decoding ever runs — see {@link #rejectsInvalidUtf8}). Every other bound is
- * enforced by Jackson's own {@link StreamReadConstraints} rather than a handcrafted reader: this class
- * replaces the T003/T004 handcrafted strict JSON reader and the four generic JSON-limit configuration
- * properties it enforced. The generic shape constraints remain frozen by the T007 contract amendment
- * so the codec cannot silently inherit changed Jackson defaults; R18 makes only {@code maxTokenCount}
- * consumer-configurable through {@code mcp.ingressMaxTokens}.
+ * enforced by Jackson's own {@link StreamReadConstraints} rather than a handcrafted reader.
+ * The generic shape constraints stay frozen
+ * so the codec cannot silently inherit changed Jackson defaults; only {@code maxTokenCount} is
+ * consumer-configurable, through {@code mcp.ingressMaxTokens}.
  *
  * <ul>
  *   <li>{@code maxNestingDepth} 1000 — matches Jackson's own default, restated explicitly.
@@ -51,7 +50,7 @@ import java.util.Iterator;
  * </ul>
  *
  * <p>{@link StreamReadFeature#STRICT_DUPLICATE_DETECTION} and {@link
- * DeserializationFeature#FAIL_ON_TRAILING_TOKENS} are enabled. The T003 {@link java.math.BigDecimal}
+ * DeserializationFeature#FAIL_ON_TRAILING_TOKENS} are enabled. The {@link java.math.BigDecimal}
  * scale-magnitude hardening cap is retained as a fixed internal constant, applied after decode: it is
  * not expressible through {@link StreamReadConstraints}, but guards the same out-of-memory
  * plain-form-encode vector the encoder's {@code WRITE_BIGDECIMAL_AS_PLAIN} guard rejects.
@@ -69,7 +68,7 @@ final class McpEnvelopeJsonCodec {
 
     /**
      * Fixed internal cap on the magnitude of a decimal's scale, aligned exactly with the encoder's
-     * {@code WRITE_BIGDECIMAL_AS_PLAIN} plain-form guard (retained unchanged from the T003 hardening).
+     * {@code WRITE_BIGDECIMAL_AS_PLAIN} plain-form guard.
      * Jackson's {@code GeneratorBase} rejects a plain-form encode when {@code scale < -9999 ||
      * scale > 9999}, so the codec's admitted set is the encoder's safe set precisely when it rejects a
      * scale magnitude greater than this bound. A short token such as {@code 1e999999999} passes the
@@ -103,7 +102,7 @@ final class McpEnvelopeJsonCodec {
                 .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
                 // Preserve exact BigDecimal lexical precision for a floating-point token (no lossy
                 // double rounding) and keep its exact scale (no trailing-zero normalization), matching
-                // the T003 hardening's lossless round-trip requirement. Replaces the deprecated
+                // the lossless round-trip requirement. Replaces the deprecated
                 // JsonNodeFactory.withExactBigDecimals(true).
                 .enable(JsonNodeFeature.USE_BIG_DECIMAL_FOR_FLOATS)
                 .disable(JsonNodeFeature.STRIP_TRAILING_BIGDECIMAL_ZEROES)

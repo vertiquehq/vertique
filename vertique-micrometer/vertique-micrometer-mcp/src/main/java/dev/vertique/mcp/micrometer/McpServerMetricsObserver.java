@@ -24,7 +24,7 @@ import lombok.extern.slf4j.Slf4j;
 
 /**
  * {@link McpRequestLifecycleObserver} implementation that records MCP server outcomes as Micrometer
- * meters (T021, contract §4.10).
+ * meters (contract §4.10).
  *
  * <p>Contributed to the {@link McpRequestLifecycleObserver} multibinding by {@link
  * McpMicrometerModule}. {@link #open} increments the untagged {@value #ACTIVE_GAUGE} gauge; the

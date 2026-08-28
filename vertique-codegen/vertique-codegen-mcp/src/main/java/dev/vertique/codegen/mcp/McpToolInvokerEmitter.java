@@ -98,7 +98,7 @@ import javax.lang.model.type.TypeMirror;
  * }
  * }</pre>
  *
- * <p><strong>Carrier and metadata (T008).</strong> Every carrier component is named positionally
+ * <p><strong>Carrier and metadata.</strong> Every carrier component is named positionally
  * ({@code argument0}, {@code argument1}, ...) so it can never collide regardless of the declared
  * protocol names, and carries {@code @JsonProperty(protocolName)} plus the parameter's resolved
  * final REST-effective {@code @Canonicalize}/{@code @Sanitize} base chain (never {@code @Skip*}),
@@ -120,7 +120,7 @@ import javax.lang.model.type.TypeMirror;
  * wire-to-Java field name resolver, stage 3 materialization through {@code McpToolRuntime
  * #materializeArguments}, and stage 4 Bean Validation through {@code McpBeanValidation#validate}, routed
  * through the constructor-injected {@code Optional<jakarta.validation.Validator>} when the application's
- * Dagger graph binds one (R38/W7, {@code McpServerModule}'s {@code @BindsOptionalOf Validator}) and
+ * Dagger graph binds an optional {@code @BindsOptionalOf Validator} and
  * falling back to {@code vertique-mcp-core}'s zero-config default otherwise. A
  * stage 2–4 failure is signalled by the public {@code dev.vertique.mcp.tool.McpInputRejectionException}
  * carrying a fixed, non-interpolated literal message — never a Bean Validation
@@ -323,8 +323,8 @@ final class McpToolInvokerEmitter {
                                 + "@param $L builds this tool's schema-and-mapper runtime binding once, during\n"
                                 + "    composition\n"
                                 + "@param $L the mandatory stage-2 canonicalization/sanitization engine\n"
-                                + "@param $L the optional application-bound stage-4 Bean Validation {@code Validator}\n"
-                                + "    (R38/W7); empty falls back to {@code McpBeanValidation}'s zero-config default\n",
+                                + "@param $L the optional application-bound stage-4 Bean Validation {@code Validator};\n"
+                                + "    empty falls back to {@code McpBeanValidation}'s zero-config default\n",
                         TOOL_FIELD,
                         RUNTIMES_PARAM,
                         INPUT_PROCESSOR_FIELD,
@@ -458,8 +458,8 @@ final class McpToolInvokerEmitter {
         prepare.endControlFlow();
 
         // Stage 4 — Bean Validation on the materialized carrier (contract §4.7 point 4), routed through
-        // the constructor-injected Optional<Validator> when the application's Dagger graph binds one
-        // (R38/W7), falling back to McpBeanValidation's zero-config default otherwise. The rejection
+        // the constructor-injected Optional<Validator> when the application's Dagger graph binds one,
+        // falling back to McpBeanValidation's zero-config default otherwise. The rejection
         // message is a fixed literal, never a ConstraintViolation#getMessage(): Hibernate Validator
         // interpolates message templates through EL, and the dispatcher returns this text verbatim.
         prepare.beginControlFlow(
@@ -714,7 +714,7 @@ final class McpToolInvokerEmitter {
         }
     }
 
-    // --- OptionalProbe canary (contract §4.1, issue #428) ---
+    // --- OptionalProbe canary (contract §4.1) ---
 
     /**
      * Returns {@code true} when {@code model} declares at least one schema parameter whose erasure is

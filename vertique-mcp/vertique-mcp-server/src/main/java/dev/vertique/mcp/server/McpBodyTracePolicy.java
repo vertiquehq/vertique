@@ -6,12 +6,12 @@ package dev.vertique.mcp.server;
 /**
  * Governs whether the MCP request body's optional W3C trace reference ({@code
  * params._meta.traceparent}/{@code tracestate}) is parsed at all, and whether a distinct extracted
- * reference is linked onto the request's OpenTelemetry span (repair task R51).
+ * reference is linked onto the request's OpenTelemetry span.
  *
  * <p>Mirrors Vert.x's own {@code TracingPolicy} default-off posture: the body reference is
  * client-supplied and, absent a trusted upstream gateway, carries exactly the same trust posture as
  * an inbound HTTP {@code traceparent} header from an anonymous caller — untrusted, link-only data
- * that must never enter an identity, authorization, or tenancy decision (D004; repair task R47).
+ * that must never enter an identity, authorization, or tenancy decision (D004).
  * Configured via {@code mcp.bodyTracePolicy}.
  */
 public enum McpBodyTracePolicy {
@@ -27,7 +27,7 @@ public enum McpBodyTracePolicy {
     IGNORE,
 
     /**
-     * Today's (repair task R39) extraction behavior: a bounded, syntactically-validated {@code
+     * The current extraction behavior: a bounded, syntactically-validated {@code
      * traceparent}/{@code tracestate} pair is extracted at most once per request and, when its trace
      * id differs from the request's own HTTP-established trace, linked onto the request's
      * OpenTelemetry span. Appropriate for a deployment behind a header-cleaning gateway, or one that

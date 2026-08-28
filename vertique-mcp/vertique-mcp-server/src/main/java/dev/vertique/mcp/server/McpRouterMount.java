@@ -48,7 +48,7 @@ final class McpRouterMount implements RouterMount {
     /**
      * As the seven-argument constructor above, but additionally threads the optional core {@link
      * Authorizer} so mount validation can reject a registry that publishes an {@code @RequiresAction}
-     * tool with no engine installed (issue #421). {@link McpServerModule#routerMount} — the one real
+     * tool with no engine installed. {@link McpServerModule#routerMount} — the one real
      * production mount point — calls this overload; the seven-argument overload is the pre-existing
      * convenience form for callers (chiefly this module's own test fixtures) that never register an
      * action-gated tool, and is exactly equivalent to passing {@link Optional#empty()} here.
@@ -70,12 +70,12 @@ final class McpRouterMount implements RouterMount {
         this.dispatcher = dispatcher;
         this.httpConfig = httpConfig;
         // The three-argument (registry-visibility, §4.5), HttpConfig-liveness-gate, and
-        // no-authorizer-for-@RequiresAction (issue #421) rules all matter only at the one real
+        // no-authorizer-for-@RequiresAction rules all matter only at the one real
         // production mount point: this constructor. Test fixtures that exercise a narrower slice of
         // McpServerConfigValidator call its narrower overloads directly.
         configValidator.validate(config, routeAuthHandlers, toolRegistry, httpConfig, authorizer);
         if (config.enabled() && toolRegistry.invokersByName().isEmpty()) {
-            // Gated behind config.enabled() (repair task R48, S1): an empty registry is valid
+            // Gated behind config.enabled(): an empty registry is valid
             // composition (an unconfigured registry with no tools is allowed, see
             // McpServerConfigValidator), but it is never what an application publishing @McpTool
             // methods intended, so both likely root causes are named here rather than left for the
@@ -121,12 +121,11 @@ final class McpRouterMount implements RouterMount {
         // runs before the sub-router and materialises multipart parts on disk; the cleanup call is
         // delegated to the root routing context, so it deletes those ancestor-spooled uploads too, even
         // for a request cheap admission goes on to reject. Routing context end handlers cover normal
-        // completion, failures, and connection/stream resets (see JaxRsRouterMount) — a claim that was
-        // false on this mount until R14 item 5: McpRequestDispatcher#registerSettlementHooks used to
-        // overwrite the single-slot response close/exception handlers Vert.x Web's routing context
-        // installs to drive those end handlers, so none of them fired on a disconnect or a reset, this
-        // upload cleanup included. Settlement now uses the multicast addEndHandler instead, which
-        // restores the coverage this comment claims; McpDisconnectCleanupIT pins it. This handler reads
+        // completion, failures, and connection/stream resets (see JaxRsRouterMount).
+        // McpRequestDispatcher#registerSettlementHooks registers through the multicast addEndHandler,
+        // rather than Vert.x Web's own single-slot response close/exception handlers, so every end
+        // handler — including this upload cleanup — fires on a disconnect or a reset too;
+        // McpDisconnectCleanupIT pins it. This handler reads
         // no body itself, so mounting it ahead of cheap admission does not reopen the body-consumption
         // gap that admission ordering exists to close.
         router.route().order(Integer.MIN_VALUE).handler(context -> {

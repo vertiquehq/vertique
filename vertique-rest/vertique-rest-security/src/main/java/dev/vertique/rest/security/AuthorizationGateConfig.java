@@ -11,19 +11,19 @@ import jakarta.annotation.Nullable;
 /**
  * Configuration record bounding every {@link SecurityPolicyEnforcer#decide} role/scope and action
  * gate future with an operator-configured deadline, deserialized from the {@code security.authz}
- * section of the application config via {@link dev.vertique.core.config.ConfigParser} (issue #417,
- * R42 — the deferred configurability half of R01/R07's fail-closed gate-timeout fix).
+ * section of the application config via {@link dev.vertique.core.config.ConfigParser}.
  *
  * <p>{@link SecurityModule} (via {@link AuthModule}) declares {@code Optional<AuthorizationGateConfig>}
  * via {@code @BindsOptionalOf}, defaulting to {@link #defaults()} when no application or config
  * module binds one — an application need not install anything extra to get the framework's
- * {@link #DEFAULT_GATE_DEADLINE_MS} bound, byte-identical to the pre-R42 hardcoded constant.
+ * {@link #DEFAULT_GATE_DEADLINE_MS} bound.
  * {@link AuthorizationGateConfigModule} is the opt-in companion that config-drives this value from
  * {@code security.authz.gateDeadlineMs} instead of the hardcoded default.
  *
- * <p>The same {@link SecurityPolicyEnforcer} instance enforces REST (via {@code AuthorizationContributor}),
- * WebSocket (via {@code WebSocketMount}), and MCP (via {@code McpPolicyEnforcer}, which wraps this
- * class) authorization gates — so this is a single knob across all three transports; there is no
+ * <p>{@link SecurityPolicyEnforcer} enforces REST (via {@code AuthorizationContributor}),
+ * WebSocket, and MCP authorization gates — each transport wraps its own {@link
+ * SecurityPolicyEnforcer} instance with this same gate deadline — so this is a single knob across
+ * all three transports; there is no
  * per-transport override.
  *
  * <p>Config path: {@code security.authz} — for example:

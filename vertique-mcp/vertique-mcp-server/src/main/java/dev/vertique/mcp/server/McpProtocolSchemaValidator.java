@@ -22,7 +22,7 @@ import java.util.Map;
 /**
  * Compiles and runs {@code params} validation against the pinned official per-method request
  * schema (contract §4.9 — {@code schema/2026-07-28/schema.json}, upstream commit {@code
- * aa7306efa4dcc03a2a9f2f223e3b2d7a0c5f3ded}), closing R08 (merge blocker 1): {@link
+ * aa7306efa4dcc03a2a9f2f223e3b2d7a0c5f3ded}): {@link
  * McpProtocolCodec#validateOfficialParams} is the sole official-schema boundary, so structurally
  * invalid {@code cursor}, {@code name}, or {@code arguments} values are rejected before
  * negotiation, interceptors, tool lookup, or authorization.

@@ -92,7 +92,7 @@ import lombok.extern.slf4j.Slf4j;
  * <p>Used by both {@link AuthorizationContributor} (JAX-RS routes) and the WebSocket module for
  * consistent authorization enforcement across transports — but not as one shared instance.
  * {@link AuthorizationContributor} injects the single Dagger {@code @Singleton} this class declares
- * above; {@code WebSocketMount.Factory} constructs its own, separate instance from the same
+ * above; the WebSocket transport's own factory constructs its own, separate instance from the same
  * constructor arguments (including the same operator-configured {@link AuthorizationGateConfig}), so
  * each transport enforces identically-configured policy through its own instance, not a shared one.
  */
@@ -119,20 +119,20 @@ public class SecurityPolicyEnforcer {
     /**
      * The bound, in milliseconds, on every {@link #decide} gate future — {@link
      * AuthorizationGateConfig#DEFAULT_GATE_DEADLINE_MS} by default, operator-configurable via the
-     * {@code security.authz} config section (issue #417, R42).
+     * {@code security.authz} config section.
      */
     private final long gateDeadlineMs;
 
     /**
-     * Creates a new enforcer with the framework-default {@link AuthorizationGateConfig} (issue
-     * #417's fixed pre-R42 deadline, byte-identical to before R42). Equivalent to the eight-argument
+     * Creates a new enforcer with the framework-default {@link AuthorizationGateConfig}.
+     * Equivalent to the eight-argument
      * constructor with {@link Optional#empty()} for {@code authorizationGateConfig}.
      *
      * <p>Not {@code @Inject}-annotated — hand-wiring call sites (chiefly tests) that do not need to
-     * thread a configured deadline use this overload. {@code WebSocketMount.Factory} still
-     * hand-constructs its own {@link SecurityPolicyEnforcer} instance — that never changed at R42 —
-     * but always through the eight-argument constructor below, threading the same operator-configured
-     * {@link AuthorizationGateConfig} REST and MCP use, not this deadline-less overload. Dagger itself
+     * thread a configured deadline use this overload. A transport that hand-constructs its own
+     * {@link SecurityPolicyEnforcer} instance
+     * always does so through the eight-argument constructor below, threading the same operator-configured
+     * {@link AuthorizationGateConfig} every transport uses, not this deadline-less overload. Dagger itself
      * always resolves the eight-argument constructor too.
      *
      * @param authorizationDecisionPoint optional app-provided async decision point; takes precedence
@@ -174,12 +174,12 @@ public class SecurityPolicyEnforcer {
 
     /**
      * As the seven-argument constructor above, but with an explicit, operator-configurable {@link
-     * #decide} gate deadline instead of the framework default (issue #417, R42).
+     * #decide} gate deadline instead of the framework default.
      *
      * <p>{@code @Inject}-constructed instances receive {@code Optional<AuthorizationGateConfig>} —
      * empty unless the application installs {@link AuthorizationGateConfigModule} (or binds {@link
      * AuthorizationGateConfig} some other way), in which case it defaults to {@link
-     * AuthorizationGateConfig#defaults()} (byte-identical to the pre-R42 hardcoded constant).
+     * AuthorizationGateConfig#defaults()}.
      *
      * @param authorizationDecisionPoint optional app-provided async decision point; takes precedence
      *                                   over everything else
@@ -395,7 +395,7 @@ public class SecurityPolicyEnforcer {
     /**
      * Evaluates a {@link SecurityPolicy} plus an optional {@code @RequiresAction} gate against an
      * already-resolved {@link SecurityContext} and <strong>returns</strong> the composed
-     * {@link AuthorizationDecision}, instead of driving a {@link RoutingContext} (T005).
+     * {@link AuthorizationDecision}, instead of driving a {@link RoutingContext}.
      *
      * <p>This is the non-HTTP counterpart to {@link #createHandler(SecurityPolicy, Optional)}: it
      * mirrors that method's contract exactly (ADR-0113 / ADR-0114) — the same role/scope-plus-action
@@ -468,7 +468,7 @@ public class SecurityPolicyEnforcer {
         Objects.requireNonNull(resource, "resource");
         Objects.requireNonNull(origin, "origin");
 
-        // R07 item 5 (security/architecture review, post-R01): captured here, before any async hop,
+        // Captured here, before any async hop,
         // so the promise built below can be re-anchored to it — see that promise's own comment for why.
         Context callerContext = Vertx.currentContext();
 
@@ -508,7 +508,7 @@ public class SecurityPolicyEnforcer {
         }
 
         // Fail-closed against a contract-violating role/scope gate (mirrors buildComposedHandler): a
-        // synchronous throw or a null Future from the decision point must not escape (F-W3).
+        // synchronous throw or a null Future from the decision point must not escape.
         Future<AuthorizationDecision> roleScopeFuture;
         try {
             roleScopeFuture = evaluateRoleScopeGate(policy, authzRequest);
@@ -520,39 +520,39 @@ public class SecurityPolicyEnforcer {
             log.warn("Authorization decision point returned a null future at role/scope gate; failing closed");
             return Future.succeededFuture(failClosedInternalError(authzRequest, correlation));
         }
-        // Bound the gate (issue #417): a non-blocking future that simply never resolves is not a
+        // Bound the gate: a non-blocking future that simply never resolves is not a
         // synchronous throw, a null future, a failed future, or a null decision, so none of the
         // existing fail-closed branches above ever catch it. .timeout() races the original future
         // against gateDeadlineMs and forwards it unchanged when it settles first — inert for a gate
         // that completes normally (verified by the unmodified SecurityPolicyEnforcerDecisionTest
         // permit/deny suite still passing byte-for-byte after this change).
         //
-        // R07 item 5 (security/architecture review, post-R01): Vert.x 5.1.6's FutureBase#timeout
+        // Vert.x 5.1.6's FutureBase#timeout
         // branches on the SOURCE future's context, not the caller's. A gate future built with the
         // static Promise.promise() — or bridged from a CompletableFuture by a remote-PDP client, the
         // exact case this deadline exists for — has context == null, so its .timeout() continuation
         // runs on Netty's GlobalEventExecutor rather than any Vert.x event-loop thread. Left
         // unaddressed, that thread would then be the one that eventually calls promise.complete(...)
-        // below, and McpCompletionCoordinator's non-volatile settled/completionEmitted latches are
-        // documented as "mutated only on the request-owning Vert.x context" — a torn latch on this
+        // below, and a downstream request coordinator's non-volatile settlement latches may be
+        // documented as "mutated only on the request-owning Vert.x context" — a torn latch on such a
         // path means double settlement or a lost completion. This method does not attempt to re-anchor
         // roleScopeFuture/actionFuture themselves (their own timeout continuations may still run off
         // any context); instead it re-anchors the one future this method actually hands back to its
         // caller — see completeOnCallerContext, used at every promise.complete(...) call site below.
         roleScopeFuture = roleScopeFuture.timeout(gateDeadlineMs, TimeUnit.MILLISECONDS);
 
-        // R07 item 5: {@code promise} itself stays the plain, context-less default — Vert.x 5.1.6's
+        // {@code promise} itself stays the plain, context-less default — Vert.x 5.1.6's
         // {@link Context} exposes no {@code promise()} factory to anchor one to a context directly.
         // Every settlement of it instead goes through {@link #completeOnCallerContext}, which
         // redispatches onto {@code callerContext} via {@link Context#runOnContext} before completing —
-        // mirroring McpCompletionCoordinator's own established {@code context.runOnContext(...)}
-        // re-anchoring idiom — so every caller of decide() (McpPolicyEnforcer,
-        // McpRequestDispatcher's tools/list scan) keeps observing this future settle on the same
+        // the same {@code context.runOnContext(...)}
+        // re-anchoring idiom a downstream request coordinator uses — so every caller of decide() keeps observing this
+        // future settle on the same
         // context it called decide() from, closing the gap a context-less gate future's own
         // off-context timeout would otherwise reopen. When decide() is itself called off any Vert.x
         // context (a unit test with no Vertx instance, matching this class's own pre-existing
         // SecurityPolicyEnforcerGateDeadlineTest fixture), callerContext is null and this degrades to
-        // the exact pre-fix behavior — completing directly, on whichever thread settled the gate.
+        // completing directly, on whichever thread settled the gate.
         Promise<AuthorizationDecision> promise = Promise.promise();
         roleScopeFuture.onComplete(roleScopeAr -> {
             if (roleScopeAr.failed()) {
@@ -581,13 +581,13 @@ public class SecurityPolicyEnforcer {
             // guaranteed non-null here because a present requiredAction implies the engine is
             // installed (slice 11). Built as an explicit 5-arg AuthorizationRequest reusing the SAME
             // origin passed to decide(), not a fresh ambient read — mirrors buildComposedHandler's
-            // reuse of authzRequest.origin() (W1 residual fix).
+            // reuse of authzRequest.origin().
             ActionRef action = requiredAction.get();
             AuthorizationRequest actionRequest =
                     new AuthorizationRequest(securityContext, action.value(), resource, origin, Map.of());
 
             // Fail-closed against a contract-violating Authorizer (mirrors buildComposedHandler): a
-            // synchronous throw or a null Future must not escape the gate (F-W3).
+            // synchronous throw or a null Future must not escape the gate.
             Future<AuthorizationDecision> actionFuture;
             try {
                 actionFuture = authorizer.authorize(actionRequest);
@@ -601,7 +601,7 @@ public class SecurityPolicyEnforcer {
                 completeOnCallerContext(promise, callerContext, failClosedInternalError(authzRequest, correlation));
                 return;
             }
-            // Bound the action gate exactly like the role/scope gate above (issue #417): the same
+            // Bound the action gate exactly like the role/scope gate above: the same
             // amplification risk applies to a hanging Authorizer, not only a hanging decision point.
             actionFuture.timeout(gateDeadlineMs, TimeUnit.MILLISECONDS).onComplete(actionAr -> {
                 AuthorizationDecision actionResult = actionAr.succeeded() ? actionAr.result() : null;
@@ -620,7 +620,7 @@ public class SecurityPolicyEnforcer {
 
     /**
      * Completes {@code promise} with {@code decision}, redispatched onto {@code callerContext} first
-     * when it is non-{@code null} (R07 item 5), so every handler {@code promise.future()} carries —
+     * when it is non-{@code null}, so every handler {@code promise.future()} carries —
      * however many async hops away, and from whatever thread the settling gate future happened to run
      * its continuation on — observes the completion on the exact Vert.x context {@link #decide} was
      * originally called from. {@code callerContext == null} (no Vert.x context was active when {@link
@@ -747,7 +747,7 @@ public class SecurityPolicyEnforcer {
             // ServiceAuthorizationInterceptor): a synchronous throw or a null Future must not escape
             // the gate. The AuthorizationDecisionPoint contract forbids both, but a misbehaving impl
             // must still deny deterministically with exactly one event rather than let an NPE/throw
-            // propagate (F-W3).
+            // propagate.
             Future<AuthorizationDecision> decisionFuture;
             try {
                 decisionFuture = decisionPoint.decide(authzRequest);
@@ -777,7 +777,7 @@ public class SecurityPolicyEnforcer {
                 AuthorizationDecision decision = ar.result();
                 if (decision == null) {
                     // The contract forbids a null decision; treat it as a fail-closed
-                    // INTERNAL_AUTHZ_ERROR deny rather than NPE on emitDecision/permitted() (F-W3).
+                    // INTERNAL_AUTHZ_ERROR deny rather than NPE on emitDecision/permitted().
                     log.warn("Authorization decision point resolved to a null decision; failing closed");
                     internalErrorDeny(ctx, authzRequest, correlation);
                     return;
@@ -864,7 +864,7 @@ public class SecurityPolicyEnforcer {
             // Fail-closed against a contract-violating role/scope gate (mirrors the role/scope-only
             // path): a synchronous throw or a null Future from the decision point must not escape the
             // gate. Both are forbidden by the AuthorizationDecisionPoint contract, but a misbehaving
-            // impl must still deny deterministically with exactly one event (F-W3).
+            // impl must still deny deterministically with exactly one event.
             Future<AuthorizationDecision> roleScopeFuture;
             try {
                 roleScopeFuture = evaluateRoleScopeGate(policy, authzRequest);
@@ -892,7 +892,7 @@ public class SecurityPolicyEnforcer {
                 AuthorizationDecision roleScope = roleScopeAr.result();
                 if (roleScope == null) {
                     // The contract forbids a null decision; treat it as a fail-closed
-                    // INTERNAL_AUTHZ_ERROR deny rather than NPE on roleScope.permitted() (F-W3).
+                    // INTERNAL_AUTHZ_ERROR deny rather than NPE on roleScope.permitted().
                     log.warn("Authorization decision point resolved to a null role/scope decision; failing closed");
                     internalErrorDenyComposed(ctx, authzRequest, correlation);
                     return;
@@ -918,7 +918,7 @@ public class SecurityPolicyEnforcer {
                 // AuthorizationDecisionPoint may resolve its Future off this Vert.x context), where a
                 // fresh currentOrigin() read could observe a different (or absent, falling back to
                 // "rest") ambient origin than the one the inbound request actually carried — mirrors
-                // captureCorrelation()'s entry-capture-once pattern above (W1 residual fix). Not the
+                // captureCorrelation()'s entry-capture-once pattern above. Not the
                 // 3-arg authorize(SecurityContext, ActionRef, ResourceRef) convenience overload, which
                 // internally seeds InvocationOrigin.unspecified() — so an origin-aware narrower
                 // evaluates the SAME origin the emitted event records (mirrors
@@ -927,7 +927,7 @@ public class SecurityPolicyEnforcer {
                         new AuthorizationRequest(secCtx, action.value(), resource, authzRequest.origin(), Map.of());
                 // Fail-closed against a contract-violating Authorizer (mirrors
                 // ServiceAuthorizationInterceptor): a synchronous throw or a null Future must not
-                // escape the gate (F-W3).
+                // escape the gate.
                 Future<AuthorizationDecision> actionFuture;
                 try {
                     actionFuture = authorizer.authorize(actionRequest);
@@ -1115,7 +1115,7 @@ public class SecurityPolicyEnforcer {
      * fail-closed by construction; here {@code action == null} means "there is no action gate", where a
      * permit is the correct outcome. Folding the two into one helper would make a shared REST/WebSocket
      * authorization primitive permit on a null action decision, which is exactly the fail-open shape the
-     * enforcer's F-W3 hardening exists to prevent.
+     * enforcer's fail-closed hardening exists to prevent.
      *
      * <p>Unlike {@link #combinedDecision}, this carries the decision point's own
      * {@code policyId}, {@code policyVersion}, and {@code safeAttributes} through instead of discarding

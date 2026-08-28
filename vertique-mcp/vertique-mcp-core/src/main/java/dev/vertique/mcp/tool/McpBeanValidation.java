@@ -19,8 +19,8 @@ import java.util.Set;
  * default validator factory and its {@link Validator} are documented thread-safe and reusable across
  * concurrent validations, so one process-wide instance is correct, not merely convenient.
  *
- * <p>The default factory is built lazily, on first use, by {@link DefaultValidatorHolder} (repair task
- * R47, phase-exit review): when the application's Dagger graph binds its own {@link Validator}, {@link
+ * <p>The default factory is built lazily, on first use, by {@link DefaultValidatorHolder}:
+ * when the application's Dagger graph binds its own {@link Validator}, {@link
  * #validate(Object, Optional)} never touches the holder class, so classloading never triggers the
  * default provider's bootstrap (and, on a classpath with no Bean Validation provider present, never
  * throws). Only a request that genuinely falls back to the default — no bound {@link Validator} — pays
@@ -39,14 +39,14 @@ public final class McpBeanValidation {
 
     /**
      * Validates {@code value} through {@code validator} when present, falling back to the one shared
-     * default {@link Validator} otherwise (R38/W7).
+     * default {@link Validator} otherwise.
      *
      * <p>This is the seam a generated invoker's constructor-injected {@code Optional<Validator>} uses:
      * when the application's Dagger graph binds a {@link Validator} — for example one backed by a
      * Dagger-aware {@link jakarta.validation.ConstraintValidatorFactory} that can resolve an
      * {@code @Inject}-only {@link jakarta.validation.ConstraintValidator} — tool-input Bean Validation
-     * runs through it, and the default factory in {@link DefaultValidatorHolder} is never initialized
-     * (repair task R47). When the binding is absent, {@link DefaultValidatorHolder#VALIDATOR} is
+     * runs through it, and the default factory in {@link DefaultValidatorHolder} is never initialized.
+     * When the binding is absent, {@link DefaultValidatorHolder#VALIDATOR} is
      * resolved and validation runs through the default {@link Validator}.
      *
      * @param value the materialized tool-argument carrier to validate; must not be {@code null}
@@ -64,7 +64,7 @@ public final class McpBeanValidation {
      * Lazily builds and holds the one process-wide default {@link Validator}, initialized only on
      * first access to {@link #validator()} — the classic initialization-on-demand holder idiom, which
      * relies on the JVM's class-initialization guarantees for thread safety without any explicit
-     * locking (repair task R47, phase-exit review): a bound application {@link Validator} must never
+     * locking: a bound application {@link Validator} must never
      * cause this class to be loaded or initialized.
      */
     private static final class DefaultValidatorHolder {

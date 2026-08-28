@@ -33,7 +33,7 @@ import lombok.extern.slf4j.Slf4j;
 
 /**
  * Coordinates one request's failure-isolated terminal and completion observation, and owns the
- * request's {@link McpCancellationSignal} (T013): a disconnect, a stream reset, or a failed write
+ * request's {@link McpCancellationSignal}: a disconnect, a stream reset, or a failed write
  * fires it exactly once, confined to the same first-observed-wins settlement this class already
  * enforces, so a cooperative tool handler can stop early.
  */
@@ -56,8 +56,8 @@ final class McpCompletionCoordinator {
     private McpRequestTerminalEvent writeTerminal;
 
     /**
-     * This request's optional linked trace reference (repair task R39; R51 renamed from {@code
-     * bodyTraceContext} to match {@link McpRequestTerminalObservation#linkedTrace()}), captured
+     * This request's optional linked trace reference, matching {@link
+     * McpRequestTerminalObservation#linkedTrace()}, captured
      * exactly once by {@link #bindLinkedTrace} and read only by {@link #publishTerminal}. {@code
      * null} whenever {@code McpBodyTracePolicy.IGNORE} is configured (the default) or no valid body
      * trace reference was extracted. Mutated only on the request-owning context, exactly like
@@ -109,7 +109,7 @@ final class McpCompletionCoordinator {
 
     /**
      * Reports whether any retained session for this request implements the opt-in {@link
-     * McpToolValueObservation} capability (T018/T020, contract §4.4).
+     * McpToolValueObservation} capability (contract §4.4).
      *
      * <p>Computed once at construction from the opened session set, never per-call: callers use this
      * to skip building a {@link McpToolInputObservation} or {@link McpToolOutputObservation} — and
@@ -126,7 +126,7 @@ final class McpCompletionCoordinator {
 
     /**
      * Reports whether any retained session for this request implements the opt-in {@link
-     * McpRawEvidenceObservation} capability (R52, repair task R52 "audit capture parity").
+     * McpRawEvidenceObservation} capability.
      *
      * <p>Computed once at construction from the opened session set, exactly like {@link
      * #hasValueObservers()}: callers use this to skip building a {@link McpRequestAdmissionEvidence}
@@ -144,7 +144,7 @@ final class McpCompletionCoordinator {
     /**
      * Delivers {@code evidence} to every retained session that implements the opt-in {@link
      * McpRawEvidenceObservation} capability, isolating each session's failure exactly like {@link
-     * #publishToolInput} (R52). Least privilege is structural: the {@code instanceof} guard below is
+     * #publishToolInput}. Least privilege is structural: the {@code instanceof} guard below is
      * the sole gate, so an ordinary session has no code path through which this method could reach it.
      *
      * @param evidence this request's raw admission-time evidence; must not be {@code null}
@@ -160,7 +160,7 @@ final class McpCompletionCoordinator {
     /**
      * Delivers {@code evidence} to every retained session that implements the opt-in {@link
      * McpRawEvidenceObservation} capability, isolating each session's failure exactly like {@link
-     * #publishRequestAdmitted} (R52).
+     * #publishRequestAdmitted}.
      *
      * @param evidence this request's raw response-side evidence; must not be {@code null}
      */
@@ -173,7 +173,7 @@ final class McpCompletionCoordinator {
     }
 
     /**
-     * Returns this request's {@link McpCancellationSignal} (T013), fired exactly once when the
+     * Returns this request's {@link McpCancellationSignal}, fired exactly once when the
      * request settles as anything other than a successful write — a disconnect, a stream reset, or a
      * failed write — so a cooperative tool handler invoked with it can stop early. A tool invoked
      * before this coordinator ever settles observes an unfired signal, exactly like every other call.
@@ -185,7 +185,7 @@ final class McpCompletionCoordinator {
     }
 
     /**
-     * Captures this request's optional linked trace reference (repair task R39; R51), once, for
+     * Captures this request's optional linked trace reference, once, for
      * {@link #publishTerminal} to carry on every terminal observation this coordinator later
      * publishes — the write-path terminal ({@link #beginWrite}) and every abort-settlement terminal
      * ({@link #completeOnContext}) alike.
@@ -205,7 +205,7 @@ final class McpCompletionCoordinator {
     /**
      * Delivers {@code observation} to every retained session that implements the opt-in {@link
      * McpToolValueObservation} capability, isolating each session's failure exactly like {@link
-     * #publishTerminal} (T018, contract §4.4).
+     * #publishTerminal} (contract §4.4).
      *
      * <p>Least privilege is structural: an ordinary {@link McpRequestObservation} session that does
      * not implement {@link McpToolValueObservation} is never even tested here — the {@code
@@ -228,7 +228,7 @@ final class McpCompletionCoordinator {
     /**
      * Delivers {@code observation} to every retained session that implements the opt-in {@link
      * McpToolValueObservation} capability, isolating each session's failure exactly like {@link
-     * #publishToolInput} (T020, contract §4.4).
+     * #publishToolInput} (contract §4.4).
      *
      * <p>Called only after the dispatcher's output stage has already normalized the result exactly
      * once and validated it against the tool's advertised output schema — this method itself performs
@@ -251,7 +251,7 @@ final class McpCompletionCoordinator {
         });
     }
 
-    // --- T004 two-phase write path ---
+    // --- Two-phase write path ---
     //
     // The successful-write path settles logically before the byte write and completes after it, so
     // the frozen lifecycle contract's ordering — logical settlement, terminal observation, write
@@ -310,7 +310,7 @@ final class McpCompletionCoordinator {
         }
         completionEmitted = true;
         if (transport != McpTransportOutcome.WRITTEN) {
-            // T013: a failed write, or a disconnect/reset that recovered a stalled write, fires
+            // A failed write, or a disconnect/reset that recovered a stalled write, fires
             // cancellation exactly once, guarded by the same completionEmitted latch as everything
             // else this method publishes — a genuinely successful write never fires it.
             cancellationSignal.cancel();
@@ -318,11 +318,11 @@ final class McpCompletionCoordinator {
         publishCompletion(writeTerminal, transport, responseCommitted, completedAt);
     }
 
-    // --- T004 settlement seam ---
+    // --- Settlement seam ---
     //
-    // The disconnect and reset settlement entries below are the internal seam the T004 dispatcher
+    // The disconnect and reset settlement entries below are the internal seam the dispatcher
     // calls once a client disconnects or the response stream resets. MCP arms no whole-request timer
-    // of its own (T007): a shared HttpConfig idle/read/write liveness expiry closes the connection, so
+    // of its own: a shared HttpConfig idle/read/write liveness expiry closes the connection, so
     // it reaches this same seam through the ordinary disconnect/reset path rather than a distinct
     // timeout entry. Each drives exactly one terminal and exactly one completion through the same
     // first-observed-wins completed-guard as the write path, on the request-owning Vert.x context
@@ -399,7 +399,7 @@ final class McpCompletionCoordinator {
         }
         settled = true;
         completionEmitted = true;
-        // T013: an abort settlement (disconnect or reset before any write) is never WRITTEN, so it
+        // An abort settlement (disconnect or reset before any write) is never WRITTEN, so it
         // always fires cancellation, guarded exactly-once by the same completionEmitted latch.
         cancellationSignal.cancel();
         // An abort settlement supplies no intervening write, so the terminal and completion fire
@@ -411,7 +411,7 @@ final class McpCompletionCoordinator {
     /**
      * Publishes the terminal observation to every retained observation, isolating observer failures.
      *
-     * <p>Carries {@link #linkedTrace} (repair task R39; R51) — this request's linked trace
+     * <p>Carries {@link #linkedTrace} — this request's linked trace
      * reference, captured once by {@link #bindLinkedTrace} — on every terminal this method ever
      * publishes, whether from the write path ({@link #beginWrite}) or an abort settlement ({@link
      * #completeOnContext}).
@@ -426,7 +426,7 @@ final class McpCompletionCoordinator {
     /**
      * Publishes the completion to every retained observation and completion listener, isolating
      * their failures, and bracketing the whole dispatch loop with every retained {@link
-     * McpCompletionScope} (R06, issue #435; contract §4.10).
+     * McpCompletionScope} (contract §4.10).
      *
      * @param terminal the terminal the completion is built from
      * @param transport the transport outcome the completion records
@@ -444,14 +444,11 @@ final class McpCompletionCoordinator {
         // produces a contract-valid completion rather than throwing between terminal and completion.
         Instant settledAt = completedAt.isBefore(terminal.terminalAt()) ? terminal.terminalAt() : completedAt;
         McpRequestCompletedEvent event = completedEvent(terminal, transport, responseCommitted, settledAt);
-        // R07 item 6 (security review): the opened-scope list is declared here, before the try, and
-        // populated incrementally by openCompletionScopes — which now runs INSIDE the try below — so
+        // The opened-scope list is declared here, before the try, and
+        // populated incrementally by openCompletionScopes — which runs inside the try below — so
         // that a session's openCompletionScope() throwing an Error (not merely a RuntimeException)
-        // still leaves every already-opened scope reachable to the finally. Before this fix,
-        // openCompletionScopes() built and returned its own local list in one call made BEFORE the
-        // try/finally even began; an Error escaping that call (its per-session catch was RuntimeException
-        // only) abandoned the whole local list — including every scope already successfully opened —
-        // with no finally ever entered to close them. The shipped OpenTelemetry consumer's scope is
+        // still leaves every already-opened scope reachable to the finally. The shipped OpenTelemetry
+        // consumer's scope is
         // span.makeCurrent(): an unclosed one leaves the span attached to the event-loop thread, and
         // every later request dispatched on that same thread inherits it — cross-request trace
         // contamination, not merely a resource leak.
@@ -470,7 +467,7 @@ final class McpCompletionCoordinator {
      * {@code opened} immediately as it succeeds — so a later session's failure never loses an earlier
      * session's already-opened scope — and isolating each session's open failure (including an
      * {@link Error}, not merely a {@link RuntimeException}) exactly like {@link #closeCompletionScopes}
-     * isolates each close (R07 item 6). A session whose {@code openCompletionScope} throws, or returns
+     * isolates each close. A session whose {@code openCompletionScope} throws, or returns
      * {@code null}, contributes no entry — its absence never affects any other session's scope or the
      * completion dispatch itself.
      *
@@ -485,7 +482,7 @@ final class McpCompletionCoordinator {
                         opened.add(scope);
                     }
                 } catch (Throwable failure) {
-                    // Throwable, not RuntimeException (R07 item 6): an Error here must not abandon the
+                    // Throwable, not RuntimeException: an Error here must not abandon the
                     // scopes already opened by earlier sessions in this same loop — never logs the
                     // failure's own message, only the failing session's class.
                     log.warn(
@@ -498,7 +495,7 @@ final class McpCompletionCoordinator {
 
     /**
      * Closes every scope {@link #openCompletionScopes} opened, in reverse order, isolating each
-     * scope's close failure — including an {@link Error} (R07 item 6) — so one misbehaving scope
+     * scope's close failure — including an {@link Error} — so one misbehaving scope
      * cannot prevent another from closing.
      *
      * @param scopes the scopes to close, in open order
@@ -509,7 +506,7 @@ final class McpCompletionCoordinator {
             try {
                 scope.close();
             } catch (Throwable failure) {
-                // Throwable, not Exception (R07 item 6): an Error closing one scope must not prevent an
+                // Throwable, not Exception: an Error closing one scope must not prevent an
                 // earlier-opened scope from closing — never logs the failure's own message, only the
                 // failing scope's class.
                 log.warn(
@@ -523,19 +520,17 @@ final class McpCompletionCoordinator {
      * Opens every contributed lifecycle observer once, isolating each failure so one misbehaving
      * observer never affects the protocol outcome or any other observer's session.
      *
-     * <p><strong>R14 item 3.</strong> Isolates {@code RuntimeException | StackOverflowError}, not
-     * {@code RuntimeException} alone. {@code observer.open} is application-supplied code in exactly the
-     * same class as the seven dispatcher callback sites R13 item 1 widened to this same narrow policy,
-     * and a native-recursion {@link StackOverflowError} from it is no less able to strand the request:
+     * <p>Isolates {@code RuntimeException | StackOverflowError}, not
+     * {@code RuntimeException} alone. {@code observer.open} is application-supplied code, and a
+     * native-recursion {@link StackOverflowError} from it is no less able to strand the request than a
+     * plain {@code RuntimeException} would:
      * this method runs from the coordinator's own constructor, inside {@code McpRequestDispatcher#begin},
      * so an escaping {@code Error} aborts the request before the coordinator exists at all — no
      * coordinator, no settlement hooks, no terminal event, and every later observer left unopened.
-     * R13's sweep stopped at the dispatcher's file boundary rather than at the callback boundary; this
-     * closes the same class of site in this class.
      *
      * <p>Deliberately narrower than {@link #openCompletionScopes}/{@link #closeCompletionScopes}, which
      * catch {@link Throwable}: those two must additionally survive an {@code Error} that would otherwise
-     * abandon a scope this same loop has <em>already opened</em> (R07 item 6), an obligation no callback
+     * abandon a scope this same loop has <em>already opened</em>, an obligation no callback
      * site here carries.
      *
      * @param observers the contributed lifecycle observers
@@ -580,21 +575,19 @@ final class McpCompletionCoordinator {
      * RuntimeException} or {@link StackOverflowError} so a misbehaving observer or listener never
      * affects request settlement.
      *
-     * <p>R07 item 6 (security review): this class previously had no logger at all, so a failing
-     * observer/listener callback was silently and permanently discarded with no operator-visible
-     * signal. {@code owner} identifies which retained session or listener failed; never logs the
+     * <p>A failing observer/listener callback is logged, never silently and permanently discarded
+     * with no operator-visible signal. {@code owner} identifies which retained session or listener failed; never logs the
      * failure's own message, matching {@link #openCompletionScopes}/{@link #closeCompletionScopes}'s
      * established non-leaking pattern for this same class.
      *
-     * <p><strong>R14 item 3.</strong> Widened from {@code RuntimeException} to the project's narrow
-     * {@code RuntimeException | StackOverflowError} isolation policy — the same one R13 item 1 applied
-     * at the dispatcher's seven application-callback sites, and the same class of callback. Every
+     * <p>Isolates {@code RuntimeException | StackOverflowError}, not {@code RuntimeException} alone.
+     * Every
      * settlement path funnels through here: {@code onToolInput}, {@code onToolOutput}, {@code
      * onTerminal}, and {@code onCompleted} on every retained session, plus {@code onCompleted} on every
-     * completion listener. A {@code StackOverflowError} from any one of them previously escaped {@link
-     * #publishCompletion} mid-loop, so every session and listener still queued behind it lost its
-     * callback, the completion scopes opened around the loop were never closed, and — on the settlement
-     * paths — the escape happened inside a {@code context.runOnContext} task with no caller left to
+     * completion listener — all application-supplied code. An escaping {@code StackOverflowError} from
+     * any one of them mid-loop would strand every session and listener still queued behind it, leave
+     * the completion scopes opened around the loop unclosed, and — on the settlement
+     * paths — escape inside a {@code context.runOnContext} task with no caller left to
      * catch it. Deliberately not {@link Throwable}: see {@link #openObservers}.
      *
      * @param owner the observation session or completion listener {@code callback} was built from
@@ -609,15 +602,15 @@ final class McpCompletionCoordinator {
     }
 
     /**
-     * The coordinator-owned {@link McpCancellationSignal} for one request (T013).
+     * The coordinator-owned {@link McpCancellationSignal} for one request.
      *
      * <p>{@link #cancel()} is called only from {@link #finishWrite} and the abort branch of {@link
      * #completeOnContext}, both already guarded by {@code completionEmitted} so this fires at most
      * once; the idempotent check here is a defensive second guard, not load-bearing. Every call site
      * runs on the request-owning context (the same invariant every other settlement field relies on).
      *
-     * <p>{@code cancelled} is a plain, context-less {@link Promise} (repair task R47, phase-exit
-     * review), so {@link #cancelled()} carries no context affinity of its own: a handler registered
+     * <p>{@code cancelled} is a plain, context-less {@link Promise},
+     * so {@link #cancelled()} carries no context affinity of its own: a handler registered
      * through it before {@link #cancel()} fires is invoked inline, synchronously, from within {@code
      * cancel()}'s call — and therefore does observe the request-owning context, since {@code cancel()}
      * always runs there — but a handler registered after {@code cancelled} has already completed runs

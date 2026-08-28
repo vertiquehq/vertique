@@ -158,7 +158,7 @@ public final class CorrelationContextDurableDecoder implements DurableContextMet
 
     /**
      * Rebuilds the {@link TraceReference} embedded in the envelope, decoding {@code sampled}/{@code
-     * traceState} additively (R51): a payload written before those trailing components existed
+     * traceState} additively: a payload written before those trailing components existed
      * carries neither key, and this method defaults them ({@code sampled=false}, {@code
      * traceState=null}) rather than failing or inferring them from other fields — the exact
      * backward-compatibility property {@code R51DurableTraceCompatFixtureTest} pins.
