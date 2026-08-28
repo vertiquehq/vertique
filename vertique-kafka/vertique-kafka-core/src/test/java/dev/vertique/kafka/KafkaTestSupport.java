@@ -23,11 +23,13 @@ import dev.vertique.core.eventbus.EventBusClient;
 import dev.vertique.core.eventbus.EventBusExceptionMapper;
 import dev.vertique.kafka.serialization.KafkaSerdeRegistry;
 import dev.vertique.kafka.serialization.TestJsonSerdeProvider;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.services.ServiceRequestSender;
 import dev.vertique.services.ServiceSupervisor;
 import dev.vertique.services.ServiceTargetResolver;
 import dev.vertique.services.config.ServicesConfig;
-import dev.vertique.services.policy.PolicyChainBuilder;
+import dev.vertique.services.resilience.ServiceResilienceConfigAdapter;
+import dev.vertique.services.resilience.ServiceResiliencePipelineFactory;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import java.util.Set;
@@ -74,22 +76,28 @@ final class KafkaTestSupport {
         ServiceSupervisor supervisor = mock(ServiceSupervisor.class);
         when(supervisor.isAvailable(any())).thenReturn(true);
         ServicesConfig servicesConfig = ServicesConfig.fromConfig(new JsonObject(), configParser());
-        return new ServiceRequestSender(eventBusClient(vertx), supervisor, servicesConfig, servicesConfig.index());
+        Resilience resilience = Resilience.create(vertx);
+        ServiceResilienceConfigAdapter adapter =
+                new ServiceResilienceConfigAdapter(resilience, servicesConfig, servicesConfig.index());
+        return new ServiceRequestSender(eventBusClient(vertx), supervisor, adapter);
     }
 
     /**
-     * Creates a {@link PolicyChainBuilder} whose per-service config index is derived from
+     * Creates a {@link ServiceResiliencePipelineFactory} whose per-service config index is derived from
      * the given root Vert.x config object. The {@code services} section is parsed via
-     * {@link ServicesConfig#fromConfig(JsonObject)} so the builder receives a properly typed index
+     * {@link ServicesConfig#fromConfig(JsonObject)} so the adapter receives a properly typed index
      * rather than the raw {@link JsonObject}.
      *
      * @param vertx  the Vert.x instance
      * @param config the root Vert.x config object
-     * @return a new policy chain builder
+     * @return a new common resilience pipeline factory
      */
-    static PolicyChainBuilder policyChainBuilder(Vertx vertx, JsonObject config) {
-        return new PolicyChainBuilder(
-                vertx, ServicesConfig.fromConfig(config, configParser()).index());
+    static ServiceResiliencePipelineFactory resiliencePipelineFactory(Vertx vertx, JsonObject config) {
+        ServicesConfig servicesConfig = ServicesConfig.fromConfig(config, configParser());
+        Resilience resilience = Resilience.create(vertx);
+        ServiceResilienceConfigAdapter adapter =
+                new ServiceResilienceConfigAdapter(resilience, servicesConfig, servicesConfig.index());
+        return new ServiceResiliencePipelineFactory(adapter, resilience);
     }
 
     /**

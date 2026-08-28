@@ -367,11 +367,18 @@ authorization bindings are absent.
 ## Resilience
 
 The annotations `@Timeout`, `@Retry`, and `@CircuitBreaker` are defined by
-`dev.vertique:vertique-resilience` and enforced server-side.
+`dev.vertique:vertique-resilience` and enforced server-side by its common executor. Services
+translates its typed operation configuration into the same resolved policy used by the server
+pipeline; configuration alone never activates resilience when an operation has no annotation.
 
 Effective policy order is timeout/circuit-breaker around retry. A configured timeout applies per
 attempt. `@Retry.abortOn` wins over `retryOn`; when `retryOn` is empty, failures not matched by
 `abortOn` are eligible for retry.
+
+The event-bus send timeout uses operation, service, and global `sendTimeoutMs` overrides before the
+resolved active execution budget plus the compatibility margin. Custom-backoff, unbounded, or
+saturated budgets require one of those explicit transport timeouts. Services exposes no bulkhead
+configuration or admission queue in this release.
 
 JSON configuration can override annotation values for an environment without changing the service
 contract. Invalid values fail during startup parsing.
@@ -596,5 +603,6 @@ implementations, typed clients, authorization, and lifecycle wiring.
 - `dev.vertique:vertique-deploy` — verticle deployment, supervision, and lifecycle integration.
 - `dev.vertique:vertique-security-core` and `dev.vertique:vertique-security-runtime` — security
   context, action authorization, identity-degradation policy, and security events.
-- `io.vertx:vertx-core` and `io.vertx:vertx-circuit-breaker` — event-bus transport and resilience.
+- `io.vertx:vertx-core` — event-bus transport; resilience execution is owned by
+  `vertique-resilience`.
 - Dagger and Jakarta Inject — application wiring and extension multibindings.

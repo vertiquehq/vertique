@@ -26,6 +26,12 @@ public class ServiceRegistrationException extends ServiceConfigurationException 
         this.violations = List.copyOf(violations);
     }
 
+    /** Creates a registration exception while preserving the common policy failure as its cause. */
+    public ServiceRegistrationException(List<ServiceRegistrationViolation> violations, Throwable cause) {
+        super(buildMessage(violations), cause);
+        this.violations = List.copyOf(violations);
+    }
+
     /**
      * Returns the list of validation violations.
      *

@@ -60,10 +60,6 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertx-core</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.vertx</groupId>
-            <artifactId>vertx-circuit-breaker</artifactId>
-        </dependency>
-        <dependency>
             <groupId>com.google.dagger</groupId>
             <artifactId>dagger</artifactId>
         </dependency>

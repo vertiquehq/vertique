@@ -23,6 +23,7 @@ import dev.vertique.core.eventbus.EventBusClient;
 import dev.vertique.core.eventbus.EventBusExceptionMapper;
 import dev.vertique.core.eventbus.LocalMessageCodec;
 import dev.vertique.core.eventbus.Result;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.security.AuthenticationState;
 import dev.vertique.security.DefaultAuthMethod;
 import dev.vertique.security.PrincipalRef;
@@ -34,6 +35,7 @@ import dev.vertique.security.origin.RequestOrigin;
 import dev.vertique.services.config.ServicesConfig;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamSource;
+import dev.vertique.services.resilience.ServiceResilienceConfigAdapter;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.eventbus.DeliveryOptions;
@@ -178,7 +180,10 @@ class ServiceClientFactoryTest {
         ServiceSupervisor availableSupervisor = mock(ServiceSupervisor.class);
         when(availableSupervisor.isAvailable(any())).thenReturn(true);
         return new ServiceRequestSender(
-                eventBusClient, availableSupervisor, new ServicesConfig(null, List.of()), Map.of());
+                eventBusClient,
+                availableSupervisor,
+                new ServiceResilienceConfigAdapter(
+                        Resilience.create(vertx), new ServicesConfig(null, List.of()), Map.of()));
     }
 
     private static ServiceContractRegistry registry;
@@ -212,7 +217,11 @@ class ServiceClientFactoryTest {
         // Build sender via the real EventBusClient
         EventBusExceptionMapper exceptionMapper = new EventBusExceptionMapper();
         EventBusClient eventBusClient = new EventBusClient(vertx, exceptionMapper);
-        sender = new ServiceRequestSender(eventBusClient, supervisor, new ServicesConfig(null, List.of()), Map.of());
+        sender = new ServiceRequestSender(
+                eventBusClient,
+                supervisor,
+                new ServiceResilienceConfigAdapter(
+                        Resilience.create(vertx), new ServicesConfig(null, List.of()), Map.of()));
 
         // Register echo consumers that reply with the received payload prefixed with "got:"
         DeliveryOptions replyOptions = new DeliveryOptions().setCodecName("dispatch.result");
@@ -374,7 +383,10 @@ class ServiceClientFactoryTest {
         ServiceSupervisor availableSupervisor = mock(ServiceSupervisor.class);
         when(availableSupervisor.isAvailable(any())).thenReturn(true);
         ServiceRequestSender localSender = new ServiceRequestSender(
-                eventBusClient, availableSupervisor, new ServicesConfig(null, List.of()), Map.of());
+                eventBusClient,
+                availableSupervisor,
+                new ServiceResilienceConfigAdapter(
+                        Resilience.create(vertx), new ServicesConfig(null, List.of()), Map.of()));
         ServiceClientFactory factory = new ServiceClientFactory(localSender, localRegistry);
         FailureService proxy = factory.create(FailureService.class);
 
@@ -423,7 +435,10 @@ class ServiceClientFactoryTest {
         ServiceSupervisor availableSupervisor = mock(ServiceSupervisor.class);
         when(availableSupervisor.isAvailable(any())).thenReturn(true);
         ServiceRequestSender localSender = new ServiceRequestSender(
-                eventBusClient, availableSupervisor, new ServicesConfig(null, List.of()), Map.of());
+                eventBusClient,
+                availableSupervisor,
+                new ServiceResilienceConfigAdapter(
+                        Resilience.create(vertx), new ServicesConfig(null, List.of()), Map.of()));
         ServiceClientFactory factory = new ServiceClientFactory(localSender, localRegistry);
         NoHandlerService proxy = factory.create(NoHandlerService.class);
 
@@ -457,7 +472,10 @@ class ServiceClientFactoryTest {
         EventBusExceptionMapper exceptionMapper = new EventBusExceptionMapper();
         EventBusClient eventBusClient = new EventBusClient(vertx, exceptionMapper);
         ServiceRequestSender localSender = new ServiceRequestSender(
-                eventBusClient, unavailableSupervisor, new ServicesConfig(null, List.of()), Map.of());
+                eventBusClient,
+                unavailableSupervisor,
+                new ServiceResilienceConfigAdapter(
+                        Resilience.create(vertx), new ServicesConfig(null, List.of()), Map.of()));
         ServiceClientFactory factory = new ServiceClientFactory(localSender, registry);
         ProxyTestService proxy = factory.create(ProxyTestService.class);
 
@@ -590,7 +608,10 @@ class ServiceClientFactoryTest {
             ServiceSupervisor availableSupervisor = mock(ServiceSupervisor.class);
             when(availableSupervisor.isAvailable(any())).thenReturn(true);
             localSender = new ServiceRequestSender(
-                    eventBusClient, availableSupervisor, new ServicesConfig(null, List.of()), Map.of());
+                    eventBusClient,
+                    availableSupervisor,
+                    new ServiceResilienceConfigAdapter(
+                            Resilience.create(vertx), new ServicesConfig(null, List.of()), Map.of()));
 
             DeliveryOptions replyOptions = new DeliveryOptions().setCodecName("dispatch.result");
             ServiceContractRegistry.ContractEntry<ScPropService> entry = localRegistry.resolve(ScPropService.class);
