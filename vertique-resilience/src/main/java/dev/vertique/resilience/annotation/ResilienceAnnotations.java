@@ -20,21 +20,24 @@ import java.util.Optional;
  * @param timeout the resolved timeout declaration
  * @param circuitBreaker the resolved circuit-breaker declaration
  * @param retry the resolved retry declaration
+ * @param bulkhead the resolved bulkhead declaration
  */
 public record ResilienceAnnotations(
         Optional<TimeoutDeclaration> timeout,
         Optional<CircuitBreakerDeclaration> circuitBreaker,
-        Optional<RetryDeclaration> retry) {
+        Optional<RetryDeclaration> retry,
+        Optional<BulkheadDeclaration> bulkhead) {
 
     /** No resilience declarations are configured. */
     public static final ResilienceAnnotations NONE =
-            new ResilienceAnnotations(Optional.empty(), Optional.empty(), Optional.empty());
+            new ResilienceAnnotations(Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
 
     /** Validates non-null optional containers. */
     public ResilienceAnnotations {
         Objects.requireNonNull(timeout, "timeout");
         Objects.requireNonNull(circuitBreaker, "circuitBreaker");
         Objects.requireNonNull(retry, "retry");
+        Objects.requireNonNull(bulkhead, "bulkhead");
     }
 
     /**
@@ -43,7 +46,7 @@ public record ResilienceAnnotations(
      * @return {@code true} when a declaration is configured
      */
     public boolean hasAny() {
-        return timeout.isPresent() || circuitBreaker.isPresent() || retry.isPresent();
+        return timeout.isPresent() || circuitBreaker.isPresent() || retry.isPresent() || bulkhead.isPresent();
     }
 
     /**
@@ -57,8 +60,9 @@ public record ResilienceAnnotations(
         Timeout timeout = resolveAnnotation(type, method, Timeout.class);
         CircuitBreaker circuitBreaker = resolveAnnotation(type, method, CircuitBreaker.class);
         Retry retry = resolveAnnotation(type, method, Retry.class);
+        Bulkhead bulkhead = resolveAnnotation(type, method, Bulkhead.class);
 
-        if (timeout == null && circuitBreaker == null && retry == null) {
+        if (timeout == null && circuitBreaker == null && retry == null && bulkhead == null) {
             return NONE;
         }
         return new ResilienceAnnotations(
@@ -74,7 +78,13 @@ public record ResilienceAnnotations(
                                 value.maxDelayMs(),
                                 value.backoff(),
                                 List.of(value.retryOn()),
-                                List.of(value.abortOn()))));
+                                List.of(value.abortOn()))),
+                Optional.ofNullable(bulkhead)
+                        .map(value -> new BulkheadDeclaration(
+                                value.maxConcurrentCalls(),
+                                value.mode(),
+                                value.maxQueueSize(),
+                                value.queueTimeoutMs())));
     }
 
     /**

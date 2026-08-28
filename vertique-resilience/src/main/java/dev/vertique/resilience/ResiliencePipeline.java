@@ -98,11 +98,22 @@ public final class ResiliencePipeline {
             CircuitBreaker circuitBreaker,
             CircuitFailureClassifier classifier,
             BooleanSupplier contextOpen) {
+        return fromAdapterPolicy(resilience, identity, policy, circuitBreaker, null, classifier, contextOpen);
+    }
+
+    static ResiliencePipeline fromAdapterPolicy(
+            Resilience resilience,
+            AdapterOperationIdentity identity,
+            ResolvedResiliencePolicy policy,
+            CircuitBreaker circuitBreaker,
+            Bulkhead bulkhead,
+            CircuitFailureClassifier classifier,
+            BooleanSupplier contextOpen) {
         Objects.requireNonNull(resilience, "resilience");
         Objects.requireNonNull(identity, "identity");
         Objects.requireNonNull(policy, "policy");
         Objects.requireNonNull(contextOpen, "contextOpen");
-        if (policy.isEmpty() && circuitBreaker == null) {
+        if (policy.isEmpty() && circuitBreaker == null && bulkhead == null) {
             throw new IllegalStateException("a pipeline must configure at least one concern");
         }
         if (policy.circuitBreaker().isPresent() || policy.bulkhead().isPresent()) {
@@ -115,7 +126,7 @@ public final class ResiliencePipeline {
                 policy.timeout().orElse(null),
                 policy.retry().orElse(null),
                 circuitBreaker,
-                null,
+                bulkhead,
                 classifier,
                 contextOpen,
                 null);
@@ -129,9 +140,22 @@ public final class ResiliencePipeline {
             CircuitFailureClassifier classifier,
             BooleanSupplier contextOpen,
             Consumer<Runnable> executionRegistrar) {
+        return fromAdapterPolicy(
+                resilience, identity, policy, circuitBreaker, null, classifier, contextOpen, executionRegistrar);
+    }
+
+    static ResiliencePipeline fromAdapterPolicy(
+            Resilience resilience,
+            AdapterOperationIdentity identity,
+            ResolvedResiliencePolicy policy,
+            CircuitBreaker circuitBreaker,
+            Bulkhead bulkhead,
+            CircuitFailureClassifier classifier,
+            BooleanSupplier contextOpen,
+            Consumer<Runnable> executionRegistrar) {
         Objects.requireNonNull(executionRegistrar, "executionRegistrar");
         ResiliencePipeline base =
-                fromAdapterPolicy(resilience, identity, policy, circuitBreaker, classifier, contextOpen);
+                fromAdapterPolicy(resilience, identity, policy, circuitBreaker, bulkhead, classifier, contextOpen);
         return new ResiliencePipeline(
                 base.resilience,
                 base.operationKey,

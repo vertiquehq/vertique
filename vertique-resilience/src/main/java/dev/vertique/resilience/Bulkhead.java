@@ -3,6 +3,7 @@
 
 package dev.vertique.resilience;
 
+import dev.vertique.resilience.adapter.AdapterOperationIdentity;
 import dev.vertique.resilience.exception.BulkheadQueueTimeoutException;
 import dev.vertique.resilience.exception.BulkheadRejectedException;
 import dev.vertique.resilience.exception.ResilienceClosedException;
@@ -55,6 +56,18 @@ public final class Bulkhead implements Resilience.RuntimeExecution {
     static Builder builderForDerivedKey(Resilience resilience, String stateKey) {
         return new Builder(
                 Objects.requireNonNull(resilience, "resilience"), Objects.requireNonNull(stateKey, "stateKey"));
+    }
+
+    static Bulkhead forAdapterIdentity(
+            Resilience resilience, AdapterOperationIdentity identity, BulkheadConfig configuration) {
+        Bulkhead bulkhead = new Bulkhead(
+                Objects.requireNonNull(resilience, "resilience"),
+                ResiliencePipeline.deriveAdapterOperationKey(Objects.requireNonNull(identity, "identity")),
+                Objects.requireNonNull(configuration, "configuration"));
+        if (!resilience.register(bulkhead)) {
+            throw new IllegalStateException("Resilience runtime is closed");
+        }
+        return bulkhead;
     }
 
     Resilience resilience() {

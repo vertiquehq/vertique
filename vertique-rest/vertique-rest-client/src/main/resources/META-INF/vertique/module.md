@@ -198,10 +198,10 @@ client contexts and WebClients. `close()` is deterministic and idempotent.
 
 ### Resilience annotations
 
-`@CircuitBreaker`, `@Retry`, `@Timeout`, and `BackoffStrategy` come from
+`@CircuitBreaker`, `@Retry`, `@Timeout`, `@Bulkhead`, and `BackoffStrategy` come from
 `dev.vertique.resilience.annotation` and `dev.vertique.resilience` in
 `dev.vertique:vertique-resilience` and are shared with
-`dev.vertique:vertique-services`. All three annotations are valid on the interface (default for every
+`dev.vertique:vertique-services`. All four annotations are valid on the interface (default for every
 method) and on a method (overrides the interface default).
 
 **`@CircuitBreaker`**
@@ -225,6 +225,23 @@ public interface PaymentClient {
     @Path("/refunds")
     @CircuitBreaker(maxFailures = 1, resetTimeoutMs = 2_000)   // per-method override
     Future<Refund> createRefund(RefundRequest request);
+}
+```
+
+**`@Bulkhead`**
+
+| Attribute | Default | Description |
+|-----------|---------|-------------|
+| `maxConcurrentCalls` | required | Maximum active logical executions |
+| `mode` | `REJECT` | Immediate rejection or bounded FIFO queueing |
+| `maxQueueSize` | `0` | Waiting-call limit in `QUEUE` mode; must be `1..1024` there |
+| `queueTimeoutMs` | `0` | Maximum queue wait in `QUEUE` mode; must be `1..60000` there |
+
+```java
+@RestClient(name = "payment-service")
+@Bulkhead(maxConcurrentCalls = 10, mode = Bulkhead.Mode.QUEUE, maxQueueSize = 100, queueTimeoutMs = 500)
+public interface PaymentClient {
+    // one permit covers the complete request, including retries
 }
 ```
 
@@ -995,7 +1012,7 @@ interface AppComponent {
 | Dependency | Why |
 |---|---|
 | `dev.vertique:vertique-core` | `OrderedExtension`/`ExtensionPhase` ordering, the exception hierarchy, `FailureMapper` behind the default exception mapper, `ConfigParser`, `core.codegen` metadata SPI, optional `BeanValidator` |
-| `dev.vertique:vertique-resilience` | Canonical timeout, retry, and circuit-breaker annotations plus backoff and retry contracts |
+| `dev.vertique:vertique-resilience` | Canonical timeout, retry, circuit-breaker, and bulkhead annotations plus backoff and retry contracts |
 | `dev.vertique:vertique-rest-core` | `ParamConversionResolver`, `ParamConverterRegistry`, `ConversionContext`, `ParamSource`, and `RestCoreModule` — the outbound half of the conversion stack `rest-jaxrs` uses inbound |
 | `dev.vertique:vertique-json` | `JsonMapperProfileRegistry`, `JsonConfig`, and `JsonRuntimeModule` for named mapper profiles |
 | `io.vertx:vertx-web-client` | `WebClient`, `WebClientOptions`, `PoolOptions` |

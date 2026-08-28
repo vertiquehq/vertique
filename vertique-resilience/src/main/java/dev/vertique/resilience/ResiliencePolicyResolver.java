@@ -3,6 +3,7 @@
 
 package dev.vertique.resilience;
 
+import dev.vertique.resilience.annotation.BulkheadDeclaration;
 import dev.vertique.resilience.annotation.CircuitBreakerDeclaration;
 import dev.vertique.resilience.annotation.ResilienceAnnotations;
 import dev.vertique.resilience.annotation.RetryDeclaration;
@@ -42,7 +43,7 @@ public final class ResiliencePolicyResolver {
                     resolveTimeout(annotations, operationOverrides, defaults),
                     resolveRetry(annotations, operationOverrides, defaults),
                     resolveCircuitBreaker(annotations, operationOverrides, defaults),
-                    resolveBulkhead(operationOverrides, defaults));
+                    resolveBulkhead(annotations, operationOverrides, defaults));
         } catch (IllegalArgumentException invalidConfiguration) {
             throw invalid();
         }
@@ -173,25 +174,45 @@ public final class ResiliencePolicyResolver {
         return Optional.of(CircuitBreakerConfig.of(maxFailures, resetTimeoutMs));
     }
 
-    private Optional<BulkheadConfig> resolveBulkhead(ResiliencePolicyOverrides overrides, ResilienceDefaults defaults) {
+    private Optional<BulkheadConfig> resolveBulkhead(
+            ResilienceAnnotations annotations, ResiliencePolicyOverrides overrides, ResilienceDefaults defaults) {
         BulkheadOverride operation = overrides.bulkhead().orElse(null);
         if (isExplicitlyDisabled(operation)) {
             return Optional.empty();
         }
 
+        BulkheadDeclaration annotation = annotations.bulkhead().orElse(null);
         boolean enabled = operation != null
                 && (operation.enabled().orElse(false) || operation.config().isPresent());
-        enabled |= defaults.bulkhead().isPresent();
+        enabled |= annotation != null || defaults.bulkhead().isPresent();
         if (!enabled) {
             return Optional.empty();
         }
         BulkheadConfig config = operation != null && operation.config().isPresent()
                 ? operation.config().orElseThrow()
-                : defaults.bulkhead().orElse(null);
+                : annotation != null
+                        ? annotationConfig(annotation)
+                        : defaults.bulkhead().orElse(null);
         if (config == null) {
             throw incomplete();
         }
         return Optional.of(config);
+    }
+
+    private static BulkheadConfig annotationConfig(BulkheadDeclaration annotation) {
+        return switch (annotation.mode()) {
+            case REJECT -> {
+                if (annotation.maxQueueSize() != 0 || annotation.queueTimeoutMs() != 0) {
+                    throw new IllegalArgumentException("reject bulkhead annotations cannot configure a queue");
+                }
+                yield BulkheadConfig.reject(annotation.maxConcurrentCalls());
+            }
+            case QUEUE ->
+                BulkheadConfig.queue(
+                        annotation.maxConcurrentCalls(),
+                        annotation.maxQueueSize(),
+                        java.time.Duration.ofMillis(annotation.queueTimeoutMs()));
+        };
     }
 
     private static RetryBackoff resolveBackoff(

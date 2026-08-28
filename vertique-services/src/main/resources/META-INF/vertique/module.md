@@ -366,7 +366,7 @@ authorization bindings are absent.
 
 ## Resilience
 
-The annotations `@Timeout`, `@Retry`, and `@CircuitBreaker` are defined by
+The annotations `@Timeout`, `@Retry`, `@CircuitBreaker`, and `@Bulkhead` are defined by
 `dev.vertique:vertique-resilience` and enforced server-side by its common executor. Services
 translates its typed operation configuration into the same resolved policy used by the server
 pipeline; configuration alone never activates resilience when an operation has no annotation.
@@ -375,10 +375,16 @@ Effective policy order is timeout/circuit-breaker around retry. A configured tim
 attempt. `@Retry.abortOn` wins over `retryOn`; when `retryOn` is empty, failures not matched by
 `abortOn` are eligible for retry.
 
+`@Bulkhead` limits concurrent logical executions. Its default `REJECT` mode fails immediately when
+capacity is exhausted. `QUEUE` mode admits a bounded FIFO queue using `maxQueueSize` and
+`queueTimeoutMs`; the permit covers the complete execution, including retries and backoff. The
+annotation may be placed on the service interface or operation, with operation declarations
+overriding interface declarations.
+
 The event-bus send timeout uses operation, service, and global `sendTimeoutMs` overrides before the
 resolved active execution budget plus the compatibility margin. Custom-backoff, unbounded, or
-saturated budgets require one of those explicit transport timeouts. Services exposes no bulkhead
-configuration or admission queue in this release.
+saturated budgets require one of those explicit transport timeouts. Services has no separate
+bulkhead configuration; admission is enabled only by an explicit `@Bulkhead` declaration.
 
 JSON configuration can override annotation values for an environment without changing the service
 contract. Invalid values fail during startup parsing.

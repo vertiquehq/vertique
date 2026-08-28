@@ -3,6 +3,8 @@
 
 package dev.vertique.resilience.adapter;
 
+import dev.vertique.resilience.Bulkhead;
+import dev.vertique.resilience.BulkheadConfig;
 import dev.vertique.resilience.CircuitBreaker;
 import dev.vertique.resilience.CircuitBreakerConfig;
 import dev.vertique.resilience.Resilience;
@@ -22,6 +24,7 @@ public final class ResilienceAdapterContext {
 
     private final Resilience resilience;
     private final Set<CircuitBreaker> breakers = ConcurrentHashMap.newKeySet();
+    private final Set<Bulkhead> bulkheads = ConcurrentHashMap.newKeySet();
     private final Set<Runnable> activeExecutionClosers = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Promise<Void> closePromise = Promise.promise();
@@ -34,8 +37,14 @@ public final class ResilienceAdapterContext {
     public ResiliencePipeline pipeline(AdapterOperationIdentity identity, ResolvedResiliencePolicy policy) {
         ensureOpen();
         Objects.requireNonNull(policy, "policy");
-        if (policy.circuitBreaker().isEmpty()) {
+        if (policy.circuitBreaker().isEmpty() && policy.bulkhead().isEmpty()) {
             return resilience.adapterPipeline(identity, policy, () -> !closed.get(), activeExecutionClosers::add);
+        }
+        if (policy.circuitBreaker().isEmpty()) {
+            Bulkhead bulkhead = bulkhead(identity, policy.bulkhead().orElseThrow());
+            ResolvedResiliencePolicy withoutBulkhead = withoutBulkhead(policy);
+            return resilience.adapterPipeline(
+                    identity, withoutBulkhead, bulkhead, () -> !closed.get(), activeExecutionClosers::add);
         }
         return pipeline(identity, policy, failure -> true);
     }
@@ -52,10 +61,18 @@ public final class ResilienceAdapterContext {
         }
         CircuitBreaker breaker =
                 circuitBreaker(identity, policy.circuitBreaker().orElseThrow());
+        Bulkhead bulkhead =
+                policy.bulkhead().map(config -> bulkhead(identity, config)).orElse(null);
         ResolvedResiliencePolicy withoutBreaker = new ResolvedResiliencePolicy(
-                policy.timeout(), policy.retry(), java.util.Optional.empty(), policy.bulkhead());
+                policy.timeout(), policy.retry(), java.util.Optional.empty(), java.util.Optional.empty());
         return resilience.adapterPipeline(
-                identity, withoutBreaker, breaker, classifier, () -> !closed.get(), activeExecutionClosers::add);
+                identity,
+                withoutBreaker,
+                breaker,
+                bulkhead,
+                classifier,
+                () -> !closed.get(),
+                activeExecutionClosers::add);
     }
 
     /** Constructs a pipeline around an explicitly shared breaker instance. */
@@ -75,10 +92,16 @@ public final class ResilienceAdapterContext {
         if (!resilience.owns(sharedCircuitBreaker)) {
             throw new IllegalArgumentException("shared circuit breaker must belong to this runtime");
         }
+        Bulkhead bulkhead = policyWithoutCircuitBreaker
+                .bulkhead()
+                .map(config -> bulkhead(identity, config))
+                .orElse(null);
+        ResolvedResiliencePolicy withoutBulkhead = withoutBulkhead(policyWithoutCircuitBreaker);
         return resilience.adapterPipeline(
                 identity,
-                policyWithoutCircuitBreaker,
+                withoutBulkhead,
                 sharedCircuitBreaker,
+                bulkhead,
                 classifier,
                 () -> !closed.get(),
                 activeExecutionClosers::add);
@@ -93,17 +116,31 @@ public final class ResilienceAdapterContext {
         return breaker;
     }
 
-    /** Closes the context and all breakers it created. */
+    private Bulkhead bulkhead(AdapterOperationIdentity stateIdentity, BulkheadConfig config) {
+        ensureOpen();
+        Bulkhead bulkhead = resilience.adapterBulkhead(
+                Objects.requireNonNull(stateIdentity, "stateIdentity"), Objects.requireNonNull(config, "config"));
+        bulkheads.add(bulkhead);
+        return bulkhead;
+    }
+
+    private static ResolvedResiliencePolicy withoutBulkhead(ResolvedResiliencePolicy policy) {
+        return new ResolvedResiliencePolicy(
+                policy.timeout(), policy.retry(), policy.circuitBreaker(), java.util.Optional.empty());
+    }
+
+    /** Closes the context and all components it created. */
     public Future<Void> close() {
         if (!closed.compareAndSet(false, true)) {
             return closePromise.future();
         }
         activeExecutionClosers.forEach(Runnable::run);
-        if (breakers.isEmpty()) {
+        if (breakers.isEmpty() && bulkheads.isEmpty()) {
             closePromise.complete();
             return closePromise.future();
         }
         breakers.forEach(breaker -> breaker.close().onComplete(ignored -> completeWhenClosed()));
+        bulkheads.forEach(bulkhead -> bulkhead.close().onComplete(ignored -> completeWhenClosed()));
         completeWhenClosed();
         return closePromise.future();
     }
@@ -120,7 +157,8 @@ public final class ResilienceAdapterContext {
 
     private void completeWhenClosed() {
         if (closed.get()
-                && breakers.stream().allMatch(breaker -> breaker.close().isComplete())) {
+                && breakers.stream().allMatch(breaker -> breaker.close().isComplete())
+                && bulkheads.stream().allMatch(bulkhead -> bulkhead.close().isComplete())) {
             closePromise.tryComplete();
         }
     }

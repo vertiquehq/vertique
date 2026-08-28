@@ -25,6 +25,7 @@ class ResilienceAnnotationsTest {
     @Timeout(5000)
     @CircuitBreaker(maxFailures = 3)
     @Retry(maxRetries = 2, retryOn = IllegalStateException.class, abortOn = UnsupportedOperationException.class)
+    @Bulkhead(maxConcurrentCalls = 4, mode = Bulkhead.Mode.QUEUE, maxQueueSize = 8, queueTimeoutMs = 250)
     interface FullyAnnotatedType {
         @Timeout(1000)
         @CircuitBreaker(maxFailures = 1)
@@ -32,6 +33,7 @@ class ResilienceAnnotationsTest {
                 maxRetries = 5,
                 retryOn = {IllegalArgumentException.class, IllegalStateException.class},
                 abortOn = {UnsupportedOperationException.class, Error.class})
+        @Bulkhead(maxConcurrentCalls = 2)
         void methodOverrides();
 
         void inheritsFromType();
@@ -80,6 +82,7 @@ class ResilienceAnnotationsTest {
         assertTrue(ResilienceAnnotations.NONE.timeout().isEmpty());
         assertTrue(ResilienceAnnotations.NONE.circuitBreaker().isEmpty());
         assertTrue(ResilienceAnnotations.NONE.retry().isEmpty());
+        assertTrue(ResilienceAnnotations.NONE.bulkhead().isEmpty());
     }
 
     @Test
@@ -134,6 +137,9 @@ class ResilienceAnnotationsTest {
         assertEquals(
                 List.of(UnsupportedOperationException.class, Error.class),
                 resolved.retry().orElseThrow().abortOn());
+        BulkheadDeclaration bulkhead = resolved.bulkhead().orElseThrow();
+        assertEquals(2, bulkhead.maxConcurrentCalls());
+        assertEquals(Bulkhead.Mode.REJECT, bulkhead.mode());
     }
 
     @Test
@@ -156,6 +162,11 @@ class ResilienceAnnotationsTest {
         assertEquals(
                 List.of(UnsupportedOperationException.class),
                 resolved.retry().orElseThrow().abortOn());
+        BulkheadDeclaration bulkhead = resolved.bulkhead().orElseThrow();
+        assertEquals(4, bulkhead.maxConcurrentCalls());
+        assertEquals(Bulkhead.Mode.QUEUE, bulkhead.mode());
+        assertEquals(8, bulkhead.maxQueueSize());
+        assertEquals(250L, bulkhead.queueTimeoutMs());
     }
 
     @Test

@@ -127,6 +127,20 @@ public final class Resilience {
     }
 
     /**
+     * Framework-only bridge for creating an adapter-owned bulkhead from a structured identity.
+     *
+     * @param identity structured adapter identity
+     * @param configuration bulkhead configuration
+     * @return runtime-owned bulkhead
+     */
+    public Bulkhead adapterBulkhead(AdapterOperationIdentity identity, BulkheadConfig configuration) {
+        Objects.requireNonNull(identity, "identity");
+        Objects.requireNonNull(configuration, "configuration");
+        ensureOpenForConstruction();
+        return Bulkhead.forAdapterIdentity(this, identity, configuration);
+    }
+
+    /**
      * Framework-only bridge for an explicitly owned adapter circuit-breaker context.
      *
      * @param identity structured adapter identity
@@ -148,6 +162,19 @@ public final class Resilience {
                 this, identity, policy, circuitBreaker, classifier, contextOpen, executionRegistrar);
     }
 
+    /** Framework-only bridge for an adapter context with an explicit bulkhead. */
+    public ResiliencePipeline adapterPipeline(
+            AdapterOperationIdentity identity,
+            ResolvedResiliencePolicy policy,
+            CircuitBreaker circuitBreaker,
+            Bulkhead bulkhead,
+            CircuitFailureClassifier classifier,
+            BooleanSupplier contextOpen,
+            Consumer<Runnable> executionRegistrar) {
+        return ResiliencePipeline.fromAdapterPolicy(
+                this, identity, policy, circuitBreaker, bulkhead, classifier, contextOpen, executionRegistrar);
+    }
+
     /**
      * Framework-only bridge for an adapter context without a circuit-breaker concern.
      *
@@ -164,6 +191,17 @@ public final class Resilience {
             Consumer<Runnable> executionRegistrar) {
         return ResiliencePipeline.fromAdapterPolicy(
                 this, identity, policy, null, null, contextOpen, executionRegistrar);
+    }
+
+    /** Framework-only bridge for an adapter context with a bulkhead but no breaker. */
+    public ResiliencePipeline adapterPipeline(
+            AdapterOperationIdentity identity,
+            ResolvedResiliencePolicy policy,
+            Bulkhead bulkhead,
+            BooleanSupplier contextOpen,
+            Consumer<Runnable> executionRegistrar) {
+        return ResiliencePipeline.fromAdapterPolicy(
+                this, identity, policy, null, bulkhead, null, contextOpen, executionRegistrar);
     }
 
     /**

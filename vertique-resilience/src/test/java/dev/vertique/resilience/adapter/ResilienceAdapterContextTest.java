@@ -9,12 +9,14 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.vertique.resilience.BulkheadConfig;
 import dev.vertique.resilience.CircuitBreaker;
 import dev.vertique.resilience.CircuitBreakerConfig;
 import dev.vertique.resilience.Resilience;
 import dev.vertique.resilience.ResiliencePipeline;
 import dev.vertique.resilience.ResolvedResiliencePolicy;
 import dev.vertique.resilience.TimeoutConfig;
+import dev.vertique.resilience.exception.BulkheadRejectedException;
 import dev.vertique.resilience.exception.CircuitOpenException;
 import dev.vertique.resilience.exception.ResilienceClosedException;
 import dev.vertique.resilience.exception.ResiliencePolicyException;
@@ -123,6 +125,47 @@ class ResilienceAdapterContextTest {
         awaitFailure(pipeline.execute(() -> Future.failedFuture(new IllegalStateException("first"))));
         assertInstanceOf(
                 CircuitOpenException.class, awaitFailure(pipeline.execute(() -> Future.succeededFuture("closed"))));
+        await(context.close());
+    }
+
+    @Test
+    @DisplayName("context owns and enforces an annotation-shaped reject bulkhead")
+    void supportsBulkheadOnlyPolicy(Vertx vertx) throws Exception {
+        resilience = Resilience.create(vertx);
+        ResilienceAdapterContext context = resilience.adapterSupport().newContext();
+        ResolvedResiliencePolicy bulkheadOnly = new ResolvedResiliencePolicy(
+                Optional.empty(), Optional.empty(), Optional.empty(), Optional.of(BulkheadConfig.reject(1)));
+        ResiliencePipeline pipeline = context.pipeline(operation("bulkhead-only"), bulkheadOnly);
+        Promise<String> active = Promise.promise();
+
+        Future<String> running = pipeline.execute(active::future);
+        Future<String> rejected = pipeline.execute(() -> Future.succeededFuture("must-not-run"));
+
+        assertInstanceOf(BulkheadRejectedException.class, awaitFailure(rejected));
+        active.complete("released");
+        assertEquals("released", await(running));
+        await(context.close());
+    }
+
+    @Test
+    @DisplayName("context owns and drains a bounded queue bulkhead")
+    void supportsQueuedBulkheadOnlyPolicy(Vertx vertx) throws Exception {
+        resilience = Resilience.create(vertx);
+        ResilienceAdapterContext context = resilience.adapterSupport().newContext();
+        ResolvedResiliencePolicy bulkheadOnly = new ResolvedResiliencePolicy(
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.of(BulkheadConfig.queue(1, 1, Duration.ofSeconds(1))));
+        ResiliencePipeline pipeline = context.pipeline(operation("bulkhead-queue"), bulkheadOnly);
+        Promise<String> active = Promise.promise();
+        Future<String> running = pipeline.execute(active::future);
+        Future<String> queued = pipeline.execute(() -> Future.succeededFuture("queued"));
+
+        assertFalse(queued.isComplete());
+        active.complete("released");
+        assertEquals("released", await(running));
+        assertEquals("queued", await(queued));
         await(context.close());
     }
 

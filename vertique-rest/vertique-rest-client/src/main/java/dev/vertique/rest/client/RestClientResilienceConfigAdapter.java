@@ -62,13 +62,15 @@ final class RestClientResilienceConfigAdapter {
         ResilienceAnnotations annotations = meta.resilienceAnnotations();
         if (usesInterfaceBreaker && annotations.circuitBreaker().isPresent()) {
             CircuitBreakerDeclaration declaration = annotations.circuitBreaker().orElseThrow();
-            annotations = new ResilienceAnnotations(annotations.timeout(), Optional.empty(), annotations.retry());
+            annotations = new ResilienceAnnotations(
+                    annotations.timeout(), Optional.empty(), annotations.retry(), annotations.bulkhead());
             if (declaration.timeoutMs() > 0 && annotations.timeout().isEmpty()) {
                 annotations = new ResilienceAnnotations(
                         Optional.of(new dev.vertique.resilience.annotation.TimeoutDeclaration(
                                 declaration.timeoutMs(), java.util.concurrent.TimeUnit.MILLISECONDS)),
                         annotations.circuitBreaker(),
-                        annotations.retry());
+                        annotations.retry(),
+                        annotations.bulkhead());
             }
         }
 

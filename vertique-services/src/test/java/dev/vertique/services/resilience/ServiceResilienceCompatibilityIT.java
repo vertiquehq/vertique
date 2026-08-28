@@ -4,8 +4,10 @@
 package dev.vertique.services.resilience;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -17,9 +19,11 @@ import dev.vertique.core.eventbus.LocalMessageCodec;
 import dev.vertique.core.eventbus.Result;
 import dev.vertique.resilience.Resilience;
 import dev.vertique.resilience.ResiliencePipeline;
+import dev.vertique.resilience.annotation.Bulkhead;
 import dev.vertique.resilience.annotation.CircuitBreaker;
 import dev.vertique.resilience.annotation.ResilienceAnnotations;
 import dev.vertique.resilience.annotation.Retry;
+import dev.vertique.resilience.exception.BulkheadRejectedException;
 import dev.vertique.services.ResolvedServiceTarget;
 import dev.vertique.services.ServiceOperation;
 import dev.vertique.services.ServiceRequestSender;
@@ -28,6 +32,7 @@ import dev.vertique.services.config.ServicesConfig;
 import dev.vertique.services.dispatch.ServiceMethodDescriptor;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.eventbus.DeliveryOptions;
 import io.vertx.junit5.VertxExtension;
@@ -35,6 +40,7 @@ import io.vertx.junit5.VertxTestContext;
 import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
@@ -54,6 +60,10 @@ class ServiceResilienceCompatibilityIT {
         @CircuitBreaker(maxFailures = 2, timeoutMs = 100, resetTimeoutMs = 1000)
         @ServiceOperation("resilient")
         Future<String> resilient();
+
+        @Bulkhead(maxConcurrentCalls = 1)
+        @ServiceOperation("bulkhead-only")
+        Future<String> bulkheadOnly();
     }
 
     private static ServiceMethodMeta meta(String operation) throws Exception {
@@ -109,6 +119,21 @@ class ServiceResilienceCompatibilityIT {
                     .join();
             assertEquals("ok", result);
             assertEquals(2, attempts.get());
+
+            ServiceMethodMeta bulkheadOnly = meta("bulkheadOnly");
+            ResiliencePipeline bulkheadPipeline = factory.pipeline(bulkheadOnly);
+            assertNotNull(bulkheadPipeline);
+            Promise<String> active = Promise.promise();
+            Future<String> running = bulkheadPipeline.execute(active::future);
+            Future<String> rejected = bulkheadPipeline.execute(() -> Future.succeededFuture("must-not-run"));
+            CompletionException failure = assertThrows(
+                    CompletionException.class,
+                    () -> rejected.toCompletionStage().toCompletableFuture().join());
+            assertInstanceOf(BulkheadRejectedException.class, failure.getCause());
+            active.complete("bulkhead-ok");
+            assertEquals(
+                    "bulkhead-ok",
+                    running.toCompletionStage().toCompletableFuture().join());
 
             EventBusClient eventBusClient = new EventBusClient(vertx, new EventBusExceptionMapper());
             ServiceSupervisor supervisor = mock(ServiceSupervisor.class);

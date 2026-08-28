@@ -11,11 +11,11 @@ SPDX-License-Identifier: EUPL-1.2
 > **Depends on:** `vertique-core`, `vertx-core`, `vertx-circuit-breaker`, Dagger, `jakarta.inject-api`
 
 `vertique-resilience` provides the shared resilience vocabulary and runtime foundation used by
-Vertique consumers. It contains type and method annotations for timeout, retry, and circuit-breaker
-declarations; immutable metadata snapshots for resolved declarations; retry contracts; and an
+Vertique consumers. It contains type and method annotations for timeout, retry, circuit-breaker, and
+bulkhead declarations; immutable metadata snapshots for resolved declarations; retry contracts; and an
 application-scoped runtime with executable timeout/retry/circuit-breaker/bulkhead policy composition,
-deterministic policy resolution, and execution budgets. Framework adapter policies containing a
-bulkhead remain rejected eagerly until downstream adapter cutovers own that boundary.
+deterministic policy resolution, and execution budgets. Framework adapter contexts can own the
+bulkhead component required by a resolved adapter policy.
 
 ---
 
@@ -34,8 +34,8 @@ type-level declaration; values are not merged attribute by attribute. `Resilienc
 resolves the effective declarations through the method and type hierarchy and exposes immutable
 declaration records through `Optional` accessors.
 
-The three declaration families are independent: an operation may configure any combination of
-timeout, retry, and circuit breaker. `ResilienceAnnotations.NONE` is the shared empty value, and
+The four declaration families are independent: an operation may configure any combination of
+timeout, retry, circuit breaker, and bulkhead. `ResilienceAnnotations.NONE` is the shared empty value, and
 `hasAny()` is the convenient test for whether a declaration is present.
 
 The executable foundation is application-scoped. Create one `Resilience` for the application graph
@@ -62,7 +62,7 @@ hidden event queue, and observer implementations must keep callbacks bounded and
 
 ### Resilience annotations
 
-`dev.vertique.resilience.annotation.Timeout`, `Retry`, and `CircuitBreaker` are runtime-retained
+`dev.vertique.resilience.annotation.Timeout`, `Retry`, `CircuitBreaker`, and `Bulkhead` are runtime-retained
 annotations targeting types and methods. `Retry` references a `BackoffStrategy` class and lists
 exception types eligible for retry or immediate abort.
 
@@ -78,7 +78,7 @@ public interface PaymentClient {
 ### Declaration metadata
 
 `ResilienceAnnotations.resolve(Method)` or `resolve(Class<?>, Method)` returns immutable
-`TimeoutDeclaration`, `RetryDeclaration`, and `CircuitBreakerDeclaration` snapshots. The snapshots
+`TimeoutDeclaration`, `RetryDeclaration`, `CircuitBreakerDeclaration`, and `BulkheadDeclaration` snapshots. The snapshots
 are suitable for generated contributors and reflective registration; they do not expose live
 annotation instances.
 
@@ -171,13 +171,13 @@ unbounded inputs remain explicit.
 
 Framework adapters use `ResilienceAdapterSupport.pipeline(AdapterOperationIdentity,
 ResolvedResiliencePolicy)` for the stable structured entry point. It derives the opaque key internally,
-accepts timeout-only and retry-only policies, and rejects empty or bulkhead-bearing policies before
-state, timers, or suppliers are started. For breaker policies, create a `ResilienceAdapterContext`
+accepts timeout-only and retry-only policies, and rejects empty or stateful policies before state,
+timers, or suppliers are started. For breaker or bulkhead policies, create a `ResilienceAdapterContext`
 with `newContext()`. Its classifier overload maps only adapter-final failures into breaker
 accounting; classifier failures preserve the original failure and count conservatively. Contexts
-own breakers and fence active public futures on `close()`. Equal structured identities in separate
-contexts do not share state. No raw-key overload or standalone public identity derivation is
-provided.
+own breakers and bulkheads and fence active public futures on `close()`. Equal structured identities
+in separate contexts do not share state. No raw-key overload or standalone public identity derivation
+is provided.
 
 ### Circuit breaker and adapter context
 
@@ -205,8 +205,9 @@ bulkheads are pipeline-local; only explicitly reusing a same-owner prebuilt inst
 capacity. The pipeline performs the fast breaker-open check before bulkhead admission and the
 authoritative breaker recheck after a queued call is admitted.
 
-Framework adapter factories continue to reject bulkhead-bearing resolved policies in this slice;
-Services and REST cutover tasks own the decision to expose adapter bulkhead configuration.
+Framework adapter contexts translate resolved bulkhead configuration into context-owned components.
+Services and REST use that context path, so explicit `@Bulkhead(mode = REJECT)` and
+`@Bulkhead(mode = QUEUE)` declarations are enforced for their operations.
 
 ### Resilience observation
 
@@ -228,8 +229,7 @@ Runtime failures use two sealed public roots: `ResilienceException` extends
 `CircuitOpenException`, `BulkheadRejectedException`, and `BulkheadQueueTimeoutException` are part of
 the published exception surface. `CircuitOpenException` carries the derived pipeline operation key
 and breaker state key; direct breaker execution uses its state key for both. Bulkhead policy
-execution is available for programmatic pipelines; framework adapter policies remain rejected until
-the downstream cutover tasks own that boundary.
+execution is available for programmatic pipelines and for framework adapter contexts.
 
 `ResilienceTimeoutException` exposes the validated derived operation key and `timeoutMs`;
 `ResilienceClosedException` exposes the validated derived operation key. Public exception messages

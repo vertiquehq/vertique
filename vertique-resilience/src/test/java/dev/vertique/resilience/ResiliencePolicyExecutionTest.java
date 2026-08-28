@@ -121,6 +121,7 @@ class ResiliencePolicyExecutionTest {
         ResilienceAnnotations annotations = new ResilienceAnnotations(
                 Optional.of(new TimeoutDeclaration(2L, TimeUnit.SECONDS)),
                 Optional.of(new CircuitBreakerDeclaration(4, 100L, 200L)),
+                Optional.empty(),
                 Optional.empty());
         ResiliencePolicyOverrides overrides = new ResiliencePolicyOverrides(
                 Optional.of(new TimeoutOverride(Optional.empty(), OptionalLong.of(7L))),
@@ -165,6 +166,11 @@ class ResiliencePolicyExecutionTest {
         RetryBackoff.Exponential backoff = assertInstanceOf(RetryBackoff.Exponential.class, retry.backoff());
         assertEquals(7L, backoff.initialDelayMs());
         assertEquals(19L, backoff.maxDelayMs());
+        BulkheadConfig.Queue bulkhead =
+                assertInstanceOf(BulkheadConfig.Queue.class, resolved.bulkhead().orElseThrow());
+        assertEquals(3, bulkhead.maxConcurrentCalls());
+        assertEquals(2, bulkhead.maxQueueSize());
+        assertEquals(125L, bulkhead.queueTimeoutMs());
     }
 
     @Test
@@ -174,7 +180,8 @@ class ResiliencePolicyExecutionTest {
         ResilienceAnnotations annotations = new ResilienceAnnotations(
                 Optional.empty(),
                 Optional.empty(),
-                Optional.of(new RetryDeclaration(3, 20L, 2.0, 200L, AnnotationBackoff.class, List.of(), List.of())));
+                Optional.of(new RetryDeclaration(3, 20L, 2.0, 200L, AnnotationBackoff.class, List.of(), List.of())),
+                Optional.empty());
         RetryOverride operation = new RetryOverride(
                 Optional.empty(),
                 OptionalInt.empty(),
@@ -686,7 +693,7 @@ class ResiliencePolicyExecutionTest {
     }
 
     private static ResilienceAnnotations annotations(RetryDeclaration retry) {
-        return new ResilienceAnnotations(Optional.empty(), Optional.empty(), Optional.of(retry));
+        return new ResilienceAnnotations(Optional.empty(), Optional.empty(), Optional.of(retry), Optional.empty());
     }
 
     private static ResiliencePolicyOverrides retryOverrides(RetryOverride retry) {
@@ -722,6 +729,11 @@ class ResiliencePolicyExecutionTest {
     }
 
     @dev.vertique.resilience.annotation.Retry(maxRetries = 5, delayMs = 99, maxDelayMs = 300)
+    @dev.vertique.resilience.annotation.Bulkhead(
+            maxConcurrentCalls = 3,
+            mode = dev.vertique.resilience.annotation.Bulkhead.Mode.QUEUE,
+            maxQueueSize = 2,
+            queueTimeoutMs = 125)
     private static final class AnnotatedPolicy {
 
         @dev.vertique.resilience.annotation.Retry(maxRetries = 2, delayMs = 7, maxDelayMs = 19)

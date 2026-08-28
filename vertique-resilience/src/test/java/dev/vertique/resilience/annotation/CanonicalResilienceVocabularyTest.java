@@ -37,6 +37,10 @@ class CanonicalResilienceVocabularyTest {
                 "dev.vertique.resilience.annotation.CircuitBreaker",
                 "Ldev/vertique/resilience/annotation/CircuitBreaker;");
         assertType(
+                Bulkhead.class,
+                "dev.vertique.resilience.annotation.Bulkhead",
+                "Ldev/vertique/resilience/annotation/Bulkhead;");
+        assertType(
                 ResilienceAnnotations.class,
                 "dev.vertique.resilience.annotation.ResilienceAnnotations",
                 "Ldev/vertique/resilience/annotation/ResilienceAnnotations;");
@@ -73,11 +77,17 @@ class CanonicalResilienceVocabularyTest {
         assertMethodDescriptor(CircuitBreaker.class, "timeoutMs", "()J");
         assertMethodDescriptor(CircuitBreaker.class, "resetTimeoutMs", "()J");
 
+        assertMethodDescriptor(Bulkhead.class, "maxConcurrentCalls", "()I");
+        assertMethodDescriptor(Bulkhead.class, "mode", "()Ldev/vertique/resilience/annotation/Bulkhead$Mode;");
+        assertMethodDescriptor(Bulkhead.class, "maxQueueSize", "()I");
+        assertMethodDescriptor(Bulkhead.class, "queueTimeoutMs", "()J");
+
         assertFieldDescriptor(
                 ResilienceAnnotations.class, "NONE", "Ldev/vertique/resilience/annotation/ResilienceAnnotations;");
         assertMethodDescriptor(ResilienceAnnotations.class, "timeout", "()Ljava/util/Optional;");
         assertMethodDescriptor(ResilienceAnnotations.class, "circuitBreaker", "()Ljava/util/Optional;");
         assertMethodDescriptor(ResilienceAnnotations.class, "retry", "()Ljava/util/Optional;");
+        assertMethodDescriptor(ResilienceAnnotations.class, "bulkhead", "()Ljava/util/Optional;");
         assertMethodDescriptor(ResilienceAnnotations.class, "hasAny", "()Z");
         assertMethodDescriptor(
                 ResilienceAnnotations.class,
@@ -100,6 +110,14 @@ class CanonicalResilienceVocabularyTest {
         assertMethodDescriptor(CircuitBreakerDeclaration.class, "maxFailures", "()I");
         assertMethodDescriptor(CircuitBreakerDeclaration.class, "timeoutMs", "()J");
         assertMethodDescriptor(CircuitBreakerDeclaration.class, "resetTimeoutMs", "()J");
+
+        assertConstructorDescriptor(
+                BulkheadDeclaration.class,
+                "(ILdev/vertique/resilience/annotation/Bulkhead$Mode;IJ)V",
+                int.class,
+                Bulkhead.Mode.class,
+                int.class,
+                long.class);
 
         assertConstructorDescriptor(
                 RetryDeclaration.class,

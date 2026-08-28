@@ -9,6 +9,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import dev.vertique.core.codegen.MethodMetadata;
 import dev.vertique.core.codegen.ParameterMetadata;
 import dev.vertique.resilience.BackoffStrategy;
+import dev.vertique.resilience.annotation.Bulkhead;
 import dev.vertique.resilience.annotation.Retry;
 import dev.vertique.rest.client.HttpClientResponse;
 import dev.vertique.rest.client.Url;
@@ -334,6 +335,20 @@ class ClientInterfaceScannerTest {
         Future<Item> overrideRetry();
     }
 
+    @Bulkhead(maxConcurrentCalls = 4, mode = Bulkhead.Mode.QUEUE, maxQueueSize = 8, queueTimeoutMs = 250)
+    @Path("/bulkhead")
+    interface InterfaceLevelBulkheadClient {
+
+        @GET
+        @Path("/inherited")
+        Future<Item> inherited();
+
+        @GET
+        @Path("/override")
+        @Bulkhead(maxConcurrentCalls = 2)
+        Future<Item> overrideBulkhead();
+    }
+
     // --- Phase 4.1 metadata-composition test interfaces ---
 
     @Path("/comp")
@@ -644,6 +659,27 @@ class ClientInterfaceScannerTest {
         // Method-level maxRetries=1 must override interface-level maxRetries=3
         assertThat(override.resilienceAnnotations().retry().orElseThrow().maxRetries())
                 .isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("Bulkhead annotations produce inherited and method-level canonical declarations")
+    void bulkheadAnnotationsAreResolved() {
+        Map<Method, ClientMethodMeta> metas = ClientInterfaceScanner.scan(InterfaceLevelBulkheadClient.class);
+        Map<String, ClientMethodMeta> byName = indexByMethodName(metas);
+
+        var inherited =
+                byName.get("inherited").resilienceAnnotations().bulkhead().orElseThrow();
+        assertThat(inherited.maxConcurrentCalls()).isEqualTo(4);
+        assertThat(inherited.mode()).isEqualTo(Bulkhead.Mode.QUEUE);
+        assertThat(inherited.maxQueueSize()).isEqualTo(8);
+        assertThat(inherited.queueTimeoutMs()).isEqualTo(250);
+
+        var override = byName.get("overrideBulkhead")
+                .resilienceAnnotations()
+                .bulkhead()
+                .orElseThrow();
+        assertThat(override.maxConcurrentCalls()).isEqualTo(2);
+        assertThat(override.mode()).isEqualTo(Bulkhead.Mode.REJECT);
     }
 
     // --- @Url tests ---
