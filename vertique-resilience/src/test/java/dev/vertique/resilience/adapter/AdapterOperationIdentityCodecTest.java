@@ -26,14 +26,14 @@ import org.junit.jupiter.api.Test;
  * Contract proofs for structured adapter identity encoding and the redacted common exception
  * hierarchy.
  *
- * <p>The runtime types are intentionally loaded reflectively because this proof is authored before
- * T011 production implementation. Reflection also keeps the private codec private: the test
- * observes its package-local derivation seam without turning that seam into public API.
+ * <p>The runtime types are intentionally loaded reflectively to keep this proof focused on the
+ * frozen public contract while observing the pipeline's package-local derivation seam without
+ * turning that seam into public API.
  */
-class AdapterOperationIdentityCodecTest {
+class AdapterOperationIdentityTest {
 
     private static final String IDENTITY_TYPE = "dev.vertique.resilience.adapter.AdapterOperationIdentity";
-    private static final String CODEC_TYPE = "dev.vertique.resilience.adapter.AdapterOperationIdentityCodec";
+    private static final String PIPELINE_TYPE = "dev.vertique.resilience.ResiliencePipeline";
     private static final String APPLICATION_OPERATION_KEY =
             "application:operation:b71ab57bc248a849ca161ebbd468e7a6d7d3af8bdc7f0e1d3490331d3c5926fc";
     private static final String APPLICATION_STATE_KEY =
@@ -72,8 +72,12 @@ class AdapterOperationIdentityCodecTest {
             assertTrue(derivedKey.matches("[a-z0-9:-]{1,32}:[0-9a-f]{64}"));
         }
 
-        Class<?> codec = load(CODEC_TYPE);
-        assertFalse(Modifier.isPublic(codec.getModifiers()), "the adapter identity codec must remain package-private");
+        Class<?> pipeline = load(PIPELINE_TYPE);
+        Method derivation = Arrays.stream(pipeline.getDeclaredMethods())
+                .filter(method -> method.getName().equals("deriveAdapterOperationKey"))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("pipeline identity derivation seam is absent"));
+        assertFalse(Modifier.isPublic(derivation.getModifiers()), "identity derivation must remain package-local");
     }
 
     @Test
@@ -352,16 +356,16 @@ class AdapterOperationIdentityCodecTest {
     }
 
     private static String derive(Object identity) {
-        Class<?> codec = load(CODEC_TYPE);
-        Method derivation = Arrays.stream(codec.getDeclaredMethods())
+        Class<?> pipeline = load(PIPELINE_TYPE);
+        Method derivation = Arrays.stream(pipeline.getDeclaredMethods())
                 .filter(method -> Modifier.isStatic(method.getModifiers()))
                 .filter(method -> method.getReturnType() == String.class)
                 .filter(method -> method.getParameterCount() == 1)
                 .filter(method -> method.getParameterTypes()[0] == identity.getClass())
                 .findFirst()
                 .orElseThrow(
-                        () -> new AssertionError("codec must expose one package-local identity derivation method"));
-        assertFalse(Modifier.isPublic(derivation.getModifiers()), "codec derivation must not be public");
+                        () -> new AssertionError("pipeline must expose one package-local identity derivation method"));
+        assertFalse(Modifier.isPublic(derivation.getModifiers()), "identity derivation must not be public");
         try {
             derivation.setAccessible(true);
             return (String) derivation.invoke(null, identity);
@@ -468,7 +472,7 @@ class AdapterOperationIdentityCodecTest {
 
     private static Class<?> load(String typeName) {
         try {
-            return Class.forName(typeName, false, AdapterOperationIdentityCodecTest.class.getClassLoader());
+            return Class.forName(typeName, false, AdapterOperationIdentityTest.class.getClassLoader());
         } catch (ClassNotFoundException e) {
             throw new AssertionError("Required T011 type is absent: " + typeName, e);
         }

@@ -19,6 +19,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 /** Fixed-order executable composition of typed resilience concerns. */
@@ -32,7 +33,7 @@ public final class ResiliencePipeline {
     private final Bulkhead bulkhead;
     private final CircuitFailureClassifier circuitFailureClassifier;
     private final BooleanSupplier contextOpen;
-    private final Consumer<Runnable> executionRegistrar;
+    private final Function<Runnable, Runnable> executionRegistrar;
 
     private ResiliencePipeline(
             Resilience resilience,
@@ -43,7 +44,7 @@ public final class ResiliencePipeline {
             Bulkhead bulkhead,
             CircuitFailureClassifier circuitFailureClassifier,
             BooleanSupplier contextOpen,
-            Consumer<Runnable> executionRegistrar) {
+            Function<Runnable, Runnable> executionRegistrar) {
         this.resilience = resilience;
         this.operationKey = operationKey;
         this.timeoutConfiguration = timeoutConfiguration;
@@ -139,7 +140,7 @@ public final class ResiliencePipeline {
             CircuitBreaker circuitBreaker,
             CircuitFailureClassifier classifier,
             BooleanSupplier contextOpen,
-            Consumer<Runnable> executionRegistrar) {
+            Function<Runnable, Runnable> executionRegistrar) {
         return fromAdapterPolicy(
                 resilience, identity, policy, circuitBreaker, null, classifier, contextOpen, executionRegistrar);
     }
@@ -152,7 +153,7 @@ public final class ResiliencePipeline {
             Bulkhead bulkhead,
             CircuitFailureClassifier classifier,
             BooleanSupplier contextOpen,
-            Consumer<Runnable> executionRegistrar) {
+            Function<Runnable, Runnable> executionRegistrar) {
         Objects.requireNonNull(executionRegistrar, "executionRegistrar");
         ResiliencePipeline base =
                 fromAdapterPolicy(resilience, identity, policy, circuitBreaker, bulkhead, classifier, contextOpen);
@@ -225,7 +226,7 @@ public final class ResiliencePipeline {
                             operationKey,
                             protectedOperation,
                             contextOpen,
-                            executionRegistrar == null ? ignored -> {} : executionRegistrar,
+                            executionRegistrar == null ? ignored -> () -> {} : executionRegistrar,
                             observation));
         }
         if (circuitBreaker != null) {
@@ -253,19 +254,22 @@ public final class ResiliencePipeline {
     private <T> Future<T> fenceContext(Future<T> outcome) {
         io.vertx.core.Promise<T> result = io.vertx.core.Promise.promise();
         io.vertx.core.Context context = resilience.executionContext();
-        executionRegistrar.accept(
+        Runnable deregister = executionRegistrar.apply(
                 () -> result.tryFail(new dev.vertique.resilience.exception.ResilienceClosedException(operationKey)));
-        outcome.onComplete(ignored -> context.runOnContext(done -> {
-            if (contextOpen.getAsBoolean()) {
-                if (outcome.succeeded()) {
-                    result.tryComplete(outcome.result());
+        outcome.onComplete(ignored -> {
+            deregister.run();
+            context.runOnContext(done -> {
+                if (contextOpen.getAsBoolean()) {
+                    if (outcome.succeeded()) {
+                        result.tryComplete(outcome.result());
+                    } else {
+                        result.tryFail(outcome.cause());
+                    }
                 } else {
-                    result.tryFail(outcome.cause());
+                    result.tryFail(new dev.vertique.resilience.exception.ResilienceClosedException(operationKey));
                 }
-            } else {
-                result.tryFail(new dev.vertique.resilience.exception.ResilienceClosedException(operationKey));
-            }
-        }));
+            });
+        });
         return result.future();
     }
 

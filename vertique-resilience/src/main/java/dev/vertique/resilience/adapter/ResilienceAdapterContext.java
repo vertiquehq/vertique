@@ -25,7 +25,8 @@ public final class ResilienceAdapterContext {
     private final Resilience resilience;
     private final Set<CircuitBreaker> breakers = ConcurrentHashMap.newKeySet();
     private final Set<Bulkhead> bulkheads = ConcurrentHashMap.newKeySet();
-    private final Set<Runnable> activeExecutionClosers = ConcurrentHashMap.newKeySet();
+    private final Set<ExecutionRegistration> activeExecutionRegistrations = ConcurrentHashMap.newKeySet();
+    private final Object lifecycleMonitor = new Object();
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Promise<Void> closePromise = Promise.promise();
 
@@ -38,13 +39,13 @@ public final class ResilienceAdapterContext {
         ensureOpen();
         Objects.requireNonNull(policy, "policy");
         if (policy.circuitBreaker().isEmpty() && policy.bulkhead().isEmpty()) {
-            return resilience.adapterPipeline(identity, policy, () -> !closed.get(), activeExecutionClosers::add);
+            return resilience.adapterPipeline(identity, policy, () -> !closed.get(), this::registerExecution);
         }
         if (policy.circuitBreaker().isEmpty()) {
             Bulkhead bulkhead = bulkhead(identity, policy.bulkhead().orElseThrow());
             ResolvedResiliencePolicy withoutBulkhead = withoutBulkhead(policy);
             return resilience.adapterPipeline(
-                    identity, withoutBulkhead, bulkhead, () -> !closed.get(), activeExecutionClosers::add);
+                    identity, withoutBulkhead, bulkhead, () -> !closed.get(), this::registerExecution);
         }
         return pipeline(identity, policy, failure -> true);
     }
@@ -66,13 +67,7 @@ public final class ResilienceAdapterContext {
         ResolvedResiliencePolicy withoutBreaker = new ResolvedResiliencePolicy(
                 policy.timeout(), policy.retry(), java.util.Optional.empty(), java.util.Optional.empty());
         return resilience.adapterPipeline(
-                identity,
-                withoutBreaker,
-                breaker,
-                bulkhead,
-                classifier,
-                () -> !closed.get(),
-                activeExecutionClosers::add);
+                identity, withoutBreaker, breaker, bulkhead, classifier, () -> !closed.get(), this::registerExecution);
     }
 
     /** Constructs a pipeline around an explicitly shared breaker instance. */
@@ -104,7 +99,7 @@ public final class ResilienceAdapterContext {
                 bulkhead,
                 classifier,
                 () -> !closed.get(),
-                activeExecutionClosers::add);
+                this::registerExecution);
     }
 
     /** Creates and tracks one context-owned breaker for a structured state identity. */
@@ -131,10 +126,15 @@ public final class ResilienceAdapterContext {
 
     /** Closes the context and all components it created. */
     public Future<Void> close() {
-        if (!closed.compareAndSet(false, true)) {
-            return closePromise.future();
+        Set<ExecutionRegistration> executionsToClose;
+        synchronized (lifecycleMonitor) {
+            if (!closed.compareAndSet(false, true)) {
+                return closePromise.future();
+            }
+            executionsToClose = Set.copyOf(activeExecutionRegistrations);
+            activeExecutionRegistrations.clear();
         }
-        activeExecutionClosers.forEach(Runnable::run);
+        executionsToClose.forEach(ExecutionRegistration::close);
         if (breakers.isEmpty() && bulkheads.isEmpty()) {
             closePromise.complete();
             return closePromise.future();
@@ -143,6 +143,19 @@ public final class ResilienceAdapterContext {
         bulkheads.forEach(bulkhead -> bulkhead.close().onComplete(ignored -> completeWhenClosed()));
         completeWhenClosed();
         return closePromise.future();
+    }
+
+    Runnable registerExecution(Runnable closeAction) {
+        Objects.requireNonNull(closeAction, "closeAction");
+        ExecutionRegistration registration = new ExecutionRegistration(closeAction);
+        synchronized (lifecycleMonitor) {
+            if (!closed.get()) {
+                activeExecutionRegistrations.add(registration);
+                return registration::remove;
+            }
+        }
+        closeAction.run();
+        return () -> {};
     }
 
     boolean isOpen() {
@@ -160,6 +173,32 @@ public final class ResilienceAdapterContext {
                 && breakers.stream().allMatch(breaker -> breaker.close().isComplete())
                 && bulkheads.stream().allMatch(bulkhead -> bulkhead.close().isComplete())) {
             closePromise.tryComplete();
+        }
+    }
+
+    private final class ExecutionRegistration {
+        private final Runnable closeAction;
+        private boolean removed;
+
+        private ExecutionRegistration(Runnable closeAction) {
+            this.closeAction = closeAction;
+        }
+
+        private void close() {
+            try {
+                closeAction.run();
+            } finally {
+                remove();
+            }
+        }
+
+        private void remove() {
+            synchronized (lifecycleMonitor) {
+                if (!removed) {
+                    removed = true;
+                    activeExecutionRegistrations.remove(this);
+                }
+            }
         }
     }
 }

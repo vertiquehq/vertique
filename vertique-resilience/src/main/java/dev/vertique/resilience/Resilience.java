@@ -20,8 +20,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
-import java.util.function.Consumer;
 import java.util.function.DoubleSupplier;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -148,7 +148,7 @@ public final class Resilience {
      * @param circuitBreaker same-owner breaker instance
      * @param classifier adapter final-failure classifier
      * @param contextOpen context lifecycle predicate
-     * @param executionRegistrar active execution close registrar
+     * @param executionRegistrar active execution registrar returning a removal handle
      * @return executable adapter pipeline
      */
     public ResiliencePipeline adapterPipeline(
@@ -157,7 +157,7 @@ public final class Resilience {
             CircuitBreaker circuitBreaker,
             CircuitFailureClassifier classifier,
             BooleanSupplier contextOpen,
-            Consumer<Runnable> executionRegistrar) {
+            Function<Runnable, Runnable> executionRegistrar) {
         return ResiliencePipeline.fromAdapterPolicy(
                 this, identity, policy, circuitBreaker, classifier, contextOpen, executionRegistrar);
     }
@@ -170,7 +170,7 @@ public final class Resilience {
             Bulkhead bulkhead,
             CircuitFailureClassifier classifier,
             BooleanSupplier contextOpen,
-            Consumer<Runnable> executionRegistrar) {
+            Function<Runnable, Runnable> executionRegistrar) {
         return ResiliencePipeline.fromAdapterPolicy(
                 this, identity, policy, circuitBreaker, bulkhead, classifier, contextOpen, executionRegistrar);
     }
@@ -181,14 +181,14 @@ public final class Resilience {
      * @param identity structured adapter identity
      * @param policy resolved timeout/retry policy
      * @param contextOpen context lifecycle predicate
-     * @param executionRegistrar active execution close registrar
+     * @param executionRegistrar active execution registrar returning a removal handle
      * @return executable adapter pipeline
      */
     public ResiliencePipeline adapterPipeline(
             AdapterOperationIdentity identity,
             ResolvedResiliencePolicy policy,
             BooleanSupplier contextOpen,
-            Consumer<Runnable> executionRegistrar) {
+            Function<Runnable, Runnable> executionRegistrar) {
         return ResiliencePipeline.fromAdapterPolicy(
                 this, identity, policy, null, null, contextOpen, executionRegistrar);
     }
@@ -199,7 +199,7 @@ public final class Resilience {
             ResolvedResiliencePolicy policy,
             Bulkhead bulkhead,
             BooleanSupplier contextOpen,
-            Consumer<Runnable> executionRegistrar) {
+            Function<Runnable, Runnable> executionRegistrar) {
         return ResiliencePipeline.fromAdapterPolicy(
                 this, identity, policy, null, bulkhead, null, contextOpen, executionRegistrar);
     }
@@ -316,7 +316,7 @@ public final class Resilience {
             Supplier<Future<T>> operation,
             ResilienceExecutionObservation observation,
             BooleanSupplier contextOpen,
-            Consumer<Runnable> executionRegistrar) {
+            Function<Runnable, Runnable> executionRegistrar) {
         Objects.requireNonNull(operationKey, "operationKey");
         if (timeoutConfiguration == null && retryConfiguration == null) {
             throw new IllegalArgumentException("timeout or retry configuration is required");

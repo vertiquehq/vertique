@@ -18,7 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
-import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 /** Executes timeout and retry policies through isolated Vert.x circuit-breaker engines. */
@@ -32,7 +32,7 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
     private final Supplier<Future<T>> operation;
     private final ResilienceExecutionObservation observation;
     private final BooleanSupplier contextOpen;
-    private final Consumer<Runnable> executionRegistrar;
+    private final Function<Runnable, Runnable> executionRegistrar;
     private final io.vertx.circuitbreaker.CircuitBreaker retryEngine;
     private final io.vertx.circuitbreaker.CircuitBreaker timeoutEngine;
     private final Promise<T> result = Promise.promise();
@@ -43,6 +43,7 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
     private final AtomicInteger lastAttemptOrdinal = new AtomicInteger();
     private final AtomicReference<RetryDecision> retryDecision = new AtomicReference<>();
     private final AtomicReference<Attempt> currentAttempt = new AtomicReference<>();
+    private Runnable deregistration = () -> {};
 
     private CircuitBreakerPolicyExecution(
             Resilience resilience,
@@ -53,7 +54,7 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
             Supplier<Future<T>> operation,
             ResilienceExecutionObservation observation,
             BooleanSupplier contextOpen,
-            Consumer<Runnable> executionRegistrar) {
+            Function<Runnable, Runnable> executionRegistrar) {
         this.resilience = Objects.requireNonNull(resilience, "resilience");
         this.context = Objects.requireNonNull(context, "context");
         this.operationKey = Objects.requireNonNull(operationKey, "operationKey");
@@ -62,7 +63,7 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
         this.operation = Objects.requireNonNull(operation, "operation");
         this.observation = observation;
         this.contextOpen = Objects.requireNonNull(contextOpen, "contextOpen");
-        this.executionRegistrar = executionRegistrar == null ? ignored -> {} : executionRegistrar;
+        this.executionRegistrar = executionRegistrar == null ? ignored -> () -> {} : executionRegistrar;
         this.retryEngine = io.vertx.circuitbreaker.CircuitBreaker.create(
                 operationKey + ":retry", resilience.vertx(), options(-1L, retryConfiguration));
         if (retryConfiguration != null) {
@@ -85,7 +86,7 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
             Supplier<Future<T>> operation,
             ResilienceExecutionObservation observation,
             BooleanSupplier contextOpen,
-            Consumer<Runnable> executionRegistrar) {
+            Function<Runnable, Runnable> executionRegistrar) {
         Context context = resilience.executionContext();
         CircuitBreakerPolicyExecution<T> execution = new CircuitBreakerPolicyExecution<>(
                 resilience,
@@ -121,7 +122,12 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
             settleClosed();
             return;
         }
-        executionRegistrar.accept(this::requestClose);
+        deregistration =
+                Objects.requireNonNull(executionRegistrar.apply(this::requestClose), "execution deregistration handle");
+        if (closeRequested.get() || settled.get() || !contextOpen.getAsBoolean()) {
+            settleClosed();
+            return;
+        }
         Future<AttemptResult<T>> outcome;
         try {
             outcome = resilience.startIfOpen(this, () -> retryEngine.execute(this::invokeAttempt));
@@ -292,6 +298,7 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
             closeEngines();
             result.tryComplete(value);
             resilience.remove(this);
+            deregistration.run();
         }
     }
 
@@ -300,6 +307,7 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
             closeEngines();
             result.tryFail(Objects.requireNonNull(failure, "failure"));
             resilience.remove(this);
+            deregistration.run();
         }
     }
 

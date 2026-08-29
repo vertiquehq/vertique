@@ -17,7 +17,7 @@ import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
-import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 /** Independently executable local circuit breaker with explicit instance-owned state. */
@@ -80,7 +80,7 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
      * @return the settled operation result
      */
     public <T> Future<T> execute(Supplier<Future<T>> operation) {
-        return execute(stateKey, null, operation, () -> true, ignored -> {});
+        return execute(stateKey, null, operation, () -> true, ignored -> () -> {});
     }
 
     <T> Future<T> execute(
@@ -88,7 +88,7 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
             CircuitFailureClassifier classifier,
             Supplier<Future<T>> operation,
             BooleanSupplier contextOpen,
-            Consumer<Runnable> executionRegistrar) {
+            Function<Runnable, Runnable> executionRegistrar) {
         return execute(operationKey, classifier, operation, contextOpen, executionRegistrar, null);
     }
 
@@ -97,7 +97,7 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
             CircuitFailureClassifier classifier,
             Supplier<Future<T>> operation,
             BooleanSupplier contextOpen,
-            Consumer<Runnable> executionRegistrar,
+            Function<Runnable, Runnable> executionRegistrar,
             ResilienceExecutionObservation observation) {
         Objects.requireNonNull(operationKey, "operationKey");
         Objects.requireNonNull(operation, "operation");
@@ -105,6 +105,7 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
         Execution<T> execution = new Execution<>(
                 context, operationKey, classifier, operation, contextOpen, executionRegistrar, observation);
         if (!resilience.register(execution)) {
+            execution.removeRegistration();
             return resilience.failedOnContext(context, operationKey);
         }
         context.runOnContext(ignored -> execution.start());
@@ -227,11 +228,12 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
         private final CircuitFailureClassifier classifier;
         private final Supplier<Future<T>> operation;
         private final BooleanSupplier contextOpen;
-        private final Consumer<Runnable> executionRegistrar;
+        private final Function<Runnable, Runnable> executionRegistrar;
         private final Promise<T> result = Promise.promise();
         private final AtomicBoolean settled = new AtomicBoolean();
         private final AtomicBoolean invoked = new AtomicBoolean();
         private final ResilienceExecutionObservation observation;
+        private Runnable deregistration = () -> {};
 
         private Execution(
                 Context context,
@@ -239,16 +241,17 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
                 CircuitFailureClassifier classifier,
                 Supplier<Future<T>> operation,
                 BooleanSupplier contextOpen,
-                Consumer<Runnable> executionRegistrar,
+                Function<Runnable, Runnable> executionRegistrar,
                 ResilienceExecutionObservation observation) {
             this.context = context;
             this.operationKey = operationKey;
             this.classifier = classifier;
             this.operation = operation;
             this.contextOpen = contextOpen;
-            this.executionRegistrar = executionRegistrar == null ? ignored -> {} : executionRegistrar;
+            this.executionRegistrar = executionRegistrar == null ? ignored -> () -> {} : executionRegistrar;
             this.observation = observation;
-            this.executionRegistrar.accept(this::requestClose);
+            this.deregistration = Objects.requireNonNull(
+                    this.executionRegistrar.apply(this::requestClose), "execution deregistration handle");
         }
 
         private Future<T> future() {
@@ -350,15 +353,23 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
 
         private void settleSuccess(T value) {
             if (settled.compareAndSet(false, true)) {
-                result.tryComplete(value);
-                resilience.remove(this);
+                try {
+                    result.tryComplete(value);
+                } finally {
+                    resilience.remove(this);
+                    deregistration.run();
+                }
             }
         }
 
         private void settleFailure(Throwable failure) {
             if (settled.compareAndSet(false, true)) {
-                result.tryFail(Objects.requireNonNull(failure, "failure"));
-                resilience.remove(this);
+                try {
+                    result.tryFail(Objects.requireNonNull(failure, "failure"));
+                } finally {
+                    resilience.remove(this);
+                    deregistration.run();
+                }
             }
         }
 
@@ -368,12 +379,21 @@ public final class CircuitBreaker implements Resilience.RuntimeExecution {
 
         private void settleFatal(Error fatal) {
             if (settled.compareAndSet(false, true)) {
-                result.tryFail(fatal);
-                resilience.remove(this);
-                context.runOnContext(ignored -> {
-                    throw fatal;
-                });
+                try {
+                    result.tryFail(fatal);
+                } finally {
+                    resilience.remove(this);
+                    deregistration.run();
+                    context.runOnContext(ignored -> {
+                        throw fatal;
+                    });
+                }
             }
+        }
+
+        private void removeRegistration() {
+            deregistration.run();
+            deregistration = () -> {};
         }
 
         @Override

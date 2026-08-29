@@ -18,7 +18,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
-import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 /** Independently executable local reject-or-queue bulkhead with explicit instance-owned capacity. */
@@ -90,14 +90,14 @@ public final class Bulkhead implements Resilience.RuntimeExecution {
      * @return the settled operation result
      */
     public <T> Future<T> execute(Supplier<Future<T>> operation) {
-        return execute(stateKey, operation, () -> true, ignored -> {});
+        return execute(stateKey, operation, () -> true, ignored -> () -> {});
     }
 
     <T> Future<T> execute(
             String operationKey,
             Supplier<Future<T>> operation,
             BooleanSupplier contextOpen,
-            Consumer<Runnable> executionRegistrar) {
+            Function<Runnable, Runnable> executionRegistrar) {
         return execute(operationKey, operation, contextOpen, executionRegistrar, null);
     }
 
@@ -105,7 +105,7 @@ public final class Bulkhead implements Resilience.RuntimeExecution {
             String operationKey,
             Supplier<Future<T>> operation,
             BooleanSupplier contextOpen,
-            Consumer<Runnable> executionRegistrar,
+            Function<Runnable, Runnable> executionRegistrar,
             ResilienceExecutionObservation observation) {
         Objects.requireNonNull(operationKey, "operationKey");
         Objects.requireNonNull(operation, "operation");
@@ -116,11 +116,12 @@ public final class Bulkhead implements Resilience.RuntimeExecution {
         Execution<T> execution =
                 new Execution<>(context, operationKey, operation, contextOpen, executionRegistrar, observation);
         if (!resilience.register(execution)) {
+            execution.removeRegistration();
             return resilience.failedOnContext(context, new ResilienceClosedException(operationKey));
         }
         boolean accepted;
         synchronized (stateMonitor) {
-            accepted = !closeStarted.get();
+            accepted = !closeStarted.get() && !execution.isTerminal();
             if (accepted) {
                 executions.add(execution);
             }
@@ -251,10 +252,11 @@ public final class Bulkhead implements Resilience.RuntimeExecution {
 
         private final String operationKey;
         private final BooleanSupplier contextOpen;
-        private final Consumer<Runnable> executionRegistrar;
+        private final Function<Runnable, Runnable> executionRegistrar;
         private final ResilienceExecutionObservation observation;
         private final Promise<T> result = Promise.promise();
         private final AtomicBoolean terminal = new AtomicBoolean();
+        private Runnable deregistration = () -> {};
 
         private Context context;
         private Supplier<Future<T>> operation;
@@ -267,7 +269,7 @@ public final class Bulkhead implements Resilience.RuntimeExecution {
                 String operationKey,
                 Supplier<Future<T>> operation,
                 BooleanSupplier contextOpen,
-                Consumer<Runnable> executionRegistrar,
+                Function<Runnable, Runnable> executionRegistrar,
                 ResilienceExecutionObservation observation) {
             this.context = Objects.requireNonNull(context, "context");
             this.operationKey = Objects.requireNonNull(operationKey, "operationKey");
@@ -275,11 +277,16 @@ public final class Bulkhead implements Resilience.RuntimeExecution {
             this.contextOpen = contextOpen;
             this.executionRegistrar = executionRegistrar;
             this.observation = observation;
-            this.executionRegistrar.accept(this::requestClose);
+            this.deregistration = Objects.requireNonNull(
+                    this.executionRegistrar.apply(this::requestClose), "execution deregistration handle");
         }
 
         private Future<T> future() {
             return result.future();
+        }
+
+        private boolean isTerminal() {
+            return terminal.get();
         }
 
         private void admit() {
@@ -457,6 +464,12 @@ public final class Bulkhead implements Resilience.RuntimeExecution {
             }
             resilience.remove(this);
             completeCloseIfIdle();
+            deregistration.run();
+        }
+
+        private void removeRegistration() {
+            deregistration.run();
+            deregistration = () -> {};
         }
 
         private void startAdmittedSupplier() {

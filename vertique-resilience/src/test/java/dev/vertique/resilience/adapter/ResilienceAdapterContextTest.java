@@ -30,6 +30,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -220,6 +222,63 @@ class ResilienceAdapterContextTest {
     }
 
     @Test
+    @DisplayName("execution registration handles remove completed work from the context")
+    void registrationHandleRemovesCompletedWork(Vertx vertx) throws Exception {
+        resilience = Resilience.create(vertx);
+        ResilienceAdapterContext context = resilience.adapterSupport().newContext();
+        AtomicInteger closeCalls = new AtomicInteger();
+
+        Runnable deregister = context.registerExecution(closeCalls::incrementAndGet);
+        deregister.run();
+
+        await(context.close());
+        assertEquals(0, closeCalls.get());
+    }
+
+    @Test
+    @DisplayName("registration after close is fenced synchronously")
+    void registrationAfterCloseRunsCloseActionImmediately(Vertx vertx) throws Exception {
+        resilience = Resilience.create(vertx);
+        ResilienceAdapterContext context = resilience.adapterSupport().newContext();
+        await(context.close());
+        AtomicInteger closeCalls = new AtomicInteger();
+
+        Runnable deregister = context.registerExecution(closeCalls::incrementAndGet);
+        assertEquals(1, closeCalls.get());
+        deregister.run();
+        assertEquals(1, closeCalls.get());
+    }
+
+    @Test
+    @DisplayName("registration racing with close is fenced while close is in progress")
+    void registrationRacingWithCloseCannotEscapeFence(Vertx vertx) throws Exception {
+        resilience = Resilience.create(vertx);
+        ResilienceAdapterContext context = resilience.adapterSupport().newContext();
+        AtomicBoolean firstCloseActionStarted = new AtomicBoolean();
+        Promise<Void> releaseFirstCloseAction = Promise.promise();
+        Runnable firstDeregister = context.registerExecution(() -> {
+            firstCloseActionStarted.set(true);
+            releaseFirstCloseAction
+                    .future()
+                    .toCompletionStage()
+                    .toCompletableFuture()
+                    .join();
+        });
+
+        Promise<Void> closing = Promise.promise();
+        new Thread(() -> context.close().onComplete(closing)).start();
+        awaitCondition(firstCloseActionStarted);
+
+        AtomicBoolean racedCloseAction = new AtomicBoolean();
+        context.registerExecution(() -> racedCloseAction.set(true));
+        assertTrue(racedCloseAction.get());
+
+        releaseFirstCloseAction.complete();
+        firstDeregister.run();
+        await(closing.future());
+    }
+
+    @Test
     @DisplayName("adapter factories expose structured identities and no application classifier hook")
     void publicSurfaceHasNoRawAdapterKeysOrApplicationClassifier() {
         assertFalse(hasPublicMethodWithStringParameter(Resilience.class, "adapterPipeline"));
@@ -281,5 +340,13 @@ class ResilienceAdapterContextTest {
 
     private static <T> T await(Future<T> future) throws Exception {
         return future.toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
+    }
+
+    private static void awaitCondition(AtomicBoolean condition) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (!condition.get() && System.nanoTime() < deadline) {
+            Thread.onSpinWait();
+        }
+        assertTrue(condition.get(), "condition was not reached");
     }
 }
