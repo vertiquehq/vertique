@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Alpha
 > **Package:** `dev.vertique.kafka`
 > **Artifact:** `vertique-kafka-core`
-> **Depends on:** core, context, logging, deploy, services
+> **Depends on:** core, resilience, context, logging, deploy, services
 
 `vertique-kafka-core` bridges Kafka topics to Vertique services. Declare a consumer with an
 annotation or a builder and the framework subscribes to the topic, deserializes the value, and
@@ -536,6 +536,10 @@ at build time.
 not committed, the consumer pauses, and after the backoff it resumes and Kafka redelivers from the
 uncommitted offset. The record then re-enters the full pipeline, including any service-level
 `@Retry`, `@Timeout`, and `@CircuitBreaker` policies.
+
+Retry delays use the shared `vertique-resilience` exponential backoff policy with zero jitter. The
+configured `backoffMs`, `backoffMultiplier`, and `maxBackoffMs` therefore retain deterministic Kafka
+timing while using the canonical retry-count validation and capped delay calculation.
 
 ```
 Record B fails (attempt 1/3)
