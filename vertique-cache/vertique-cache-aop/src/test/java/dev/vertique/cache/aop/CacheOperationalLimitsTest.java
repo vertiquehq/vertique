@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.cache;
+package dev.vertique.cache.aop;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import dev.vertique.cache.CacheIdentity;
+import dev.vertique.cache.CacheMode;
 import dev.vertique.cache.config.CacheConfig;
 import dev.vertique.cache.config.CacheEntryConfig;
 import java.time.Duration;

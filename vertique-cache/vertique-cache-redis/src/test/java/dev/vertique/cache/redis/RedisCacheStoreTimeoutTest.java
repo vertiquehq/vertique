@@ -14,11 +14,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.aop.Invocation;
-import dev.vertique.cache.CacheEvict;
-import dev.vertique.cache.CacheEvictAspect;
 import dev.vertique.cache.CacheIdentity;
-import dev.vertique.cache.Cacheable;
-import dev.vertique.cache.CacheableAspect;
+import dev.vertique.cache.aop.CacheEvict;
+import dev.vertique.cache.aop.CacheEvictAspect;
+import dev.vertique.cache.aop.Cacheable;
+import dev.vertique.cache.aop.CacheableAspect;
 import dev.vertique.core.codegen.MethodMetadata;
 import dev.vertique.core.codegen.ReflectiveMethodMetadata;
 import io.vertx.core.Future;

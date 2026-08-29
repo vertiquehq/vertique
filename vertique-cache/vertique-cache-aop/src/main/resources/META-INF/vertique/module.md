@@ -6,7 +6,7 @@ SPDX-License-Identifier: EUPL-1.2
 # Cache AOP
 
 > **Status:** Alpha
-> **Package:** `dev.vertique.cache`
+> **Package:** `dev.vertique.cache.aop`
 > **Artifact:** `vertique-cache-aop`
 > **Depends on:** `vertique-cache-core`, `vertique-aop`, `vertique-core`
 
@@ -31,8 +31,10 @@ proxy generation or cache storage behavior.
 ## Composition
 
 Include `CacheAopModule` alongside a cache provider module in an application component.
-Provider modules include the provider-neutral `CacheCoreModule`; the AOP module supplies
-the annotation adapters.
+Provider modules include only the provider-neutral `CacheCoreModule` and never this
+module; an application that uses cache annotations installs `CacheAopModule`
+explicitly, and a programmatic-only application omits it entirely. The adapters reach
+definition resolution through the core's public `CacheAdapterSupport` seam.
 
 Programmatic callers should depend only on `vertique-cache-core` and use `CacheBuilder`
 and `Cache<K,V>` directly.

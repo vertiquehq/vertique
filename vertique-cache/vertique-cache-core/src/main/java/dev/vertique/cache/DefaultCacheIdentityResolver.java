@@ -13,11 +13,11 @@ import java.util.Optional;
 
 /** Default cache identity resolver backed by the current framework security context. */
 @Singleton
-public final class DefaultCacheIdentityResolver implements CacheIdentityResolver {
+final class DefaultCacheIdentityResolver implements CacheIdentityResolver {
     private final ContextHolder contextHolder;
 
     @Inject
-    public DefaultCacheIdentityResolver(ContextHolder contextHolder) {
+    DefaultCacheIdentityResolver(ContextHolder contextHolder) {
         this.contextHolder = contextHolder;
     }
 

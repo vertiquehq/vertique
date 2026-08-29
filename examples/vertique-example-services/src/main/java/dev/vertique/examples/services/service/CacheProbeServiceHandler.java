@@ -5,7 +5,7 @@ package dev.vertique.examples.services.service;
 
 import dev.vertique.cache.AnonymousCachePolicy;
 import dev.vertique.cache.CacheIdentity;
-import dev.vertique.cache.Cacheable;
+import dev.vertique.cache.aop.Cacheable;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.services.ServiceHandler;
 import io.vertx.core.Future;

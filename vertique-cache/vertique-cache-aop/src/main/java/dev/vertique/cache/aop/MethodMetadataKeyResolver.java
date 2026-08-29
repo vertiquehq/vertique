@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.cache;
+package dev.vertique.cache.aop;
 
 import dev.vertique.core.codegen.MethodMetadata;
 import dev.vertique.core.codegen.ParameterMetadata;

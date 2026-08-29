@@ -112,11 +112,11 @@ public final class Cache<K, V> {
                             ? "late_hit"
                             : result.succeeded() ? "late_miss" : "late_error");
         } catch (Throwable failure) {
-            observe(selection.providerId(), "get", outcome("error"), startedAt);
+            observe(selection.providerId(), "get", "error", startedAt);
             return loadAndStore(input, loader, selection, key);
         }
-        return lookup.onFailure(failure -> observe(
-                        selection.providerId(), "get", outcome(isTimeout(failure) ? "timeout" : "error"), startedAt))
+        return lookup.onFailure(failure ->
+                        observe(selection.providerId(), "get", isTimeout(failure) ? "timeout" : "error", startedAt))
                 .recover(failure -> Future.succeededFuture(null))
                 .compose(hit -> {
                     if (hit == null) {
@@ -224,17 +224,13 @@ public final class Cache<K, V> {
                         "put",
                         putStartedAt,
                         result -> result.succeeded() ? "late_success" : "late_error");
-                return put.onSuccess(
-                                ignored -> observe(selection.providerId(), "put", outcome("success"), putStartedAt))
+                return put.onSuccess(ignored -> observe(selection.providerId(), "put", "success", putStartedAt))
                         .onFailure(failure -> observe(
-                                selection.providerId(),
-                                "put",
-                                outcome(isTimeout(failure) ? "timeout" : "error"),
-                                putStartedAt))
+                                selection.providerId(), "put", isTimeout(failure) ? "timeout" : "error", putStartedAt))
                         .recover(ignored -> Future.succeededFuture())
                         .map(value);
             } catch (Throwable failure) {
-                observe(selection.providerId(), "put", outcome("error"), putStartedAt);
+                observe(selection.providerId(), "put", "error", putStartedAt);
                 return Future.succeededFuture(value);
             }
         });
@@ -334,7 +330,7 @@ public final class Cache<K, V> {
         AtomicBoolean timedOut = new AtomicBoolean();
         future.onComplete(result -> {
             sourceSettled.set(true);
-            if (timedOut.get()) observe(provider, operation, outcome(lateOutcome.apply(result)), startedAt);
+            if (timedOut.get()) observe(provider, operation, lateOutcome.apply(result), startedAt);
         });
         Future<T> bounded = future.timeout(config.backendTimeoutMs(), TimeUnit.MILLISECONDS);
         return bounded.recover(failure -> {
@@ -349,10 +345,6 @@ public final class Cache<K, V> {
     private static boolean isTimeout(Throwable failure) {
         return failure != null
                 && failure.getClass().getSimpleName().toLowerCase().contains("timeout");
-    }
-
-    private String outcome(String current) {
-        return current;
     }
 
     private static final class CacheDeadlineExceeded extends RuntimeException {

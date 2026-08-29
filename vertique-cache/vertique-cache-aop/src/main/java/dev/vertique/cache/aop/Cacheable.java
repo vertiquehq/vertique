@@ -1,9 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.cache;
+package dev.vertique.cache.aop;
 
 import dev.vertique.aop.Aspect;
+import dev.vertique.cache.AnonymousCachePolicy;
+import dev.vertique.cache.CacheIdentity;
+import dev.vertique.cache.CacheMode;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;

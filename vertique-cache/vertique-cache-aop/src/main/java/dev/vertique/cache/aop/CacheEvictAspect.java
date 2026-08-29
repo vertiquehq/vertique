@@ -1,17 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.cache;
+package dev.vertique.cache.aop;
 
 import dev.vertique.aop.AspectProvider;
 import dev.vertique.aop.MethodInterceptor;
+import dev.vertique.cache.Cache;
 import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.cache.spi.CacheStore;
 import dev.vertique.core.codegen.MethodMetadata;
-import io.vertx.core.Future;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
-import java.util.List;
 import java.util.Set;
 
 /** Annotation adapter that delegates invalidation to a prepared {@link Cache}. */
@@ -32,20 +31,16 @@ public final class CacheEvictAspect implements AspectProvider<CacheEvict> {
 
     @Override
     public MethodInterceptor interceptor(MethodMetadata target, CacheEvict annotation) {
-        List<CacheAnnotationAdapter.PreparedEviction> evictions;
+        CacheAnnotationAdapter.PreparedEviction eviction;
         try {
-            evictions = List.of(new CacheAnnotationAdapter.PreparedEviction(
-                    adapter.eviction(target, annotation), annotation.clear()));
+            eviction = new CacheAnnotationAdapter.PreparedEviction(
+                    adapter.eviction(target, annotation), annotation.clear());
         } catch (RuntimeException invalidDefinition) {
             return invocation -> invocation.proceed();
         }
-        return invocation -> invocation.proceed().compose(result -> {
-            List<Future<Boolean>> operations = evictions.stream()
-                    .map(eviction -> eviction.clear()
-                            ? eviction.cache().invalidateAll()
-                            : eviction.cache().invalidate(invocation.arguments()))
-                    .toList();
-            return Future.all(operations).map(ignored -> result);
-        });
+        return invocation -> invocation.proceed().compose(result -> (eviction.clear()
+                        ? eviction.cache().invalidateAll()
+                        : eviction.cache().invalidate(invocation.arguments()))
+                .map(result));
     }
 }

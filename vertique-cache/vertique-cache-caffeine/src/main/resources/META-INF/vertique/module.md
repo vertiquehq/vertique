@@ -19,8 +19,9 @@ Use this provider for application instances whose cache state is intentionally l
 ## Core Concepts
 
 The provider owns local storage policy and lifecycle while cache core owns the provider-neutral
-invocation contract. This module includes `CacheAopModule`, so applications using annotations get
-the cache aspect bindings through explicit provider composition.
+invocation contract. This module includes only the provider-neutral `CacheCoreModule`; applications
+using cache annotations additionally install `CacheAopModule` themselves, and
+programmatic-only applications need no annotation dependency at all.
 
 The implementation maintains one bounded Caffeine cache per logical `CacheRegion`. Entries are JSON-serialized with the configured profile, so callers receive a defensive copy and generic declared result types remain supported. A finite TTL expires entries using a monotonic clock; TTL `0` disables time expiration while the per-region size bound remains active. Disabled caches and null results are no-ops, and codec or size failures are surfaced as failed provider futures for the runtime's fail-open policy.
 

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.cache;
+package dev.vertique.cache.aop;
 
 import dagger.Binds;
 import dagger.Module;

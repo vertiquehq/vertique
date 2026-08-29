@@ -57,10 +57,10 @@ final class CacheStoreResolver {
         return new CacheStoreSelection(mode, providerId, provider.get());
     }
 
+    /** Resolves every mode to one fixed store for provider-less composition and tests. */
     static CacheStoreResolver fixed(CacheStore store) {
-        String providerId = store.getClass().getSimpleName().contains("Redis") ? "redis" : "caffeine";
         return new CacheStoreResolver(
                 Map.of(CacheMode.LOCAL, () -> store, CacheMode.CLUSTERED, () -> store),
-                Map.of(CacheMode.LOCAL, providerId, CacheMode.CLUSTERED, providerId));
+                Map.of(CacheMode.LOCAL, "fixed", CacheMode.CLUSTERED, "fixed"));
     }
 }

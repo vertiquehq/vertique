@@ -3,7 +3,7 @@
 
 package dev.vertique.cache.caffeine;
 
-import static dev.vertique.cache.T011CacheCompositionFixtures.await;
+import static dev.vertique.cache.aop.T011CacheCompositionFixtures.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import dagger.Component;
@@ -13,7 +13,7 @@ import dagger.multibindings.IntoSet;
 import dev.vertique.cache.Cache;
 import dev.vertique.cache.CacheBuilder;
 import dev.vertique.cache.CacheIdentity;
-import dev.vertique.cache.T011CacheCompositionFixtures;
+import dev.vertique.cache.aop.T011CacheCompositionFixtures;
 import dev.vertique.cache.spi.CacheObserver;
 import jakarta.inject.Singleton;
 import java.util.concurrent.atomic.AtomicInteger;

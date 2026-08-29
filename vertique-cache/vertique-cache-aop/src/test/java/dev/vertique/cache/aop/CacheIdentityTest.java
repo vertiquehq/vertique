@@ -1,11 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.cache;
+package dev.vertique.cache.aop;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
+import dev.vertique.cache.AnonymousCachePolicy;
+import dev.vertique.cache.CacheIdentity;
+import dev.vertique.cache.CacheMode;
 import dev.vertique.cache.config.CacheConfig;
 import dev.vertique.cache.spi.CacheIdentityResolver;
 import dev.vertique.core.context.ContextHolder;
@@ -32,7 +35,8 @@ class CacheIdentityTest {
         var metadata = CacheTestFixtures.metadata(method, "unused");
         var holder = new MutableContextHolder(securityContext("service-1", "user-1"));
         var store = new CacheTestFixtures.RecordingStore();
-        CacheIdentityResolver resolver = new DefaultCacheIdentityResolver(holder);
+        CacheIdentityResolver resolver =
+                () -> holder.current(SecurityContext.class).map(SecurityContext::identity);
 
         new CacheableAspect(store, CacheConfig.defaults(), Set.of(), Set.of(resolver))
                 .interceptor(metadata, Target.annotation(CacheIdentity.ACTOR_AND_SUBJECT, AnonymousCachePolicy.BYPASS))
@@ -51,7 +55,8 @@ class CacheIdentityTest {
         var holder = new MutableContextHolder(securityContext("service-1", null));
         var store = new CacheTestFixtures.RecordingStore();
         var calls = new AtomicInteger();
-        CacheIdentityResolver resolver = new DefaultCacheIdentityResolver(holder);
+        CacheIdentityResolver resolver =
+                () -> holder.current(SecurityContext.class).map(SecurityContext::identity);
         var interceptor = new CacheableAspect(store, CacheConfig.defaults(), Set.of(), Set.of(resolver))
                 .interceptor(metadata, Target.annotation(CacheIdentity.ACTOR, AnonymousCachePolicy.BYPASS));
 

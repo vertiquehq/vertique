@@ -17,7 +17,7 @@ class CacheAnnotationProcessorTest {
         ProcessorTestHarness.run(new CacheAnnotationProcessor(), SourceFiles.inline("com.example.CacheableBean", """
                                 package com.example;
 
-                                import dev.vertique.cache.Cacheable;
+                                import dev.vertique.cache.aop.Cacheable;
                                 import jakarta.inject.Inject;
 
                                 public class CacheableBean {
@@ -45,7 +45,7 @@ class CacheAnnotationProcessorTest {
                         new CacheAnnotationProcessor(), SourceFiles.inline("com.example.RestCacheableBean", """
                                 package com.example;
 
-                                import dev.vertique.cache.Cacheable;
+                                import dev.vertique.cache.aop.Cacheable;
                                 import io.vertx.core.Future;
                                 import jakarta.inject.Inject;
                                 import jakarta.ws.rs.GET;
@@ -77,7 +77,7 @@ class CacheAnnotationProcessorTest {
                         new CacheAnnotationProcessor(), SourceFiles.inline("com.example.ResponseCacheableBean", """
                                 package com.example;
 
-                                import dev.vertique.cache.Cacheable;
+                                import dev.vertique.cache.aop.Cacheable;
                                 import jakarta.inject.Inject;
                                 import jakarta.ws.rs.GET;
                                 import jakarta.ws.rs.core.Response;
@@ -105,7 +105,7 @@ class CacheAnnotationProcessorTest {
                         SourceFiles.inline("com.example.FutureResponseCacheableBean", """
                                 package com.example;
 
-                                import dev.vertique.cache.Cacheable;
+                                import dev.vertique.cache.aop.Cacheable;
                                 import io.vertx.core.Future;
                                 import jakarta.inject.Inject;
                                 import jakarta.ws.rs.GET;
@@ -133,7 +133,7 @@ class CacheAnnotationProcessorTest {
                         new CacheAnnotationProcessor(), SourceFiles.inline("com.example.BufferCacheableBean", """
                                 package com.example;
 
-                                import dev.vertique.cache.Cacheable;
+                                import dev.vertique.cache.aop.Cacheable;
                                 import io.vertx.core.buffer.Buffer;
                                 import jakarta.inject.Inject;
                                 import jakarta.ws.rs.GET;
@@ -160,7 +160,7 @@ class CacheAnnotationProcessorTest {
                         new CacheAnnotationProcessor(), SourceFiles.inline("com.example.StreamingCacheableBean", """
                                 package com.example;
 
-                                import dev.vertique.cache.Cacheable;
+                                import dev.vertique.cache.aop.Cacheable;
                                 import io.vertx.core.streams.ReadStream;
                                 import jakarta.inject.Inject;
                                 import jakarta.ws.rs.GET;
@@ -187,7 +187,7 @@ class CacheAnnotationProcessorTest {
                         new CacheAnnotationProcessor(), SourceFiles.inline("com.example.TransportCacheableBean", """
                                 package com.example;
 
-                                import dev.vertique.cache.Cacheable;
+                                import dev.vertique.cache.aop.Cacheable;
                                 import io.vertx.core.http.HttpServerResponse;
                                 import jakarta.inject.Inject;
                                 import jakarta.ws.rs.GET;
@@ -215,7 +215,7 @@ class CacheAnnotationProcessorTest {
                         SourceFiles.inline("com.example.TransportSubtypeCacheableBean", """
                                 package com.example;
 
-                                import dev.vertique.cache.Cacheable;
+                                import dev.vertique.cache.aop.Cacheable;
                                 import io.vertx.core.Future;
                                 import io.vertx.core.streams.ReadStream;
                                 import jakarta.inject.Inject;
@@ -260,7 +260,7 @@ class CacheAnnotationProcessorTest {
         JavaFileObject source = SourceFiles.inline("com.example.InvalidCacheableBean", """
                 package com.example;
 
-                import dev.vertique.cache.Cacheable;
+                import dev.vertique.cache.aop.Cacheable;
                 import jakarta.inject.Inject;
                 import java.util.List;
 
@@ -287,7 +287,7 @@ class CacheAnnotationProcessorTest {
                         new CacheAnnotationProcessor(), SourceFiles.inline("com.example.PropertyCacheableBean", """
                                 package com.example;
 
-                                import dev.vertique.cache.Cacheable;
+                                import dev.vertique.cache.aop.Cacheable;
                                 import jakarta.inject.Inject;
 
                                 public class PropertyCacheableBean {
@@ -312,7 +312,7 @@ class CacheAnnotationProcessorTest {
                         new CacheAnnotationProcessor(), SourceFiles.inline("com.example.DeepCacheableBean", """
                                 package com.example;
 
-                                import dev.vertique.cache.Cacheable;
+                                import dev.vertique.cache.aop.Cacheable;
                                 import jakarta.inject.Inject;
 
                                 public class DeepCacheableBean {
@@ -346,7 +346,7 @@ class CacheAnnotationProcessorTest {
                         new CacheAnnotationProcessor(), SourceFiles.inline("com.example.FutureCacheableBean", """
                                 package com.example;
 
-                                import dev.vertique.cache.Cacheable;
+                                import dev.vertique.cache.aop.Cacheable;
                                 import io.vertx.core.Future;
                                 import jakarta.inject.Inject;
 
@@ -375,8 +375,8 @@ class CacheAnnotationProcessorTest {
                         new CacheAnnotationProcessor(), SourceFiles.inline("com.example.ConstantCacheableBean", """
                                 package com.example;
 
-                                import dev.vertique.cache.CacheEvict;
-                                import dev.vertique.cache.Cacheable;
+                                import dev.vertique.cache.aop.CacheEvict;
+                                import dev.vertique.cache.aop.Cacheable;
                                 import jakarta.inject.Inject;
 
                                 public class ConstantCacheableBean {
@@ -404,7 +404,7 @@ class CacheAnnotationProcessorTest {
                         new CacheAnnotationProcessor(), SourceFiles.inline("com.example.MissingEvictionBean", """
                                 package com.example;
 
-                                import dev.vertique.cache.CacheEvict;
+                                import dev.vertique.cache.aop.CacheEvict;
                                 import jakarta.inject.Inject;
 
                                 public class MissingEvictionBean {
@@ -424,7 +424,7 @@ class CacheAnnotationProcessorTest {
                         new CacheAnnotationProcessor(), SourceFiles.inline("com.example.ConflictingEvictionBean", """
                                 package com.example;
 
-                                import dev.vertique.cache.CacheEvict;
+                                import dev.vertique.cache.aop.CacheEvict;
                                 import jakarta.inject.Inject;
 
                                 public class ConflictingEvictionBean {
@@ -449,7 +449,7 @@ class CacheAnnotationProcessorTest {
                         SourceFiles.inline("com.example.NonProxyableCacheableBean", """
                                 package com.example;
 
-                                import dev.vertique.cache.Cacheable;
+                                import dev.vertique.cache.aop.Cacheable;
                                 import jakarta.inject.Inject;
 
                                 public class NonProxyableCacheableBean {

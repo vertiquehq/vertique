@@ -15,7 +15,7 @@
     <description>Redis-backed cache provider for annotation-driven cache support</description>
     <dependencies>
         <dependency><groupId>dev.vertique</groupId><artifactId>vertique-cache-core</artifactId></dependency>
-        <dependency><groupId>dev.vertique</groupId><artifactId>vertique-cache-aop</artifactId></dependency>
+        <dependency><groupId>dev.vertique</groupId><artifactId>vertique-cache-aop</artifactId><scope>test</scope></dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-cache-core</artifactId>

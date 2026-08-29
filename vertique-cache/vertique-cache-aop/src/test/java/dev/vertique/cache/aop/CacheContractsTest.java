@@ -1,11 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.cache;
+package dev.vertique.cache.aop;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import dev.vertique.cache.AnonymousCachePolicy;
+import dev.vertique.cache.CacheIdentity;
+import dev.vertique.cache.CacheMode;
 import dev.vertique.cache.config.CacheConfig;
 import dev.vertique.cache.config.CacheEntryConfig;
 import dev.vertique.cache.spi.CacheRegion;
@@ -79,14 +82,17 @@ class CacheContractsTest {
     }
 
     @Test
-    @DisplayName("selector paths percent-encode scalars and resolve named record properties")
-    void selectorPathsRenderBoundedScalarSelectors() {
+    @DisplayName("selector paths resolve named record properties and positional roots in order")
+    void selectorPathsResolveDeclaredComponents() {
         MethodMetadata metadata = metadata("user");
 
         Object[] values = MethodMetadataKeyResolver.resolve(
                 new String[] {"user.name", "0.active"}, metadata, new Object[] {new User("Åsa", true)});
 
-        assertEquals("k2S%C3%85sa:k2Ztrue", CacheKey.render(CacheKey.of(values[0], values[1])));
+        // Canonical framing/joining of the resolved components is core-owned and
+        // byte-proven by the cache-core declaration tests.
+        assertEquals("Åsa", values[0]);
+        assertEquals(true, values[1]);
     }
 
     @Test

@@ -3,8 +3,8 @@
 
 package dev.vertique.codegen.cache;
 
-import dev.vertique.cache.CacheEvict;
-import dev.vertique.cache.Cacheable;
+import dev.vertique.cache.aop.CacheEvict;
+import dev.vertique.cache.aop.Cacheable;
 import dev.vertique.codegen.AnnotationMirrors;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -30,7 +30,7 @@ import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 
 /** Compile-time validation for cache selectors and supported method result shapes. */
-@SupportedAnnotationTypes({"dev.vertique.cache.Cacheable", "dev.vertique.cache.CacheEvict"})
+@SupportedAnnotationTypes({"dev.vertique.cache.aop.Cacheable", "dev.vertique.cache.aop.CacheEvict"})
 @SupportedSourceVersion(SourceVersion.RELEASE_21)
 public final class CacheAnnotationProcessor extends AbstractProcessor {
     private static final String FUTURE_FQN = "io.vertx.core.Future";
@@ -113,9 +113,9 @@ public final class CacheAnnotationProcessor extends AbstractProcessor {
         List<EvictionDeclaration> declarations = new ArrayList<>();
         for (AnnotationMirror mirror : element.getAnnotationMirrors()) {
             String type = mirror.getAnnotationType().toString();
-            if (type.equals("dev.vertique.cache.CacheEvict")) {
+            if (type.equals("dev.vertique.cache.aop.CacheEvict")) {
                 declarations.add(evictionDeclaration(mirror));
-            } else if (type.equals("dev.vertique.cache.CacheEvict.List")) {
+            } else if (type.equals("dev.vertique.cache.aop.CacheEvict.List")) {
                 for (var entry : mirror.getElementValues().entrySet()) {
                     if (!entry.getKey().getSimpleName().contentEquals("value")) continue;
                     if (entry.getValue().getValue() instanceof List<?> nested) {

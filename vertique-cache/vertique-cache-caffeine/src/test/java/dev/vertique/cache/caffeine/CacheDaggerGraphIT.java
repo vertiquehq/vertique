@@ -3,7 +3,7 @@
 
 package dev.vertique.cache.caffeine;
 
-import static dev.vertique.cache.T011CacheCompositionFixtures.await;
+import static dev.vertique.cache.aop.T011CacheCompositionFixtures.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -15,7 +15,8 @@ import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dev.vertique.cache.CacheMode;
-import dev.vertique.cache.T011CacheCompositionFixtures;
+import dev.vertique.cache.aop.CacheAopModule;
+import dev.vertique.cache.aop.T011CacheCompositionFixtures;
 import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.cache.spi.CacheStore;
 import dev.vertique.config.parser.ConfigParsingModule;
@@ -73,6 +74,7 @@ class CacheDaggerGraphIT {
     @Component(
             modules = {
                 CacheCaffeineModule.class,
+                CacheAopModule.class,
                 ConfigParsingModule.class,
                 T011CacheCompositionFixtures.ConfigModule.class,
                 ObserverModule.class

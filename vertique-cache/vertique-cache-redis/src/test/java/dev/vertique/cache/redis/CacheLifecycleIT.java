@@ -3,13 +3,13 @@
 
 package dev.vertique.cache.redis;
 
-import static dev.vertique.cache.T011CacheCompositionFixtures.await;
+import static dev.vertique.cache.aop.T011CacheCompositionFixtures.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.cache.CacheMode;
-import dev.vertique.cache.Cacheable;
+import dev.vertique.cache.aop.Cacheable;
 import dev.vertique.cache.config.CacheConfig;
 import dev.vertique.cache.spi.CacheRegion;
 import dev.vertique.cache.spi.CacheStore;
@@ -39,8 +39,8 @@ class CacheLifecycleIT {
     @DisplayName("disabled cache bypasses every backend operation")
     void disabledCacheClosesWithoutBackendAccess() throws Exception {
         ThrowingStore backend = new ThrowingStore();
-        dev.vertique.cache.CacheableAspect aspect =
-                new dev.vertique.cache.CacheableAspect(backend, disabledConfig(), Set.of());
+        dev.vertique.cache.aop.CacheableAspect aspect =
+                new dev.vertique.cache.aop.CacheableAspect(backend, disabledConfig(), Set.of());
         var valueMethod = LifecycleTarget.class.getDeclaredMethod("value");
         Cacheable annotation = valueMethod.getAnnotation(Cacheable.class);
         var metadata = new dev.vertique.core.codegen.ReflectiveMethodMetadata(valueMethod, List.of());

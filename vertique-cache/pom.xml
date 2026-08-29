@@ -13,7 +13,7 @@
     <artifactId>vertique-cache</artifactId>
     <packaging>pom</packaging>
     <name>Vertique Cache</name>
-    <description>Annotation-driven cache support family: contracts, code generation, storage providers, and optional adapters</description>
+    <description>Cache support family: programmatic and annotation APIs, contracts, storage providers, and optional adapters</description>
     <modules>
         <module>vertique-cache-core</module>
         <module>vertique-cache-aop</module>

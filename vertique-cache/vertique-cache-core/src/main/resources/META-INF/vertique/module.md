@@ -46,8 +46,10 @@ The typed cache configuration uses explicit duration units such as `defaultTtlSe
 profile for cache values; a per-cache `jsonProfile` override may inherit the global
 cache profile when omitted. Provider modules contribute storage bindings through the
 internal `CacheMode` Dagger map seam. The standard composition maps `LOCAL` to Caffeine and
-`CLUSTERED` to Redis. Annotation adapters in `vertique-cache-aop` resolve the same provider
-through this module's neutral builder seam.
+`CLUSTERED` to Redis. Annotation adapters in `vertique-cache-aop` (package
+`dev.vertique.cache.aop`) reach the same definition resolution through the public
+framework seam `CacheAdapterSupport`; it is integration surface for adapters and
+generated code, not application API.
 
 ## Runtime behavior
 
