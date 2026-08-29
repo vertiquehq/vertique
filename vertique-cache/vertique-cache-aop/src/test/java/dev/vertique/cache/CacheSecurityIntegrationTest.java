@@ -55,7 +55,7 @@ class CacheSecurityIntegrationTest {
 
         trace.clear();
         ResolvedCacheKey hitKey =
-                new ResolvedCacheKey(new CacheRegion("cache", "profiles", 2), "i2:N", CacheBuilder.scalar("hit"));
+                new ResolvedCacheKey(new CacheRegion("cache", "profiles", 2), "i2:N", CacheKey.encodeScalar("hit"));
         T011CacheCompositionFixtures.await(store.put(
                 hitKey,
                 new CacheValueDescriptor(String.class, "vertx"),

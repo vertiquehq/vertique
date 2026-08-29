@@ -86,7 +86,7 @@ class CacheContractsTest {
         Object[] values = MethodMetadataKeyResolver.resolve(
                 new String[] {"user.name", "0.active"}, metadata, new Object[] {new User("Åsa", true)});
 
-        assertEquals("k2S%C3%85sa:k2Ztrue", CacheBuilder.render(CacheKey.of(values[0], values[1])));
+        assertEquals("k2S%C3%85sa:k2Ztrue", CacheKey.render(CacheKey.of(values[0], values[1])));
     }
 
     @Test

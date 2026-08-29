@@ -81,12 +81,12 @@ final class CacheAnnotationAdapter {
     private static Function<Object, String> selector(String[] paths, MethodMetadata target) {
         if (paths.length == 0) {
             // An explicitly empty declaration is a value-independent constant key.
-            return ignored -> CacheBuilder.CONSTANT_SELECTOR;
+            return ignored -> CacheKey.CONSTANT_SELECTOR;
         }
         String[] declared = paths.clone();
         return input -> {
             Object[] values = MethodMetadataKeyResolver.resolve(declared, target, (Object[]) input);
-            return CacheBuilder.render(CacheKey.of(values[0], java.util.Arrays.copyOfRange(values, 1, values.length)));
+            return CacheKey.render(CacheKey.of(values[0], java.util.Arrays.copyOfRange(values, 1, values.length)));
         };
     }
 

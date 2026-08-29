@@ -14,13 +14,10 @@ import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
 import java.lang.reflect.WildcardType;
-import java.text.Normalizer;
 import java.time.Duration;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 
@@ -218,7 +215,7 @@ public final class CacheBuilder {
                     ttl == null ? -1 : wholeSeconds(ttl),
                     identity,
                     anonymousPolicy,
-                    input -> scalar(input),
+                    CacheKey::encodeScalar,
                     false,
                     null);
         }
@@ -287,135 +284,10 @@ public final class CacheBuilder {
                     input -> {
                         @SuppressWarnings("unchecked")
                         K typed = (K) input;
-                        return render(declared.apply(typed));
+                        return CacheKey.render(declared.apply(typed));
                     },
                     false,
                     null);
-        }
-    }
-
-    /**
-     * Canonical selector for an explicitly value-independent operation (an empty
-     * declared component list). {@code K} is a reserved scalar-family tag, so no framed
-     * component or joined tuple can collide with it.
-     */
-    static final String CONSTANT_SELECTOR = "k2K";
-
-    static String scalar(Object value) {
-        if (value == null) throw new IllegalArgumentException("cache selector input must not be null");
-        return Scalar.encode(value);
-    }
-
-    /**
-     * Renders a selector result — one supported scalar or a {@link CacheKey} — into the
-     * canonical selector. Components are independently framed and joined with the
-     * runtime-owned {@code :} separator, which framed payloads percent-encode and
-     * therefore cannot forge.
-     */
-    static String render(Object selectorResult) {
-        if (selectorResult == null) throw new IllegalArgumentException("cache selector must not be null");
-        if (!(selectorResult instanceof CacheKey key)) return Scalar.encode(selectorResult);
-        StringBuilder result = new StringBuilder();
-        for (Object component : key.components()) {
-            if (result.length() > 0) result.append(':');
-            result.append(Scalar.encode(component));
-        }
-        return result.toString();
-    }
-
-    private static final class Scalar {
-        static String encode(Object value) {
-            Objects.requireNonNull(value, "cache selector component");
-            String tag;
-            String payload;
-            if (value instanceof String string) {
-                tag = "S";
-                payload = text(string);
-            } else if (value instanceof Character character) {
-                if (Character.isSurrogate(character))
-                    throw new IllegalArgumentException("surrogate Character is unsupported");
-                tag = "C";
-                payload = text(character.toString());
-            } else if (value instanceof Boolean) {
-                tag = "Z";
-                payload = value.toString();
-            } else if (value instanceof Byte) {
-                tag = "B";
-                payload = value.toString();
-            } else if (value instanceof Short) {
-                tag = "H";
-                payload = value.toString();
-            } else if (value instanceof Integer) {
-                tag = "I";
-                payload = value.toString();
-            } else if (value instanceof Long) {
-                tag = "L";
-                payload = value.toString();
-            } else if (value instanceof java.math.BigInteger) {
-                tag = "N";
-                payload = value.toString();
-            } else if (value instanceof Float f && Float.isFinite(f)) {
-                tag = "F";
-                payload = f.toString();
-            } else if (value instanceof Double d && Double.isFinite(d)) {
-                tag = "D";
-                payload = d.toString();
-            } else if (value instanceof java.math.BigDecimal decimal) {
-                tag = "M";
-                payload = decimal.scale() + "~" + decimal.unscaledValue();
-            } else if (value instanceof Enum<?> enumeration) {
-                tag = "E";
-                String type = percent(enumeration.getDeclaringClass().getName());
-                payload = type.length() + "~" + type + percent(enumeration.name());
-            } else if (value instanceof UUID) {
-                tag = "U";
-                payload = value.toString();
-            } else if (value instanceof java.time.Instant) {
-                tag = "T";
-                payload = value.toString();
-            } else if (value instanceof java.time.LocalDate) {
-                tag = "A";
-                payload = value.toString();
-            } else if (value instanceof java.time.LocalDateTime) {
-                tag = "J";
-                payload = value.toString();
-            } else if (value instanceof java.time.OffsetDateTime) {
-                tag = "O";
-                payload = value.toString();
-            } else if (value instanceof java.time.ZonedDateTime) {
-                tag = "W";
-                payload = value.toString();
-            } else
-                throw new IllegalArgumentException("unsupported cache selector component: "
-                        + value.getClass().getName());
-            return "k2" + tag + percent(payload);
-        }
-
-        private static String text(String value) {
-            for (int i = 0; i < value.length(); i++) {
-                char ch = value.charAt(i);
-                if (Character.isHighSurrogate(ch)) {
-                    if (i + 1 >= value.length() || !Character.isLowSurrogate(value.charAt(++i))) {
-                        throw new IllegalArgumentException("cache selector contains ill-formed UTF-16");
-                    }
-                } else if (Character.isLowSurrogate(ch)) {
-                    throw new IllegalArgumentException("cache selector contains ill-formed UTF-16");
-                }
-            }
-            return Normalizer.normalize(value, Normalizer.Form.NFC);
-        }
-
-        private static String percent(String value) {
-            StringBuilder result = new StringBuilder();
-            for (byte b : value.getBytes(java.nio.charset.StandardCharsets.UTF_8)) {
-                char ch = (char) (b & 0xff);
-                if (ch >= 'A' && ch <= 'Z'
-                        || ch >= 'a' && ch <= 'z'
-                        || ch >= '0' && ch <= '9'
-                        || "._~%-".indexOf(ch) >= 0) result.append(ch);
-                else result.append('%').append(String.format(Locale.ROOT, "%02X", b & 0xff));
-            }
-            return result.toString();
         }
     }
 
