@@ -18,11 +18,14 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BiFunction;
 
 /** Opaque per-adapter lifecycle and explicit state-sharing boundary. */
 public final class ResilienceAdapterContext {
 
     private final Resilience resilience;
+    private final BiFunction<AdapterOperationIdentity, CircuitBreakerConfig, CircuitBreaker> circuitBreakerFactory;
+    private final BiFunction<AdapterOperationIdentity, BulkheadConfig, Bulkhead> bulkheadFactory;
     private final Set<CircuitBreaker> breakers = ConcurrentHashMap.newKeySet();
     private final Set<Bulkhead> bulkheads = ConcurrentHashMap.newKeySet();
     private final Set<ExecutionRegistration> activeExecutionRegistrations = ConcurrentHashMap.newKeySet();
@@ -31,7 +34,16 @@ public final class ResilienceAdapterContext {
     private final Promise<Void> closePromise = Promise.promise();
 
     ResilienceAdapterContext(Resilience resilience) {
+        this(resilience, resilience::adapterCircuitBreaker, resilience::adapterBulkhead);
+    }
+
+    ResilienceAdapterContext(
+            Resilience resilience,
+            BiFunction<AdapterOperationIdentity, CircuitBreakerConfig, CircuitBreaker> circuitBreakerFactory,
+            BiFunction<AdapterOperationIdentity, BulkheadConfig, Bulkhead> bulkheadFactory) {
         this.resilience = Objects.requireNonNull(resilience, "resilience");
+        this.circuitBreakerFactory = Objects.requireNonNull(circuitBreakerFactory, "circuitBreakerFactory");
+        this.bulkheadFactory = Objects.requireNonNull(bulkheadFactory, "bulkheadFactory");
     }
 
     /** Constructs a context-owned pipeline for a resolved policy. */
@@ -104,19 +116,29 @@ public final class ResilienceAdapterContext {
 
     /** Creates and tracks one context-owned breaker for a structured state identity. */
     public CircuitBreaker circuitBreaker(AdapterOperationIdentity stateIdentity, CircuitBreakerConfig config) {
-        ensureOpen();
-        CircuitBreaker breaker = resilience.adapterCircuitBreaker(
-                Objects.requireNonNull(stateIdentity, "stateIdentity"), Objects.requireNonNull(config, "config"));
-        breakers.add(breaker);
-        return breaker;
+        synchronized (lifecycleMonitor) {
+            ensureOpen();
+            CircuitBreaker breaker = Objects.requireNonNull(
+                    circuitBreakerFactory.apply(
+                            Objects.requireNonNull(stateIdentity, "stateIdentity"),
+                            Objects.requireNonNull(config, "config")),
+                    "circuit breaker");
+            breakers.add(breaker);
+            return breaker;
+        }
     }
 
     private Bulkhead bulkhead(AdapterOperationIdentity stateIdentity, BulkheadConfig config) {
-        ensureOpen();
-        Bulkhead bulkhead = resilience.adapterBulkhead(
-                Objects.requireNonNull(stateIdentity, "stateIdentity"), Objects.requireNonNull(config, "config"));
-        bulkheads.add(bulkhead);
-        return bulkhead;
+        synchronized (lifecycleMonitor) {
+            ensureOpen();
+            Bulkhead bulkhead = Objects.requireNonNull(
+                    bulkheadFactory.apply(
+                            Objects.requireNonNull(stateIdentity, "stateIdentity"),
+                            Objects.requireNonNull(config, "config")),
+                    "bulkhead");
+            bulkheads.add(bulkhead);
+            return bulkhead;
+        }
     }
 
     private static ResolvedResiliencePolicy withoutBulkhead(ResolvedResiliencePolicy policy) {

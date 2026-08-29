@@ -279,6 +279,54 @@ class ResilienceAdapterContextTest {
     }
 
     @Test
+    @DisplayName("component creation and ownership registration are fenced against close")
+    void componentCreationRacingWithCloseCannotEscapeOwnership(Vertx vertx) throws Exception {
+        resilience = Resilience.create(vertx);
+        AtomicBoolean componentCreationStarted = new AtomicBoolean();
+        Promise<Void> releaseComponentCreation = Promise.promise();
+        ResilienceAdapterContext context = new ResilienceAdapterContext(
+                resilience,
+                (identity, config) -> {
+                    componentCreationStarted.set(true);
+                    releaseComponentCreation
+                            .future()
+                            .toCompletionStage()
+                            .toCompletableFuture()
+                            .join();
+                    return resilience.adapterCircuitBreaker(identity, config);
+                },
+                resilience::adapterBulkhead);
+        Promise<CircuitBreaker> created = Promise.promise();
+        Thread creator = new Thread(() -> {
+            try {
+                created.complete(context.circuitBreaker(
+                        new AdapterOperationIdentity("rest-client", List.of("creation-race")),
+                        CircuitBreakerConfig.builder().build()));
+            } catch (Throwable failure) {
+                created.fail(failure);
+            }
+        });
+        creator.start();
+        awaitCondition(componentCreationStarted);
+        assertFalse(created.future().isComplete());
+
+        Promise<Void> closing = Promise.promise();
+        AtomicBoolean closeAttempted = new AtomicBoolean();
+        Thread closer = new Thread(() -> {
+            closeAttempted.set(true);
+            context.close().onComplete(closing);
+        });
+        closer.start();
+        awaitCondition(closeAttempted);
+        assertFalse(closing.future().isComplete());
+
+        releaseComponentCreation.complete();
+        CircuitBreaker breaker = await(created.future());
+        await(closing.future());
+        assertTrue(breaker.close().isComplete());
+    }
+
+    @Test
     @DisplayName("adapter factories expose structured identities and no application classifier hook")
     void publicSurfaceHasNoRawAdapterKeysOrApplicationClassifier() {
         assertFalse(hasPublicMethodWithStringParameter(Resilience.class, "adapterPipeline"));
