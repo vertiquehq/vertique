@@ -11,7 +11,7 @@ import dev.vertique.core.exception.ConfigurationException;
  *
  * <p>The single component is a nullable boxed value: {@code null} means "not overridden" — the
  * effective per-attempt timeout falls back to the {@code @Timeout} annotation (or the circuit
- * breaker timeout) per {@link dev.vertique.services.policy.PolicyChainBuilder}. No defaulting is
+ * breaker timeout) per {@link dev.vertique.services.resilience.ServiceResilienceConfigAdapter}. No defaulting is
  * applied here. When present, the value is validated ({@code > 0}) so a malformed override fails fast
  * at startup rather than flowing a non-positive timeout into the dispatch pipeline.
  *

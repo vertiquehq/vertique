@@ -8,8 +8,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import dev.vertique.core.codegen.MethodMetadata;
 import dev.vertique.core.codegen.ParameterMetadata;
-import dev.vertique.core.resilience.BackoffStrategy;
-import dev.vertique.core.resilience.Retry;
+import dev.vertique.resilience.BackoffStrategy;
+import dev.vertique.resilience.annotation.Bulkhead;
+import dev.vertique.resilience.annotation.Retry;
 import dev.vertique.rest.client.HttpClientResponse;
 import dev.vertique.rest.client.Url;
 import io.vertx.core.Future;
@@ -334,6 +335,20 @@ class ClientInterfaceScannerTest {
         Future<Item> overrideRetry();
     }
 
+    @Bulkhead(maxConcurrentCalls = 4, mode = Bulkhead.Mode.QUEUE, maxQueueSize = 8, queueTimeoutMs = 250)
+    @Path("/bulkhead")
+    interface InterfaceLevelBulkheadClient {
+
+        @GET
+        @Path("/inherited")
+        Future<Item> inherited();
+
+        @GET
+        @Path("/override")
+        @Bulkhead(maxConcurrentCalls = 2)
+        Future<Item> overrideBulkhead();
+    }
+
     // --- Phase 4.1 metadata-composition test interfaces ---
 
     @Path("/comp")
@@ -598,27 +613,27 @@ class ClientInterfaceScannerTest {
     }
 
     @Test
-    @DisplayName("Method with @Retry(maxRetries=5) produces RetryConfig with maxRetries=5")
+    @DisplayName("Method with @Retry(maxRetries=5) produces canonical retry declarations")
     void methodLevelRetryProducesRetryConfig() {
         Map<Method, ClientMethodMeta> metas = ClientInterfaceScanner.scan(MethodLevelRetryClient.class);
         Map<String, ClientMethodMeta> byName = indexByMethodName(metas);
 
         ClientMethodMeta withRetry = byName.get("withRetry");
-        assertThat(withRetry.resilience()).isNotNull();
-        assertThat(withRetry.resilience().retry()).isNotNull();
-        assertThat(withRetry.resilience().retry().maxRetries()).isEqualTo(5);
-        assertThat(withRetry.resilience().retry().backoffClass()).isEqualTo(NoDelayBackoff.class);
+        assertThat(withRetry.resilienceAnnotations().retry()).isPresent();
+        assertThat(withRetry.resilienceAnnotations().retry().orElseThrow().maxRetries())
+                .isEqualTo(5);
+        assertThat(withRetry.resilienceAnnotations().retry().orElseThrow().backoffClass())
+                .isEqualTo(NoDelayBackoff.class);
     }
 
     @Test
-    @DisplayName("Method without @Retry has null retryConfig")
+    @DisplayName("Method without @Retry has no retry declaration")
     void methodWithoutRetryHasNullRetryConfig() {
         Map<Method, ClientMethodMeta> metas = ClientInterfaceScanner.scan(MethodLevelRetryClient.class);
         Map<String, ClientMethodMeta> byName = indexByMethodName(metas);
 
         ClientMethodMeta noRetry = byName.get("noRetry");
-        // No resilience config at all — resilience is null
-        assertThat(noRetry.resilience()).isNull();
+        assertThat(noRetry.resilienceAnnotations().retry()).isEmpty();
     }
 
     @Test
@@ -628,9 +643,9 @@ class ClientInterfaceScannerTest {
         Map<String, ClientMethodMeta> byName = indexByMethodName(metas);
 
         ClientMethodMeta inherited = byName.get("inherited");
-        assertThat(inherited.resilience()).isNotNull();
-        assertThat(inherited.resilience().retry()).isNotNull();
-        assertThat(inherited.resilience().retry().maxRetries()).isEqualTo(3);
+        assertThat(inherited.resilienceAnnotations().retry()).isPresent();
+        assertThat(inherited.resilienceAnnotations().retry().orElseThrow().maxRetries())
+                .isEqualTo(3);
     }
 
     @Test
@@ -640,10 +655,31 @@ class ClientInterfaceScannerTest {
         Map<String, ClientMethodMeta> byName = indexByMethodName(metas);
 
         ClientMethodMeta override = byName.get("overrideRetry");
-        assertThat(override.resilience()).isNotNull();
-        assertThat(override.resilience().retry()).isNotNull();
+        assertThat(override.resilienceAnnotations().retry()).isPresent();
         // Method-level maxRetries=1 must override interface-level maxRetries=3
-        assertThat(override.resilience().retry().maxRetries()).isEqualTo(1);
+        assertThat(override.resilienceAnnotations().retry().orElseThrow().maxRetries())
+                .isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("Bulkhead annotations produce inherited and method-level canonical declarations")
+    void bulkheadAnnotationsAreResolved() {
+        Map<Method, ClientMethodMeta> metas = ClientInterfaceScanner.scan(InterfaceLevelBulkheadClient.class);
+        Map<String, ClientMethodMeta> byName = indexByMethodName(metas);
+
+        var inherited =
+                byName.get("inherited").resilienceAnnotations().bulkhead().orElseThrow();
+        assertThat(inherited.maxConcurrentCalls()).isEqualTo(4);
+        assertThat(inherited.mode()).isEqualTo(Bulkhead.Mode.QUEUE);
+        assertThat(inherited.maxQueueSize()).isEqualTo(8);
+        assertThat(inherited.queueTimeoutMs()).isEqualTo(250);
+
+        var override = byName.get("overrideBulkhead")
+                .resilienceAnnotations()
+                .bulkhead()
+                .orElseThrow();
+        assertThat(override.maxConcurrentCalls()).isEqualTo(2);
+        assertThat(override.mode()).isEqualTo(Bulkhead.Mode.REJECT);
     }
 
     // --- @Url tests ---

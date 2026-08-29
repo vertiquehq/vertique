@@ -57,6 +57,7 @@ Set<String> classpathCoordinates =
         "dev.vertique:vertique-starter-core",
         "dev.vertique:vertique-management",
         "dev.vertique:vertique-services",
+        "dev.vertique:vertique-resilience",
         "com.google.dagger:dagger",
         // The core starter closure the services starter transitively requires.
         "dev.vertique:vertique-application",
@@ -102,6 +103,7 @@ Set<String> expectedVertique = [
         "vertique-management",
         "vertique-security-core",
         "vertique-security-runtime",
+        "vertique-resilience",
         "vertique-services",
         "vertique-starter-core",
         "vertique-starter-services"

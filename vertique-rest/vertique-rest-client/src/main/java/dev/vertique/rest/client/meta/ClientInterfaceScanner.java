@@ -6,15 +6,10 @@ package dev.vertique.rest.client.meta;
 import dev.vertique.core.codegen.ParameterMetadata;
 import dev.vertique.core.codegen.ReflectiveMethodMetadata;
 import dev.vertique.core.codegen.ReflectiveParameterMetadata;
-import dev.vertique.core.resilience.CircuitBreaker;
-import dev.vertique.core.resilience.Retry;
-import dev.vertique.core.resilience.Timeout;
+import dev.vertique.resilience.annotation.ResilienceAnnotations;
 import dev.vertique.rest.client.ExpectedStatus;
 import dev.vertique.rest.client.HttpClientResponse;
 import dev.vertique.rest.client.Url;
-import dev.vertique.rest.client.meta.ClientMethodMeta.ResilienceConfig;
-import dev.vertique.rest.client.meta.ClientMethodMeta.RetryConfig;
-import io.vertx.circuitbreaker.CircuitBreakerOptions;
 import io.vertx.core.Expectation;
 import io.vertx.core.Future;
 import io.vertx.core.http.HttpResponseExpectation;
@@ -44,13 +39,11 @@ import java.lang.reflect.RecordComponent;
 import java.lang.reflect.Type;
 import java.net.URI;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 
@@ -104,7 +97,7 @@ public final class ClientInterfaceScanner {
             String consumesMediaType = resolveConsumes(iface, method);
             String producesMediaType = resolveProduces(iface, method);
             Expectation<HttpResponseHead> expectation = resolveExpectedStatus(method);
-            ResilienceConfig resilience = resolveResilienceConfig(method);
+            ResilienceAnnotations resilienceAnnotations = ResilienceAnnotations.resolve(method);
 
             boolean hasUrlParam = params.stream().anyMatch(p -> p.source() == ClientParamMeta.ParamSource.URL);
 
@@ -125,7 +118,7 @@ public final class ClientInterfaceScanner {
                     consumesMediaType,
                     producesMediaType,
                     expectation,
-                    resilience,
+                    resilienceAnnotations,
                     hasUrlParam);
 
             result.put(method, meta);
@@ -784,75 +777,6 @@ public final class ClientInterfaceScanner {
             return HttpResponseExpectation.status(ann.min(), ann.max());
         }
         return null;
-    }
-
-    /**
-     * Resolves the per-method {@link ResilienceConfig} by combining {@link Timeout},
-     * {@link CircuitBreaker}, and {@link Retry} annotations on the method and its declaring
-     * interface. Returns {@code null} if none of these annotations are present.
-     *
-     * <p>Method-level annotations take precedence over interface-level annotations for both
-     * {@link Timeout} and {@link Retry}. A method-level annotation completely replaces the
-     * corresponding interface-level one — individual fields are not merged.
-     *
-     * <p>{@link CircuitBreaker} is method-level only: an interface-level {@code @CircuitBreaker}
-     * is handled separately by {@link dev.vertique.rest.client.RestClientBuilder}, which creates
-     * a shared circuit breaker for the whole client interface. Inheriting it here would create
-     * redundant per-method circuit breakers.
-     *
-     * @param method the interface method
-     * @return the resilience configuration, or {@code null} if no resilience annotations are present
-     */
-    private static ResilienceConfig resolveResilienceConfig(Method method) {
-        // @Timeout: method-level overrides interface-level (broadened to support type-level)
-        Timeout timeoutAnn = method.getAnnotation(Timeout.class);
-        if (timeoutAnn == null) {
-            timeoutAnn = method.getDeclaringClass().getAnnotation(Timeout.class);
-        }
-
-        // @CircuitBreaker: method-level only (interface-level handled by RestClientBuilder)
-        CircuitBreaker cbAnn = method.getAnnotation(CircuitBreaker.class);
-
-        // @Retry: method-level overrides interface-level
-        Retry retryAnn = method.getAnnotation(Retry.class);
-        if (retryAnn == null) {
-            retryAnn = method.getDeclaringClass().getAnnotation(Retry.class);
-        }
-
-        if (timeoutAnn == null && cbAnn == null && retryAnn == null) {
-            return null;
-        }
-
-        long timeoutMs = timeoutAnn != null ? timeoutAnn.unit().toMillis(timeoutAnn.value()) : -1L;
-        CircuitBreakerOptions cbOptions = cbAnn != null ? toCircuitBreakerOptions(cbAnn) : null;
-        RetryConfig retryConfig = retryAnn != null ? toRetryConfig(retryAnn) : null;
-
-        return new ResilienceConfig(cbOptions, timeoutMs, retryConfig);
-    }
-
-    /**
-     * Converts a {@link CircuitBreaker} annotation into a Vert.x {@link CircuitBreakerOptions}.
-     *
-     * @param ann the annotation to convert
-     * @return the populated options
-     */
-    private static CircuitBreakerOptions toCircuitBreakerOptions(CircuitBreaker ann) {
-        return new CircuitBreakerOptions()
-                .setTimeout(ann.timeoutMs())
-                .setMaxFailures(ann.maxFailures())
-                .setResetTimeout(ann.resetTimeoutMs());
-    }
-
-    /**
-     * Converts a {@link Retry} annotation into a {@link RetryConfig} record.
-     *
-     * @param ann the annotation to convert
-     * @return the populated retry configuration
-     */
-    private static RetryConfig toRetryConfig(Retry ann) {
-        Set<Class<? extends Throwable>> retryOn = Arrays.stream(ann.retryOn()).collect(Collectors.toUnmodifiableSet());
-        Set<Class<? extends Throwable>> abortOn = Arrays.stream(ann.abortOn()).collect(Collectors.toUnmodifiableSet());
-        return new RetryConfig(ann.maxRetries(), ann.backoff(), retryOn, abortOn);
     }
 
     // --- Method Collection ---

@@ -3,8 +3,8 @@
 
 package dev.vertique.services;
 
-import dev.vertique.core.resilience.ResilienceAnnotations;
 import dev.vertique.core.util.AnnotationResolver;
+import dev.vertique.resilience.annotation.ResilienceAnnotations;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.util.List;

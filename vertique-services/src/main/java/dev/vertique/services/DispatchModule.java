@@ -24,6 +24,7 @@ import dev.vertique.deploy.DeployerModule;
 import dev.vertique.deploy.VerticleDeployer;
 import dev.vertique.deploy.VerticleSupervisor;
 import dev.vertique.logging.LoggingContextModule;
+import dev.vertique.resilience.dagger.ResilienceModule;
 import dev.vertique.security.authz.ActionRegistry;
 import dev.vertique.security.authz.Authorizer;
 import dev.vertique.security.runtime.IdentitySnapshotDegradationPolicy;
@@ -89,6 +90,7 @@ import java.util.stream.Collectors;
             ContextRuntimeModule.class,
             LoggingContextModule.class,
             CorrelationContextModule.class,
+            ResilienceModule.class,
             SecurityEventsModule.class
         })
 public abstract class DispatchModule {
@@ -297,8 +299,12 @@ public abstract class DispatchModule {
             @Services Set<Object> services,
             Set<ServiceContractContributor> contributors,
             @VertxConfig JsonObject config,
-            Map<ServicesConfig.ServiceKey, ServiceConfig> serviceConfigIndex) {
-        return ServiceContractRegistry.build(services, contributors, config, serviceConfigIndex);
+            Map<ServicesConfig.ServiceKey, ServiceConfig> serviceConfigIndex,
+            dev.vertique.services.resilience.ServiceResilienceConfigAdapter resilienceConfigAdapter) {
+        ServiceContractRegistry registry =
+                ServiceContractRegistry.build(services, contributors, config, serviceConfigIndex);
+        resilienceConfigAdapter.validate(registry.entries());
+        return registry;
     }
 
     /**
@@ -373,7 +379,8 @@ public abstract class DispatchModule {
             Map<ServicesConfig.ServiceKey, ServiceConfig> serviceConfigIndex,
             dev.vertique.context.ServiceDispatchContextRegistry contextRegistry,
             dev.vertique.context.InboundDispatchScope inboundScope,
-            dev.vertique.context.InboundExecutionContextScope inboundExecScope) {
+            dev.vertique.context.InboundExecutionContextScope inboundExecScope,
+            dev.vertique.services.resilience.ServiceResiliencePipelineFactory resiliencePipelineFactory) {
         return new ServiceDeploymentManager(
                 vertx,
                 deployer,
@@ -384,7 +391,8 @@ public abstract class DispatchModule {
                 serviceConfigIndex,
                 contextRegistry,
                 inboundScope,
-                inboundExecScope);
+                inboundExecScope,
+                resiliencePipelineFactory);
     }
 
     // --- Paired SERVICES-phase lifecycle steps (FR-APP-028) ---
@@ -453,9 +461,8 @@ public abstract class DispatchModule {
     static ServiceRequestSender requestSender(
             EventBusClient eventBusClient,
             ServiceSupervisor supervisor,
-            ServicesConfig servicesConfig,
-            Map<ServicesConfig.ServiceKey, ServiceConfig> serviceConfigIndex) {
-        return new ServiceRequestSender(eventBusClient, supervisor, servicesConfig, serviceConfigIndex);
+            dev.vertique.services.resilience.ServiceResilienceConfigAdapter resilienceConfigAdapter) {
+        return new ServiceRequestSender(eventBusClient, supervisor, resilienceConfigAdapter);
     }
 
     /**

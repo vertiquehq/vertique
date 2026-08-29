@@ -20,7 +20,7 @@ import dev.vertique.services.ServiceExceptionMapper;
 import dev.vertique.services.ServiceOperation;
 import dev.vertique.services.ServiceTargetResolver;
 import dev.vertique.services.ServiceVerticle;
-import dev.vertique.services.policy.PolicyChainBuilder;
+import dev.vertique.services.resilience.ServiceResiliencePipelineFactory;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
@@ -204,13 +204,18 @@ public class KafkaErrorHandlingIT {
 
         // --- Deploy service verticles ---
         ServiceExceptionMapper exceptionMapper = new ServiceExceptionMapper();
-        PolicyChainBuilder policyChain = KafkaTestSupport.policyChainBuilder(vertx, config);
+        ServiceResiliencePipelineFactory resiliencePipelineFactory =
+                KafkaTestSupport.resiliencePipelineFactory(vertx, config);
 
         ServiceVerticle<SkipService> skipVerticle = new ServiceVerticle<>(
-                skipRegistry.resolve(SkipService.class), exceptionMapper, List.of(), policyChain, null);
+                skipRegistry.resolve(SkipService.class), exceptionMapper, List.of(), resiliencePipelineFactory, null);
 
         ServiceVerticle<DlqService> dlqVerticle = new ServiceVerticle<>(
-                dlqServiceRegistry.resolve(DlqService.class), exceptionMapper, List.of(), policyChain, null);
+                dlqServiceRegistry.resolve(DlqService.class),
+                exceptionMapper,
+                List.of(),
+                resiliencePipelineFactory,
+                null);
 
         // --- Deploy Kafka consumer verticles ---
         KafkaProducerFactory producerFactory = new KafkaProducerFactory(

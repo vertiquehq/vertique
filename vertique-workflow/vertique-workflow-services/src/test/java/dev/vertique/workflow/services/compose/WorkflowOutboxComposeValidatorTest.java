@@ -6,12 +6,12 @@ package dev.vertique.workflow.services.compose;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import dev.vertique.core.resilience.ResilienceAnnotations;
 import dev.vertique.inboxoutbox.ClaimScope;
 import dev.vertique.inboxoutbox.DestinationType;
 import dev.vertique.inboxoutbox.OutboxDestinationHandler;
 import dev.vertique.inboxoutbox.OutboxEnvelope;
 import dev.vertique.inboxoutbox.OutboxPublishResult;
+import dev.vertique.resilience.annotation.ResilienceAnnotations;
 import dev.vertique.services.ResolvedServiceTarget;
 import dev.vertique.services.ServiceTargetResolver;
 import dev.vertique.services.dispatch.ServiceMethodDescriptor;

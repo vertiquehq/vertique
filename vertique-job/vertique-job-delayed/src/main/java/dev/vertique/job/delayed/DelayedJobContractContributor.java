@@ -5,6 +5,7 @@ package dev.vertique.job.delayed;
 
 import dev.vertique.core.util.TypeResolver;
 import dev.vertique.job.JobContext;
+import dev.vertique.resilience.annotation.ResilienceAnnotations;
 import dev.vertique.services.ServiceContractContributor;
 import dev.vertique.services.ServiceContractEntries;
 import dev.vertique.services.ServiceContractRegistry.ContractEntry;
@@ -170,6 +171,7 @@ public class DelayedJobContractContributor implements ServiceContractContributor
                 .method(executeMethod)
                 .payloadType(payloadType)
                 .returnType(Void.class)
+                .resilienceAnnotations(ResilienceAnnotations.NONE)
                 .param("payload", ParamSource.PAYLOAD, payloadType)
                 .param("ctx", ParamSource.DISPATCH_CONTEXT, JobContext.class)
                 .done()

@@ -45,14 +45,14 @@ public final class ServiceAnnotations {
 
     // --- Resilience annotations ---
 
-    /** FQN of {@code dev.vertique.core.resilience.Timeout}. */
-    public static final String TIMEOUT = "dev.vertique.core.resilience.Timeout";
+    /** FQN of {@code dev.vertique.resilience.annotation.Timeout}. */
+    public static final String TIMEOUT = "dev.vertique.resilience.annotation.Timeout";
 
-    /** FQN of {@code dev.vertique.core.resilience.CircuitBreaker}. */
-    public static final String CIRCUIT_BREAKER = "dev.vertique.core.resilience.CircuitBreaker";
+    /** FQN of {@code dev.vertique.resilience.annotation.CircuitBreaker}. */
+    public static final String CIRCUIT_BREAKER = "dev.vertique.resilience.annotation.CircuitBreaker";
 
-    /** FQN of {@code dev.vertique.core.resilience.Retry}. */
-    public static final String RETRY = "dev.vertique.core.resilience.Retry";
+    /** FQN of {@code dev.vertique.resilience.annotation.Retry}. */
+    public static final String RETRY = "dev.vertique.resilience.annotation.Retry";
 
     // --- NoAutoWire ---
 

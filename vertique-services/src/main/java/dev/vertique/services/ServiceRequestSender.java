@@ -9,22 +9,13 @@ import dev.vertique.core.eventbus.EventBusClient;
 import dev.vertique.core.eventbus.EventBusDispatchException;
 import dev.vertique.core.eventbus.EventBusTimeoutException;
 import dev.vertique.core.eventbus.Result;
-import dev.vertique.core.resilience.CircuitBreaker;
-import dev.vertique.core.resilience.ResilienceAnnotations;
-import dev.vertique.core.resilience.Retry;
-import dev.vertique.core.resilience.Timeout;
-import dev.vertique.services.config.CircuitBreakerOverride;
-import dev.vertique.services.config.RetryOverride;
-import dev.vertique.services.config.ServiceConfig;
-import dev.vertique.services.config.ServiceOperationConfig;
-import dev.vertique.services.config.ServicesConfig;
-import dev.vertique.services.config.ServicesConfig.ServiceKey;
-import dev.vertique.services.config.TimeoutOverride;
+import dev.vertique.resilience.DurationBound;
+import dev.vertique.resilience.ResolvedResiliencePolicy;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
+import dev.vertique.services.resilience.ServiceResilienceConfigAdapter;
 import io.vertx.core.Future;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
-import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -61,36 +52,25 @@ import lombok.extern.slf4j.Slf4j;
 @Singleton
 public class ServiceRequestSender {
 
-    /** Default event bus send timeout when no resilience annotations are present. */
-    private static final long DEFAULT_SEND_TIMEOUT_MS = 30_000L;
-
-    /** Overhead buffer added to the computed send timeout to account for event bus processing. */
-    private static final long SEND_TIMEOUT_BUFFER_MS = 1000L;
-
     private final EventBusClient eventBusClient;
     private final ServiceSupervisor supervisor;
-    private final Long globalSendTimeoutMs;
-    private final Map<ServiceKey, ServiceConfig> serviceConfigIndex;
+    private final ServiceResilienceConfigAdapter resilienceConfigAdapter;
 
     /**
      * Creates a new service request sender.
      *
      * @param eventBusClient the event bus client for transport
      * @param supervisor     the supervisor for availability checks
-     * @param servicesConfig the typed services config supplying the global send timeout
-     * @param serviceConfigIndex the {@code (namespace, name) -> ServiceConfig} index for per-service and
-     *     per-operation send timeout overrides
+     * @param resilienceConfigAdapter the shared Services-to-common resilience adapter
      */
     @Inject
     public ServiceRequestSender(
             EventBusClient eventBusClient,
             ServiceSupervisor supervisor,
-            ServicesConfig servicesConfig,
-            Map<ServiceKey, ServiceConfig> serviceConfigIndex) {
+            ServiceResilienceConfigAdapter resilienceConfigAdapter) {
         this.eventBusClient = eventBusClient;
         this.supervisor = supervisor;
-        this.globalSendTimeoutMs = servicesConfig.sendTimeoutMs();
-        this.serviceConfigIndex = serviceConfigIndex;
+        this.resilienceConfigAdapter = resilienceConfigAdapter;
     }
 
     // --- Public API ---
@@ -196,7 +176,7 @@ public class ServiceRequestSender {
      *   <li>{@code services.contracts.{namespace}.{name}.sendTimeoutMs} — per-service config</li>
      *   <li>{@code services.sendTimeoutMs} — global config</li>
      *   <li>Computed from effective resilience config (annotation + config overrides)</li>
-     *   <li>{@link #DEFAULT_SEND_TIMEOUT_MS} (30 seconds)</li>
+     *   <li>the framework default (30 seconds)</li>
      * </ol>
      *
      * <p>An explicit value at any of the first three levels always wins over the resilience-computed
@@ -209,55 +189,25 @@ public class ServiceRequestSender {
      * @return the send timeout in milliseconds
      */
     long computeSendTimeout(ServiceMethodMeta meta) {
-        ServiceConfig serviceConfig = serviceConfigIndex.get(new ServiceKey(meta.namespace(), meta.name()));
-        ServiceOperationConfig operationConfig = findOperationConfig(serviceConfig, meta.operation());
-
-        Long explicitTimeout = null;
-        if (operationConfig != null) {
-            explicitTimeout = operationConfig.sendTimeoutMs();
-        }
-        if (explicitTimeout == null && serviceConfig != null) {
-            explicitTimeout = serviceConfig.sendTimeoutMs();
-        }
-        if (explicitTimeout == null) {
-            explicitTimeout = globalSendTimeoutMs;
-        }
-
-        long resilienceTimeout = computeResilienceTimeout(meta, operationConfig);
+        Long explicitTimeout = resilienceConfigAdapter.explicitSendTimeoutMs(meta);
+        ResolvedResiliencePolicy policy = resilienceConfigAdapter.resolve(meta);
 
         if (explicitTimeout != null) {
-            if (explicitTimeout < resilienceTimeout) {
+            DurationBound active = policy.executionBudget().activeExecution();
+            if (active instanceof DurationBound.Known known
+                    && !known.saturated()
+                    && explicitTimeout < resilienceConfigAdapter.derivedSendTimeoutMs(meta, policy)) {
                 log.warn(
-                        "[{}/{}] Explicit sendTimeoutMs ({}ms) is shorter than computed resilience "
-                                + "timeout ({}ms) for operation {} — client may receive timeout errors "
-                                + "while server retries are in progress",
-                        meta.namespace(),
-                        meta.name(),
+                        "Explicit sendTimeoutMs ({}ms) is shorter than the resolved resilience budget "
+                                + "for operation key {} — client may receive timeout errors while server retries "
+                                + "are in progress",
                         explicitTimeout,
-                        resilienceTimeout,
-                        meta.operation());
+                        policy.executionBudget());
             }
             return explicitTimeout;
         }
 
-        return resilienceTimeout;
-    }
-
-    /**
-     * Looks up the typed per-operation config for an operation within a service.
-     *
-     * @param serviceConfig the resolved service config, or {@code null} when the service has no config
-     * @param operation the operation id
-     * @return the matching {@link ServiceOperationConfig}, or {@code null} when absent
-     */
-    private static ServiceOperationConfig findOperationConfig(ServiceConfig serviceConfig, String operation) {
-        if (serviceConfig == null) {
-            return null;
-        }
-        return serviceConfig.operations().stream()
-                .filter(op -> op.operation().equals(operation))
-                .findFirst()
-                .orElse(null);
+        return resilienceConfigAdapter.derivedSendTimeoutMs(meta, policy);
     }
 
     // --- Private Helpers ---
@@ -298,62 +248,5 @@ public class ServiceRequestSender {
             return new ServiceDispatchException(contract, address, e.getMessage(), cause);
         }
         return cause;
-    }
-
-    /**
-     * Computes the send timeout from effective resilience config (annotations + typed config overrides).
-     *
-     * <p>Each annotation value may be overridden by the corresponding typed per-operation override
-     * ({@link TimeoutOverride}, {@link CircuitBreakerOverride}, {@link RetryOverride}); an override
-     * field that is {@code null} ("not overridden") falls back to the annotation value.
-     *
-     * @param meta            the operation metadata
-     * @param operationConfig the typed per-operation config overrides, or {@code null} when absent
-     * @return the computed send timeout, or {@link #DEFAULT_SEND_TIMEOUT_MS} if no resilience config
-     */
-    private static long computeResilienceTimeout(ServiceMethodMeta meta, ServiceOperationConfig operationConfig) {
-        ResilienceAnnotations annotations = meta.resilienceAnnotations();
-        if (!annotations.hasAny()) {
-            return DEFAULT_SEND_TIMEOUT_MS;
-        }
-
-        long perAttemptMs = DEFAULT_SEND_TIMEOUT_MS;
-        Timeout timeout = annotations.timeout();
-        CircuitBreaker cb = annotations.circuitBreaker();
-        if (timeout != null) {
-            TimeoutOverride timeoutOverride = operationConfig != null ? operationConfig.timeout() : null;
-            Long valueMs = timeoutOverride != null ? timeoutOverride.valueMs() : null;
-            perAttemptMs = valueMs != null ? valueMs : timeout.unit().toMillis(timeout.value());
-        } else if (cb != null && cb.timeoutMs() >= 0) {
-            CircuitBreakerOverride cbOverride = operationConfig != null ? operationConfig.circuitBreaker() : null;
-            Long timeoutMs = cbOverride != null ? cbOverride.timeoutMs() : null;
-            perAttemptMs = timeoutMs != null ? timeoutMs : cb.timeoutMs();
-        }
-
-        int maxRetries = 0;
-        long totalBackoff = 0;
-        Retry retry = annotations.retry();
-        if (retry != null) {
-            RetryOverride retryOverride = operationConfig != null ? operationConfig.retry() : null;
-            maxRetries = retryOverride != null && retryOverride.maxRetries() != null
-                    ? retryOverride.maxRetries()
-                    : retry.maxRetries();
-            long delayMs = retryOverride != null && retryOverride.delayMs() != null
-                    ? retryOverride.delayMs()
-                    : retry.delayMs();
-            double multiplier = retryOverride != null && retryOverride.backoffMultiplier() != null
-                    ? retryOverride.backoffMultiplier()
-                    : retry.backoffMultiplier();
-            long maxDelayMs = retryOverride != null && retryOverride.maxDelayMs() != null
-                    ? retryOverride.maxDelayMs()
-                    : retry.maxDelayMs();
-            for (int i = 0; i < maxRetries; i++) {
-                long delay = Math.min((long) (delayMs * Math.pow(multiplier, i)), maxDelayMs);
-                long jitter = Math.min(delay, 1000L);
-                totalBackoff += delay + jitter;
-            }
-        }
-
-        return perAttemptMs * (1L + maxRetries) + totalBackoff + SEND_TIMEOUT_BUFFER_MS;
     }
 }

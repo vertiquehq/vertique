@@ -127,7 +127,7 @@ class ServiceAuthorizationInterceptorTest {
                 String.class,
                 String.class,
                 List.of(),
-                dev.vertique.core.resilience.ResilienceAnnotations.NONE,
+                dev.vertique.resilience.annotation.ResilienceAnnotations.NONE,
                 methodAnnotations,
                 classAnnotations,
                 false);

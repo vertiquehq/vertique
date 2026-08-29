@@ -6,6 +6,7 @@ package dev.vertique.services;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -25,19 +26,24 @@ import dev.vertique.core.eventbus.EventBusClient;
 import dev.vertique.core.eventbus.EventBusDispatchException;
 import dev.vertique.core.eventbus.EventBusTimeoutException;
 import dev.vertique.core.eventbus.Result;
-import dev.vertique.core.resilience.CircuitBreaker;
-import dev.vertique.core.resilience.ResilienceAnnotations;
-import dev.vertique.core.resilience.Retry;
-import dev.vertique.core.resilience.Timeout;
+import dev.vertique.resilience.Resilience;
+import dev.vertique.resilience.annotation.CircuitBreaker;
+import dev.vertique.resilience.annotation.ResilienceAnnotations;
+import dev.vertique.resilience.annotation.Retry;
+import dev.vertique.resilience.annotation.Timeout;
 import dev.vertique.services.config.ServiceConfig;
 import dev.vertique.services.config.ServicesConfig;
 import dev.vertique.services.dispatch.ServiceMethodDescriptor;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
+import dev.vertique.services.resilience.ServiceResilienceConfigAdapter;
 import io.vertx.core.Future;
+import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -55,6 +61,21 @@ import org.mockito.junit.jupiter.MockitoExtension;
  */
 @ExtendWith(MockitoExtension.class)
 class ServiceRequestSenderTest {
+
+    private static Vertx resilienceVertx;
+    private static Resilience resilience;
+
+    @BeforeAll
+    static void startResilienceRuntime() {
+        resilienceVertx = Vertx.vertx();
+        resilience = Resilience.create(resilienceVertx);
+    }
+
+    @AfterAll
+    static void stopResilienceRuntime() {
+        resilience.close().toCompletionStage().toCompletableFuture().join();
+        resilienceVertx.close().toCompletionStage().toCompletableFuture().join();
+    }
 
     // --- Annotated fixture interfaces used to obtain annotation instances ---
 
@@ -155,7 +176,8 @@ class ServiceRequestSenderTest {
     private ServiceRequestSender senderFor(JsonObject rootConfig) {
         ServicesConfig servicesConfig = ServicesConfig.fromConfig(rootConfig, configParser());
         Map<ServicesConfig.ServiceKey, ServiceConfig> index = servicesConfig.index();
-        return new ServiceRequestSender(eventBusClient, supervisor, servicesConfig, index);
+        return new ServiceRequestSender(
+                eventBusClient, supervisor, new ServiceResilienceConfigAdapter(resilience, servicesConfig, index));
     }
 
     // --- Supervisor gating ---
@@ -460,23 +482,16 @@ class ServiceRequestSenderTest {
 
             long timeout = sender.computeSendTimeout(meta);
 
-            // CB with timeoutMs=-1 → perAttemptMs stays DEFAULT (30000); no retries → 30000 + 1000
-            assertEquals(31_000L, timeout);
+            // A breaker without a timeout does not activate the timeout concern; transport uses the default.
+            assertEquals(30_000L, timeout);
         }
 
         @Test
-        @DisplayName("@Retry(maxRetries=2, delayMs=100, multiplier=2.0, maxDelay=30000) → correct backoff sum")
-        void retryOnly_computesBackoff() throws Exception {
-            // attempt 0: delay = min(100 * 2^0, 30000) = 100, jitter = min(100, 1000) = 100 → 200
-            // attempt 1: delay = min(100 * 2^1, 30000) = 200, jitter = min(200, 1000) = 200 → 400
-            // totalBackoff = 600
-            // perAttemptMs = 30000 (DEFAULT — no @Timeout or @CB.timeoutMs)
-            // result = 30000 * (1+2) + 600 + 1000 = 91600
+        @DisplayName("@Retry without an explicit send timeout → requires registration-time transport bound")
+        void retryOnly_requiresExplicitSendTimeout() throws Exception {
             ServiceMethodMeta meta = makeMeta(resolveMeta(WithRetry.class));
 
-            long timeout = sender.computeSendTimeout(meta);
-
-            assertEquals(91_600L, timeout);
+            assertThrows(IllegalStateException.class, () -> sender.computeSendTimeout(meta));
         }
 
         @Test

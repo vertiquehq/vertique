@@ -3,7 +3,7 @@
 
 package dev.vertique.job.delayed;
 
-import dev.vertique.core.resilience.BackoffStrategy;
+import dev.vertique.resilience.BackoffStrategy;
 import java.util.Locale;
 
 /**
