@@ -141,12 +141,17 @@ class RedisCacheStoreTimeoutTest {
     }
 
     static final class BusinessTarget {
-        @Cacheable(name = "profiles", key = "constant", identity = CacheIdentity.NONE)
+        @Cacheable(
+                name = "profiles",
+                key = {},
+                identity = CacheIdentity.NONE)
         Future<String> load() {
             return Future.succeededFuture("unused");
         }
 
-        @CacheEvict(name = "profiles", key = "constant")
+        @CacheEvict(
+                name = "profiles",
+                key = {})
         Future<String> evict() {
             return Future.succeededFuture("unused");
         }

@@ -134,7 +134,7 @@ class CacheSecurityIntegrationTest {
     }
 
     static final class Target {
-        @Cacheable(name = "profiles", key = "{0}", identity = CacheIdentity.NONE)
+        @Cacheable(name = "profiles", key = "0", identity = CacheIdentity.NONE)
         String value(String id) {
             return id;
         }

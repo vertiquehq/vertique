@@ -140,8 +140,8 @@ class CacheIdentityTest {
                 }
 
                 @Override
-                public String key() {
-                    return "me";
+                public String[] key() {
+                    return new String[0];
                 }
 
                 @Override
@@ -171,7 +171,9 @@ class CacheIdentityTest {
             };
         }
 
-        @Cacheable(name = "profile", key = "me")
+        @Cacheable(
+                name = "profile",
+                key = {})
         String current() {
             return "unused";
         }

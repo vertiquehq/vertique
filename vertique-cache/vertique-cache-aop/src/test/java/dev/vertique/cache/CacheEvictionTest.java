@@ -72,7 +72,7 @@ class CacheEvictionTest {
     }
 
     static final class Target {
-        @CacheEvict(name = "profile", key = "{0}")
+        @CacheEvict(name = "profile", key = "0")
         String mutate(String user) {
             return "unused";
         }

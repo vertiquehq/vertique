@@ -18,7 +18,8 @@ import java.lang.annotation.Target;
 public @interface CacheEvict {
     String name();
 
-    String key() default "";
+    /** Ordered selector paths for exact invalidation; empty only with {@code clear=true}. */
+    String[] key() default {};
 
     boolean clear() default false;
 

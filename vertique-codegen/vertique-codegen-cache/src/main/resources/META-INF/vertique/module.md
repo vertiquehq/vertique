@@ -38,8 +38,11 @@ method that can be overridden; final, private, static, abstract, and non-proxyab
 shapes produce diagnostics. `@Cacheable` methods must return a value, and raw, wildcard, or
 type-variable `Future` results are rejected.
 
-Selectors use literal text plus positional (`{0}`) or parameter-name (`{user}`) selectors.
-Property paths may contain at most three properties after the parameter. Each property must
+Keys are ordered selector-path arrays: `key = {"tenantId", "user.email"}`. Each path is a
+positional (`"0"`) or parameter-name (`"user"`) root plus at most seven dot-separated
+property segments (eight segments including the root). There is no template or literal
+text; the runtime alone composes and frames the canonical key. An explicitly empty
+`key = {}` declares a constant, value-independent operation key. Each property must
 resolve to a public, zero-argument instance accessor: a record accessor, a method named for
 the property, or a JavaBean `getX()`/`isX()` accessor. The terminal must be one of the
 processor's supported scalar shapes:
@@ -50,15 +53,16 @@ processor's supported scalar shapes:
 | Numeric values | `BigInteger`, `BigDecimal` |
 | Other scalar values | `UUID`, enum types, and `java.time.temporal.TemporalAccessor` types |
 
-Blank selectors, unmatched braces, unsupported literal characters, invalid identifiers,
-unresolved parameters or accessors, excessive property depth, object/container terminals,
-and unsupported return shapes produce compile-time diagnostics. The processor does not
-perform a separate ambiguity check; a selector must resolve through the ordinary parameter
-and accessor lookup rules.
+Blank paths, invalid identifiers, unresolved parameters or accessors, excessive property
+depth, object/container terminals, and unsupported return shapes produce compile-time
+diagnostics. The processor does not perform a separate ambiguity check; a path must
+resolve through the ordinary parameter and accessor lookup rules.
 
-For `@CacheEvict`, proxyability is always validated. A nonblank key is selector-validated;
-a clear operation has no selector to validate. The runtime eviction aspect treats a
-declaration with neither a key nor `clear = true` as a no-op.
+For `@CacheEvict`, proxyability is always validated, and a declaration must specify
+exactly one of `clear = true` or an explicit `key` attribute — a declaration with
+neither, or with both a key and `clear = true`, is a compile-time diagnostic. An
+explicit nonempty key is path-validated; an explicit empty key is the constant-entry
+exact eviction; a clear operation has no selector to validate.
 
 For a JAX-RS `@GET` method, `@Cacheable` accepts an entity or `Future<entity>` result. HTTP
 response wrappers, transport response types, buffers, routing contexts, streams, publishers,

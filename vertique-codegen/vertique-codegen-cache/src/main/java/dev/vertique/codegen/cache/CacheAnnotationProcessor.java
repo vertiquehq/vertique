@@ -15,6 +15,8 @@ import javax.annotation.processing.RoundEnvironment;
 import javax.annotation.processing.SupportedAnnotationTypes;
 import javax.annotation.processing.SupportedSourceVersion;
 import javax.lang.model.SourceVersion;
+import javax.lang.model.element.AnnotationMirror;
+import javax.lang.model.element.AnnotationValue;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
@@ -68,13 +70,17 @@ public final class CacheAnnotationProcessor extends AbstractProcessor {
         for (Element element : roundEnvironment.getElementsAnnotatedWith(CacheEvict.class)) {
             if (element.getKind() == ElementKind.METHOD) {
                 validateProxyability((ExecutableElement) element);
-                for (CacheEvict annotation : element.getAnnotationsByType(CacheEvict.class)) {
-                    if (annotation.clear() == !annotation.key().isBlank()) {
-                        error(element, "cache eviction must specify exactly one of clear=true or a nonblank key");
+                for (EvictionDeclaration declaration : evictionDeclarations(element)) {
+                    if (declaration.clear() && declaration.keyExplicit()) {
+                        error(element, "cache eviction must specify exactly one of clear=true or an explicit key");
                         continue;
                     }
-                    if (!annotation.clear() && !annotation.key().isBlank()) {
-                        validateSelector((ExecutableElement) element, annotation.key());
+                    if (!declaration.clear() && !declaration.keyExplicit()) {
+                        error(element, "cache eviction must specify exactly one of clear=true or an explicit key");
+                        continue;
+                    }
+                    if (!declaration.clear()) {
+                        validateSelector((ExecutableElement) element, declaration.paths());
                     }
                 }
             }
@@ -82,7 +88,7 @@ public final class CacheAnnotationProcessor extends AbstractProcessor {
         return false;
     }
 
-    private void validateMethod(ExecutableElement method, String template, boolean resultRequired) {
+    private void validateMethod(ExecutableElement method, String[] paths, boolean resultRequired) {
         validateProxyability(method);
         if (resultRequired && method.getReturnType().getKind() == TypeKind.VOID) {
             error(method, "@Cacheable methods must return a value");
@@ -91,66 +97,73 @@ public final class CacheAnnotationProcessor extends AbstractProcessor {
             error(method, "@Cacheable Future return types must be concrete Future<T>");
         }
         validateRestResult(method);
-        validateSelector(method, template);
+        validateSelector(method, paths);
     }
 
-    private void validateSelector(ExecutableElement method, String template) {
-        if (template.isBlank()) {
-            error(method, "cache key must not be blank");
-            return;
+    private void validateSelector(ExecutableElement method, String[] paths) {
+        // An explicitly empty declared component list is the value-independent constant key.
+        for (String path : paths) {
+            validateSelectorPath(method, path);
         }
-        if (template.length() > 256) {
-            error(method, "cache key must not exceed 256 ASCII characters");
-            return;
-        }
-        List<Integer> tokenStarts = new ArrayList<>();
-        List<Integer> tokenEnds = new ArrayList<>();
-        for (int index = 0; index < template.length(); index++) {
-            char character = template.charAt(index);
-            if (character == '{' && index + 1 < template.length() && template.charAt(index + 1) == '{') {
-                index++;
-                continue;
-            }
-            if (character == '}' && index + 1 < template.length() && template.charAt(index + 1) == '}') {
-                index++;
-                continue;
-            }
-            if (character == '{') {
-                int end = template.indexOf('}', index + 1);
-                if (end < 0) {
-                    error(method, "cache key contains an unmatched '{'");
-                    return;
+    }
+
+    private record EvictionDeclaration(boolean clear, boolean keyExplicit, String[] paths) {}
+
+    private List<EvictionDeclaration> evictionDeclarations(Element element) {
+        List<EvictionDeclaration> declarations = new ArrayList<>();
+        for (AnnotationMirror mirror : element.getAnnotationMirrors()) {
+            String type = mirror.getAnnotationType().toString();
+            if (type.equals("dev.vertique.cache.CacheEvict")) {
+                declarations.add(evictionDeclaration(mirror));
+            } else if (type.equals("dev.vertique.cache.CacheEvict.List")) {
+                for (var entry : mirror.getElementValues().entrySet()) {
+                    if (!entry.getKey().getSimpleName().contentEquals("value")) continue;
+                    if (entry.getValue().getValue() instanceof List<?> nested) {
+                        for (Object value : nested) {
+                            if (value instanceof AnnotationValue annotationValue
+                                    && annotationValue.getValue() instanceof AnnotationMirror nestedMirror) {
+                                declarations.add(evictionDeclaration(nestedMirror));
+                            }
+                        }
+                    }
                 }
-                tokenStarts.add(index);
-                tokenEnds.add(end + 1);
-                validateSelectorToken(method, template.substring(index + 1, end));
-                index = end;
-            } else if (character == '}') {
-                error(method, "cache key contains an unmatched '}'");
-                return;
-            } else if (!isLiteral(character)) {
-                error(method, "cache key contains an unsupported literal character");
-                return;
             }
         }
-        for (int index = 1; index < tokenStarts.size(); index++) {
-            String literal = template.substring(tokenEnds.get(index - 1), tokenStarts.get(index))
-                    .replace("{{", "{")
-                    .replace("}}", "}");
-            if (literal.chars()
-                    .noneMatch(value -> value == ':' || value == '/' || value == '=' || value == '{' || value == '}')) {
-                error(method, "cache key components require a raw boundary character");
-                return;
-            }
-        }
+        return declarations;
     }
 
-    private void validateSelectorToken(ExecutableElement method, String token) {
-        if (token.isBlank()) {
-            error(method, "cache key selector must not be blank");
+    private EvictionDeclaration evictionDeclaration(AnnotationMirror mirror) {
+        boolean clear = false;
+        boolean keyExplicit = false;
+        List<String> paths = new ArrayList<>();
+        for (var entry : mirror.getElementValues().entrySet()) {
+            String member = entry.getKey().getSimpleName().toString();
+            Object value = entry.getValue().getValue();
+            if (member.equals("clear") && value instanceof Boolean explicit) {
+                clear = explicit;
+            } else if (member.equals("key") && value instanceof List<?> declared) {
+                keyExplicit = true;
+                for (Object path : declared) {
+                    if (path instanceof AnnotationValue annotationValue
+                            && annotationValue.getValue() instanceof String text) {
+                        paths.add(text);
+                    }
+                }
+            }
+        }
+        return new EvictionDeclaration(clear, keyExplicit, paths.toArray(String[]::new));
+    }
+
+    private void validateSelectorPath(ExecutableElement method, String path) {
+        if (path.isBlank()) {
+            error(method, "cache key selector path must not be blank");
             return;
         }
-        String[] segments = token.split("\\.", -1);
+        if (path.length() > 256) {
+            error(method, "cache key selector path must not exceed 256 ASCII characters");
+            return;
+        }
+        String[] segments = path.split("\\.", -1);
         if (segments.length > 8 || segments[0].isBlank()) {
             error(method, "cache key property paths are limited to eight segments including the root parameter");
             return;
@@ -344,14 +357,6 @@ public final class CacheAnnotationProcessor extends AbstractProcessor {
             }
         }
         return true;
-    }
-
-    private static boolean isLiteral(char character) {
-        return character <= 0x7f
-                && (character >= 'A' && character <= 'Z'
-                        || character >= 'a' && character <= 'z'
-                        || character >= '0' && character <= '9'
-                        || "._~:/-=%".indexOf(character) >= 0);
     }
 
     private void error(Element element, String message) {

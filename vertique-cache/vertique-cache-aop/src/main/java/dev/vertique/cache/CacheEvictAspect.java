@@ -43,9 +43,7 @@ public final class CacheEvictAspect implements AspectProvider<CacheEvict> {
             List<Future<Boolean>> operations = evictions.stream()
                     .map(eviction -> eviction.clear()
                             ? eviction.cache().invalidateAll()
-                            : annotation.key().isBlank()
-                                    ? Future.succeededFuture(false)
-                                    : eviction.cache().invalidate(invocation.arguments()))
+                            : eviction.cache().invalidate(invocation.arguments()))
                     .toList();
             return Future.all(operations).map(ignored -> result);
         });

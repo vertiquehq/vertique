@@ -163,7 +163,9 @@ class CacheLifecycleIT {
     }
 
     static final class LifecycleTarget {
-        @Cacheable(name = "profiles", key = "constant")
+        @Cacheable(
+                name = "profiles",
+                key = {})
         String value() {
             return "business-result";
         }

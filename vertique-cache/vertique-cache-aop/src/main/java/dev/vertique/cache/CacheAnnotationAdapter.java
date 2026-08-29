@@ -51,15 +51,13 @@ final class CacheAnnotationAdapter {
                 annotation.anonymous(),
                 selector(annotation.key(), target),
                 target.returnType() != Future.class,
-                annotation.key());
+                joinPaths(annotation.key()));
     }
 
     Cache<Object, Object> eviction(MethodMetadata target, CacheEvict annotation) {
         Cacheable cacheable = target.findAnnotation(Cacheable.class).orElse(null);
-        String layout = cacheable == null ? "{0}" : cacheable.key();
         Type valueType = cacheable == null ? Object.class : valueType(target);
-        Function<Object, String> selector =
-                annotation.key().isBlank() ? ignored -> "clear" : selector(annotation.key(), target);
+        Function<Object, String> selector = selector(annotation.key(), target);
         return builder.buildUnregistered(
                 annotation.name(),
                 valueType,
@@ -69,7 +67,7 @@ final class CacheAnnotationAdapter {
                 cacheable == null ? AnonymousCachePolicy.BYPASS : cacheable.anonymous(),
                 selector,
                 false,
-                layout);
+                annotation.key().length == 0 ? null : joinPaths(annotation.key()));
     }
 
     List<PreparedEviction> evictions(MethodMetadata target, CacheEvict[] declarations) {
@@ -80,8 +78,20 @@ final class CacheAnnotationAdapter {
         return List.copyOf(result);
     }
 
-    private static Function<Object, String> selector(String template, MethodMetadata target) {
-        return input -> CacheKeyRenderer.renderCanonical(template, target, (Object[]) input, CacheBuilder::scalar);
+    private static Function<Object, String> selector(String[] paths, MethodMetadata target) {
+        if (paths.length == 0) {
+            // An explicitly empty declaration is a value-independent constant key.
+            return ignored -> CacheBuilder.CONSTANT_SELECTOR;
+        }
+        String[] declared = paths.clone();
+        return input -> {
+            Object[] values = MethodMetadataKeyResolver.resolve(declared, target, (Object[]) input);
+            return CacheBuilder.render(CacheKey.of(values[0], java.util.Arrays.copyOfRange(values, 1, values.length)));
+        };
+    }
+
+    private static String joinPaths(String[] paths) {
+        return String.join(",", paths);
     }
 
     private static Type valueType(MethodMetadata target) {

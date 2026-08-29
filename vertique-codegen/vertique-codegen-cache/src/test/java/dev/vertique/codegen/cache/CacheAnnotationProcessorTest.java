@@ -24,12 +24,12 @@ class CacheAnnotationProcessorTest {
                                     @Inject
                                     public CacheableBean() {}
 
-                                    @Cacheable(name = "users", key = "{0}")
+                                    @Cacheable(name = "users", key = "0")
                                     public String byId(String id) {
                                         return id;
                                     }
 
-                                    @Cacheable(name = "users", key = "{userId}")
+                                    @Cacheable(name = "users", key = "userId")
                                     public String byNamedParameter(String userId) {
                                         return userId;
                                     }
@@ -55,13 +55,13 @@ class CacheAnnotationProcessorTest {
                                     public RestCacheableBean() {}
 
                                     @GET
-                                    @Cacheable(name = "users", key = "{0}")
+                                    @Cacheable(name = "users", key = "0")
                                     public String entity(String id) {
                                         return id;
                                     }
 
                                     @GET
-                                    @Cacheable(name = "users", key = "{0}")
+                                    @Cacheable(name = "users", key = "0")
                                     public Future<String> futureEntity(String id) {
                                         return Future.succeededFuture(id);
                                     }
@@ -87,7 +87,7 @@ class CacheAnnotationProcessorTest {
                                     public ResponseCacheableBean() {}
 
                                     @GET
-                                    @Cacheable(name = "users", key = "{0}")
+                                    @Cacheable(name = "users", key = "0")
                                     public Response response(String id) {
                                         return Response.ok(id).build();
                                     }
@@ -116,7 +116,7 @@ class CacheAnnotationProcessorTest {
                                     public FutureResponseCacheableBean() {}
 
                                     @GET
-                                    @Cacheable(name = "users", key = "{0}")
+                                    @Cacheable(name = "users", key = "0")
                                     public Future<Response> response(String id) {
                                         return Future.succeededFuture(Response.ok(id).build());
                                     }
@@ -143,7 +143,7 @@ class CacheAnnotationProcessorTest {
                                     public BufferCacheableBean() {}
 
                                     @GET
-                                    @Cacheable(name = "users", key = "{0}")
+                                    @Cacheable(name = "users", key = "0")
                                     public Buffer buffer(String id) {
                                         return null;
                                     }
@@ -170,7 +170,7 @@ class CacheAnnotationProcessorTest {
                                     public StreamingCacheableBean() {}
 
                                     @GET
-                                    @Cacheable(name = "users", key = "{0}")
+                                    @Cacheable(name = "users", key = "0")
                                     public ReadStream<String> stream(String id) {
                                         return null;
                                     }
@@ -197,7 +197,7 @@ class CacheAnnotationProcessorTest {
                                     public TransportCacheableBean() {}
 
                                     @GET
-                                    @Cacheable(name = "users", key = "{0}")
+                                    @Cacheable(name = "users", key = "0")
                                     public HttpServerResponse response(String id) {
                                         return null;
                                     }
@@ -228,19 +228,19 @@ class CacheAnnotationProcessorTest {
                                     public TransportSubtypeCacheableBean() {}
 
                                     @GET
-                                    @Cacheable(name = "users", key = "{0}")
+                                    @Cacheable(name = "users", key = "0")
                                     public CustomResponse response(String id) {
                                         return null;
                                     }
 
                                     @GET
-                                    @Cacheable(name = "users", key = "{0}")
+                                    @Cacheable(name = "users", key = "0")
                                     public Future<CustomPublisher> publisher(String id) {
                                         return null;
                                     }
 
                                     @GET
-                                    @Cacheable(name = "users", key = "{0}")
+                                    @Cacheable(name = "users", key = "0")
                                     public CustomStream stream(String id) {
                                         return null;
                                     }
@@ -268,7 +268,7 @@ class CacheAnnotationProcessorTest {
                     @Inject
                     public InvalidCacheableBean() {}
 
-                    @Cacheable(name = "users", key = "{value}")
+                    @Cacheable(name = "users", key = "value")
                     public String objectValue(List<String> value) {
                         return value.getFirst();
                     }
@@ -294,7 +294,7 @@ class CacheAnnotationProcessorTest {
                                     @Inject
                                     public PropertyCacheableBean() {}
 
-                                    @Cacheable(name = "users", key = "{user.email}")
+                                    @Cacheable(name = "users", key = "user.email")
                                     public String byUser(User user) {
                                         return user.email();
                                     }
@@ -319,7 +319,7 @@ class CacheAnnotationProcessorTest {
                                     @Inject
                                     public DeepCacheableBean() {}
 
-                                    @Cacheable(name = "users", key = "{user.a.b.c.d.e.f.g.h}")
+                                    @Cacheable(name = "users", key = "user.a.b.c.d.e.f.g.h")
                                     public String byUser(User user) {
                                         return "value";
                                     }
@@ -354,11 +354,11 @@ class CacheAnnotationProcessorTest {
                                     @Inject
                                     public FutureCacheableBean() {}
 
-                                    @Cacheable(name = "users", key = "{0}")
+                                    @Cacheable(name = "users", key = "0")
                                     @SuppressWarnings("rawtypes")
                                     public Future raw(String id) { return Future.succeededFuture(id); }
 
-                                    @Cacheable(name = "users", key = "{0}")
+                                    @Cacheable(name = "users", key = "0")
                                     public Future<? extends CharSequence> wildcard(String id) {
                                         return Future.succeededFuture(id);
                                     }
@@ -366,6 +366,79 @@ class CacheAnnotationProcessorTest {
                                 """))
                 .assertFailed()
                 .assertErrorMessage("concrete Future");
+    }
+
+    @Test
+    @DisplayName("explicitly empty keys declare constant operations")
+    void explicitlyEmptyKeysDeclareConstantOperations() {
+        ProcessorTestHarness.run(
+                        new CacheAnnotationProcessor(), SourceFiles.inline("com.example.ConstantCacheableBean", """
+                                package com.example;
+
+                                import dev.vertique.cache.CacheEvict;
+                                import dev.vertique.cache.Cacheable;
+                                import jakarta.inject.Inject;
+
+                                public class ConstantCacheableBean {
+                                    @Inject
+                                    public ConstantCacheableBean() {}
+
+                                    @Cacheable(name = "users", key = {})
+                                    public String all() {
+                                        return "users";
+                                    }
+
+                                    @CacheEvict(name = "users", key = {})
+                                    public String refresh() {
+                                        return "users";
+                                    }
+                                }
+                                """))
+                .assertSuccess();
+    }
+
+    @Test
+    @DisplayName("evictions must declare exactly one of clear or an explicit key")
+    void evictionsRequireExplicitClearOrKey() {
+        ProcessorTestHarness.run(
+                        new CacheAnnotationProcessor(), SourceFiles.inline("com.example.MissingEvictionBean", """
+                                package com.example;
+
+                                import dev.vertique.cache.CacheEvict;
+                                import jakarta.inject.Inject;
+
+                                public class MissingEvictionBean {
+                                    @Inject
+                                    public MissingEvictionBean() {}
+
+                                    @CacheEvict(name = "users")
+                                    public String forgotten(String id) {
+                                        return id;
+                                    }
+                                }
+                                """))
+                .assertFailed()
+                .assertErrorMessage("exactly one of clear=true or an explicit key");
+
+        ProcessorTestHarness.run(
+                        new CacheAnnotationProcessor(), SourceFiles.inline("com.example.ConflictingEvictionBean", """
+                                package com.example;
+
+                                import dev.vertique.cache.CacheEvict;
+                                import jakarta.inject.Inject;
+
+                                public class ConflictingEvictionBean {
+                                    @Inject
+                                    public ConflictingEvictionBean() {}
+
+                                    @CacheEvict(name = "users", key = "0", clear = true)
+                                    public String conflicted(String id) {
+                                        return id;
+                                    }
+                                }
+                                """))
+                .assertFailed()
+                .assertErrorMessage("exactly one of clear=true or an explicit key");
     }
 
     @Test
@@ -383,7 +456,7 @@ class CacheAnnotationProcessorTest {
                                     @Inject
                                     public NonProxyableCacheableBean() {}
 
-                                    @Cacheable(name = "users", key = "{0}")
+                                    @Cacheable(name = "users", key = "0")
                                     public final String finalMethod(String id) { return id; }
                                 }
                                 """))

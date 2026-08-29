@@ -79,32 +79,29 @@ class CacheContractsTest {
     }
 
     @Test
-    @DisplayName("key templates percent-encode scalars and resolve named record properties")
-    void keyTemplatesRenderBoundedScalarSelectors() {
+    @DisplayName("selector paths percent-encode scalars and resolve named record properties")
+    void selectorPathsRenderBoundedScalarSelectors() {
         MethodMetadata metadata = metadata("user");
 
-        assertEquals(
-                "user/k2S%C3%85sa/k2Ztrue",
-                CacheKeyRenderer.renderCanonical(
-                        "user/{user.name}/{0.active}",
-                        metadata,
-                        new Object[] {new User("Åsa", true)},
-                        CacheBuilder::scalar));
+        Object[] values = MethodMetadataKeyResolver.resolve(
+                new String[] {"user.name", "0.active"}, metadata, new Object[] {new User("Åsa", true)});
+
+        assertEquals("k2S%C3%85sa:k2Ztrue", CacheBuilder.render(CacheKey.of(values[0], values[1])));
     }
 
     @Test
-    @DisplayName("key templates reject unmatched braces and object terminals")
-    void keyTemplatesRejectUnsupportedSelectors() {
+    @DisplayName("selector paths reject unresolved properties and blank segments")
+    void selectorPathsRejectUnsupportedSelectors() {
         MethodMetadata metadata = metadata("user");
 
         assertThrows(
                 IllegalArgumentException.class,
-                () -> CacheKeyRenderer.renderCanonical(
-                        "{user.missing}", metadata, new Object[] {new User("Åsa", true)}, CacheBuilder::scalar));
+                () -> MethodMetadataKeyResolver.resolve(
+                        new String[] {"user.missing"}, metadata, new Object[] {new User("Åsa", true)}));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> CacheKeyRenderer.renderCanonical(
-                        "{user", metadata, new Object[] {new User("Åsa", true)}, CacheBuilder::scalar));
+                () -> MethodMetadataKeyResolver.resolve(
+                        new String[] {"user..name"}, metadata, new Object[] {new User("Åsa", true)}));
     }
 
     private static MethodMetadata metadata(String parameterName) {
@@ -190,7 +187,7 @@ class CacheContractsTest {
     private record User(String name, boolean active) {}
 
     static final class Sample {
-        @Cacheable(name = "profile", key = "{0}")
+        @Cacheable(name = "profile", key = "0")
         Object cached() {
             return null;
         }

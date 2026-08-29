@@ -42,14 +42,13 @@ class ProgrammaticCacheApiTest {
         CacheBuilder builder = CacheBuilder.forTesting(
                 store, CacheTestFixturesConfig.defaults(), java.util.Set.of(), java.util.Set.of());
         var base = builder.cache("products", String.class).identity(CacheIdentity.NONE);
-        var cache =
-                base.key("{tenant}:{product}", Query::tenant, Query::product).build();
+        var cache = base.<Query>key(query -> CacheKey.of(query.tenant(), query.product()))
+                .build();
 
         await(cache.get(new Query("acme", 42), ignored -> Future.succeededFuture("value")));
 
         assertEquals("k2Sacme:k2I42", store.lastKey.selector());
-        assertThrows(IllegalArgumentException.class, () -> base.key("{left}-{right}", Query::tenant, Query::product)
-                .build());
+        assertThrows(NullPointerException.class, () -> base.key(null));
     }
 
     @Test

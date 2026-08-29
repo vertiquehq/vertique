@@ -16,7 +16,8 @@ import java.lang.annotation.Target;
 public @interface Cacheable {
     String name();
 
-    String key();
+    /** Ordered selector paths; each names a parameter root plus optional accessor segments. */
+    String[] key();
 
     CacheMode mode() default CacheMode.DEFAULT;
 

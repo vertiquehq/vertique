@@ -24,11 +24,16 @@ The `CacheBuilder`/`Cache` application API and storage contracts are kept separa
 and annotation details. Local and clustered implementations depend on this module; this module
 does not depend on Caffeine, Redis, AOP, or a serialization engine. Application code supplies
 logical inputs and selector functions, never `CacheStore`, `ResolvedCacheKey`, or provider keys.
+A selector function returns one supported scalar or an ordered `CacheKey.of(...)` component
+tuple; there is no key template or format string. The runtime alone owns key format: each
+component is independently type-framed and the framed components are joined with the
+runtime-owned `:` separator, which component payloads percent-encode and cannot forge, so
+distinct component tuples always render distinct keys.
 
 ```java
 Cache<ProductQuery, Product> products = cacheBuilder
         .cache("products", Product.class)
-        .key("{tenantId}:{productId}", ProductQuery::tenantId, ProductQuery::productId)
+        .key(query -> CacheKey.of(query.tenantId(), query.productId()))
         .identity(CacheIdentity.EFFECTIVE_PRINCIPAL)
         .ttl(Duration.ofMinutes(5))
         .build();
