@@ -11,7 +11,7 @@ import dev.vertique.core.exception.ConfigurationException;
  *
  * <p>Every component is a nullable boxed value: {@code null} means "not overridden" — the effective
  * value falls back to the {@code @CircuitBreaker} annotation per
- * {@link dev.vertique.services.policy.PolicyChainBuilder}. No defaulting is applied here. Present
+ * {@link dev.vertique.services.resilience.ServiceResilienceConfigAdapter}. No defaulting is applied here. Present
  * values are validated at parse time so malformed config fails fast at startup rather than at first
  * use: {@code maxFailures >= 1}, {@code timeoutMs > 0}, {@code resetTimeoutMs > 0} (matching the
  * {@code rest-client} {@code RestClientCircuitBreakerConfig} precedent).

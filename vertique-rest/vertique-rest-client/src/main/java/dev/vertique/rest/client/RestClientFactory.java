@@ -5,6 +5,7 @@ package dev.vertique.rest.client;
 
 import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.json.JsonConfig;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.client.config.RestClientConfig;
 import dev.vertique.rest.client.interceptor.RestClientContextCapturer;
 import dev.vertique.rest.client.interceptor.RestClientInterceptor;
@@ -47,6 +48,10 @@ import lombok.extern.slf4j.Slf4j;
 public class RestClientFactory {
 
     private final Vertx vertx;
+
+    @Nullable
+    private final Resilience resilience;
+
     private final Set<RestClientInterceptor> globalInterceptors;
     private final Set<RestClientContextCapturer<?>> globalContextCapturers;
     private final Map<String, RestClientConfig> configIndex;
@@ -144,7 +149,34 @@ public class RestClientFactory {
             @Nullable String defaultsJsonProfileId,
             @Nullable JsonConfig jsonConfig,
             @Nullable ParamConversionResolver paramConversionResolver) {
+        this(
+                vertx,
+                globalInterceptors,
+                globalContextCapturers,
+                configIndex,
+                beanValidator,
+                beanParamAccessorRegistry,
+                jsonMapperProfileRegistry,
+                defaultsJsonProfileId,
+                jsonConfig,
+                paramConversionResolver,
+                null);
+    }
+
+    RestClientFactory(
+            Vertx vertx,
+            Set<RestClientInterceptor> globalInterceptors,
+            Set<RestClientContextCapturer<?>> globalContextCapturers,
+            Map<String, RestClientConfig> configIndex,
+            @Nullable dev.vertique.core.validation.BeanValidator beanValidator,
+            BeanParamAccessorRegistry beanParamAccessorRegistry,
+            @Nullable JsonMapperProfileRegistry jsonMapperProfileRegistry,
+            @Nullable String defaultsJsonProfileId,
+            @Nullable JsonConfig jsonConfig,
+            @Nullable ParamConversionResolver paramConversionResolver,
+            @Nullable Resilience resilience) {
         this.vertx = vertx;
+        this.resilience = resilience;
         this.globalInterceptors = globalInterceptors;
         this.globalContextCapturers = globalContextCapturers;
         this.configIndex = configIndex != null ? Map.copyOf(configIndex) : Map.of();
@@ -170,7 +202,8 @@ public class RestClientFactory {
      * @return a new builder with global interceptors, config, and optional validator pre-registered
      */
     public RestClientBuilder builder() {
-        RestClientBuilder b = new RestClientBuilder(vertx);
+        RestClientBuilder b =
+                resilience == null ? new RestClientBuilder(vertx) : RestClientBuilder.create(vertx, resilience);
         globalInterceptors.forEach(b::register);
         globalContextCapturers.forEach(b::registerCapturer);
         b.configIndex(configIndex);

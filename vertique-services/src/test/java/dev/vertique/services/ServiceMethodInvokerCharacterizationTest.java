@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import dev.vertique.core.eventbus.DispatchEnvelope;
 import dev.vertique.core.eventbus.LocalMessageCodec;
 import dev.vertique.core.eventbus.Result;
-import dev.vertique.core.resilience.ResilienceAnnotations;
+import dev.vertique.resilience.annotation.ResilienceAnnotations;
 import dev.vertique.services.dispatch.NonRecoverableDispatchFailure;
 import dev.vertique.services.dispatch.ServiceMethodDescriptor;
 import dev.vertique.services.dispatch.ServiceMethodInvoker;

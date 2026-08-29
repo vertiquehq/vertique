@@ -6,9 +6,9 @@ package dev.vertique.services;
 import static org.junit.jupiter.api.Assertions.*;
 
 import dev.vertique.core.eventbus.DispatchEnvelope;
-import dev.vertique.core.resilience.CircuitBreaker;
-import dev.vertique.core.resilience.Retry;
-import dev.vertique.core.resilience.Timeout;
+import dev.vertique.resilience.annotation.CircuitBreaker;
+import dev.vertique.resilience.annotation.Retry;
+import dev.vertique.resilience.annotation.Timeout;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamMeta;
@@ -312,13 +312,15 @@ class ServiceRegistrarTest {
 
         var policies = resilientMeta.resilienceAnnotations();
         assertTrue(policies.hasAny());
-        assertNotNull(policies.timeout());
+        assertTrue(policies.timeout().isPresent());
         assertEquals(
-                5000L, policies.timeout().value(), "Method-level timeout (5000) must override class-level (10000)");
-        assertNotNull(policies.circuitBreaker());
-        assertEquals(3, policies.circuitBreaker().maxFailures());
-        assertNotNull(policies.retry());
-        assertEquals(2, policies.retry().maxRetries());
+                5000L,
+                policies.timeout().orElseThrow().value(),
+                "Method-level timeout (5000) must override class-level (10000)");
+        assertTrue(policies.circuitBreaker().isPresent());
+        assertEquals(3, policies.circuitBreaker().orElseThrow().maxFailures());
+        assertTrue(policies.retry().isPresent());
+        assertEquals(2, policies.retry().orElseThrow().maxRetries());
     }
 
     @Test
@@ -333,10 +335,10 @@ class ServiceRegistrarTest {
 
         var policies = inheritedMeta.resilienceAnnotations();
         assertTrue(policies.hasAny());
-        assertNotNull(policies.timeout());
-        assertEquals(10000L, policies.timeout().value(), "Should inherit class-level timeout (10000)");
-        assertNull(policies.circuitBreaker());
-        assertNull(policies.retry());
+        assertTrue(policies.timeout().isPresent());
+        assertEquals(10000L, policies.timeout().orElseThrow().value(), "Should inherit class-level timeout (10000)");
+        assertTrue(policies.circuitBreaker().isEmpty());
+        assertTrue(policies.retry().isEmpty());
     }
 
     @Test

@@ -6,11 +6,11 @@ package dev.vertique.services;
 import dev.vertique.context.InboundDispatchScope;
 import dev.vertique.context.InboundExecutionContextScope;
 import dev.vertique.context.ServiceDispatchContextRegistry;
-import dev.vertique.services.dispatch.DispatchPipeline;
+import dev.vertique.resilience.ResiliencePipeline;
 import dev.vertique.services.dispatch.ServiceMethodInvoker;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
 import dev.vertique.services.interceptor.ServiceInterceptor;
-import dev.vertique.services.policy.PolicyChainBuilder;
+import dev.vertique.services.resilience.ServiceResiliencePipelineFactory;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Promise;
 import java.util.List;
@@ -35,7 +35,7 @@ public class ServiceVerticle<T> extends AbstractVerticle {
     private final ServiceContractRegistry.ContractEntry<T> entry;
     private final ServiceExceptionMapper exceptionMapper;
     private final List<ServiceInterceptor> interceptors;
-    private final PolicyChainBuilder policyChainBuilder;
+    private final ServiceResiliencePipelineFactory resiliencePipelineFactory;
     private final ServiceMethodInvoker.FatalErrorHandler fatalErrorHandler;
     private final ServiceDispatchContextRegistry contextRegistry;
     private final InboundDispatchScope inboundScope;
@@ -48,7 +48,7 @@ public class ServiceVerticle<T> extends AbstractVerticle {
      * @param exceptionMapper exception mapper used by each {@link ServiceMethodInvoker}
      * @param interceptors service interceptors in {@link dev.vertique.core.extension.OrderedExtension}
      *                     order (phase → priority → orderKey)
-     * @param policyChainBuilder builder that constructs per-operation policy pipelines
+     * @param resiliencePipelineFactory factory that constructs per-operation policy pipelines
      * @param fatalErrorHandler optional handler for non-recoverable {@link Error} instances;
      *                          may be {@code null}
      */
@@ -56,9 +56,9 @@ public class ServiceVerticle<T> extends AbstractVerticle {
             ServiceContractRegistry.ContractEntry<T> entry,
             ServiceExceptionMapper exceptionMapper,
             List<ServiceInterceptor> interceptors,
-            PolicyChainBuilder policyChainBuilder,
+            ServiceResiliencePipelineFactory resiliencePipelineFactory,
             ServiceMethodInvoker.FatalErrorHandler fatalErrorHandler) {
-        this(entry, exceptionMapper, interceptors, policyChainBuilder, fatalErrorHandler, null);
+        this(entry, exceptionMapper, interceptors, resiliencePipelineFactory, fatalErrorHandler, null);
     }
 
     /**
@@ -72,10 +72,10 @@ public class ServiceVerticle<T> extends AbstractVerticle {
             ServiceContractRegistry.ContractEntry<T> entry,
             ServiceExceptionMapper exceptionMapper,
             List<ServiceInterceptor> interceptors,
-            PolicyChainBuilder policyChainBuilder,
+            ServiceResiliencePipelineFactory resiliencePipelineFactory,
             ServiceMethodInvoker.FatalErrorHandler fatalErrorHandler,
             ServiceDispatchContextRegistry contextRegistry) {
-        this(entry, exceptionMapper, interceptors, policyChainBuilder, fatalErrorHandler, contextRegistry, null);
+        this(entry, exceptionMapper, interceptors, resiliencePipelineFactory, fatalErrorHandler, contextRegistry, null);
     }
 
     /**
@@ -86,7 +86,7 @@ public class ServiceVerticle<T> extends AbstractVerticle {
             ServiceContractRegistry.ContractEntry<T> entry,
             ServiceExceptionMapper exceptionMapper,
             List<ServiceInterceptor> interceptors,
-            PolicyChainBuilder policyChainBuilder,
+            ServiceResiliencePipelineFactory resiliencePipelineFactory,
             ServiceMethodInvoker.FatalErrorHandler fatalErrorHandler,
             ServiceDispatchContextRegistry contextRegistry,
             InboundDispatchScope inboundScope) {
@@ -94,7 +94,7 @@ public class ServiceVerticle<T> extends AbstractVerticle {
                 entry,
                 exceptionMapper,
                 interceptors,
-                policyChainBuilder,
+                resiliencePipelineFactory,
                 fatalErrorHandler,
                 contextRegistry,
                 inboundScope,
@@ -114,7 +114,7 @@ public class ServiceVerticle<T> extends AbstractVerticle {
             ServiceContractRegistry.ContractEntry<T> entry,
             ServiceExceptionMapper exceptionMapper,
             List<ServiceInterceptor> interceptors,
-            PolicyChainBuilder policyChainBuilder,
+            ServiceResiliencePipelineFactory resiliencePipelineFactory,
             ServiceMethodInvoker.FatalErrorHandler fatalErrorHandler,
             ServiceDispatchContextRegistry contextRegistry,
             InboundDispatchScope inboundScope,
@@ -122,7 +122,7 @@ public class ServiceVerticle<T> extends AbstractVerticle {
         this.entry = entry;
         this.exceptionMapper = exceptionMapper;
         this.interceptors = List.copyOf(interceptors);
-        this.policyChainBuilder = policyChainBuilder;
+        this.resiliencePipelineFactory = resiliencePipelineFactory;
         this.fatalErrorHandler = fatalErrorHandler;
         this.contextRegistry = contextRegistry;
         this.inboundScope = inboundScope;
@@ -140,7 +140,8 @@ public class ServiceVerticle<T> extends AbstractVerticle {
     @Override
     public void start(Promise<Void> startPromise) {
         for (ServiceMethodMeta meta : entry.operations().values()) {
-            DispatchPipeline pipeline = policyChainBuilder.build(meta);
+            ResiliencePipeline pipeline =
+                    resiliencePipelineFactory == null ? null : resiliencePipelineFactory.pipeline(meta);
             ServiceMethodInvoker invoker = new ServiceMethodInvoker(
                     meta,
                     exceptionMapper,

@@ -15,6 +15,7 @@ import dev.vertique.core.context.ServiceDispatchContextDecoder;
 import dev.vertique.core.context.ServiceDispatchDecodeContext;
 import dev.vertique.core.eventbus.DispatchEnvelope;
 import dev.vertique.core.eventbus.Result;
+import dev.vertique.resilience.ResiliencePipeline;
 import dev.vertique.security.authz.InvocationOrigin;
 import dev.vertique.services.ServiceExceptionMapper;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamMeta;
@@ -60,7 +61,7 @@ import lombok.extern.slf4j.Slf4j;
  *   <li>Chain {@link ServiceInterceptor#beforeDispatch} async handlers in
  *       {@link dev.vertique.core.extension.OrderedExtension} order (phase → priority → orderKey).
  *       Any handler failure short-circuits dispatch.</li>
- *   <li>Execute the {@link DispatchPipeline} (or invoke the method directly if no pipeline).</li>
+ *   <li>Execute the {@link ResiliencePipeline} (or invoke the method directly if no pipeline).</li>
  *   <li>Map failures through {@link dev.vertique.services.ServiceExceptionMapper}.</li>
  *   <li>Fire {@link ServiceInterceptor#onComplete} sync observers with timing.</li>
  *   <li>Chain {@link ServiceInterceptor#afterDispatch} async handlers independently
@@ -97,7 +98,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
     private final ServiceMethodMeta meta;
     private final ServiceExceptionMapper exceptionMapper;
     private final List<ServiceInterceptor> interceptors;
-    private final DispatchPipeline pipeline;
+    private final ResiliencePipeline pipeline;
     private final FatalErrorHandler fatalErrorHandler;
     private final Vertx vertx;
     private final ServiceDispatchContextRegistry contextRegistry;
@@ -122,7 +123,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
             @NonNull ServiceMethodMeta meta,
             @NonNull ServiceExceptionMapper exceptionMapper,
             @NonNull List<ServiceInterceptor> interceptors,
-            DispatchPipeline pipeline,
+            ResiliencePipeline pipeline,
             FatalErrorHandler fatalErrorHandler,
             Vertx vertx) {
         this(meta, exceptionMapper, interceptors, pipeline, fatalErrorHandler, vertx, null);
@@ -140,7 +141,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
             @NonNull ServiceMethodMeta meta,
             @NonNull ServiceExceptionMapper exceptionMapper,
             @NonNull List<ServiceInterceptor> interceptors,
-            DispatchPipeline pipeline,
+            ResiliencePipeline pipeline,
             FatalErrorHandler fatalErrorHandler,
             Vertx vertx,
             ServiceDispatchContextRegistry contextRegistry) {
@@ -159,7 +160,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
             @NonNull ServiceMethodMeta meta,
             @NonNull ServiceExceptionMapper exceptionMapper,
             @NonNull List<ServiceInterceptor> interceptors,
-            DispatchPipeline pipeline,
+            ResiliencePipeline pipeline,
             FatalErrorHandler fatalErrorHandler,
             Vertx vertx,
             ServiceDispatchContextRegistry contextRegistry,
@@ -193,7 +194,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
             @NonNull ServiceMethodMeta meta,
             @NonNull ServiceExceptionMapper exceptionMapper,
             @NonNull List<ServiceInterceptor> interceptors,
-            DispatchPipeline pipeline,
+            ResiliencePipeline pipeline,
             FatalErrorHandler fatalErrorHandler,
             Vertx vertx,
             ServiceDispatchContextRegistry contextRegistry,
@@ -225,7 +226,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
             @NonNull ServiceMethodMeta meta,
             @NonNull ServiceExceptionMapper exceptionMapper,
             @NonNull List<ServiceInterceptor> interceptors,
-            DispatchPipeline pipeline,
+            ResiliencePipeline pipeline,
             FatalErrorHandler fatalErrorHandler) {
         this(meta, exceptionMapper, interceptors, pipeline, fatalErrorHandler, null);
     }
@@ -243,7 +244,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
             @NonNull ServiceMethodMeta meta,
             @NonNull ServiceExceptionMapper exceptionMapper,
             @NonNull List<ServiceInterceptor> interceptors,
-            DispatchPipeline pipeline) {
+            ResiliencePipeline pipeline) {
         this(meta, exceptionMapper, interceptors, pipeline, null, null);
     }
 
@@ -676,10 +677,7 @@ public class ServiceMethodInvoker implements Handler<Message<DispatchEnvelope<?>
      * @return a future of the raw invocation result
      */
     private Future<Object> execute(DispatchEnvelope<?> body) {
-        if (pipeline != null && pipeline.hasStages()) {
-            return pipeline.execute(meta, body, () -> invokeMethod(body));
-        }
-        return invokeMethod(body);
+        return pipeline == null ? invokeMethod(body) : pipeline.execute(() -> invokeMethod(body));
     }
 
     /**

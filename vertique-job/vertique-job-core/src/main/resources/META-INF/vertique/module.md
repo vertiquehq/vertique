@@ -187,7 +187,8 @@ name. Constructed with a `null` repository, every path is a no-op — the in-mem
 without persistence.
 
 ```java
-handler.handleCompletion(execution, result, BackoffStrategy.linear(30_000, 3_600_000))
+handler.handleCompletion(
+        execution, result, retryCount -> Math.min(30_000L * (retryCount + 1L), 3_600_000L))
         .onFailure(err -> log.warn("Completion handling failed", err));
 ```
 
@@ -421,5 +422,6 @@ public interface AppComponent { ... }
 
 - **core** — `ContextValue` and `@DispatchContextValue` (handler-parameter injection), `Result`
   (dispatch outcomes), `DurableMetadata` (durable propagation context on `JobExecution` and the
-  transition event), `BackoffStrategy` (retry delays), `OrderedExtension` (interceptor ordering), and
-  `ConfigParser` / `JsonConfigPaths` (the `job.coordinator` parse boundary).
+  transition event), `OrderedExtension` (interceptor ordering), and `ConfigParser` /
+  `JsonConfigPaths` (the `job.coordinator` parse boundary).
+- **resilience** — the `BackoffStrategy` contract used for retry delays.

@@ -28,10 +28,19 @@ examples and application composition
         |
 REST, services, jobs, workflows, Kafka, observability
         |
-security, configuration, persistence, context propagation
+resilience, security, configuration, persistence, context propagation
         |
 core and JSON foundations
 ```
+
+`vertique-resilience` owns the canonical timeout, retry, and circuit-breaker vocabulary, immutable
+declaration metadata, and retry contracts shared by Services, REST clients, jobs, and code
+generation. It depends on `vertique-core`; core remains independent of resilience so foundation
+consumers do not acquire policy-specific API.
+
+The optional `vertique-micrometer-resilience` adapter consumes only the resilience observer SPI and
+the shared Micrometer registry. It stays outside the runtime so resilience execution remains free of
+telemetry-library dependencies.
 
 `vertique-json-schema` owns transport-neutral Java `Type` -> JSON Schema 2020-12
 generation, built on Victools. It depends only on `vertique-core` plus Jackson,

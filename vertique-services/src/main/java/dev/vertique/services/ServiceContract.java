@@ -21,8 +21,8 @@ import java.lang.annotation.Target;
  * absent). This identity is suitable for durable persistence (e.g., outbox rows) because it does not
  * depend on the runtime transport address format.
  *
- * <p>Policy annotations ({@link dev.vertique.core.resilience.CircuitBreaker},
- * {@link dev.vertique.core.resilience.Retry}, {@link dev.vertique.core.resilience.Timeout})
+ * <p>Policy annotations ({@link dev.vertique.resilience.annotation.CircuitBreaker},
+ * {@link dev.vertique.resilience.annotation.Retry}, {@link dev.vertique.resilience.annotation.Timeout})
  * on the interface methods define resilience SLAs as part of the contract.
  *
  * <p>Example:

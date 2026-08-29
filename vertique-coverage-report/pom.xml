@@ -36,6 +36,10 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
+            <artifactId>vertique-resilience</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
             <artifactId>vertique-json</artifactId>
         </dependency>
         <dependency>
@@ -389,6 +393,10 @@ SPDX-License-Identifier: EUPL-1.2
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-opentelemetry-cache</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-micrometer-resilience</artifactId>
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>

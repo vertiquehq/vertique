@@ -24,8 +24,10 @@ import dev.vertique.core.eventbus.LocalMessageCodec;
 import dev.vertique.core.eventbus.Result;
 import dev.vertique.logging.DiagnosticContextSnapshot;
 import dev.vertique.logging.MDCContexts;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.services.config.ServicesConfig;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
+import dev.vertique.services.resilience.ServiceResilienceConfigAdapter;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.eventbus.DeliveryOptions;
@@ -121,7 +123,11 @@ class MdcPropagationTest {
 
         EventBusExceptionMapper exceptionMapper = new EventBusExceptionMapper();
         EventBusClient eventBusClient = new EventBusClient(vertx, exceptionMapper);
-        sender = new ServiceRequestSender(eventBusClient, supervisor, new ServicesConfig(null, List.of()), Map.of());
+        sender = new ServiceRequestSender(
+                eventBusClient,
+                supervisor,
+                new ServiceResilienceConfigAdapter(
+                        Resilience.create(vertx), new ServicesConfig(null, List.of()), Map.of()));
 
         ServiceContractRegistry.ContractEntry<MdcTestService> entry = registry.resolve(MdcTestService.class);
         echoMdcMeta = entry.operations().get("echoMdc");
@@ -208,8 +214,11 @@ class MdcPropagationTest {
             when(supervisor.isAvailable(any())).thenReturn(true);
             EventBusExceptionMapper exceptionMapper = new EventBusExceptionMapper();
             EventBusClient eventBusClient = new EventBusClient(vertx, exceptionMapper);
-            ServiceRequestSender localSender =
-                    new ServiceRequestSender(eventBusClient, supervisor, new ServicesConfig(null, List.of()), Map.of());
+            ServiceRequestSender localSender = new ServiceRequestSender(
+                    eventBusClient,
+                    supervisor,
+                    new ServiceResilienceConfigAdapter(
+                            Resilience.create(vertx), new ServicesConfig(null, List.of()), Map.of()));
             ServiceClientFactory factory = mdcAwareFactory(localSender, localRegistry);
             MultiMdcService proxy = factory.create(MultiMdcService.class);
 

@@ -11,7 +11,7 @@ import dev.vertique.context.DefaultContextHolder;
 import dev.vertique.core.eventbus.DispatchEnvelope;
 import dev.vertique.core.eventbus.DispatchMetadata;
 import dev.vertique.core.eventbus.LocalMessageCodec;
-import dev.vertique.core.resilience.ResilienceAnnotations;
+import dev.vertique.resilience.annotation.ResilienceAnnotations;
 import dev.vertique.security.AuthenticationState;
 import dev.vertique.security.DefaultAuthMethod;
 import dev.vertique.security.PrincipalRef;

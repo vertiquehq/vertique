@@ -11,7 +11,7 @@ import dev.vertique.core.exception.ConfigurationException;
  *
  * <p>Every component is a nullable boxed value: {@code null} means "not overridden" — the effective
  * value falls back to the {@code @Retry} annotation per
- * {@link dev.vertique.services.policy.PolicyChainBuilder}. No defaulting is applied here. Present
+ * {@link dev.vertique.services.resilience.ServiceResilienceConfigAdapter}. No defaulting is applied here. Present
  * values are validated at parse time so a malformed override fails fast at startup rather than
  * flowing into the resilience pipeline. The bounds match the {@code @Retry} annotation semantics:
  * {@code maxRetries >= 0}, {@code delayMs >= 0}, {@code maxDelayMs >= 0}, and

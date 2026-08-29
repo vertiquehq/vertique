@@ -17,7 +17,7 @@ import static org.mockito.Mockito.verify;
 
 import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.core.eventbus.Result;
-import dev.vertique.core.resilience.BackoffStrategy;
+import dev.vertique.resilience.BackoffStrategy;
 import io.vertx.core.Future;
 import java.time.Instant;
 import java.util.Map;

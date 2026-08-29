@@ -162,8 +162,8 @@ Vertique lifecycle do not call a deployment manager directly.
 ```java
 package com.example.users;
 
-import dev.vertique.core.resilience.Retry;
-import dev.vertique.core.resilience.Timeout;
+import dev.vertique.resilience.annotation.Retry;
+import dev.vertique.resilience.annotation.Timeout;
 import dev.vertique.services.OneWay;
 import dev.vertique.services.ServiceContract;
 import dev.vertique.services.ServiceOperation;
@@ -287,7 +287,8 @@ These annotations define the public service protocol:
 | `@ServiceOperation` | Stable operation id and address segment | Required for durable target resolution |
 | `@OneWay` | Fire-and-forget operation | Method must return `Future<Void>` |
 
-Resilience annotations from `dev.vertique.core.resilience` may be placed on contracts or methods.
+Resilience annotations from `dev.vertique.resilience.annotation` may be placed on contracts or
+methods.
 Method annotations override contract-level values.
 
 ### `ServiceHandler<C>`
@@ -365,12 +366,25 @@ authorization bindings are absent.
 
 ## Resilience
 
-The annotations `@Timeout`, `@Retry`, and `@CircuitBreaker` are defined by
-`dev.vertique:vertique-core` and enforced server-side.
+The annotations `@Timeout`, `@Retry`, `@CircuitBreaker`, and `@Bulkhead` are defined by
+`dev.vertique:vertique-resilience` and enforced server-side by its common executor. Services
+translates its typed operation configuration into the same resolved policy used by the server
+pipeline; configuration alone never activates resilience when an operation has no annotation.
 
 Effective policy order is timeout/circuit-breaker around retry. A configured timeout applies per
 attempt. `@Retry.abortOn` wins over `retryOn`; when `retryOn` is empty, failures not matched by
 `abortOn` are eligible for retry.
+
+`@Bulkhead` limits concurrent logical executions. Its default `REJECT` mode fails immediately when
+capacity is exhausted. `QUEUE` mode admits a bounded FIFO queue using `maxQueueSize` and
+`queueTimeoutMs`; the permit covers the complete execution, including retries and backoff. The
+annotation may be placed on the service interface or operation, with operation declarations
+overriding interface declarations.
+
+The event-bus send timeout uses operation, service, and global `sendTimeoutMs` overrides before the
+resolved active execution budget plus the compatibility margin. Custom-backoff, unbounded, or
+saturated budgets require one of those explicit transport timeouts. Services has no separate
+bulkhead configuration; admission is enabled only by an explicit `@Bulkhead` declaration.
 
 JSON configuration can override annotation values for an environment without changing the service
 contract. Invalid values fail during startup parsing.
@@ -585,13 +599,16 @@ implementations, typed clients, authorization, and lifecycle wiring.
 
 ## Dependencies
 
-- `dev.vertique:vertique-core` — async results, event-bus envelopes, lifecycle, resilience, and
-  ordered extensions.
+- `dev.vertique:vertique-core` — async results, event-bus envelopes, lifecycle, and ordered
+  extensions.
+- `dev.vertique:vertique-resilience` — canonical resilience annotations, declaration metadata, and
+  retry contracts.
 - `dev.vertique:vertique-context` — typed dispatch-context capture and restoration.
 - `dev.vertique:vertique-correlation` and `dev.vertique:vertique-logging` — correlation and MDC
   propagation.
 - `dev.vertique:vertique-deploy` — verticle deployment, supervision, and lifecycle integration.
 - `dev.vertique:vertique-security-core` and `dev.vertique:vertique-security-runtime` — security
   context, action authorization, identity-degradation policy, and security events.
-- `io.vertx:vertx-core` and `io.vertx:vertx-circuit-breaker` — event-bus transport and resilience.
+- `io.vertx:vertx-core` — event-bus transport; resilience execution is owned by
+  `vertique-resilience`.
 - Dagger and Jakarta Inject — application wiring and extension multibindings.

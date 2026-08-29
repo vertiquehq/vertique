@@ -11,7 +11,6 @@ import dev.vertique.config.parser.DefaultConfigParser;
 import dev.vertique.core.eventbus.DispatchEnvelope;
 import dev.vertique.core.eventbus.LocalMessageCodec;
 import dev.vertique.core.eventbus.Result;
-import dev.vertique.services.policy.PolicyChainBuilder;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.eventbus.DeliveryOptions;
@@ -19,7 +18,6 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeAll;
@@ -90,8 +88,8 @@ class ServiceVerticleTest {
     void start_registersConsumersForAllOperations(Vertx vertx, VertxTestContext ctx) throws Throwable {
         ServiceContractRegistry.ContractEntry<SimpleService> entry = registry.resolve(SimpleService.class);
 
-        ServiceVerticle<SimpleService> verticle = new ServiceVerticle<>(
-                entry, new ServiceExceptionMapper(), List.of(), new PolicyChainBuilder(vertx, Map.of()), null);
+        ServiceVerticle<SimpleService> verticle =
+                new ServiceVerticle<>(entry, new ServiceExceptionMapper(), List.of(), null, null);
 
         vertx.deployVerticle(verticle).onComplete(ctx.succeeding(deploymentId -> {
             ctx.verify(() -> assertTrue(!deploymentId.isEmpty(), "deployment ID should be non-empty"));
@@ -107,8 +105,8 @@ class ServiceVerticleTest {
     void deployedVerticle_respondsToRequests(Vertx vertx, VertxTestContext ctx) throws Throwable {
         ServiceContractRegistry.ContractEntry<SimpleService> entry = registry.resolve(SimpleService.class);
 
-        ServiceVerticle<SimpleService> verticle = new ServiceVerticle<>(
-                entry, new ServiceExceptionMapper(), List.of(), new PolicyChainBuilder(vertx, Map.of()), null);
+        ServiceVerticle<SimpleService> verticle =
+                new ServiceVerticle<>(entry, new ServiceExceptionMapper(), List.of(), null, null);
 
         String address = entry.operations().get("hello").address();
         DeliveryOptions bodyOptions = new DeliveryOptions().setCodecName("dispatch.envelope");
@@ -135,11 +133,8 @@ class ServiceVerticleTest {
     void verticle_withNoPolicies_startsSuccessfully(Vertx vertx, VertxTestContext ctx) throws Throwable {
         ServiceContractRegistry.ContractEntry<SimpleService> entry = registry.resolve(SimpleService.class);
 
-        // Build with empty config — no annotations on SimpleService means no policies
-        PolicyChainBuilder noOpBuilder = new PolicyChainBuilder(vertx, Map.of());
-
         ServiceVerticle<SimpleService> verticle =
-                new ServiceVerticle<>(entry, new ServiceExceptionMapper(), List.of(), noOpBuilder, null);
+                new ServiceVerticle<>(entry, new ServiceExceptionMapper(), List.of(), null, null);
 
         vertx.deployVerticle(verticle).onComplete(ctx.succeeding(id -> ctx.completeNow()));
 

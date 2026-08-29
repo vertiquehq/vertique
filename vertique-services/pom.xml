@@ -34,6 +34,10 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
+            <artifactId>vertique-resilience</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
             <artifactId>vertique-context</artifactId>
         </dependency>
         <dependency>
@@ -54,10 +58,6 @@ SPDX-License-Identifier: EUPL-1.2
         <dependency>
             <groupId>io.vertx</groupId>
             <artifactId>vertx-core</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.vertx</groupId>
-            <artifactId>vertx-circuit-breaker</artifactId>
         </dependency>
         <dependency>
             <groupId>com.google.dagger</groupId>

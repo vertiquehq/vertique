@@ -35,7 +35,7 @@
       "packaging": "pom"
     }
   ],
-  "expectedPublishableGavCount": 103,
+  "expectedPublishableGavCount": 106,
   "expectedPublishableGavs": [
     "dev.vertique:vertique-aop",
     "dev.vertique:vertique-app-parent",
@@ -46,6 +46,7 @@
     "dev.vertique:vertique-archetype-services",
     "dev.vertique:vertique-bom",
     "dev.vertique:vertique-bootstrap",
+    "dev.vertique:vertique-cache-aop",
     "dev.vertique:vertique-cache-core",
     "dev.vertique:vertique-cache-caffeine",
     "dev.vertique:vertique-cache-redis",
@@ -103,6 +104,7 @@
     "dev.vertique:vertique-micrometer-core",
     "dev.vertique:vertique-micrometer-registry-prometheus",
     "dev.vertique:vertique-micrometer-rest",
+    "dev.vertique:vertique-micrometer-resilience",
     "dev.vertique:vertique-micrometer-services",
     "dev.vertique:vertique-opentelemetry-cache",
     "dev.vertique:vertique-opentelemetry-core",
@@ -111,6 +113,7 @@
     "dev.vertique:vertique-opentelemetry-services",
     "dev.vertique:vertique-parent",
     "dev.vertique:vertique-redis-core",
+    "dev.vertique:vertique-resilience",
     "dev.vertique:vertique-rest-auth-jwt",
     "dev.vertique:vertique-rest-client",
     "dev.vertique:vertique-rest-core",

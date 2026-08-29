@@ -69,6 +69,7 @@ SPDX-License-Identifier: EUPL-1.2
 | `vertique-micrometer-core` | [module.md](../vertique-micrometer/vertique-micrometer-core/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-micrometer-registry-prometheus` | [module.md](../vertique-micrometer/vertique-micrometer-registry-prometheus/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-micrometer-rest` | [module.md](../vertique-micrometer/vertique-micrometer-rest/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-micrometer-resilience` | [module.md](../vertique-micrometer/vertique-micrometer-resilience/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-micrometer-services` | [module.md](../vertique-micrometer/vertique-micrometer-services/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-opentelemetry-cache` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-cache/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-opentelemetry-core` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-core/src/main/resources/META-INF/vertique/module.md) |
@@ -76,6 +77,7 @@ SPDX-License-Identifier: EUPL-1.2
 | `vertique-opentelemetry-rest` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-rest/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-opentelemetry-services` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-services/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-redis-core` | [module.md](../vertique-redis/vertique-redis-core/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-resilience` | [module.md](../vertique-resilience/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-rest-auth-jwt` | [module.md](../vertique-rest/vertique-rest-auth-jwt/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-rest-client` | [module.md](../vertique-rest/vertique-rest-client/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-rest-core` | [module.md](../vertique-rest/vertique-rest-core/src/main/resources/META-INF/vertique/module.md) |

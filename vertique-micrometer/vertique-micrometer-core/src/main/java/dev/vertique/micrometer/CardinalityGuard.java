@@ -74,7 +74,11 @@ final class CardinalityGuard {
             "result.kind",
             "stage",
             "sink",
-            "decision");
+            "decision",
+            "circuit",
+            "from",
+            "to",
+            "mode");
 
     /** Prevent instantiation — this class is a static factory only. */
     private CardinalityGuard() {}

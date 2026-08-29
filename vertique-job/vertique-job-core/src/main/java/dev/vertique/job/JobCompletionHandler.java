@@ -4,7 +4,7 @@
 package dev.vertique.job;
 
 import dev.vertique.core.eventbus.Result;
-import dev.vertique.core.resilience.BackoffStrategy;
+import dev.vertique.resilience.BackoffStrategy;
 import io.vertx.core.Future;
 import java.time.Instant;
 import lombok.extern.slf4j.Slf4j;
