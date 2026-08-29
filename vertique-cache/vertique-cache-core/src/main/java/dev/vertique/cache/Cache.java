@@ -357,7 +357,7 @@ public final class Cache<K, V> {
         });
         Future<T> bounded = future.timeout(config.backendTimeoutMs(), TimeUnit.MILLISECONDS);
         return bounded.recover(failure -> {
-            if (!sourceSettled.get() && isTimeout(failure)) {
+            if (!sourceSettled.get() && failure instanceof java.util.concurrent.TimeoutException) {
                 timedOut.set(true);
                 return Future.failedFuture(new CacheDeadlineExceeded(failure));
             }
@@ -366,8 +366,9 @@ public final class Cache<K, V> {
     }
 
     private static boolean isTimeout(Throwable failure) {
-        return failure != null
-                && failure.getClass().getSimpleName().toLowerCase().contains("timeout");
+        // Only the shared deadline wrapper winning its race classifies as timeout; a
+        // provider failure merely named or typed as a timeout stays a provider error.
+        return failure instanceof CacheDeadlineExceeded;
     }
 
     private static final class CacheDeadlineExceeded extends RuntimeException {

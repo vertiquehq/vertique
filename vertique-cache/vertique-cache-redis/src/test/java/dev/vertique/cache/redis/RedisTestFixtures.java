@@ -67,12 +67,8 @@ final class RedisTestFixtures {
         return store.put(key, descriptor(type), value, ttl);
     }
 
-    static RedisCacheStore store(
-            RedisCommandClient commands,
-            CacheConfig config,
-            JsonMapperProfileRegistry profiles,
-            RedisDeadlineBoundary deadline) {
-        return new RedisCacheStore(commands, REDIS_CONFIG, config, profiles, deadline);
+    static RedisCacheStore store(RedisCommandClient commands, CacheConfig config, JsonMapperProfileRegistry profiles) {
+        return new RedisCacheStore(commands, REDIS_CONFIG, config, profiles);
     }
 
     static JsonMapperProfileRegistry profiles(String id, ObjectMapper mapper) {
@@ -120,35 +116,6 @@ final class RedisTestFixtures {
 
     static <T> T await(Future<T> future) throws Exception {
         return future.toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
-    }
-
-    static final class ImmediateDeadline implements RedisDeadlineBoundary {
-        @Override
-        public <T> Future<T> withDeadline(Future<T> backend, Duration deadline) {
-            return backend;
-        }
-    }
-
-    static final class TimeoutDeadline implements RedisDeadlineBoundary {
-        private final List<Future<?>> backends = new ArrayList<>();
-        private final Duration expectedDeadline;
-
-        TimeoutDeadline(Duration expectedDeadline) {
-            this.expectedDeadline = expectedDeadline;
-        }
-
-        @Override
-        public <T> Future<T> withDeadline(Future<T> backend, Duration deadline) {
-            if (!expectedDeadline.equals(deadline)) {
-                return Future.failedFuture("unexpected deadline: " + deadline);
-            }
-            backends.add(backend);
-            return Future.failedFuture(new java.util.concurrent.TimeoutException("test timeout"));
-        }
-
-        List<Future<?>> backends() {
-            return backends;
-        }
     }
 
     static class InMemoryRedisCommandClient implements RedisCommandClient {

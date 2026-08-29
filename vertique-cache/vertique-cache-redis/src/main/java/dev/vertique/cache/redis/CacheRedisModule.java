@@ -54,9 +54,8 @@ public abstract class CacheRedisModule {
             RedisClientRegistry clients,
             CacheRedisConfig config,
             CacheConfig cacheConfig,
-            JsonMapperProfileRegistry profiles,
-            Vertx vertx) {
-        return new RedisCacheStore(clients, config, cacheConfig, profiles, vertx);
+            JsonMapperProfileRegistry profiles) {
+        return new RedisCacheStore(clients, config, cacheConfig, profiles);
     }
 
     @Provides

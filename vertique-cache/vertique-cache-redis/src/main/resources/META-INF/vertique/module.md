@@ -69,11 +69,12 @@ generations therefore expire normally. Clear is logically immediate but physical
 weak: an in-flight lookup may still return a value from the old generation, and old
 physical keys are not deleted by the clear operation.
 
-Every composed Redis operation is fenced by `cache.backendTimeoutMs`, including the
-generation and client-pool wait portion. On timeout or Redis failure, the cache core
+This store owns no settlement fence: the shared cache runtime alone bounds every
+composed Redis operation — generation lookup and client-pool wait included — with
+`cache.backendTimeoutMs`. On the runtime's timeout or a Redis failure, the cache core
 preserves the business result. The backend future is not assumed to be cancellable;
-a late Redis completion is ignored by the returned operation future, although the
-backend side effect may still complete.
+when it settles after the runtime deadline, the runtime emits its single late
+observation event while the backend side effect may still complete.
 
 ## Physical old-generation cleanup
 

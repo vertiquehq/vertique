@@ -32,8 +32,7 @@ class RedisCacheSerializationTest {
         ObjectMapper mapper = new ObjectMapper().setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
         CacheConfig config = cacheConfig("snake");
         RedisTestFixtures.InMemoryRedisCommandClient commands = new RedisTestFixtures.InMemoryRedisCommandClient();
-        RedisCacheStore store = RedisTestFixtures.store(
-                commands, config, profiles("snake", mapper), new RedisTestFixtures.ImmediateDeadline());
+        RedisCacheStore store = RedisTestFixtures.store(commands, config, profiles("snake", mapper));
         Profile value = new Profile("Alice", 3);
 
         await(store.put(KEY, new CacheValueDescriptor(Profile.class, "snake"), value, java.time.Duration.ZERO));
@@ -52,11 +51,7 @@ class RedisCacheSerializationTest {
         String entryKey = RedisCacheKey.entry(KEY, "generation-1", REDIS_CONFIG, cacheConfig());
         commands.values.put(generationKey, "generation-1");
         commands.values.put(entryKey, "not-json");
-        RedisCacheStore store = RedisTestFixtures.store(
-                commands,
-                cacheConfig(),
-                profiles("vertx", new ObjectMapper()),
-                new RedisTestFixtures.ImmediateDeadline());
+        RedisCacheStore store = RedisTestFixtures.store(commands, cacheConfig(), profiles("vertx", new ObjectMapper()));
 
         assertThrows(Exception.class, () -> await(get(store, KEY, Profile.class)));
     }

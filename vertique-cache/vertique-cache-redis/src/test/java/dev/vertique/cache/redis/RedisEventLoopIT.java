@@ -36,11 +36,7 @@ public class RedisEventLoopIT {
                 new RedisTestFixtures.ControllableRedisCommandClient();
         commands.blockEntryReads();
         CacheStore store = new RedisCacheStore(
-                commands,
-                RedisTestFixtures.REDIS_CONFIG,
-                cacheConfig(),
-                profiles("vertx", new ObjectMapper()),
-                new VertxRedisDeadline(vertx));
+                commands, RedisTestFixtures.REDIS_CONFIG, cacheConfig(), profiles("vertx", new ObjectMapper()));
 
         Future<Optional<Object>> operation = store.get(KEY, descriptor(String.class));
         assertTrue(commands.awaitEntryReadStarted(), "the provider must reach the controllable backend read");

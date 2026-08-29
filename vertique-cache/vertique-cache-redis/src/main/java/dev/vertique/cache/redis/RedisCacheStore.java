@@ -14,7 +14,6 @@ import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.json.DefaultJsonMapperProfileRegistry;
 import dev.vertique.redis.RedisClientRegistry;
 import io.vertx.core.Future;
-import io.vertx.core.Vertx;
 import io.vertx.redis.client.Response;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
@@ -32,17 +31,13 @@ public final class RedisCacheStore implements CacheStore {
     private final CacheRedisConfig config;
     private final CacheConfig cacheConfig;
     private final JsonMapperProfileRegistry profiles;
-    private final RedisDeadlineBoundary deadline;
-    private final Duration backendTimeout;
-
     /** Direct-provider constructor for use without a Dagger graph. */
     public RedisCacheStore(RedisClientRegistry clients, CacheRedisConfig config, CacheConfig cacheConfig) {
         this(
                 VertxRedisCommandClient.from(clients, config.connection()),
                 config,
                 cacheConfig,
-                new DefaultJsonMapperProfileRegistry(Set.of()),
-                new LegacyRedisDeadline());
+                new DefaultJsonMapperProfileRegistry(Set.of()));
     }
 
     @Inject
@@ -50,37 +45,19 @@ public final class RedisCacheStore implements CacheStore {
             RedisClientRegistry clients,
             CacheRedisConfig config,
             CacheConfig cacheConfig,
-            JsonMapperProfileRegistry profiles,
-            Vertx vertx) {
-        this(
-                VertxRedisCommandClient.from(clients, config.connection()),
-                config,
-                cacheConfig,
-                profiles,
-                new VertxRedisDeadline(vertx));
+            JsonMapperProfileRegistry profiles) {
+        this(VertxRedisCommandClient.from(clients, config.connection()), config, cacheConfig, profiles);
     }
 
     RedisCacheStore(
             RedisCommandClient redis,
             CacheRedisConfig config,
             CacheConfig cacheConfig,
-            JsonMapperProfileRegistry profiles,
-            Vertx vertx) {
-        this(redis, config, cacheConfig, profiles, new VertxRedisDeadline(vertx));
-    }
-
-    RedisCacheStore(
-            RedisCommandClient redis,
-            CacheRedisConfig config,
-            CacheConfig cacheConfig,
-            JsonMapperProfileRegistry profiles,
-            RedisDeadlineBoundary deadline) {
+            JsonMapperProfileRegistry profiles) {
         this.redis = redis;
         this.config = config;
         this.cacheConfig = cacheConfig;
         this.profiles = profiles;
-        this.deadline = deadline;
-        this.backendTimeout = Duration.ofMillis(cacheConfig.backendTimeoutMs());
     }
 
     @Override
@@ -93,7 +70,7 @@ public final class RedisCacheStore implements CacheStore {
             return Future.succeededFuture(Optional.empty());
         }
         try {
-            return bounded(generation(key).compose(token -> redis.get(entryKey(key, token))))
+            return (generation(key).compose(token -> redis.get(entryKey(key, token))))
                     .compose(response -> decode(response, key.region(), value));
         } catch (RuntimeException failure) {
             return Future.failedFuture(failure);
@@ -120,7 +97,7 @@ public final class RedisCacheStore implements CacheStore {
             return Future.failedFuture("Redis cache value exceeds maxValueBytes");
         }
         try {
-            return bounded(generation(key).compose(token -> {
+            return (generation(key).compose(token -> {
                 String storageKey = entryKey(key, token);
                 List<String> command = ttl.isZero()
                         ? List.of(storageKey, json)
@@ -138,7 +115,7 @@ public final class RedisCacheStore implements CacheStore {
             return Future.succeededFuture();
         }
         try {
-            return bounded(generation(key)
+            return (generation(key)
                     .compose(token -> redis.del(List.of(entryKey(key, token))).mapEmpty()));
         } catch (RuntimeException failure) {
             return Future.failedFuture(failure);
@@ -152,7 +129,7 @@ public final class RedisCacheStore implements CacheStore {
         }
         try {
             String generationKey = RedisCacheKey.generation(region, config, cacheConfig);
-            return bounded(redis.set(List.of(generationKey, UUID.randomUUID().toString()))
+            return (redis.set(List.of(generationKey, UUID.randomUUID().toString()))
                     .mapEmpty());
         } catch (RuntimeException failure) {
             return Future.failedFuture(failure);
@@ -185,10 +162,6 @@ public final class RedisCacheStore implements CacheStore {
                     }
                     return generation;
                 });
-    }
-
-    private <T> Future<T> bounded(Future<T> backend) {
-        return deadline.withDeadline(backend, backendTimeout);
     }
 
     private String entryKey(ResolvedCacheKey key, String generation) {
