@@ -359,9 +359,7 @@ framework's own scanners provide the implementations.
 The resilience annotation vocabulary and its declaration metadata are provided by
 `dev.vertique:vertique-resilience`. Core deliberately remains independent of that artifact;
 applications using `@Retry`, `@Timeout`, or `@CircuitBreaker` should depend on the resilience module
-directly or through the module that enforces those declarations. The historical
-`dev.vertique.core.resilience` classes remain as a transitional compatibility surface while REST
-and Services complete their cutover; new code must use the canonical resilience package.
+directly or through the module that enforces those declarations.
 
 ### `CorrelationContext`
 
@@ -774,8 +772,6 @@ Canonicalizers and sanitizers run earlier and do receive accurate provenance.
 
 `dev.vertique:vertique-resilience` also owns the canonical `BackoffStrategy` and `RetryPolicy`, the
 small contracts used by consumer modules to calculate retry delays and determine retry eligibility.
-The historical core-package copies remain source-compatible during the migration and must not be
-used by new code.
 
 ### `FailureTranslator` and `ContextAwareFailureTranslator`
 
@@ -1079,8 +1075,7 @@ Each carries `address()`. Service-layer callers receive enriched subclasses from
 
 The resilience annotation semantics, declaration fields, and retry bounds are documented by
 `dev.vertique:vertique-resilience` and the consumer modules that enforce them. Core does not own the
-new runtime; its historical resilience package is retained only for compatibility until the
-consumer cutover.
+runtime or annotation vocabulary.
 
 ### Constraints and common mistakes
 
