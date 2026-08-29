@@ -130,7 +130,7 @@ public final class ContributorEmitter {
     private static final ClassName PARAM_SOURCE =
             ClassName.get("dev.vertique.services.dispatch.ServiceMethodMeta", "ParamSource");
     private static final ClassName RESILIENCE_ANNOTATIONS =
-            ClassName.get("dev.vertique.core.resilience", "ResilienceAnnotations");
+            ClassName.get("dev.vertique.resilience.annotation", "ResilienceAnnotations");
     private static final ClassName ANNOTATION_RESOLVER = ClassName.get("dev.vertique.core.util", "AnnotationResolver");
     private static final ClassName INJECT = ClassName.get("jakarta.inject", "Inject");
     private static final ClassName PROVIDER = ClassName.get("jakarta.inject", "Provider");
@@ -805,7 +805,7 @@ public final class ContributorEmitter {
     }
 
     /**
-     * Returns the static field name for the {@link dev.vertique.core.resilience.ResilienceAnnotations}
+     * Returns the static field name for the {@link dev.vertique.resilience.annotation.ResilienceAnnotations}
      * of an operation, scoped to a specific impl.
      *
      * <p>Pattern: {@code <IMPLPREFIX>_<CONTRACTMETHODNAME>_RESILIENCE}.

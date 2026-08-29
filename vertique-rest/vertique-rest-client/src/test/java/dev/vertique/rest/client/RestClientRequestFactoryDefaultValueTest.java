@@ -6,6 +6,7 @@ package dev.vertique.rest.client;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
+import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.client.meta.ClientInterfaceScanner;
 import dev.vertique.rest.client.meta.ClientMethodMeta;
 import dev.vertique.rest.core.convert.ParamConversionResolver;
@@ -143,7 +144,17 @@ class RestClientRequestFactoryDefaultValueTest {
                 new RestClientInterceptorChain("test-client", List.of()),
                 new DefaultRestClientExceptionMapper(),
                 DatabindCodec.mapper(),
-                new RestClientResilienceResolver("test-client", 5000L, null, null, null, null, vertx),
+                null,
+                new RestClientResiliencePipelineFactory(
+                        Resilience.create(vertx),
+                        "test-client",
+                        Object.class,
+                        5000L,
+                        new DefaultRestClientRetryPolicy(),
+                        dev.vertique.resilience.BackoffStrategy.none(),
+                        null,
+                        null,
+                        Map.of()),
                 null,
                 "test-client",
                 List.of(),

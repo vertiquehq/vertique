@@ -22,7 +22,7 @@ import dev.vertique.services.ServiceExceptionMapper;
 import dev.vertique.services.ServiceOperation;
 import dev.vertique.services.ServiceTargetResolver;
 import dev.vertique.services.ServiceVerticle;
-import dev.vertique.services.policy.PolicyChainBuilder;
+import dev.vertique.services.resilience.ServiceResiliencePipelineFactory;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
@@ -296,13 +296,22 @@ public class KafkaInterceptorIT {
 
         // --- Deploy service verticles ---
         ServiceExceptionMapper exceptionMapper = new ServiceExceptionMapper();
-        PolicyChainBuilder policyChain = KafkaTestSupport.policyChainBuilder(vertx, config);
+        ServiceResiliencePipelineFactory resiliencePipelineFactory =
+                KafkaTestSupport.resiliencePipelineFactory(vertx, config);
 
         ServiceVerticle<InterceptorTestService> mainVerticle = new ServiceVerticle<>(
-                mainRegistry.resolve(InterceptorTestService.class), exceptionMapper, List.of(), policyChain, null);
+                mainRegistry.resolve(InterceptorTestService.class),
+                exceptionMapper,
+                List.of(),
+                resiliencePipelineFactory,
+                null);
 
         ServiceVerticle<FailingService> failVerticle = new ServiceVerticle<>(
-                failRegistry.resolve(FailingService.class), exceptionMapper, List.of(), policyChain, null);
+                failRegistry.resolve(FailingService.class),
+                exceptionMapper,
+                List.of(),
+                resiliencePipelineFactory,
+                null);
 
         // --- Deploy Kafka consumer verticles with interceptors ---
         KafkaProducerFactory producerFactory = new KafkaProducerFactory(

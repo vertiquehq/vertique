@@ -14,7 +14,7 @@ import dev.vertique.core.exception.ConfigurationException;
  * nullable typed records whose own fields are nullable boxed values: an absent nested object
  * deserializes to {@code null}, and an absent field within a present object is {@code null} too —
  * "not overridden" in both cases. No defaulting is applied; the effective resilience values are
- * computed by {@link dev.vertique.services.policy.PolicyChainBuilder} from the annotations and these
+ * computed by {@link dev.vertique.services.resilience.ServiceResilienceConfigAdapter} from the annotations and these
  * overrides. When present, {@code sendTimeoutMs} is validated ({@code > 0}) so a malformed override
  * fails fast at startup; the nested policy overrides validate their own bounds.
  *

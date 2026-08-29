@@ -43,6 +43,11 @@ the `JobRepository` binding is not optional.
 `scheduledAt`; claim queries filter by `scheduled_at <= NOW()`, so the job becomes claimable exactly
 when its time arrives. Nothing transitions it and nothing wakes up early.
 
+Contributor-backed delayed-job operations explicitly publish `ResilienceAnnotations.NONE`. The
+Services registration boundary therefore recognizes the operation without constructing a common
+resilience pipeline. Durable retry, watchdog timeout, claim capacity, and dead-letter transitions
+remain owned by the poller and `JobRepository` state machine.
+
 **One row, many attempts.** A delayed job reuses a single execution row: `executionId` is stable and
 `attemptNumber` increments. `maxAttempts` is inclusive, so an attempt remains while
 `attemptNumber + 1 < maxAttempts`. When the last attempt fails the row moves to `DEAD_LETTER` and
@@ -457,8 +462,9 @@ public class ManualWiringModule {
 - **services** — handler discovery through `ServiceContractRegistry`, and dispatch through the
   services invoker, which is what injects `JobContext`/`JobDispatchContext` into handler methods.
 - **deploy** — `VerticleDeployment` and `LifecyclePhase` for the per-queue poller deployments.
-- **core** — event bus dispatch (`DispatchEnvelope`, `EventBusClient`, `Result`), `BackoffStrategy`,
-  the exception roots, `ConfigParser` and the keyed-config support.
+- **core** — event bus dispatch (`DispatchEnvelope`, `EventBusClient`, `Result`), the exception
+  roots, `ConfigParser` and the keyed-config support.
+- **resilience** — the `BackoffStrategy` contract used for retry delays.
 - **context** — durable context propagation across the persistence hop.
 - **db-core** — the `DataAccessException` family the enqueue exception mapper translates.
 - **logging** — the MDC context facade used on the dispatch and reply paths.

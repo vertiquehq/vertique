@@ -12,7 +12,7 @@ import dev.vertique.services.config.ServiceConfig;
 import dev.vertique.services.config.ServicesConfig.ServiceKey;
 import dev.vertique.services.dispatch.ServiceMethodInvoker;
 import dev.vertique.services.interceptor.ServiceInterceptor;
-import dev.vertique.services.policy.PolicyChainBuilder;
+import dev.vertique.services.resilience.ServiceResiliencePipelineFactory;
 import io.vertx.core.Future;
 import java.util.ArrayList;
 import java.util.List;
@@ -47,6 +47,7 @@ public class ServiceDeploymentManager {
     private final ServiceExceptionMapper exceptionMapper;
     private final List<ServiceInterceptor> interceptors;
     private final Map<ServiceKey, ServiceConfig> serviceConfigIndex;
+    private final ServiceResiliencePipelineFactory resiliencePipelineFactory;
     private final dev.vertique.context.ServiceDispatchContextRegistry contextRegistry;
     private final dev.vertique.context.InboundDispatchScope inboundScope;
     private final dev.vertique.context.InboundExecutionContextScope inboundExecScope;
@@ -130,6 +131,7 @@ public class ServiceDeploymentManager {
                 serviceConfigIndex,
                 contextRegistry,
                 inboundScope,
+                null,
                 null);
     }
 
@@ -154,6 +156,33 @@ public class ServiceDeploymentManager {
             dev.vertique.context.ServiceDispatchContextRegistry contextRegistry,
             dev.vertique.context.InboundDispatchScope inboundScope,
             dev.vertique.context.InboundExecutionContextScope inboundExecScope) {
+        this(
+                vertx,
+                deployer,
+                registry,
+                supervisor,
+                exceptionMapper,
+                interceptors,
+                serviceConfigIndex,
+                contextRegistry,
+                inboundScope,
+                inboundExecScope,
+                null);
+    }
+
+    /** Full constructor with the application-scoped common resilience pipeline factory. */
+    public ServiceDeploymentManager(
+            io.vertx.core.Vertx vertx,
+            VerticleDeployer deployer,
+            ServiceContractRegistry registry,
+            ServiceSupervisor supervisor,
+            ServiceExceptionMapper exceptionMapper,
+            Set<ServiceInterceptor> interceptors,
+            Map<ServiceKey, ServiceConfig> serviceConfigIndex,
+            dev.vertique.context.ServiceDispatchContextRegistry contextRegistry,
+            dev.vertique.context.InboundDispatchScope inboundScope,
+            dev.vertique.context.InboundExecutionContextScope inboundExecScope,
+            ServiceResiliencePipelineFactory resiliencePipelineFactory) {
         this.vertx = vertx;
         this.deployer = deployer;
         this.registry = registry;
@@ -165,6 +194,7 @@ public class ServiceDeploymentManager {
         this.contextRegistry = contextRegistry;
         this.inboundScope = inboundScope;
         this.inboundExecScope = inboundExecScope;
+        this.resiliencePipelineFactory = resiliencePipelineFactory;
     }
 
     /**
@@ -204,10 +234,14 @@ public class ServiceDeploymentManager {
                     .onSuccess(v -> deploymentNames.remove(entry.getKey()))
                     .onFailure(cause -> log.warn("Failed to undeploy service: {}", name, cause)));
         }
-        if (undeploys.isEmpty()) {
-            return Future.succeededFuture();
+        Future<Void> undeploy = undeploys.isEmpty()
+                ? Future.succeededFuture()
+                : Future.join(undeploys).mapEmpty();
+        if (resiliencePipelineFactory == null) {
+            return undeploy;
         }
-        return Future.join(undeploys).mapEmpty();
+        return undeploy.compose(ignored -> resiliencePipelineFactory.close())
+                .recover(cause -> resiliencePipelineFactory.close().transform(ignored -> Future.failedFuture(cause)));
     }
 
     // --- Internal ---
@@ -266,7 +300,6 @@ public class ServiceDeploymentManager {
      */
     private <T> Future<String> deployService(ServiceContractRegistry.ContractEntry<T> entry) {
         String name = serviceDeploymentName(entry);
-        PolicyChainBuilder policyChainBuilder = new PolicyChainBuilder(vertx, serviceConfigIndex);
         ServiceMethodInvoker.FatalErrorHandler fatalHandler =
                 error -> supervisor.reportFatalError(entry.contract(), error);
 
@@ -276,7 +309,7 @@ public class ServiceDeploymentManager {
                         entry,
                         exceptionMapper,
                         interceptors,
-                        policyChainBuilder,
+                        resiliencePipelineFactory,
                         fatalHandler,
                         contextRegistry,
                         inboundScope,

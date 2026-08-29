@@ -145,8 +145,8 @@ final class ServiceContractTestFixtures {
                     """);
 
     static final JavaFileObject RESILIENCE_ANNOTATIONS_SOURCE =
-            SourceFiles.inline("dev.vertique.core.resilience.ResilienceAnnotations", """
-                    package dev.vertique.core.resilience;
+            SourceFiles.inline("dev.vertique.resilience.annotation.ResilienceAnnotations", """
+                    package dev.vertique.resilience.annotation;
                     import java.lang.reflect.Method;
                     public final class ResilienceAnnotations {
                         public static ResilienceAnnotations resolve(Class<?> c, Method m) { return null; }

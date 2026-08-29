@@ -54,24 +54,28 @@ class ServiceContractProcessorRoundtripTest {
     // needed for the structural subset that still uses FRAMEWORK_SOURCES.
 
     private static final JavaFileObject TIMEOUT_ANNOTATION =
-            SourceFiles.inline("dev.vertique.core.resilience.Timeout", """
-                    package dev.vertique.core.resilience;
+            SourceFiles.inline("dev.vertique.resilience.annotation.Timeout", """
+                    package dev.vertique.resilience.annotation;
                     import java.lang.annotation.*;
+                    import java.util.concurrent.TimeUnit;
                     @Target({ElementType.TYPE, ElementType.METHOD})
                     @Retention(RetentionPolicy.RUNTIME)
                     public @interface Timeout {
-                        long valueMs() default 5000;
+                        long value() default 5000;
+                        TimeUnit unit() default TimeUnit.MILLISECONDS;
                     }
                     """);
 
     private static final JavaFileObject CIRCUIT_BREAKER_ANNOTATION =
-            SourceFiles.inline("dev.vertique.core.resilience.CircuitBreaker", """
-                    package dev.vertique.core.resilience;
+            SourceFiles.inline("dev.vertique.resilience.annotation.CircuitBreaker", """
+                    package dev.vertique.resilience.annotation;
                     import java.lang.annotation.*;
                     @Target({ElementType.TYPE, ElementType.METHOD})
                     @Retention(RetentionPolicy.RUNTIME)
                     public @interface CircuitBreaker {
-                        int failureRateThreshold() default 50;
+                        int maxFailures() default 5;
+                        long timeoutMs() default -1;
+                        long resetTimeoutMs() default 10000;
                     }
                     """);
 
@@ -92,18 +96,18 @@ class ServiceContractProcessorRoundtripTest {
             SourceFiles.inline("com.example.BillingService", """
                     package com.example;
                     import com.example.annotation.AuditTier;
-                    import dev.vertique.core.resilience.Timeout;
-                    import dev.vertique.core.resilience.CircuitBreaker;
+                    import dev.vertique.resilience.annotation.Timeout;
+                    import dev.vertique.resilience.annotation.CircuitBreaker;
                     import dev.vertique.services.ServiceContract;
                     import dev.vertique.services.ServiceOperation;
                     import io.vertx.core.Future;
                     @ServiceContract(value = "billing-service", namespace = "billing")
-                    @Timeout(valueMs = 10000)
+                    @Timeout(value = 10000)
                     @CircuitBreaker
                     @AuditTier("gold")
                     public interface BillingService {
                         @ServiceOperation("charge")
-                        @Timeout(valueMs = 2000)
+                        @Timeout(value = 2000)
                         Future<String> charge(String chargeRequest);
                     }
                     """);
@@ -137,7 +141,7 @@ class ServiceContractProcessorRoundtripTest {
                     """);
 
     // --- Runtime fixture sources (compiled against real framework classpath) ---
-    // These use the correct real API: @Timeout(value=...) not @Timeout(valueMs=...)
+    // These use the correct real API: @Timeout(value=...) with TimeUnit only when needed.
     // and include the domain AuditTier annotation as an inline fixture.
 
     private static final JavaFileObject RUNTIME_AUDIT_TIER_ANNOTATION =
@@ -155,9 +159,9 @@ class ServiceContractProcessorRoundtripTest {
             SourceFiles.inline("com.example.BillingService", """
                     package com.example;
                     import com.example.annotation.AuditTier;
-                    import dev.vertique.core.resilience.Timeout;
-                    import dev.vertique.core.resilience.CircuitBreaker;
-                    import dev.vertique.core.resilience.Retry;
+                    import dev.vertique.resilience.annotation.Timeout;
+                    import dev.vertique.resilience.annotation.CircuitBreaker;
+                    import dev.vertique.resilience.annotation.Retry;
                     import dev.vertique.services.ServiceContract;
                     import dev.vertique.services.ServiceOperation;
                     import io.vertx.core.Future;
@@ -247,7 +251,7 @@ class ServiceContractProcessorRoundtripTest {
         result.assertGeneratedSourceContains(
                 "com.example.BillingService_ContractContributor", "ResilienceAnnotations.resolve(");
 
-        // Method annotations: include method-level @Timeout(valueMs=2000)
+        // Method annotations: include method-level @Timeout(value=2000)
         result.assertGeneratedSourceContains("com.example.BillingService_ContractContributor", ".methodAnnotations(");
         result.assertGeneratedSourceContains(
                 "com.example.BillingService_ContractContributor", "AnnotationResolver.resolveMethodAnnotations(");
@@ -511,8 +515,8 @@ class ServiceContractProcessorRoundtripTest {
 
     /**
      * Asserts full resilience annotation equivalence for all three annotations: {@link
-     * dev.vertique.core.resilience.Timeout}, {@link dev.vertique.core.resilience.CircuitBreaker},
-     * and {@link dev.vertique.core.resilience.Retry}.
+     * dev.vertique.resilience.annotation.Timeout}, {@link dev.vertique.resilience.annotation.CircuitBreaker},
+     * and {@link dev.vertique.resilience.annotation.Retry}.
      *
      * <p>Comparison uses annotation {@code equals()} per JDK spec, which returns {@code true}
      * iff the annotation type and all member values are equal. This catches attribute drift

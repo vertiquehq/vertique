@@ -269,6 +269,29 @@
           "public static <T> dev.vertique.mcp.tool.McpToolResult<T> dev.vertique.mcp.tool.McpToolResult.structured(T)",
           "public static dev.vertique.mcp.tool.McpToolResult<java.lang.Void> dev.vertique.mcp.tool.McpToolResult.error(java.lang.String)",
           "public static dev.vertique.mcp.tool.McpToolResult<java.lang.Void> dev.vertique.mcp.tool.McpToolResult.text(java.lang.String)"
+        ],
+        "dev.vertique.mcp.lifecycle.McpRawEvidenceObservation": [
+          "public default void dev.vertique.mcp.lifecycle.McpRawEvidenceObservation.onRequestAdmitted(dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence)",
+          "public default void dev.vertique.mcp.lifecycle.McpRawEvidenceObservation.onResponseWritten(dev.vertique.mcp.lifecycle.McpResponseEvidence)"
+        ],
+        "dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence": [
+          "public byte[] dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.body()",
+          "public dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence(byte[],java.util.Map<java.lang.String, java.lang.String>,java.lang.String,java.lang.String,java.lang.String)",
+          "public final boolean dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.equals(java.lang.Object)",
+          "public final int dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.hashCode()",
+          "public final java.lang.String dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.toString()",
+          "public java.lang.String dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.contentType()",
+          "public java.lang.String dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.jsonRpcRequestId()",
+          "public java.lang.String dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.principalId()",
+          "public java.util.Map<java.lang.String, java.lang.String> dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.headers()"
+        ],
+        "dev.vertique.mcp.lifecycle.McpResponseEvidence": [
+          "public byte[] dev.vertique.mcp.lifecycle.McpResponseEvidence.body()",
+          "public dev.vertique.mcp.lifecycle.McpResponseEvidence(byte[],java.util.Map<java.lang.String, java.lang.String>)",
+          "public final boolean dev.vertique.mcp.lifecycle.McpResponseEvidence.equals(java.lang.Object)",
+          "public final int dev.vertique.mcp.lifecycle.McpResponseEvidence.hashCode()",
+          "public final java.lang.String dev.vertique.mcp.lifecycle.McpResponseEvidence.toString()",
+          "public java.util.Map<java.lang.String, java.lang.String> dev.vertique.mcp.lifecycle.McpResponseEvidence.headers()"
         ]
       }
     },

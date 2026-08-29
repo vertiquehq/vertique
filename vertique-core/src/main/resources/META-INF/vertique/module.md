@@ -13,7 +13,7 @@ SPDX-License-Identifier: EUPL-1.2
 `vertique-core` is the vocabulary every other Vertique module is written against. It supplies the
 Vert.x dependency-injection seam, the framework exception hierarchy, the typed-configuration
 contract, the extension-ordering and lifecycle contracts, the event-bus dispatch types, and the
-shared annotation vocabularies for resilience, validation, sanitization, and JSON profiles.
+shared annotation vocabularies for validation, sanitization, and JSON profiles.
 
 Core is almost entirely *declaration*. Most of what it defines is implemented elsewhere: the
 context holder ships in `dev.vertique:vertique-context`, the config parser in
@@ -32,9 +32,8 @@ starter or feature module. Depend on it **directly** when:
 - you throw or catch framework exceptions and want the semantic roots that drive HTTP mapping;
 - you parse a configuration section into a typed record through `ConfigParser`;
 - you implement a framework extension point declared here — a health check, a lifecycle step, an
-  `ObjectMapper` customizer, a canonicalizer, a backoff strategy;
-- you annotate an operation with `@Retry`, `@Timeout`, `@CircuitBreaker`, `@ValidateWith`,
-  `@Canonicalize`, `@Sanitize`, or `@JsonProfile`.
+  `ObjectMapper` customizer, or a canonicalizer;
+- you annotate an operation with `@ValidateWith`, `@Canonicalize`, `@Sanitize`, or `@JsonProfile`.
 
 Pair core with the module that implements the contract you are using: `vertique-config-core` for
 `ConfigParser`, `vertique-validation` for `BeanValidator`, `vertique-json` for the JSON profile
@@ -355,34 +354,12 @@ framework's own scanners provide the implementations.
 - `parameterTypes()` gives the erased signature without materializing `ParameterMetadata` objects;
   `parameters()` gives the full per-parameter view.
 
-### `ResilienceAnnotations`
+### Resilience vocabulary
 
-Resolved `@Timeout`, `@CircuitBreaker`, and `@Retry` values for one method, with method-level
-annotations replacing type-level ones outright — there is no per-attribute merging.
-
-```java
-public record ResilienceAnnotations(Timeout timeout, CircuitBreaker circuitBreaker, Retry retry) {
-
-    /** No policies configured. */
-    public static final ResilienceAnnotations NONE;
-
-    public static ResilienceAnnotations resolve(Class<?> type, Method method);
-    public static ResilienceAnnotations resolve(Method method);   // uses method.getDeclaringClass()
-
-    public boolean hasAny();
-}
-```
-
-#### Invariants & Gotchas
-
-- **Component order is `(timeout, circuitBreaker, retry)`.** All three are `Timeout`,
-  `CircuitBreaker`, and `Retry` annotation instances, and any of them may be `null`.
-- Resolution walks the full supertype hierarchy on both sides — the method plus every overridden
-  same-signature method, then the type plus its superclasses and transitively reachable interfaces.
-  This is necessary because neither `Class.getAnnotation` nor `Method.getAnnotation` traverses
-  super-interfaces, and `@Inherited` does not apply to interface annotations.
-- `resolve` returns the shared `NONE` instance when no resilience annotation is present anywhere,
-  so `hasAny()` is the correct emptiness test rather than a `null` check on the result.
+The resilience annotation vocabulary and its declaration metadata are provided by
+`dev.vertique:vertique-resilience`. Core deliberately remains independent of that artifact;
+applications using `@Retry`, `@Timeout`, or `@CircuitBreaker` should depend on the resilience module
+directly or through the module that enforces those declarations.
 
 ### `CorrelationContext`
 
@@ -793,46 +770,10 @@ from its transport provenance, and one validation pass can cover values from sev
 once, so no accurate location exists to report. Do not branch on `location()` in a policy.
 Canonicalizers and sanitizers run earlier and do receive accurate provenance.
 
-### `BackoffStrategy`
+### Resilience primitives
 
-Computes the delay before each retry attempt, given the zero-based retry count.
-
-```java
-@FunctionalInterface
-public interface BackoffStrategy {
-    long delay(int retryCount);
-
-    static BackoffStrategy exponential(long delayMs, double multiplier, long maxDelayMs);
-    static BackoffStrategy fixed(long delayMs);
-    static BackoffStrategy none();
-
-    /** Sentinel used as the @Retry#backoff default — never instantiated or executed. */
-    final class Default implements BackoffStrategy { }
-}
-```
-
-A custom strategy is selected by class, not by Dagger binding:
-
-```java
-public final class DecorrelatedJitterBackoff implements BackoffStrategy {
-    public DecorrelatedJitterBackoff() {}
-
-    @Override public long delay(int retryCount) { return Math.min(30_000L, 100L << retryCount); }
-}
-
-@Retry(maxRetries = 4, backoff = DecorrelatedJitterBackoff.class)
-Future<String> lookup(String id);
-```
-
-`BackoffStrategyResolver.resolve(Retry, BackoffStrategy fallback)` performs the selection. A custom
-class is instantiated reflectively through an accessible no-arg constructor on each resolution — the
-result is not cached — and a failure to instantiate throws `IllegalStateException`. When `backoff()`
-is left at the `Default` sentinel the resolver uses the caller-supplied fallback, or builds
-`exponential(delayMs, backoffMultiplier, maxDelayMs)` from the annotation when the fallback is
-`null`. `BackoffStrategy.Default` is a sentinel only — it cannot be instantiated or executed.
-
-`RetryPolicy` (`boolean shouldRetry(Throwable error, int retryCount)`) is the complementary
-predicate consulted by consumer modules when `@Retry#retryOn` is empty.
+`dev.vertique:vertique-resilience` also owns the canonical `BackoffStrategy` and `RetryPolicy`, the
+small contracts used by consumer modules to calculate retry delays and determine retry eligibility.
 
 ### `FailureTranslator` and `ContextAwareFailureTranslator`
 
@@ -1134,39 +1075,9 @@ Each carries `address()`. Service-layer callers receive enriched subclasses from
 
 ### Resilience annotation semantics
 
-`@Timeout`, `@Retry`, and `@CircuitBreaker` are declarations only — core defines the vocabulary and
-its resolution, and the consumer module enforces it. `dev.vertique:vertique-services` applies them
-server-side; `dev.vertique:vertique-rest-client` applies them per client. All three are
-`@Target({TYPE, METHOD})` and `@Retention(RUNTIME)`; a method-level annotation **replaces** the
-type-level one outright, with no per-attribute merging.
-
-| Annotation | Attribute | Default | Constraint |
-|---|---|---:|---|
-| `@Timeout` | `value` | — (required) | must be positive |
-| | `unit` | `TimeUnit.MILLISECONDS` | any `TimeUnit` |
-| `@Retry` | `maxRetries` | `3` | at least 0 |
-| | `delayMs` | `500` | at least 0 |
-| | `backoffMultiplier` | `2.0` | at least 1.0 |
-| | `maxDelayMs` | `30000` | at least 0 |
-| | `backoff` | `BackoffStrategy.Default.class` | sentinel meaning "use the consumer's default" |
-| | `retryOn` | `{}` | empty means "every failure is eligible" |
-| | `abortOn` | `{}` | — |
-| `@CircuitBreaker` | `maxFailures` | `5` | at least 1 |
-| | `timeoutMs` | `-1` | `-1` inherits the consumer module's default |
-| | `resetTimeoutMs` | `10000` | must be positive |
-
-The annotations themselves carry no validator — the constraints above are enforced where the values
-are consumed, and the same bounds apply to the equivalent JSON configuration overrides, which fail
-with `ConfigurationException` during startup parsing.
-
-Retry eligibility is evaluated in a fixed order: **`abortOn` wins first** — a match stops retrying
-immediately. Then `retryOn`, when non-empty, restricts retries to matching types. When `retryOn` is
-empty, every failure not matched by `abortOn` is eligible. Both use `isInstance`, so a supertype
-entry covers its subclasses.
-
-The effective policy nests timeout and circuit breaker **around** retry, and a configured timeout
-applies **per attempt**, not to the whole retry sequence. Consumer modules let JSON configuration
-override annotation values for an environment without editing the contract.
+The resilience annotation semantics, declaration fields, and retry bounds are documented by
+`dev.vertique:vertique-resilience` and the consumer modules that enforce them. Core does not own the
+runtime or annotation vocabulary.
 
 ### Constraints and common mistakes
 

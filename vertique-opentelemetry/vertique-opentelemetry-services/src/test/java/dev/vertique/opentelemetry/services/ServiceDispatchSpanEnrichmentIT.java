@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import dev.vertique.core.eventbus.DispatchEnvelope;
 import dev.vertique.core.eventbus.LocalMessageCodec;
 import dev.vertique.core.eventbus.Result;
-import dev.vertique.core.resilience.ResilienceAnnotations;
+import dev.vertique.resilience.annotation.ResilienceAnnotations;
 import dev.vertique.services.ServiceContract;
 import dev.vertique.services.ServiceExceptionMapper;
 import dev.vertique.services.ServiceOperation;

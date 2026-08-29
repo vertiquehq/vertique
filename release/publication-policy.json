@@ -35,7 +35,7 @@
       "packaging": "pom"
     }
   ],
-  "expectedPublishableGavCount": 101,
+  "expectedPublishableGavCount": 103,
   "expectedPublishableGavs": [
     "dev.vertique:vertique-aop",
     "dev.vertique:vertique-app-parent",
@@ -102,6 +102,7 @@
     "dev.vertique:vertique-micrometer-mcp",
     "dev.vertique:vertique-micrometer-registry-prometheus",
     "dev.vertique:vertique-micrometer-rest",
+    "dev.vertique:vertique-micrometer-resilience",
     "dev.vertique:vertique-micrometer-services",
     "dev.vertique:vertique-opentelemetry-core",
     "dev.vertique:vertique-opentelemetry-mcp",
@@ -109,6 +110,7 @@
     "dev.vertique:vertique-opentelemetry-rest",
     "dev.vertique:vertique-opentelemetry-services",
     "dev.vertique:vertique-parent",
+    "dev.vertique:vertique-resilience",
     "dev.vertique:vertique-rest-auth-jwt",
     "dev.vertique:vertique-rest-client",
     "dev.vertique:vertique-rest-core",

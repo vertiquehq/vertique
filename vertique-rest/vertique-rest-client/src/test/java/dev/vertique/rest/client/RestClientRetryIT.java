@@ -13,8 +13,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.github.tomakehurst.wiremock.http.Fault;
 import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
-import dev.vertique.core.resilience.BackoffStrategy;
-import dev.vertique.core.resilience.Retry;
+import dev.vertique.resilience.BackoffStrategy;
+import dev.vertique.resilience.annotation.Retry;
 import dev.vertique.rest.client.exception.RestClientConnectionException;
 import dev.vertique.rest.client.exception.RestClientResponseException;
 import dev.vertique.rest.client.interceptor.RestClientInterceptor;

@@ -20,7 +20,7 @@ import dev.vertique.services.ServiceExceptionMapper;
 import dev.vertique.services.ServiceOperation;
 import dev.vertique.services.ServiceTargetResolver;
 import dev.vertique.services.ServiceVerticle;
-import dev.vertique.services.policy.PolicyChainBuilder;
+import dev.vertique.services.resilience.ServiceResiliencePipelineFactory;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
@@ -447,18 +447,39 @@ public class KafkaRetryAndRouterIT {
 
         // --- Deploy service verticles ---
         ServiceExceptionMapper exceptionMapper = new ServiceExceptionMapper();
-        PolicyChainBuilder policyChain = KafkaTestSupport.policyChainBuilder(vertx, config);
+        ServiceResiliencePipelineFactory resiliencePipelineFactory =
+                KafkaTestSupport.resiliencePipelineFactory(vertx, config);
 
         ServiceVerticle<RetrySucceedService> retrySucceedVerticle = new ServiceVerticle<>(
-                retrySucceedRegistry.resolve(RetrySucceedService.class), exceptionMapper, List.of(), policyChain, null);
+                retrySucceedRegistry.resolve(RetrySucceedService.class),
+                exceptionMapper,
+                List.of(),
+                resiliencePipelineFactory,
+                null);
         ServiceVerticle<RetryExhaustService> retryExhaustVerticle = new ServiceVerticle<>(
-                retryExhaustRegistry.resolve(RetryExhaustService.class), exceptionMapper, List.of(), policyChain, null);
+                retryExhaustRegistry.resolve(RetryExhaustService.class),
+                exceptionMapper,
+                List.of(),
+                resiliencePipelineFactory,
+                null);
         ServiceVerticle<RouterTypeAService> typeAVerticle = new ServiceVerticle<>(
-                routerRegistry.resolve(RouterTypeAService.class), exceptionMapper, List.of(), policyChain, null);
+                routerRegistry.resolve(RouterTypeAService.class),
+                exceptionMapper,
+                List.of(),
+                resiliencePipelineFactory,
+                null);
         ServiceVerticle<RouterTypeBService> typeBVerticle = new ServiceVerticle<>(
-                routerRegistry.resolve(RouterTypeBService.class), exceptionMapper, List.of(), policyChain, null);
+                routerRegistry.resolve(RouterTypeBService.class),
+                exceptionMapper,
+                List.of(),
+                resiliencePipelineFactory,
+                null);
         ServiceVerticle<RouterDefaultService> defaultVerticle = new ServiceVerticle<>(
-                routerRegistry.resolve(RouterDefaultService.class), exceptionMapper, List.of(), policyChain, null);
+                routerRegistry.resolve(RouterDefaultService.class),
+                exceptionMapper,
+                List.of(),
+                resiliencePipelineFactory,
+                null);
 
         // --- Deploy Kafka consumer verticles ---
         KafkaProducerFactory producerFactory = new KafkaProducerFactory(
