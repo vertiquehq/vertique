@@ -193,7 +193,7 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
                     && !retryConfiguration.fallbackPolicy().shouldRetry(normalized, ordinal - 1)) {
                 return Future.succeededFuture(AttemptResult.failure(normalized));
             }
-            long delay = delay(ordinal - 1);
+            long delay = delay(retryConfiguration.backoff(), ordinal - 1);
             if (delay < 0L) {
                 return Future.succeededFuture(AttemptResult.failure(normalized));
             }
@@ -220,22 +220,9 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
         }
     }
 
-    private long delay(int retryCount) {
+    private long delay(RetryBackoff backoff, int retryCount) {
         try {
-            RetryBackoff backoff = retryConfiguration.backoff();
-            if (backoff instanceof RetryBackoff.Fixed fixed) {
-                return fixed.delayMs();
-            }
-            if (backoff instanceof RetryBackoff.Exponential exponential) {
-                long base = Retry.cappedExponentialDelay(exponential, retryCount);
-                long jitterUpperBound = Math.min(base, exponential.maxJitterMs());
-                if (jitterUpperBound == 0L) {
-                    return base;
-                }
-                long jitter = (long) (resilience.randomDouble() * jitterUpperBound);
-                return ExecutionBudget.saturatingAdd(base, jitter);
-            }
-            return ((RetryBackoff.Custom) backoff).delegate().delay(retryCount);
+            return backoff.delayMs(retryCount, resilience::randomDouble);
         } catch (Throwable failure) {
             throw new BackoffFailure(failure);
         }

@@ -48,6 +48,9 @@ public final class Retry {
         if (backoff.initialDelayMs() == 0L || backoff.maxDelayMs() == 0L) {
             return 0L;
         }
+        if (backoff.multiplier() == 1.0d) {
+            return Math.min(backoff.initialDelayMs(), backoff.maxDelayMs());
+        }
         double value = backoff.initialDelayMs();
         for (int index = 0; index < retryCount && value < backoff.maxDelayMs(); index++) {
             value *= backoff.multiplier();
@@ -58,7 +61,7 @@ public final class Retry {
         if (value >= backoff.maxDelayMs()) {
             return backoff.maxDelayMs();
         }
-        return Math.min(backoff.maxDelayMs(), (long) Math.ceil(value));
+        return Math.min(backoff.maxDelayMs(), (long) value);
     }
 
     /** Executes the supplier under this retry policy. */

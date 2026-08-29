@@ -3,6 +3,8 @@
 
 package dev.vertique.kafka;
 
+import dev.vertique.resilience.RetryBackoff;
+
 /**
  * Configuration for the {@link ErrorStrategy#RETRY} error handling strategy.
  *
@@ -37,8 +39,8 @@ public record RetryConfig(
         if (backoffMs < 0) {
             throw new IllegalArgumentException("backoffMs must be >= 0, got " + backoffMs);
         }
-        if (backoffMultiplier < 1.0) {
-            throw new IllegalArgumentException("backoffMultiplier must be >= 1.0, got " + backoffMultiplier);
+        if (!Double.isFinite(backoffMultiplier) || backoffMultiplier < 1.0) {
+            throw new IllegalArgumentException("backoffMultiplier must be finite and >= 1.0, got " + backoffMultiplier);
         }
         if (exhaustedStrategy == ErrorStrategy.RETRY) {
             throw new IllegalArgumentException("exhaustedStrategy must not be RETRY (would cause infinite recursion)");
@@ -56,7 +58,7 @@ public record RetryConfig(
      * @return the delay in milliseconds, never exceeding {@code maxBackoffMs}
      */
     public long delayMs(int retryCount) {
-        long computed = (long) (backoffMs * Math.pow(backoffMultiplier, retryCount));
-        return Math.min(computed, maxBackoffMs);
+        return RetryBackoff.exponential(backoffMs, backoffMultiplier, maxBackoffMs, 0L)
+                .delayMs(retryCount);
     }
 }
