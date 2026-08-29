@@ -99,7 +99,7 @@ failed/backlogged outcome instead of deletion.
 
 Failures are retained for the next run and use capped exponential retry backoff: 15 minutes,
 30 minutes, then up to a one-hour ceiling. Each sweep sends a bounded `CacheCleanupObservation`
-through the provider-neutral `CacheObserver.onCleanup` seam. The observation contains the
+through the provider-neutral `CacheObserver` seam as sealed `CacheCleanupCompleted` events. The event contains the
 connection profile, namespace, success/error outcome, scanned count, deleted count, backlog
 indicator, and failure flag. An observer failure does not fail the maintenance operation. A
 metrics adapter may translate this observation into backend-specific counters without adding a

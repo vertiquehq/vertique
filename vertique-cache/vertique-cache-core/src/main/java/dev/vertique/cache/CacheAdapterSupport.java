@@ -75,6 +75,44 @@ public final class CacheAdapterSupport {
     }
 
     /**
+     * Resolves an exact-eviction handle for a logical cache whose definition was
+     * registered by an annotation declaration (co-located or cross-method). The handle
+     * carries the registered definition's mode, TTL, identity, and anonymous policy, so
+     * an eviction can never silently address a different identity bucket than its
+     * target cache. A programmatic-only definition deliberately never satisfies an
+     * annotation eviction target; programmatic caches are invalidated through their own
+     * {@code Cache} handles.
+     */
+    public java.util.Optional<Cache<Object, Object>> evictionFor(String name, Function<Object, Object> selector) {
+        return builder.registered(name)
+                .filter(CacheBuilder.RegisteredDefinition::annotationDeclared)
+                .map(definition -> builder.buildUnregistered(
+                        name,
+                        definition.valueType(),
+                        definition.mode(),
+                        definition.ttlSeconds(),
+                        definition.identity(),
+                        definition.anonymous(),
+                        compose(selector),
+                        false,
+                        null));
+    }
+
+    /**
+     * Emits the terminal {@code EVICT}/{@code UNRESOLVED_TARGET} observation for an
+     * exact eviction that names a logical cache with no registered definition.
+     */
+    public void observeUnresolvedEviction(String name) {
+        CacheObservationSupport.completed(
+                builder.observers(),
+                "none",
+                dev.vertique.cache.spi.event.CacheOperation.EVICT,
+                name,
+                dev.vertique.cache.spi.event.CacheOutcome.UNRESOLVED_TARGET,
+                System.nanoTime());
+    }
+
+    /**
      * Adapter-declared cache definition. The selector maps invocation input to one
      * supported scalar or a {@link CacheKey}; a null selector declares a
      * value-independent constant operation key. {@code selectorPaths} carries the

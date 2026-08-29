@@ -10,7 +10,9 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import dev.vertique.cache.spi.CacheObservation;
+import dev.vertique.cache.spi.event.CacheOperation;
+import dev.vertique.cache.spi.event.CacheOperationCompleted;
+import dev.vertique.cache.spi.event.CacheOutcome;
 import dev.vertique.opentelemetry.TracingConfig;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
@@ -36,7 +38,8 @@ class CacheObserverTest {
             CacheTracingObserver observer =
                     new CacheTracingObserver(tracer, TracingConfig.builder().build());
 
-            observer.onOperation(new CacheObservation("get", "redis", "profiles", "miss", Duration.ofMillis(1)));
+            observer.onEvent(new CacheOperationCompleted(
+                    CacheOperation.GET, "redis", "profiles", CacheOutcome.MISS, Duration.ofMillis(1)));
 
             List<io.opentelemetry.sdk.trace.data.SpanData> spans = exporter.getFinishedSpanItems();
             assertEquals(1, spans.size());
@@ -59,7 +62,7 @@ class CacheObserverTest {
         CacheTracingObserver observer =
                 new CacheTracingObserver(tracer, TracingConfig.builder().build());
 
-        assertDoesNotThrow(() -> observer.onOperation(
-                new CacheObservation("get", "redis", "profiles", "failure", Duration.ofMillis(1))));
+        assertDoesNotThrow(() -> observer.onEvent(new CacheOperationCompleted(
+                CacheOperation.GET, "redis", "profiles", CacheOutcome.ERROR, Duration.ofMillis(1))));
     }
 }

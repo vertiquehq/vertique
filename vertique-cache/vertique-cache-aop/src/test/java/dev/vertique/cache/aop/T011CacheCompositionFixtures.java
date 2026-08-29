@@ -11,8 +11,9 @@ import dev.vertique.aop.MethodInterceptor;
 import dev.vertique.cache.CacheIdentity;
 import dev.vertique.cache.CacheMode;
 import dev.vertique.cache.config.CacheConfig;
-import dev.vertique.cache.spi.CacheObservation;
 import dev.vertique.cache.spi.CacheObserver;
+import dev.vertique.cache.spi.event.CacheEvent;
+import dev.vertique.cache.spi.event.CacheOperationCompleted;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.codegen.MethodMetadata;
 import dev.vertique.core.codegen.ParameterMetadata;
@@ -24,7 +25,6 @@ import jakarta.inject.Singleton;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.lang.reflect.Type;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -42,11 +42,6 @@ public final class T011CacheCompositionFixtures {
         return new CacheConfig(enabled, mode, 60, 86_400, "vertx", 1_024, 1_048_576, 100, 100, Map.of());
     }
 
-    /** Builds observation data containing only the stable T011 dimensions. */
-    public static CacheObservation observation(String provider, String outcome) {
-        return new CacheObservation("get", provider, "profiles", outcome, Duration.ofMillis(1));
-    }
-
     /** Awaits a Vert.x future with a bounded test timeout. */
     public static <T> T await(Future<T> future) throws Exception {
         return future.toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
@@ -54,17 +49,19 @@ public final class T011CacheCompositionFixtures {
 
     /** Captures neutral observations without exposing keys, arguments, or payloads. */
     public static final class RecordingObserver implements CacheObserver {
-        private final List<CacheObservation> observations = new ArrayList<>();
+        private final List<CacheOperationCompleted> observations = new ArrayList<>();
 
         @Inject
         public RecordingObserver() {}
 
         @Override
-        public void onOperation(CacheObservation observation) {
-            observations.add(observation);
+        public void onEvent(CacheEvent event) {
+            if (event instanceof CacheOperationCompleted completed) {
+                observations.add(completed);
+            }
         }
 
-        public List<CacheObservation> observations() {
+        public List<CacheOperationCompleted> observations() {
             return List.copyOf(observations);
         }
     }

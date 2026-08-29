@@ -6,7 +6,8 @@ package dev.vertique.cache;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 import dev.vertique.cache.spi.CacheObserver;
-import dev.vertique.cache.spi.CacheRegion;
+import dev.vertique.cache.spi.event.CacheOperation;
+import dev.vertique.cache.spi.event.CacheOutcome;
 import java.time.Duration;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
@@ -19,12 +20,12 @@ class CacheObservationSupportTest {
             throw new AssertionError("telemetry failure");
         };
 
-        assertDoesNotThrow(() -> CacheObservationSupport.observe(
+        assertDoesNotThrow(() -> CacheObservationSupport.completed(
                 Set.of(failingObserver),
                 "caffeine",
-                "get",
-                new CacheRegion("cache", "profiles", 1),
-                "hit",
+                CacheOperation.GET,
+                "profiles",
+                CacheOutcome.HIT,
                 System.nanoTime() - Duration.ofMillis(1).toNanos()));
     }
 }

@@ -9,6 +9,8 @@ import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.cache.spi.CacheRegion;
 import dev.vertique.cache.spi.CacheValueDescriptor;
 import dev.vertique.cache.spi.ResolvedCacheKey;
+import dev.vertique.cache.spi.event.CacheOperation;
+import dev.vertique.cache.spi.event.CacheOutcome;
 import dev.vertique.security.PrincipalRef;
 import dev.vertique.security.PrincipalType;
 import dev.vertique.security.SecurityIdentity;
@@ -72,15 +74,15 @@ public final class Cache<K, V> {
             return Future.failedFuture(new NullPointerException("loader"));
         }
         if (input == null) {
-            observe("none", "get", "bypass_selector", System.nanoTime());
+            observe("none", CacheOperation.GET, CacheOutcome.BYPASS_SELECTOR, System.nanoTime());
             return invokeLoader(input, loader);
         }
         if (!config.enabled()) {
-            observe("none", "get", "disabled", System.nanoTime());
+            observe("none", CacheOperation.GET, CacheOutcome.DISABLED, System.nanoTime());
             return invokeLoader(input, loader);
         }
         if (asynchronousOnly && mode == CacheMode.CLUSTERED) {
-            observe("none", "get", "bypass_selector", System.nanoTime());
+            observe("none", CacheOperation.GET, CacheOutcome.BYPASS_SELECTOR, System.nanoTime());
             return invokeLoader(input, loader);
         }
         ResolvedCacheKey key;
@@ -88,15 +90,17 @@ public final class Cache<K, V> {
         try {
             key = key(input);
             if (key.canonical().getBytes(java.nio.charset.StandardCharsets.UTF_8).length > config.maxKeyBytes()) {
-                observe("none", "get", "bypass_key_size", System.nanoTime());
+                observe("none", CacheOperation.GET, CacheOutcome.BYPASS_KEY_SIZE, System.nanoTime());
                 return invokeLoader(input, loader);
             }
             selection = stores.resolve(mode);
         } catch (RuntimeException invalidOrUnavailable) {
             observe(
                     "none",
-                    "get",
-                    invalidOrUnavailable instanceof IdentityUnavailable ? "bypass_identity" : "bypass_selector",
+                    CacheOperation.GET,
+                    invalidOrUnavailable instanceof IdentityUnavailable
+                            ? CacheOutcome.BYPASS_IDENTITY
+                            : CacheOutcome.BYPASS_SELECTOR,
                     System.nanoTime());
             return invokeLoader(input, loader);
         }
@@ -106,29 +110,32 @@ public final class Cache<K, V> {
             lookup = bounded(
                     selection.store().get(key, descriptor()),
                     selection.providerId(),
-                    "get",
+                    CacheOperation.GET,
                     startedAt,
                     result -> result.succeeded() && result.result().isPresent()
-                            ? "late_hit"
-                            : result.succeeded() ? "late_miss" : "late_error");
+                            ? CacheOutcome.HIT
+                            : result.succeeded() ? CacheOutcome.MISS : CacheOutcome.ERROR);
         } catch (Throwable failure) {
-            observe(selection.providerId(), "get", "error", startedAt);
+            observe(selection.providerId(), CacheOperation.GET, CacheOutcome.ERROR, startedAt);
             return loadAndStore(input, loader, selection, key);
         }
-        return lookup.onFailure(failure ->
-                        observe(selection.providerId(), "get", isTimeout(failure) ? "timeout" : "error", startedAt))
+        return lookup.onFailure(failure -> observe(
+                        selection.providerId(),
+                        CacheOperation.GET,
+                        isTimeout(failure) ? CacheOutcome.TIMEOUT : CacheOutcome.ERROR,
+                        startedAt))
                 .recover(failure -> Future.succeededFuture(null))
                 .compose(hit -> {
                     if (hit == null) {
                         return loadAndStore(input, loader, selection, key);
                     }
                     if (hit.isPresent()) {
-                        observe(selection.providerId(), "get", "hit", startedAt);
+                        observe(selection.providerId(), CacheOperation.GET, CacheOutcome.HIT, startedAt);
                         @SuppressWarnings("unchecked")
                         V value = (V) hit.get();
                         return Future.succeededFuture(value);
                     }
-                    observe(selection.providerId(), "get", "miss", startedAt);
+                    observe(selection.providerId(), CacheOperation.GET, CacheOutcome.MISS, startedAt);
                     return loadAndStore(input, loader, selection, key);
                 });
     }
@@ -136,37 +143,43 @@ public final class Cache<K, V> {
     /** Invalidates the entry for the current identity bucket. */
     public Future<Boolean> invalidate(K input) {
         if (input == null) {
-            observe("none", "evict", "bypass_selector", System.nanoTime());
+            observe("none", CacheOperation.EVICT, CacheOutcome.BYPASS_SELECTOR, System.nanoTime());
             return Future.succeededFuture(false);
         }
         if (!config.enabled()) {
-            observe("none", "evict", "disabled", System.nanoTime());
+            observe("none", CacheOperation.EVICT, CacheOutcome.DISABLED, System.nanoTime());
             return Future.succeededFuture(false);
         }
         try {
             CacheStoreSelection selection = stores.resolve(mode);
             ResolvedCacheKey key = key(input);
             if (key.canonical().getBytes(java.nio.charset.StandardCharsets.UTF_8).length > config.maxKeyBytes()) {
-                observe(selection.providerId(), "evict", "bypass_key_size", System.nanoTime());
+                observe(selection.providerId(), CacheOperation.EVICT, CacheOutcome.BYPASS_KEY_SIZE, System.nanoTime());
                 return Future.succeededFuture(false);
             }
             long startedAt = System.nanoTime();
             return bounded(
                             selection.store().evict(key),
                             selection.providerId(),
-                            "evict",
+                            CacheOperation.EVICT,
                             startedAt,
-                            result -> result.succeeded() ? "late_success" : "late_error")
-                    .onSuccess(ignored -> observe(selection.providerId(), "evict", "success", startedAt))
+                            result -> result.succeeded() ? CacheOutcome.SUCCESS : CacheOutcome.ERROR)
+                    .onSuccess(ignored ->
+                            observe(selection.providerId(), CacheOperation.EVICT, CacheOutcome.SUCCESS, startedAt))
                     .onFailure(failure -> observe(
-                            selection.providerId(), "evict", isTimeout(failure) ? "timeout" : "error", startedAt))
+                            selection.providerId(),
+                            CacheOperation.EVICT,
+                            isTimeout(failure) ? CacheOutcome.TIMEOUT : CacheOutcome.ERROR,
+                            startedAt))
                     .map(true)
                     .recover(ignored -> Future.succeededFuture(false));
         } catch (Throwable failure) {
             observe(
                     "none",
-                    "evict",
-                    failure instanceof IdentityUnavailable ? "bypass_identity" : "bypass_selector",
+                    CacheOperation.EVICT,
+                    failure instanceof IdentityUnavailable
+                            ? CacheOutcome.BYPASS_IDENTITY
+                            : CacheOutcome.BYPASS_SELECTOR,
                     System.nanoTime());
             return Future.succeededFuture(false);
         }
@@ -175,7 +188,7 @@ public final class Cache<K, V> {
     /** Invalidates the complete logical cache region. */
     public Future<Boolean> invalidateAll() {
         if (!config.enabled()) {
-            observe("none", "clear", "disabled", System.nanoTime());
+            observe("none", CacheOperation.CLEAR, CacheOutcome.DISABLED, System.nanoTime());
             return Future.succeededFuture(false);
         }
         try {
@@ -184,16 +197,20 @@ public final class Cache<K, V> {
             return bounded(
                             selection.store().clear(region),
                             selection.providerId(),
-                            "clear",
+                            CacheOperation.CLEAR,
                             startedAt,
-                            result -> result.succeeded() ? "late_success" : "late_error")
-                    .onSuccess(ignored -> observe(selection.providerId(), "clear", "success", startedAt))
+                            result -> result.succeeded() ? CacheOutcome.SUCCESS : CacheOutcome.ERROR)
+                    .onSuccess(ignored ->
+                            observe(selection.providerId(), CacheOperation.CLEAR, CacheOutcome.SUCCESS, startedAt))
                     .onFailure(failure -> observe(
-                            selection.providerId(), "clear", isTimeout(failure) ? "timeout" : "error", startedAt))
+                            selection.providerId(),
+                            CacheOperation.CLEAR,
+                            isTimeout(failure) ? CacheOutcome.TIMEOUT : CacheOutcome.ERROR,
+                            startedAt))
                     .map(true)
                     .recover(ignored -> Future.succeededFuture(false));
         } catch (Throwable failure) {
-            observe("none", "clear", "error", System.nanoTime());
+            observe("none", CacheOperation.CLEAR, CacheOutcome.ERROR, System.nanoTime());
             return Future.succeededFuture(false);
         }
     }
@@ -213,7 +230,7 @@ public final class Cache<K, V> {
             K input, Function<? super K, Future<V>> loader, CacheStoreSelection selection, ResolvedCacheKey key) {
         return invokeLoader(input, loader).compose(value -> {
             if (value == null) {
-                observe(selection.providerId(), "put", "skipped_null", System.nanoTime());
+                observe(selection.providerId(), CacheOperation.PUT, CacheOutcome.SKIPPED_NULL, System.nanoTime());
                 return Future.succeededFuture((V) null);
             }
             long putStartedAt = System.nanoTime();
@@ -221,16 +238,20 @@ public final class Cache<K, V> {
                 Future<Void> put = bounded(
                         selection.store().put(key, descriptor(), value, Duration.ofSeconds(ttlSeconds)),
                         selection.providerId(),
-                        "put",
+                        CacheOperation.PUT,
                         putStartedAt,
-                        result -> result.succeeded() ? "late_success" : "late_error");
-                return put.onSuccess(ignored -> observe(selection.providerId(), "put", "success", putStartedAt))
+                        result -> result.succeeded() ? CacheOutcome.SUCCESS : CacheOutcome.ERROR);
+                return put.onSuccess(ignored ->
+                                observe(selection.providerId(), CacheOperation.PUT, CacheOutcome.SUCCESS, putStartedAt))
                         .onFailure(failure -> observe(
-                                selection.providerId(), "put", isTimeout(failure) ? "timeout" : "error", putStartedAt))
+                                selection.providerId(),
+                                CacheOperation.PUT,
+                                isTimeout(failure) ? CacheOutcome.TIMEOUT : CacheOutcome.ERROR,
+                                putStartedAt))
                         .recover(ignored -> Future.succeededFuture())
                         .map(value);
             } catch (Throwable failure) {
-                observe(selection.providerId(), "put", "error", putStartedAt);
+                observe(selection.providerId(), CacheOperation.PUT, CacheOutcome.ERROR, putStartedAt);
                 return Future.succeededFuture(value);
             }
         });
@@ -315,22 +336,24 @@ public final class Cache<K, V> {
         return result.toString();
     }
 
-    private void observe(String provider, String operation, String outcome, long startedAt) {
-        CacheObservationSupport.observe(observers, provider, operation, region, outcome, startedAt);
+    private void observe(String provider, CacheOperation operation, CacheOutcome outcome, long startedAt) {
+        CacheObservationSupport.completed(observers, provider, operation, region.name(), outcome, startedAt);
     }
 
     private <T> Future<T> bounded(
             Future<T> future,
             String provider,
-            String operation,
+            CacheOperation operation,
             long startedAt,
-            Function<io.vertx.core.AsyncResult<T>, String> lateOutcome) {
+            Function<io.vertx.core.AsyncResult<T>, CacheOutcome> lateOutcome) {
         if (future == null) return Future.failedFuture(new NullPointerException("cache store returned null Future"));
         AtomicBoolean sourceSettled = new AtomicBoolean();
         AtomicBoolean timedOut = new AtomicBoolean();
         future.onComplete(result -> {
             sourceSettled.set(true);
-            if (timedOut.get()) observe(provider, operation, lateOutcome.apply(result), startedAt);
+            if (timedOut.get())
+                CacheObservationSupport.late(
+                        observers, provider, operation, region.name(), lateOutcome.apply(result), startedAt);
         });
         Future<T> bounded = future.timeout(config.backendTimeoutMs(), TimeUnit.MILLISECONDS);
         return bounded.recover(failure -> {

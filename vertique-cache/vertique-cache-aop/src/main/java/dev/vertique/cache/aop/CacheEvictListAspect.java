@@ -36,11 +36,7 @@ final class CacheEvictListAspect implements AspectProvider<CacheEvict.List> {
         return invocation -> invocation.proceed().compose(result -> {
             List<Future<Boolean>> operations = new ArrayList<>();
             for (CacheAnnotationAdapter.PreparedEviction eviction : evictions) {
-                if (eviction.clear()) {
-                    operations.add(eviction.cache().invalidateAll());
-                } else {
-                    operations.add(eviction.cache().invalidate(invocation.arguments()));
-                }
+                operations.add(eviction.run(invocation.arguments()));
             }
             return Future.all(operations).map(ignored -> result);
         });

@@ -3,9 +3,11 @@
 
 package dev.vertique.micrometer.cache;
 
-import dev.vertique.cache.spi.CacheCleanupObservation;
-import dev.vertique.cache.spi.CacheObservation;
 import dev.vertique.cache.spi.CacheObserver;
+import dev.vertique.cache.spi.event.CacheCleanupCompleted;
+import dev.vertique.cache.spi.event.CacheEvent;
+import dev.vertique.cache.spi.event.CacheLateCompletion;
+import dev.vertique.cache.spi.event.CacheOperationCompleted;
 import dev.vertique.micrometer.MetricsConfig;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -13,9 +15,11 @@ import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.Timer;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
+import java.time.Duration;
+import java.util.Locale;
 import java.util.Optional;
 
-/** Records redacted cache observations as bounded Micrometer timers and cleanup counters. */
+/** Records sealed cache events as bounded Micrometer timers and cleanup counters. */
 @Singleton
 public final class CacheMetricsObserver implements CacheObserver {
     private static final String CLEANUP_RUNS_COUNTER = "cache.cleanup.runs";
@@ -54,48 +58,51 @@ public final class CacheMetricsObserver implements CacheObserver {
     }
 
     @Override
-    public void onOperation(CacheObservation observation) {
+    public void onEvent(CacheEvent event) {
         if (!enabled) {
             return;
         }
         try {
-            Timer.builder("cache." + bounded(observation.operation()))
-                    .tag("provider", bounded(observation.provider()))
-                    .tag("cache", bounded(observation.cacheName()))
-                    .tag("outcome", bounded(observation.outcome()))
-                    .register(registry)
-                    .record(observation.duration());
+            switch (event) {
+                case CacheOperationCompleted completed ->
+                    operation(
+                            completed.operation().name(),
+                            completed.provider(),
+                            completed.cacheName(),
+                            completed.outcome().name().toLowerCase(Locale.ROOT),
+                            completed.elapsed());
+                case CacheLateCompletion late ->
+                    operation(
+                            late.operation().name(),
+                            late.provider(),
+                            late.cacheName(),
+                            "late_" + late.outcome().name().toLowerCase(Locale.ROOT),
+                            late.elapsed());
+                case CacheCleanupCompleted cleanup -> cleanup(cleanup);
+            }
         } catch (Throwable ignored) {
             // Telemetry must never alter cache behavior.
         }
     }
 
-    /**
-     * Records one cleanup outcome and its bounded scan, delete, and backlog counts.
-     *
-     * <p>The cleanup SPI intentionally exposes counters rather than elapsed time, so this
-     * callback records counters only. Registry failures are swallowed to keep maintenance
-     * fail-open.
-     *
-     * @param observation the redacted cleanup outcome; never {@code null}
-     */
-    @Override
-    public void onCleanup(CacheCleanupObservation observation) {
-        if (!enabled) {
-            return;
-        }
-        try {
-            Tags tags = Tags.of(
-                    "profile", observation.profile(),
-                    "namespace", observation.namespace(),
-                    "outcome", observation.outcome());
-            counter(CLEANUP_RUNS_COUNTER, tags).increment();
-            counter(CLEANUP_SCANNED_COUNTER, tags).increment(observation.scanned());
-            counter(CLEANUP_DELETED_COUNTER, tags).increment(observation.deleted());
-            counter(CLEANUP_BACKLOG_COUNTER, tags).increment(observation.backlog());
-        } catch (Throwable ignored) {
-            // Telemetry must never alter cache maintenance behavior.
-        }
+    private void operation(String operation, String provider, String cacheName, String outcome, Duration elapsed) {
+        Timer.builder("cache." + operation.toLowerCase(Locale.ROOT))
+                .tag("provider", bounded(provider))
+                .tag("cache", bounded(cacheName))
+                .tag("outcome", bounded(outcome))
+                .register(registry)
+                .record(elapsed);
+    }
+
+    private void cleanup(CacheCleanupCompleted cleanup) {
+        Tags tags = Tags.of(
+                "profile", cleanup.profile(),
+                "namespace", cleanup.namespace(),
+                "outcome", cleanup.outcome());
+        counter(CLEANUP_RUNS_COUNTER, tags).increment();
+        counter(CLEANUP_SCANNED_COUNTER, tags).increment(cleanup.scanned());
+        counter(CLEANUP_DELETED_COUNTER, tags).increment(cleanup.deleted());
+        counter(CLEANUP_BACKLOG_COUNTER, tags).increment(cleanup.backlog());
     }
 
     private Counter counter(String name, Tags tags) {

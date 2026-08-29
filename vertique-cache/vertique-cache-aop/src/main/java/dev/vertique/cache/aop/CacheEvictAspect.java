@@ -33,14 +33,11 @@ public final class CacheEvictAspect implements AspectProvider<CacheEvict> {
     public MethodInterceptor interceptor(MethodMetadata target, CacheEvict annotation) {
         CacheAnnotationAdapter.PreparedEviction eviction;
         try {
-            eviction = new CacheAnnotationAdapter.PreparedEviction(
-                    adapter.eviction(target, annotation), annotation.clear());
+            eviction = adapter.prepared(target, annotation);
         } catch (RuntimeException invalidDefinition) {
             return invocation -> invocation.proceed();
         }
-        return invocation -> invocation.proceed().compose(result -> (eviction.clear()
-                        ? eviction.cache().invalidateAll()
-                        : eviction.cache().invalidate(invocation.arguments()))
+        return invocation -> invocation.proceed().compose(result -> eviction.run(invocation.arguments())
                 .map(result));
     }
 }

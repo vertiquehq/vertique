@@ -11,11 +11,13 @@ import dev.vertique.aop.Invocation;
 import dev.vertique.cache.CacheIdentity;
 import dev.vertique.cache.CacheMode;
 import dev.vertique.cache.config.CacheConfig;
-import dev.vertique.cache.spi.CacheObservation;
 import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.cache.spi.CacheStore;
 import dev.vertique.cache.spi.CacheValueDescriptor;
 import dev.vertique.cache.spi.ResolvedCacheKey;
+import dev.vertique.cache.spi.event.CacheEvent;
+import dev.vertique.cache.spi.event.CacheOperationCompleted;
+import dev.vertique.cache.spi.event.CacheOutcome;
 import dev.vertique.core.codegen.MethodMetadata;
 import dev.vertique.core.codegen.ParameterMetadata;
 import dev.vertique.core.codegen.ReflectiveMethodMetadata;
@@ -37,7 +39,7 @@ class CacheAspectTest {
     @Test
     void localHitMissAndFailOpen() throws NoSuchMethodException {
         RecordingStore store = new RecordingStore();
-        List<CacheObservation> observations = new ArrayList<>();
+        List<CacheEvent> observations = new ArrayList<>();
         CacheObserver observer = observations::add;
         Cacheable annotation =
                 Target.class.getDeclaredMethod("value", String.class).getAnnotation(Cacheable.class);
@@ -76,7 +78,8 @@ class CacheAspectTest {
         assertEquals(2, targetCalls.get(), "a failed cache get must preserve the business path");
         assertFalse(observations.isEmpty(), "cache failures must be observable");
         assertTrue(observations.stream()
-                .anyMatch(observation -> observation.outcome().contains("error")));
+                .anyMatch(event -> event instanceof CacheOperationCompleted completed
+                        && completed.outcome() == CacheOutcome.ERROR));
     }
 
     @Test

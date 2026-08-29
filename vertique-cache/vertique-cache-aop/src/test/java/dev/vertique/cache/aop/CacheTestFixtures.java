@@ -124,6 +124,7 @@ final class CacheTestFixtures {
         @Override
         public Future<Void> evict(ResolvedCacheKey key) {
             evictCalls++;
+            lastKey = key;
             if (failEvictions) {
                 return Future.failedFuture("evict failed");
             }

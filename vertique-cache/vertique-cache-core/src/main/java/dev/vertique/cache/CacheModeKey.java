@@ -9,7 +9,11 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
-/** Internal Dagger key for provider-neutral cache-store contributions. */
+/**
+ * Provider SPI: the Dagger map key a cache provider module uses to contribute its
+ * {@code CacheStore} binding for one semantic {@link CacheMode}. This annotation and
+ * {@link CacheProviderIdKey} are the provider extension point, not internal machinery.
+ */
 @MapKey
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.METHOD)

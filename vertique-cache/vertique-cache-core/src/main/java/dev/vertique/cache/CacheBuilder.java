@@ -390,6 +390,32 @@ public final class CacheBuilder {
         return name;
     }
 
+    /** Immutable registered-definition policy snapshot for adapter eviction resolution. */
+    record RegisteredDefinition(
+            Type valueType,
+            CacheMode mode,
+            long ttlSeconds,
+            CacheIdentity identity,
+            AnonymousCachePolicy anonymous,
+            boolean annotationDeclared) {}
+
+    Optional<RegisteredDefinition> registered(String name) {
+        DefinitionFingerprint fingerprint = catalog.get(name);
+        return fingerprint == null
+                ? Optional.empty()
+                : Optional.of(new RegisteredDefinition(
+                        fingerprint.type(),
+                        fingerprint.mode(),
+                        fingerprint.ttl(),
+                        fingerprint.identity(),
+                        fingerprint.anonymous(),
+                        fingerprint.selectorPaths() != null));
+    }
+
+    Set<CacheObserver> observers() {
+        return observers;
+    }
+
     private void register(
             String name,
             Type type,

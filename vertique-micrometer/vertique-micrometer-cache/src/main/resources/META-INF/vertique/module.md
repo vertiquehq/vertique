@@ -38,7 +38,7 @@ these counters:
 | `cache.cleanup.deleted` | number of deleted keys |
 | `cache.cleanup.backlog` | backlog indicator/count |
 
-`CacheObservation` and `CacheCleanupObservation` contain redacted, bounded values supplied by the
+`CacheOperationCompleted`, `CacheLateCompletion`, and `CacheCleanupCompleted` events contain redacted, bounded values supplied by the
 cache modules. Registry failures are swallowed, so telemetry cannot change cache operations or
 Redis cleanup behavior.
 
@@ -68,5 +68,5 @@ must provide the required `MeterRegistry` binding.
 | Artifact | Purpose |
 |---|---|
 | `vertique-micrometer-core` | Provides the application `MeterRegistry` and metrics configuration when `MicrometerModule` is installed |
-| `vertique-cache-core` | Provides `CacheObserver`, `CacheObservation`, and `CacheCleanupObservation` |
+| `vertique-cache-core` | Provides `CacheObserver` and the sealed `dev.vertique.cache.spi.event` vocabulary |
 | `micrometer-core` | Supplies timers, counters, tags, and registry APIs |

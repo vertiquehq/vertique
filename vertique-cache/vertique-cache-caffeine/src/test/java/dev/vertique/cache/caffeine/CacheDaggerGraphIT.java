@@ -19,6 +19,7 @@ import dev.vertique.cache.aop.CacheAopModule;
 import dev.vertique.cache.aop.T011CacheCompositionFixtures;
 import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.cache.spi.CacheStore;
+import dev.vertique.cache.spi.event.CacheOperation;
 import dev.vertique.config.parser.ConfigParsingModule;
 import jakarta.inject.Singleton;
 import java.util.Map;
@@ -48,7 +49,8 @@ class CacheDaggerGraphIT {
                 CaffeineCacheStore.class,
                 component.providers().get(CacheMode.LOCAL).get());
         assertTrue(component.observer().observations().stream()
-                .allMatch(observation -> Set.of("get", "put").contains(observation.operation())));
+                .allMatch(observation ->
+                        Set.of(CacheOperation.GET, CacheOperation.PUT).contains(observation.operation())));
         assertTrue(component.observer().observations().stream()
                 .allMatch(observation -> Set.of("caffeine").contains(observation.provider())));
         assertFalse(component.observer().observations().toString().contains("raw-selector-is-not-observed"));

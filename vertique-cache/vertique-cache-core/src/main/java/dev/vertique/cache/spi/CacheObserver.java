@@ -3,21 +3,22 @@
 
 package dev.vertique.cache.spi;
 
-/** Optional provider-neutral observation seam for cache operations and cleanup outcomes. */
+import dev.vertique.cache.spi.event.CacheEvent;
+
+/**
+ * Optional provider-neutral observation seam for the sealed cache event vocabulary.
+ *
+ * <p>Events are emitted synchronously by the shared cache runtime (and by provider
+ * maintenance jobs for cleanup events). Implementations must remain bounded and
+ * non-blocking; observer failures are logged-and-suppressed by the emitter and never
+ * alter cache or business outcomes.
+ */
+@FunctionalInterface
 public interface CacheObserver {
     /**
-     * Observes one cache operation.
+     * Observes one redacted cache event.
      *
-     * @param observation redacted cache operation data
+     * @param event the sealed, immutable event payload
      */
-    void onOperation(CacheObservation observation);
-
-    /**
-     * Observes one physical cache cleanup outcome.
-     *
-     * <p>The default implementation keeps operation-only observers source-compatible.
-     *
-     * @param observation redacted, bounded cleanup outcome data
-     */
-    default void onCleanup(CacheCleanupObservation observation) {}
+    void onEvent(CacheEvent event);
 }

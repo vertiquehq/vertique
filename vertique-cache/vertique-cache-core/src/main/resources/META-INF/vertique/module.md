@@ -58,10 +58,15 @@ failures, and observer failures preserve the business invocation. A successful l
 miss may populate the provider-neutral `CacheStore`; a hit skips the target after the
 outer framework authorization boundary has run. Programmatic callers must invoke the handle
 only after their application authorization decision. The optional `CacheObserver` set is
-empty by default and receives redacted operation, provider, cache, outcome, and duration
-data without becoming a cache or telemetry dependency. The same observer seam exposes
-redacted cleanup outcomes through `CacheObserver.onCleanup(CacheCleanupObservation)`; the
-default method keeps operation-only observers source-compatible. Identity-scoped cache definitions use
+empty by default and receives the sealed `dev.vertique.cache.spi.event` vocabulary:
+`CacheOperationCompleted` (typed `CacheOperation`/`CacheOutcome` enums plus provider,
+cache name, and elapsed time), at most one `CacheLateCompletion` supplement after a
+timed-out operation, and provider-maintenance `CacheCleanupCompleted` events. Observers
+implement the single `onEvent(CacheEvent)` method, must remain bounded and
+non-blocking, and their failures are suppressed. A standalone annotation eviction whose
+target definition is not yet registered emits `EVICT`/`UNRESOLVED_TARGET` instead of
+silently addressing the wrong identity bucket; once the target is registered, the
+eviction resolves and reuses that definition's identity, mode, and TTL policy. Identity-scoped cache definitions use
 the standard `DefaultCacheIdentityResolver`, contributed by `CacheCoreModule`, to read
 the current `SecurityContext` from the framework `ContextHolder`. `ACTOR` uses the actor,
 `EFFECTIVE_PRINCIPAL` uses the subject when present and otherwise the actor, and

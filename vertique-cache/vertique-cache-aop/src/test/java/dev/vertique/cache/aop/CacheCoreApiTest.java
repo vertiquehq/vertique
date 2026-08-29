@@ -14,10 +14,11 @@ import dev.vertique.cache.CacheMode;
 import dev.vertique.cache.config.CacheConfig;
 import dev.vertique.cache.config.CacheEntryConfig;
 import dev.vertique.cache.spi.CacheIdentityResolver;
-import dev.vertique.cache.spi.CacheObservation;
 import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.cache.spi.CacheRegion;
 import dev.vertique.cache.spi.CacheStore;
+import dev.vertique.cache.spi.event.CacheEvent;
+import dev.vertique.cache.spi.event.CacheOperationCompleted;
 import java.lang.reflect.Method;
 import java.lang.reflect.RecordComponent;
 import java.lang.reflect.Type;
@@ -40,7 +41,7 @@ class CacheCoreApiTest {
             CacheConfig.class,
             CacheEntryConfig.class,
             CacheObserver.class,
-            CacheObservation.class,
+            CacheOperationCompleted.class,
             CacheIdentityResolver.class);
 
     @Test
@@ -106,8 +107,8 @@ class CacheCoreApiTest {
     private static boolean hasObserverSetSeam() {
         return CacheObserver.class.isInterface()
                 && Arrays.stream(CacheObserver.class.getDeclaredMethods())
-                        .anyMatch(method -> method.getParameterCount() == 1
-                                && method.getParameterTypes()[0] == CacheObservation.class);
+                        .anyMatch(method ->
+                                method.getParameterCount() == 1 && method.getParameterTypes()[0] == CacheEvent.class);
     }
 
     private static Class<?> loadModeKey() {

@@ -18,9 +18,8 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.vertique.cache.spi.CacheCleanupObservation;
-import dev.vertique.cache.spi.CacheObservation;
 import dev.vertique.cache.spi.CacheObserver;
+import dev.vertique.cache.spi.event.CacheCleanupCompleted;
 import dev.vertique.redis.RedisScanPage;
 import io.vertx.core.Future;
 import java.time.Duration;
@@ -235,12 +234,8 @@ class RedisCleanupJobTest {
     @DisplayName("isolates cleanup observer failures from the sweep result")
     void isolatesObserverFailure() throws Exception {
         RedisCleanupTestFixtures.RecordingObserver recordingObserver = new RedisCleanupTestFixtures.RecordingObserver();
-        CacheObserver failingObserver = new CacheObserver() {
-            @Override
-            public void onOperation(CacheObservation observation) {}
-
-            @Override
-            public void onCleanup(CacheCleanupObservation observation) {
+        CacheObserver failingObserver = event -> {
+            if (event instanceof CacheCleanupCompleted) {
                 throw new AssertionError("observer failure");
             }
         };

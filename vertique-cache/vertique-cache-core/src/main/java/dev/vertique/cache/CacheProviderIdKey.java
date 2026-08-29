@@ -9,7 +9,11 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
-/** Internal Dagger key for bounded provider diagnostic identifiers. */
+/**
+ * Provider SPI: the Dagger map key a cache provider module uses to contribute its
+ * bounded provider id for one semantic {@link CacheMode}. This annotation and
+ * {@link CacheModeKey} are the provider extension point, not internal machinery.
+ */
 @MapKey
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.METHOD)

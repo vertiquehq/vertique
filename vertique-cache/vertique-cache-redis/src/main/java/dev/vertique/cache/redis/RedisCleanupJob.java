@@ -4,8 +4,8 @@
 package dev.vertique.cache.redis;
 
 import dev.vertique.cache.config.CacheConfig;
-import dev.vertique.cache.spi.CacheCleanupObservation;
 import dev.vertique.cache.spi.CacheObserver;
+import dev.vertique.cache.spi.event.CacheCleanupCompleted;
 import dev.vertique.job.cron.CronExpression;
 import dev.vertique.job.cron.CronJobDefinition;
 import dev.vertique.job.cron.CronScheduler;
@@ -449,7 +449,7 @@ final class RedisCleanupJob {
     }
 
     private void observeCleanup(CleanupResult outcome) {
-        CacheCleanupObservation observation = new CacheCleanupObservation(
+        CacheCleanupCompleted observation = new CacheCleanupCompleted(
                 redisConfig.connection(),
                 redisConfig.namespace(),
                 outcome.failed() ? "error" : "success",
@@ -459,7 +459,7 @@ final class RedisCleanupJob {
                 outcome.failed());
         for (CacheObserver observer : observers) {
             try {
-                observer.onCleanup(observation);
+                observer.onEvent(observation);
             } catch (Throwable ignored) {
                 // Observer failures must not turn best-effort maintenance into an application failure.
             }

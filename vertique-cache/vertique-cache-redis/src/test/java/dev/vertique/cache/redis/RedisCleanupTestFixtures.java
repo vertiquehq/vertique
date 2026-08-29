@@ -6,9 +6,9 @@ package dev.vertique.cache.redis;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import dev.vertique.cache.spi.CacheCleanupObservation;
-import dev.vertique.cache.spi.CacheObservation;
 import dev.vertique.cache.spi.CacheObserver;
+import dev.vertique.cache.spi.event.CacheCleanupCompleted;
+import dev.vertique.cache.spi.event.CacheEvent;
 import dev.vertique.redis.RedisPrimaryNode;
 import dev.vertique.redis.RedisScanPage;
 import dev.vertique.redis.RedisTopologyOperations;
@@ -121,14 +121,13 @@ final class RedisCleanupTestFixtures {
     }
 
     static final class RecordingObserver implements CacheObserver {
-        final List<CacheCleanupObservation> records = new ArrayList<>();
+        final List<CacheCleanupCompleted> records = new ArrayList<>();
 
         @Override
-        public void onOperation(CacheObservation observation) {}
-
-        @Override
-        public void onCleanup(CacheCleanupObservation observation) {
-            records.add(observation);
+        public void onEvent(CacheEvent event) {
+            if (event instanceof CacheCleanupCompleted cleanup) {
+                records.add(cleanup);
+            }
         }
     }
 

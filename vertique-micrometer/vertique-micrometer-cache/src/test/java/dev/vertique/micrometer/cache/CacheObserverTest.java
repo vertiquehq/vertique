@@ -8,8 +8,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
-import dev.vertique.cache.spi.CacheCleanupObservation;
-import dev.vertique.cache.spi.CacheObservation;
+import dev.vertique.cache.spi.event.CacheCleanupCompleted;
+import dev.vertique.cache.spi.event.CacheOperation;
+import dev.vertique.cache.spi.event.CacheOperationCompleted;
+import dev.vertique.cache.spi.event.CacheOutcome;
 import dev.vertique.micrometer.MetricsConfig;
 import io.micrometer.core.instrument.Meter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -24,7 +26,8 @@ class CacheObserverTest {
         CacheMetricsObserver observer =
                 new CacheMetricsObserver(registry, MetricsConfig.builder().build());
 
-        observer.onOperation(new CacheObservation("get", "caffeine", "profiles", "hit", Duration.ofMillis(1)));
+        observer.onEvent(new CacheOperationCompleted(
+                CacheOperation.GET, "caffeine", "profiles", CacheOutcome.HIT, Duration.ofMillis(1)));
 
         Meter meter = registry.find("cache.get")
                 .tag("provider", "caffeine")
@@ -44,8 +47,9 @@ class CacheObserverTest {
         CacheMetricsObserver observer = new CacheMetricsObserver(
                 registry, MetricsConfig.builder().enabled(false).build());
 
-        observer.onOperation(new CacheObservation("get", "redis", "profiles", "miss", Duration.ofMillis(1)));
-        observer.onCleanup(new CacheCleanupObservation("primary", "profiles", "success", 4, 3, 1, false));
+        observer.onEvent(new CacheOperationCompleted(
+                CacheOperation.GET, "redis", "profiles", CacheOutcome.MISS, Duration.ofMillis(1)));
+        observer.onEvent(new CacheCleanupCompleted("primary", "profiles", "success", 4, 3, 1, false));
 
         assertFalse(registry.getMeters().stream()
                 .anyMatch(meter -> meter.getId().getName().startsWith("cache.")));
@@ -57,10 +61,10 @@ class CacheObserverTest {
                 org.mockito.Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class),
                 MetricsConfig.builder().build());
 
-        assertDoesNotThrow(() -> observer.onOperation(
-                new CacheObservation("get", "redis", "profiles", "failure", Duration.ofMillis(1))));
+        assertDoesNotThrow(() -> observer.onEvent(new CacheOperationCompleted(
+                CacheOperation.GET, "redis", "profiles", CacheOutcome.ERROR, Duration.ofMillis(1))));
         assertDoesNotThrow(
-                () -> observer.onCleanup(new CacheCleanupObservation("primary", "profiles", "failure", 0, 0, 1, true)));
+                () -> observer.onEvent(new CacheCleanupCompleted("primary", "profiles", "failure", 0, 0, 1, true)));
     }
 
     @Test
@@ -69,7 +73,7 @@ class CacheObserverTest {
         CacheMetricsObserver observer =
                 new CacheMetricsObserver(registry, MetricsConfig.builder().build());
 
-        observer.onCleanup(new CacheCleanupObservation("primary", "profiles", "success", 4, 3, 1, false));
+        observer.onEvent(new CacheCleanupCompleted("primary", "profiles", "success", 4, 3, 1, false));
 
         assertEquals(
                 1.0,

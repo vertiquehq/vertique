@@ -6,17 +6,16 @@ package dev.vertique.cache;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-import dev.vertique.cache.spi.CacheCleanupObservation;
+import dev.vertique.cache.spi.event.CacheCleanupCompleted;
 import org.junit.jupiter.api.Test;
 
-class CacheCleanupObservationTest {
+class CacheCleanupCompletedTest {
 
     @Test
     void truncatesDimensionLabelsToTheContractBound() {
         String longLabel = "x".repeat(65);
 
-        CacheCleanupObservation observation =
-                new CacheCleanupObservation(longLabel, longLabel, longLabel, 1, 2, 3, false);
+        CacheCleanupCompleted observation = new CacheCleanupCompleted(longLabel, longLabel, longLabel, 1, 2, 3, false);
 
         assertEquals(64, observation.profile().length());
         assertEquals(64, observation.namespace().length());
@@ -27,18 +26,18 @@ class CacheCleanupObservationTest {
     void rejectsMissingBlankAndNegativeObservationValues() {
         assertThrows(
                 NullPointerException.class,
-                () -> new CacheCleanupObservation(null, "namespace", "success", 0, 0, 0, false));
+                () -> new CacheCleanupCompleted(null, "namespace", "success", 0, 0, 0, false));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> new CacheCleanupObservation("profile", " ", "success", 0, 0, 0, false));
+                () -> new CacheCleanupCompleted("profile", " ", "success", 0, 0, 0, false));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> new CacheCleanupObservation("profile", "namespace", "success", -1, 0, 0, false));
+                () -> new CacheCleanupCompleted("profile", "namespace", "success", -1, 0, 0, false));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> new CacheCleanupObservation("profile", "namespace", "success", 0, -1, 0, false));
+                () -> new CacheCleanupCompleted("profile", "namespace", "success", 0, -1, 0, false));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> new CacheCleanupObservation("profile", "namespace", "success", 0, 0, -1, false));
+                () -> new CacheCleanupCompleted("profile", "namespace", "success", 0, 0, -1, false));
     }
 }
