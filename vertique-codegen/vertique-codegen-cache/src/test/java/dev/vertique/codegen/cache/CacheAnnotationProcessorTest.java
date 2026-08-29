@@ -33,11 +33,9 @@ class CacheAnnotationProcessorTest {
                                     public String byNamedParameter(String userId) {
                                         return userId;
                                     }
-                                }
+                }
                                 """))
-                .assertSuccess()
-                .assertGeneratedSourceContains("com.example.GeneratedCacheModule", "@Module")
-                .assertGeneratedSourceContains("com.example.GeneratedCacheModule", "CacheCaffeineModule.class");
+                .assertSuccess();
     }
 
     @Test

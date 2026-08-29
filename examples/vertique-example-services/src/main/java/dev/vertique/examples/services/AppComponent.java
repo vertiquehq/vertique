@@ -6,13 +6,13 @@ package dev.vertique.examples.services;
 import dagger.Component;
 import dev.vertique.application.VertiqueApp;
 import dev.vertique.application.VertiqueApplicationComponent;
+import dev.vertique.cache.caffeine.CacheCaffeineModule;
 import dev.vertique.config.parser.ConfigParsingModule;
 import dev.vertique.core.VertxModule;
 import dev.vertique.core.lifecycle.CoreLifecycleStepsModule;
 import dev.vertique.examples.services.resource.GeneratedJaxRsResourcesModule;
 import dev.vertique.examples.services.security.AuthzEventCollector;
 import dev.vertique.examples.services.service.GeneratedAopModule;
-import dev.vertique.examples.services.service.GeneratedCacheModule;
 import dev.vertique.examples.services.service.GeneratedServicesModule;
 import dev.vertique.management.ManagementModule;
 import dev.vertique.rest.auth.jwt.JwtAuthModule;
@@ -58,8 +58,7 @@ import jakarta.inject.Singleton;
  *       produced by {@code vertique-codegen-jaxrs} at compile time</li>
  *   <li>{@link GeneratedAopModule} — auto-generated AOP proxy bindings for cache-aware service
  *       handlers</li>
- *   <li>{@link GeneratedCacheModule} — auto-generated cache metadata and local Caffeine provider
- *       composition produced by {@code vertique-codegen-cache}</li>
+ *   <li>{@link CacheCaffeineModule} — explicit local Caffeine provider composition</li>
  *   <li>{@link GeneratedServicesModule} — auto-generated singleton typed-client and
  *       {@code ServiceContractContributor} bindings produced by
  *       {@code vertique-codegen-services} at compile time. Drives
@@ -92,7 +91,7 @@ import jakarta.inject.Singleton;
             AppModule.class,
             GeneratedJaxRsResourcesModule.class,
             GeneratedAopModule.class,
-            GeneratedCacheModule.class,
+            CacheCaffeineModule.class,
             GeneratedServicesModule.class,
             JwtAuthModule.class,
             SecurityAuthzModule.class,

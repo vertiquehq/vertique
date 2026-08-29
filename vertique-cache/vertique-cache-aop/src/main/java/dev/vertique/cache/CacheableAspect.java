@@ -5,8 +5,6 @@ package dev.vertique.cache;
 
 import dev.vertique.aop.AspectProvider;
 import dev.vertique.aop.MethodInterceptor;
-import dev.vertique.cache.config.CacheConfig;
-import dev.vertique.cache.spi.CacheIdentityResolver;
 import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.cache.spi.CacheStore;
 import dev.vertique.core.codegen.MethodMetadata;
@@ -17,30 +15,31 @@ import java.util.Set;
 /** Annotation adapter that delegates cache behavior to a prepared {@link Cache}. */
 @Singleton
 public final class CacheableAspect implements AspectProvider<Cacheable> {
-    private final CacheBuilder builder;
+    private final CacheAnnotationAdapter adapter;
 
     @Inject
-    CacheableAspect(CacheBuilder builder) {
-        this.builder = builder;
+    CacheableAspect(CacheAnnotationAdapter adapter) {
+        this.adapter = adapter;
     }
 
     /** Direct construction hook for isolated adapter tests. */
-    public CacheableAspect(CacheStore store, CacheConfig config, Set<CacheObserver> observers) {
-        this(CacheBuilder.forTesting(store, config, observers, Set.of()));
+    public CacheableAspect(
+            CacheStore store, dev.vertique.cache.config.CacheConfig config, Set<CacheObserver> observers) {
+        this(new CacheAnnotationAdapter(store, config, observers));
     }
 
     /** Direct construction hook for isolated adapter tests with a custom identity resolver. */
     public CacheableAspect(
             CacheStore store,
-            CacheConfig config,
+            dev.vertique.cache.config.CacheConfig config,
             Set<CacheObserver> observers,
-            Set<CacheIdentityResolver> identityResolvers) {
-        this(CacheBuilder.forTesting(store, config, observers, identityResolvers));
+            Set<dev.vertique.cache.spi.CacheIdentityResolver> identityResolvers) {
+        this(new CacheAnnotationAdapter(store, config, observers, identityResolvers));
     }
 
     @Override
     public MethodInterceptor interceptor(MethodMetadata target, Cacheable annotation) {
-        Cache<Object, Object> cache = builder.annotation(target, annotation);
+        Cache<Object, Object> cache = adapter.cacheable(target, annotation);
         return invocation -> cache.get(invocation.arguments(), ignored -> invocation.proceed());
     }
 }

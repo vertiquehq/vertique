@@ -3,22 +3,11 @@
 
 package dev.vertique.codegen.cache;
 
-import com.palantir.javapoet.AnnotationSpec;
-import com.palantir.javapoet.ClassName;
-import com.palantir.javapoet.CodeBlock;
-import com.palantir.javapoet.JavaFile;
-import com.palantir.javapoet.MethodSpec;
-import com.palantir.javapoet.TypeName;
-import com.palantir.javapoet.TypeSpec;
 import dev.vertique.cache.CacheEvict;
 import dev.vertique.cache.Cacheable;
 import dev.vertique.codegen.AnnotationMirrors;
-import dev.vertique.codegen.CodegenContext;
-import dev.vertique.codegen.PackageResolver;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import javax.annotation.processing.AbstractProcessor;
@@ -45,13 +34,6 @@ public final class CacheAnnotationProcessor extends AbstractProcessor {
     private static final String FUTURE_FQN = "io.vertx.core.Future";
     private static final String GET_FQN = "jakarta.ws.rs.GET";
     private static final String LEGACY_GET_FQN = "javax.ws.rs.GET";
-    private static final ClassName GENERATED_METADATA =
-            ClassName.get("dev.vertique.cache.spi", "GeneratedCacheMetadata");
-    private static final ClassName OPERATION_ID = GENERATED_METADATA.nestedClass("OperationId");
-    private static final ClassName CACHEABLE_DECLARATION = GENERATED_METADATA.nestedClass("CacheableDeclaration");
-    private static final ClassName EVICTION_DECLARATION = GENERATED_METADATA.nestedClass("EvictionDeclaration");
-    private static final ClassName SELECTOR = GENERATED_METADATA.nestedClass("Selector");
-    private static final ClassName SELECTOR_COMPONENT = GENERATED_METADATA.nestedClass("SelectorComponent");
     private static final Set<String> UNSUPPORTED_REST_RESULTS = Set.of(
             "jakarta.ws.rs.core.Response",
             "javax.ws.rs.core.Response",
@@ -66,31 +48,25 @@ public final class CacheAnnotationProcessor extends AbstractProcessor {
 
     private Types types;
     private Elements elements;
-    private CodegenContext context;
-    private boolean generatedModule;
     private final Set<Element> proxyabilityValidated = new HashSet<>();
 
     @Override
     public synchronized void init(javax.annotation.processing.ProcessingEnvironment environment) {
         super.init(environment);
-        context = new CodegenContext(environment);
         types = environment.getTypeUtils();
         elements = environment.getElementUtils();
     }
 
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnvironment) {
-        List<Element> cacheOrigins = new ArrayList<>();
         for (Element element : roundEnvironment.getElementsAnnotatedWith(Cacheable.class)) {
             if (element.getKind() == ElementKind.METHOD) {
-                cacheOrigins.add(element);
                 Cacheable annotation = element.getAnnotation(Cacheable.class);
                 validateMethod((ExecutableElement) element, annotation.key(), true);
             }
         }
         for (Element element : roundEnvironment.getElementsAnnotatedWith(CacheEvict.class)) {
             if (element.getKind() == ElementKind.METHOD) {
-                cacheOrigins.add(element);
                 validateProxyability((ExecutableElement) element);
                 for (CacheEvict annotation : element.getAnnotationsByType(CacheEvict.class)) {
                     if (annotation.clear() == !annotation.key().isBlank()) {
@@ -103,256 +79,7 @@ public final class CacheAnnotationProcessor extends AbstractProcessor {
                 }
             }
         }
-        if (!cacheOrigins.isEmpty() && !generatedModule && !roundEnvironment.processingOver()) {
-            emitGeneratedCacheModule(cacheOrigins);
-        }
         return false;
-    }
-
-    private void emitGeneratedCacheModule(List<? extends Element> origins) {
-        String packageName = new PackageResolver(context.env()).resolve(origins, context);
-        if (packageName == null) {
-            return;
-        }
-        TypeSpec.Builder module = TypeSpec.classBuilder("GeneratedCacheModule")
-                .addModifiers(Modifier.PUBLIC, Modifier.ABSTRACT)
-                .addAnnotation(AnnotationSpec.builder(ClassName.get("dagger", "Module"))
-                        .addMember(
-                                "includes",
-                                "$T.class",
-                                ClassName.get("dev.vertique.cache.caffeine", "CacheCaffeineModule"))
-                        .build())
-                .addAnnotation(AnnotationSpec.builder(ClassName.get("javax.annotation.processing", "Generated"))
-                        .addMember("value", "$S", CacheAnnotationProcessor.class.getName())
-                        .build());
-        int ordinal = 0;
-        for (Element origin : new LinkedHashSet<>(origins)) {
-            if (origin instanceof ExecutableElement method) {
-                module.addMethod(metadataProvider(method, ordinal++));
-            }
-        }
-        try {
-            JavaFile generated = JavaFile.builder(packageName, module.build()).build();
-            generated.writeTo(context.filer());
-            generatedModule = true;
-        } catch (IOException failure) {
-            context.diagnostics().error(null, "Failed to write GeneratedCacheModule: %s", failure.getMessage());
-        }
-    }
-
-    private MethodSpec metadataProvider(ExecutableElement method, int ordinal) {
-        CodeBlock.Builder body = CodeBlock.builder();
-        body.add("return new $T() {\n", GENERATED_METADATA);
-        body.add(
-                "@Override public $T operationId() { return new $T($S, $S, $T.of(",
-                OPERATION_ID,
-                OPERATION_ID,
-                binaryName((TypeElement) method.getEnclosingElement()),
-                method.getSimpleName(),
-                List.class);
-        for (int index = 0; index < method.getParameters().size(); index++) {
-            if (index > 0) body.add(", ");
-            body.add("$S", binaryTypeName(method.getParameters().get(index).asType()));
-        }
-        body.add(")); }\n");
-        body.add("@Override public boolean synchronous() { return $L; }\n", !isFuture(method.getReturnType()));
-        Cacheable cacheable = method.getAnnotation(Cacheable.class);
-        if (cacheable == null) {
-            body.add(
-                    "@Override public java.util.Optional<$T> cacheable() { return java.util.Optional.empty(); }\n",
-                    CACHEABLE_DECLARATION);
-        } else {
-            body.add(
-                    "@Override public java.util.Optional<$T> cacheable() { return java.util.Optional.of(new $T(",
-                    CACHEABLE_DECLARATION,
-                    CACHEABLE_DECLARATION);
-            body.add(
-                    "$S, $L, $T.$L, $L, $T.$L, $T.$L, $L",
-                    cacheable.name(),
-                    genericTypeExpression(cacheValueType(method)),
-                    ClassName.get("dev.vertique.cache", "CacheMode"),
-                    cacheable.mode().name(),
-                    cacheable.ttlSeconds(),
-                    ClassName.get("dev.vertique.cache", "CacheIdentity"),
-                    cacheable.identity().name(),
-                    ClassName.get("dev.vertique.cache", "AnonymousCachePolicy"),
-                    cacheable.anonymous().name(),
-                    selectorExpression(method, cacheable.key()));
-            body.add(")); }\n");
-        }
-        body.add("@Override public java.util.List<$T> evictions() { return $T.of(", EVICTION_DECLARATION, List.class);
-        List<CacheEvict> evictions = normalizedEvictions(method);
-        for (int index = 0; index < evictions.size(); index++) {
-            if (index > 0) body.add(", ");
-            CacheEvict eviction = evictions.get(index);
-            body.add("new $T($S, ", EVICTION_DECLARATION, eviction.name());
-            if (eviction.clear()) body.add("java.util.Optional.empty()");
-            else body.add("java.util.Optional.of($L)", selectorExpression(method, eviction.key()));
-            body.add(")");
-        }
-        body.add("); }\n");
-        body.add("};\n");
-        return MethodSpec.methodBuilder("provideCacheMetadata" + ordinal)
-                .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
-                .addAnnotation(ClassName.get("dagger", "Provides"))
-                .addAnnotation(ClassName.get("dagger.multibindings", "IntoSet"))
-                .returns(GENERATED_METADATA)
-                .addCode(body.build())
-                .build();
-    }
-
-    private List<CacheEvict> normalizedEvictions(ExecutableElement method) {
-        List<CacheEvict> result = new ArrayList<>();
-        Set<String> cleared = new HashSet<>();
-        Set<String> exact = new HashSet<>();
-        for (CacheEvict eviction : method.getAnnotationsByType(CacheEvict.class)) {
-            if (eviction.clear()) {
-                result.removeIf(existing -> existing.name().equals(eviction.name()) && !existing.clear());
-                if (cleared.add(eviction.name())) result.add(eviction);
-            } else if (!cleared.contains(eviction.name()) && exact.add(eviction.name() + "\u0000" + eviction.key())) {
-                result.add(eviction);
-            }
-        }
-        return result;
-    }
-
-    private CodeBlock selectorExpression(ExecutableElement method, String template) {
-        List<String> tokens = selectorTokens(template);
-        CodeBlock.Builder selector = CodeBlock.builder();
-        selector.add("new $T($S, $T.of(", SELECTOR, template, List.class);
-        for (int index = 0; index < tokens.size(); index++) {
-            if (index > 0) selector.add(", ");
-            String token = tokens.get(index);
-            String[] segments = token.split("\\.", -1);
-            int parameter = parameterIndex(method, segments[0]);
-            TypeMirror rootType = method.getParameters().get(parameter).asType();
-            TypeMirror current = rootType;
-            for (int segment = 1; segment < segments.length; segment++) {
-                current = propertyType(current, segments[segment]);
-            }
-            selector.add(
-                    "new $T($L, $S, (Object[] arguments) -> $L)",
-                    SELECTOR_COMPONENT,
-                    classLiteral(current),
-                    token,
-                    accessorExpression(method, parameter, rootType, segments));
-        }
-        selector.add(")");
-        selector.add(")");
-        return selector.build();
-    }
-
-    private CodeBlock accessorExpression(
-            ExecutableElement method, int parameter, TypeMirror rootType, String[] segments) {
-        CodeBlock.Builder expression = CodeBlock.builder();
-        expression.add("(($L) arguments[$L])", sourceTypeName(rootType), parameter);
-        TypeMirror current = rootType;
-        for (int index = 1; index < segments.length; index++) {
-            expression.add(".$N()", accessorName(current, segments[index]));
-            current = propertyType(current, segments[index]);
-        }
-        return expression.build();
-    }
-
-    private String accessorName(TypeMirror type, String property) {
-        TypeElement element = (TypeElement) ((DeclaredType) type).asElement();
-        String suffix = Character.toUpperCase(property.charAt(0)) + property.substring(1);
-        for (Element member : elements.getAllMembers(element)) {
-            if (member.getKind() == ElementKind.METHOD
-                    && member instanceof ExecutableElement method
-                    && method.getParameters().isEmpty()
-                    && method.getModifiers().contains(Modifier.PUBLIC)
-                    && !method.getModifiers().contains(Modifier.STATIC)) {
-                String name = method.getSimpleName().toString();
-                if (name.equals(property) || name.equals("get" + suffix) || name.equals("is" + suffix)) return name;
-            }
-        }
-        throw new IllegalArgumentException("missing cache selector accessor: " + property);
-    }
-
-    private int parameterIndex(ExecutableElement method, String root) {
-        try {
-            return Integer.parseInt(root);
-        } catch (NumberFormatException ignored) {
-            for (int index = 0; index < method.getParameters().size(); index++) {
-                if (root.contentEquals(method.getParameters().get(index).getSimpleName())) return index;
-            }
-            throw new IllegalArgumentException("unknown cache selector parameter: " + root);
-        }
-    }
-
-    private List<String> selectorTokens(String template) {
-        List<String> tokens = new ArrayList<>();
-        for (int index = 0; index < template.length(); index++) {
-            if (template.charAt(index) != '{') continue;
-            if (index + 1 < template.length() && template.charAt(index + 1) == '{') {
-                index++;
-                continue;
-            }
-            int end = template.indexOf('}', index + 1);
-            if (end >= 0) {
-                tokens.add(template.substring(index + 1, end));
-                index = end;
-            }
-        }
-        return tokens;
-    }
-
-    private TypeMirror cacheValueType(ExecutableElement method) {
-        TypeMirror returnType = method.getReturnType();
-        if (isFuture(returnType))
-            return ((DeclaredType) returnType).getTypeArguments().getFirst();
-        return returnType;
-    }
-
-    private boolean isFuture(TypeMirror type) {
-        return type.getKind() == TypeKind.DECLARED
-                && types.erasure(type).toString().equals(FUTURE_FQN)
-                && ((DeclaredType) type).getTypeArguments().size() == 1;
-    }
-
-    private CodeBlock classLiteral(TypeMirror mirror) {
-        return CodeBlock.of("$T.class", TypeName.get(types.erasure(mirror)));
-    }
-
-    private CodeBlock sourceTypeName(TypeMirror mirror) {
-        if (mirror.getKind() == TypeKind.DECLARED) {
-            return CodeBlock.of("$T", ClassName.get((TypeElement) ((DeclaredType) mirror).asElement()));
-        }
-        return CodeBlock.of("$T", TypeName.get(mirror));
-    }
-
-    private CodeBlock genericTypeExpression(TypeMirror mirror) {
-        if (mirror.getKind() != TypeKind.DECLARED) return classLiteral(mirror);
-        DeclaredType declared = (DeclaredType) mirror;
-        TypeElement element = (TypeElement) declared.asElement();
-        if (declared.getTypeArguments().isEmpty()) return CodeBlock.of("$T.class", ClassName.get(element));
-        CodeBlock.Builder expression = CodeBlock.builder();
-        expression.add("new java.lang.reflect.ParameterizedType() {\n");
-        expression.add(
-                "@Override public java.lang.reflect.Type[] getActualTypeArguments() { return new java.lang.reflect.Type[] { ");
-        for (int index = 0; index < declared.getTypeArguments().size(); index++) {
-            if (index > 0) expression.add(", ");
-            expression.add(
-                    "$L", genericTypeExpression(declared.getTypeArguments().get(index)));
-        }
-        expression.add(" }; }\n");
-        expression.add(
-                "@Override public java.lang.reflect.Type getRawType() { return $T.class; }\n", ClassName.get(element));
-        expression.add("@Override public java.lang.reflect.Type getOwnerType() { return null; }\n}");
-        return expression.build();
-    }
-
-    private String binaryName(TypeElement element) {
-        return elements.getBinaryName(element).toString();
-    }
-
-    private String binaryTypeName(TypeMirror mirror) {
-        if (mirror.getKind() == TypeKind.ARRAY)
-            return binaryTypeName(((javax.lang.model.type.ArrayType) mirror).getComponentType()) + "[]";
-        if (mirror.getKind().isPrimitive()) return mirror.getKind().name().toLowerCase(java.util.Locale.ROOT);
-        if (mirror.getKind() == TypeKind.DECLARED) return binaryName((TypeElement) ((DeclaredType) mirror).asElement());
-        return binaryTypeName(types.erasure(mirror));
     }
 
     private void validateMethod(ExecutableElement method, String template, boolean resultRequired) {

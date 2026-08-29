@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Alpha
 > **Package:** `dev.vertique.cache.caffeine`
 > **Artifact:** `vertique-cache-caffeine`
-> **Depends on:** `vertique-cache-core`, `vertique-json`
+> **Depends on:** `vertique-cache-core`, `vertique-cache-aop`, `vertique-json`
 
 `vertique-cache-caffeine` is the Caffeine provider boundary for annotation-driven cache support. It is intentionally separate from the provider-neutral cache contracts and uses the existing named JSON profile registry for defensive-copy serialization.
 
@@ -18,7 +18,9 @@ Use this provider for application instances whose cache state is intentionally l
 
 ## Core Concepts
 
-The provider owns local storage policy and lifecycle while the cache core owns the provider-neutral invocation contract. Applications normally include the generated `GeneratedCacheModule`, emitted by the cache annotation processor, which includes this provider and contributes it under `CacheMode.LOCAL`; explicit Dagger composition remains available for applications without generated cache annotations.
+The provider owns local storage policy and lifecycle while cache core owns the provider-neutral
+invocation contract. This module includes `CacheAopModule`, so applications using annotations get
+the cache aspect bindings through explicit provider composition.
 
 The implementation maintains one bounded Caffeine cache per logical `CacheRegion`. Entries are JSON-serialized with the configured profile, so callers receive a defensive copy and generic declared result types remain supported. A finite TTL expires entries using a monotonic clock; TTL `0` disables time expiration while the per-region size bound remains active. Disabled caches and null results are no-ops, and codec or size failures are surfaced as failed provider futures for the runtime's fail-open policy.
 
@@ -37,7 +39,7 @@ Run the local-provider proof with:
 ```
 
 The clean reactor verification also checks dependency/BOM parity, packaged module-documentation
-parity, and generated cache/AOP output.
+parity, and generated AOP output.
 
 ## Dependencies
 

@@ -11,7 +11,13 @@ This module is the ownership boundary for the Caffeine cache provider. Its imple
 
 ## Runtime or Build Flow
 
-The provider is selected by the cache-core `CacheMode` map and depends on the cache core contracts plus the named JSON profile registry. Generated applications receive the `LOCAL` contribution through `GeneratedCacheModule`; explicit Dagger composition is also supported. `CaffeineCacheStore` keeps one bounded Caffeine cache per `CacheRegion`, stores JSON bytes, and reconstructs values with the declared result `Type`. Finite TTL checks use a monotonic clock; TTL `0` disables time expiration while Caffeine's per-region maximum-entry bound remains active. Codec and size failures are returned as failed provider futures for the runtime's fail-open handling.
+The provider is selected by the cache-core `CacheMode` map and depends on the cache core contracts,
+the cache AOP bindings, and the named JSON profile registry. `CacheCaffeineModule` includes
+`CacheAopModule` so applications use explicit provider composition. `CaffeineCacheStore` keeps one bounded Caffeine cache per `CacheRegion`, stores
+JSON bytes, and reconstructs values with the declared result `Type`. Finite TTL checks use a
+monotonic clock; TTL `0` disables time expiration while Caffeine's per-region maximum-entry bound
+remains active. Codec and size failures are returned as failed provider futures for the runtime's
+fail-open handling.
 
 ## Load-Bearing Invariants
 

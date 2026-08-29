@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Alpha
 > **Package:** `dev.vertique.cache.redis`
 > **Artifact:** `vertique-cache-redis`
-> **Depends on:** `vertique-cache-core`, `vertique-json`, `vertique-redis-core`
+> **Depends on:** `vertique-cache-core`, `vertique-cache-aop`, `vertique-json`, `vertique-redis-core`
 
 `vertique-cache-redis` is the asynchronous clustered provider for the provider-neutral
 cache contracts. It stores JSON values in Redis through the shared Redis client

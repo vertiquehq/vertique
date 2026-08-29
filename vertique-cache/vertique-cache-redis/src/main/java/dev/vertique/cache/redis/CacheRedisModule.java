@@ -8,6 +8,7 @@ import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoMap;
 import dagger.multibindings.IntoSet;
+import dev.vertique.cache.CacheAopModule;
 import dev.vertique.cache.CacheCoreModule;
 import dev.vertique.cache.CacheMode;
 import dev.vertique.cache.CacheModeKey;
@@ -35,7 +36,7 @@ import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 
 /** Dagger contribution for the clustered Redis cache store. */
-@Module(includes = {CacheCoreModule.class, JsonRuntimeModule.class, RedisConnectionModule.class})
+@Module(includes = {CacheCoreModule.class, CacheAopModule.class, JsonRuntimeModule.class, RedisConnectionModule.class})
 public abstract class CacheRedisModule {
     @BindsOptionalOf
     abstract CronScheduler optionalCronScheduler();

@@ -11,7 +11,10 @@ This module owns the cache annotation processor boundary and must keep generated
 
 ## Runtime or Build Flow
 
-The processor consumes `vertique-cache-core` contracts during application compilation. When cache annotations are present it emits one public `GeneratedCacheModule` in the annotated bean's package, including `CacheCaffeineModule`; applications can include that generated module in their Dagger component to install the local provider. Generated classes belong to the consuming compilation and are not dependencies of cache providers.
+The processor consumes `vertique-cache-aop` contracts during application compilation. The generic
+AOP processor owns proxy and method-metadata generation; this processor performs cache-specific
+validation only. Provider composition is explicit through the concrete provider module, and no
+cache-specific runtime or provider-composition class is generated.
 
 For JAX-RS `@GET` methods, processor validation accepts entity and `Future<entity>`
 results only. HTTP response wrappers, transport response types, buffers, routing contexts,

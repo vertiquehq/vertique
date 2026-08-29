@@ -8,8 +8,6 @@ import dev.vertique.cache.config.CacheEntryConfig;
 import dev.vertique.cache.spi.CacheIdentityResolver;
 import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.cache.spi.CacheRegion;
-import dev.vertique.cache.spi.GeneratedCacheMetadata;
-import dev.vertique.core.codegen.MethodMetadata;
 import io.vertx.core.Future;
 import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.ParameterizedType;
@@ -19,11 +17,8 @@ import java.lang.reflect.WildcardType;
 import java.text.Normalizer;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -38,28 +33,16 @@ public final class CacheBuilder {
     private final Set<CacheObserver> observers;
     private final Optional<CacheIdentityResolver> identityResolver;
     private final ConcurrentHashMap<String, DefinitionFingerprint> catalog = new ConcurrentHashMap<>();
-    private final Map<GeneratedCacheMetadata.OperationId, PreparedOperation> preparedOperations;
 
     CacheBuilder(
             CacheStoreResolver stores,
             CacheConfig config,
             Set<CacheObserver> observers,
             Optional<CacheIdentityResolver> identityResolver) {
-        this(stores, config, observers, identityResolver, Set.of());
-    }
-
-    CacheBuilder(
-            CacheStoreResolver stores,
-            CacheConfig config,
-            Set<CacheObserver> observers,
-            Optional<CacheIdentityResolver> identityResolver,
-            Set<GeneratedCacheMetadata> generatedMetadata) {
         this.stores = stores;
         this.config = Objects.requireNonNull(config, "config");
         this.observers = Set.copyOf(observers);
         this.identityResolver = identityResolver;
-        validateGeneratedMetadata(generatedMetadata);
-        this.preparedOperations = prepareGeneratedMetadata(generatedMetadata);
     }
 
     static CacheBuilder forTesting(
@@ -69,7 +52,7 @@ public final class CacheBuilder {
             Set<CacheIdentityResolver> resolvers) {
         Optional<CacheIdentityResolver> resolver =
                 resolvers.size() == 1 ? Optional.of(resolvers.iterator().next()) : Optional.empty();
-        return new CacheBuilder(CacheStoreResolver.fixed(store), config, observers, resolver, Set.of());
+        return new CacheBuilder(CacheStoreResolver.fixed(store), config, observers, resolver);
     }
 
     public <V> Definition<V> cache(String name, Class<V> valueType) {
@@ -81,78 +64,88 @@ public final class CacheBuilder {
         return new Definition<>(this, requireName(name), valueType.capturedType(), null, null, null, null);
     }
 
-    Cache<Object, Object> annotation(MethodMetadata target, Cacheable annotation) {
-        PreparedOperation prepared = preparedOperations.get(operationId(target));
-        if (prepared != null && prepared.cache() != null) return prepared.cache();
-        Type declaredType = valueType(target);
-        CacheMode mode = effectiveMode(annotation.name(), annotation.mode());
-        long ttl = effectiveTtl(annotation.name(), annotation.ttlSeconds());
-        CacheIdentity annotationIdentity = annotation.identity();
-        if (config.enabled()) stores.resolve(mode);
-        register(
-                annotation.name(),
-                declaredType,
-                mode,
-                ttl,
-                annotationIdentity,
-                annotation.anonymous(),
-                annotation.key());
-        return new Cache<>(
-                stores,
-                config,
-                observers,
-                identityResolver,
-                annotation.name(),
-                declaredType,
-                effectiveProfile(annotation.name()),
-                mode,
-                ttl,
-                annotationIdentity,
-                annotation.anonymous(),
-                input -> CacheKeyRenderer.renderCanonical(
-                        annotation.key(), target, (Object[]) input, CacheBuilder::scalar),
-                target.returnType() != Future.class);
+    /** Builds and registers a cache from a provider-neutral definition supplied by an API adapter. */
+    <K, V> Cache<K, V> build(
+            String name,
+            Type valueType,
+            CacheMode requestedMode,
+            long requestedTtl,
+            CacheIdentity identity,
+            AnonymousCachePolicy anonymousPolicy,
+            Function<Object, String> selector,
+            boolean asynchronousOnly,
+            String layout) {
+        validateType(valueType, new java.util.HashSet<>());
+        return buildResolved(
+                name,
+                valueType,
+                requestedMode,
+                requestedTtl,
+                identity,
+                anonymousPolicy,
+                selector,
+                asynchronousOnly,
+                layout,
+                true);
     }
 
-    Cache<Object, Object> eviction(MethodMetadata target, CacheEvict annotation) {
-        PreparedOperation prepared = preparedOperations.get(operationId(target));
-        if (prepared != null && !prepared.evictions().isEmpty())
-            return prepared.evictions().getFirst().cache();
-        CacheIdentity targetIdentity =
-                target.findAnnotation(Cacheable.class).map(Cacheable::identity).orElse(CacheIdentity.NONE);
-        return new Cache<>(
-                stores,
-                config,
-                observers,
-                identityResolver,
-                annotation.name(),
-                Object.class,
-                effectiveProfile(annotation.name()),
-                effectiveMode(annotation.name(), CacheMode.DEFAULT),
-                effectiveTtl(annotation.name(), -1),
-                targetIdentity,
-                target.findAnnotation(Cacheable.class).map(Cacheable::anonymous).orElse(AnonymousCachePolicy.BYPASS),
-                input -> CacheKeyRenderer.renderCanonical(
-                        annotation.key(), target, (Object[]) input, CacheBuilder::scalar),
+    /** Builds an unregistered handle for an adapter operation that never stores values. */
+    <K, V> Cache<K, V> buildUnregistered(
+            String name,
+            Type valueType,
+            CacheMode requestedMode,
+            long requestedTtl,
+            CacheIdentity identity,
+            AnonymousCachePolicy anonymousPolicy,
+            Function<Object, String> selector,
+            boolean asynchronousOnly,
+            String layout) {
+        return buildResolved(
+                name,
+                valueType,
+                requestedMode,
+                requestedTtl,
+                identity,
+                anonymousPolicy,
+                selector,
+                asynchronousOnly,
+                layout,
                 false);
     }
 
-    List<PreparedEviction> evictions(MethodMetadata target) {
-        PreparedOperation prepared = preparedOperations.get(operationId(target));
-        if (prepared != null) return prepared.evictions();
-        return target.findAnnotation(CacheEvict.class)
-                .map(annotation -> List.of(new PreparedEviction(eviction(target, annotation), annotation.clear())))
-                .orElse(List.of());
-    }
-
-    List<PreparedEviction> evictions(MethodMetadata target, CacheEvict[] declarations) {
-        PreparedOperation prepared = preparedOperations.get(operationId(target));
-        if (prepared != null) return prepared.evictions();
-        List<PreparedEviction> result = new ArrayList<>();
-        for (CacheEvict declaration : declarations) {
-            result.add(new PreparedEviction(eviction(target, declaration), declaration.clear()));
-        }
-        return List.copyOf(result);
+    private <K, V> Cache<K, V> buildResolved(
+            String name,
+            Type valueType,
+            CacheMode requestedMode,
+            long requestedTtl,
+            CacheIdentity identity,
+            AnonymousCachePolicy anonymousPolicy,
+            Function<Object, String> selector,
+            boolean asynchronousOnly,
+            String layout,
+            boolean register) {
+        CacheMode effectiveMode = effectiveMode(name, requestedMode);
+        long effectiveTtl = effectiveTtl(name, requestedTtl);
+        CacheIdentity effectiveIdentity = identity == null ? CacheIdentity.EFFECTIVE_PRINCIPAL : identity;
+        AnonymousCachePolicy effectiveAnonymous =
+                anonymousPolicy == null ? AnonymousCachePolicy.BYPASS : anonymousPolicy;
+        if (config.enabled()) stores.resolve(effectiveMode);
+        if (register)
+            register(name, valueType, effectiveMode, effectiveTtl, effectiveIdentity, effectiveAnonymous, layout);
+        return new Cache<>(
+                stores,
+                config,
+                observers,
+                identityResolver,
+                name,
+                valueType,
+                effectiveProfile(name),
+                effectiveMode,
+                effectiveTtl,
+                effectiveIdentity,
+                effectiveAnonymous,
+                selector,
+                asynchronousOnly);
     }
 
     public abstract static class TypeRef<V> {
@@ -221,28 +214,16 @@ public final class CacheBuilder {
         }
 
         public <K> Cache<K, V> build() {
-            validateType(valueType, new java.util.HashSet<>());
-            CacheMode effectiveMode = owner.effectiveMode(name, mode);
-            long effectiveTtl = owner.effectiveTtl(name, ttl == null ? -1 : wholeSeconds(ttl));
-            CacheIdentity effectiveIdentity = identity == null ? CacheIdentity.EFFECTIVE_PRINCIPAL : identity;
-            AnonymousCachePolicy effectiveAnonymous =
-                    anonymousPolicy == null ? AnonymousCachePolicy.BYPASS : anonymousPolicy;
-            if (owner.config.enabled()) owner.stores.resolve(effectiveMode);
-            owner.register(name, valueType, effectiveMode, effectiveTtl, effectiveIdentity, effectiveAnonymous, "{0}");
-            return new Cache<>(
-                    owner.stores,
-                    owner.config,
-                    owner.observers,
-                    owner.identityResolver,
+            return owner.build(
                     name,
                     valueType,
-                    owner.effectiveProfile(name),
-                    effectiveMode,
-                    effectiveTtl,
-                    effectiveIdentity,
-                    effectiveAnonymous,
+                    mode,
+                    ttl == null ? -1 : wholeSeconds(ttl),
+                    identity,
+                    anonymousPolicy,
                     input -> scalar(input),
-                    false);
+                    false,
+                    "{0}");
         }
     }
 
@@ -304,33 +285,17 @@ public final class CacheBuilder {
         }
 
         public Cache<K, V> build() {
-            validateType(valueType, new java.util.HashSet<>());
             Layout parsed = Layout.parse(layout, components.size());
-            CacheMode effectiveMode = owner.effectiveMode(name, mode);
-            long effectiveTtl = owner.effectiveTtl(name, ttl == null ? -1 : wholeSeconds(ttl));
-            if (owner.config.enabled()) owner.stores.resolve(effectiveMode);
-            owner.register(
+            return owner.build(
                     name,
                     valueType,
-                    effectiveMode,
-                    effectiveTtl,
-                    identity == null ? CacheIdentity.EFFECTIVE_PRINCIPAL : identity,
-                    anonymousPolicy == null ? AnonymousCachePolicy.BYPASS : anonymousPolicy,
-                    layout);
-            return new Cache<>(
-                    owner.stores,
-                    owner.config,
-                    owner.observers,
-                    owner.identityResolver,
-                    name,
-                    valueType,
-                    owner.effectiveProfile(name),
-                    effectiveMode,
-                    effectiveTtl,
-                    identity == null ? CacheIdentity.EFFECTIVE_PRINCIPAL : identity,
-                    anonymousPolicy == null ? AnonymousCachePolicy.BYPASS : anonymousPolicy,
+                    mode,
+                    ttl == null ? -1 : wholeSeconds(ttl),
+                    identity,
+                    anonymousPolicy,
                     input -> parsed.render(input, components),
-                    false);
+                    false,
+                    layout);
         }
     }
 
@@ -623,213 +588,12 @@ public final class CacheBuilder {
         return entry != null && entry.jsonProfile() != null ? entry.jsonProfile() : config.jsonProfile();
     }
 
-    private static Type valueType(MethodMetadata target) {
-        Type returnType = target.genericReturnType();
-        if (returnType instanceof ParameterizedType parameterized && target.returnType() == Future.class) {
-            return parameterized.getActualTypeArguments()[0];
-        }
-        return returnType;
-    }
-
     private static String requireName(String name) {
         Objects.requireNonNull(name, "name");
         if (name.length() > 128 || name.isBlank() || !name.matches("[A-Za-z0-9._~-]+")) {
             throw new IllegalArgumentException("cache name must be 1-128 ASCII cache segment characters");
         }
         return name;
-    }
-
-    private void validateGeneratedMetadata(Set<GeneratedCacheMetadata> metadata) {
-        List<GeneratedCacheMetadata> ordered = metadata.stream()
-                .sorted(java.util.Comparator.comparing(
-                        item -> item.operationId().declaringBinaryName()
-                                + "#" + item.operationId().methodName()
-                                + item.operationId().erasedParameterTypeNames()))
-                .toList();
-        Set<GeneratedCacheMetadata.OperationId> operationIds = new java.util.HashSet<>();
-        for (GeneratedCacheMetadata operation : ordered) {
-            Objects.requireNonNull(operation, "generated cache metadata");
-            if (!operationIds.add(operation.operationId())) {
-                throw new IllegalStateException("duplicate generated cache operation id");
-            }
-            operation.cacheable().ifPresent(declaration -> {
-                validateType(declaration.valueType(), new java.util.HashSet<>());
-                effectiveMode(declaration.cacheName(), declaration.mode());
-                effectiveTtl(declaration.cacheName(), declaration.ttlSeconds());
-                register(
-                        declaration.cacheName(),
-                        declaration.valueType(),
-                        effectiveMode(declaration.cacheName(), declaration.mode()),
-                        effectiveTtl(declaration.cacheName(), declaration.ttlSeconds()),
-                        declaration.identity(),
-                        declaration.anonymous(),
-                        declaration.selector().normalizedLayout());
-            });
-            for (GeneratedCacheMetadata.EvictionDeclaration eviction : operation.evictions()) {
-                requireName(eviction.cacheName());
-                eviction.selector()
-                        .ifPresent(selector -> Layout.parse(
-                                selector.normalizedLayout(),
-                                selector.components().size()));
-            }
-        }
-    }
-
-    private Map<GeneratedCacheMetadata.OperationId, PreparedOperation> prepareGeneratedMetadata(
-            Set<GeneratedCacheMetadata> metadata) {
-        if (metadata.isEmpty()) return Map.of();
-        Map<String, GeneratedDefinition> definitions = new HashMap<>();
-        for (GeneratedCacheMetadata operation : metadata) {
-            operation.cacheable().ifPresent(declaration -> {
-                GeneratedDefinition candidate = new GeneratedDefinition(declaration, operation.synchronous());
-                GeneratedDefinition existing = definitions.putIfAbsent(declaration.cacheName(), candidate);
-                if (existing != null && !existing.compatibleWith(candidate)) {
-                    throw new IllegalStateException(
-                            "incompatible generated definitions for cache " + declaration.cacheName());
-                }
-                if (operation.synchronous()
-                        && effectiveMode(declaration.cacheName(), declaration.mode()) == CacheMode.CLUSTERED) {
-                    throw new IllegalStateException(
-                            "synchronous cache method cannot use clustered mode: " + declaration.cacheName());
-                }
-            });
-        }
-        Map<GeneratedCacheMetadata.OperationId, PreparedOperation> result = new HashMap<>();
-        for (GeneratedCacheMetadata operation : metadata) {
-            Cache<Object, Object> cache = operation
-                    .cacheable()
-                    .map(declaration -> buildGeneratedCache(declaration, operation.synchronous()))
-                    .orElse(null);
-            List<PreparedEviction> evictions = new ArrayList<>();
-            for (GeneratedCacheMetadata.EvictionDeclaration declaration : operation.evictions()) {
-                GeneratedDefinition target = definitions.get(declaration.cacheName());
-                if (target == null) {
-                    throw new IllegalStateException(
-                            "generated eviction targets unknown cache " + declaration.cacheName());
-                }
-                Cache<Object, Object> evictionCache =
-                        buildGeneratedEvictionCache(target, declaration, operation.synchronous());
-                evictions.add(new PreparedEviction(
-                        evictionCache, declaration.selector().isEmpty()));
-            }
-            result.put(operation.operationId(), new PreparedOperation(cache, List.copyOf(evictions)));
-        }
-        return Collections.unmodifiableMap(result);
-    }
-
-    private Cache<Object, Object> buildGeneratedCache(
-            GeneratedCacheMetadata.CacheableDeclaration declaration, boolean synchronous) {
-        CacheMode mode = effectiveMode(declaration.cacheName(), declaration.mode());
-        long ttl = effectiveTtl(declaration.cacheName(), declaration.ttlSeconds());
-        return new Cache<>(
-                stores,
-                config,
-                observers,
-                identityResolver,
-                declaration.cacheName(),
-                declaration.valueType(),
-                effectiveProfile(declaration.cacheName()),
-                mode,
-                ttl,
-                declaration.identity(),
-                declaration.anonymous(),
-                selector(declaration.selector()),
-                synchronous);
-    }
-
-    private Cache<Object, Object> buildGeneratedEvictionCache(
-            GeneratedDefinition target, GeneratedCacheMetadata.EvictionDeclaration declaration, boolean synchronous) {
-        if (declaration.selector().isPresent()
-                && !selectorCompatible(
-                        target.declaration().selector(), declaration.selector().orElseThrow())) {
-            throw new IllegalStateException(
-                    "generated eviction selector does not match cache " + declaration.cacheName());
-        }
-        CacheMode mode =
-                effectiveMode(declaration.cacheName(), target.declaration().mode());
-        long ttl = effectiveTtl(declaration.cacheName(), target.declaration().ttlSeconds());
-        Function<Object, String> selector =
-                declaration.selector().map(this::selector).orElse(input -> "clear");
-        return new Cache<>(
-                stores,
-                config,
-                observers,
-                identityResolver,
-                declaration.cacheName(),
-                target.declaration().valueType(),
-                effectiveProfile(declaration.cacheName()),
-                mode,
-                ttl,
-                target.declaration().identity(),
-                target.declaration().anonymous(),
-                selector,
-                synchronous);
-    }
-
-    private Function<Object, String> selector(GeneratedCacheMetadata.Selector generated) {
-        Layout parsed = Layout.parse(
-                generated.normalizedLayout(), generated.components().size());
-        List<Function<Object[], ?>> functions = new ArrayList<>();
-        for (GeneratedCacheMetadata.SelectorComponent component : generated.components()) {
-            functions.add(component.accessor()::select);
-        }
-        return input -> parsed.render((Object[]) input, functions);
-    }
-
-    private static boolean selectorCompatible(
-            GeneratedCacheMetadata.Selector cacheSelector, GeneratedCacheMetadata.Selector evictionSelector) {
-        if (!cacheSelector.normalizedLayout().equals(evictionSelector.normalizedLayout())
-                || cacheSelector.components().size()
-                        != evictionSelector.components().size()) return false;
-        for (int i = 0; i < cacheSelector.components().size(); i++) {
-            GeneratedCacheMetadata.SelectorComponent cacheComponent =
-                    cacheSelector.components().get(i);
-            GeneratedCacheMetadata.SelectorComponent evictionComponent =
-                    evictionSelector.components().get(i);
-            if (!cacheComponent.accessorPath().equals(evictionComponent.accessorPath())
-                    || !boxed(cacheComponent.declaredType()).equals(boxed(evictionComponent.declaredType()))) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static Class<?> boxed(Class<?> type) {
-        if (!type.isPrimitive()) return type;
-        if (type == boolean.class) return Boolean.class;
-        if (type == byte.class) return Byte.class;
-        if (type == short.class) return Short.class;
-        if (type == int.class) return Integer.class;
-        if (type == long.class) return Long.class;
-        if (type == float.class) return Float.class;
-        if (type == double.class) return Double.class;
-        if (type == char.class) return Character.class;
-        return type;
-    }
-
-    private static GeneratedCacheMetadata.OperationId operationId(MethodMetadata target) {
-        return new GeneratedCacheMetadata.OperationId(
-                target.declaringType().getName(),
-                target.name(),
-                java.util.Arrays.stream(target.parameterTypes())
-                        .map(Class::getName)
-                        .toList());
-    }
-
-    record PreparedOperation(Cache<Object, Object> cache, List<PreparedEviction> evictions) {}
-
-    record PreparedEviction(Cache<Object, Object> cache, boolean clear) {}
-
-    private record GeneratedDefinition(GeneratedCacheMetadata.CacheableDeclaration declaration, boolean synchronous) {
-        boolean compatibleWith(GeneratedDefinition other) {
-            return declaration.valueType().equals(other.declaration.valueType())
-                    && declaration.mode() == other.declaration.mode()
-                    && declaration.ttlSeconds() == other.declaration.ttlSeconds()
-                    && declaration.identity() == other.declaration.identity()
-                    && declaration.anonymous() == other.declaration.anonymous()
-                    && selectorCompatible(declaration.selector(), other.declaration.selector())
-                    && synchronous == other.synchronous;
-        }
     }
 
     private void register(

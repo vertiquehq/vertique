@@ -87,7 +87,7 @@ callbacks do not re-register cleanup or close the shared Redis clients more than
 ## Load-Bearing Invariants
 
 - Redis connection profile parsing and client lifecycle remain in `vertique-redis-core`.
-- The provider must not make `vertique-cache-core` depend on Redis.
+- The provider must not make `vertique-cache-core` depend on Redis or `vertique-cache-aop`.
 - Rendered Redis keys are bounded by `CacheConfig.maxKeyBytes` in UTF-8 before command
   submission; the format version and opaque generation are part of the physical key.
 - Whole-region clear replaces the generation marker but does not delete old physical

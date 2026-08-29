@@ -10,16 +10,14 @@
         <version>${revision}</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
-    <artifactId>vertique-cache-core</artifactId>
-    <name>Vertique Cache Core</name>
-    <description>Provider-neutral programmatic cache API, SPI, and runtime contracts</description>
+    <artifactId>vertique-cache-aop</artifactId>
+    <name>Vertique Cache AOP</name>
+    <description>Annotation and AOP adapters for the provider-neutral cache API</description>
     <dependencies>
+        <dependency><groupId>dev.vertique</groupId><artifactId>vertique-cache-core</artifactId></dependency>
+        <dependency><groupId>dev.vertique</groupId><artifactId>vertique-aop</artifactId></dependency>
         <dependency><groupId>dev.vertique</groupId><artifactId>vertique-core</artifactId></dependency>
-        <dependency><groupId>dev.vertique</groupId><artifactId>vertique-context</artifactId></dependency>
-        <dependency><groupId>dev.vertique</groupId><artifactId>vertique-security-core</artifactId></dependency>
-        <dependency><groupId>com.google.dagger</groupId><artifactId>dagger</artifactId></dependency>
         <dependency><groupId>jakarta.inject</groupId><artifactId>jakarta.inject-api</artifactId></dependency>
-        <dependency><groupId>org.projectlombok</groupId><artifactId>lombok</artifactId><scope>provided</scope></dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>

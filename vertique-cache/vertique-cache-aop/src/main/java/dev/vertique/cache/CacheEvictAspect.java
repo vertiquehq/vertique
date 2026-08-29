@@ -5,7 +5,6 @@ package dev.vertique.cache;
 
 import dev.vertique.aop.AspectProvider;
 import dev.vertique.aop.MethodInterceptor;
-import dev.vertique.cache.config.CacheConfig;
 import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.cache.spi.CacheStore;
 import dev.vertique.core.codegen.MethodMetadata;
@@ -18,24 +17,25 @@ import java.util.Set;
 /** Annotation adapter that delegates invalidation to a prepared {@link Cache}. */
 @Singleton
 public final class CacheEvictAspect implements AspectProvider<CacheEvict> {
-    private final CacheBuilder builder;
+    private final CacheAnnotationAdapter adapter;
 
     @Inject
-    CacheEvictAspect(CacheBuilder builder) {
-        this.builder = builder;
+    CacheEvictAspect(CacheAnnotationAdapter adapter) {
+        this.adapter = adapter;
     }
 
     /** Direct construction hook for isolated adapter tests. */
-    public CacheEvictAspect(CacheStore store, CacheConfig config, Set<CacheObserver> observers) {
-        this(CacheBuilder.forTesting(store, config, observers, Set.of()));
+    public CacheEvictAspect(
+            CacheStore store, dev.vertique.cache.config.CacheConfig config, Set<CacheObserver> observers) {
+        this(new CacheAnnotationAdapter(store, config, observers));
     }
 
     @Override
     public MethodInterceptor interceptor(MethodMetadata target, CacheEvict annotation) {
-        List<CacheBuilder.PreparedEviction> evictions;
+        List<CacheAnnotationAdapter.PreparedEviction> evictions;
         try {
-            evictions = List.of(
-                    new CacheBuilder.PreparedEviction(builder.eviction(target, annotation), annotation.clear()));
+            evictions = List.of(new CacheAnnotationAdapter.PreparedEviction(
+                    adapter.eviction(target, annotation), annotation.clear()));
         } catch (RuntimeException invalidDefinition) {
             return invocation -> invocation.proceed();
         }

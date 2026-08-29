@@ -6,6 +6,7 @@ package dev.vertique.cache.caffeine;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoMap;
+import dev.vertique.cache.CacheAopModule;
 import dev.vertique.cache.CacheCoreModule;
 import dev.vertique.cache.CacheMode;
 import dev.vertique.cache.CacheModeKey;
@@ -17,7 +18,7 @@ import dev.vertique.json.JsonRuntimeModule;
 import jakarta.inject.Singleton;
 
 /** Dagger contribution for the local Caffeine cache store. */
-@Module(includes = {CacheCoreModule.class, JsonRuntimeModule.class})
+@Module(includes = {CacheCoreModule.class, CacheAopModule.class, JsonRuntimeModule.class})
 public final class CacheCaffeineModule {
     @Provides
     @IntoMap

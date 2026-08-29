@@ -8,17 +8,26 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Alpha
 > **Package:** `dev.vertique.codegen.cache`
 > **Artifact:** `vertique-codegen-cache`
-> **Depends on:** `vertique-cache-core`, `vertique-codegen-core`
+> **Depends on:** `vertique-cache-aop`, `vertique-codegen-core`
 
-`vertique-codegen-cache` is the build-time module boundary for cache annotation validation and generated cache metadata. It remains separate from the provider-neutral runtime and from storage providers. It is an annotation-processor artifact, not a runtime dependency.
+`vertique-codegen-cache` is the build-time module boundary for cache annotation validation. It
+remains separate from the provider-neutral runtime and from storage providers. It is an
+annotation-processor artifact, not a runtime dependency.
 
 ## When To Use It
 
-Use this artifact in the compile-time processor path of applications that use generated cache metadata. Runtime applications should also declare the cache runtime and a concrete provider according to their composition.
+Use this artifact in the compile-time processor path of applications that use cache annotations.
+Runtime applications should declare `vertique-cache-aop` and a concrete provider according to
+their composition.
 
 ## Core Concepts
 
-The registered `CacheAnnotationProcessor` validates `@Cacheable` and `@CacheEvict` declarations and returns control to the other processors. When a compilation contains cache annotations, it emits one public `GeneratedCacheModule` in the annotated bean's package; that module includes `CacheCaffeineModule` so the generated application component can install the Caffeine provider through the normal cache-core map seam. The generic AOP processor emits the application-owned subclass proxy and reflection-free `MethodMetadata`; generated types belong to the consuming application compilation and are not supplied by a runtime provider module.
+The registered `CacheAnnotationProcessor` validates `@Cacheable` and `@CacheEvict` declarations
+and returns all proxy and metadata generation to the generic AOP processor. Provider composition
+is explicit: the application includes a concrete provider module, which includes the cache core
+and cache AOP bindings. The generic AOP processor emits the application-owned subclass proxy and
+reflection-free `MethodMetadata`; generated types belong to the consuming application
+compilation and are not supplied by a runtime provider module.
 
 ## Validation boundary
 
@@ -54,9 +63,9 @@ declaration with neither a key nor `clear = true` as a no-op.
 For a JAX-RS `@GET` method, `@Cacheable` accepts an entity or `Future<entity>` result. HTTP
 response wrappers, transport response types, buffers, routing contexts, streams, publishers,
 and `Multi` results are rejected. The processor emits no selector `toString()` fallback.
-Generated method metadata is reflection-free, while the current runtime selector renderer
-invokes the validated record or bean accessor and fails open when a null or invalid value
-cannot produce a key. The configured `CacheConfig.maxKeyBytes` limit applies to the complete
+The generic AOP processor emits reflection-free method metadata; the cache annotation adapter
+uses it to invoke the validated record or bean accessor and fails open when a null or invalid
+value cannot produce a key. The configured `CacheConfig.maxKeyBytes` limit applies to the complete
 canonical UTF-8 key; its default is 1,024 bytes.
 
 Inherited annotations are not promoted to a different concrete bean by this processor; the
@@ -69,9 +78,8 @@ alongside this artifact for the validated annotations to produce proxies and met
 
 ## Verification
 
-A clean reactor build regenerates the cache metadata, generated cache module, and AOP composition
-from the consuming application sources; stale generated output is not a runtime provider
-dependency. Run the processor proof with:
+A clean reactor build regenerates AOP output from the consuming application sources; stale
+generated output is not a runtime provider dependency. Run the processor proof with:
 
 ```text
 ./mvnw -ntp -pl vertique-codegen/vertique-codegen-cache -am verify
@@ -95,5 +103,5 @@ parity:
 
 | Artifact | Purpose |
 |---|---|
-| `vertique-cache-core` | Cache annotation and runtime contract types |
+| `vertique-cache-aop` | Cache annotations and runtime AOP adapters |
 | `vertique-codegen-core` | Shared annotation-processor utilities |

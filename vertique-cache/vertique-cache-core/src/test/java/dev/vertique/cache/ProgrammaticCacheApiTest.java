@@ -12,11 +12,11 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
-/** Direct proof that application cache handles share the annotation runtime. */
+/** Direct proof of the programmatic cache API and runtime behavior. */
 class ProgrammaticCacheApiTest {
     @Test
     void scalarHandleLoadsOnceAndUsesVersionTwoFraming() {
-        CacheTestFixtures.RecordingStore store = new CacheTestFixtures.RecordingStore();
+        ProgrammaticCacheTestFixtures.RecordingStore store = new ProgrammaticCacheTestFixtures.RecordingStore();
         CacheBuilder builder = CacheBuilder.forTesting(
                 store, CacheTestFixturesConfig.defaults(), java.util.Set.of(), java.util.Set.of());
         Cache<String, String> cache = builder.cache("products", String.class)
@@ -38,7 +38,7 @@ class ProgrammaticCacheApiTest {
 
     @Test
     void compositeDefinitionEvaluatesEachSelectorOnceAndIsImmutable() {
-        CacheTestFixtures.RecordingStore store = new CacheTestFixtures.RecordingStore();
+        ProgrammaticCacheTestFixtures.RecordingStore store = new ProgrammaticCacheTestFixtures.RecordingStore();
         CacheBuilder builder = CacheBuilder.forTesting(
                 store, CacheTestFixturesConfig.defaults(), java.util.Set.of(), java.util.Set.of());
         var base = builder.cache("products", String.class).identity(CacheIdentity.NONE);
@@ -54,7 +54,7 @@ class ProgrammaticCacheApiTest {
 
     @Test
     void parameterizedTypeRefIsAccepted() {
-        CacheTestFixtures.RecordingStore store = new CacheTestFixtures.RecordingStore();
+        ProgrammaticCacheTestFixtures.RecordingStore store = new ProgrammaticCacheTestFixtures.RecordingStore();
         CacheBuilder builder = CacheBuilder.forTesting(
                 store, CacheTestFixturesConfig.defaults(), java.util.Set.of(), java.util.Set.of());
         Cache<String, List<String>> cache = builder.cache("values", new CacheBuilder.TypeRef<List<String>>() {})

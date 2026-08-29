@@ -15,27 +15,27 @@ import java.util.List;
 /** Executes every repeated eviction declaration after the business method succeeds. */
 @Singleton
 final class CacheEvictListAspect implements AspectProvider<CacheEvict.List> {
-    private final CacheBuilder builder;
+    private final CacheAnnotationAdapter adapter;
 
     @Inject
-    CacheEvictListAspect(CacheBuilder builder) {
-        this.builder = builder;
+    CacheEvictListAspect(CacheAnnotationAdapter adapter) {
+        this.adapter = adapter;
     }
 
     @Override
     public MethodInterceptor interceptor(MethodMetadata target, CacheEvict.List annotations) {
-        List<CacheBuilder.PreparedEviction> preparedEvictions;
+        List<CacheAnnotationAdapter.PreparedEviction> preparedEvictions;
         try {
-            preparedEvictions = builder.evictions(target, annotations.value());
+            preparedEvictions = adapter.evictions(target, annotations.value());
         } catch (RuntimeException invalidDefinition) {
             // A malformed declaration is rejected by the cache processor. Keep generated
-            // proxies fail-open for compatibility with manually constructed metadata.
+            // proxies fail-open when runtime metadata is supplied manually.
             preparedEvictions = List.of();
         }
-        List<CacheBuilder.PreparedEviction> evictions = List.copyOf(preparedEvictions);
+        List<CacheAnnotationAdapter.PreparedEviction> evictions = List.copyOf(preparedEvictions);
         return invocation -> invocation.proceed().compose(result -> {
             List<Future<Boolean>> operations = new ArrayList<>();
-            for (CacheBuilder.PreparedEviction eviction : evictions) {
+            for (CacheAnnotationAdapter.PreparedEviction eviction : evictions) {
                 if (eviction.clear()) {
                     operations.add(eviction.cache().invalidateAll());
                 } else {

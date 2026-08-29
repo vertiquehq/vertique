@@ -3,12 +3,10 @@
 
 package dev.vertique.cache;
 
-import dagger.Binds;
 import dagger.BindsOptionalOf;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.Multibinds;
-import dev.vertique.aop.AspectProvider;
 import dev.vertique.cache.config.CacheConfig;
 import dev.vertique.cache.spi.CacheIdentityResolver;
 import dev.vertique.cache.spi.CacheStore;
@@ -34,20 +32,8 @@ public abstract class CacheCoreModule {
     @Multibinds
     abstract Set<dev.vertique.cache.spi.CacheObserver> cacheObservers();
 
-    @Multibinds
-    abstract Set<dev.vertique.cache.spi.GeneratedCacheMetadata> generatedCacheMetadata();
-
     @BindsOptionalOf
     abstract CacheIdentityResolver optionalCacheIdentityResolver();
-
-    @Binds
-    abstract AspectProvider<Cacheable> bindCacheableAspect(CacheableAspect aspect);
-
-    @Binds
-    abstract AspectProvider<CacheEvict> bindCacheEvictAspect(CacheEvictAspect aspect);
-
-    @Binds
-    abstract AspectProvider<CacheEvict.List> bindCacheEvictListAspect(CacheEvictListAspect aspect);
 
     @Provides
     @Singleton
@@ -56,10 +42,8 @@ public abstract class CacheCoreModule {
             CacheConfig config,
             Set<dev.vertique.cache.spi.CacheObserver> observers,
             DefaultCacheIdentityResolver defaultResolver,
-            Optional<CacheIdentityResolver> customResolver,
-            Set<dev.vertique.cache.spi.GeneratedCacheMetadata> generatedMetadata) {
-        return new CacheBuilder(
-                stores, config, observers, Optional.of(customResolver.orElse(defaultResolver)), generatedMetadata);
+            Optional<CacheIdentityResolver> customResolver) {
+        return new CacheBuilder(stores, config, observers, Optional.of(customResolver.orElse(defaultResolver)));
     }
 
     @Provides

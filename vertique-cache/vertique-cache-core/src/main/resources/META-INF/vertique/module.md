@@ -8,11 +8,11 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Alpha
 > **Package:** `dev.vertique.cache`
 > **Artifact:** `vertique-cache-core`
-> **Depends on:** `vertique-aop`, `vertique-core`, `vertique-security-core`
+> **Depends on:** `vertique-core`, `vertique-security-core`
 
-`vertique-cache-core` is the provider-neutral foundation for annotation-driven and programmatic
-method-result caching. Injected `CacheBuilder` creates immutable `Cache<K,V>` handles; both
-callers use the same cache-aside runtime and no provider implementation is exposed.
+`vertique-cache-core` is the provider-neutral foundation for programmatic method-result caching.
+Injected `CacheBuilder` creates immutable `Cache<K,V>` handles; annotation support is layered in
+`vertique-cache-aop` and no provider implementation is exposed.
 
 ## When To Use It
 
@@ -20,9 +20,9 @@ Use this artifact when an application or provider module needs the provider-neut
 
 ## Core Concepts
 
-Cache annotations, the `CacheBuilder`/`Cache` application API, and storage contracts are kept
-separate from provider details. Local and clustered implementations depend on this module; this
-module does not depend on Caffeine, Redis, or a serialization engine. Application code supplies
+The `CacheBuilder`/`Cache` application API and storage contracts are kept separate from provider
+and annotation details. Local and clustered implementations depend on this module; this module
+does not depend on Caffeine, Redis, AOP, or a serialization engine. Application code supplies
 logical inputs and selector functions, never `CacheStore`, `ResolvedCacheKey`, or provider keys.
 
 ```java
@@ -41,8 +41,8 @@ The typed cache configuration uses explicit duration units such as `defaultTtlSe
 profile for cache values; a per-cache `jsonProfile` override may inherit the global
 cache profile when omitted. Provider modules contribute storage bindings through the
 internal `CacheMode` Dagger map seam. The standard composition maps `LOCAL` to Caffeine and
-`CLUSTERED` to Redis; the aspects resolve the provider for the effective mode and record that
-provider in cache observations.
+`CLUSTERED` to Redis. Annotation adapters in `vertique-cache-aop` resolve the same provider
+through this module's neutral builder seam.
 
 ## Runtime behavior
 
@@ -54,7 +54,7 @@ only after their application authorization decision. The optional `CacheObserver
 empty by default and receives redacted operation, provider, cache, outcome, and duration
 data without becoming a cache or telemetry dependency. The same observer seam exposes
 redacted cleanup outcomes through `CacheObserver.onCleanup(CacheCleanupObservation)`; the
-default method keeps operation-only observers source-compatible. Identity-scoped annotations use
+default method keeps operation-only observers source-compatible. Identity-scoped cache definitions use
 the standard `DefaultCacheIdentityResolver`, contributed by `CacheCoreModule`, to read
 the current `SecurityContext` from the framework `ContextHolder`. `ACTOR` uses the actor,
 `EFFECTIVE_PRINCIPAL` uses the subject when present and otherwise the actor, and
@@ -89,7 +89,8 @@ Run the cache package proof with:
 ```
 
 The clean reactor verification additionally checks dependency and BOM parity, forbidden provider
-dependencies, packaged module-documentation parity, and regeneration of cache and AOP metadata:
+dependencies, packaged module-documentation parity, and regeneration of cache composition and AOP
+output:
 
 ```text
 ./mvnw -ntp clean verify
@@ -99,7 +100,6 @@ dependencies, packaged module-documentation parity, and regeneration of cache an
 
 | Artifact | Purpose |
 |---|---|
-| `vertique-aop` | Method interception runtime boundary |
 | `vertique-core` | Framework foundations and shared configuration/runtime contracts |
 | `vertique-context` | Vert.x context propagation and `ContextHolder` runtime binding |
 | `vertique-security-core` | Provider-neutral `SecurityContext` and caller identity contracts |

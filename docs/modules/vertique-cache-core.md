@@ -5,10 +5,10 @@
 
 This module owns the provider-neutral cache package boundary. Provider implementations must depend inward on this module and must not introduce provider types into its public contracts.
 
-`CacheBuilder` and immutable `Cache<K,V>` are the application-facing API. Builder definitions
-resolve policy once, while identity is read from the current security context for every
-identity-scoped operation. Programmatic and annotation callers share the `Cache` behavior owner;
-the aspects only adapt metadata and invocation arguments.
+`CacheBuilder` and immutable `Cache<K,V>` are the programmatic application API. Builder
+definitions resolve policy once, while identity is read from the current security context for
+every identity-scoped operation. Annotation callers are implemented by the separate
+`vertique-cache-aop` adapter module.
 
 ## Source Map
 
@@ -16,11 +16,14 @@ the aspects only adapt metadata and invocation arguments.
 
 ## Runtime or Build Flow
 
-The module is selected before provider modules in the reactor and supplies the neutral dependency target for code generation and storage providers. Its Dagger map seam selects a `CacheStore` by effective `CacheMode`; the standard provider composition maps `LOCAL` to Caffeine and `CLUSTERED` to Redis, while observations receive the selected provider identity.
+The module is selected before provider modules in the reactor and supplies the neutral dependency
+target for storage providers and API adapters. Its Dagger map seam selects a `CacheStore` by
+effective `CacheMode`; the standard provider composition maps `LOCAL` to Caffeine and `CLUSTERED`
+to Redis, while observations receive the selected provider identity.
 
-The cache aspect remains inside the framework authorization boundary. Authorization must
+The cache AOP adapter remains inside the framework authorization boundary. Authorization must
 run before a lookup on both hits and misses; a hit may skip the target method only after
-that outer boundary has completed. For identity-scoped annotations, the standard
+that outer boundary has completed. For identity-scoped definitions, the standard
 `DefaultCacheIdentityResolver` reads the current `SecurityContext` from `ContextHolder`
 and derives the canonical caller component from its actor and subject fields. Missing or
 unavailable identity bypasses the cache unless the annotation explicitly opts into the anonymous
@@ -35,7 +38,7 @@ cache-core does not depend on Micrometer or any other telemetry implementation.
 - Cleanup observation remains a provider-neutral `CacheCleanupObservation` record; telemetry
   adapters consume it through `CacheObserver` rather than adding provider or Micrometer types.
 - Aggregator POMs remain non-consumable and are not added to the BOM.
-- Provider selection stays behind the cache-core resolver; aspects do not know provider implementation classes.
+- Provider selection stays behind the cache-core resolver; AOP adapters do not know provider implementation classes.
 - Providers consume `ResolvedCacheKey` and `CacheValueDescriptor`; application code cannot supply
   a resolved identity-bearing key through the builder API.
 

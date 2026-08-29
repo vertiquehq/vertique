@@ -12,19 +12,13 @@
     </parent>
     <artifactId>vertique-codegen-cache</artifactId>
     <name>Vertique Codegen Cache</name>
-    <description>Compile-time processor support for annotation-driven cache metadata</description>
+    <description>Compile-time validation and composition support for cache annotations</description>
     <dependencies>
-        <dependency><groupId>dev.vertique</groupId><artifactId>vertique-cache-core</artifactId></dependency>
+        <dependency><groupId>dev.vertique</groupId><artifactId>vertique-cache-aop</artifactId></dependency>
         <dependency><groupId>dev.vertique</groupId><artifactId>vertique-codegen-core</artifactId></dependency>
-        <dependency><groupId>com.palantir.javapoet</groupId><artifactId>javapoet</artifactId></dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-codegen-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-cache-caffeine</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
