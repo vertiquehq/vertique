@@ -56,6 +56,12 @@ The internal reactor parent, `vertique-parent`, enforces this repository boundar
 during Maven validation, including transitive dependencies. Applications instead
 inherit the consumer-safe `vertique-app-parent` described below.
 
+Cache support follows the same one-way boundary: `vertique-cache-core` owns
+provider-neutral cache contracts and consumes `vertique-aop` and `vertique-core`;
+the Caffeine and Redis provider modules depend on that neutral core. Shared Redis
+connection profiles and client lifecycle belong to `vertique-redis-core`, which is
+independent of cache-specific behavior so other Redis-backed capabilities can reuse it.
+
 ## Compile-time wiring
 
 Annotation processors under `vertique-codegen` generate Dagger bindings, service
@@ -67,7 +73,7 @@ compile time.
 The standalone `vertique-app-parent` is the public Maven boundary for applications. It
 imports `vertique-bom` and places only Dagger plus the dependency-only
 `vertique-codegen-all` facade on the compiler processor path. The facade resolves the
-closed set of Vertique-owned processor leaves transitively; those leaves remain build
+closed set of Vertique-owned processor leaves, including cache code generation, transitively; those leaves remain build
 tools and never become application runtime dependencies. Custom-parent consumers use
 the same boundary explicitly by importing the BOM and configuring the same two
 versionless processor paths. Lombok is outside that default boundary and requires an

@@ -19,9 +19,10 @@ SPDX-License-Identifier: EUPL-1.2
     <artifactId>vertique-opentelemetry</artifactId>
     <packaging>pom</packaging>
     <name>Vertique OpenTelemetry</name>
-    <description>OpenTelemetry tracing modules: SDK bootstrap, correlation bridge, span enrichment adapters</description>
+    <description>OpenTelemetry tracing modules: SDK bootstrap, cache adapter, correlation bridge, span enrichment adapters</description>
 
     <modules>
+        <module>vertique-opentelemetry-cache</module>
         <module>vertique-opentelemetry-core</module>
         <module>vertique-opentelemetry-rest</module>
         <module>vertique-opentelemetry-services</module>

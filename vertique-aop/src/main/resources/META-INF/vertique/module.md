@@ -69,7 +69,7 @@ public interface AspectProvider<A extends Annotation> {
 }
 ```
 
-Both arguments are produced reflection-free by the processor: `target` is a generated `MethodMetadata` implementation (see `MethodMetadata` in `vertique-core`, `dev.vertique.core.codegen`), and `annotation` is a generated annotation-literal carrying the method's attribute values. `MethodMetadata`'s constant-only accessors (`name()`, `declaringType()`, `returnType()`, `parameterTypes()`, `parameters()`, `findAnnotation()`, `hasAnnotation()`) are the reflection-free core that generated proxies call. `genericReturnType()` and `asMethod()` are an opt-in reflective-accessor group — never called by generated proxy code, and only safe to call when the caller accepts the reflection they entail.
+Both arguments are produced reflection-free by the processor: `target` is a generated `MethodMetadata` implementation (see `MethodMetadata` in `vertique-core`, `dev.vertique.core.codegen`), and `annotation` is a generated annotation-literal carrying the method's attribute values. `MethodMetadata`'s constant-only accessors (`name()`, `declaringType()`, `returnType()`, `parameterTypes()`, `parameters()`, `findAnnotation()`, `hasAnnotation()`) are the reflection-free core that generated proxies call. Generated metadata also returns `genericReturnType()` from a reflection-free `Type` graph for consumers that need the declared payload shape; `asMethod()` remains an opt-in reflective accessor.
 
 **Dagger wiring example:**
 

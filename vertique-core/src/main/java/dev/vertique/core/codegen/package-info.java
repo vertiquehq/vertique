@@ -16,13 +16,12 @@
  *       a generated implementation returns compile-time-captured constants and never reflects at
  *       call time. Annotation lookups are backed by generated annotation-literals rather than
  *       {@code Method#getAnnotation}.
- *   <li>The <strong>reflective-accessor group</strong> —
- *       {@link dev.vertique.core.codegen.MethodMetadata#asMethod()},
- *       {@link dev.vertique.core.codegen.MethodMetadata#genericReturnType()}, and
- *       {@link dev.vertique.core.codegen.ParameterMetadata#genericType()} — is an <em>opt-in</em>
- *       group that is <strong>not</strong> part of the reflection-free guarantee and is never called
- *       by generated proxy code. A consumer that explicitly needs reflective access uses it,
- *       accepting the reflection it entails.
+ *   <li>{@link dev.vertique.core.codegen.MethodMetadata#asMethod()} and
+ *       {@link dev.vertique.core.codegen.ParameterMetadata#genericType()} remain opt-in reflective
+ *       accessors. Generated method metadata supplies {@link
+ *       dev.vertique.core.codegen.MethodMetadata#genericReturnType()} as a reflection-free
+ *       {@link java.lang.reflect.Type} graph; reflection-backed metadata may still derive it from a
+ *       live method.
  * </ul>
  *
  * <h2>Key types</h2>

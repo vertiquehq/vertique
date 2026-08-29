@@ -145,8 +145,7 @@ The message carries only the failing class's simple name or a structural descrip
 
 ## Emitted Telemetry
 
-This module adds **span events** to the current recording span. It never creates spans of its own, and
-it never adds an attribute to a span it did not receive.
+The security observer adds **span events** to the current recording span.
 
 | Trigger | Span event name | Attributes |
 |---|---|---|

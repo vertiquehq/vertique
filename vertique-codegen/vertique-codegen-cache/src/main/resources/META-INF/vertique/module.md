@@ -1,0 +1,111 @@
+<!--
+SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+SPDX-License-Identifier: EUPL-1.2
+-->
+
+# Cache Codegen
+
+> **Status:** Alpha
+> **Package:** `dev.vertique.codegen.cache`
+> **Artifact:** `vertique-codegen-cache`
+> **Depends on:** `vertique-cache-aop`, `vertique-codegen-core`
+
+`vertique-codegen-cache` is the build-time module boundary for cache annotation validation. It
+remains separate from the provider-neutral runtime and from storage providers. It is an
+annotation-processor artifact, not a runtime dependency.
+
+## When To Use It
+
+Use this artifact in the compile-time processor path of applications that use cache annotations.
+Runtime applications should declare `vertique-cache-aop` and a concrete provider according to
+their composition.
+
+## Core Concepts
+
+The registered `CacheAnnotationProcessor` validates `@Cacheable` and `@CacheEvict` declarations
+and returns all proxy and metadata generation to the generic AOP processor. Provider composition
+is explicit: the application includes a concrete provider module, which includes the cache core
+and cache AOP bindings. The generic AOP processor emits the application-owned subclass proxy and
+reflection-free `MethodMetadata`; generated types belong to the consuming application
+compilation and are not supplied by a runtime provider module.
+
+## Validation boundary
+
+The processor validates cache declarations at compilation. A cacheable or eviction method
+must be declared on a public, non-final class with exactly one constructor annotated with
+`jakarta.inject.Inject` or `javax.inject.Inject`. The annotated method must be an instance
+method that can be overridden; final, private, static, abstract, and non-proxyable method
+shapes produce diagnostics. `@Cacheable` methods must return a value, and raw, wildcard, or
+type-variable `Future` results are rejected.
+
+Keys are ordered selector-path arrays: `key = {"tenantId", "user.email"}`. Each path is a
+positional (`"0"`) or parameter-name (`"user"`) root plus at most seven dot-separated
+property segments (eight segments including the root). There is no template or literal
+text; the runtime alone composes and frames the canonical key. An explicitly empty
+`key = {}` declares a constant, value-independent operation key. Each property must
+resolve to a public, zero-argument instance accessor: a record accessor, a method named for
+the property, or a JavaBean `getX()`/`isX()` accessor. The terminal must be one of the
+processor's supported scalar shapes:
+
+| Shape | Accepted types |
+|---|---|
+| Text and primitives | `String`, `char`/`Character`, `boolean`/`Boolean`, and numeric primitives or wrappers |
+| Numeric values | `BigInteger`, `BigDecimal` |
+| Other scalar values | `UUID`, enum types, and `java.time.temporal.TemporalAccessor` types |
+
+Blank paths, invalid identifiers, unresolved parameters or accessors, excessive property
+depth, object/container terminals, and unsupported return shapes produce compile-time
+diagnostics. The processor does not perform a separate ambiguity check; a path must
+resolve through the ordinary parameter and accessor lookup rules.
+
+For `@CacheEvict`, proxyability is always validated, and a declaration must specify
+exactly one of `clear = true` or an explicit `key` attribute — a declaration with
+neither, or with both a key and `clear = true`, is a compile-time diagnostic. An
+explicit nonempty key is path-validated; an explicit empty key is the constant-entry
+exact eviction; a clear operation has no selector to validate.
+
+For a JAX-RS `@GET` method, `@Cacheable` accepts an entity or `Future<entity>` result. HTTP
+response wrappers, transport response types, buffers, routing contexts, streams, publishers,
+and `Multi` results are rejected. The processor emits no selector `toString()` fallback.
+The generic AOP processor emits reflection-free method metadata; the cache annotation adapter
+uses it to invoke the validated record or bean accessor and fails open when a null or invalid
+value cannot produce a key. The configured `CacheConfig.maxKeyBytes` limit applies to the complete
+canonical UTF-8 key; its default is 1,024 bytes.
+
+Inherited annotations are not promoted to a different concrete bean by this processor; the
+validated method belongs to its declaring class. Self-invocation is not diagnosed here:
+interception occurs only when a call enters the generated AOP override, so direct
+construction and calls that bypass the proxy are not intercepted.
+
+The generic AOP processor must be present on the application's annotation-processor path
+alongside this artifact for the validated annotations to produce proxies and metadata.
+
+## Verification
+
+A clean reactor build regenerates AOP output from the consuming application sources; stale
+generated output is not a runtime provider dependency. Run the processor proof with:
+
+```text
+./mvnw -ntp -pl vertique-codegen/vertique-codegen-cache -am verify
+```
+
+The package-level clean build also verifies dependency/BOM parity and packaged module-documentation
+parity:
+
+```text
+./mvnw -ntp clean verify
+```
+
+## Decision records
+
+- [D012 — Named and property key selectors](../../../../../../../../../docs/specs/cache-001-annotation-cache-support/decisions/D012-named-and-property-key-selectors.md)
+- [D015 — Cache REST entities, not HTTP responses](../../../../../../../../../docs/specs/cache-001-annotation-cache-support/decisions/D015-cache-rest-entities-not-http-responses.md)
+- [D021 — Generated module composes cache runtime](../../../../../../../../../docs/specs/cache-001-annotation-cache-support/decisions/D021-generated-module-composes-cache-runtime.md)
+- [D023 — Public cache key and value shape](../../../../../../../../../docs/specs/cache-001-annotation-cache-support/decisions/D023-public-cache-key-value-shape.md)
+
+## Dependencies
+
+| Artifact | Purpose |
+|---|---|
+| `vertique-cache-aop` | Cache annotations and runtime AOP adapters |
+| `vertique-codegen-core` | Shared annotation-processor utilities |

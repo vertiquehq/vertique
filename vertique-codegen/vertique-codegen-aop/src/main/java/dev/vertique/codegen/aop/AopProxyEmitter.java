@@ -322,12 +322,9 @@ final class AopProxyEmitter {
     private Map<String, AspectRef> collectAspects(List<ExecutableElement> methods, Set<String> aspectFqns) {
         Map<String, AspectRef> byFqn = new LinkedHashMap<>();
         for (ExecutableElement method : methods) {
-            for (AnnotationMirror mirror : method.getAnnotationMirrors()) {
+            for (AnnotationMirror mirror : aspectMirrors(method, aspectFqns)) {
                 TypeElement annType = (TypeElement) mirror.getAnnotationType().asElement();
                 String fqn = annType.getQualifiedName().toString();
-                if (!aspectFqns.contains(fqn)) {
-                    continue;
-                }
                 byFqn.computeIfAbsent(fqn, k -> new AspectRef(annType, mirror));
             }
         }
@@ -340,15 +337,41 @@ final class AopProxyEmitter {
      */
     private List<AspectOnMethod> orderedAspects(ExecutableElement method, Set<String> aspectFqns) {
         List<AspectOnMethod> list = new ArrayList<>();
-        for (AnnotationMirror mirror : method.getAnnotationMirrors()) {
+        for (AnnotationMirror mirror : aspectMirrors(method, aspectFqns)) {
             TypeElement annType = (TypeElement) mirror.getAnnotationType().asElement();
             String fqn = annType.getQualifiedName().toString();
-            if (aspectFqns.contains(fqn)) {
-                list.add(new AspectOnMethod(fqn, aspectOrdering(annType), mirror));
-            }
+            list.add(new AspectOnMethod(fqn, aspectOrdering(annType), mirror));
         }
         list.sort(Comparator.comparingInt(AspectOnMethod::ordering).reversed().thenComparing(AspectOnMethod::fqn));
         return list;
+    }
+
+    /** Expands repeatable annotation containers so each occurrence receives its own literal. */
+    private List<AnnotationMirror> aspectMirrors(ExecutableElement method, Set<String> aspectFqns) {
+        List<AnnotationMirror> result = new ArrayList<>();
+        for (AnnotationMirror mirror : method.getAnnotationMirrors()) {
+            String fqn = ((TypeElement) mirror.getAnnotationType().asElement())
+                    .getQualifiedName()
+                    .toString();
+            if (aspectFqns.contains(fqn)) {
+                result.add(mirror);
+                continue;
+            }
+            for (var entry : mirror.getElementValues().entrySet()) {
+                if (!(entry.getValue().getValue() instanceof List<?> values)) continue;
+                for (Object value : values) {
+                    if (value instanceof javax.lang.model.element.AnnotationValue annotationValue
+                            && annotationValue.getValue() instanceof AnnotationMirror nested) {
+                        String nestedFqn = ((TypeElement)
+                                        nested.getAnnotationType().asElement())
+                                .getQualifiedName()
+                                .toString();
+                        if (aspectFqns.contains(nestedFqn)) result.add(nested);
+                    }
+                }
+            }
+        }
+        return result;
     }
 
     /** Reads the {@code ordering()} member of the {@code @Aspect} meta-annotation on the trigger type. */
