@@ -3,6 +3,7 @@
 
 package dev.vertique.kafka;
 
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.util.Strings;
 import dev.vertique.kafka.config.KafkaConfig;
 import dev.vertique.kafka.config.KafkaConsumerConfig;
@@ -212,12 +213,15 @@ record ResolvedKafkaConsumerConfig(
 
     /**
      * Resolves an enum constant from a string name, returning the default if the name is blank or null.
+     * A non-blank name that does not identify an enum constant fails with a
+     * {@link ConfigurationException}.
      *
      * @param <E> the enum type
      * @param name the string name to look up
      * @param type the enum class
      * @param defaultValue the fallback value when name is blank or null
      * @return the resolved enum constant
+     * @throws ConfigurationException if name is non-blank but does not identify an enum constant
      */
     private static <E extends Enum<E>> E resolveEnum(String name, Class<E> type, E defaultValue) {
         if (name == null || name.isBlank()) {
@@ -226,7 +230,8 @@ record ResolvedKafkaConsumerConfig(
         try {
             return Enum.valueOf(type, name.toUpperCase());
         } catch (IllegalArgumentException e) {
-            return defaultValue;
+            throw new ConfigurationException(
+                    "Invalid " + type.getSimpleName() + " value '" + name + "'", e);
         }
     }
 

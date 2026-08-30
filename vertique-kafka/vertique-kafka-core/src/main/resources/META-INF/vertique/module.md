@@ -818,7 +818,7 @@ Fires exactly once per send, through the shared wire funnel in `KafkaProducerFac
 
 | Failure | Cause |
 |---|---|
-| `ConfigurationException` | A consumer config bound is violated — `eventBusTimeoutMs <= 0`, `maxInFlight < 1`, `instances < 1`, `maxRetries < 0`, `backoffMs < 0`, `backoffMultiplier < 1.0`, `maxBackoffMs < 0`. The message names the exact config path |
+| `ConfigurationException` | A consumer config bound is violated — an unknown `commitStrategy`, `errorStrategy`, or `retry.exhaustedStrategy`, `eventBusTimeoutMs <= 0`, `maxInFlight < 1`, `instances < 1`, `maxRetries < 0`, `backoffMs < 0`, `backoffMultiplier < 1.0`, `maxBackoffMs < 0`. Enum failures identify the invalid type and value; other validation messages name the exact config path |
 | `KafkaRegistrationException` | An invalid consumer declaration, or a generated binding companion that is present but malformed. A `ConfigurationException` subtype — broken generated code is never silently skipped |
 | `IllegalArgumentException` | The resolved format has no registered `KafkaSerdeProvider`; the message names the missing module |
 | `IllegalStateException` | `worker = false` on a consumer whose effective deserializer reports `mayBlock()` |

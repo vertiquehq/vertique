@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import dev.vertique.config.parser.DefaultConfigMapper;
 import dev.vertique.config.parser.DefaultConfigParser;
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.kafka.config.KafkaConfig;
 import io.vertx.core.ThreadingModel;
 import io.vertx.core.json.JsonObject;
@@ -167,6 +168,20 @@ class ResolvedKafkaConsumerConfigTest {
 
             ResolvedKafkaConsumerConfig config = resolveDefault("test-consumer", "topic", "group", kafkaConfig);
             assertEquals(ErrorStrategy.DEAD_LETTER, config.errorStrategy());
+        }
+
+        @Test
+        @DisplayName("invalid config errorStrategy throws ConfigurationException")
+        void invalidConfigErrorStrategyThrowsConfigurationException() {
+            JsonObject kafkaConfig = new JsonObject()
+                    .put(
+                            "consumers",
+                            new JsonObject()
+                                    .put("test-consumer", new JsonObject().put("errorStrategy", "NOT_A_STRATEGY")));
+
+            assertThrows(
+                    ConfigurationException.class,
+                    () -> resolveDefault("test-consumer", "topic", "group", kafkaConfig));
         }
 
         @Test
@@ -435,6 +450,34 @@ class ResolvedKafkaConsumerConfigTest {
             assertEquals(500L, config.retryConfig().backoffMs());
             assertEquals(3.0, config.retryConfig().backoffMultiplier());
             assertEquals(30_000L, config.retryConfig().maxBackoffMs());
+        }
+
+        @Test
+        @DisplayName("invalid retry.exhaustedStrategy throws ConfigurationException")
+        void invalidRetryExhaustedStrategyThrowsConfigurationException() {
+            JsonObject kafkaConfig = new JsonObject()
+                    .put(
+                            "consumers",
+                            new JsonObject()
+                                    .put(
+                                            "consumer",
+                                            new JsonObject()
+                                                    .put(
+                                                            "retry",
+                                                            new JsonObject().put("exhaustedStrategy", "NOT_A_STRATEGY"))));
+
+            assertThrows(
+                    ConfigurationException.class,
+                    () -> resolve(
+                            "consumer",
+                            "topic",
+                            "group",
+                            true,
+                            CommitStrategy.AUTO,
+                            ErrorStrategy.RETRY,
+                            "",
+                            30_000L,
+                            kafkaConfig));
         }
     }
 
