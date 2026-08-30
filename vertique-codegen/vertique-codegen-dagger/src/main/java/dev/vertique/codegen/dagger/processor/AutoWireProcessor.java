@@ -7,8 +7,10 @@ import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.PackageResolver;
 import dev.vertique.codegen.dagger.processor.collect.DelayedJobExecutorScanner;
 import dev.vertique.codegen.dagger.processor.collect.KafkaConsumerCollector;
+import dev.vertique.codegen.dagger.processor.collect.RegistrationCollector;
 import dev.vertique.codegen.dagger.processor.collect.RestClientCollector;
 import dev.vertique.codegen.dagger.processor.emit.MultibindingModuleEmitter;
+import dev.vertique.codegen.dagger.processor.emit.RegistrationModuleEmitter;
 import dev.vertique.codegen.dagger.processor.emit.RestClientModuleEmitter;
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -38,6 +40,10 @@ import javax.lang.model.element.TypeElement;
  *   <li>{@code DelayedJobExecutor} impls &#8594; {@code GeneratedDelayedJobsModule} with
  *       {@code @Provides @IntoSet @DelayedJobs Object} methods</li>
  * </ul>
+ *
+ * <p>It also consumes the source-retained {@code @RegisterAs} and {@code @RegisterIntoSet}
+ * annotations and emits an explicit {@code GeneratedRegistrationsModule} containing abstract
+ * {@code @Binds} declarations.
  *
  * <p>JAX-RS resource binding ({@code @Path} &#8594; {@code GeneratedJaxRsResourcesModule}) is
  * owned by {@code JaxRsPipelineProcessor} in {@code vertique-codegen-jaxrs} (CG-010).
@@ -86,17 +92,20 @@ public final class AutoWireProcessor extends AbstractProcessor {
 
     private CodegenContext ctx;
     private EnumMap<Qualifier, List<Binding>> accumulator;
+    private List<Registration> registrations;
     private boolean disabled;
     private boolean emitted;
 
     // --- Collectors and scanners (initialized in init) ---
     private RestClientCollector restClientCollector;
     private KafkaConsumerCollector kafkaCollector;
+    private RegistrationCollector registrationCollector;
     private DelayedJobExecutorScanner delayedJobScanner;
 
     // --- Emitters ---
     private MultibindingModuleEmitter multibindingEmitter;
     private RestClientModuleEmitter restClientEmitter;
+    private RegistrationModuleEmitter registrationEmitter;
 
     // --- PackageResolver ---
     private PackageResolver packageResolver;
@@ -135,10 +144,12 @@ public final class AutoWireProcessor extends AbstractProcessor {
         for (Qualifier q : Qualifier.values()) {
             accumulator.put(q, new ArrayList<>());
         }
+        registrations = new ArrayList<>();
 
         // Collectors
         restClientCollector = new RestClientCollector(ctx);
         kafkaCollector = new KafkaConsumerCollector(ctx);
+        registrationCollector = new RegistrationCollector(ctx);
 
         // Scanners
         delayedJobScanner = new DelayedJobExecutorScanner(ctx);
@@ -146,6 +157,7 @@ public final class AutoWireProcessor extends AbstractProcessor {
         // Emitters
         multibindingEmitter = new MultibindingModuleEmitter(ctx);
         restClientEmitter = new RestClientModuleEmitter(ctx);
+        registrationEmitter = new RegistrationModuleEmitter(ctx);
 
         // Package resolver
         packageResolver = new PackageResolver(env);
@@ -189,6 +201,7 @@ public final class AutoWireProcessor extends AbstractProcessor {
         // --- Phase 1: Annotation-rooted collectors ---
         restClientCollector.collect(roundEnv, accumulator.get(Qualifier.REST_CLIENTS));
         kafkaCollector.collect(roundEnv, accumulator.get(Qualifier.KAFKA_CONSUMERS));
+        registrationCollector.collect(roundEnv, registrations);
 
         // --- Phase 2: Root-element scan for delayed-job executors ---
         List<TypeElement> concreteRootElements = collectConcreteRootElements(roundEnv);
@@ -236,6 +249,14 @@ public final class AutoWireProcessor extends AbstractProcessor {
      * by {@link RestClientModuleEmitter}.
      */
     private void emitAll() {
+        if (!registrations.isEmpty()) {
+            String packageName = packageResolver.resolve(
+                    registrations.stream().map(Registration::origin).toList(), ctx);
+            if (packageName != null) {
+                registrationEmitter.emit(registrations, packageName);
+            }
+        }
+
         for (Qualifier qualifier : Qualifier.values()) {
             List<Binding> bindings = accumulator.get(qualifier);
             if (bindings.isEmpty()) {

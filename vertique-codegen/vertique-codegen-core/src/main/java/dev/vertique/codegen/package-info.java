@@ -14,6 +14,8 @@
  *
  * <p>Sub-packages:
  * <ul>
+ *   <li>{@code dev.vertique.codegen} — source-retained registration annotations such as
+ *       {@link dev.vertique.codegen.RegisterAs} and {@link dev.vertique.codegen.RegisterIntoSet}
  *   <li>{@code dev.vertique.codegen.dagger} — {@link dev.vertique.codegen.dagger.DaggerModuleWriter}
  *       for emitting Dagger {@code @Module} classes via JavaPoet
  *   <li>{@code dev.vertique.codegen.support} — identifier utilities

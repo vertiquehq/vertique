@@ -229,6 +229,32 @@ public @interface ConditionalOnProperties {
 - Only consumed by codegen processors; has no effect on manually-written Dagger bindings.
 - Placing `@ConditionalOnProperty` on a type that is also annotated `@NoAutoWire` triggers a compile-time WARNING from `ImplCandidateScanner` — the conditional has no effect on opted-out types.
 
+### Generic Dagger registration annotations
+
+`@RegisterAs` and `@RegisterIntoSet` are source-retained, repeatable type annotations consumed by
+`vertique-codegen-dagger`:
+
+```java
+@RegisterAs(MetricsObserver.class)
+final class DefaultMetricsObserver implements MetricsObserver {
+    @Inject
+    DefaultMetricsObserver() {}
+}
+
+@RegisterIntoSet(EventInterceptor.class)
+@RegisterIntoSet(RequestInterceptor.class)
+final class LoggingInterceptor implements EventInterceptor, RequestInterceptor {
+    @Inject
+    LoggingInterceptor() {}
+}
+```
+
+Each declaration carries one `Class<?> value()` target. The annotated type must be concrete, have
+exactly one `jakarta.inject.Inject` or `javax.inject.Inject` constructor, and be assignable to the
+target. `@NoAutoWire` suppresses every registration declaration on the same type. The processor
+emits `GeneratedRegistrationsModule` in the package resolved from the annotated origins; the module
+must be included explicitly by the owning Dagger component or aggregate module.
+
 ---
 
 ## Extension Points

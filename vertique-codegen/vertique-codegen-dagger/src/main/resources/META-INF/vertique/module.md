@@ -23,6 +23,13 @@ Two framework qualifiers use the multibinding emit shape; one uses a direct sing
 
 `@ServiceContract` implementation wiring is owned by `vertique-codegen-services`, not by this processor.
 
+Generic source-retained registrations are also handled here. `@RegisterAs(Target.class)` emits one
+abstract `@Binds Target bindImplementation(Implementation implementation)` method, while
+`@RegisterIntoSet(Target.class)` emits the same shape with `@IntoSet`. Both annotations are
+repeatable, so one implementation may be registered under multiple explicit targets. The
+processor emits `GeneratedRegistrationsModule` only when at least one valid registration exists;
+the owning Dagger component or aggregate module must include it explicitly.
+
 The processor uses `@SupportedAnnotationTypes("*")` so it runs every round regardless of which annotations are present. It always returns `false` from `process()` so Dagger, Lombok, and other processors see the same elements unmodified.
 
 ---
@@ -32,8 +39,8 @@ The processor uses `@SupportedAnnotationTypes("*")` so it runs every round regar
 | Package | Contents |
 |---------|----------|
 | `dev.vertique.codegen.dagger.processor` | `AutoWireProcessor`, `Qualifier` (enum), `Binding` (record) |
-| `dev.vertique.codegen.dagger.processor.collect` | `AnnotationRootedCollector` (shared base), `RestClientCollector`, `KafkaConsumerCollector`, `DelayedJobExecutorScanner` |
-| `dev.vertique.codegen.dagger.processor.emit` | `MultibindingModuleEmitter`, `RestClientModuleEmitter` |
+| `dev.vertique.codegen.dagger.processor.collect` | `AnnotationRootedCollector` (shared base), `RestClientCollector`, `KafkaConsumerCollector`, `DelayedJobExecutorScanner`, `RegistrationCollector` |
+| `dev.vertique.codegen.dagger.processor.emit` | `MultibindingModuleEmitter`, `RestClientModuleEmitter`, `RegistrationModuleEmitter` |
 | `dev.vertique.codegen.dagger.processor.support` | `Filters`, `FilerWriter` |
 
 ---
@@ -103,6 +110,16 @@ Collects interfaces annotated `@RestClient`. No `@Inject` constructor check (int
 ### `DelayedJobExecutorScanner`
 
 Root-element scan: loads `dev.vertique.job.delayed.DelayedJobExecutor` via `Elements.getTypeElement(...)`. If the class is unavailable in this compilation (no `job-delayed` dependency), the scanner is a no-op. Checks assignability via erasure FQN comparison. Only concrete classes pass.
+
+### `RegistrationCollector` and `RegistrationModuleEmitter`
+
+`RegistrationCollector` reads direct and compiler-generated container annotation mirrors for
+`@RegisterAs` and `@RegisterIntoSet`. It suppresses opted-out types, rejects non-concrete types,
+requires exactly one Jakarta or Javax `@Inject` constructor, and checks implementation
+assignability to every declared target. `RegistrationModuleEmitter` writes valid registrations as
+abstract `@Binds` methods in `GeneratedRegistrationsModule`, adding `@IntoSet` for set
+registrations. Duplicate direct bindings remain Dagger's normal diagnostic; multiple set
+contributions are supported.
 
 ### `MultibindingModuleEmitter`
 
