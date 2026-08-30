@@ -187,6 +187,20 @@ public abstract class AuthModule {
     abstract VertxAuthorizationImporter optionalVertxAuthorizationImporter();
 
     /**
+     * Declares the optional {@link AuthorizationGateConfig} binding, defaulting to {@link
+     * AuthorizationGateConfig#defaults()} when absent (issue #417, R42).
+     *
+     * <p>Bounds every {@link SecurityPolicyEnforcer#decide} role/scope and action gate future.
+     * {@link AuthorizationGateConfigModule} is the opt-in companion that config-drives this value
+     * from {@code security.authz.gateDeadlineMs} instead of the hardcoded default; an application
+     * may also bind {@link AuthorizationGateConfig} programmatically some other way.
+     *
+     * @return the optional-binding declaration (Dagger-generated; never invoked directly)
+     */
+    @BindsOptionalOf
+    abstract AuthorizationGateConfig optionalAuthorizationGateConfig();
+
+    /**
      * Registers the authorization handler contributor.
      *
      * @param contributor the authorization contributor (injected by Dagger)

@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+SPDX-License-Identifier: EUPL-1.2
+-->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.vertique</groupId>
+        <artifactId>vertique-parent</artifactId>
+        <version>${revision}</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>vertique-opentelemetry-mcp</artifactId>
+    <name>Vertique OpenTelemetry MCP Adapter</name>
+    <description>OpenTelemetry span enrichment adapter for the MCP server: early server-span capture at open(), bounded attribute enrichment, and an optional body-trace link, without creating or renaming a span</description>
+
+    <dependencies>
+        <!-- OpenTelemetry API only — no SDK in compile scope (NFR-TEL-002) -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-api</artifactId>
+        </dependency>
+
+        <!-- Framework -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-mcp-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.google.dagger</groupId>
+            <artifactId>dagger</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.inject</groupId>
+            <artifactId>jakarta.inject-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Test -->
+        <!-- vertx-core is test-scope only: OpenTelemetryMcpInventoryChecker (T006's frozen per-module
+             guard mechanism, duplicated here per its own decision) reads the committed inventory
+             resource as an io.vertx.core.json.JsonObject, matching every sibling guard's checker. -->
+        <dependency>
+            <groupId>io.vertx</groupId>
+            <artifactId>vertx-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.vertx</groupId>
+            <artifactId>vertx-web</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.vertx</groupId>
+            <artifactId>vertx-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- ITs issue their requests through WebClient, which aggregates the response body before its future resolves -->
+        <dependency>
+            <groupId>io.vertx</groupId>
+            <artifactId>vertx-web-client</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.vertx</groupId>
+            <artifactId>vertx-opentelemetry</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-sdk</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-sdk-testing</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- TP-002/TP-003 IT fixtures: full Dagger composition of a real port-0 MCP server, mirroring
+             the exact modules an application installs (contract §4.10's own component example).
+             Compile scope (R51): McpServerSpanObserver's main source now imports
+             dev.vertique.core.correlation.TraceReference directly, the framework's single
+             trace-reference type (replacing the deleted MCP-local McpTraceContext), rather than
+             relying on it merely being transitively reachable through vertique-mcp-core. -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-context</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-rest-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-rest-security</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-mcp-server</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- R06 (issue #435) IT: exemplar cross-adapter proof, mirroring vertique-opentelemetry-rest's
+             identical "S21 IT: exemplar cross-adapter proof" test-scope dependency set. -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-micrometer-mcp</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.prometheus</groupId>
+            <artifactId>prometheus-metrics-tracer-otel</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>3.27.7</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

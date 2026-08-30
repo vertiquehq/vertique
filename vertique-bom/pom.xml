@@ -172,6 +172,16 @@ SPDX-License-Identifier: EUPL-1.2
             </dependency>
             <dependency>
                 <groupId>dev.vertique</groupId>
+                <artifactId>vertique-mcp-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-mcp-server</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
                 <artifactId>vertique-logging</artifactId>
                 <version>${project.version}</version>
             </dependency>
@@ -402,6 +412,11 @@ SPDX-License-Identifier: EUPL-1.2
             </dependency>
             <dependency>
                 <groupId>dev.vertique</groupId>
+                <artifactId>vertique-codegen-mcp</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
                 <artifactId>vertique-codegen-workflow</artifactId>
                 <version>${project.version}</version>
             </dependency>
@@ -472,6 +487,11 @@ SPDX-License-Identifier: EUPL-1.2
             </dependency>
             <dependency>
                 <groupId>dev.vertique</groupId>
+                <artifactId>vertique-micrometer-mcp</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
                 <artifactId>vertique-micrometer-registry-prometheus</artifactId>
                 <version>${project.version}</version>
             </dependency>
@@ -498,6 +518,11 @@ SPDX-License-Identifier: EUPL-1.2
             <dependency>
                 <groupId>dev.vertique</groupId>
                 <artifactId>vertique-opentelemetry-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-opentelemetry-mcp</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

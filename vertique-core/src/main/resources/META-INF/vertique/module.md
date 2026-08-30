@@ -441,9 +441,11 @@ public interface JsonMapperProfileRegistry {
 ```
 
 `@JsonProfile("name")` is `@Target({TYPE, METHOD})` and selects a profile at a boundary that
-supports it. `JsonProfileId` trims its value and rejects `null` or blank. Looking up an unknown id
-throws `JsonProfileConfigurationException`, which extends `ConfigurationException`. The registry
-implementation ships in `dev.vertique:vertique-json`.
+supports it. Which placements a boundary accepts is the boundary's own contract: REST resources and
+MCP tools accept both TYPE and METHOD with method-level overriding type-level, while `rest-client`
+interfaces and Kafka listeners/producers accept TYPE only. `JsonProfileId` trims its value and
+rejects `null` or blank. Looking up an unknown id throws `JsonProfileConfigurationException`, which
+extends `ConfigurationException`. The registry implementation ships in `dev.vertique:vertique-json`.
 
 ### JSON schema overrides on a profile
 
@@ -854,7 +856,7 @@ the record is `(Optional<T> value, List<ContextDecodeWarning> warnings)` with th
 `record (String key, String value, String reason)`.
 
 `DispatchBoundary` supplies the boundary identifiers an encoder or decoder can branch on:
-`SERVICE_DISPATCH`, `KAFKA`, `OUTBOX`, `OUTBOX_SERVICE`, `DELAYED_JOB`, `WORKFLOW`, `CAMEL`.
+`MCP`, `SERVICE_DISPATCH`, `KAFKA`, `OUTBOX`, `OUTBOX_SERVICE`, `DELAYED_JOB`, `WORKFLOW`, `CAMEL`.
 
 ---
 

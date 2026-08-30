@@ -111,8 +111,9 @@ write_document_with_violation() {
 # $1 = module path relative to the fixture root
 # $2 = artifactId (document heading)
 # $3 = document mode: present|empty|whitespace|missing, or one of the
-#      content-rule violations adr-hyphen|adr-space|related-adrs-heading|
-#      version-history|planned-additions|missing-status|invalid-status|unresolved-repo-path
+#      content-rule violations adr-hyphen|adr-space|task-reference|
+#      contract-section|related-adrs-heading|version-history|planned-additions|
+#      missing-status|invalid-status|unresolved-repo-path
 fixture_write_document() {
     local module_path="$1"
     local artifact_id="$2"
@@ -141,6 +142,16 @@ DOC
         adr-space)
             write_document_with_violation "$document" "$artifact_id" <<'DOC'
 Dispatch ordering follows ADR 0192.
+DOC
+            ;;
+        task-reference)
+            write_document_with_violation "$document" "$artifact_id" <<'DOC'
+The bounded dispatcher was introduced by R18 and completed in T036.
+DOC
+            ;;
+        contract-section)
+            write_document_with_violation "$document" "$artifact_id" <<'DOC'
+Every request follows contract §4.7 before invocation.
 DOC
             ;;
         related-adrs-heading)
@@ -490,6 +501,24 @@ fixture_add_aligned_artifact vertique-delta vertique-delta jar adr-space
 fixture_finish
 run_case "adr-reference-spaced" fail "$fixture_root" \
     "vertique-delta cites a private decision record in its canonical module document: Dispatch ordering follows ADR 0192."
+
+# Package-local task/repair/phase/decision identifiers are equally private and
+# must not survive merely because they do not use the ADR prefix.
+fixture_reset task-reference
+fixture_add_baseline_artifacts
+fixture_add_aligned_artifact vertique-delta vertique-delta jar task-reference
+fixture_finish
+run_case "task-reference" fail "$fixture_root" \
+    "vertique-delta cites private delivery provenance in its canonical module document: The bounded dispatcher was introduced by R18 and completed in T036."
+
+# The word "contract" distinguishes a private feature-spec citation from a
+# legitimate section citation to a named public standard such as RFC 9110.
+fixture_reset contract-section
+fixture_add_baseline_artifacts
+fixture_add_aligned_artifact vertique-delta vertique-delta jar contract-section
+fixture_finish
+run_case "contract-section" fail "$fixture_root" \
+    "vertique-delta cites a private contract section in its canonical module document: Every request follows contract §4.7 before invocation."
 
 # A "## Related ADRs" section carries private decision material even when it
 # quotes no record number, so the heading itself must be rejected.

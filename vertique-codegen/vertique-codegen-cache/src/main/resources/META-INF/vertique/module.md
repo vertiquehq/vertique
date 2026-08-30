@@ -96,13 +96,6 @@ parity:
 ./mvnw -ntp clean verify
 ```
 
-## Decision records
-
-- [D012 — Named and property key selectors](../../../../../../../../../docs/specs/cache-001-annotation-cache-support/decisions/D012-named-and-property-key-selectors.md)
-- [D015 — Cache REST entities, not HTTP responses](../../../../../../../../../docs/specs/cache-001-annotation-cache-support/decisions/D015-cache-rest-entities-not-http-responses.md)
-- [D021 — Generated module composes cache runtime](../../../../../../../../../docs/specs/cache-001-annotation-cache-support/decisions/D021-generated-module-composes-cache-runtime.md)
-- [D023 — Public cache key and value shape](../../../../../../../../../docs/specs/cache-001-annotation-cache-support/decisions/D023-public-cache-key-value-shape.md)
-
 ## Dependencies
 
 | Artifact | Purpose |

@@ -82,4 +82,23 @@ public final class RestAuthenticationEvidence {
         List<AuthenticationEvidence> list = ctx.get(KEY);
         return list == null ? List.of() : List.copyOf(list);
     }
+
+    /**
+     * Resets the routing context to its pre-authentication (no-evidence) state by discarding any
+     * accumulated evidence collector. After this call {@link #get(RoutingContext)} returns an empty
+     * list until a subsequent {@link #append(RoutingContext, AuthenticationEvidence)}.
+     *
+     * <p>This is used at a trust boundary that must bind an identity <em>without consulting ambient
+     * evidence</em> — specifically the MCP mount's no-scheme canonical-anonymous path (§4.7 stage 3),
+     * where any evidence appended by ambient Router handlers ahead of the mount must not bleed into
+     * the resolved anonymous identity or its primary authentication method. It is a no-op when no
+     * evidence has been appended.
+     *
+     * @param ctx the current routing context; must not be {@code null}
+     * @throws NullPointerException if {@code ctx} is {@code null}
+     */
+    public static void clear(RoutingContext ctx) {
+        Objects.requireNonNull(ctx, "ctx");
+        ctx.remove(KEY);
+    }
 }

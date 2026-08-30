@@ -12,6 +12,7 @@ import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.rest.security.AuthorizationDecisionPoint;
+import dev.vertique.rest.security.AuthorizationGateConfig;
 import dev.vertique.rest.security.IdentityResolutionMiddleware;
 import dev.vertique.rest.security.SecurityClaimMapper;
 import dev.vertique.rest.security.SecurityPolicyEnforcer;
@@ -155,13 +156,20 @@ public class WebSocketMount implements RouterMount {
     // --- Factory ---
 
     /**
-     * Factory for creating {@link WebSocketMount} instances. Holds all shared framework services
-     * injected once by Dagger and reused across multiple mount instances.
+     * Factory for creating {@link WebSocketMount} instances. This factory itself is the one Dagger
+     * {@code @Singleton} injected once and reused across multiple mount instances; most of the shared
+     * services it holds are Dagger-injected constructor arguments, held as-is.
      *
-     * <p>The security components ({@link SecurityPolicyEnforcer} and
-     * {@link IdentityResolutionMiddleware}) are constructed lazily inside the factory constructor
-     * based on the available optional bindings. When the security module is absent, these remain
-     * {@code null} and all WebSocket endpoints operate without authentication or authorization.
+     * <p>The {@link SecurityPolicyEnforcer} is the one exception to "held as-is": it is not itself a
+     * Dagger-injected value, but a separate instance this factory constructor constructs on the spot
+     * from the injected pieces (the decision point, policy, providers, emitter, and gate config) —
+     * identically configured to, but never the same object as, the Dagger {@code @Singleton}
+     * {@link dev.vertique.rest.security.AuthorizationContributor} injects for JAX-RS routes (see
+     * {@link SecurityPolicyEnforcer}'s own class Javadoc). {@link IdentityResolutionMiddleware} is
+     * constructed the same way. Both are
+     * constructed lazily inside the factory constructor based on the available optional bindings; when
+     * the security module is absent, both remain {@code null} and all WebSocket endpoints operate
+     * without authentication or authorization.
      *
      * <p>Inject this factory into application modules to create one or more WebSocket mounts
      * without having to declare each individual dependency.
@@ -197,8 +205,8 @@ public class WebSocketMount implements RouterMount {
         /**
          * Core action {@link Authorizer} passed to {@link WebSocketEndpointRegistrar} so a class-level
          * {@code @RequiresAction} endpoint fails startup (fail-closed) when the {@link ActionRegistry}
-         * is present but the {@code Authorizer} — bound through a separate optional seam — is absent
-         * (finding W2); {@code null} when the authorization engine is absent.
+         * is present but the {@code Authorizer} — bound through a separate optional seam — is absent;
+         * {@code null} when the authorization engine is absent.
          */
         final @Nullable Authorizer authorizer;
 
@@ -265,6 +273,7 @@ public class WebSocketMount implements RouterMount {
                     channelIdentityManager,
                     authorizer,
                     actionRegistry,
+                    Optional.empty(),
                     Optional.empty());
         }
 
@@ -329,6 +338,14 @@ public class WebSocketMount implements RouterMount {
          *                                       so contributed providers are consulted during identity
          *                                       resolution at upgrade time. Absent → the import step
          *                                       is skipped.
+         * @param authorizationGateConfig        optional operator-configured {@link
+         *                                       SecurityPolicyEnforcer#decide} gate deadline;
+         *                                       empty defaults to {@link
+         *                                       AuthorizationGateConfig#defaults()}.
+         *                                       Threaded into the enforcer so the WebSocket upgrade
+         *                                       gate honors the same operator-configured deadline as
+         *                                       REST and MCP — a single knob across all three
+         *                                       transports.
          */
         @Inject
         public Factory(
@@ -348,7 +365,8 @@ public class WebSocketMount implements RouterMount {
                 Optional<ChannelIdentityManager> channelIdentityManager,
                 Optional<Authorizer> authorizer,
                 Optional<ActionRegistry> actionRegistry,
-                Optional<VertxAuthorizationImporter> vertxAuthorizationImporter) {
+                Optional<VertxAuthorizationImporter> vertxAuthorizationImporter,
+                Optional<AuthorizationGateConfig> authorizationGateConfig) {
             this.messageCodec = messageCodec;
             this.routeAuthHandlers = routeAuthHandlers;
             this.sortedInterceptors = requestInterceptors.stream()
@@ -372,7 +390,10 @@ public class WebSocketMount implements RouterMount {
                         // composed and enforced once at upgrade (FR-AUTHZ-048, ADR-0115). Empty when the
                         // authz engine is absent — in which case no @RequiresAction endpoint passes the
                         // scanner's startup validation, so the enforcer never reads it.
-                        authorizer);
+                        authorizer,
+                        // Thread the operator-configured gate deadline so the
+                        // WebSocket upgrade gate honors the same deadline as REST and MCP.
+                        authorizationGateConfig);
                 this.identityResolutionMiddleware = new IdentityResolutionMiddleware(
                         identityResolvers,
                         claimMapper,

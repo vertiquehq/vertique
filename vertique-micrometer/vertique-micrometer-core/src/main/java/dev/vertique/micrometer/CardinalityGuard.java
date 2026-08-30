@@ -75,6 +75,11 @@ final class CardinalityGuard {
             "stage",
             "sink",
             "decision",
+            // The MCP metrics observer emits three derived keys this list must admit; the
+            // contract test in vertique-micrometer-mcp derives them from the observer itself.
+            "tool",
+            "result.type",
+            "transport.outcome",
             "circuit",
             "from",
             "to",

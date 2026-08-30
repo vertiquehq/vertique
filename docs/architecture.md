@@ -50,6 +50,36 @@ schema synthesis while keeping REST-owned loose-parameter assembly to itself.
 Dependency direction stays one-way into the schema module: neither `vertique-core`
 nor `vertique-json` depends on it.
 
+`vertique-mcp-core` owns the transport-neutral MCP lifecycle and extension contracts.
+It depends on foundation and security APIs, never HTTP, protocol, observability, or
+enterprise audit implementations. `vertique-mcp-server` owns the Router-mounted MCP
+transport composition and consumes that core API plus the existing REST security
+seams; observer adapters depend on the neutral MCP core contracts rather than on the
+server implementation. This keeps the protocol transport and its optional extensions
+on the application-facing side of the dependency direction.
+
+The MCP request path is deliberately one adapter pipeline rather than a parallel application
+stack:
+
+```text
+Streamable HTTP request
+        |
+bounded JSON-RPC decode and protocol negotiation
+        |
+shared identity + SecurityPolicyEnforcer decision
+        |
+generated schema, input processing, and direct tool invocation
+        |
+bounded output validation and terminal lifecycle observation
+```
+
+Generated invokers retain the selected application JSON profile for schema, materialization, and
+bounded structured-output writing. The server owns byte and token budgets and terminal settlement;
+neutral lifecycle contracts in `vertique-mcp-core` let metrics, tracing, and deliberately selected
+application adapters observe outcomes without importing protocol implementation types. The release
+claim is supported-scope conformance for the final `2026-07-28` discovery, tool-list, and tool-call
+surface documented by the MCP modules.
+
 Foundation modules do not import higher-level capabilities. Adapter modules depend
 on the neutral API or SPI owned by the producer module they observe or extend.
 The internal reactor parent, `vertique-parent`, enforces this repository boundary

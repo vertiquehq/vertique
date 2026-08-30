@@ -1,0 +1,7 @@
+{"id":"disconnect-before-write","transport":"DISCONNECT","timing":"BEFORE_WRITE","lateCompletion":false,"expectedCommitted":false,"expectedOutcomes":["DISCONNECTED","RESET"]}
+{"id":"reset-before-write","transport":"RESET","timing":"BEFORE_WRITE","lateCompletion":false,"expectedCommitted":false,"expectedOutcomes":["RESET"]}
+{"id":"disconnect-before-write-late-completion","transport":"DISCONNECT","timing":"BEFORE_WRITE","lateCompletion":true,"expectedCommitted":false,"expectedOutcomes":["DISCONNECTED","RESET"]}
+{"id":"reset-before-write-late-completion","transport":"RESET","timing":"BEFORE_WRITE","lateCompletion":true,"expectedCommitted":false,"expectedOutcomes":["RESET"]}
+{"id":"disconnect-during-write","transport":"DISCONNECT","timing":"DURING_WRITE","lateCompletion":false,"expectedCommitted":true,"expectedOutcomes":["DISCONNECTED","RESET","WRITE_FAILED"]}
+{"id":"reset-during-write","transport":"RESET","timing":"DURING_WRITE","lateCompletion":false,"expectedCommitted":true,"expectedOutcomes":["RESET","WRITE_FAILED"]}
+{"id":"disconnect-after-write","transport":"DISCONNECT","timing":"AFTER_WRITE","lateCompletion":false,"expectedCommitted":true,"expectedOutcomes":["WRITTEN"]}

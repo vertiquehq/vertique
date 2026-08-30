@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+SPDX-License-Identifier: EUPL-1.2
+-->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.vertique</groupId>
+        <artifactId>vertique-parent</artifactId>
+        <version>${revision}</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>vertique-micrometer-mcp</artifactId>
+    <name>Vertique Micrometer MCP Adapter</name>
+    <description>Micrometer metrics adapter for the MCP server: bounded request timer, active-request gauge, validation-failure counter, and tool-call timer</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-micrometer-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-mcp-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.google.dagger</groupId>
+            <artifactId>dagger</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.inject</groupId>
+            <artifactId>jakarta.inject-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Test -->
+        <!-- vertx-core is test-scope only: MicrometerMcpInventoryChecker (T006's frozen per-module
+             guard mechanism, duplicated here per its own decision) reads the committed inventory
+             resource as an io.vertx.core.json.JsonObject, matching every sibling guard's checker. -->
+        <dependency>
+            <groupId>io.vertx</groupId>
+            <artifactId>vertx-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- vertique-core is test-scope only: McpServerMetricsObserverTest's no-identity/no-trace-id
+             fixture directly constructs CorrelationContextSnapshot/CorrelationIdentifier/TraceReference
+             to prove the observer never tags them. -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- vertique-config-core is test-scope only: McpMetricsCompositionTest composes the real
+             MicrometerModule (which requires ConfigParsingModule/ConfigParser) alongside
+             McpMicrometerModule, proving both modules' @BindsOptionalOf MetricsConfig declarations
+             co-install cleanly, mirroring MicrometerModuleTest's own Dagger graph pattern. -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-config-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>3.27.7</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

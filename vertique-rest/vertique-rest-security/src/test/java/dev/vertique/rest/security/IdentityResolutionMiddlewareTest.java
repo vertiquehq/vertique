@@ -16,6 +16,7 @@ import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.context.ContextValues;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
+import dev.vertique.core.context.DispatchBoundary;
 import dev.vertique.core.correlation.CorrelationContext;
 import dev.vertique.core.extension.ExtensionPhase;
 import dev.vertique.correlation.CorrelationContextFactory;
@@ -30,6 +31,7 @@ import dev.vertique.security.PrincipalRef;
 import dev.vertique.security.PrincipalType;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityIdentity;
+import dev.vertique.security.authz.InvocationOrigin;
 import dev.vertique.security.events.CredentialAcceptedEvent;
 import dev.vertique.security.resolver.IdentityResolutionException;
 import dev.vertique.security.resolver.SecurityIdentityResolutionContext;
@@ -178,6 +180,38 @@ class IdentityResolutionMiddlewareTest {
                 return () -> {};
             }
         };
+    }
+
+    private static ContextHolder originCapturingHolder(AtomicReference<InvocationOrigin> capturedOrigin) {
+        return new ContextHolder() {
+            @Override
+            public <T> Optional<T> current(Class<T> type) {
+                return Optional.empty();
+            }
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T extends ContextValue> Scope bind(Class<T> type, T value) {
+                if (type == InvocationOrigin.class) {
+                    capturedOrigin.set((InvocationOrigin) value);
+                }
+                return () -> {};
+            }
+        };
+    }
+
+    private static void authenticateAsAlice(io.vertx.ext.web.RoutingContext context) {
+        RestAuthenticationEvidence.append(
+                context,
+                new AuthenticationEvidence(
+                        DefaultAuthMethod.jwt(),
+                        Optional.of("alice"),
+                        Instant.now(),
+                        Optional.empty(),
+                        new dev.vertique.security.verification.CustomVerificationSource("test", Map.of()),
+                        Map.of("sub", "alice")));
+        ((UserContextInternal) context.userContext()).setUser(User.create(new JsonObject().put("sub", "alice")));
+        context.next();
     }
 
     // --- Constructor / startup guard ---
@@ -331,6 +365,49 @@ class IdentityResolutionMiddlewareTest {
 
             startAndSend(vertx, ctx, router, 200);
         }
+    }
+
+    @Test
+    void shouldBindExplicitMcpOriginWithoutChangingRestDefault(Vertx vertx, VertxTestContext ctx) {
+        AtomicReference<InvocationOrigin> capturedOrigin = new AtomicReference<>();
+        IdentityResolutionMiddleware middleware = new IdentityResolutionMiddleware(
+                Set.of(new DefaultSecurityIdentityResolver()),
+                Optional.of(new DefaultSecurityClaimMapper()),
+                new SecurityEventEmitter(Set.of()),
+                new CapturingSecurityRuntime(),
+                originCapturingHolder(capturedOrigin));
+
+        Router router = Router.router(vertx);
+        installLifecycle(router, "/mcp");
+        installLifecycle(router, "/rest");
+        router.route("/mcp").handler(IdentityResolutionMiddlewareTest::authenticateAsAlice);
+        router.route("/mcp").handler(middleware.handlerFor(InvocationOrigin.of(DispatchBoundary.MCP)));
+        router.route("/mcp")
+                .handler(context -> context.response().end(capturedOrigin.get().kind()));
+        router.route("/rest").handler(IdentityResolutionMiddlewareTest::authenticateAsAlice);
+        router.route("/rest").handler(middleware);
+        router.route("/rest")
+                .handler(context -> context.response().end(capturedOrigin.get().kind()));
+
+        client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
+        vertx.createHttpServer()
+                .requestHandler(router)
+                .listen(0, "127.0.0.1")
+                .compose(httpServer -> {
+                    server = httpServer;
+                    return client.get(httpServer.actualPort(), "127.0.0.1", "/mcp")
+                            .send();
+                })
+                .compose(mcp -> {
+                    assertEquals(200, mcp.statusCode());
+                    assertEquals(DispatchBoundary.MCP, mcp.bodyAsString());
+                    return client.get(server.actualPort(), "127.0.0.1", "/rest").send();
+                })
+                .onComplete(ctx.succeeding(rest -> {
+                    assertEquals(200, rest.statusCode());
+                    assertEquals("rest", rest.bodyAsString());
+                    ctx.completeNow();
+                }));
     }
 
     // --- Authenticated path ---

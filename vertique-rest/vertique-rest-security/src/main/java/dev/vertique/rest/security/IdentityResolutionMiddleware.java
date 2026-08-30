@@ -272,6 +272,25 @@ public final class IdentityResolutionMiddleware implements Handler<RoutingContex
      */
     @Override
     public void handle(RoutingContext ctx) {
+        handle(ctx, InvocationOrigin.of("rest"));
+    }
+
+    /**
+     * Returns a non-blocking handler that resolves the identity and binds the supplied invocation
+     * origin for the request lifecycle.
+     *
+     * <p>{@link #handle(RoutingContext)} remains the REST default. Non-REST transports use this
+     * factory so shared identity resolution does not misattribute their authorization decisions.
+     *
+     * @param origin the transport origin to bind; must not be {@code null}
+     * @return a handler using the existing identity-resolution pipeline with {@code origin}
+     */
+    public Handler<RoutingContext> handlerFor(InvocationOrigin origin) {
+        InvocationOrigin resolvedOrigin = Objects.requireNonNull(origin, "origin");
+        return ctx -> handle(ctx, resolvedOrigin);
+    }
+
+    private void handle(RoutingContext ctx, InvocationOrigin invocationOrigin) {
         // Credential-rejection events are emitted directly by DefaultCredentialRejectionReporter
         // (the failing auth handler calls ctx.fail(...), short-circuiting this middleware).
 
@@ -294,7 +313,7 @@ public final class IdentityResolutionMiddleware implements Handler<RoutingContex
             // synchronous throw here would escape into the Vert.x context exception handler and
             // hang the request instead of failing it. Route it to ctx.fail(...) exactly once.
             try {
-                composeClaimsAndContinue(ctx, ar.result(), evidence, origin, correlation);
+                composeClaimsAndContinue(ctx, ar.result(), evidence, origin, correlation, invocationOrigin);
             } catch (RuntimeException t) {
                 ctx.fail(t);
             }
@@ -325,7 +344,8 @@ public final class IdentityResolutionMiddleware implements Handler<RoutingContex
             SecurityIdentity identity,
             List<AuthenticationEvidence> evidence,
             Optional<RequestOrigin> origin,
-            Optional<CorrelationContext> correlation) {
+            Optional<CorrelationContext> correlation,
+            InvocationOrigin invocationOrigin) {
         // 5. Build authentication state from evidence.
         AuthMethod primaryMethod =
                 evidence.isEmpty() ? DefaultAuthMethod.none() : evidence.get(0).method();
@@ -344,7 +364,7 @@ public final class IdentityResolutionMiddleware implements Handler<RoutingContex
         //     consulted and the base claims are carried forward synchronously (no future allocated),
         //     inside handle()'s outer synchronous-throw guard.
         if (authorizationImporter.isEmpty() || user == null) {
-            bindAndEnrich(ctx, identity, authentication, base, origin, correlation);
+            bindAndEnrich(ctx, identity, authentication, base, origin, correlation, invocationOrigin);
             ctx.next();
             return;
         }
@@ -359,7 +379,7 @@ public final class IdentityResolutionMiddleware implements Handler<RoutingContex
             // Same synchronous-throw guard as in handle(): this callback may run on a later tick,
             // where a propagated throw would be lost rather than failing the request.
             try {
-                bindAndEnrich(ctx, identity, authentication, claimsAr.result(), origin, correlation);
+                bindAndEnrich(ctx, identity, authentication, claimsAr.result(), origin, correlation, invocationOrigin);
             } catch (RuntimeException t) {
                 ctx.fail(t);
                 return;
@@ -387,20 +407,20 @@ public final class IdentityResolutionMiddleware implements Handler<RoutingContex
             AuthenticationState authentication,
             AuthorizationClaims authorization,
             Optional<RequestOrigin> origin,
-            Optional<CorrelationContext> correlation) {
+            Optional<CorrelationContext> correlation,
+            InvocationOrigin invocationOrigin) {
         // 7. Construct the SecurityContext and bind it into the request-scoped context.
         AuthenticatedSecurityContext securityContext =
                 new AuthenticatedSecurityContext(identity, authentication, authorization, origin);
         RequestContextLifecycle.Handle lifecycle = RequestContextLifecycle.fromRoutingContext(ctx);
         lifecycle.onClose(securityRuntime.bindCurrent(securityContext));
 
-        // Install the ambient InvocationOrigin for the request lifecycle (identity-002
-        // P2.S5b-i) — this middleware is the REST ingress boundary, so every request that
-        // reaches identity resolution is unconditionally a "rest" invocation. Downstream
-        // authorization (SecurityPolicyEnforcer) and identity-snapshot capture read this back
+        // Install the ambient invocation origin for the request lifecycle. The default handle
+        // method supplies REST; non-REST transports explicitly select their own origin through
+        // handlerFor(...). Downstream authorization and identity-snapshot capture read this back
         // via contextHolder.current(InvocationOrigin.class) instead of falling back to
         // InvocationOrigin.unspecified().
-        lifecycle.onClose(contextHolder.bind(InvocationOrigin.class, InvocationOrigin.of("rest")));
+        lifecycle.onClose(contextHolder.bind(InvocationOrigin.class, invocationOrigin));
 
         // Capture an identity snapshot for durable carriage when the seam is wired (carriage
         // installed). The snapshot's bind scope unwinds with the request lifecycle, exactly like

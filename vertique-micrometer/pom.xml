@@ -24,6 +24,7 @@ SPDX-License-Identifier: EUPL-1.2
     <modules>
         <module>vertique-micrometer-cache</module>
         <module>vertique-micrometer-core</module>
+        <module>vertique-micrometer-mcp</module>
         <module>vertique-micrometer-registry-prometheus</module>
         <module>vertique-micrometer-rest</module>
         <module>vertique-micrometer-services</module>

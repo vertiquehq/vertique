@@ -57,6 +57,9 @@ Every request passes three separately-owned stages. Only the last two belong to 
    grants of every contributed Vert.x `AuthorizationProvider` into those claims (see
    [Vert.x authorization import](#vertx-authorization-import-opt-in)); then assembles the
    `SecurityContext`, binds it for the rest of the request, and emits `CredentialAcceptedEvent`.
+   `IdentityResolutionMiddleware.handle(...)` binds the REST invocation origin by default;
+   another transport reusing the same resolver must use `handlerFor(InvocationOrigin)` to bind its
+   explicit boundary identity instead.
 3. **Authorization** (priority 100) — evaluates the effective `SecurityPolicy` and any
    `@RequiresAction` gate, and emits exactly one `AuthorizationDecisionEvent`.
 
@@ -325,6 +328,7 @@ when registering non-JAX-RS routes (for example a WebSocket upgrade) that need t
 | `createHandler(SecurityPolicy)` | Role/scope enforcement only |
 | `createHandler(SecurityPolicy, Optional<ActionRef>)` | AND-composes the role/scope gate with the action gate into one handler emitting one event |
 | `createHandler(SecurityPolicy.Constrained, String)` | Constrained enforcement with a context label used in error messages |
+| `decide(SecurityContext, SecurityPolicy, Optional<ActionRef>, ResourceRef, InvocationOrigin)` | Non-HTTP counterpart to `createHandler(SecurityPolicy, Optional<ActionRef>)`: returns the composed decision instead of installing a handler |
 
 It returns `null` — install no handler — for `None` and `PermitAll` with no action. With an action
 present, even an action-only `None` route gets a handler.
@@ -335,6 +339,36 @@ The decision point is selected once, at construction, in this order:
 2. an application-provided sync `AuthorizationPolicy`, wrapped as `SyncPolicyDecisionPoint`;
 3. the built-in decision point, which evaluates roles, scopes, and permissions from
    `AuthorizationClaims`.
+
+`decide(...)` is for a caller with no `RoutingContext` to drive — for example a non-HTTP-routed
+transport that has already established a `SecurityContext` for the caller. It mirrors
+`createHandler(SecurityPolicy, Optional<ActionRef>)` exactly: the same role/scope-plus-action AND
+composition, the same fail-fast ordering (the action gate is evaluated only once the role/scope gate
+permits), the same first-failing-predicate `reasonCode`, and the same `rolesSatisfied` /
+`actionSatisfied` / `actionEvaluated` safe attributes — but it returns the `AuthorizationDecision`
+instead of driving a `RoutingContext`, performs no HTTP status mapping, and never resolves ambient
+state; the caller supplies an already-established `SecurityContext` and its own `ResourceRef` and
+`InvocationOrigin`. `None` and `PermitAll` with no action permit and emit **no** event, matching the
+handler factories that install no handler for the same shape; `DenyAll` denies with
+`AuthzReasonCodes.DENY_ALL` and emits one event; every other combination emits exactly one combined
+`AuthorizationDecisionEvent`. The returned future is never `null` and never fails for an ordinary
+deny — a contract-violating decision point or `Authorizer` resolves a fail-closed
+`INTERNAL_AUTHZ_ERROR` deny instead of propagating. `vertique-mcp-server` is the framework's own
+caller, using it to authorize a tool invocation against the caller's already-resolved
+`SecurityContext` instead of a Vert.x route.
+
+**Gate deadline (issue #417, `AuthorizationGateConfig`).** Every role/scope and action gate future
+`decide` (and every handler `SecurityPolicyEnforcer` builds) awaits is bounded by a deadline — a
+non-blocking future from an app-provided `AuthorizationDecisionPoint` or `Authorizer` that simply
+never resolves (a remote PDP or OPA sidecar with no timeout of its own) would otherwise stall the
+caller indefinitely, which is a real failure for a caller with no `RoutingContext` idle timeout to
+fall back on (an MCP `tools/list` scan). Exceeding the deadline fails closed exactly like any other
+gate contract violation: `AuthzReasonCodes.INTERNAL_AUTHZ_ERROR`, one emitted
+`AuthorizationDecisionEvent`, no propagation of the stalled future. See
+[Configuration](#configuration) for the operator key and default. A general resilience/circuit-breaker
+module (issue #453) is the intended longer-term successor for bounding and recovering from a
+misbehaving decision point or authorizer; `AuthorizationGateConfig` is scoped to this one timeout
+value in the meantime.
 
 ### `JaxRsSecurityContext`
 
@@ -459,6 +493,12 @@ RouteAuthHandler bearerRouteAuth(JWTAuth jwtAuth) {
     };
 }
 ```
+
+`createHandler()` is required authentication. Implement `createOptionalHandler()` only when the
+scheme can distinguish absent credentials from invalid credentials: absent credentials continue
+without a user or evidence, while every presented invalid credential fails closed. The JWT module
+implements this capability for its bearer scheme; custom handlers remain required-only unless they
+make the same guarantee.
 
 ### `SecurityEventObserver` (multibinding)
 
@@ -653,6 +693,39 @@ Resolution rules:
 A non-empty `trustedProxyCidrs` is what makes forwarded headers trustworthy. Setting
 `trustForwardedScheme` or `trustForwardedHost` without it changes nothing.
 
+### Authorization gate deadline (`AuthorizationGateConfig`)
+
+`AuthorizationGateConfig` bounds every `SecurityPolicyEnforcer#decide` role/scope and action gate
+future (issue #417). By default `SecurityPolicyEnforcer` uses
+`AuthorizationGateConfig.DEFAULT_GATE_DEADLINE_MS` (`5000`) — no application wiring is required to get
+this default. To config-drive it instead, install `AuthorizationGateConfigModule` alongside
+`AuthModule`:
+
+```java
+@Component(modules = {..., AuthModule.class, AuthorizationGateConfigModule.class})
+public interface AppComponent { ... }
+```
+
+```yaml
+security:
+  authz:
+    gateDeadlineMs: 5000
+```
+
+| Component | Config key | Default | Meaning |
+|---|---|---|---|
+| `gateDeadlineMs` | `security.authz.gateDeadlineMs` | `5000` | Milliseconds bounding every role/scope and action gate future; must be `> 0` |
+
+This is one shared value for every transport that reuses `SecurityPolicyEnforcer` — REST
+(`AuthorizationContributor`), WebSocket (`WebSocketMount`), and MCP (`McpPolicyEnforcer`) all observe
+the same configured deadline; there is no per-transport override. A gate that exceeds the deadline
+fails closed with `AuthzReasonCodes.INTERNAL_AUTHZ_ERROR`, exactly like any other gate contract
+violation (see [Request-time outcomes](#request-time-outcomes)).
+
+An application may instead bind `AuthorizationGateConfig` programmatically (a `@Provides` method
+returning a constructed instance) rather than installing `AuthorizationGateConfigModule`, if it needs
+the value from a source other than the standard config file.
+
 ---
 
 ## Failures, Constraints, and Common Mistakes
@@ -679,7 +752,7 @@ There is no warn-only mode. Every validation failure stops startup.
 | 401 | `AUTHENTICATION_REQUIRED` | No `SecurityContext` bound, or an anonymous actor on an `AuthenticatedOnly` or `Constrained` route |
 | 403 | `DENY_ALL` | `@DenyAll` |
 | 403 | the decision's own code | The decision point denied |
-| 403 | `INTERNAL_AUTHZ_ERROR` | The decision point or `Authorizer` threw, returned a `null` future, or resolved to a `null` decision — fail-closed |
+| 403 | `INTERNAL_AUTHZ_ERROR` | The decision point or `Authorizer` threw, returned a `null` future, resolved to a `null` decision, or exceeded the configured [gate deadline](#authorization-gate-deadline-authorizationgateconfig) — fail-closed |
 | 503 | — | A provider failed during the opt-in [Vert.x authorization import](#vertx-authorization-import-opt-in) — fail-closed: the `SecurityContext` is never bound and no partially imported claim is observable. The problem detail is the generic `Authorization is temporarily unavailable`; the failing provider id is logged, never returned |
 | — | `PERMITTED` | Both gates passed |
 

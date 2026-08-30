@@ -213,7 +213,7 @@ The application must supply exactly one thing: a `JWTAuth` binding. Everything e
 | Binding | Kind | What it is |
 |---|---|---|
 | `Set<SecuritySchemeHandler>` | `@IntoSet` | A `JwtBearerSecuritySchemeHandler` registered under the effective scheme name, for OpenAPI-described operations |
-| `Set<RouteAuthHandler>` | `@IntoSet` | A route-level handler under the same scheme name, for transports with no OpenAPI description (WebSocket upgrades, action-only routes) |
+| `Set<RouteAuthHandler>` | `@IntoSet` | A route-level handler under the same scheme name, for transports with no OpenAPI description (WebSocket upgrades, action-only routes), including explicit optional-authentication support |
 | `Set<AuthorizationProvider>` | `@IntoSet` | `JwtClaimAuthorizationProvider` — feeds the Vert.x cache; the opt-in `VertxAuthorizationImportModule` import always excludes it |
 | `Set<OperationHandlerContributor>` | `@IntoSet` | `JwtClaimsValidatorContributor` at priority 50 when a `JwtClaimsValidator` is bound; otherwise a no-op contributor |
 | `JwtAuthConfig` | `@BindsOptionalOf` | The application's optional whole-config override |
@@ -222,6 +222,11 @@ The application must supply exactly one thing: a `JWTAuth` binding. Everything e
 
 The scheme handler and the route auth handler are **separate instances** built from the same
 effective config, so both paths produce identical evidence and identical rejection reason codes.
+
+The JWT route handler also advertises `createOptionalHandler()`. With no `Authorization` header it
+continues exactly once without setting a Vert.x user or appending authentication evidence. Any
+present header, including a blank, non-Bearer, malformed, expired, or invalid bearer value, delegates
+to the same JWT verifier as `createHandler()` and therefore rejects rather than becoming anonymous.
 
 Both of those bindings run the same startup check before handing out a handler. When the bound
 `JWTAuth` was built by `JwtAuthFactory` (including a `RefreshableJwtAuth`) and the clock skew it

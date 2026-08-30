@@ -26,6 +26,7 @@ SPDX-License-Identifier: EUPL-1.2
 | `vertique-codegen-events` | [module.md](../vertique-codegen/vertique-codegen-events/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-codegen-jaxrs` | [module.md](../vertique-codegen/vertique-codegen-jaxrs/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-codegen-kafka` | [module.md](../vertique-codegen/vertique-codegen-kafka/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-codegen-mcp` | [module.md](../vertique-codegen/vertique-codegen-mcp/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-codegen-rest-client` | [module.md](../vertique-codegen/vertique-codegen-rest-client/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-codegen-sanitization` | [module.md](../vertique-codegen/vertique-codegen-sanitization/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-codegen-services` | [module.md](../vertique-codegen/vertique-codegen-services/src/main/resources/META-INF/vertique/module.md) |
@@ -65,14 +66,18 @@ SPDX-License-Identifier: EUPL-1.2
 | `vertique-localization` | [module.md](../vertique-localization/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-logging` | [module.md](../vertique-logging/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-management` | [module.md](../vertique-management/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-mcp-core` | [module.md](../vertique-mcp/vertique-mcp-core/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-mcp-server` | [module.md](../vertique-mcp/vertique-mcp-server/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-micrometer-cache` | [module.md](../vertique-micrometer/vertique-micrometer-cache/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-micrometer-core` | [module.md](../vertique-micrometer/vertique-micrometer-core/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-micrometer-mcp` | [module.md](../vertique-micrometer/vertique-micrometer-mcp/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-micrometer-registry-prometheus` | [module.md](../vertique-micrometer/vertique-micrometer-registry-prometheus/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-micrometer-rest` | [module.md](../vertique-micrometer/vertique-micrometer-rest/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-micrometer-resilience` | [module.md](../vertique-micrometer/vertique-micrometer-resilience/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-micrometer-services` | [module.md](../vertique-micrometer/vertique-micrometer-services/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-opentelemetry-cache` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-cache/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-opentelemetry-core` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-core/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-opentelemetry-mcp` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-mcp/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-opentelemetry-prometheus` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-prometheus/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-opentelemetry-rest` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-rest/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-opentelemetry-services` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-services/src/main/resources/META-INF/vertique/module.md) |

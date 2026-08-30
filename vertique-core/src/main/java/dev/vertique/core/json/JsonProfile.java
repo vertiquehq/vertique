@@ -21,12 +21,17 @@ import java.lang.annotation.Target;
  *   <li><strong>{@code @KafkaListener} / {@code @KafkaProducer} types</strong> — placed on a
  *       Kafka listener or producer TYPE. Method-level placement is rejected at build time
  *       (FR-JSON-066).
+ *   <li><strong>MCP tools</strong> — placed on an {@code @McpTool} METHOD or on its declaring
+ *       TYPE; method-level overrides type-level. It selects the profile used for tool argument
+ *       materialization and structured-result serialization, and for the schemas generated from
+ *       them. The MCP protocol envelope itself is profile-independent. A blank value fails
+ *       compilation; an unknown profile fails composition.
  * </ul>
  *
- * <p>When the annotation is absent the boundary falls back to its per-boundary configured default,
- * then the global {@code json.jsonProfile} config key, and ultimately to the reserved {@code vertx}
- * profile. The referenced profile must be registered in the {@link JsonMapperProfileRegistry},
- * otherwise resolution fails at startup.
+ * <p>When the annotation is absent the boundary falls back to its per-boundary configured default
+ * ({@code mcp.jsonProfile} for MCP tools), then the global {@code json.jsonProfile} config key, and
+ * ultimately to the reserved {@code vertx} profile. The referenced profile must be registered in
+ * the {@link JsonMapperProfileRegistry}, otherwise resolution fails at startup.
  */
 @Retention(RetentionPolicy.RUNTIME)
 @Target({ElementType.TYPE, ElementType.METHOD})

@@ -156,6 +156,13 @@ public final class CorrelationContextDurableDecoder implements DurableContextMet
         return new CorrelationIdentifier(value, source);
     }
 
+    /**
+     * Rebuilds the {@link TraceReference} embedded in the envelope, decoding {@code sampled}/{@code
+     * traceState} additively: a payload written before those trailing components existed
+     * carries neither key, and this method defaults them ({@code sampled=false}, {@code
+     * traceState=null}) rather than failing or inferring them from other fields — the exact
+     * backward-compatibility property {@code R51DurableTraceCompatFixtureTest} pins.
+     */
     private static TraceReference readTrace(JsonNode node) {
         if (node == null || node.isNull()) {
             return null;
@@ -166,7 +173,10 @@ public final class CorrelationContextDurableDecoder implements DurableContextMet
         String traceId = node.get("traceId").asText();
         String spanId = node.hasNonNull("spanId") ? node.get("spanId").asText() : null;
         String source = node.get("source").asText();
-        return new TraceReference(traceId, spanId, source);
+        boolean sampled = node.hasNonNull("sampled") && node.get("sampled").asBoolean();
+        String traceState =
+                node.hasNonNull("traceState") ? node.get("traceState").asText() : null;
+        return new TraceReference(traceId, spanId, source, sampled, traceState);
     }
 
     private static CorrelationSessionRef readSession(JsonNode node) {

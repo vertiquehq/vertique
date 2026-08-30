@@ -1009,6 +1009,11 @@ static SecuritySchemeHandler apiKeyScheme(ApiKeyAuthProvider provider) {
 
 `RouteAuthHandler` (`String schemeName()`, `Handler<RoutingContext> createHandler()`) is the
 route-level variant; its multibinding is declared by `AuthModule` in `vertique-rest-security`.
+`createHandler()` always retains required-authentication semantics. A transport that supports
+anonymous callers alongside authenticated callers must select only a handler that explicitly returns
+a non-empty `createOptionalHandler()` result. That handler continues once without changing the user
+or authentication evidence when its credentials are absent; it must reject present-but-invalid
+credentials through the same verification path as its required handler.
 
 `SecurityRuntime`, `SecurityPolicyResolver`, and `SecurityPolicyValidator` are declared here and
 implemented in `vertique-rest-security`. Bind your own only to replace framework behavior wholesale.

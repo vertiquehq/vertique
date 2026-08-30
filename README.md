@@ -117,6 +117,23 @@ Each child README documents the exact `archetype:generate` invocation for its co
 starter family's own aggregator, it is not published through the BOM and carries no canonical
 module reference or [module index](docs/modules.md) row.
 
+## Model Context Protocol
+
+Vertique can expose generated Java methods as governed MCP tools over one stateless Streamable HTTP
+endpoint. Applications add `vertique-mcp-core`, `vertique-mcp-server`, and
+`vertique-codegen-mcp`; optional Micrometer and OpenTelemetry adapters observe the same neutral
+request lifecycle without changing protocol responses. The server reuses Vertique's existing
+security decision point, input-processing pipeline, JSON profiles, and Dagger composition.
+
+The released MCP surface targets the final `2026-07-28` protocol and carries a supported-scope
+conformance claim for discovery, tool listing, and tool calls. Its canonical module references
+define the exact HTTP, configuration, generated-code, authorization, validation, lifecycle, and
+observability contracts. Transport families and operation families outside that documented scope
+are not part of MCP-001.
+
+Start with the [`vertique-mcp-server` module reference](vertique-mcp/vertique-mcp-server/src/main/resources/META-INF/vertique/module.md)
+and the complete [module index](docs/modules.md).
+
 ## Documentation
 
 - [Developer documentation](https://vertique.dev/docs)

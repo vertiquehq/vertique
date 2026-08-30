@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "module": "vertique-micrometer-mcp",
+  "comparisonBasis": "full-generic-signature",
+  "direction": "exact",
+  "scanScope": "hand-authored-public-surface; a top-level public type with no src/main/java source file is annotation-processor output and is excluded",
+  "packages": [
+    "dev.vertique.mcp.micrometer"
+  ],
+  "types": {
+    "dev.vertique.mcp.micrometer.McpMicrometerModule": []
+  }
+}

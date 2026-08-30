@@ -264,7 +264,7 @@ public class WebSocketSecurityPipelineIT {
     static void tearDown(VertxTestContext ctx) {
         Future<?> s = server != null ? server.close() : Future.succeededFuture();
         Future<?> c = wsClient != null ? wsClient.close() : Future.succeededFuture();
-        Future.join(s, c).onComplete(ar -> ctx.completeNow());
+        Future.join(s, c).onComplete(ctx.succeeding(ar -> ctx.completeNow()));
     }
 
     // --- Connect helpers ---
@@ -565,7 +565,7 @@ public class WebSocketSecurityPipelineIT {
     // --- Factory parity helpers ---
 
     /**
-     * Builds a {@link WebSocketMount.Factory} via the import-aware constructor (the 16 injected
+     * Builds a {@link WebSocketMount.Factory} via the import-aware constructor (the 17 injected
      * parameters plus the trailing optional {@link VertxAuthorizationImporter}), wired with the
      * shared stub security pipeline used by this IT's registrar-based tests.
      *
@@ -590,13 +590,15 @@ public class WebSocketSecurityPipelineIT {
                 Optional.empty(),
                 Optional.empty(),
                 Optional.empty(),
-                importer);
+                importer,
+                Optional.empty());
     }
 
     /**
      * Builds a {@link WebSocketMount.Factory} via the pre-existing injected constructor (exact
-     * current 16-parameter signature — no importer parameter), with the given providers contributed
-     * through the {@code authorizationProviders} set.
+     * current 16-parameter signature — no importer, no gate-config parameter; both default to
+     * {@link Optional#empty()} internally), with the given providers contributed through the
+     * {@code authorizationProviders} set.
      *
      * @param providers the Vert.x authorization providers passed to the enforcer's provider set
      * @return the configured factory

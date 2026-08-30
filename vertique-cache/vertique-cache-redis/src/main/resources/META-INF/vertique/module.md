@@ -110,7 +110,7 @@ The `RedisCleanupLifecycle` step runs in `INFRA` at one priority above
 `RedisClientShutdownStep`. During reverse teardown it unregisters cleanup dispatch first, then
 closes the shared Redis clients. When an application provides `CronScheduler`, this module also
 registers the bounded cleanup job and its event-bus dispatch handler. Cleanup policy and metrics
-remain owned by T010; this module only composes their lifecycle with the shared client.
+remain owned by the cache runtime; this module only composes their lifecycle with the shared client.
 
 ## Conformance and verification
 
