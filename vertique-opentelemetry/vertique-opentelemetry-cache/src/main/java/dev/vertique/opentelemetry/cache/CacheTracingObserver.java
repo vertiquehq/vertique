@@ -3,6 +3,7 @@
 
 package dev.vertique.opentelemetry.cache;
 
+import dev.vertique.codegen.RegisterIntoSet;
 import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.cache.spi.event.CacheEvent;
 import dev.vertique.cache.spi.event.CacheLateCompletion;
@@ -19,6 +20,7 @@ import java.util.Locale;
 
 /** Records sealed cache operation events as short-lived child spans. */
 @Singleton
+@RegisterIntoSet(CacheObserver.class)
 public final class CacheTracingObserver implements CacheObserver {
     private final Tracer tracer;
     private final boolean enabled;

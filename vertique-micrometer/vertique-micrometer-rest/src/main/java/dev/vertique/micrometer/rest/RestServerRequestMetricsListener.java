@@ -3,6 +3,7 @@
 
 package dev.vertique.micrometer.rest;
 
+import dev.vertique.codegen.RegisterIntoSet;
 import dev.vertique.micrometer.MetricsConfig;
 import dev.vertique.rest.core.events.RestRequestCompletedEvent;
 import dev.vertique.rest.core.events.RestRequestCompletedListener;
@@ -47,6 +48,7 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Singleton
+@RegisterIntoSet(RestRequestCompletedListener.class)
 public final class RestServerRequestMetricsListener implements RestRequestCompletedListener {
 
     /** Micrometer meter name for the per-request server timer. */

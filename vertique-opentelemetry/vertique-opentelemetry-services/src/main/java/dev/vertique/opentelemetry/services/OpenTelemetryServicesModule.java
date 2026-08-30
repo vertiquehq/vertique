@@ -4,9 +4,6 @@
 package dev.vertique.opentelemetry.services;
 
 import dagger.Module;
-import dagger.Provides;
-import dagger.multibindings.IntoSet;
-import dev.vertique.services.interceptor.ServiceInterceptor;
 
 /**
  * Dagger module that contributes OpenTelemetry service dispatch span enrichment components via
@@ -49,26 +46,9 @@ import dev.vertique.services.interceptor.ServiceInterceptor;
  *
  * @see ServiceDispatchSpanEnrichmentInterceptor
  */
-@Module
+@Module(includes = GeneratedRegistrationsModule.class)
 public abstract class OpenTelemetryServicesModule {
 
     private OpenTelemetryServicesModule() {}
 
-    // --- Multibinding contributions ---
-
-    /**
-     * Contributes {@link ServiceDispatchSpanEnrichmentInterceptor} into the
-     * {@link ServiceInterceptor} multibinding set.
-     *
-     * <p>The interceptor enriches the active CONSUMER span with service target and one-way
-     * attributes on dispatch, and records terminal outcome status on terminal complete.
-     *
-     * @param interceptor the singleton interceptor; provided by Dagger via its {@code @Inject} ctor
-     * @return the interceptor cast to the SPI type
-     */
-    @Provides
-    @IntoSet
-    static ServiceInterceptor serviceDispatchSpanEnrichment(ServiceDispatchSpanEnrichmentInterceptor interceptor) {
-        return interceptor;
-    }
 }

@@ -60,8 +60,8 @@ recordings (by both `ServerSpanEnrichmentContributor` and `ServerSpanOutcomeInte
 `afterResponse` hook) attach to the active span correctly because those hooks fire pre-write.
 
 **Exemplar attachment during completion dispatch.** `ServerSpanCompletionScope` (implements
-`RequestCompletionScope`, contributed into the `Set<RequestCompletionScope>` multibinding via
-`@IntoSet` in `OpenTelemetryRestModule`) bridges this gap: it retrieves the server span stashed
+`RequestCompletionScope`, contributed into the `Set<RequestCompletionScope>` multibinding by the
+`GeneratedRegistrationsModule` included by `OpenTelemetryRestModule`) bridges this gap: it retrieves the server span stashed
 under `RestSpanKeys.SPAN_KEY` and calls `span.makeCurrent()` before the completion-listener
 fan-out, then closes the returned OTel scope after all listeners run. The ended span's
 `SpanContext` remains valid after the span is ended, so `makeCurrent()` re-establishes it as the
@@ -203,7 +203,7 @@ response pipeline.
 
 ### ServerSpanCompletionScope
 
-`@Singleton` implementation of `RequestCompletionScope` (from `vertique-rest-core`). Package-private — contributed into the `Set<RequestCompletionScope>` multibinding via `@IntoSet` in `OpenTelemetryRestModule`.
+`@Singleton` implementation of `RequestCompletionScope` (from `vertique-rest-core`). Package-private — contributed into the `Set<RequestCompletionScope>` multibinding via `@RegisterIntoSet` and the generated module included by `OpenTelemetryRestModule`.
 
 Re-establishes the HTTP server span as the current OTel span for the duration of the completion-listener dispatch loop, so that Micrometer exemplar samplers can attach a `trace_id` to timer samples recorded in `RestRequestCompletedListener` implementations.
 
@@ -243,7 +243,7 @@ Re-establishes the HTTP server span as the current OTel span for the duration of
 
 - `ServerSpanEnrichmentContributor` into `Set<OperationHandlerContributor>`
 - `ServerSpanOutcomeInterceptor` into `Set<RequestInterceptor>`
-- `ServerSpanCompletionScope` into `Set<RequestCompletionScope>` via `@IntoSet` (satisfies the `@Multibinds Set<RequestCompletionScope>` declared in `RestCoreModule`)
+- `ServerSpanCompletionScope` into `Set<RequestCompletionScope>` via `@RegisterIntoSet` and `GeneratedRegistrationsModule` (satisfies the `@Multibinds Set<RequestCompletionScope>` declared in `RestCoreModule`)
 
 Install it alongside `RestModule` (or `RestCoreModule`) and `OpenTelemetryModule`:
 
@@ -267,6 +267,10 @@ with or without `OpenTelemetryModule` on the Dagger graph — enrichment is alwa
 silently becomes a no-op when no recording span is present.
 
 ---
+The adapter's simple SPI contribution is declared on its injectable implementation with
+`@RegisterIntoSet`. During the provider build, `vertique-codegen-dagger` emits
+`GeneratedRegistrationsModule`, which this module includes explicitly. The generated module contains
+only this type adaptation; configuration, registry, and optional bindings remain hand-written.
 
 ## Dependencies
 

@@ -3,6 +3,7 @@
 
 package dev.vertique.micrometer.resilience;
 
+import dev.vertique.codegen.RegisterIntoSet;
 import dev.vertique.micrometer.MetricsConfig;
 import dev.vertique.resilience.spi.ResilienceObserver;
 import dev.vertique.resilience.spi.event.AttemptCompleted;
@@ -29,6 +30,7 @@ import lombok.extern.slf4j.Slf4j;
 /** Records the frozen Micrometer meter vocabulary for common resilience events. */
 @Slf4j
 @Singleton
+@RegisterIntoSet(ResilienceObserver.class)
 final class ResilienceMetricsObserver implements ResilienceObserver {
 
     static final String EXECUTION_METER = "vertique.resilience.execution";

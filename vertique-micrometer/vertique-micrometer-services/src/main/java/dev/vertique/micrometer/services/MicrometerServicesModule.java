@@ -5,10 +5,7 @@ package dev.vertique.micrometer.services;
 
 import dagger.BindsOptionalOf;
 import dagger.Module;
-import dagger.Provides;
-import dagger.multibindings.IntoSet;
 import dev.vertique.micrometer.MetricsConfig;
-import dev.vertique.services.interceptor.ServiceInterceptor;
 
 /**
  * Dagger module that contributes Micrometer service dispatch metrics components via multibinding.
@@ -48,7 +45,7 @@ import dev.vertique.services.interceptor.ServiceInterceptor;
  * {@code MicrometerModule} is also installed its {@code @Provides MetricsConfig} satisfies the
  * optional binding; when it is absent the optional is empty and the interceptor defaults to enabled.
  */
-@Module
+@Module(includes = GeneratedRegistrationsModule.class)
 public abstract class MicrometerServicesModule {
 
     private MicrometerServicesModule() {}
@@ -69,21 +66,4 @@ public abstract class MicrometerServicesModule {
     @BindsOptionalOf
     abstract MetricsConfig metricsConfig();
 
-    // --- Multibinding contributions ---
-
-    /**
-     * Contributes {@link ServiceDispatchMetricsInterceptor} into the
-     * {@link ServiceInterceptor} multibinding set.
-     *
-     * <p>The interceptor records a per-dispatch timer
-     * ({@value ServiceDispatchMetricsInterceptor#METER_NAME}) on each terminal service outcome.
-     *
-     * @param i the singleton interceptor; provided by Dagger via its {@code @Inject} constructor
-     * @return the interceptor cast to the SPI type
-     */
-    @Provides
-    @IntoSet
-    static ServiceInterceptor serviceDispatchMetrics(ServiceDispatchMetricsInterceptor i) {
-        return i;
-    }
 }

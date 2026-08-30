@@ -3,6 +3,7 @@
 
 package dev.vertique.opentelemetry.services;
 
+import dev.vertique.codegen.RegisterIntoSet;
 import dev.vertique.core.eventbus.Result;
 import dev.vertique.services.interceptor.ServiceDispatchContext;
 import dev.vertique.services.interceptor.ServiceInterceptor;
@@ -57,6 +58,7 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Singleton
+@RegisterIntoSet(ServiceInterceptor.class)
 public final class ServiceDispatchSpanEnrichmentInterceptor implements ServiceInterceptor {
 
     /**

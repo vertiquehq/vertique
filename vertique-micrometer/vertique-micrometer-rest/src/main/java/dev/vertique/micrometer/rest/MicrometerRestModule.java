@@ -5,11 +5,7 @@ package dev.vertique.micrometer.rest;
 
 import dagger.BindsOptionalOf;
 import dagger.Module;
-import dagger.Provides;
-import dagger.multibindings.IntoSet;
 import dev.vertique.micrometer.MetricsConfig;
-import dev.vertique.rest.core.events.RestRequestCompletedListener;
-import dev.vertique.rest.core.interceptor.RequestInterceptor;
 
 /**
  * Dagger module that contributes Micrometer REST server metrics components via multibinding.
@@ -51,7 +47,7 @@ import dev.vertique.rest.core.interceptor.RequestInterceptor;
  * {@code MicrometerModule} is also installed its {@code @Provides MetricsConfig} satisfies the
  * optional binding; when it is absent the optional is empty and both components default to enabled.
  */
-@Module
+@Module(includes = GeneratedRegistrationsModule.class)
 public abstract class MicrometerRestModule {
 
     private MicrometerRestModule() {}
@@ -71,37 +67,4 @@ public abstract class MicrometerRestModule {
     @BindsOptionalOf
     abstract MetricsConfig metricsConfig();
 
-    // --- Multibinding contributions ---
-
-    /**
-     * Contributes {@link RestServerRequestMetricsListener} into the
-     * {@link RestRequestCompletedListener} multibinding set.
-     *
-     * <p>The listener records a per-request timer ({@value RestServerRequestMetricsListener#METER_NAME})
-     * on each completed HTTP request.
-     *
-     * @param l the singleton listener; provided by Dagger via its {@code @Inject} constructor
-     * @return the listener cast to the SPI type
-     */
-    @Provides
-    @IntoSet
-    static RestRequestCompletedListener restServerRequestMetrics(RestServerRequestMetricsListener l) {
-        return l;
-    }
-
-    /**
-     * Contributes {@link RestServerActiveRequestsInterceptor} into the
-     * {@link RequestInterceptor} multibinding set.
-     *
-     * <p>The interceptor maintains a gauge ({@value RestServerActiveRequestsInterceptor#METER_NAME})
-     * tracking in-flight HTTP requests.
-     *
-     * @param i the singleton interceptor; provided by Dagger via its {@code @Inject} constructor
-     * @return the interceptor cast to the SPI type
-     */
-    @Provides
-    @IntoSet
-    static RequestInterceptor restServerActiveRequests(RestServerActiveRequestsInterceptor i) {
-        return i;
-    }
 }
