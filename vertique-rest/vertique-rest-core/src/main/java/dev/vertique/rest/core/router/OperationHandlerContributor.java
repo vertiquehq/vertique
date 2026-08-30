@@ -61,6 +61,8 @@ public interface OperationHandlerContributor extends OrderedExtension {
      * inspect {@link OperationRegistrationContext#operationId()} and
      * {@link OperationRegistrationContext#securityPolicy()} for security annotations or
      * other metadata, then call {@code context.route().addHandler(...)} to add handlers.
+     * Exceptions thrown by this callback propagate and are fatal to the enclosing operation;
+     * processing does not continue.
      *
      * @param context the registration context providing operation metadata and the target route
      */

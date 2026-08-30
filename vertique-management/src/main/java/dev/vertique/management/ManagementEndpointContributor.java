@@ -48,6 +48,8 @@ public interface ManagementEndpointContributor extends OrderedExtension {
      * <p>Called once per management server start, after health routes are mounted and before
      * the HTTP server begins listening. Throwing from this method fails the management server
      * startup.
+     * Exceptions thrown by this callback propagate and are fatal to the enclosing operation;
+     * processing does not continue.
      *
      * @param router the management server router; health paths ({@code /health/*}) are already
      *               registered and must not be expected to take effect if re-registered here

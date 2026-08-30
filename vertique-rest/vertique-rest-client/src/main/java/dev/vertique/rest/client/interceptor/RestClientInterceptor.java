@@ -58,7 +58,8 @@ public interface RestClientInterceptor extends OrderedExtension {
      * Synchronous observer called after the request context is built and before
      * {@link #beforeRequest} async handlers run. Suitable for structured logging or metrics.
      *
-     * <p>Exceptions thrown here are swallowed — use {@link #beforeRequest} if you need to modify
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
+     * enclosing operation. Use {@link #beforeRequest} if you need to modify
      * the request or fail the pipeline.
      *
      * @param ctx the populated request context (read-only; use {@link #beforeRequest} to modify)
@@ -69,7 +70,8 @@ public interface RestClientInterceptor extends OrderedExtension {
      * Synchronous observer called after any HTTP response is received, regardless of status code.
      * Suitable for structured logging, metrics, or audit.
      *
-     * <p>Exceptions thrown here are swallowed.
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
+     * enclosing operation.
      *
      * @param request the request context that produced this response
      * @param response the received response context
@@ -80,7 +82,8 @@ public interface RestClientInterceptor extends OrderedExtension {
      * Synchronous observer called whenever a request fails (transport error, timeout, or
      * response-turned-error via {@link #afterResponse}). Suitable for structured error logging.
      *
-     * <p>Exceptions thrown here are swallowed.
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
+     * enclosing operation.
      *
      * @param request the request context of the failed request
      * @param response the response context if an HTTP response was received before the failure,
@@ -97,8 +100,9 @@ public interface RestClientInterceptor extends OrderedExtension {
      * completes is observed (unlike {@link #onResponse}, which fires only when a response is received —
      * never on a transport failure — and {@link #onError}, which fires once after all retries). Suitable
      * for per-attempt audit / metrics.
-     * Exactly one of {response, error} is non-null on the {@code completion}. Exceptions are swallowed;
-     * implementations MUST NOT block.
+     * Exactly one of {response, error} is non-null on the {@code completion}. Exceptions thrown by
+     * this callback are caught, logged, and swallowed; they do not affect the enclosing operation.
+     * Implementations MUST NOT block.
      *
      * <p><strong>Circuit-breaker caveat:</strong> this hook observes <em>physical send completions</em>,
      * not breaker-level outcomes. If the call runs inside a circuit breaker whose own timeout is shorter

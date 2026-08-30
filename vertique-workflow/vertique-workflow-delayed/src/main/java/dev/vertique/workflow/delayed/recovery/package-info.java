@@ -6,7 +6,7 @@
  *
  * <p>Contains {@link dev.vertique.workflow.delayed.recovery.WorkflowTimerRecoveryService}
  * (the reconcile logic), {@link dev.vertique.workflow.delayed.recovery.WorkflowTimerRecoveryContract}
- * + {@link dev.vertique.workflow.delayed.recovery.WorkflowTimerRecoveryServiceImpl} (the
+ * + {@link dev.vertique.workflow.delayed.recovery.WorkflowTimerRecoveryCron} (the
  * cluster-singleton {@code @CronJob} entry point), and
  * {@link dev.vertique.workflow.delayed.recovery.WorkflowTimerRecoveryConfig} (its configuration
  * record).

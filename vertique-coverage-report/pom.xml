@@ -192,6 +192,26 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
+            <artifactId>vertique-cache-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-cache-aop</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-cache-caffeine</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-cache-redis</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-redis-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
             <artifactId>vertique-validation</artifactId>
         </dependency>
         <dependency>
@@ -296,6 +316,10 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
+            <artifactId>vertique-codegen-cache</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
             <artifactId>vertique-codegen-rest-client</artifactId>
         </dependency>
         <dependency>
@@ -360,6 +384,10 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
+            <artifactId>vertique-micrometer-cache</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
             <artifactId>vertique-micrometer-core</artifactId>
         </dependency>
         <dependency>
@@ -377,6 +405,10 @@ SPDX-License-Identifier: EUPL-1.2
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-micrometer-services</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-opentelemetry-cache</artifactId>
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>

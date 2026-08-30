@@ -3,6 +3,7 @@
 
 package dev.vertique.opentelemetry.rest;
 
+import dev.vertique.codegen.RegisterIntoSet;
 import dev.vertique.rest.core.events.RequestCompletionScope;
 import io.opentelemetry.api.trace.Span;
 import io.vertx.ext.web.RoutingContext;
@@ -33,6 +34,7 @@ import jakarta.inject.Singleton;
  * @see ServerSpanEnrichmentContributor
  */
 @Singleton
+@RegisterIntoSet(RequestCompletionScope.class)
 final class ServerSpanCompletionScope implements RequestCompletionScope {
 
     /** No-op closeable returned when no valid span is present or on any exception. */

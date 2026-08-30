@@ -19,9 +19,10 @@ SPDX-License-Identifier: EUPL-1.2
     <artifactId>vertique-micrometer</artifactId>
     <packaging>pom</packaging>
     <name>Vertique Micrometer</name>
-    <description>Micrometer metrics modules: backend-agnostic core, pluggable registry backends</description>
+    <description>Micrometer metrics modules: backend-agnostic core, cache adapter, pluggable registry backends</description>
 
     <modules>
+        <module>vertique-micrometer-cache</module>
         <module>vertique-micrometer-core</module>
         <module>vertique-micrometer-mcp</module>
         <module>vertique-micrometer-registry-prometheus</module>

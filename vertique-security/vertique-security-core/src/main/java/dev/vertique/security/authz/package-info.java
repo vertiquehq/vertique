@@ -39,10 +39,10 @@
  *   <li>{@link dev.vertique.security.authz.ActionContributor} — contributes actions into the
  *       registry at startup; bound {@code @IntoSet} by framework and application modules</li>
  *   <li>{@link dev.vertique.security.authz.PolicyDefinitionSource} — contributes policy
- *       definitions; default in-memory impl in {@code internal}; config-backed impl in
+ *       definitions; default in-memory impl in {@code dev.vertique.security.runtime.authz}; config-backed impl in
  *       {@code vertique-config-core}</li>
  *   <li>{@link dev.vertique.security.authz.RolePolicyResolver} — maps role names to policy
- *       names; default in-memory impl in {@code internal}; config-backed impl in
+ *       names; default in-memory impl in {@code dev.vertique.security.runtime.authz}; config-backed impl in
  *       {@code vertique-config-core}</li>
  * </ul>
  *

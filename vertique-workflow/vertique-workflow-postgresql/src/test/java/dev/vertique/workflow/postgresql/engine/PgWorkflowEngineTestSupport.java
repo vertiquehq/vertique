@@ -30,7 +30,7 @@ import java.util.Set;
  *
  * <p>This support type holds the PostgreSQL construction knowledge — building a
  * {@link PgWorkflowTransactionRunner} over a {@link Pool} (with its stage-1
- * {@link WorkflowPgExceptionMapper} and the relocated stage-2
+ * {@link PgWorkflowExceptionMapper} and the relocated stage-2
  * {@link dev.vertique.workflow.engine.WorkflowExceptionMapper}) — and then delegates the assembly of
  * the entire portable collaborator graph to {@link WorkflowEngineFactory#create}. The factory owns
  * construction of the engine collaborators ({@code RecorderRouter}, {@code BranchTransitionEngine},
@@ -219,7 +219,7 @@ final class PgWorkflowEngineTestSupport {
 
     /**
      * Builds a {@link WorkflowTransactionRunner} over the given pool, mirroring the production wiring
-     * (stage-1 {@link WorkflowPgExceptionMapper} + stage-2
+     * (stage-1 {@link PgWorkflowExceptionMapper} + stage-2
      * {@link dev.vertique.workflow.engine.WorkflowExceptionMapper}) so the layered exception mapping
      * is exercised in tests that construct the engine directly.
      *
@@ -228,7 +228,7 @@ final class PgWorkflowEngineTestSupport {
      */
     private static WorkflowTransactionRunner<SqlClient> runnerFor(Pool pool) {
         return new PgWorkflowTransactionRunner(
-                new WorkflowTxRunnerRepository(pool, new WorkflowPgExceptionMapper()),
+                new WorkflowTxRunnerRepository(pool, new PgWorkflowExceptionMapper()),
                 new dev.vertique.workflow.engine.WorkflowExceptionMapper());
     }
 }

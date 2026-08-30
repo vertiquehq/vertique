@@ -53,6 +53,8 @@ public class CronExpression {
 
     private final String raw;
     private final TreeSet<Integer>[] fields;
+    private final boolean dayOfMonthUnrestricted;
+    private final boolean dayOfWeekUnrestricted;
 
     /**
      * Parses a 6-field cron expression.
@@ -73,6 +75,8 @@ public class CronExpression {
         for (int i = 0; i < 6; i++) {
             this.fields[i] = parseField(parts[i], FIELD_MIN[i], FIELD_MAX[i], i);
         }
+        this.dayOfMonthUnrestricted = "*".equals(parts[IDX_DAY]);
+        this.dayOfWeekUnrestricted = "*".equals(parts[IDX_DOW]);
         // Normalize day-of-week: 7 is an alias for 0 (both mean Sunday)
         if (this.fields[IDX_DOW].remove(Integer.valueOf(7))) {
             this.fields[IDX_DOW].add(0);
@@ -132,7 +136,7 @@ public class CronExpression {
             // Check day-of-month and day-of-week
             int dayOfMonth = candidate.getDayOfMonth();
             int dayOfWeek = candidate.getDayOfWeek().getValue() % 7; // convert: Mon=1..Sun=0
-            boolean dayOk = fields[IDX_DAY].contains(dayOfMonth) && fields[IDX_DOW].contains(dayOfWeek);
+            boolean dayOk = matchesCronDay(dayOfMonth, dayOfWeek);
             if (!dayOk) {
                 candidate = candidate.plusDays(1).withHour(0).withMinute(0).withSecond(0);
                 continue;
@@ -186,6 +190,29 @@ public class CronExpression {
         }
 
         throw new IllegalStateException("No next fire time found within 4 years for expression: " + raw);
+    }
+
+    /**
+     * Applies standard cron semantics for the day-of-month and day-of-week fields.
+     *
+     * <p>When both fields are restricted, either matching field is sufficient. If one field is
+     * unrestricted ({@code *}), only the other field controls the day; if both are unrestricted,
+     * every day matches.
+     *
+     * @param dayOfMonth the candidate day of the month
+     * @param dayOfWeek the candidate day of the week, where Sunday is {@code 0}
+     * @return whether the candidate date matches the cron day fields
+     */
+    private boolean matchesCronDay(int dayOfMonth, int dayOfWeek) {
+        boolean dayOfMonthMatches = fields[IDX_DAY].contains(dayOfMonth);
+        boolean dayOfWeekMatches = fields[IDX_DOW].contains(dayOfWeek);
+        if (dayOfMonthUnrestricted) {
+            return dayOfWeekUnrestricted || dayOfWeekMatches;
+        }
+        if (dayOfWeekUnrestricted) {
+            return dayOfMonthMatches;
+        }
+        return dayOfMonthMatches || dayOfWeekMatches;
     }
 
     // --- Field parsing ---

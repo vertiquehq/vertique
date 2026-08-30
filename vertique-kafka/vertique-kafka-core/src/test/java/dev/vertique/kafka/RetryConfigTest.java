@@ -5,6 +5,7 @@ package dev.vertique.kafka;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import dev.vertique.resilience.RetryBackoff;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -102,6 +103,18 @@ class RetryConfigTest {
             RetryConfig config = new RetryConfig(3, 500L, 2.0, ErrorStrategy.DEAD_LETTER, 1000L);
             assertEquals(1000L, config.delayMs(1));
         }
+
+        @Test
+        @DisplayName("delayMs() matches the equivalent zero-jitter resilience backoff")
+        void delayMsMatchesZeroJitterResilienceBackoff() {
+            RetryConfig config = new RetryConfig(3, 1L, 1.5, ErrorStrategy.DEAD_LETTER, 10_000L);
+            RetryBackoff resilienceBackoff = RetryBackoff.exponential(1L, 1.5, 10_000L, 0L);
+
+            assertEquals(resilienceBackoff.delayMs(0), config.delayMs(0));
+            assertEquals(resilienceBackoff.delayMs(1), config.delayMs(1));
+            assertEquals(resilienceBackoff.delayMs(2), config.delayMs(2));
+            assertEquals(resilienceBackoff.delayMs(10), config.delayMs(10));
+        }
     }
 
     // --- Constructor validation tests ---
@@ -150,6 +163,17 @@ class RetryConfigTest {
         @DisplayName("backoffMultiplier = 1.0 is accepted")
         void backoffMultiplierOfOneIsAccepted() {
             assertDoesNotThrow(() -> new RetryConfig(3, 1000L, 1.0, ErrorStrategy.DEAD_LETTER, 60_000L));
+        }
+
+        @Test
+        @DisplayName("non-finite backoffMultiplier throws IllegalArgumentException")
+        void nonFiniteBackoffMultiplierFails() {
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () -> new RetryConfig(3, 1000L, Double.NaN, ErrorStrategy.DEAD_LETTER, 60_000L));
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () -> new RetryConfig(3, 1000L, Double.POSITIVE_INFINITY, ErrorStrategy.DEAD_LETTER, 60_000L));
         }
 
         @Test

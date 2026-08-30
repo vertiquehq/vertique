@@ -36,7 +36,7 @@ import org.junit.jupiter.api.Timeout;
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class VertiqueApplicationShutdownTest extends AbstractLaunchTestSupport {
 
-    private static final String NOOP_VERTICLE = NoopVerticle.class.getName();
+    private static final String NOOP_VERTICLE = NoOpVerticle.class.getName();
     private static final String FAILING_VERTICLE = FailingVerticle.class.getName();
 
     // --- Tests ---

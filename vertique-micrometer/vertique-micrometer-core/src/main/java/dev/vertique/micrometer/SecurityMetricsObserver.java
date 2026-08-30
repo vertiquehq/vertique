@@ -3,6 +3,7 @@
 
 package dev.vertique.micrometer;
 
+import dev.vertique.codegen.RegisterIntoSet;
 import dev.vertique.security.AuthMethod;
 import dev.vertique.security.AuthMethodKind;
 import dev.vertique.security.events.AuthorizationDecisionEvent;
@@ -52,6 +53,7 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Singleton
+@RegisterIntoSet(SecurityEventObserver.class)
 final class SecurityMetricsObserver implements SecurityEventObserver {
 
     // --- Meter names ---

@@ -21,6 +21,15 @@ SPDX-License-Identifier: EUPL-1.2
     <description>OpenTelemetry span enrichment adapter for event bus service dispatch: enriches the active CONSUMER span with service target and one-way attributes, and records terminal outcome status</description>
 
     <dependencies>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-codegen-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-codegen-dagger</artifactId>
+            <scope>provided</scope>
+        </dependency>
         <!-- OpenTelemetry API only — no SDK in compile scope (NFR-TEL-002) -->
         <dependency>
             <groupId>io.opentelemetry</groupId>
@@ -114,6 +123,18 @@ SPDX-License-Identifier: EUPL-1.2
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <annotationProcessorPaths combine.children="append">
+                        <path>
+                            <groupId>dev.vertique</groupId>
+                            <artifactId>vertique-codegen-dagger</artifactId>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
             </plugin>
         </plugins>
     </build>

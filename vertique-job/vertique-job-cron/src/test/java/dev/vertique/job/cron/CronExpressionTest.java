@@ -93,6 +93,63 @@ class CronExpressionTest {
         }
     }
 
+    // --- Day-of-month and day-of-week semantics ---
+
+    @Nested
+    @DisplayName("day matching")
+    class DayMatching {
+
+        @Test
+        @DisplayName("uses OR when day-of-month and day-of-week are both restricted")
+        void restrictedDayFieldsUseOr() {
+            CronExpression expr = new CronExpression("0 0 0 15 * 1");
+            Instant from = ZonedDateTime.of(2024, 2, 14, 23, 59, 59, 0, UTC).toInstant();
+            Instant next = expr.computeNextFireTime(from, UTC);
+
+            assertEquals(ZonedDateTime.of(2024, 2, 15, 0, 0, 0, 0, UTC).toInstant(), next);
+        }
+
+        @Test
+        @DisplayName("matches a restricted day-of-month with wildcard day-of-week")
+        void restrictedDayOfMonthWithWildcardDayOfWeek() {
+            CronExpression expr = new CronExpression("0 0 0 15 * *");
+            Instant from = ZonedDateTime.of(2024, 1, 16, 0, 0, 0, 0, UTC).toInstant();
+            Instant next = expr.computeNextFireTime(from, UTC);
+
+            assertEquals(ZonedDateTime.of(2024, 2, 15, 0, 0, 0, 0, UTC).toInstant(), next);
+        }
+
+        @Test
+        @DisplayName("matches a restricted day-of-week with wildcard day-of-month")
+        void restrictedDayOfWeekWithWildcardDayOfMonth() {
+            CronExpression expr = new CronExpression("0 0 0 * * 1");
+            Instant from = ZonedDateTime.of(2024, 1, 16, 0, 0, 0, 0, UTC).toInstant();
+            Instant next = expr.computeNextFireTime(from, UTC);
+
+            assertEquals(ZonedDateTime.of(2024, 1, 22, 0, 0, 0, 0, UTC).toInstant(), next);
+        }
+
+        @Test
+        @DisplayName("maps day-of-week 1 to Monday")
+        void mapsDayOfWeekOneToMonday() {
+            CronExpression expr = new CronExpression("0 0 0 * * 1");
+            Instant from = ZonedDateTime.of(2024, 1, 14, 23, 59, 59, 0, UTC).toInstant();
+            Instant next = expr.computeNextFireTime(from, UTC);
+
+            assertEquals(ZonedDateTime.of(2024, 1, 15, 0, 0, 0, 0, UTC).toInstant(), next);
+        }
+
+        @Test
+        @DisplayName("treats day-of-week 7 as the Sunday alias")
+        void treatsSevenAsSundayAlias() {
+            Instant from = ZonedDateTime.of(2024, 1, 15, 0, 0, 0, 0, UTC).toInstant();
+            Instant expected = ZonedDateTime.of(2024, 1, 21, 0, 0, 0, 0, UTC).toInstant();
+
+            assertEquals(expected, new CronExpression("0 0 0 * * 0").computeNextFireTime(from, UTC));
+            assertEquals(expected, new CronExpression("0 0 0 * * 7").computeNextFireTime(from, UTC));
+        }
+    }
+
     // --- Next fire time computation ---
 
     @Nested

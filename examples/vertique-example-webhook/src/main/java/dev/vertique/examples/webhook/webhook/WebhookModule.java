@@ -21,7 +21,7 @@ import java.util.concurrent.TimeUnit;
  * it. Adding a hand-written provider back would make the binding a Dagger duplicate.
  */
 @Module
-public class WebhookModule {
+public abstract class WebhookModule {
 
     /**
      * Contributes the {@link DeliverWebhookJobImpl} executor to the {@link DelayedJobs} multibinding

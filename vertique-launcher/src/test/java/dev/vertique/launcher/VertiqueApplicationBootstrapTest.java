@@ -36,7 +36,7 @@ import org.junit.jupiter.api.Timeout;
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 class VertiqueApplicationBootstrapTest extends AbstractLaunchTestSupport {
 
-    private static final String NOOP_VERTICLE = NoopVerticle.class.getName();
+    private static final String NOOP_VERTICLE = NoOpVerticle.class.getName();
     private static final String MARKER_PROP = "bootstrap.test.marker";
     private static final String MARKER_VALUE = "test-marker-xyz";
 
@@ -61,8 +61,8 @@ class VertiqueApplicationBootstrapTest extends AbstractLaunchTestSupport {
         assertEquals(0, exitCode, "launch must succeed");
 
         // Deployment config assertions
-        JsonObject started = NoopVerticle.startedConfig.get();
-        assertNotNull(started, "NoopVerticle must have been started");
+        JsonObject started = NoOpVerticle.startedConfig.get();
+        assertNotNull(started, "NoOpVerticle must have been started");
         assertEquals("world", started.getString("hello"), "verticle config must contain --conf keys");
         assertEquals(
                 MARKER_VALUE,
@@ -83,7 +83,7 @@ class VertiqueApplicationBootstrapTest extends AbstractLaunchTestSupport {
 
     @Test
     @DisplayName(
-            "bootstrap failure: unknown store type → exit 11, NoopVerticle never started, no contributor shutdown invocations")
+            "bootstrap failure: unknown store type → exit 11, NoOpVerticle never started, no contributor shutdown invocations")
     void bootstrapLoadFailureExits11AndProducesNoShutdowns() {
         // Inject a config.stores array with an unknown type to trigger BootstrapConfigException
         String conf = "{\"config\":{\"stores\":[{\"type\":\"no-such-store\"}]}}";
@@ -94,7 +94,7 @@ class VertiqueApplicationBootstrapTest extends AbstractLaunchTestSupport {
                 ExitCodes.VERTX_INITIALIZATION,
                 exitCode,
                 "bootstrap load failure must map to VERTX_INITIALIZATION (11)");
-        assertNull(NoopVerticle.startedConfig.get(), "NoopVerticle must never have been started");
+        assertNull(NoOpVerticle.startedConfig.get(), "NoOpVerticle must never have been started");
 
         // No contributor contributed → no :shutdown entries expected
         List<String> shutdowns = TestContributorState.invocations.stream()

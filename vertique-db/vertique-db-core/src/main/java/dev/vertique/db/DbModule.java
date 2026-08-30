@@ -19,7 +19,7 @@ import jakarta.inject.Singleton;
  * DbPostgresqlModule}) to get a fully configured pool.
  */
 @Module
-public class DbModule {
+public abstract class DbModule {
 
     /**
      * Provides the database pool configuration from the {@code "db"} config section.

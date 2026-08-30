@@ -150,10 +150,14 @@ step.
 
 ### Retry contracts
 
-`BackoffStrategy` computes a delay in milliseconds from a zero-based retry count. Use
-`BackoffStrategy.exponential`, `fixed`, or `none` for standard policies, or implement the functional
-interface for a custom strategy. `RetryPolicy` determines whether a failure is eligible for retry
-when a consumer's retry configuration delegates eligibility to a policy.
+`RetryBackoff.delayMs(int)` computes the delay in milliseconds from a zero-based retry count. Fixed
+policies return their configured delay, exponential policies apply the configured cap and then add
+bounded random jitter, and custom policies delegate to their `BackoffStrategy`. Negative retry counts
+are rejected. Use `BackoffStrategy.exponential`, `fixed`, or `none` when a consumer needs a strategy
+implementation, or implement the functional interface for a custom strategy. `RetryPolicy` determines
+whether a failure is eligible for retry when a consumer's retry configuration delegates eligibility to
+a policy. Runtime integrations that own a validated random source may use
+`delayMs(int, DoubleSupplier)`; the one-argument method uses the default runtime random source.
 
 `Retry.builder(resilience, operationName)` creates an independently executable retry component.
 `ResiliencePipeline.Builder.retry(...)` accepts a prebuilt `Retry` or an inline retry builder. Retry

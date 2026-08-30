@@ -38,7 +38,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Integration tests for the two-stage layered exception mapping performed by
- * {@link PgWorkflowTransactionRunner} (stage-1 {@link WorkflowPgExceptionMapper} +
+ * {@link PgWorkflowTransactionRunner} (stage-1 {@link PgWorkflowExceptionMapper} +
  * stage-2 {@link WorkflowExceptionMapper}).
  *
  * <p>Each test runs a real transaction whose body raises a chosen failure, then asserts the
@@ -78,7 +78,7 @@ public class WorkflowTransactionRunnerLayeredMappingIT {
                 .build();
 
         runner = new PgWorkflowTransactionRunner(
-                new WorkflowTxRunnerRepository(pool, new WorkflowPgExceptionMapper()), new WorkflowExceptionMapper());
+                new WorkflowTxRunnerRepository(pool, new PgWorkflowExceptionMapper()), new WorkflowExceptionMapper());
 
         ctx.completeNow();
     }

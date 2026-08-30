@@ -7,7 +7,6 @@ import dagger.Binds;
 import dagger.BindsOptionalOf;
 import dagger.Module;
 import dagger.Provides;
-import dagger.multibindings.IntoSet;
 import dev.vertique.aop.AspectProvider;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
@@ -44,7 +43,7 @@ import jakarta.inject.Singleton;
  * @see SecurityMetricsObserver
  * @see MetricsConfig
  */
-@Module
+@Module(includes = GeneratedRegistrationsModule.class)
 public abstract class MicrometerModule {
 
     // --- MeterRegistry ---
@@ -98,24 +97,6 @@ public abstract class MicrometerModule {
      */
     @BindsOptionalOf
     abstract MetricsConfig optionalMetricsConfig();
-
-    // --- SecurityEventObserver multibinding ---
-
-    /**
-     * Contributes {@link SecurityMetricsObserver} into the {@link SecurityEventObserver} multibinding
-     * set.
-     *
-     * <p>When this module is installed alongside the rest-security module's {@code AuthModule}, the
-     * contributed observer receives security lifecycle events and records them as Micrometer metrics.
-     *
-     * @param observer the security metrics observer; provided by Dagger via its {@code @Inject} ctor
-     * @return the observer cast to {@link SecurityEventObserver} for the multibinding set
-     */
-    @Provides
-    @IntoSet
-    static SecurityEventObserver securityMetricsObserver(SecurityMetricsObserver observer) {
-        return observer;
-    }
 
     // --- @Timed AspectProvider ---
 

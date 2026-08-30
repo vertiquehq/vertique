@@ -67,6 +67,9 @@ public interface ConfigPropertySource extends AutoCloseable {
      * <p>Invoked exactly once at shutdown, in reverse declaration order. Implementations
      * MUST NOT throw — any exception is a programming error. The default implementation is
      * a no-op, suitable for stateless or connection-free sources.
+     *
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
+     * the enclosing operation.
      */
     @Override
     default void close() {}

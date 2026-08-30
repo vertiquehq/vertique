@@ -84,7 +84,7 @@ public class WorkflowTransactionRunnerStatementCountIT {
                 .build();
         countingPool = new CountingPool(realPool);
         runner = new PgWorkflowTransactionRunner(
-                new WorkflowTxRunnerRepository(countingPool, new WorkflowPgExceptionMapper()),
+                new WorkflowTxRunnerRepository(countingPool, new PgWorkflowExceptionMapper()),
                 new WorkflowExceptionMapper());
         ctx.completeNow();
     }

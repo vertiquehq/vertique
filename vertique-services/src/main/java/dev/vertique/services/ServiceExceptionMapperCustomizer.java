@@ -35,6 +35,8 @@ public interface ServiceExceptionMapperCustomizer extends OrderedExtension {
 
     /**
      * Applies custom exception translations to the given {@link ServiceExceptionMapper}.
+     * Exceptions thrown by this callback propagate and are fatal to the enclosing operation;
+     * processing does not continue.
      *
      * @param mapper the mapper to customize
      */

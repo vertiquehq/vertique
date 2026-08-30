@@ -35,7 +35,7 @@ import jakarta.inject.Singleton;
  *       required for the {@code SINGLE_INSTANCE} recovery cron job.
  *       {@link dev.vertique.job.cron.dagger.CronModule} (in-memory cron, no
  *       {@code JobRepository}) is not sufficient — the {@code CronPersistenceMarker} guard on
- *       {@link #workflowBranchRecoveryService(WorkflowBranchRecoveryServiceImpl, CronPersistenceMarker)}
+ *       {@link #workflowBranchRecoveryService(PgWorkflowBranchRecoveryCron, CronPersistenceMarker)}
  *       fails compilation if only the in-memory module is installed.</li>
  * </ul>
  */
@@ -43,7 +43,7 @@ import jakarta.inject.Singleton;
 public abstract class WorkflowBranchRecoveryModule {
 
     /**
-     * Contributes {@link WorkflowBranchRecoveryServiceImpl} into the {@code @Services}
+     * Contributes {@link PgWorkflowBranchRecoveryCron} into the {@code @Services}
      * multibinding so {@code CronJobRegistrar} discovers its {@code @CronJob}-annotated reconcile
      * method.
      *
@@ -64,7 +64,7 @@ public abstract class WorkflowBranchRecoveryModule {
     @IntoSet
     @Services
     static Object workflowBranchRecoveryService(
-            WorkflowBranchRecoveryServiceImpl impl,
+            PgWorkflowBranchRecoveryCron impl,
             @SuppressWarnings("unused") CronPersistenceMarker cronPersistenceMarker) {
         return impl;
     }
@@ -73,7 +73,7 @@ public abstract class WorkflowBranchRecoveryModule {
      * Provides the default {@link WorkflowBranchRecoveryConfig} for the branch-recovery service.
      *
      * <p>Hardcodes the batch size and stale-threshold defaults. The scan cadence is owned by the
-     * cron expression on {@code WorkflowBranchRecoveryServiceImpl} and tunable via
+     * cron expression on {@code PgWorkflowBranchRecoveryCron} and tunable via
      * {@code cron.jobs.workflow-branch-recovery.cron} config. Applications that need different
      * batch/stale settings must fork the module — Dagger does not allow two {@code @Provides} for
      * the same key, so providing a competing {@code @Singleton WorkflowBranchRecoveryConfig} in

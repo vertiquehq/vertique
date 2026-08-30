@@ -66,6 +66,8 @@ SPDX-License-Identifier: EUPL-1.2
         <module>vertique-services</module>
         <module>vertique-kafka</module>
         <module>vertique-db</module>
+        <module>vertique-redis</module>
+        <module>vertique-cache</module>
         <module>vertique-job</module>
         <module>vertique-deploy</module>
         <module>vertique-application</module>
@@ -108,6 +110,7 @@ SPDX-License-Identifier: EUPL-1.2
 
         <java.version>21</java.version>
         <vertx.version>5.1.6</vertx.version>
+        <lettuce.version>7.7.0.RELEASE</lettuce.version>
         <dagger.version>2.59.2</dagger.version>
         <!-- Jackson 2.x line — the framework imports the Jackson 2 BOM (see dependencyManagement)
              to stay on 2.x deliberately, since Vert.x 5.1 supports both 2.x and 3.x. Keep aligned
@@ -125,6 +128,7 @@ SPDX-License-Identifier: EUPL-1.2
         <jakarta.annotation.version>2.1.1</jakarta.annotation.version>
         <logback.version>1.5.34</logback.version>
         <slf4j.version>2.0.17</slf4j.version>
+        <caffeine.version>3.2.4</caffeine.version>
 
         <!-- Test -->
         <junit.jupiter.version>5.14.4</junit.jupiter.version>
@@ -232,6 +236,13 @@ SPDX-License-Identifier: EUPL-1.2
                 <version>${vertx.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+
+            <!-- Lettuce is restricted to the Redis topology-maintenance adapter. -->
+            <dependency>
+                <groupId>io.lettuce</groupId>
+                <artifactId>lettuce-core</artifactId>
+                <version>${lettuce.version}</version>
             </dependency>
 
             <!-- Jackson BOM — explicitly pin the Jackson 2.x line. Vert.x 5.1 ships both Jackson 2.x
@@ -448,6 +459,31 @@ SPDX-License-Identifier: EUPL-1.2
             </dependency>
             <dependency>
                 <groupId>dev.vertique</groupId>
+                <artifactId>vertique-cache-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-cache-aop</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-cache-caffeine</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-cache-redis</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-redis-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
                 <artifactId>vertique-validation</artifactId>
                 <version>${project.version}</version>
             </dependency>
@@ -578,6 +614,11 @@ SPDX-License-Identifier: EUPL-1.2
             </dependency>
             <dependency>
                 <groupId>dev.vertique</groupId>
+                <artifactId>vertique-codegen-cache</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
                 <artifactId>vertique-codegen-rest-client</artifactId>
                 <version>${project.version}</version>
             </dependency>
@@ -660,6 +701,11 @@ SPDX-License-Identifier: EUPL-1.2
             <!-- Micrometer framework modules -->
             <dependency>
                 <groupId>dev.vertique</groupId>
+                <artifactId>vertique-micrometer-cache</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
                 <artifactId>vertique-micrometer-core</artifactId>
                 <version>${project.version}</version>
             </dependency>
@@ -690,6 +736,11 @@ SPDX-License-Identifier: EUPL-1.2
             </dependency>
 
             <!-- OpenTelemetry framework modules -->
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-opentelemetry-cache</artifactId>
+                <version>${project.version}</version>
+            </dependency>
             <dependency>
                 <groupId>dev.vertique</groupId>
                 <artifactId>vertique-opentelemetry-core</artifactId>
@@ -1105,6 +1156,10 @@ SPDX-License-Identifier: EUPL-1.2
                              mode) and cannot unblock native/Docker I/O or an interrupt-swallowing
                              retry loop. Unit forks are fast; this is a generous backstop. -->
                         <forkedProcessTimeoutInSeconds>600</forkedProcessTimeoutInSeconds>
+                        <!-- Bound shutdown as well as test execution. A fork can finish reporting
+                             tests and still remain alive because application code started a
+                             non-daemon thread. -->
+                        <forkedProcessExitTimeoutInSeconds>60</forkedProcessExitTimeoutInSeconds>
                         <!-- Best-effort per-method bound for interruptible lifecycle hangs; a
                              class-level @Timeout does NOT cover @BeforeAll/@AfterAll. Not a
                              substitute for the fork cap above (SAME_THREAD cannot abort an
@@ -1134,6 +1189,11 @@ SPDX-License-Identifier: EUPL-1.2
                              worst case to 15 min per module fork so CI always reports a result.
                              Sized above any healthy module IT suite (full reactor ITs run ~12 min). -->
                         <forkedProcessTimeoutInSeconds>900</forkedProcessTimeoutInSeconds>
+                        <!-- Bound shutdown as well as test execution. A fork can finish reporting
+                             tests and still remain alive because application code started a
+                             non-daemon thread; without this bound Failsafe can wait indefinitely
+                             in verify after the test reports have been written. -->
+                        <forkedProcessExitTimeoutInSeconds>60</forkedProcessExitTimeoutInSeconds>
                         <!-- Best-effort per-method bound for interruptible lifecycle hangs; a
                              class-level @Timeout does NOT cover @BeforeAll/@AfterAll. Not a
                              substitute for the fork cap above. -->

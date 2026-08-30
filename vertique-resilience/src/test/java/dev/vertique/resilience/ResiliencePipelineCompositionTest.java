@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -266,16 +267,31 @@ class ResiliencePipelineCompositionTest {
                     .timeout(timeout -> timeout.duration(Duration.ofHours(1)))
                     .build();
             AtomicBoolean supplierStarted = new AtomicBoolean();
+            AtomicReference<Future<String>> result = new AtomicReference<>();
+            AtomicReference<Future<Void>> close = new AtomicReference<>();
+            AtomicReference<Throwable> callbackFailure = new AtomicReference<>();
+            CountDownLatch scheduled = new CountDownLatch(1);
 
-            Future<String> result = pipeline.execute(() -> {
-                supplierStarted.set(true);
-                return Promise.<String>promise().future();
+            vertx.runOnContext(ignored -> {
+                try {
+                    result.set(pipeline.execute(() -> {
+                        supplierStarted.set(true);
+                        return Promise.<String>promise().future();
+                    }));
+                    close.set(resilience.close());
+                } catch (Throwable failure) {
+                    callbackFailure.set(failure);
+                } finally {
+                    scheduled.countDown();
+                }
             });
 
-            await(resilience.close());
+            assertTrue(scheduled.await(AWAIT_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS));
+            assertNull(callbackFailure.get(), "the context callback must complete successfully");
+            await(close.get());
 
             assertFalse(supplierStarted.get(), "close must prevent a queued supplier from starting");
-            assertInstanceOf(ResilienceClosedException.class, result.cause());
+            assertInstanceOf(ResilienceClosedException.class, result.get().cause());
         }
     }
 

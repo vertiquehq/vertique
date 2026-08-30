@@ -26,7 +26,7 @@ import jakarta.inject.Singleton;
  *
  * <p>{@link CronJobRegistrar} and {@link CronScheduler} are required because the recovery loop
  * was migrated from a per-node {@code setPeriodic} verticle to a cluster-singleton
- * {@code @CronJob SINGLE_INSTANCE} method on {@code WorkflowTimerRecoveryServiceImpl}. Without
+ * {@code @CronJob SINGLE_INSTANCE} method on {@code WorkflowTimerRecoveryCron}. Without
  * the cron infrastructure installed, the application would silently ship without orphan /
  * dead-letter recovery.
  *
@@ -72,7 +72,7 @@ public final class WorkflowDelayedComposeValidator implements ComposeValidator {
      *   <li>{@code jobRepository} — proves a {@link JobRepository} implementation is wired (used
      *       by the recovery service to look up job states).</li>
      *   <li>{@code cronJobRegistrar} — proves the cron registrar is on the graph; without it the
-     *       {@code @CronJob} on {@code WorkflowTimerRecoveryServiceImpl} would not be discovered
+     *       {@code @CronJob} on {@code WorkflowTimerRecoveryCron} would not be discovered
      *       and recovery would silently never run.</li>
      *   <li>{@code cronScheduler} — proves the cron scheduler is on the graph; without it the
      *       lifecycle verticle that fires scheduled jobs is missing.</li>

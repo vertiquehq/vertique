@@ -17,9 +17,7 @@ import jakarta.inject.Singleton;
  * that want leading-byte verification add it explicitly alongside {@code RestModule}.
  */
 @Module
-public final class MagicBytesVerifierModule {
-
-    private MagicBytesVerifierModule() {}
+public abstract class MagicBytesVerifierModule {
 
     /**
      * Contributes the package-private built-in implementation through the public verifier SPI.

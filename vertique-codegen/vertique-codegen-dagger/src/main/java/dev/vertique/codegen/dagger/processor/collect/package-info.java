@@ -6,6 +6,8 @@
  *
  * <p>Two discovery modes are used:
  * <ul>
+ *   <li><b>Generic registrations</b> — {@code RegistrationCollector} reads repeatable
+ *       {@code @RegisterAs} and {@code @RegisterIntoSet} type declarations.</li>
  *   <li><b>Annotation-rooted</b> — {@link dev.vertique.codegen.dagger.processor.collect.PathResourceCollector},
  *       {@link dev.vertique.codegen.dagger.processor.collect.RestClientCollector}, and
  *       {@link dev.vertique.codegen.dagger.processor.collect.KafkaConsumerCollector} each query

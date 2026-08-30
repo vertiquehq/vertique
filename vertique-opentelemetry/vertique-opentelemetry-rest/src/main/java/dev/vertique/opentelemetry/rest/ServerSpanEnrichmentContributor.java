@@ -3,6 +3,7 @@
 
 package dev.vertique.opentelemetry.rest;
 
+import dev.vertique.codegen.RegisterIntoSet;
 import dev.vertique.rest.core.router.OperationHandlerContributor;
 import dev.vertique.rest.core.router.OperationRegistrationContext;
 import io.opentelemetry.api.trace.Span;
@@ -40,6 +41,7 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Singleton
+@RegisterIntoSet(OperationHandlerContributor.class)
 public final class ServerSpanEnrichmentContributor implements OperationHandlerContributor {
 
     /** Priority for this contributor — one step after {@code OperationIdCaptureContributor} at 350. */

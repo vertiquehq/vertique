@@ -32,7 +32,7 @@ import jakarta.inject.Singleton;
  * config keys); no override is needed here.
  */
 @Module
-public class AppModule {
+public abstract class AppModule {
 
     /**
      * Provides a JWT authentication provider using a symmetric HMAC key.

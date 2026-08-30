@@ -195,7 +195,7 @@ JavaPoet emitter that, given a method element, generates a `dev.vertique.core.co
 | `emitMethodMetadata(ExecutableElement, ClassName, Types)` | Emits a `MethodMetadata` implementation with no materialized annotation literals (`findAnnotation`/`hasAnnotation` resolve nothing) |
 | `methodMetadataType(ExecutableElement, ClassName, Types, List<AnnotationLiteralRef>, List<List<AnnotationLiteralRef>>)` | Builds the `MethodMetadata`-implementing `TypeSpec.Builder` with method-level **and** parameter-level annotation literals baked in, without top-level modifiers (so the caller can emit it top-level or nested) |
 
-Both the method-level and parameter-level `findAnnotation`/`hasAnnotation` surfaces are reflection-free and literal-backed: for each runtime-retained method annotation the emitter bakes a `static final <Ann>` literal constant (`ANNOTATION_<i>`) and resolves `findAnnotation` by a `type == <Ann>.class` match; for each parameter's runtime-retained annotations it bakes `PARAM_<p>_ANNOTATION_<i>` literal constants and passes them to the nested `ParameterMetadataImpl`, whose `findAnnotation` matches the looked-up `type` against each literal's `annotationType()` — never `Method.getAnnotation`/`Parameter.getAnnotation`. This backs `ParameterMetadata.findAnnotation`/`hasAnnotation` on the codegen path. The opt-in reflective-accessor group (`asMethod`, `genericReturnType`, `genericType`) is still stubbed — calling it throws `UnsupportedOperationException`.
+Both the method-level and parameter-level `findAnnotation`/`hasAnnotation` surfaces are reflection-free and literal-backed: for each runtime-retained method annotation the emitter bakes a `static final <Ann>` literal constant (`ANNOTATION_<i>`) and resolves `findAnnotation` by a `type == <Ann>.class` match; for each parameter's runtime-retained annotations it bakes `PARAM_<p>_ANNOTATION_<i>` literal constants and passes them to the nested `ParameterMetadataImpl`, whose `findAnnotation` matches the looked-up `type` against each literal's `annotationType()` — never `Method.getAnnotation`/`Parameter.getAnnotation`. This backs `ParameterMetadata.findAnnotation`/`hasAnnotation` on the codegen path. Generated method metadata emits `genericReturnType()` as a reflection-free `Type` graph, including parameterized, wildcard, and generic-array return shapes. `asMethod()` and parameter `genericType()` remain stubbed and throw `UnsupportedOperationException`.
 
 The caller owns the generator namespace when materializing each `AnnotationLiteralRef`. `AnnotationLiteralEmitter.literalClassName(...)` and `emit(...)` require that namespace and generate `<Ann>$<Namespace>Literal`; there is no shared literal suffix or unnamespaced overload. `AopProxyEmitter` uses `Aop` and therefore emits `<Ann>$AopLiteral`; the JAX-RS emitters use `JaxRs` and emit `<Ann>$JaxRsLiteral`. Each caller deduplicates its own generated FQNs before writing them. The same bounded-attribute-kind gate protects method-level and parameter-level literal generation, but callers choose the failure policy: AOP rejects an unsupported attribute kind at compile time, while JAX-RS omits that literal and wires its documented lazy reflective fallback.
 
@@ -228,6 +228,32 @@ public @interface ConditionalOnProperties {
 - Multiple `@ConditionalOnProperty` annotations on the same type are ANDed.
 - Only consumed by codegen processors; has no effect on manually-written Dagger bindings.
 - Placing `@ConditionalOnProperty` on a type that is also annotated `@NoAutoWire` triggers a compile-time WARNING from `ImplCandidateScanner` — the conditional has no effect on opted-out types.
+
+### Generic Dagger registration annotations
+
+`@RegisterAs` and `@RegisterIntoSet` are source-retained, repeatable type annotations consumed by
+`vertique-codegen-dagger`:
+
+```java
+@RegisterAs(MetricsObserver.class)
+final class DefaultMetricsObserver implements MetricsObserver {
+    @Inject
+    DefaultMetricsObserver() {}
+}
+
+@RegisterIntoSet(EventInterceptor.class)
+@RegisterIntoSet(RequestInterceptor.class)
+final class LoggingInterceptor implements EventInterceptor, RequestInterceptor {
+    @Inject
+    LoggingInterceptor() {}
+}
+```
+
+Each declaration carries one `Class<?> value()` target. The annotated type must be concrete, have
+exactly one `jakarta.inject.Inject` or `javax.inject.Inject` constructor, and be assignable to the
+target. `@NoAutoWire` suppresses every registration declaration on the same type. The processor
+emits `GeneratedRegistrationsModule` in the package resolved from the annotated origins; the module
+must be included explicitly by the owning Dagger component or aggregate module.
 
 ---
 

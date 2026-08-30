@@ -40,6 +40,18 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
+            <artifactId>vertique-cache-aop</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-cache-caffeine</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-rest-auth-jwt</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
             <artifactId>vertique-services</artifactId>
         </dependency>
         <dependency>
@@ -106,7 +118,6 @@ SPDX-License-Identifier: EUPL-1.2
             <version>${project.version}</version>
             <scope>provided</scope>
         </dependency>
-
         <!-- Test -->
         <dependency>
             <groupId>dev.vertique</groupId>

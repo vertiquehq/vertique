@@ -78,7 +78,7 @@ second  minute  hour  day-of-month  month  day-of-week
   0       0      0       15           *         *        → 15th of each month at midnight
 ```
 
-Supported syntax: `*` (all), `N` (specific), `A-B` (range), `A,B,C` (list), `*/N` (every N from min), `A-B/N` (every N in range). Day-of-week: 0 = Sunday, 1 = Monday, …, 6 = Saturday (7 is also accepted as Sunday).
+Supported syntax: `*` (all), `N` (specific), `A-B` (range), `A,B,C` (list), `*/N` (every N from min), `A-B/N` (every N in range). Day-of-week: 0 = Sunday, 1 = Monday, …, 6 = Saturday (7 is also accepted as Sunday). For day matching, when both day-of-month and day-of-week are restricted, the job fires when either field matches (OR). If either field is a wildcard, the other field controls.
 
 ### `CronExpression`
 
@@ -385,4 +385,3 @@ static JobInterceptor metricsInterceptor(MetricsService metrics) {
 > `org.slf4j.MDC` directly because the framework facade (`dev.vertique.logging.MDC`) requires
 > a duplicated Vert.x context and would throw otherwise. Enrichment inside event-bus consumer
 > handlers (which run on duplicated contexts) uses the framework facade normally.
-

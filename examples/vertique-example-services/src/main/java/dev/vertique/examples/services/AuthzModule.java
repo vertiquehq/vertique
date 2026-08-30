@@ -45,7 +45,7 @@ import java.util.Set;
  * them here.
  */
 @Module
-public class AuthzModule {
+public abstract class AuthzModule {
 
     /** Policy name granting the {@code svc.probe.run} action. */
     private static final String PROBE_POLICY = "probe-policy";

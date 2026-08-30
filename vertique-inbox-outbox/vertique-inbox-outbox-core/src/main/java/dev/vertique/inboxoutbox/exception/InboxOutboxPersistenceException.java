@@ -7,8 +7,8 @@ package dev.vertique.inboxoutbox.exception;
  * Thrown when an inbox or outbox operation fails because of a persistence-layer error.
  *
  * <p>This is the inbox/outbox-domain projection of a database failure that crossed the
- * transactional-messaging API boundary. The {@code InboxOutboxExceptionMapper} (in the
- * {@code vertique-inbox-outbox-postgresql} module) translates
+ * transactional-messaging API boundary. The exception mapper in the
+ * {@code vertique-inbox-outbox-postgresql} module translates
  * {@link dev.vertique.db.exception.DataAccessException} subtypes into this exception so that
  * callers of the inbox/outbox service API see inbox/outbox exceptions, not data-access exceptions.
  *

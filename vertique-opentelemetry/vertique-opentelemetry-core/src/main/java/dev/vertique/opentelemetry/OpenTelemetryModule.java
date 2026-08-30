@@ -5,7 +5,6 @@ package dev.vertique.opentelemetry;
 
 import dagger.Module;
 import dagger.Provides;
-import dagger.multibindings.IntoSet;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.config.JsonConfigPaths;
@@ -45,7 +44,7 @@ import jakarta.inject.Singleton;
  * @see TracingConfig
  * @see SecuritySpanEventObserver
  */
-@Module
+@Module(includes = GeneratedRegistrationsModule.class)
 public abstract class OpenTelemetryModule {
 
     // --- TracingConfig ---
@@ -120,24 +119,5 @@ public abstract class OpenTelemetryModule {
     @Singleton
     static TraceReferenceResolver traceReferenceResolver(OpenTelemetryTraceReferenceResolver resolver) {
         return resolver;
-    }
-
-    // --- SecurityEventObserver multibinding ---
-
-    /**
-     * Contributes {@link SecuritySpanEventObserver} into the {@link SecurityEventObserver}
-     * multibinding set.
-     *
-     * <p>When this module is installed alongside the rest-security module's {@code AuthModule},
-     * the contributed observer receives security lifecycle events and records them as span events
-     * on the active OpenTelemetry span.
-     *
-     * @param observer the security span event observer; provided by Dagger via its {@code @Inject} ctor
-     * @return the observer cast to {@link SecurityEventObserver} for the multibinding set
-     */
-    @Provides
-    @IntoSet
-    static SecurityEventObserver securitySpanEventObserver(SecuritySpanEventObserver observer) {
-        return observer;
     }
 }

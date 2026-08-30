@@ -14,7 +14,7 @@ import jakarta.inject.Singleton;
  *
  * <p>{@code TransactionBuilder} cannot be instantiated directly — it is created by
  * {@link dev.vertique.db.AbstractSqlRepository#transaction()} bound to <em>that repository's</em>
- * exception mapper. This repository carries the {@link WorkflowPgExceptionMapper} (stage 1) so that
+ * exception mapper. This repository carries the {@link PgWorkflowExceptionMapper} (stage 1) so that
  * transactions executed through the runner apply the DB-boundary mapping inside
  * {@code TransactionBuilder.execute(...)}. It performs no queries of its own; only its
  * {@code transaction()} factory is used.
@@ -29,7 +29,7 @@ class WorkflowTxRunnerRepository extends PgSqlRepository {
      * @param exceptionMapper the workflow stage-1 (DB-boundary) exception mapper
      */
     @Inject
-    WorkflowTxRunnerRepository(Pool pool, WorkflowPgExceptionMapper exceptionMapper) {
+    WorkflowTxRunnerRepository(Pool pool, PgWorkflowExceptionMapper exceptionMapper) {
         super(pool, exceptionMapper);
     }
 }

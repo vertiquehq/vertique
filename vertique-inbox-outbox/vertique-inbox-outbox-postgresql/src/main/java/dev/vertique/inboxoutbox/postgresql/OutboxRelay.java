@@ -52,7 +52,7 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p><b>Stale lease recovery and cleanup</b> are no longer owned by this verticle — they run as
  * cluster-singleton cron jobs in
- * {@code OutboxMaintenanceServiceImpl} (see
+ * {@code OutboxMaintenanceCron} (see
  * {@code dev.vertique.inboxoutbox.postgresql.maintenance}). The verticle keeps only per-node
  * data-plane mechanics (poll loop and LISTEN/NOTIFY wakeup) per the framework's scheduling rule.
  *

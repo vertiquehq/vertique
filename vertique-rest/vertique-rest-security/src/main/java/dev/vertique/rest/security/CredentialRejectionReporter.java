@@ -62,6 +62,9 @@ public interface CredentialRejectionReporter {
      *                               {@code null}
      * @throws IllegalStateException if {@link dev.vertique.core.correlation.CorrelationContext} is
      *                               not bound on the context holder
+     *
+     * <p>Exceptions thrown by this callback propagate and are fatal to the enclosing operation;
+     * processing does not continue.
      */
     void report(
             RoutingContext ctx,

@@ -25,11 +25,11 @@ import java.util.Optional;
  * annotationType()} — never {@link Method#getAnnotation(Class)}. {@code SOURCE}/{@code CLASS}-retained
  * annotations are not part of this surface (they are invisible at runtime).
  *
- * <p>{@link #genericReturnType()} and {@link #asMethod()} are the opt-in <em>reflective-accessor
- * group</em>. They are <strong>not</strong> part of the reflection-free guarantee and are never
- * called by generated proxy code; a consumer that needs reflective access must opt into them
- * explicitly. They exist for tooling/consumers that genuinely require a {@link Method} token or the
- * generic return type, accepting the reflection that entails.
+ * <p>{@link #asMethod()} remains an opt-in reflective accessor. Generated metadata emits
+ * {@link #genericReturnType()} as a reflection-free {@link Type} graph, so serializers and generated
+ * interceptors can inspect declared payload types without a reflective method lookup. The accessor
+ * remains separate from the constant-only core because its result can be a composite runtime
+ * {@code Type} rather than a {@link Class} literal.
  *
  * <p>This SPI references no AOP or event type — it is a neutral runtime home shared across those
  * concerns.
@@ -101,13 +101,14 @@ public interface MethodMetadata {
      */
     boolean hasAnnotation(Class<? extends Annotation> type);
 
-    // --- reflective-accessor group (opt-in; NOT part of the reflection-free guarantee) ---
+    // --- generic type / reflective method accessors ---
 
     /**
      * Returns the generic return type of the method.
      *
-     * <p>Part of the opt-in reflective-accessor group: this is not part of the reflection-free
-     * guarantee and is never called by generated proxy code.
+     * <p>Generated implementations return a reflection-free {@link Type} graph for declared
+     * parameterized return types. Implementations that do not have compile-time metadata may still
+     * derive the value reflectively.
      *
      * @return the generic return type
      */

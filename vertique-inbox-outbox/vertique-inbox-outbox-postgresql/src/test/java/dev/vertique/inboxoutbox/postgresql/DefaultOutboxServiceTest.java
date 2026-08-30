@@ -57,7 +57,7 @@ import org.mockito.quality.Strictness;
 /**
  * Tests for {@link DefaultOutboxService} — captures durable context into {@link OutboxMetadata},
  * delegates publish to the underlying {@link OutboxRepository}, and wraps repository failures with
- * {@link InboxOutboxExceptionMapper}.
+ * {@link PgInboxOutboxExceptionMapper}.
  */
 @ExtendWith({VertxExtension.class, MockitoExtension.class})
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -80,7 +80,7 @@ class DefaultOutboxServiceTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = new DurableContextPropagator(
                 new DurableContextMetadataRegistry(Set.of(), Set.of()), holder, new ContextScopeBinder(holder));
-        service = new DefaultOutboxService(repository, propagator, new InboxOutboxExceptionMapper());
+        service = new DefaultOutboxService(repository, propagator, new PgInboxOutboxExceptionMapper());
     }
 
     @Test
@@ -195,7 +195,7 @@ class DefaultOutboxServiceTest {
                     holder,
                     new ContextScopeBinder(holder));
             DefaultOutboxService carrierService =
-                    new DefaultOutboxService(repository, propagator, new InboxOutboxExceptionMapper());
+                    new DefaultOutboxService(repository, propagator, new PgInboxOutboxExceptionMapper());
 
             ArgumentCaptor<UUID> carrierIdCaptor = forClass(UUID.class);
             when(repository.insert(eq(entry), any(OutboxMetadata.class), carrierIdCaptor.capture(), eq(tx)))

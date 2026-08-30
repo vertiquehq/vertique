@@ -36,7 +36,7 @@ import org.junit.jupiter.api.Timeout;
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 class PlaceholderEndToEndTest extends AbstractLaunchTestSupport {
 
-    private static final String NOOP_VERTICLE = NoopVerticle.class.getName();
+    private static final String NOOP_VERTICLE = NoOpVerticle.class.getName();
     private static final String SENTINEL = "s3cret-SENTINEL-9472";
 
     // --- Resolved values ---
@@ -62,8 +62,8 @@ class PlaceholderEndToEndTest extends AbstractLaunchTestSupport {
             assertEquals(0, exitCode, "launch must succeed with resolved placeholders");
 
             // Verticle deployment config assertions
-            JsonObject started = NoopVerticle.startedConfig.get();
-            assertNotNull(started, "NoopVerticle must have started");
+            JsonObject started = NoOpVerticle.startedConfig.get();
+            assertNotNull(started, "NoOpVerticle must have started");
             JsonObject db = started.getJsonObject("db");
             assertNotNull(db, "db section must exist in verticle config");
             assertEquals(SENTINEL, db.getString("password"), "db.password must be resolved from stub source");
@@ -160,7 +160,7 @@ class PlaceholderEndToEndTest extends AbstractLaunchTestSupport {
     class ResolutionFailure {
 
         @Test
-        @DisplayName("unresolvable reference: launch returns 11 and NoopVerticle is never deployed")
+        @DisplayName("unresolvable reference: launch returns 11 and NoOpVerticle is never deployed")
         void unresolvableRefCausesExit11() {
             // No sources declared; ${no.such.key} cannot be resolved
             String conf = "{\"x\":\"${no.such.key}\"}";
@@ -172,7 +172,7 @@ class PlaceholderEndToEndTest extends AbstractLaunchTestSupport {
                     exitCode,
                     "unresolvable placeholder must cause VERTX_INITIALIZATION (11)");
             // Verticle must never have been deployed
-            assertEquals(null, NoopVerticle.startedConfig.get(), "NoopVerticle must never have started");
+            assertEquals(null, NoOpVerticle.startedConfig.get(), "NoOpVerticle must never have started");
         }
 
         @Test
@@ -194,7 +194,7 @@ class PlaceholderEndToEndTest extends AbstractLaunchTestSupport {
                     ExitCodes.VERTX_INITIALIZATION,
                     exitCode,
                     "malformed vertx.options must cause VERTX_INITIALIZATION (11)");
-            assertEquals(null, NoopVerticle.startedConfig.get(), "NoopVerticle must never have started");
+            assertEquals(null, NoOpVerticle.startedConfig.get(), "NoOpVerticle must never have started");
             assertEquals(
                     1,
                     LauncherStubSourceFactory.State.closeCount.get(),

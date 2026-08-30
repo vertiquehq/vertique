@@ -44,7 +44,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Integration test that proves the {@code @CronJob} methods on
- * {@link OutboxMaintenanceServiceImpl} are discovered, validated, and persisted to the
+ * {@link OutboxMaintenanceCron} are discovered, validated, and persisted to the
  * cron-schedule table against a real PostgreSQL instance.
  *
  * <p>Scope is intentionally narrow: registration + persistence only, not live fire. The
@@ -94,7 +94,7 @@ public class OutboxMaintenanceSchedulePersistenceIT {
     @Test
     @DisplayName("scan() persists outbox-stale-lease-recovery and outbox-cleanup schedule rows")
     void persistsBothMaintenanceSchedules(Vertx vertx, VertxTestContext ctx) {
-        OutboxMaintenanceServiceImpl impl = new OutboxMaintenanceServiceImpl(() -> null);
+        OutboxMaintenanceCron impl = new OutboxMaintenanceCron(() -> null);
         ServiceContractRegistry registry =
                 ServiceContractRegistry.build(Set.of(impl), new DefaultConfigParser(DefaultConfigMapper.lenient()));
         ServiceTargetResolver resolver = stubTargetResolver();

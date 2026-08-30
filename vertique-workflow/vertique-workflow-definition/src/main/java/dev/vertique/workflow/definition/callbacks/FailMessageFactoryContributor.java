@@ -22,6 +22,9 @@ public interface FailMessageFactoryContributor {
     /**
      * Registers fail-message factories with {@code builder}.
      *
+     * <p>Exceptions thrown by this callback propagate and are fatal to the enclosing operation;
+     * processing does not continue.
+     *
      * @param builder the mutable registry builder; non-null
      */
     void contribute(FailMessageFactoryRegistry.Builder builder);

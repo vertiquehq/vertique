@@ -3,6 +3,7 @@
 
 package dev.vertique.micrometer.prometheus;
 
+import dev.vertique.codegen.RegisterIntoSet;
 import dev.vertique.management.ManagementEndpointContributor;
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
 import io.prometheus.metrics.tracer.common.SpanContext;
@@ -45,6 +46,7 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Singleton
+@RegisterIntoSet(ManagementEndpointContributor.class)
 public final class PrometheusScrapeEndpoint implements ManagementEndpointContributor {
 
     // --- Constants ---

@@ -27,9 +27,9 @@ import org.junit.jupiter.api.Test;
  * the constant-only <em>reflection-free core</em> ({@code name}, {@code declaringType},
  * {@code returnType}, {@code parameterTypes}, {@code parameters}, {@code findAnnotation},
  * {@code hasAnnotation}; and on {@link ParameterMetadata} {@code index}, {@code name}, {@code type})
- * and the opt-in <em>reflective-accessor group</em> ({@code genericReturnType} / {@code asMethod}
- * on {@link MethodMetadata}; {@code genericType} on {@link ParameterMetadata}). The reflective group
- * must be present on the interface — its presence is part of the frozen surface (OQ-4 resolved).
+ * and the generic/reflective accessors ({@code genericReturnType} / {@code asMethod} on
+ * {@link MethodMetadata}; {@code genericType} on {@link ParameterMetadata}). These accessors must
+ * be present on the interface — their presence is part of the frozen surface (OQ-4 resolved).
  */
 class MetadataSpiContractTest {
 
@@ -57,7 +57,7 @@ class MetadataSpiContractTest {
             assertTrue(metadata.hasAnnotation(Marker.class));
             assertFalse(metadata.hasAnnotation(Override.class));
 
-            // --- reflective-accessor group (opt-in; must be present on the interface) ---
+            // --- generic/reflective accessors (must be present on the interface) ---
             assertSame(String.class, metadata.genericReturnType());
             assertSame(sampleMethod, metadata.asMethod());
         }

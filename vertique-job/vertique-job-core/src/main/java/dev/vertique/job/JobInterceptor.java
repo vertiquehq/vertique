@@ -18,6 +18,11 @@ import java.time.Instant;
  * <p>Register interceptors via Dagger multibinding ({@code @IntoSet}) against
  * {@code Set<JobInterceptor>}.
  *
+ * <p>This SPI intentionally remains synchronous and observation-only. Job dispatch owns the
+ * completion boundary, so an asynchronous interceptor contract would require defining ordering,
+ * timeout, failure, and context-propagation semantics for observer work. Keep asynchronous work
+ * behind an explicitly managed application component instead of extending this lifecycle hook.
+ *
  * <p>Common use cases:
  * <ul>
  *   <li>MDC context propagation (built into {@link dev.vertique.core.eventbus.DispatchEnvelope} dispatch,
@@ -35,7 +40,8 @@ public interface JobInterceptor extends OrderedExtension {
      * Synchronous observer called when a job dispatch begins (after the body is received).
      * Suitable for setting up MDC context or recording dispatch metrics.
      *
-     * <p>Exceptions thrown here are swallowed.
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
+     * enclosing operation.
      *
      * @param ctx the dispatch context for this execution
      */
@@ -45,7 +51,8 @@ public interface JobInterceptor extends OrderedExtension {
      * Synchronous observer called after every job dispatch (both success and failure).
      * Suitable for recording latency, clearing MDC context, or emitting audit events.
      *
-     * <p>Exceptions thrown here are swallowed.
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
+     * enclosing operation.
      *
      * @param ctx       the dispatch context for this execution
      * @param result    the dispatch result, or {@code null} if the reply body was not a

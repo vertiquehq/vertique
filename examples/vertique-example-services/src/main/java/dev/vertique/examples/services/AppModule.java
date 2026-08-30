@@ -9,36 +9,36 @@ import dagger.multibindings.IntoSet;
 import dev.vertique.core.lifecycle.LifecyclePhase;
 import dev.vertique.deploy.VerticleDeployment;
 import dev.vertique.management.ManagementVerticle;
+import dev.vertique.rest.auth.jwt.JwtAuthFactory;
 import dev.vertique.rest.core.router.HttpVerticle;
-import dev.vertique.rest.core.security.SecurityPolicyValidator;
-import jakarta.annotation.Nullable;
+import io.vertx.core.Vertx;
+import io.vertx.ext.auth.jwt.JWTAuth;
 import jakarta.inject.Provider;
+import jakarta.inject.Singleton;
 
 /**
- * Application-specific Dagger module providing configuration and optional security bindings.
+ * Application-specific Dagger module providing JWT authentication and verticle deployments.
  *
- * <p>This example does not use authentication or authorization. {@code AuthModule} and
- * {@code SecurityModule} are not included in the component; {@link SecurityPolicyValidator}
- * is provided as {@code null}. {@code SecurityRuntime} resolves to {@code Optional.empty()}
- * automatically via {@code @BindsOptionalOf} in {@code RestCoreModule}.
- *
- * <p>Reads values from the {@code @VertxConfig} JSON object provided by {@link VertxModule}.
+ * <p>The JWT provider is consumed by {@link dev.vertique.rest.auth.jwt.JwtAuthModule}, which
+ * wires it into the framework's security scheme and authorization provider multibindings.
  */
 @Module
-public class AppModule {
+public abstract class AppModule {
 
     /**
-     * Provides a {@code null} {@link SecurityPolicyValidator} since this example does not use auth.
+     * Provides a JWT authentication provider using a symmetric HMAC key.
      *
-     * <p>{@code JaxRsRouterMount.Factory} accepts a nullable {@code SecurityPolicyValidator}
-     * and skips policy validation at startup when it is absent.
+     * <p>This example uses a hardcoded symmetric key for simplicity. Production applications
+     * should use asymmetric keys and load them from secure configuration.
      *
-     * @return always {@code null}
+     * @param vertx the Vert.x instance
+     * @return configured JWT auth provider
      */
     @Provides
-    @Nullable
-    static SecurityPolicyValidator securityPolicyValidator() {
-        return null;
+    @Singleton
+    static JWTAuth jwtAuth(Vertx vertx) {
+        return JwtAuthFactory.fromSymmetricKey(
+                vertx, "HS256", "super-secret-key-for-example-app-minimum-256-bits-long!!");
     }
 
     /**

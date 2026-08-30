@@ -8,6 +8,7 @@ import dev.vertique.services.dispatch.ServiceMethodDescriptor;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamMeta;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamSource;
+import dev.vertique.services.exception.ServiceRegistrationException;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.util.ArrayList;

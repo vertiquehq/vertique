@@ -145,8 +145,7 @@ The message carries only the failing class's simple name or a structural descrip
 
 ## Emitted Telemetry
 
-This module adds **span events** to the current recording span. It never creates spans of its own, and
-it never adds an attribute to a span it did not receive.
+The security observer adds **span events** to the current recording span.
 
 | Trigger | Span event name | Attributes |
 |---|---|---|
@@ -311,6 +310,10 @@ takes precedence over it.
   `OpenTelemetryModule` rather than trying to outrank its binding.
 
 ---
+The adapter's simple SPI contribution is declared on its injectable implementation with
+`@RegisterIntoSet`. During the provider build, `vertique-codegen-dagger` emits
+`GeneratedRegistrationsModule`, which this module includes explicitly. The generated module contains
+only this type adaptation; configuration, registry, and optional bindings remain hand-written.
 
 ## Dependencies
 

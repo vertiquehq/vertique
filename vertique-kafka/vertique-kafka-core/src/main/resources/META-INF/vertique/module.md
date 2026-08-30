@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Alpha
 > **Package:** `dev.vertique.kafka`
 > **Artifact:** `vertique-kafka-core`
-> **Depends on:** core, context, logging, deploy, services
+> **Depends on:** core, resilience, context, logging, deploy, services
 
 `vertique-kafka-core` bridges Kafka topics to Vertique services. Declare a consumer with an
 annotation or a builder and the framework subscribes to the topic, deserializes the value, and
@@ -537,6 +537,10 @@ not committed, the consumer pauses, and after the backoff it resumes and Kafka r
 uncommitted offset. The record then re-enters the full pipeline, including any service-level
 `@Retry`, `@Timeout`, and `@CircuitBreaker` policies.
 
+Retry delays use the shared `vertique-resilience` exponential backoff policy with zero jitter. The
+configured `backoffMs`, `backoffMultiplier`, and `maxBackoffMs` therefore retain deterministic Kafka
+timing while using the canonical retry-count validation and capped delay calculation.
+
 ```
 Record B fails (attempt 1/3)
   → offset not committed
@@ -814,7 +818,7 @@ Fires exactly once per send, through the shared wire funnel in `KafkaProducerFac
 
 | Failure | Cause |
 |---|---|
-| `ConfigurationException` | A consumer config bound is violated — `eventBusTimeoutMs <= 0`, `maxInFlight < 1`, `instances < 1`, `maxRetries < 0`, `backoffMs < 0`, `backoffMultiplier < 1.0`, `maxBackoffMs < 0`. The message names the exact config path |
+| `ConfigurationException` | A consumer config bound is violated — an unknown `commitStrategy`, `errorStrategy`, or `retry.exhaustedStrategy`, `eventBusTimeoutMs <= 0`, `maxInFlight < 1`, `instances < 1`, `maxRetries < 0`, `backoffMs < 0`, `backoffMultiplier < 1.0`, `maxBackoffMs < 0`. Enum failures identify the invalid type and value; other validation messages name the exact config path |
 | `KafkaRegistrationException` | An invalid consumer declaration, or a generated binding companion that is present but malformed. A `ConfigurationException` subtype — broken generated code is never silently skipped |
 | `IllegalArgumentException` | The resolved format has no registered `KafkaSerdeProvider`; the message names the missing module |
 | `IllegalStateException` | `worker = false` on a consumer whose effective deserializer reports `mayBlock()` |
