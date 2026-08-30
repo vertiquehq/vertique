@@ -92,7 +92,7 @@ public abstract class AnnotationRootedCollector {
      * Produces a {@link Binding} for the given type element that has passed all filters.
      *
      * <p>Subclasses may return {@code null} to signal that this specific type should be skipped
-     * (e.g., {@link PathResourceCollector} returns {@code null} for interfaces). A {@code null}
+     * (e.g., {@link KafkaConsumerCollector} returns {@code null} for interfaces). A {@code null}
      * return is treated as a silent skip with no diagnostic.
      *
      * @param type the validated type element; never {@code null}
