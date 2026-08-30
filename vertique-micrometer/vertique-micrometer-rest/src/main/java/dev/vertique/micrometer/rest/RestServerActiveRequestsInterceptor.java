@@ -3,6 +3,7 @@
 
 package dev.vertique.micrometer.rest;
 
+import dev.vertique.codegen.RegisterIntoSet;
 import dev.vertique.micrometer.MetricsConfig;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import io.micrometer.core.instrument.Gauge;
@@ -36,6 +37,7 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Singleton
+@RegisterIntoSet(RequestInterceptor.class)
 public final class RestServerActiveRequestsInterceptor implements RequestInterceptor {
 
     /** Micrometer meter name for the active-requests gauge. */

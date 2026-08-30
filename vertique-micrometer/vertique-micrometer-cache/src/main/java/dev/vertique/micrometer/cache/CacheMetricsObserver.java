@@ -8,6 +8,7 @@ import dev.vertique.cache.spi.event.CacheCleanupCompleted;
 import dev.vertique.cache.spi.event.CacheEvent;
 import dev.vertique.cache.spi.event.CacheLateCompletion;
 import dev.vertique.cache.spi.event.CacheOperationCompleted;
+import dev.vertique.codegen.RegisterIntoSet;
 import dev.vertique.micrometer.MetricsConfig;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -21,6 +22,7 @@ import java.util.Optional;
 
 /** Records sealed cache events as bounded Micrometer timers and cleanup counters. */
 @Singleton
+@RegisterIntoSet(CacheObserver.class)
 public final class CacheMetricsObserver implements CacheObserver {
     private static final String CLEANUP_RUNS_COUNTER = "cache.cleanup.runs";
     private static final String CLEANUP_SCANNED_COUNTER = "cache.cleanup.scanned";

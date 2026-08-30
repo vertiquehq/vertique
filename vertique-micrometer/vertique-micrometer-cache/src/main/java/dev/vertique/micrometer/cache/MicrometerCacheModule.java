@@ -3,11 +3,8 @@
 
 package dev.vertique.micrometer.cache;
 
-import dagger.Binds;
 import dagger.BindsOptionalOf;
 import dagger.Module;
-import dagger.multibindings.IntoSet;
-import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.micrometer.MetricsConfig;
 
 /**
@@ -18,7 +15,7 @@ import dev.vertique.micrometer.MetricsConfig;
  * The optional metrics configuration defaults to enabled when the core Micrometer module is not
  * installed.
  */
-@Module
+@Module(includes = GeneratedRegistrationsModule.class)
 public abstract class MicrometerCacheModule {
 
     private MicrometerCacheModule() {}
@@ -30,14 +27,4 @@ public abstract class MicrometerCacheModule {
      */
     @BindsOptionalOf
     abstract MetricsConfig metricsConfig();
-
-    /**
-     * Contributes {@link CacheMetricsObserver} to the cache observer multibinding set.
-     *
-     * @param observer the singleton cache metrics observer
-     * @return the observer exposed through the cache observer SPI type
-     */
-    @Binds
-    @IntoSet
-    abstract CacheObserver cacheMetricsObserver(CacheMetricsObserver observer);
 }

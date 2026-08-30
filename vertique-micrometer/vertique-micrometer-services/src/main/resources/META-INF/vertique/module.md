@@ -135,6 +135,10 @@ Outcome convention: a dispatch that failed but was recovered by the service pipe
 whose terminal result is still a failure produce `outcome=ERROR`.
 
 ---
+The adapter's simple SPI contribution is declared on its injectable implementation with
+`@RegisterIntoSet`. During the provider build, `vertique-codegen-dagger` emits
+`GeneratedRegistrationsModule`, which this module includes explicitly. The generated module contains
+only this type adaptation; configuration, registry, and optional bindings remain hand-written.
 
 ## Dependencies
 

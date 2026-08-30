@@ -4,11 +4,6 @@
 package dev.vertique.opentelemetry.rest;
 
 import dagger.Module;
-import dagger.Provides;
-import dagger.multibindings.IntoSet;
-import dev.vertique.rest.core.events.RequestCompletionScope;
-import dev.vertique.rest.core.interceptor.RequestInterceptor;
-import dev.vertique.rest.core.router.OperationHandlerContributor;
 
 /**
  * Dagger module that contributes OpenTelemetry REST span enrichment components via multibinding.
@@ -52,61 +47,8 @@ import dev.vertique.rest.core.router.OperationHandlerContributor;
  * @see ServerSpanCompletionScope
  * @see RequestCompletionScope
  */
-@Module
+@Module(includes = GeneratedRegistrationsModule.class)
 public abstract class OpenTelemetryRestModule {
 
     private OpenTelemetryRestModule() {}
-
-    // --- Multibinding contributions ---
-
-    /**
-     * Contributes {@link ServerSpanEnrichmentContributor} into the
-     * {@link OperationHandlerContributor} multibinding set.
-     *
-     * <p>The contributor adds a per-request handler that enriches the active OpenTelemetry span
-     * with HTTP route and operationId attributes.
-     *
-     * @param contributor the singleton contributor; provided by Dagger via its {@code @Inject} ctor
-     * @return the contributor cast to the SPI type
-     */
-    @Provides
-    @IntoSet
-    static OperationHandlerContributor serverSpanEnrichment(ServerSpanEnrichmentContributor contributor) {
-        return contributor;
-    }
-
-    /**
-     * Contributes {@link ServerSpanOutcomeInterceptor} into the {@link RequestInterceptor}
-     * multibinding set.
-     *
-     * <p>The interceptor records span outcome (status code and error type) after each HTTP response.
-     *
-     * @param interceptor the singleton interceptor; provided by Dagger via its {@code @Inject} ctor
-     * @return the interceptor cast to the SPI type
-     */
-    @Provides
-    @IntoSet
-    static RequestInterceptor serverSpanOutcome(ServerSpanOutcomeInterceptor interceptor) {
-        return interceptor;
-    }
-
-    /**
-     * Contributes {@link ServerSpanCompletionScope} into the {@link RequestCompletionScope}
-     * multibinding set.
-     *
-     * <p>This satisfies the {@code @Multibinds Set<RequestCompletionScope>} declared in
-     * {@code RestCoreModule}, enabling the {@link dev.vertique.rest.core.events.RestRequestCompletionEmitter}
-     * to re-establish the server span as current during completion-listener dispatch. This allows
-     * Micrometer exemplar samplers to attach a {@code trace_id} to timer samples recorded in
-     * {@code RestRequestCompletedListener} impls (e.g.
-     * {@link dev.vertique.micrometer.rest.RestServerRequestMetricsListener}).
-     *
-     * @param scope the singleton scope implementation
-     * @return the scope contributed to the {@link RequestCompletionScope} set
-     */
-    @Provides
-    @IntoSet
-    static RequestCompletionScope serverSpanCompletionScope(ServerSpanCompletionScope scope) {
-        return scope;
-    }
 }

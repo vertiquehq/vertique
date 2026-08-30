@@ -21,6 +21,10 @@ span failures are swallowed so telemetry cannot alter cache behavior.
 The adapter is deliberately separate from `vertique-opentelemetry-core`: the core module owns SDK
 bootstrap, Vert.x tracing, correlation, and security span events, while this module owns the cache
 observer contribution.
+The adapter's simple SPI contribution is declared on its injectable implementation with
+`@RegisterIntoSet`. During the provider build, `vertique-codegen-dagger` emits
+`GeneratedRegistrationsModule`, which this module includes explicitly. The generated module contains
+only this type adaptation; configuration, registry, and optional bindings remain hand-written.
 
 ## Dependencies
 

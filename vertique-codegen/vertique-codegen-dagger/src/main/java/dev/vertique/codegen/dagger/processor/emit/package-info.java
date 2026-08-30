@@ -6,6 +6,8 @@
  *
  * <p>Two emitter shapes are supported:
  * <ul>
+ *   <li>{@code RegistrationModuleEmitter} — generates abstract {@code @Binds} and
+ *       {@code @Binds @IntoSet} declarations for generic registration annotations.</li>
  *   <li>{@link dev.vertique.codegen.dagger.processor.emit.MultibindingModuleEmitter} — generates
  *       {@code @Provides @IntoSet @Qualifier} methods for multibinding qualifiers
  *       ({@code @Services}, {@code @JaxRsResources}, {@code @KafkaConsumers},

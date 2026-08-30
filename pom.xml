@@ -1130,6 +1130,10 @@ SPDX-License-Identifier: EUPL-1.2
                              mode) and cannot unblock native/Docker I/O or an interrupt-swallowing
                              retry loop. Unit forks are fast; this is a generous backstop. -->
                         <forkedProcessTimeoutInSeconds>600</forkedProcessTimeoutInSeconds>
+                        <!-- Bound shutdown as well as test execution. A fork can finish reporting
+                             tests and still remain alive because application code started a
+                             non-daemon thread. -->
+                        <forkedProcessExitTimeoutInSeconds>60</forkedProcessExitTimeoutInSeconds>
                         <!-- Best-effort per-method bound for interruptible lifecycle hangs; a
                              class-level @Timeout does NOT cover @BeforeAll/@AfterAll. Not a
                              substitute for the fork cap above (SAME_THREAD cannot abort an
@@ -1159,6 +1163,11 @@ SPDX-License-Identifier: EUPL-1.2
                              worst case to 15 min per module fork so CI always reports a result.
                              Sized above any healthy module IT suite (full reactor ITs run ~12 min). -->
                         <forkedProcessTimeoutInSeconds>900</forkedProcessTimeoutInSeconds>
+                        <!-- Bound shutdown as well as test execution. A fork can finish reporting
+                             tests and still remain alive because application code started a
+                             non-daemon thread; without this bound Failsafe can wait indefinitely
+                             in verify after the test reports have been written. -->
+                        <forkedProcessExitTimeoutInSeconds>60</forkedProcessExitTimeoutInSeconds>
                         <!-- Best-effort per-method bound for interruptible lifecycle hangs; a
                              class-level @Timeout does NOT cover @BeforeAll/@AfterAll. Not a
                              substitute for the fork cap above. -->

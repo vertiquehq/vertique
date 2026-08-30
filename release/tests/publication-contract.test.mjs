@@ -603,18 +603,18 @@ describe('PublicCiContractTest', () => {
     }
   });
 
-  it('retainsSurefireAndFailsafeReportsAfterAFailure', () => {
-    // Maven redirects test output to these directories, so the failure-only
-    // artifact is the durable diagnostic record for CI-only flakes.
+  it('retainsSurefireAndFailsafeReportsAfterFailureOrCancellation', () => {
+    // Maven redirects test output to these directories, so the artifact is the
+    // durable diagnostic record for CI-only flakes and cancelled runs.
     const yaml = ci();
     const buildStep = yaml.indexOf('      - name: Build and test\n');
-    const reportStep = yaml.indexOf('      - name: Upload test reports on failure\n');
+    const reportStep = yaml.indexOf('      - name: Upload test reports after build interruption\n');
     assert.ok(buildStep >= 0, 'ci.yml must run Maven verification');
     assert.ok(reportStep > buildStep, 'test-report retention must run after Maven verification');
     assert.match(
       yaml,
-      /^      - name: Upload test reports on failure\n        if: failure\(\)\n        uses: actions\/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7\.0\.1\n        with:\n          name: test-reports\n          path: \|\n            \*\*\/target\/surefire-reports\/\*\*\n            \*\*\/target\/failsafe-reports\/\*\*\n          if-no-files-found: ignore$/m,
-      'ci.yml must retain Surefire and Failsafe diagnostics when a build fails'
+      /^      - name: Upload test reports after build interruption\n        if: \$\{\{ always\(\) && \(failure\(\) \|\| cancelled\(\)\) \}\}\n        uses: actions\/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7\.0\.1\n        with:\n          name: test-reports\n          path: \|\n            \*\*\/target\/surefire-reports\/\*\*\n            \*\*\/target\/failsafe-reports\/\*\*\n          if-no-files-found: ignore$/m,
+      'ci.yml must retain Surefire and Failsafe diagnostics after failure or cancellation'
     );
   });
 });

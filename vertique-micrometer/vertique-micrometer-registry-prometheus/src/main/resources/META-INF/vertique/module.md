@@ -274,6 +274,10 @@ interface AppComponent {
 ```
 
 ---
+The adapter's simple SPI contribution is declared on its injectable implementation with
+`@RegisterIntoSet`. During the provider build, `vertique-codegen-dagger` emits
+`GeneratedRegistrationsModule`, which this module includes explicitly. The generated module contains
+only this type adaptation; configuration, registry, and optional bindings remain hand-written.
 
 ## Dependencies
 

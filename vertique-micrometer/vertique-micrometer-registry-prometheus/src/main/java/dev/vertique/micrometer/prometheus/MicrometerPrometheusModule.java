@@ -6,11 +6,9 @@ package dev.vertique.micrometer.prometheus;
 import dagger.BindsOptionalOf;
 import dagger.Module;
 import dagger.Provides;
-import dagger.multibindings.IntoSet;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.JsonConfigPaths;
 import dev.vertique.core.exception.ConfigurationException;
-import dev.vertique.management.ManagementEndpointContributor;
 import io.prometheus.metrics.tracer.common.SpanContext;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
@@ -52,7 +50,7 @@ import jakarta.inject.Singleton;
  * @see PrometheusScrapeEndpoint
  * @see PrometheusScrapeConfig
  */
-@Module
+@Module(includes = GeneratedRegistrationsModule.class)
 public abstract class MicrometerPrometheusModule {
 
     // --- Optional bindings ---
@@ -149,21 +147,6 @@ public abstract class MicrometerPrometheusModule {
                 .path(path)
                 .exemplarsEnabled(exemplarsEnabled)
                 .build();
-    }
-
-    // --- ManagementEndpointContributor multibinding ---
-
-    /**
-     * Contributes the {@link PrometheusScrapeEndpoint} into the {@link ManagementEndpointContributor}
-     * multibinding set.
-     *
-     * @param endpoint the endpoint to contribute; provided by Dagger via its {@code @Inject} ctor
-     * @return the endpoint cast to {@link ManagementEndpointContributor}
-     */
-    @Provides
-    @IntoSet
-    static ManagementEndpointContributor prometheusScrapeEndpoint(PrometheusScrapeEndpoint endpoint) {
-        return endpoint;
     }
 
     // --- Private helpers ---

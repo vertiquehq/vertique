@@ -8,6 +8,7 @@ import dev.vertique.cache.spi.event.CacheEvent;
 import dev.vertique.cache.spi.event.CacheLateCompletion;
 import dev.vertique.cache.spi.event.CacheOperationCompleted;
 import dev.vertique.cache.spi.event.CacheOutcome;
+import dev.vertique.codegen.RegisterIntoSet;
 import dev.vertique.opentelemetry.TracingConfig;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.StatusCode;
@@ -19,6 +20,7 @@ import java.util.Locale;
 
 /** Records sealed cache operation events as short-lived child spans. */
 @Singleton
+@RegisterIntoSet(CacheObserver.class)
 public final class CacheTracingObserver implements CacheObserver {
     private final Tracer tracer;
     private final boolean enabled;

@@ -3,6 +3,7 @@
 
 package dev.vertique.opentelemetry.rest;
 
+import dev.vertique.codegen.RegisterIntoSet;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.StatusCode;
@@ -67,6 +68,7 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Singleton
+@RegisterIntoSet(RequestInterceptor.class)
 public final class ServerSpanOutcomeInterceptor implements RequestInterceptor {
 
     /**

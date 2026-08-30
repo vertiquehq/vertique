@@ -16,6 +16,15 @@
     <dependencies>
         <dependency>
             <groupId>dev.vertique</groupId>
+            <artifactId>vertique-codegen-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-codegen-dagger</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
             <artifactId>vertique-cache-core</artifactId>
         </dependency>
         <dependency>
@@ -55,4 +64,21 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <annotationProcessorPaths combine.children="append">
+                        <path>
+                            <groupId>dev.vertique</groupId>
+                            <artifactId>vertique-codegen-dagger</artifactId>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>

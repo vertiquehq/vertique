@@ -230,8 +230,7 @@ record ResolvedKafkaConsumerConfig(
         try {
             return Enum.valueOf(type, name.toUpperCase());
         } catch (IllegalArgumentException e) {
-            throw new ConfigurationException(
-                    "Invalid " + type.getSimpleName() + " value '" + name + "'", e);
+            throw new ConfigurationException("Invalid " + type.getSimpleName() + " value '" + name + "'", e);
         }
     }
 
