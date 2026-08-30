@@ -6,8 +6,7 @@
  *
  * <p>Two discovery modes are used:
  * <ul>
- *   <li><b>Annotation-rooted</b> — {@link dev.vertique.codegen.dagger.processor.collect.PathResourceCollector},
- *       {@link dev.vertique.codegen.dagger.processor.collect.RestClientCollector}, and
+ *   <li><b>Annotation-rooted</b> — {@link dev.vertique.codegen.dagger.processor.collect.RestClientCollector} and
  *       {@link dev.vertique.codegen.dagger.processor.collect.KafkaConsumerCollector} each query
  *       {@link javax.annotation.processing.RoundEnvironment#getElementsAnnotatedWith} for their
  *       respective marker annotation.</li>

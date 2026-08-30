@@ -292,7 +292,7 @@ return values;
 
 ## Imports
 
-- No wildcard imports (enforced by Spotless)
+- No wildcard imports (review-enforced; Spotless does not expand wildcard imports)
 - Static imports for test assertion methods (`assertThat`, `assertEquals`, `mock`, `when`, etc.)
 - Import ordering is managed by the formatter — do not rearrange manually
 

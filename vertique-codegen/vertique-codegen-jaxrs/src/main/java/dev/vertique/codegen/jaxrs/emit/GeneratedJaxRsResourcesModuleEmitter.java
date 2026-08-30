@@ -68,9 +68,6 @@ import javax.lang.model.element.TypeElement;
  * {@link PackageResolver#resolve} has already emitted a compiler diagnostic and this emitter
  * aborts silently.
  *
- * <p>The {@code @Generated} annotation on the module records
- * {@code "dev.vertique.codegen.jaxrs.JaxRsPipelineProcessor"} as the generator, matching the
- * pipeline processor's FQN.
  */
 public final class GeneratedJaxRsResourcesModuleEmitter {
 
