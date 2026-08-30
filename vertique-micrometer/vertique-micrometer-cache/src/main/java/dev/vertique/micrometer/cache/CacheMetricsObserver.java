@@ -3,12 +3,12 @@
 
 package dev.vertique.micrometer.cache;
 
-import dev.vertique.codegen.RegisterIntoSet;
 import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.cache.spi.event.CacheCleanupCompleted;
 import dev.vertique.cache.spi.event.CacheEvent;
 import dev.vertique.cache.spi.event.CacheLateCompletion;
 import dev.vertique.cache.spi.event.CacheOperationCompleted;
+import dev.vertique.codegen.RegisterIntoSet;
 import dev.vertique.micrometer.MetricsConfig;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;

@@ -180,8 +180,7 @@ class ResolvedKafkaConsumerConfigTest {
                                     .put("test-consumer", new JsonObject().put("errorStrategy", "NOT_A_STRATEGY")));
 
             assertThrows(
-                    ConfigurationException.class,
-                    () -> resolveDefault("test-consumer", "topic", "group", kafkaConfig));
+                    ConfigurationException.class, () -> resolveDefault("test-consumer", "topic", "group", kafkaConfig));
         }
 
         @Test
@@ -464,7 +463,8 @@ class ResolvedKafkaConsumerConfigTest {
                                             new JsonObject()
                                                     .put(
                                                             "retry",
-                                                            new JsonObject().put("exhaustedStrategy", "NOT_A_STRATEGY"))));
+                                                            new JsonObject()
+                                                                    .put("exhaustedStrategy", "NOT_A_STRATEGY"))));
 
             assertThrows(
                     ConfigurationException.class,

@@ -10,5 +10,4 @@ import dagger.Module;
 public abstract class OpenTelemetryCacheModule {
 
     private OpenTelemetryCacheModule() {}
-
 }

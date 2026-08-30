@@ -27,5 +27,4 @@ public abstract class MicrometerCacheModule {
      */
     @BindsOptionalOf
     abstract MetricsConfig metricsConfig();
-
 }

@@ -50,5 +50,4 @@ import dagger.Module;
 public abstract class OpenTelemetryServicesModule {
 
     private OpenTelemetryServicesModule() {}
-
 }

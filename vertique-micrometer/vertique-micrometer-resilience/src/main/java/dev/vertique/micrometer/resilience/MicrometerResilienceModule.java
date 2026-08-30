@@ -6,7 +6,6 @@ package dev.vertique.micrometer.resilience;
 import dagger.BindsOptionalOf;
 import dagger.Module;
 import dev.vertique.micrometer.MetricsConfig;
-import dev.vertique.resilience.spi.ResilienceObserver;
 
 /** Dagger bindings for the optional Micrometer resilience observer. */
 @Module(includes = GeneratedRegistrationsModule.class)
@@ -17,5 +16,4 @@ public abstract class MicrometerResilienceModule {
     /** Declares the optional global metrics configuration used by this adapter. */
     @BindsOptionalOf
     abstract MetricsConfig metricsConfig();
-
 }

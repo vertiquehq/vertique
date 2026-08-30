@@ -120,5 +120,4 @@ public abstract class OpenTelemetryModule {
     static TraceReferenceResolver traceReferenceResolver(OpenTelemetryTraceReferenceResolver resolver) {
         return resolver;
     }
-
 }

@@ -121,6 +121,11 @@ jobs:
           bash scripts/test-verify-test-client-policy.sh
           bash scripts/verify-test-client-policy.sh
 
+      # Formatting is a required pre-build gate: fail fast before compiling or
+      # running tests when Java sources do not match the repository formatter.
+      - name: Check formatting
+        run: ./mvnw -ntp -pl '!vertique-app-parent' spotless:check
+
       # Per-module HTML reports are skipped: the vertique-coverage-report
       # aggregate XML produced by this same invocation is the only coverage
       # output CI consumes. Reactor parallelism (-T1C) comes from
@@ -168,9 +173,6 @@ jobs:
           name: jacoco-aggregate
           path: vertique-coverage-report/target/site/jacoco-aggregate/jacoco.xml
           if-no-files-found: error
-
-      - name: Check formatting
-        run: ./mvnw -ntp -pl '!vertique-app-parent' spotless:check
 
       # Always, not just on success: whatever this run downloaded should
       # survive even if a later step (or the build itself) fails, since a

@@ -9,7 +9,6 @@ import dagger.Provides;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.JsonConfigPaths;
 import dev.vertique.core.exception.ConfigurationException;
-import dev.vertique.management.ManagementEndpointContributor;
 import io.prometheus.metrics.tracer.common.SpanContext;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;

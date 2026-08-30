@@ -65,5 +65,4 @@ public abstract class MicrometerServicesModule {
      */
     @BindsOptionalOf
     abstract MetricsConfig metricsConfig();
-
 }

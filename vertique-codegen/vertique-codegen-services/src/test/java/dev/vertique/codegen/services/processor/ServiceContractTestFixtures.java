@@ -208,7 +208,7 @@ final class ServiceContractTestFixtures {
                     """);
 
     static final JavaFileObject SERVICE_REGISTRATION_EXCEPTION_SOURCE =
-                    SourceFiles.inline("dev.vertique.services.exception.ServiceRegistrationException", """
+            SourceFiles.inline("dev.vertique.services.exception.ServiceRegistrationException", """
                     package dev.vertique.services.exception;
                     import java.util.List;
                     import dev.vertique.services.ServiceRegistrationViolation;
