@@ -74,6 +74,9 @@ public interface VertxBuilderContributor extends OrderedExtension {
      *       failure, deploy failure, Vert.x start failure, and contributor failure.</li>
      * </ul>
      *
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
+     * the enclosing operation.
+     *
      * <p>The default implementation is a no-op.
      */
     default void onShutdown() {}

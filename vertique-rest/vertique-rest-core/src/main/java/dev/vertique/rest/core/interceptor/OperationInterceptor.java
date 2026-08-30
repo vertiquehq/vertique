@@ -65,8 +65,9 @@ public interface OperationInterceptor extends OrderedExtension {
      * Synchronous observer called before the operation method is invoked (after all
      * {@link #beforeOperation} async handlers have completed). Suitable for structured logging.
      *
-     * <p>Exceptions thrown here are swallowed — use {@link #beforeOperation} to modify the
-     * context or short-circuit the operation.
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
+     * the enclosing operation. Use {@link #beforeOperation} to modify the context or short-circuit
+     * the operation.
      *
      * @param ctx the operation context
      */
@@ -77,7 +78,8 @@ public interface OperationInterceptor extends OrderedExtension {
      * is the raw value returned by the resource method (after any {@link #afterOperation}
      * transformation). Suitable for audit logging or success metrics.
      *
-     * <p>Exceptions thrown here are swallowed.
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
+     * the enclosing operation.
      *
      * @param ctx    the operation context
      * @param result the raw operation result
@@ -88,7 +90,8 @@ public interface OperationInterceptor extends OrderedExtension {
      * Synchronous observer called when the operation fails. Cannot affect the error outcome —
      * use {@link #recoverOperation} for that.
      *
-     * <p>Exceptions thrown here are swallowed.
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
+     * the enclosing operation.
      *
      * @param ctx   the operation context
      * @param cause the operation failure

@@ -21,14 +21,16 @@ import io.vertx.ext.web.Router;
 public interface RouterLifecycleHook extends OrderedExtension {
 
     /**
-     * Called before authentication handlers are set up.
+     * Called before authentication handlers are set up. Exceptions thrown by this callback
+     * propagate and are fatal to the enclosing operation; processing does not continue.
      *
      * @param setup the transport-neutral {@link RouterSetup} being configured
      */
     default void beforeAuthSetup(RouterSetup setup) {}
 
     /**
-     * Called after authentication handlers are set up.
+     * Called after authentication handlers are set up. Exceptions thrown by this callback
+     * propagate and are fatal to the enclosing operation; processing does not continue.
      *
      * @param setup the transport-neutral {@link RouterSetup} that has been configured with security
      *     handlers
@@ -36,7 +38,8 @@ public interface RouterLifecycleHook extends OrderedExtension {
     default void afterAuthSetup(RouterSetup setup) {}
 
     /**
-     * Called after the Router is created.
+     * Called after the Router is created. Exceptions thrown by this callback propagate and are
+     * fatal to the enclosing operation; processing does not continue.
      *
      * @param router the fully created {@link Router} before it is mounted as a sub-router
      */

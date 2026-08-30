@@ -9,7 +9,8 @@ import dev.vertique.resilience.spi.event.ResilienceEvent;
 public interface ResilienceObserver {
 
     /**
-     * Receives one resilience event.
+     * Receives one resilience event. Exceptions thrown by this callback are caught, logged, and
+     * swallowed; they do not affect the enclosing operation.
      *
      * @param event immutable redacted event
      */

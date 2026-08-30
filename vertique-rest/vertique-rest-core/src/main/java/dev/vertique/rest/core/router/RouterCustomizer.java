@@ -36,7 +36,8 @@ import io.vertx.ext.web.Router;
 public interface RouterCustomizer extends OrderedExtension {
 
     /**
-     * Customizes the main router.
+     * Customizes the main router. Exceptions thrown by this callback propagate and are fatal to
+     * the enclosing operation; processing does not continue.
      *
      * @param router the main HTTP router
      */

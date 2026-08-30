@@ -35,7 +35,8 @@ import dev.vertique.core.extension.OrderedExtension;
 public interface RestExceptionMapperCustomizer extends OrderedExtension {
 
     /**
-     * Registers one or more exception translations on the given mapper.
+     * Registers one or more exception translations on the given mapper. Exceptions thrown by
+     * this callback propagate and are fatal to the enclosing operation; processing does not continue.
      *
      * @param mapper the REST exception mapper to customize
      */

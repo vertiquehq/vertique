@@ -34,6 +34,9 @@ public interface RestRequestCompletedListener {
     /**
      * Called once per handled request after the HTTP response has completed.
      *
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
+     * the enclosing operation.
+     *
      * @param event the completed-request event; never {@code null}
      */
     void onCompleted(RestRequestCompletedEvent event);

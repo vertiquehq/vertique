@@ -60,8 +60,8 @@ public interface KafkaOutboxCaptureHook extends OrderedExtension {
     /**
      * Called once per outbox publish attempt after serialization and result classification.
      *
-     * <p>Implementations MUST NOT throw checked exceptions. Any unchecked exception is swallowed
-     * by the framework and does not affect the publish result or delivery behavior.
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
+     * the enclosing operation.
      *
      * @param topic   the Kafka topic the outbox entry targets; never {@code null}
      * @param key     the Kafka record key derived from

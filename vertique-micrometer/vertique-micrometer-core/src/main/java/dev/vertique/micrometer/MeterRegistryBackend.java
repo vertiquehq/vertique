@@ -36,6 +36,9 @@ public interface MeterRegistryBackend extends AutoCloseable {
      *
      * <p>Called on normal application shutdown (in reverse creation order) AND on bootstrap
      * rollback if a later provider fails. Must be idempotent.
+     *
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
+     * the enclosing operation.
      */
     @Override
     void close();

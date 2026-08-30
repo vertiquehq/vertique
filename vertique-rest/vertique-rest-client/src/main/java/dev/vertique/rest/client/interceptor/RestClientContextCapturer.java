@@ -45,7 +45,8 @@ public interface RestClientContextCapturer<C> extends OrderedExtension {
     /**
      * Observes one completed physical attempt with the value captured by
      * {@link #captureRequestContext()}. Fire-and-forget; implementations MUST NOT block and
-     * exceptions are swallowed by the dispatcher.
+     * Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
+     * enclosing operation.
      *
      * @param capturedContext the value returned by this capturer's
      *                        {@link #captureRequestContext()} (may be {@code null})

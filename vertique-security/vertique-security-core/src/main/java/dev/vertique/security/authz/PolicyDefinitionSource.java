@@ -55,6 +55,9 @@ public interface PolicyDefinitionSource {
      * @throws NullPointerException  if {@code registry} is {@code null}
      * @throws IllegalStateException if any exact pattern is not registered, or any wildcard pattern
      *     matches no registered action
+     *
+     * <p>Exceptions thrown by this callback propagate and are fatal to the enclosing operation;
+     * processing does not continue.
      */
     default void validateAgainst(ActionRegistry registry) {
         Objects.requireNonNull(registry, "registry");

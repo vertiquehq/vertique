@@ -39,6 +39,20 @@ Run `spotless:apply` before committing. The formatter handles line wrapping, ind
 
 All packages start with `dev.vertique.{module}`. Sub-packages are allowed for logical grouping (for example, `dev.vertique.rest.security`).
 
+Package placement follows these conventions:
+
+- Keep primary domain types and public SPIs at the module root by default. Do not create a `spi`
+  package only to label an interface as an SPI.
+- Use verb-form packages such as `scan`, `validate`, `emit`, and `collect` for code-generation
+  pipeline stages. Use noun-form packages such as `config` and `validation` for runtime concerns.
+- Group domain events and their observer SPI in an `.events` package when a module has an event
+  cluster.
+- Keep composition validators in a `compose` package.
+- Nest code-generation stages below `.processor.` (for example, `.processor.scan` and
+  `.processor.emit`).
+- Keep Dagger-specific packages under `.dagger`, not `.di`. Existing workflow `.di` packages are
+  grandfathered and are not renamed as part of a documentation change.
+
 ### Classes
 
 Use role-indicating suffixes consistently:
@@ -48,12 +62,15 @@ Use role-indicating suffixes consistently:
 | `*Module` | Dagger `@Module` | `RestModule`, `AuthModule` |
 | `*Component` | Dagger `@Component` | `AppComponent` |
 | `*Verticle` | Vert.x verticle | `HttpVerticle`, `MainVerticle` |
-| `*Registry` | Hierarchy-aware dispatcher | `ExceptionMapperRegistry` |
+| `*Registry` (hierarchy) | Hierarchy-aware dispatcher | `ExceptionMapperRegistry` |
+| `*Registry` (lookup/resource) | Flat named-value lookup or resource collection owner; prefer a more specific suffix for new types when practical | `RedisClientRegistry` |
 | `*Hook` | Lifecycle hook interface | `RouterLifecycleHook` |
 | `*Interceptor` | Request/operation/error interceptor interface | `RequestInterceptor`, `OperationInterceptor`, `ErrorInterceptor`, `ServiceInterceptor` |
 | `*Middleware` | Router-level `Handler<RoutingContext>` with scope/order | `CorrelationIngressMiddleware` |
-| `*Contributor` | `OperationHandlerContributor` impl | `IdentityResolutionContributor` |
-| `*Resolver` | Chain-of-responsibility SPI | `SecurityIdentityResolver` |
+| `*Contributor` (pipeline) | Ordered operation-pipeline participant | `IdentityResolutionContributor` |
+| `*Contributor` (registration) | One-shot registry or builder seeder; prefer `*Registrar` for new APIs | `ServiceContractContributor` |
+| `*Resolver` (chain/strategy) | Chain-of-responsibility or strategy SPI | `SecurityIdentityResolver` |
+| `*Resolver` (utility) | Type, annotation, or package resolution helper; not an extension chain | `TypeResolver` |
 | `*Mapper` | Exception/failure translator | `FailureMapper`, `DefaultExceptionMapper` |
 | `*Producer` | Response type dispatcher | `ResponseProducer` |
 | `*Binding` | Dagger multibinding wrapper | `CanonicalizerBinding`, `SanitizerBinding` |
@@ -67,11 +84,39 @@ Use role-indicating suffixes consistently:
 ### Methods
 
 - `camelCase` throughout
-- Factory methods: `of(...)`, `none()`, `jwt()`, `custom(...)`
+- Factory methods: `of(...)`, `none()`, `jwt()`, `custom(...)`; follow the factory grammar below for new APIs.
 - `@Provides` methods named after what they return: `failureMapper()`, `httpVerticle()`
 - Boolean checks: `hasScope()`, `isSuccess()`, `isFailure()`
 - Transformers: `map()`, `flatMap()`, `recover()`, `fold()`
 - Hook/interceptor callbacks: `beforeX()`, `afterX()`, `recoverX()`, `transformX()` — e.g., `beforeAuthSetup`, `afterRouterCreated`, `beforeOperation`, `transformResponse`
+
+### Implementation prefixes and factory grammar
+
+- `Default*` names the canonical framework/default implementation.
+- `Pg*`, `Redis*`, `S3*`, and other backend prefixes identify backend-specific implementations.
+- Use `of(...)` for pure value construction, `create(...)` for effectful construction, `from(...)`
+  for conversion, `defaults()` for configuration defaults, and `none()` for an empty sentinel.
+- Framework-owned JSON configuration keys use camelCase. Native-client passthrough maps preserve
+  the native library's key casing; do not normalize keys that Vertique does not own.
+- Fluent accessors are the default. Use JavaBean `getX()` accessors only at an external
+  JavaBean-shaped interoperability boundary, such as JAX-RS, Bean Validation, Testcontainers, or Camel.
+- Adapter aggregate modules use the `<Family><Backend>Module` shape. Application starters and
+  persistence satellites are separate composition roles; a persistence module is composed
+  alongside an application starter rather than replacing it.
+
+### Extension callback summary
+
+Use `onX` for synchronous observers and `beforeX`/`afterX`/`recoverX`/`transformX` for asynchronous
+handlers that participate in control flow. Use `contribute` for registration or assembly
+contributions. The owning interface Javadoc must state whether callbacks are ordered, unordered,
+swallowed-and-logged, or fatal; every public void SPI callback carries one of these exact exception
+clauses:
+
+> Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
+> enclosing operation.
+
+> Exceptions thrown by this callback propagate and are fatal to the enclosing operation; processing
+> does not continue.
 
 ### Enums
 

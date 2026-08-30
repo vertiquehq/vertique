@@ -18,8 +18,8 @@ package dev.vertique.job;
  *
  * <p><strong>Implementations MUST NOT block.</strong> The call runs synchronously on the job-completion
  * thread, which may be a Vert.x event loop, timer, or event-bus callback. Submit any async work
- * fire-and-forget (do not chain on it). Exceptions thrown here are swallowed and logged; later listeners
- * still run.
+ * fire-and-forget (do not chain on it). Exceptions thrown by this callback are caught, logged, and
+ * swallowed; they do not affect the enclosing operation.
  *
  * <p>Register listeners via Dagger multibinding ({@code @IntoSet}) against
  * {@code Set<JobExecutionStateTransitionListener>}.
@@ -28,6 +28,9 @@ public interface JobExecutionStateTransitionListener {
 
     /**
      * Called once with the curated facts of a persisted job state transition.
+     *
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
+     * the enclosing operation.
      *
      * @param event the safe-by-type transition event; never {@code null}
      */
