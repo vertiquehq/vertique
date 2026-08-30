@@ -175,7 +175,7 @@ SPDX-License-Identifier: EUPL-1.2
             </plugin>
             <plugin>
                 <!--
-                    Inherits version and base configuration (argLine, forkedProcessTimeoutInSeconds)
+                    Inherits version and base configuration (argLine, forked-process execution and exit timeouts)
                     from vertique-parent pluginManagement, which also declares the default
                     integration-test-phase and verify-phase executions. No *IT.java class is
                     compiled directly for this module, but archetype:integration-test's nested

@@ -134,9 +134,10 @@ jobs:
         run: ./mvnw -ntp -Djacoco.module.report.skip=true clean verify
 
       # Surefire and Failsafe redirect test output to these reports. Retain
-      # them on failures so CI-only flakes remain diagnosable after the run.
-      - name: Upload test reports on failure
-        if: failure()
+      # them after failures and cancellation so CI-only flakes and hangs remain
+      # diagnosable after the run.
+      - name: Upload test reports after build interruption
+        if: ${{ always() && (failure() || cancelled()) }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-reports
