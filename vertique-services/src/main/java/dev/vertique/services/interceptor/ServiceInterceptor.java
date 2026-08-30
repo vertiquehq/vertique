@@ -61,7 +61,8 @@ public interface ServiceInterceptor extends OrderedExtension {
      * Synchronous observer called before dispatch (after all {@link #beforeDispatch} async
      * handlers have completed). Suitable for structured logging or metrics.
      *
-     * <p>Exceptions thrown here are swallowed — use {@link #beforeDispatch} to modify the
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
+     * enclosing operation. Use {@link #beforeDispatch} to modify the
      * context or short-circuit dispatch.
      *
      * @param ctx the dispatch context (read-only at this point; use {@link #beforeDispatch}
@@ -77,7 +78,8 @@ public interface ServiceInterceptor extends OrderedExtension {
      * <p>Interceptors can distinguish outcomes via {@link Result#isSuccess()} /
      * {@link Result#isFailure()}.
      *
-     * <p>Exceptions thrown here are swallowed.
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
+     * enclosing operation.
      *
      * @param ctx       the dispatch context
      * @param result    the dispatch result (success or failure)
@@ -104,7 +106,8 @@ public interface ServiceInterceptor extends OrderedExtension {
      * on a foreign context — so holder context ({@code SecurityContext}, {@code CorrelationContext}) is
      * readable here. This makes the hook suitable for terminal-outcome observability.
      *
-     * <p>Exceptions thrown here are swallowed; it cannot affect the dispatch outcome or reply.
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
+     * enclosing operation.
      *
      * @param ctx       the dispatch context
      * @param result    the terminal dispatch result (success, recovered, or failed)

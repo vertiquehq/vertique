@@ -30,6 +30,8 @@ public interface ObjectMapperCustomizer extends OrderedExtension {
 
     /**
      * Customizes the given {@link ObjectMapper}. Called once at application startup.
+     * Exceptions thrown by this callback propagate and are fatal to the enclosing operation;
+     * processing does not continue.
      *
      * @param mapper the ObjectMapper to customize
      */

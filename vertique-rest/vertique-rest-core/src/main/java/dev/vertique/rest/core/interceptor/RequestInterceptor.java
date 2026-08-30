@@ -82,8 +82,8 @@ public interface RequestInterceptor extends OrderedExtension {
      * {@link #beforeRequest} async handlers run. Suitable for access logging or request-count
      * metrics.
      *
-     * <p>Exceptions thrown here are swallowed — use {@link #beforeRequest} to modify or
-     * short-circuit the pipeline.
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
+     * the enclosing operation. Use {@link #beforeRequest} to modify or short-circuit the pipeline.
      *
      * @param rc the Vert.x {@link RoutingContext} for the incoming request
      */
@@ -94,7 +94,8 @@ public interface RequestInterceptor extends OrderedExtension {
      * <em>original</em> cause before any {@link ErrorInterceptor#beforeMapping} transformation.
      * Suitable for error-rate metrics or structured error logging.
      *
-     * <p>Exceptions thrown here are swallowed.
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
+     * enclosing operation.
      *
      * @param rc    the Vert.x {@link RoutingContext} for the failed request
      * @param error the original failure, before any mapping
@@ -109,7 +110,8 @@ public interface RequestInterceptor extends OrderedExtension {
      * {@link SerializedBody} should be modified here. Use {@link #transformResponse} to
      * modify the response before serialization.
      *
-     * <p>Exceptions thrown here are swallowed.
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
+     * enclosing operation.
      *
      * @param rc       the Vert.x {@link RoutingContext}
      * @param response the JAX-RS {@link Response} that produced the body
@@ -137,7 +139,8 @@ public interface RequestInterceptor extends OrderedExtension {
      * <p>For error responses, the original throwable is available via
      * {@code rc.data().get(ORIGINAL_ERROR_KEY)}.
      *
-     * <p>Exceptions thrown here are swallowed — use {@link #transformResponse} to modify responses.
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
+     * enclosing operation. Use {@link #transformResponse} to modify responses.
      *
      * @param rc       the current routing context
      * @param response the final response after all transformations, as handed off to the wire; on

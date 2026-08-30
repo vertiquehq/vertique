@@ -52,7 +52,8 @@ public interface KafkaConsumerInterceptor extends OrderedExtension {
      * Synchronous observer called after deserialization and before {@link #beforeDispatch}
      * async handlers run. Suitable for structured logging or metrics.
      *
-     * <p>Exceptions thrown here are swallowed — use {@link #beforeDispatch} to modify the
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
+     * enclosing operation. Use {@link #beforeDispatch} to modify the
      * context or filter the record.
      *
      * @param ctx the dispatch context (read-only; use {@link #beforeDispatch} to modify)
@@ -63,7 +64,8 @@ public interface KafkaConsumerInterceptor extends OrderedExtension {
      * Synchronous observer called after successful dispatch. Suitable for success metrics,
      * evidence capture, or structured logging.
      *
-     * <p>Exceptions thrown here are swallowed.
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
+     * enclosing operation.
      *
      * @param ctx the dispatch context
      */
@@ -73,7 +75,8 @@ public interface KafkaConsumerInterceptor extends OrderedExtension {
      * Synchronous observer called on any dispatch failure. Suitable for error metrics or
      * alerting. Cannot affect the error handling outcome — use {@link #recoverError} for that.
      *
-     * <p>Exceptions thrown here are swallowed.
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
+     * enclosing operation.
      *
      * @param ctx the dispatch context
      * @param error the dispatch failure

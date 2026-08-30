@@ -43,6 +43,9 @@ public interface SecuritySchemeHandler {
      * Configures the authentication handler on the scheme-scoped {@link SecuritySchemeRegistry}.
      * Called once during JaxRsRouterMount startup.
      *
+     * <p>Exceptions thrown by this callback propagate and are fatal to the enclosing operation;
+     * processing does not continue.
+     *
      * @param registry the scheme-scoped registry on which to register the authentication handler
      */
     void configure(SecuritySchemeRegistry registry);

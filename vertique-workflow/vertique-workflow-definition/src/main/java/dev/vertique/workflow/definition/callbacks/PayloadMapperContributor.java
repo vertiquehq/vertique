@@ -32,6 +32,9 @@ public interface PayloadMapperContributor {
     /**
      * Registers payload mappers with {@code builder}.
      *
+     * <p>Exceptions thrown by this callback propagate and are fatal to the enclosing operation;
+     * processing does not continue.
+     *
      * @param builder the mutable registry builder; non-null
      */
     void contribute(PayloadMapperRegistry.Builder builder);

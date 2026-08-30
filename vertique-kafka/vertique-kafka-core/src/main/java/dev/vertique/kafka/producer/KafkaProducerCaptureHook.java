@@ -59,8 +59,8 @@ public interface KafkaProducerCaptureHook extends OrderedExtension {
     /**
      * Called once per send after the Kafka {@code producer.send(record)} call settles.
      *
-     * <p>Implementations MUST NOT throw checked exceptions. Any unchecked exception is swallowed
-     * by the framework and does not affect the send result.
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
+     * the enclosing operation.
      *
      * @param origin         the origin of this send; never {@code null}
      * @param topic          the target topic; never {@code null}

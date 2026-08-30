@@ -25,6 +25,9 @@ public interface WorkflowContributor {
     /**
      * Contributes one or more workflow definitions to the given registry.
      *
+     * <p>Exceptions thrown by this callback propagate and are fatal to the enclosing operation;
+     * processing does not continue.
+     *
      * @param registry the registry to register definitions into
      */
     void contribute(WorkflowRegistry registry);

@@ -35,7 +35,8 @@ public interface JobInterceptor extends OrderedExtension {
      * Synchronous observer called when a job dispatch begins (after the body is received).
      * Suitable for setting up MDC context or recording dispatch metrics.
      *
-     * <p>Exceptions thrown here are swallowed.
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
+     * enclosing operation.
      *
      * @param ctx the dispatch context for this execution
      */
@@ -45,7 +46,8 @@ public interface JobInterceptor extends OrderedExtension {
      * Synchronous observer called after every job dispatch (both success and failure).
      * Suitable for recording latency, clearing MDC context, or emitting audit events.
      *
-     * <p>Exceptions thrown here are swallowed.
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
+     * enclosing operation.
      *
      * @param ctx       the dispatch context for this execution
      * @param result    the dispatch result, or {@code null} if the reply body was not a

@@ -47,6 +47,9 @@ public interface RestServerRequestEvidenceCapturer extends OrderedExtension {
      * javadoc for why {@link RoutingContext#data()} is not an appropriate choice for sensitive
      * evidence.
      *
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
+     * the enclosing operation.
+     *
      * @param ctx  the current routing context; callers must treat this as read-only with respect
      *             to routing control (do not call {@code next()}, {@code fail()}, etc.)
      * @param meta the neutral operation descriptor holding the resource {@link java.lang.reflect.Method},

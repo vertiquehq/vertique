@@ -91,6 +91,9 @@ public interface RequestValidationStrategy extends OrderedExtension {
      * @throws dev.vertique.rest.core.RestConfigurationException when this strategy resolves a per-mount
      *     contract and the {@code openapiPath} carried by {@code mountMeta} diverges from the contract
      *     path it is bound to, so that no operation is ever validated against a different mount's contract
+     *
+     * <p>Exceptions thrown by this callback propagate and are fatal to the enclosing operation;
+     * processing does not continue.
      */
     default void bindToMount(MountMeta mountMeta) {
         // No-op by default: contract-path-agnostic strategies (web-validation, none) ignore mount metadata.

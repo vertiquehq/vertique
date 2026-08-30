@@ -48,6 +48,8 @@ public interface MountCustomizer extends OrderedExtension {
     /**
      * Customizes the mount's router after creation. The router has already been fully
      * configured by the {@link RouterMount} but has not yet been mounted as a sub-router.
+     * Exceptions thrown by this callback propagate and are fatal to the enclosing operation;
+     * processing does not continue.
      *
      * @param mountRouter the mount's router
      * @param meta        metadata of the mount

@@ -66,6 +66,9 @@ public interface RestRequestCaptureCoordinator extends OrderedExtension {
      * side channel keyed by request identity, <em>not</em> {@code rc.data()} — and submit exactly one
      * capture-aware audit record. Evidence retrieved here MUST NOT be exposed on {@code rc.data()}.
      *
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
+     * the enclosing operation.
+     *
      * @param event the completed-request event, identical to what the safe listeners received;
      *              never {@code null}
      * @param rc    the live routing context for the completed request; never {@code null}. The

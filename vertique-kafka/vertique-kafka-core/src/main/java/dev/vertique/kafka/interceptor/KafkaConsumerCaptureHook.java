@@ -39,8 +39,8 @@ public interface KafkaConsumerCaptureHook extends OrderedExtension {
      * Called once per record at the terminal point of the dispatch pipeline, after all async
      * operations (DLQ publish, seek, recovery) have settled.
      *
-     * <p>Implementations MUST NOT throw checked exceptions. Any unchecked exception is swallowed
-     * by the framework and does not affect dispatch.
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
+     * the enclosing operation.
      *
      * @param ctx     the dispatch context at the time of the terminal event; the context is
      *                immutable and reflects the pre-dispatch state (deserialized value, headers,
@@ -65,7 +65,10 @@ public interface KafkaConsumerCaptureHook extends OrderedExtension {
      * </ol>
      *
      * <p>The same observer-only contract applies: implementations MUST NOT affect commit, retry, or
-     * delivery behaviour. Exceptions are swallowed by the framework.
+     * delivery behaviour.
+     *
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
+     * the enclosing operation.
      *
      * @param disposition the raw record metadata available before deserialization; non-null
      * @param outcome     the final disposition of this record; non-null
