@@ -18,7 +18,7 @@ import java.util.function.Function;
  * PostgreSQL implementation of {@link WorkflowTransactionRunner} over {@link SqlClient}.
  *
  * <p>Runs the transaction through a dedicated {@link WorkflowTxRunnerRepository}'s
- * {@code transaction()} builder (so the stage-1 {@link WorkflowPgExceptionMapper} applies inside
+ * {@code transaction()} builder (so the stage-1 {@link PgWorkflowExceptionMapper} applies inside
  * {@code execute}), then applies the stage-2 {@link WorkflowExceptionMapper} in the outer
  * {@code recover}. The two stages implement the layered DB-to-workflow exception mapping:
  *

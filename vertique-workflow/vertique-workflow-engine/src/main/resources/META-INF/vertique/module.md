@@ -230,7 +230,7 @@ History entries appended during a bound drive may additionally record `commandCo
 ### WorkflowExceptionMapper
 
 Stage-2 (workflow-boundary) exception mapper applied in the Pg runner's outer `recover` after the DB
-layer's stage-1 mapper (`WorkflowPgExceptionMapper`) has run. Translates `DataAccessException` subtypes
+layer's stage-1 mapper (`PgWorkflowExceptionMapper`) has run. Translates `DataAccessException` subtypes
 into workflow-semantic exceptions rooted in the core hierarchy (e.g. `WorkflowConflictException` →
 `ConflictException` for 409, `WorkflowPersistenceException` → `WorkflowTechnicalException` for 500);
 already-semantic workflow exceptions and non-DB throwables pass through unchanged:

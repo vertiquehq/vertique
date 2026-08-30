@@ -20,7 +20,7 @@ import java.util.function.Supplier;
  * transaction to guarantee atomicity between deduplication and business logic.
  *
  * <p>Repository failures from {@link InboxRepository#tryInsert} are wrapped by
- * {@link InboxOutboxExceptionMapper} so that callers see
+ * {@link PgInboxOutboxExceptionMapper} so that callers see
  * {@link dev.vertique.inboxoutbox.exception.InboxOutboxPersistenceException} instead of raw
  * {@link dev.vertique.db.exception.DataAccessException} types. Failures from the
  * caller-supplied {@code work} supplier propagate UNWRAPPED — the mapper applies only to the
@@ -32,7 +32,7 @@ import java.util.function.Supplier;
 class DefaultInboxService implements InboxService {
 
     private final InboxRepository repository;
-    private final InboxOutboxExceptionMapper exceptionMapper;
+    private final PgInboxOutboxExceptionMapper exceptionMapper;
 
     /**
      * Creates a new inbox service.
@@ -42,7 +42,7 @@ class DefaultInboxService implements InboxService {
      *                        inbox/outbox-domain exceptions at the service boundary
      */
     @Inject
-    DefaultInboxService(InboxRepository repository, InboxOutboxExceptionMapper exceptionMapper) {
+    DefaultInboxService(InboxRepository repository, PgInboxOutboxExceptionMapper exceptionMapper) {
         this.repository = repository;
         this.exceptionMapper = exceptionMapper;
     }
@@ -55,7 +55,7 @@ class DefaultInboxService implements InboxService {
      * {@link InboxResult.Processed}. When a conflict is detected (duplicate), skips {@code work}
      * and returns {@link InboxResult.Duplicate} immediately.
      *
-     * <p>The {@code recover} that applies {@link InboxOutboxExceptionMapper#translate} is chained
+     * <p>The {@code recover} that applies {@link PgInboxOutboxExceptionMapper#translate} is chained
      * on the {@code tryInsert} future BEFORE the {@code compose} that invokes {@code work}. This
      * ensures ONLY repository failures are wrapped; failures raised by {@code work.get()} inside
      * the {@code compose} propagate unchanged (FR-IO-004).

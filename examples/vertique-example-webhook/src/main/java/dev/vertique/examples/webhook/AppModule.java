@@ -24,7 +24,7 @@ import jakarta.inject.Provider;
  * {@code JaxRsRouterMount.Factory} still consumes it as {@code @Nullable}.
  */
 @Module
-public class AppModule {
+public abstract class AppModule {
 
     /**
      * Provides a {@code null} {@link SecurityPolicyValidator} since this example does not use auth.

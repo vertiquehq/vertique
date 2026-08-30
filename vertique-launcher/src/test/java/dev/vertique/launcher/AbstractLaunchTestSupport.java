@@ -15,7 +15,7 @@ import org.junit.jupiter.api.BeforeEach;
  * {@link RedactionLogCaptureTest}.
  *
  * <p>{@code @BeforeEach}: resets {@link TestContributorState}, {@link FakeVertxMetrics},
- * {@link LauncherStubSourceFactory.State}, {@link NoopVerticle#startedConfig}, and
+ * {@link LauncherStubSourceFactory.State}, {@link NoOpVerticle#startedConfig}, and
  * {@link TestVertiqueApplication#capturedVertx} so each test starts from a clean slate.
  *
  * <p>{@code @AfterEach}: closes any {@link Vertx} instance captured during the test and awaits
@@ -30,7 +30,7 @@ abstract class AbstractLaunchTestSupport {
         TestContributorState.reset();
         FakeVertxMetrics.resetCreated();
         LauncherStubSourceFactory.State.reset();
-        NoopVerticle.startedConfig.set(null);
+        NoOpVerticle.startedConfig.set(null);
         TestVertiqueApplication.capturedVertx.set(null);
     }
 

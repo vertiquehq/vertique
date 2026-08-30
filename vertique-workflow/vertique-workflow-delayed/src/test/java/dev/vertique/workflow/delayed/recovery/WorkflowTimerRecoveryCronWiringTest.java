@@ -33,7 +33,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Wiring test proving that {@link CronJobRegistrar} discovers the {@code @CronJob} on
- * {@link WorkflowTimerRecoveryServiceImpl#reconcile()} when the impl is registered via
+ * {@link WorkflowTimerRecoveryCron#reconcile()} when the impl is registered via
  * {@code @Services}.
  *
  * <p>Verifies:
@@ -49,7 +49,7 @@ import org.junit.jupiter.api.Test;
  * <p>Independent of the production cron lifecycle verticle: invokes {@code scan()} directly with
  * a capturing scheduler so the test does not need a real Vert.x instance.
  */
-@DisplayName("WorkflowTimerRecoveryServiceImpl cron wiring")
+@DisplayName("WorkflowTimerRecoveryCron cron wiring")
 class WorkflowTimerRecoveryCronWiringTest {
 
     /** Captures every job registered with {@code register(...)} without needing live Vert.x. */
@@ -81,7 +81,7 @@ class WorkflowTimerRecoveryCronWiringTest {
     void scanRegistersWorkflowTimerRecovery() {
         // The cron registrar reads annotations on the impl method; the recovery service itself is
         // not needed for scan(). A no-op Provider keeps the wiring lightweight.
-        WorkflowTimerRecoveryServiceImpl impl = new WorkflowTimerRecoveryServiceImpl(() -> null);
+        WorkflowTimerRecoveryCron impl = new WorkflowTimerRecoveryCron(() -> null);
         ServiceContractRegistry registry =
                 ServiceContractRegistry.build(Set.of(impl), new DefaultConfigParser(DefaultConfigMapper.lenient()));
         ServiceTargetResolver resolver = stubTargetResolver();

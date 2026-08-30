@@ -140,7 +140,7 @@ public abstract class WorkflowPostgresqlModule {
      *
      * <p>The runner owns the workflow transaction boundary and the layered DB-to-workflow exception
      * mapping. Its collaborators — {@link WorkflowTxRunnerRepository} (carrying the stage-1
-     * {@link WorkflowPgExceptionMapper}) and the stage-2
+     * {@link PgWorkflowExceptionMapper}) and the stage-2
      * {@link dev.vertique.workflow.engine.WorkflowExceptionMapper} — are constructed by Dagger via
      * their {@code @Inject} constructors, so no additional bindings are required.
      *

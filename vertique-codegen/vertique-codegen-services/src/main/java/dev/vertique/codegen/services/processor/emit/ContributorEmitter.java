@@ -140,7 +140,7 @@ public final class ContributorEmitter {
     private static final ClassName ANNOTATION = ClassName.get("java.lang.annotation", "Annotation");
     private static final ClassName METHOD = ClassName.get("java.lang.reflect", "Method");
     private static final ClassName SERVICE_REGISTRATION_EXCEPTION =
-            ClassName.get("dev.vertique.services", "ServiceRegistrationException");
+            ClassName.get("dev.vertique.services.exception", "ServiceRegistrationException");
     private static final ClassName SERVICE_REGISTRATION_VIOLATION =
             ClassName.get("dev.vertique.services", "ServiceRegistrationViolation");
 

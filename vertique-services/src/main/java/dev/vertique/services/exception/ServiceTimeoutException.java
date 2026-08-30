@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.services;
+package dev.vertique.services.exception;
 
 import dev.vertique.core.eventbus.EventBusTimeoutException;
 

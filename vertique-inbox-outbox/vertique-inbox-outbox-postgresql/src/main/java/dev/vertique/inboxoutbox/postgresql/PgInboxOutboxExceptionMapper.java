@@ -51,13 +51,13 @@ import jakarta.inject.Singleton;
  * {@link Throwable#getCause()}.
  */
 @Singleton
-class InboxOutboxExceptionMapper {
+class PgInboxOutboxExceptionMapper {
 
     /**
      * Creates a stateless inbox/outbox-boundary exception mapper.
      */
     @Inject
-    InboxOutboxExceptionMapper() {}
+    PgInboxOutboxExceptionMapper() {}
 
     /**
      * Translates a repository failure into an inbox/outbox-domain exception per the class policy.

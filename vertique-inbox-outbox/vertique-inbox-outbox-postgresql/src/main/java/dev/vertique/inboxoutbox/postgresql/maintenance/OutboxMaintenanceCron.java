@@ -56,17 +56,17 @@ import jakarta.inject.Singleton;
  * construction would force {@link OutboxMaintenanceService} and its repository dependencies to
  * resolve at registry-build time. There is no known cycle through the {@code @Services} set
  * today — {@link OutboxMaintenanceService} only depends on repositories and configs. Routing
- * through {@link Provider} is defensive symmetry with {@code WorkflowTimerRecoveryServiceImpl}
+ * through {@link Provider} is defensive symmetry with {@code WorkflowTimerRecoveryCron}
  * (which has a documented real cycle) and keeps registry build uniformly lightweight; the
  * underlying service is materialised lazily on the first cron fire.
  */
 @Singleton
-public final class OutboxMaintenanceServiceImpl implements OutboxMaintenanceContract {
+public final class OutboxMaintenanceCron implements OutboxMaintenanceContract {
 
     private final Provider<OutboxMaintenanceService> serviceProvider;
 
     @Inject
-    public OutboxMaintenanceServiceImpl(Provider<OutboxMaintenanceService> serviceProvider) {
+    public OutboxMaintenanceCron(Provider<OutboxMaintenanceService> serviceProvider) {
         this.serviceProvider = serviceProvider;
     }
 

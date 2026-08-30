@@ -48,7 +48,7 @@ import java.util.UUID;
  * outbox uses this one string.
  *
  * <p>Repository failures from {@link OutboxRepository#insert} are wrapped by
- * {@link InboxOutboxExceptionMapper} so that callers see {@code InboxOutboxPersistenceException}
+ * {@link PgInboxOutboxExceptionMapper} so that callers see {@code InboxOutboxPersistenceException}
  * instead of raw {@link dev.vertique.db.exception.DataAccessException} types.
  *
  * <p>Registered as a singleton by {@code TransactionalMessagingPostgresqlModule}.
@@ -69,7 +69,7 @@ class DefaultOutboxService implements OutboxService {
 
     private final OutboxRepository repository;
     private final DurableContextPropagator propagator;
-    private final InboxOutboxExceptionMapper exceptionMapper;
+    private final PgInboxOutboxExceptionMapper exceptionMapper;
 
     /**
      * Creates a new outbox service.
@@ -84,7 +84,7 @@ class DefaultOutboxService implements OutboxService {
     DefaultOutboxService(
             OutboxRepository repository,
             DurableContextPropagator propagator,
-            InboxOutboxExceptionMapper exceptionMapper) {
+            PgInboxOutboxExceptionMapper exceptionMapper) {
         this.repository = repository;
         this.propagator = propagator;
         this.exceptionMapper = exceptionMapper;
@@ -115,7 +115,7 @@ class DefaultOutboxService implements OutboxService {
      *
      * <p>Any {@link dev.vertique.db.exception.DataAccessException} from the repository is translated
      * to an {@link dev.vertique.inboxoutbox.exception.InboxOutboxPersistenceException} via
-     * {@link InboxOutboxExceptionMapper#translate} so that callers see typed inbox/outbox failures.
+     * {@link PgInboxOutboxExceptionMapper#translate} so that callers see typed inbox/outbox failures.
      */
     @Override
     public Future<Long> publish(SqlClient tx, OutboxEntry entry) {

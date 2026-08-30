@@ -9,7 +9,7 @@ import java.time.Duration;
  * Configuration for the {@link WorkflowTimerRecoveryService} orphan and dead-letter recovery scan.
  *
  * <p>The recovery service runs as a {@code SINGLE_INSTANCE} cron job (see
- * {@link WorkflowTimerRecoveryServiceImpl}) and detects timers whose underlying delayed jobs may
+ * {@link WorkflowTimerRecoveryCron}) and detects timers whose underlying delayed jobs may
  * have been lost (e.g., after a JVM restart) or have moved to terminal states
  * ({@code DEAD_LETTER}, {@code SUCCEEDED}) without having properly fired.
  *
@@ -21,7 +21,7 @@ import java.time.Duration;
  * </ul>
  *
  * <p>The scan cadence itself is owned by the cron expression on
- * {@link WorkflowTimerRecoveryServiceImpl#reconcile()} (default {@code "*}{@code /30 * * * * *"});
+ * {@link WorkflowTimerRecoveryCron#reconcile()} (default {@code "*}{@code /30 * * * * *"});
  * operators tune via the {@code cron.jobs.workflow-timer-recovery.*} config subtree, not here.
  *
  * @param batchSize    the maximum number of recoverable timers to process per scan cycle

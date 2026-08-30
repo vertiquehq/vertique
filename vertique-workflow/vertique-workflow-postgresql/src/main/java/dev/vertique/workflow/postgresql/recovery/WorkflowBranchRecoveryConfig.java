@@ -9,7 +9,7 @@ import java.time.Duration;
  * Configuration for the branch-recovery scan (PRD-WF-002 §A.4.3).
  *
  * <p>The recovery service runs as a {@code SINGLE_INSTANCE} cron job (see
- * {@link WorkflowBranchRecoveryServiceImpl}) and reconciles two classes of branch tokens:
+ * {@link PgWorkflowBranchRecoveryCron}) and reconciles two classes of branch tokens:
  * <ul>
  *   <li>Due {@code RETRY_SCHEDULED} branches (whose {@code next_retry_at} has passed) — resumed
  *       through {@code BranchTransitionEngine}, with the owning join re-evaluated on terminal
@@ -28,7 +28,7 @@ import java.time.Duration;
  * </ul>
  *
  * <p>The scan cadence itself is owned by the cron expression on
- * {@link WorkflowBranchRecoveryServiceImpl#reconcile()} (default {@code "*}{@code /30 * * * * *"});
+ * {@link PgWorkflowBranchRecoveryCron#reconcile()} (default {@code "*}{@code /30 * * * * *"});
  * operators tune via the {@code cron.jobs.workflow-branch-recovery.*} config subtree, not here.
  *
  * @param batchSize       the maximum number of recoverable branches to process per status per

@@ -15,7 +15,7 @@ import dev.vertique.workflow.delayed.job.WorkflowTimerFireExecutor;
 import dev.vertique.workflow.delayed.job.WorkflowTimerFireJob;
 import dev.vertique.workflow.delayed.recorder.WorkflowTimerSideEffectRecorder;
 import dev.vertique.workflow.delayed.recovery.WorkflowTimerRecoveryConfig;
-import dev.vertique.workflow.delayed.recovery.WorkflowTimerRecoveryServiceImpl;
+import dev.vertique.workflow.delayed.recovery.WorkflowTimerRecoveryCron;
 import dev.vertique.workflow.sideeffect.WorkflowRecorders;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import io.vertx.sqlclient.SqlClient;
@@ -34,7 +34,7 @@ import jakarta.inject.Singleton;
  *       multibinding so the delayed-job infrastructure registers it as a job handler.</li>
  *   <li>{@link WorkflowTimerFireJob} — the typed delayed-job client proxy created by
  *       {@link DelayedJobClientFactory#create(Class)}.</li>
- *   <li>{@link WorkflowTimerRecoveryServiceImpl} contributed into the {@code @Services Set<Object>}
+ *   <li>{@link WorkflowTimerRecoveryCron} contributed into the {@code @Services Set<Object>}
  *       multibinding so {@code CronJobRegistrar} discovers its {@code @CronJob}-annotated
  *       reconcile method.</li>
  *   <li>{@link WorkflowTimerRecoveryConfig} — default configuration for the recovery service.
@@ -108,7 +108,7 @@ public abstract class WorkflowDelayedModule {
     }
 
     /**
-     * Contributes {@link WorkflowTimerRecoveryServiceImpl} into the {@code @Services} multibinding
+     * Contributes {@link WorkflowTimerRecoveryCron} into the {@code @Services} multibinding
      * so {@code CronJobRegistrar} discovers its {@code @CronJob}-annotated reconcile method.
      *
      * @param impl the recovery service implementation
@@ -118,7 +118,7 @@ public abstract class WorkflowDelayedModule {
     @Singleton
     @IntoSet
     @Services
-    static Object workflowTimerRecoveryService(WorkflowTimerRecoveryServiceImpl impl) {
+    static Object workflowTimerRecoveryService(WorkflowTimerRecoveryCron impl) {
         return impl;
     }
 
@@ -126,7 +126,7 @@ public abstract class WorkflowDelayedModule {
      * Provides the default {@link WorkflowTimerRecoveryConfig} for the recovery service.
      *
      * <p>Hardcodes the batch size and grace-period defaults. The scan cadence is owned by the
-     * cron expression on {@code WorkflowTimerRecoveryServiceImpl} and tunable via
+     * cron expression on {@code WorkflowTimerRecoveryCron} and tunable via
      * {@code cron.jobs.workflow-timer-recovery.cron} config. Applications that need different
      * batch/grace settings must fork the module — Dagger does not allow two {@code @Provides}
      * for the same key, so providing a competing {@code @Singleton WorkflowTimerRecoveryConfig}

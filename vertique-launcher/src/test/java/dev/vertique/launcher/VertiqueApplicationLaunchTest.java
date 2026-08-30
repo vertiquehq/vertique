@@ -37,7 +37,7 @@ import org.junit.jupiter.api.Timeout;
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class VertiqueApplicationLaunchTest extends AbstractLaunchTestSupport {
 
-    private static final String NOOP_VERTICLE = NoopVerticle.class.getName();
+    private static final String NOOP_VERTICLE = NoOpVerticle.class.getName();
 
     // --- Tests ---
 
@@ -48,8 +48,8 @@ class VertiqueApplicationLaunchTest extends AbstractLaunchTestSupport {
                 new TestVertiqueApplication(new String[] {NOOP_VERTICLE, "--conf", "{\"hello\":\"world\"}"}).launch();
 
         assertEquals(0, exitCode, "launch must return 0 on success");
-        JsonObject started = NoopVerticle.startedConfig.get();
-        assertNotNull(started, "NoopVerticle must have been started");
+        JsonObject started = NoOpVerticle.startedConfig.get();
+        assertNotNull(started, "NoOpVerticle must have been started");
         // Containment check: the resolved tree (⊇ --conf) must contain the --conf key.
         assertEquals("world", started.getString("hello"), "verticle config must contain the --conf value");
     }

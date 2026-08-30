@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
 import dev.vertique.services.ServiceContractContributor;
-import dev.vertique.services.ServiceRegistrationException;
+import dev.vertique.services.exception.ServiceRegistrationException;
 import io.vertx.core.json.JsonObject;
 import java.lang.reflect.Constructor;
 import java.util.List;

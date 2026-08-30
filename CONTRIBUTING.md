@@ -34,8 +34,8 @@ Use Conventional Commits:
 <type>(<scope>): <description>
 ```
 
-Common types are `feat`, `fix`, `refactor`, `test`, `docs`, `build`, `chore`,
-and `ci`.
+Supported types are `feat`, `fix`, `refactor`, `test`, `docs`, `build`, `chore`,
+`style`, `perf`, `ci`, and `revert`.
 
 Open changes through a pull request. Maintainers may request focused tests,
 documentation updates, or a clean full build before merging.

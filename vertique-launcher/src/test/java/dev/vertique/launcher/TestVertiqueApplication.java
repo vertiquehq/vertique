@@ -19,7 +19,7 @@ import java.util.function.Supplier;
  *
  * <p>It also opts out of the framework-owned standalone bootstrap verticle by overriding
  * {@link #verticleSupplier()} to return {@code null} (the FR-APP-030 escape hatch). The launch tests
- * pass an explicit verticle FQN as a CLI positional argument (e.g. {@code NoopVerticle}) and exercise
+ * pass an explicit verticle FQN as a CLI positional argument (e.g. {@code NoOpVerticle}) and exercise
  * the launcher's contributor-chain, config-resolution, overlay, and exit-code behaviour through that
  * CLI/{@code Main-Verticle} path; the framework supplier (a {@link VertiqueBootstrapVerticle}) would
  * bypass that path entirely. The default-supplier behaviour itself is covered by

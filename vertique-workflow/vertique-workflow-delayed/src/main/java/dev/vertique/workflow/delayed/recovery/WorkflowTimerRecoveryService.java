@@ -65,7 +65,7 @@ import org.slf4j.LoggerFactory;
  * <p>Per-row failures are isolated: a failure reconciling one timer is logged and does not prevent
  * the remaining timers in the batch from being processed.
  *
- * <p>Scheduling is owned by {@link WorkflowTimerRecoveryServiceImpl} via {@code @CronJob} with
+ * <p>Scheduling is owned by {@link WorkflowTimerRecoveryCron} via {@code @CronJob} with
  * {@code SINGLE_INSTANCE} mode and {@code SKIP} overlap policy; this class only owns the
  * reconcile logic and is unaware of how it is invoked.
  */

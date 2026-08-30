@@ -15,11 +15,11 @@ import java.util.concurrent.atomic.AtomicReference;
  * completes successfully. Tests can read {@link #startedConfig} to verify the configuration
  * propagated correctly through the bootstrap chain.
  */
-public final class NoopVerticle extends VerticleBase {
+public final class NoOpVerticle extends VerticleBase {
 
     /**
      * Holds the {@link JsonObject} captured from {@link #config()} on the most recent successful
-     * start. Set to {@code null} initially; updated each time a {@code NoopVerticle} is deployed.
+     * start. Set to {@code null} initially; updated each time a {@code NoOpVerticle} is deployed.
      */
     static final AtomicReference<JsonObject> startedConfig = new AtomicReference<>(null);
 

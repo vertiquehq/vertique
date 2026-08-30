@@ -21,7 +21,7 @@ import jakarta.inject.Singleton;
  * registers its routes automatically.
  */
 @Module
-public class JobModule {
+public abstract class JobModule {
 
     /**
      * Provides the job pipeline configuration from the {@code "job"} config section.

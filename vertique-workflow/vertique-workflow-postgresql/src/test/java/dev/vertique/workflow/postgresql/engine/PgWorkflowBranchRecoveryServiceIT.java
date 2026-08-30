@@ -46,8 +46,8 @@ import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowOperations;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
+import dev.vertique.workflow.postgresql.recovery.PgWorkflowBranchRecoveryCron;
 import dev.vertique.workflow.postgresql.recovery.WorkflowBranchRecoveryConfig;
-import dev.vertique.workflow.postgresql.recovery.WorkflowBranchRecoveryServiceImpl;
 import dev.vertique.workflow.registry.WorkflowContributor;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.RecorderResult;
@@ -1050,10 +1050,10 @@ public class PgWorkflowBranchRecoveryServiceIT {
     }
 
     @Test
-    @DisplayName("WorkflowBranchRecoveryServiceImpl.reconcile() drives the same demote→evaluateJoin path"
+    @DisplayName("PgWorkflowBranchRecoveryCron.reconcile() drives the same demote→evaluateJoin path"
             + " as direct sweepOnce")
     void reconcileAdapterDrivesStaleRunningDemote(VertxTestContext ctx) {
-        WorkflowBranchRecoveryServiceImpl adapter = new WorkflowBranchRecoveryServiceImpl(
+        PgWorkflowBranchRecoveryCron adapter = new PgWorkflowBranchRecoveryCron(
                 () -> recovery, new WorkflowBranchRecoveryConfig(10, java.time.Duration.ofSeconds(1)));
 
         StartFanout payload = new StartFanout("o-adapter");

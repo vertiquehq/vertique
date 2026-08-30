@@ -50,7 +50,7 @@ import org.slf4j.LoggerFactory;
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 class VertxOptionsOverlayTest extends AbstractLaunchTestSupport {
 
-    private static final String NOOP_VERTICLE = NoopVerticle.class.getName();
+    private static final String NOOP_VERTICLE = NoOpVerticle.class.getName();
     private static final String VERTX_OPT_PREFIX = "vertx.options.";
 
     // --- Unit-level pure-function tests ---

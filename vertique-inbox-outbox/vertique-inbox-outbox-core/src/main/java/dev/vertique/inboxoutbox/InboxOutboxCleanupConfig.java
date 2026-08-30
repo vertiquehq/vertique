@@ -18,7 +18,7 @@ import lombok.extern.jackson.Jacksonized;
  * and dead-letter outbox tables, preventing unbounded table growth.
  *
  * <p>Cleanup cadence is owned by the framework's cron infrastructure (see
- * {@code OutboxMaintenanceServiceImpl} in {@code vertique-inbox-outbox-postgresql}). Operators
+ * {@code OutboxMaintenanceCron} in {@code vertique-inbox-outbox-postgresql}). Operators
  * tune via {@code cron.jobs.outbox-cleanup.cron} config. The previous {@code cleanupIntervalHours}
  * field has been removed; configs that still set it are accepted (and the value ignored) thanks
  * to {@link JsonIgnoreProperties} on this class, so upgrades do not break on existing YAML.

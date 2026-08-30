@@ -23,7 +23,7 @@ import jakarta.inject.Singleton;
  * wires it into the framework's security scheme and authorization provider multibindings.
  */
 @Module
-public class AppModule {
+public abstract class AppModule {
 
     /**
      * Provides a JWT authentication provider using a symmetric HMAC key.
