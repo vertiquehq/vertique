@@ -33,6 +33,9 @@ public interface McpRawEvidenceObservation extends McpRequestObservation {
      * McpToolValueObservation#onToolInput(McpToolInputObservation)}, which never fires for such a
      * request.
      *
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
+     * the enclosing operation.
+     *
      * @param evidence this request's raw admission-time evidence; never {@code null}
      */
     default void onRequestAdmitted(McpRequestAdmissionEvidence evidence) {}
@@ -43,6 +46,9 @@ public interface McpRawEvidenceObservation extends McpRequestObservation {
      * <p>Fires at most once per request, immediately before the single shared terminal writer sends
      * the response to the wire — for every terminal write, including a bounded error or rejection
      * response.
+     *
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
+     * the enclosing operation.
      *
      * @param evidence this request's raw response-side evidence; never {@code null}
      */

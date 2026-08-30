@@ -33,6 +33,9 @@ public interface McpToolValueObservation extends McpRequestObservation {
      * reached a prepared invocation (a protocol, authentication, authorization, or input-validation
      * failure) — such a request still receives {@link #onTerminal} and {@link #onCompleted}.
      *
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
+     * the enclosing operation.
+     *
      * @param observation the bounded, unmodifiable, normalized input observation; never {@code null}
      */
     default void onToolInput(McpToolInputObservation observation) {}
@@ -44,6 +47,9 @@ public interface McpToolValueObservation extends McpRequestObservation {
      * <p>Fires at most once per request, only after bounded output normalization and output-schema
      * validation have both succeeded. This callback belongs to the output pipeline slice; no producer
      * in this task invokes it.
+     *
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
+     * the enclosing operation.
      *
      * @param observation the bounded, normalized output observation; never {@code null}
      */

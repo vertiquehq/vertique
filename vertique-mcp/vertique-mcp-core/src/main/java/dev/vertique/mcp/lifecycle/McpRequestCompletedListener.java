@@ -11,6 +11,13 @@ package dev.vertique.mcp.lifecycle;
  */
 public interface McpRequestCompletedListener {
 
-    /** Receives the completed request facts. */
+    /**
+     * Receives the completed request facts.
+     *
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
+     * the enclosing operation.
+     *
+     * @param event the transport completion facts for this request
+     */
     void onCompleted(McpRequestCompletedEvent event);
 }
