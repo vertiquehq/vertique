@@ -6,10 +6,10 @@ package dev.vertique.codegen.jaxrs;
 import com.palantir.javapoet.ClassName;
 import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.PackageResolver;
-import dev.vertique.codegen.jaxrs.emit.BeanParamModelEmitter;
-import dev.vertique.codegen.jaxrs.emit.ExecutionPlanEmitter;
-import dev.vertique.codegen.jaxrs.emit.GeneratedJaxRsResourcesModuleEmitter;
-import dev.vertique.codegen.jaxrs.emit.JaxRsDescriptorEmitter;
+import dev.vertique.codegen.jaxrs.processor.emit.BeanParamModelEmitter;
+import dev.vertique.codegen.jaxrs.processor.emit.ExecutionPlanEmitter;
+import dev.vertique.codegen.jaxrs.processor.emit.GeneratedJaxRsResourcesModuleEmitter;
+import dev.vertique.codegen.jaxrs.processor.emit.JaxRsDescriptorEmitter;
 import dev.vertique.codegen.jaxrs.processor.validate.BodyFormValidator;
 import dev.vertique.codegen.jaxrs.processor.validate.ContextParamValidator;
 import dev.vertique.codegen.jaxrs.processor.validate.HttpVerbValidator;
@@ -54,13 +54,13 @@ import javax.lang.model.util.Elements;
  *       (CG-010 slice e), which mirrors the runtime {@code RouteValidator.addContextParamViolations}
  *       rules for {@code @Context} parameters (FR-REST-187/188/189).</li>
  *   <li><strong>Emit</strong> — four emitters fire per build:
- *       {@link dev.vertique.codegen.jaxrs.emit.GeneratedJaxRsResourcesModuleEmitter} writes the
+ *       {@link dev.vertique.codegen.jaxrs.processor.emit.GeneratedJaxRsResourcesModuleEmitter} writes the
  *       Dagger DI module (only when auto-wiring is enabled);
- *       {@link dev.vertique.codegen.jaxrs.emit.JaxRsDescriptorEmitter} writes a per-resource
+ *       {@link dev.vertique.codegen.jaxrs.processor.emit.JaxRsDescriptorEmitter} writes a per-resource
  *       {@code _JaxRsDescriptor};
- *       {@link dev.vertique.codegen.jaxrs.emit.BeanParamModelEmitter} writes a per-bean
+ *       {@link dev.vertique.codegen.jaxrs.processor.emit.BeanParamModelEmitter} writes a per-bean
  *       {@code _BeanParamModel} for every {@code @BeanParam}/{@code @RequestParams} type;
- *       {@link dev.vertique.codegen.jaxrs.emit.ExecutionPlanEmitter} writes a per-method
+ *       {@link dev.vertique.codegen.jaxrs.processor.emit.ExecutionPlanEmitter} writes a per-method
  *       {@code _<methodName>_<idx>_ExecutionPlan} for each verb-bearing method that passes the
  *       eligibility gate.</li>
  * </ol>

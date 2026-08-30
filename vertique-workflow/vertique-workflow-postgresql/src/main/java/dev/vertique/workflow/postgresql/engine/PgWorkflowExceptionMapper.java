@@ -45,14 +45,14 @@ import jakarta.inject.Singleton;
  * in the runner's outer {@code recover}.
  */
 @Singleton
-class WorkflowPgExceptionMapper extends PgDbExceptionMapper {
+class PgWorkflowExceptionMapper extends PgDbExceptionMapper {
 
     /**
      * Creates a mapper that adds {@link WorkflowException} passthrough on top of the inherited
      * PostgreSQL SQL-state translations, with an unknown-passthrough {@code fallback}.
      */
     @Inject
-    WorkflowPgExceptionMapper() {
+    PgWorkflowExceptionMapper() {
         on(WorkflowException.class, (e, ctx) -> e);
     }
 

@@ -25,7 +25,7 @@ import dev.vertique.inboxoutbox.OutboxService;
 import dev.vertique.inboxoutbox.RelayCapabilities;
 import dev.vertique.inboxoutbox.TransactionalMessagingModule;
 import dev.vertique.inboxoutbox.postgresql.compose.InboxOutboxPostgresqlComposeValidator;
-import dev.vertique.inboxoutbox.postgresql.maintenance.OutboxMaintenanceServiceImpl;
+import dev.vertique.inboxoutbox.postgresql.maintenance.OutboxMaintenanceCron;
 import dev.vertique.logging.LoggingContextModule;
 import dev.vertique.services.Services;
 import io.vertx.core.DeploymentOptions;
@@ -137,7 +137,7 @@ public abstract class TransactionalMessagingPostgresqlModule {
     }
 
     /**
-     * Contributes {@link OutboxMaintenanceServiceImpl} into the {@code @Services} multibinding so
+     * Contributes {@link OutboxMaintenanceCron} into the {@code @Services} multibinding so
      * the cron registrar discovers its {@code @CronJob}-annotated maintenance methods
      * ({@code recoverStaleLeases} and {@code cleanup}).
      *
@@ -148,7 +148,7 @@ public abstract class TransactionalMessagingPostgresqlModule {
     @Singleton
     @IntoSet
     @Services
-    static Object outboxMaintenance(OutboxMaintenanceServiceImpl impl) {
+    static Object outboxMaintenance(OutboxMaintenanceCron impl) {
         return impl;
     }
 

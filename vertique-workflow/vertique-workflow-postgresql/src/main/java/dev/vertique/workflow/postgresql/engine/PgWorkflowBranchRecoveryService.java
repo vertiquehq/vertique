@@ -47,7 +47,7 @@ import org.slf4j.LoggerFactory;
  * entire sweep. Transactions are opened through the injected {@link WorkflowTransactionRunner} so DB
  * failures in the sweep surface as {@code WorkflowException} (via the runner's two-stage mapper),
  * matching the caller-facing engine paths. The service is read-side {@code @Singleton};
- * {@code WorkflowBranchRecoveryServiceImpl} (a cluster-singleton {@code @CronJob}) drives the
+ * {@code PgWorkflowBranchRecoveryCron} (a cluster-singleton {@code @CronJob}) drives the
  * periodic tick.
  */
 @Singleton
@@ -170,7 +170,7 @@ public final class PgWorkflowBranchRecoveryService {
      * Runs one recovery sweep, computing the stale cutoff as {@code now - staleness} via the
      * injected {@link Clock}.
      *
-     * <p>This is the cron-friendly overload used by {@code WorkflowBranchRecoveryServiceImpl}:
+     * <p>This is the cron-friendly overload used by {@code PgWorkflowBranchRecoveryCron}:
      * configuration declares a relative {@link Duration} and the service owns the wall-clock
      * resolution so the cron adapter stays free of timing logic. The {@link Instant} overload
      * called here re-reads the clock for the {@code next_retry_at} cutoff; the two reads are

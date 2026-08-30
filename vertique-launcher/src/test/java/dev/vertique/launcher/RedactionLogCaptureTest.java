@@ -43,7 +43,7 @@ import org.slf4j.LoggerFactory;
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 class RedactionLogCaptureTest extends AbstractLaunchTestSupport {
 
-    private static final String NOOP_VERTICLE = NoopVerticle.class.getName();
+    private static final String NOOP_VERTICLE = NoOpVerticle.class.getName();
     private static final String SENTINEL = "s3cret-SENTINEL-9472";
 
     // --- Capturing appender lifecycle ---

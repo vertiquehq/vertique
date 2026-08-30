@@ -208,9 +208,10 @@ final class ServiceContractTestFixtures {
                     """);
 
     static final JavaFileObject SERVICE_REGISTRATION_EXCEPTION_SOURCE =
-            SourceFiles.inline("dev.vertique.services.ServiceRegistrationException", """
-                    package dev.vertique.services;
+                    SourceFiles.inline("dev.vertique.services.exception.ServiceRegistrationException", """
+                    package dev.vertique.services.exception;
                     import java.util.List;
+                    import dev.vertique.services.ServiceRegistrationViolation;
                     public class ServiceRegistrationException extends RuntimeException {
                         public ServiceRegistrationException(List<ServiceRegistrationViolation> violations) {
                             super("registration failed");

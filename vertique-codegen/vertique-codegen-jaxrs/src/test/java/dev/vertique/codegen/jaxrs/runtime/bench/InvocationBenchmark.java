@@ -126,7 +126,7 @@ class InvocationBenchmark {
     /**
      * Generated execution plan for {@link BenchResource#search(String, int, int)}.
      *
-     * <p>Simulates the class that {@link dev.vertique.codegen.jaxrs.emit.ExecutionPlanEmitter}
+     * <p>Simulates the class that {@link dev.vertique.codegen.jaxrs.processor.emit.ExecutionPlanEmitter}
      * would produce for the {@code search} method:
      * <ul>
      *   <li>{@code extractArguments} uses precomputed policy constants — no annotation scanning.</li>

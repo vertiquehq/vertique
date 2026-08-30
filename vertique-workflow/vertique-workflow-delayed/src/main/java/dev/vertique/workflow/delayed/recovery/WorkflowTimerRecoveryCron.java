@@ -42,12 +42,12 @@ import jakarta.inject.Singleton;
  * </ul>
  */
 @Singleton
-public final class WorkflowTimerRecoveryServiceImpl implements WorkflowTimerRecoveryContract {
+public final class WorkflowTimerRecoveryCron implements WorkflowTimerRecoveryContract {
 
     private final Provider<WorkflowTimerRecoveryService> serviceProvider;
 
     @Inject
-    public WorkflowTimerRecoveryServiceImpl(Provider<WorkflowTimerRecoveryService> serviceProvider) {
+    public WorkflowTimerRecoveryCron(Provider<WorkflowTimerRecoveryService> serviceProvider) {
         this.serviceProvider = serviceProvider;
     }
 

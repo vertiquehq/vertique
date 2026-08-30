@@ -35,7 +35,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Wiring test proving that {@link CronJobRegistrar} discovers both {@code @CronJob} methods on
- * {@link OutboxMaintenanceServiceImpl} when the impl is registered via {@code @Services}.
+ * {@link OutboxMaintenanceCron} when the impl is registered via {@code @Services}.
  *
  * <p>Verifies:
  * <ul>
@@ -48,7 +48,7 @@ import org.junit.jupiter.api.Test;
  *       {@code @ServiceOperation} is wired correctly on the contract methods.</li>
  * </ul>
  */
-@DisplayName("OutboxMaintenanceServiceImpl cron wiring")
+@DisplayName("OutboxMaintenanceCron cron wiring")
 class OutboxMaintenanceCronWiringTest {
 
     /** Captures every job registered with {@code register(...)} without needing live Vert.x. */
@@ -80,7 +80,7 @@ class OutboxMaintenanceCronWiringTest {
     void scanRegistersBothMaintenanceJobs() {
         // The registrar reads annotations on the impl methods; the underlying service is not
         // needed for scan(). A no-op Provider keeps the wiring lightweight.
-        OutboxMaintenanceServiceImpl impl = new OutboxMaintenanceServiceImpl(() -> null);
+        OutboxMaintenanceCron impl = new OutboxMaintenanceCron(() -> null);
         ServiceContractRegistry registry =
                 ServiceContractRegistry.build(Set.of(impl), new DefaultConfigParser(DefaultConfigMapper.lenient()));
         ServiceTargetResolver resolver = stubTargetResolver();

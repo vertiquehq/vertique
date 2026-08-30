@@ -17,7 +17,7 @@ import jakarta.inject.Singleton;
  * Stage-2 (workflow-boundary) exception mapper for the workflow transaction runner.
  *
  * <p>Applied in the runner's outer {@code recover} after {@code TransactionBuilder.execute(...)}
- * has run (and stage 1, {@link WorkflowPgExceptionMapper}, has already mapped DB driver exceptions
+ * has run (and stage 1, {@link PgWorkflowExceptionMapper}, has already mapped DB driver exceptions
  * to {@link DataAccessException} subtypes). It owns the workflow-domain semantics: it translates
  * database failures into workflow exceptions so that callers of the workflow API see workflow
  * exceptions, not data-access exceptions.

@@ -35,6 +35,7 @@ import dev.vertique.security.origin.RequestOrigin;
 import dev.vertique.services.config.ServicesConfig;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamSource;
+import dev.vertique.services.exception.ServiceUnavailableException;
 import dev.vertique.services.resilience.ServiceResilienceConfigAdapter;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;

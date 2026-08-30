@@ -22,7 +22,7 @@ import jakarta.ws.rs.ext.ExceptionMapper;
  * </ul>
  */
 @Module
-public class ResourceModule {
+public abstract class ResourceModule {
 
     /**
      * Contributes {@link ItemResource} to the JAX-RS resource set.

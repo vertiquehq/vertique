@@ -27,7 +27,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * APT compile-tests for {@link dev.vertique.codegen.jaxrs.emit.ExecutionPlanEmitter} (CG-010
+ * APT compile-tests for {@link dev.vertique.codegen.jaxrs.processor.emit.ExecutionPlanEmitter} (CG-010
  * step 4d, slice 2).
  *
  * <p>Each test compiles a small fixture through the full pipeline processor and asserts on the

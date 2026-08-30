@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Codegen JAX-RS Pipeline Module
 
-> **Status:** Implemented (CG-009 validation + CG-010 runtime codegen)
+> **Status:** Implemented
 > **Package:** `dev.vertique.codegen.jaxrs`
 > **Artifact:** `vertique-codegen-jaxrs`
 > **Depends on:** `vertique-codegen-core` (compile), `vertique-rest-core` (compile — for `dev.vertique.rest.core.security.Authorized`), `vertique-rest-jaxrs` (compile — runtime SPI types)

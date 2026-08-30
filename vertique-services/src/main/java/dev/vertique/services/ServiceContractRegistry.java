@@ -11,6 +11,7 @@ import dev.vertique.resilience.annotation.TimeoutDeclaration;
 import dev.vertique.services.config.ServiceConfig;
 import dev.vertique.services.config.ServicesConfig.ServiceKey;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
+import dev.vertique.services.exception.ServiceRegistrationException;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.ThreadingModel;
 import io.vertx.core.json.JsonObject;

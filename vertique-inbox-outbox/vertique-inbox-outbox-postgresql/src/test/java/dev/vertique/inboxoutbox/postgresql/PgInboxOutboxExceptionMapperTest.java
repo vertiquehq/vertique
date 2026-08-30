@@ -20,16 +20,16 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Tests for {@link InboxOutboxExceptionMapper} — translation policy, retryability, cause
+ * Tests for {@link PgInboxOutboxExceptionMapper} — translation policy, retryability, cause
  * preservation, message sanitization, and pass-through for non-DB throwables.
  */
-class InboxOutboxExceptionMapperTest {
+class PgInboxOutboxExceptionMapperTest {
 
-    InboxOutboxExceptionMapper mapper;
+    PgInboxOutboxExceptionMapper mapper;
 
     @BeforeEach
     void setUp() {
-        mapper = new InboxOutboxExceptionMapper();
+        mapper = new PgInboxOutboxExceptionMapper();
     }
 
     // --- Retryable translations ---

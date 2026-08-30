@@ -38,7 +38,7 @@ import jakarta.inject.Singleton;
  * sweep.
  */
 @Singleton
-public final class WorkflowBranchRecoveryServiceImpl implements WorkflowBranchRecoveryContract {
+public final class PgWorkflowBranchRecoveryCron implements WorkflowBranchRecoveryContract {
 
     private final Provider<PgWorkflowBranchRecoveryService> serviceProvider;
     private final WorkflowBranchRecoveryConfig config;
@@ -50,7 +50,7 @@ public final class WorkflowBranchRecoveryServiceImpl implements WorkflowBranchRe
      * @param config the resolved recovery configuration (batch size + stale threshold)
      */
     @Inject
-    public WorkflowBranchRecoveryServiceImpl(
+    public PgWorkflowBranchRecoveryCron(
             Provider<PgWorkflowBranchRecoveryService> serviceProvider, WorkflowBranchRecoveryConfig config) {
         this.serviceProvider = serviceProvider;
         this.config = config;

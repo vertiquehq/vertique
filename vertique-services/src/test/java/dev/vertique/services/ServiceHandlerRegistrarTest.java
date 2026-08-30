@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamSource;
+import dev.vertique.services.exception.ServiceRegistrationException;
 import io.vertx.core.Future;
 import java.util.List;
 import java.util.Map;

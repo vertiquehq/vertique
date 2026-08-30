@@ -39,7 +39,7 @@ class DefaultInboxServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new DefaultInboxService(repository, new InboxOutboxExceptionMapper());
+        service = new DefaultInboxService(repository, new PgInboxOutboxExceptionMapper());
     }
 
     @Nested
@@ -122,7 +122,7 @@ class DefaultInboxServiceTest {
             assertSame(
                     workError,
                     future.cause(),
-                    "work failure must be the same instance — not wrapped by InboxOutboxExceptionMapper");
+                    "work failure must be the same instance — not wrapped by PgInboxOutboxExceptionMapper");
             verify(repository).tryInsert("msg-2", "source-b", tx);
         }
     }

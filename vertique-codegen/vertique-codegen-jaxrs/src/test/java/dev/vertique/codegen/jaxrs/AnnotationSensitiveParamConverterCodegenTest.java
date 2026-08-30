@@ -32,8 +32,8 @@ import org.junit.jupiter.api.Test;
  * End-to-end proof for GitHub issue #162 (rest-jaxrs codegen literal-backed parameter annotations,
  * slice 6): a JAX-RS {@code ParamConverterProvider} that inspects <em>parameter annotations</em> to
  * decide whether it applies now works identically on codegen-generated routes — both the
- * per-request execution-plan path ({@link dev.vertique.codegen.jaxrs.emit.ExecutionPlanEmitter}) and
- * the startup-descriptor path ({@link dev.vertique.codegen.jaxrs.emit.JaxRsDescriptorEmitter}) — as
+ * per-request execution-plan path ({@link dev.vertique.codegen.jaxrs.processor.emit.ExecutionPlanEmitter}) and
+ * the startup-descriptor path ({@link dev.vertique.codegen.jaxrs.processor.emit.JaxRsDescriptorEmitter}) — as
  * it already does on reflectively-scanned routes.
  *
  * <p>Coverage spans both annotation-member kinds: a fully-literalizable marker

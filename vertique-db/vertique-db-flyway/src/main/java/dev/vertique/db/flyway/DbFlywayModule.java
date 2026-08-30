@@ -25,7 +25,7 @@ import jakarta.inject.Singleton;
  * }</pre>
  */
 @Module
-public class DbFlywayModule {
+public abstract class DbFlywayModule {
 
     /**
      * Provides the Flyway configuration from the {@code "flyway"} config section.

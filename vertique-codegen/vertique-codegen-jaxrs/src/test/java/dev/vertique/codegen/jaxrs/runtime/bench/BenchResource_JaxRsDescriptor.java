@@ -14,7 +14,7 @@ import java.util.List;
 /**
  * Hand-crafted generated descriptor companion for {@link BenchResource}.
  *
- * <p>Simulates the class that {@link dev.vertique.codegen.jaxrs.emit.JaxRsDescriptorEmitter}
+ * <p>Simulates the class that {@link dev.vertique.codegen.jaxrs.processor.emit.JaxRsDescriptorEmitter}
  * would produce at compile time. The FQN follows the algorithm from
  * {@link dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsDescriptorRegistry#derivedFqn}:
  * same package as the resource class, simple name, plus the {@code _JaxRsDescriptor} suffix.

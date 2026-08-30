@@ -26,8 +26,8 @@ import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.WorkflowOperations;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
+import dev.vertique.workflow.postgresql.recovery.PgWorkflowBranchRecoveryCron;
 import dev.vertique.workflow.postgresql.recovery.WorkflowBranchRecoveryConfig;
-import dev.vertique.workflow.postgresql.recovery.WorkflowBranchRecoveryServiceImpl;
 import dev.vertique.workflow.registry.WorkflowContributor;
 import dev.vertique.workflow.state.WorkflowStatus;
 import io.vertx.core.Vertx;
@@ -321,9 +321,9 @@ public class WorkflowDarkModeIT {
     }
 
     @Test
-    @DisplayName("AC-8 — the WorkflowBranchRecoveryServiceImpl adapter also completes cleanly in dark mode")
+    @DisplayName("AC-8 — the PgWorkflowBranchRecoveryCron adapter also completes cleanly in dark mode")
     void darkMode_reconcileAdapterCompletesCleanly(VertxTestContext ctx) {
-        WorkflowBranchRecoveryServiceImpl adapter = new WorkflowBranchRecoveryServiceImpl(
+        PgWorkflowBranchRecoveryCron adapter = new PgWorkflowBranchRecoveryCron(
                 () -> recovery, new WorkflowBranchRecoveryConfig(10, java.time.Duration.ofSeconds(1)));
 
         Start payload = new Start("dm-2");

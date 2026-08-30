@@ -17,7 +17,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for {@link WorkflowPgExceptionMapper} (stage-1, DB boundary).
+ * Unit tests for {@link PgWorkflowExceptionMapper} (stage-1, DB boundary).
  *
  * <p>Verifies the registered-translator precedence and the {@code fallback} override: the
  * {@code on(WorkflowException.class, ...)} registration covers only workflow business-rule subtypes;
@@ -28,20 +28,20 @@ import org.junit.jupiter.api.Test;
  * driver exceptions are mapped to {@link DataAccessException} subtypes by the inherited PostgreSQL
  * rules.
  */
-class WorkflowPgExceptionMapperPrecedenceTest {
+class PgWorkflowExceptionMapperPrecedenceTest {
 
     /**
      * A reparented workflow not-found exception ({@link WorkflowInstanceNotFoundException} extends
      * {@link dev.vertique.workflow.exception.WorkflowNotFoundException} → core
      * {@link dev.vertique.core.exception.NotFoundException}, not {@link
      * dev.vertique.workflow.exception.WorkflowException}) must pass through unchanged via the
-     * {@link WorkflowPgExceptionMapper#fallback(Throwable, String) fallback} override, since it is not
+     * {@link PgWorkflowExceptionMapper#fallback(Throwable, String) fallback} override, since it is not
      * matched by {@code on(WorkflowException.class, ...)}.
      */
     @Test
     @DisplayName("translate(WorkflowInstanceNotFoundException) returns the same instance (fallback, not on() guard)")
     void workflowExceptionTranslatesToSelf() {
-        WorkflowPgExceptionMapper mapper = new WorkflowPgExceptionMapper();
+        PgWorkflowExceptionMapper mapper = new PgWorkflowExceptionMapper();
         WorkflowInstanceNotFoundException input =
                 new WorkflowInstanceNotFoundException(new WorkflowInstanceId(UUID.randomUUID()));
 
@@ -57,7 +57,7 @@ class WorkflowPgExceptionMapperPrecedenceTest {
     @Test
     @DisplayName("translate(IllegalStateException) returns the same instance (fallback override)")
     void illegalStateExceptionTranslatesToSelf() {
-        WorkflowPgExceptionMapper mapper = new WorkflowPgExceptionMapper();
+        PgWorkflowExceptionMapper mapper = new PgWorkflowExceptionMapper();
         IllegalStateException input = new IllegalStateException("bug");
 
         Throwable result = mapper.translate(input, "op");
@@ -68,13 +68,13 @@ class WorkflowPgExceptionMapperPrecedenceTest {
     /**
      * A {@link WorkflowConflictException} (extends core {@link dev.vertique.core.exception.ConflictException},
      * not {@link dev.vertique.workflow.exception.WorkflowException}) must pass through unchanged via the
-     * {@link WorkflowPgExceptionMapper#fallback(Throwable, String) fallback} override — it is a
+     * {@link PgWorkflowExceptionMapper#fallback(Throwable, String) fallback} override — it is a
      * reparented workflow-semantic type that is not matched by {@code on(WorkflowException.class, ...)}.
      */
     @Test
     @DisplayName("translate(WorkflowConflictException) returns the same instance (fallback, reparented type)")
     void workflowConflictExceptionPassesThroughViaFallback() {
-        WorkflowPgExceptionMapper mapper = new WorkflowPgExceptionMapper();
+        PgWorkflowExceptionMapper mapper = new PgWorkflowExceptionMapper();
         WorkflowConflictException input = new WorkflowConflictException("optimistic conflict");
 
         Throwable result = mapper.translate(input, "op");
@@ -89,7 +89,7 @@ class WorkflowPgExceptionMapperPrecedenceTest {
     @Test
     @DisplayName("translate(DatabaseException) maps to a DataAccessException subtype")
     void databaseExceptionTranslatesToDataAccessExceptionSubtype() {
-        WorkflowPgExceptionMapper mapper = new WorkflowPgExceptionMapper();
+        PgWorkflowExceptionMapper mapper = new PgWorkflowExceptionMapper();
         DatabaseException input = new PgException("conn lost", "ERROR", "08006", null);
 
         Throwable result = mapper.translate(input, "op");

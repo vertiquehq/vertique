@@ -27,7 +27,7 @@ import org.junit.jupiter.api.Timeout;
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 class VertiqueApplicationDiscoveryErrorTest extends AbstractLaunchTestSupport {
 
-    private static final String NOOP_VERTICLE = NoopVerticle.class.getName();
+    private static final String NOOP_VERTICLE = NoOpVerticle.class.getName();
 
     /** Deployment config that declares one launcher-stub source for close-count verification. */
     private static final String CONF_WITH_SOURCE = """
@@ -89,7 +89,7 @@ class VertiqueApplicationDiscoveryErrorTest extends AbstractLaunchTestSupport {
                 ExitCodes.VERTX_INITIALIZATION,
                 exitCode,
                 "ServiceConfigurationError from discovery must map to VERTX_INITIALIZATION (11)");
-        assertNull(NoopVerticle.startedConfig.get(), "verticle must NOT have been deployed on discovery error");
+        assertNull(NoOpVerticle.startedConfig.get(), "verticle must NOT have been deployed on discovery error");
     }
 
     @Test

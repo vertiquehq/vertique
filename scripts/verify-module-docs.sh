@@ -61,7 +61,7 @@ forbidden_heading_pattern='^##[[:space:]]+(Related ADRs|Version History|Planned 
 
 # The template mandates the blockquote status header, which is how a reader
 # learns whether the module's surface is safe to depend on.
-status_header_pattern='^>[[:space:]]*\*\*Status:\*\*'
+status_header_pattern='^>[[:space:]]*\*\*Status:\*\*[[:space:]]+(Experimental|Alpha|Beta|Implemented|Stable)[[:space:]]*$'
 
 for required_file in "$index" "$bom_pom" "$root_pom"; do
     if [[ ! -f "$required_file" ]]; then
@@ -560,7 +560,7 @@ while IFS=$'\t' read -r artifact_id link; do
         "$forbidden_heading_pattern"
 
     if ! grep -qE "$status_header_pattern" "$document"; then
-        report_failure "$artifact_id has no \"> **Status:**\" blockquote in its canonical module document at $relative_link"
+        report_failure "$artifact_id has no valid \"> **Status:**\" blockquote (Experimental, Alpha, Beta, Implemented, or Stable) in its canonical module document at $relative_link"
     fi
 
     # A repository-relative path is the one link form a packaged document may use

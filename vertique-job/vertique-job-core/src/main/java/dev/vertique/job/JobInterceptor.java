@@ -18,6 +18,11 @@ import java.time.Instant;
  * <p>Register interceptors via Dagger multibinding ({@code @IntoSet}) against
  * {@code Set<JobInterceptor>}.
  *
+ * <p>This SPI intentionally remains synchronous and observation-only. Job dispatch owns the
+ * completion boundary, so an asynchronous interceptor contract would require defining ordering,
+ * timeout, failure, and context-propagation semantics for observer work. Keep asynchronous work
+ * behind an explicitly managed application component instead of extending this lifecycle hook.
+ *
  * <p>Common use cases:
  * <ul>
  *   <li>MDC context propagation (built into {@link dev.vertique.core.eventbus.DispatchEnvelope} dispatch,

@@ -21,13 +21,13 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for {@link WorkflowBranchRecoveryServiceImpl}.
+ * Unit tests for {@link PgWorkflowBranchRecoveryCron}.
  *
  * <p>The impl is a thin adapter: it must forward the configured stale-threshold {@link Duration}
  * and batch size to {@link PgWorkflowBranchRecoveryService#sweepOnce(Duration, int)}, then map the
  * service's {@code Future<Integer>} count to {@code Future<Void>} while preserving failures.
  */
-class WorkflowBranchRecoveryServiceImplTest {
+class PgWorkflowBranchRecoveryCronTest {
 
     /**
      * Builds an impl wired to the given mock recovery service with explicit batch size and stale
@@ -38,11 +38,10 @@ class WorkflowBranchRecoveryServiceImplTest {
      * @param staleThreshold  the configured stale-threshold {@link Duration}
      * @return the configured impl under test
      */
-    private static WorkflowBranchRecoveryServiceImpl impl(
+    private static PgWorkflowBranchRecoveryCron impl(
             PgWorkflowBranchRecoveryService recoveryService, int batchSize, Duration staleThreshold) {
         Provider<PgWorkflowBranchRecoveryService> provider = () -> recoveryService;
-        return new WorkflowBranchRecoveryServiceImpl(
-                provider, new WorkflowBranchRecoveryConfig(batchSize, staleThreshold));
+        return new PgWorkflowBranchRecoveryCron(provider, new WorkflowBranchRecoveryConfig(batchSize, staleThreshold));
     }
 
     @Nested
