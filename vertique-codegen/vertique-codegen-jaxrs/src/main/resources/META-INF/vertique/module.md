@@ -228,6 +228,8 @@ Benchmark numbers from `RegistrationBenchmark` and `InvocationBenchmark` (JUnit-
 
 The large observed ratios are directional measurements over a hot JVM loop with a representative fixture (`BenchResource` — 4 methods with path/query/header parameters). Real-world improvement depends on resource count, method count, parameter complexity, and JVM warm-up.
 
+`RegistrationBenchmark` and `InvocationBenchmark` are manual-only: their class names deliberately do not match Surefire's include patterns, so they are excluded from `test`/`verify`/CI by name and must be run explicitly (see their class-level Javadoc for the exact command).
+
 ---
 
 ## Extension Points

@@ -8,11 +8,12 @@
  * <ul>
  *   <li><b>Generic registrations</b> — {@code RegistrationCollector} reads repeatable
  *       {@code @RegisterAs} and {@code @RegisterIntoSet} type declarations.</li>
- *   <li><b>Annotation-rooted</b> — {@link dev.vertique.codegen.dagger.processor.collect.PathResourceCollector},
- *       {@link dev.vertique.codegen.dagger.processor.collect.RestClientCollector}, and
- *       {@link dev.vertique.codegen.dagger.processor.collect.KafkaConsumerCollector} each query
+ *   <li><b>Annotation-rooted</b> — {@link dev.vertique.codegen.dagger.processor.collect.RestClientCollector}
+ *       and {@link dev.vertique.codegen.dagger.processor.collect.KafkaConsumerCollector} each query
  *       {@link javax.annotation.processing.RoundEnvironment#getElementsAnnotatedWith} for their
- *       respective marker annotation.</li>
+ *       respective marker annotation. The former {@code @Path}-resource collector,
+ *       {@code PathResourceCollector}, was removed when JAX-RS binding moved to
+ *       {@code vertique-codegen-jaxrs}'s {@code JaxRsPipelineProcessor} (CG-010).</li>
  *   <li><b>Root-element scan</b> —
  *       {@link dev.vertique.codegen.dagger.processor.collect.DelayedJobExecutorScanner} walks
  *       {@link javax.annotation.processing.RoundEnvironment#getRootElements()} to find concrete

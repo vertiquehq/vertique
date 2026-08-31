@@ -47,6 +47,12 @@ import org.junit.jupiter.api.Test;
  * <p>The test prints per-operation timings and the observed speedup ratio. It passes when the
  * ratio is ≥2×. CI finish-time protection: warm-up is 10 000 iterations; measurement is 100 000
  * iterations — well within the 10 s target.
+ *
+ * <p>The class name deliberately does not match Surefire's default include patterns, so it is
+ * excluded from {@code test}, {@code verify}, and CI regardless of the module it lives in. Run it
+ * manually via its {@link #main(String[])} entry point, or with {@code ./mvnw -ntp test
+ * -Dtest=RegistrationBenchmark -pl vertique-codegen/vertique-codegen-jaxrs} (which forces Surefire
+ * to select it by name even though the default includes would skip it).
  */
 @DisplayName("RegistrationBenchmark — generated-descriptor vs reflective-scan speedup")
 class RegistrationBenchmark {
