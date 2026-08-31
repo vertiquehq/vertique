@@ -109,7 +109,7 @@ upstream Model Context Protocol conformance suite's frozen `2026-07-28` requirem
 `tools-list`, `tools-call-simple-text`, `tools-call-error`, the standard image/audio/embedded-resource
 and mixed-content result shapes, request-scoped progress, `server-stateless`, and
 `dns-rebinding-protection` — each run
-to zero failures with no expected-failure baseline. The remaining 28 scored scenarios, and protocol
+to zero failures with no expected-failure baseline. The remaining 27 scored scenarios, and protocol
 capabilities this module does not implement (tasks, subscriptions, resources, prompts, and result
 extensions beyond those standard blocks), are out of scope entirely, not partially implemented. This
 module claims conformance only to that scoped ten-scenario partition, never to the full requirement set.

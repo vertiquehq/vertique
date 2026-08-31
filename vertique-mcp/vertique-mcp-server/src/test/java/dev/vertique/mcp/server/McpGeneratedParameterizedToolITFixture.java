@@ -67,12 +67,17 @@ final class McpGeneratedParameterizedToolITFixture {
     static final String SANITIZER_SOURCE_FQN = TOOL_PACKAGE + ".UpperCaseSanitizer";
     static final String CONSTRAINT_SOURCE_FQN = TOOL_PACKAGE + ".NotBlankConstraint";
     static final String INVOKER_FQN = TOOL_PACKAGE + ".GreetingTools_compose_McpToolInvoker";
+    static final String CASCADED_TOOL_NAME = "greeting.cascaded";
+    static final String CASCADED_TOOLS_SOURCE_FQN = TOOL_PACKAGE + ".CascadedGreetingTools";
+    static final String CASCADED_REQUEST_SOURCE_FQN = TOOL_PACKAGE + ".CascadedGreetingRequest";
+    static final String CASCADED_INVOKER_FQN = TOOL_PACKAGE + ".CascadedGreetingTools_compose_McpToolInvoker";
 
     private static final String SERVER_NAME = "vertique-test";
     private static final String SERVER_VERSION = "1.0";
 
     private final ProcessorTestHarness.Result result;
     private final McpToolInvoker invoker;
+    private final McpToolInvoker cascadedInvoker;
     private final HttpServer server;
     private final int port;
     private final McpInputLifecycleObservationITFixture.CapableSession session;
@@ -80,8 +85,9 @@ final class McpGeneratedParameterizedToolITFixture {
     /**
      * Compiles the real {@code GreetingTools}/{@code UpperCaseSanitizer} sources with the real {@link
      * McpToolProcessor}, loads the generated invoker through its real constructor, and starts one
-     * composed server contributing one {@link McpInputLifecycleObservationITFixture.CapableObserver}
-     * so the delivered {@code onToolInput} normalized-argument tree can be observed directly.
+     * composed server contributing two generated tools and one {@link
+     * McpInputLifecycleObservationITFixture.CapableObserver} so the delivered {@code onToolInput}
+     * normalized-argument tree can be observed directly.
      *
      * @param vertx the owning Vert.x instance
      * @throws Exception if compilation, class loading, or server startup fails
@@ -133,7 +139,7 @@ final class McpGeneratedParameterizedToolITFixture {
         // wrongly rejected as "no JSON schema representation" before this feature's own code ever runs.
         // Reported to the caller (see final report); this fixture routes around it rather than fixing
         // it. Using a custom constraint also proves the meta-annotation-based
-        // McpToolInvokerEmitter#addConstraintAnnotations detection generalizes beyond the built-ins.
+        // McpToolInvokerEmitter#addValidationAnnotations detection generalizes beyond the built-ins.
         JavaFileObject constraintSource = SourceFiles.inline(CONSTRAINT_SOURCE_FQN, """
                 package com.example.greeting;
 
@@ -164,17 +170,53 @@ final class McpGeneratedParameterizedToolITFixture {
                     }
                 }
                 """);
-        this.result = ProcessorTestHarness.run(new McpToolProcessor(), toolSource, sanitizerSource, constraintSource);
+        JavaFileObject cascadedRequestSource = SourceFiles.inline(CASCADED_REQUEST_SOURCE_FQN, """
+                package com.example.greeting;
+
+                import jakarta.validation.constraints.NotBlank;
+
+                public record CascadedGreetingRequest(@NotBlank String name) {}
+                """);
+        JavaFileObject cascadedToolSource = SourceFiles.inline(CASCADED_TOOLS_SOURCE_FQN, """
+                package com.example.greeting;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+                import jakarta.validation.Valid;
+
+                public class CascadedGreetingTools {
+
+                    @Inject
+                    public CascadedGreetingTools() {}
+
+                    @McpTool(name = "greeting.cascaded", description = "Composes a greeting from a validated request.")
+                    public Future<String> compose(
+                            @McpToolParam(name = "request", description = "The request to validate.")
+                            @Valid CascadedGreetingRequest request) {
+                        return Future.succeededFuture("Hello, " + request.name() + "!");
+                    }
+                }
+                """);
+        this.result = ProcessorTestHarness.run(
+                new McpToolProcessor(),
+                toolSource,
+                sanitizerSource,
+                constraintSource,
+                cascadedRequestSource,
+                cascadedToolSource);
         result.assertSuccess();
 
-        this.invoker = loadInvoker();
+        this.invoker = loadInvoker(TOOLS_SOURCE_FQN, INVOKER_FQN, SANITIZER_SOURCE_FQN);
+        this.cascadedInvoker = loadInvoker(CASCADED_TOOLS_SOURCE_FQN, CASCADED_INVOKER_FQN, null);
 
         McpServerConfig config = McpServerConfig.builder()
                 .enabled(true)
                 .serverName(SERVER_NAME)
                 .serverVersion(SERVER_VERSION)
                 .build();
-        McpToolRegistry registry = McpToolRegistry.build(Set.of(invoker));
+        McpToolRegistry registry = McpToolRegistry.build(Set.of(invoker, cascadedInvoker));
         RecordingSecurityRuntime securityRuntime = new RecordingSecurityRuntime();
         McpPolicyEnforcer policyEnforcer = new McpPolicyEnforcer(new SecurityPolicyEnforcer(
                 Optional.empty(),
@@ -259,20 +301,22 @@ final class McpGeneratedParameterizedToolITFixture {
      * the emitter copied onto the carrier component actually reaches the real engine, not a
      * hand-written stand-in.
      */
-    private McpToolInvoker loadInvoker() throws Exception {
-        Class<?> toolsClass = result.loadGeneratedClass(TOOLS_SOURCE_FQN);
-        Class<?> sanitizerClass = result.loadGeneratedClass(SANITIZER_SOURCE_FQN);
-        Class<?> invokerClass = result.loadGeneratedClass(INVOKER_FQN);
+    private McpToolInvoker loadInvoker(String toolsSourceFqn, String invokerFqn, String sanitizerSourceFqn)
+            throws Exception {
+        Class<?> toolsClass = result.loadGeneratedClass(toolsSourceFqn);
+        Class<?> sanitizerClass = sanitizerSourceFqn == null ? null : result.loadGeneratedClass(sanitizerSourceFqn);
+        Class<?> invokerClass = result.loadGeneratedClass(invokerFqn);
         Object toolsInstance = toolsClass.getDeclaredConstructor().newInstance();
-        Sanitizer sanitizerInstance =
-                (Sanitizer) sanitizerClass.getDeclaredConstructor().newInstance();
+        Sanitizer sanitizerInstance = sanitizerClass == null
+                ? null
+                : (Sanitizer) sanitizerClass.getDeclaredConstructor().newInstance();
 
         InputObjectProcessor processor = InputObjectProcessor.createDefault(
                 canonicalizerType -> {
                     throw new IllegalArgumentException("unresolvable canonicalizer " + canonicalizerType);
                 },
                 sanitizerType -> {
-                    if (sanitizerType.getName().equals(SANITIZER_SOURCE_FQN)) {
+                    if (sanitizerSourceFqn != null && sanitizerType.getName().equals(sanitizerSourceFqn)) {
                         return sanitizerInstance;
                     }
                     throw new IllegalArgumentException("unresolvable sanitizer " + sanitizerType);

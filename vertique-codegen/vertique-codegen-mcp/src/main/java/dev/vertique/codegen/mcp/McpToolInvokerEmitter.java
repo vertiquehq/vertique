@@ -104,10 +104,11 @@ import javax.lang.model.type.TypeMirror;
  * protocol names, and carries {@code @JsonProperty(protocolName)} plus the parameter's resolved
  * final REST-effective {@code @Canonicalize}/{@code @Sanitize} base chain (never {@code @Skip*}),
  * resolved at compile time by {@link McpInputPolicyResolver}. It also carries any Jakarta Bean
- * Validation constraint annotation ({@code @NotNull}, {@code @Size}, {@code @Pattern}, ...) declared
- * directly on the tool parameter — any annotation meta-annotated {@code @jakarta.validation.Constraint}
- * — copied verbatim so stage 4 ({@link #prepare} below) can enforce it against the materialized
- * carrier. A parameterized tool also emits a position-stable {@code List<McpToolParameterMetadata>}
+ * Validation constraint annotation ({@code @NotNull}, {@code @Size}, {@code @Pattern}, ...) and
+ * {@code @Valid} declared directly on the tool parameter. Constraints are copied verbatim and
+ * {@code @Valid} is preserved so stage 4 ({@link #prepare} below) can enforce direct constraints
+ * and cascaded validation against the materialized carrier. A parameterized tool also emits a
+ * position-stable {@code List<McpToolParameterMetadata>}
  * pairing each component name with its external protocol name and description, and the effective
  * {@code @JsonProfile} id — resolved method-over-type — is emitted as a typed {@code JsonProfileId}
  * literal.
@@ -188,6 +189,8 @@ final class McpToolInvokerEmitter {
 
     /** The fully-qualified name of the meta-annotation marking a Jakarta Bean Validation constraint. */
     private static final String JAKARTA_CONSTRAINT_FQN = "jakarta.validation.Constraint";
+    /** The fully-qualified name of Jakarta Bean Validation's cascade marker. */
+    private static final String JAKARTA_VALID_FQN = "jakarta.validation.Valid";
 
     private static final String INPUT_TYPE = "Input";
     private static final String PREPARED_CALL_TYPE = "PreparedCall";
@@ -676,7 +679,7 @@ final class McpToolInvokerEmitter {
                             .build());
             addPolicyAnnotation(component, CANONICALIZE, parameter.canonicalizers());
             addPolicyAnnotation(component, SANITIZE, parameter.sanitizers());
-            addConstraintAnnotations(component, parameter);
+            addValidationAnnotations(component, parameter);
             components.addParameter(component.build());
         });
 
@@ -685,7 +688,7 @@ final class McpToolInvokerEmitter {
                         "The typed input carrier for {@code $L}: one component per input-schema member, named with a\n"
                                 + "collision-safe positional Java identifier ({@code argument0}, {@code argument1}, ...)\n"
                                 + "while {@code @JsonProperty} preserves the declared protocol name on the wire, and any\n"
-                                + "Jakarta Bean Validation constraint declared on the source parameter is carried through\n"
+                                + "Jakarta Bean Validation metadata declared on the source parameter is carried through\n"
                                 + "for stage 4 of the fixed request-time input pipeline (contract §4.7).\n",
                         model.toolName())
                 .addModifiers(Modifier.PRIVATE)
@@ -709,19 +712,22 @@ final class McpToolInvokerEmitter {
     }
 
     /**
-     * Copies every Jakarta Bean Validation constraint annotation declared directly on the source tool
-     * parameter onto the generated carrier component, verbatim — a declared annotation is recognized
-     * as a constraint the same way Jakarta Validation itself does: meta-annotated
-     * {@code @jakarta.validation.Constraint}, not a hardcoded {@code jakarta.validation.constraints.*}
-     * allowlist, so a custom application constraint is copied too. Without this, stage 4
-     * ({@code McpBeanValidation#validate}) would always see a carrier with no declared constraints,
-     * since the generated {@code Input} record is otherwise unrelated to the source method parameter.
+     * Copies Jakarta Bean Validation metadata declared directly on the source tool parameter onto the
+     * generated carrier component. Constraint annotations are recognized the same way Jakarta
+     * Validation itself does — by the {@code @jakarta.validation.Constraint} meta-annotation, not a
+     * hardcoded {@code jakarta.validation.constraints.*} allowlist — so a custom application
+     * constraint is copied too. {@code @Valid} is copied separately because it is the cascade marker,
+     * not a constraint declaration. Without preserving both forms, stage 4
+     * ({@code McpBeanValidation#validate}) would not see the source parameter's direct constraints or
+     * nested-object cascade semantics, since the generated {@code Input} record is otherwise unrelated
+     * to the source method parameter.
      */
-    private void addConstraintAnnotations(ParameterSpec.Builder component, McpToolParameterModel parameter) {
+    private void addValidationAnnotations(ParameterSpec.Builder component, McpToolParameterModel parameter) {
         for (AnnotationMirror mirror : parameter.element().getAnnotationMirrors()) {
             TypeElement annotationType =
                     (TypeElement) mirror.getAnnotationType().asElement();
-            if (AnnotationMirrors.isPresent(annotationType, JAKARTA_CONSTRAINT_FQN)) {
+            if (AnnotationMirrors.isPresent(annotationType, JAKARTA_CONSTRAINT_FQN)
+                    || annotationType.getQualifiedName().contentEquals(JAKARTA_VALID_FQN)) {
                 component.addAnnotation(AnnotationSpec.get(mirror));
             }
         }
