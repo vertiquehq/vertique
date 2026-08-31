@@ -68,6 +68,7 @@ final class McpToolModelValidator {
 
     /** The protocol tool-name grammar, mirroring {@link McpToolDescriptor}'s own bound. */
     private static final Pattern TOOL_NAME = Pattern.compile("[A-Za-z0-9_.-]{1,128}");
+
     private static final Pattern CLIENT_CAPABILITY_NAME = Pattern.compile("[A-Za-z][A-Za-z0-9_-]{0,127}");
 
     /**
@@ -853,22 +854,24 @@ final class McpToolModelValidator {
             Object raw = value.getValue();
             if (!(raw instanceof String capability)
                     || !CLIENT_CAPABILITY_NAME.matcher(capability).matches()) {
-                ctx.diagnostics().error(
-                        method,
-                        "@McpTool '%s' on %s has requiredClientCapabilities entry '%s'; each name must match %s",
-                        toolName,
-                        method.getSimpleName(),
-                        raw,
-                        CLIENT_CAPABILITY_NAME.pattern());
+                ctx.diagnostics()
+                        .error(
+                                method,
+                                "@McpTool '%s' on %s has requiredClientCapabilities entry '%s'; each name must match %s",
+                                toolName,
+                                method.getSimpleName(),
+                                raw,
+                                CLIENT_CAPABILITY_NAME.pattern());
                 return Optional.empty();
             }
             if (!capabilities.add(capability)) {
-                ctx.diagnostics().error(
-                        method,
-                        "@McpTool '%s' on %s repeats required client capability '%s'",
-                        toolName,
-                        method.getSimpleName(),
-                        capability);
+                ctx.diagnostics()
+                        .error(
+                                method,
+                                "@McpTool '%s' on %s repeats required client capability '%s'",
+                                toolName,
+                                method.getSimpleName(),
+                                capability);
                 return Optional.empty();
             }
         }

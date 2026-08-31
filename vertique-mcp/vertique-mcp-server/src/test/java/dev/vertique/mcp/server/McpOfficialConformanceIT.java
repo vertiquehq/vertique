@@ -101,6 +101,14 @@ public class McpOfficialConformanceIT {
             "tools-call-with-progress",
             "server-stateless",
             "dns-rebinding-protection");
+    private static final Map<String, Set<String>> EXPECTED_OPTIONAL_SKIPS = Map.of(
+            "server-stateless",
+            Set.of(
+                    "sep-2575-server-sends-subscription-ack",
+                    "sep-2575-server-tags-subscription-id",
+                    "sep-2575-server-honors-notification-filter",
+                    "sep-2575-server-sends-prompts-list-changed-on-subscription",
+                    "sep-2575-server-sends-tools-list-changed-on-subscription"));
     private static final Path RETAINED_RESULTS = Path.of("target", "mcp-conformance-results");
 
     private static ConformanceFixture fixture;
@@ -186,6 +194,15 @@ public class McpOfficialConformanceIT {
                     .anySatisfy(check -> assertThat(check.getString("status")).isEqualTo("SUCCESS"));
             assertThat(report.checks())
                     .noneSatisfy(check -> assertThat(check.getString("status")).isIn("FAILURE", "WARNING"));
+            Set<String> skipped = new LinkedHashSet<>();
+            report.checks().forEach(check -> {
+                if ("SKIPPED".equals(check.getString("status"))) {
+                    skipped.add(check.getString("id"));
+                }
+            });
+            assertThat(skipped)
+                    .as(scenario + " may skip only explicitly allowlisted optional checks")
+                    .containsExactlyInAnyOrderElementsOf(EXPECTED_OPTIONAL_SKIPS.getOrDefault(scenario, Set.of()));
 
             List<McpRequestTerminalEvent> terminalEvents = List.copyOf(fixture.terminalEvents());
             assertThat(terminalEvents)
@@ -430,9 +447,7 @@ public class McpOfficialConformanceIT {
                                 "test_missing_capability",
                                 McpToolResult.text("sampling capability was supplied"),
                                 Set.of("sampling")),
-                        tool(
-                                "test_streaming_elicitation",
-                                McpToolResult.text("streaming diagnostic complete")),
+                        tool("test_streaming_elicitation", McpToolResult.text("streaming diagnostic complete")),
                         tool("test_logging_tool", McpToolResult.text("logging diagnostic complete")),
                         progressTool()));
                 RecordingSecurityRuntime securityRuntime = new RecordingSecurityRuntime();

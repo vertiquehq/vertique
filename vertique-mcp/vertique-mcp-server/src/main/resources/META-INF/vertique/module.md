@@ -218,7 +218,10 @@ request-scoped `notifications/progress`; the reporter is a no-op without a clien
 `params._meta.progressToken`, and progress is never a partial result. Opaque progress tokens are
 retained losslessly, bounded to 4,096 UTF-8 bytes, and are not narrowed to Java numeric primitives.
 Progress frames and the terminal frame consume one shared `mcp.outputMaxBytes` response budget, so
-repeated progress cannot amplify the response beyond the configured cap. The completion
+repeated progress cannot amplify the response beyond the configured cap. Capacity for the bounded
+terminal fallback is protected before progress starts; if the intended terminal frame cannot fit,
+the server emits that bounded JSON-RPC `-32603` SSE fallback rather than ending the stream without a
+terminal result. The completion
 coordinator owns this signal and fires it from the same first-observed-wins guard that governs
 completion: a genuinely successful write never fires it, but every other settlement path does,
 including the stalled-write recovery below. Every `tools/call` invocation receives this signal through
@@ -589,7 +592,8 @@ output](#bounded-response-output)): serialization streams to the same byte-count
 the moment the running count would exceed `mcp.outputMaxBytes`, so an over-cap structured result is
 classified as `SERIALIZATION` before its full byte array is ever materialized, covering structured
 content as well as discovery and listing payloads. Progress and terminal SSE frames additionally share
-the coordinator's request-scoped response budget, including the framing bytes.
+the coordinator's request-scoped response budget, including the framing bytes and the protected
+terminal-fallback capacity.
 
 ## Tool runtime
 

@@ -241,7 +241,9 @@ final class McpRequestDispatcher {
             new McpToolAccess(McpAccessMode.DENY_ALL, List.of(), null));
 
     private static final String KEY_PREFIX = McpRequestDispatcher.class.getName();
-    private static final String COMPLETION_COORDINATOR_KEY = KEY_PREFIX + ".completionCoordinator";
+    static final String COMPLETION_COORDINATOR_KEY = KEY_PREFIX + ".completionCoordinator";
+    static final String TERMINAL_FALLBACK_BODY_KEY = KEY_PREFIX + ".terminalFallbackBody";
+    static final String SSE_SELECTED_KEY = KEY_PREFIX + ".sseSelected";
     private static final String STARTED_AT_KEY = KEY_PREFIX + ".startedAt";
 
     /**
@@ -565,7 +567,10 @@ final class McpRequestDispatcher {
                 context,
                 config.outputMaxBytes(),
                 () -> settlementTerminal(context, startedAt, McpErrorType.TRANSPORT));
+        byte[] terminalFallback = sseFrame(boundedSseErrorResponse(null, INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE));
+        coordinator.bindTerminalResponseBytes(terminalFallback.length);
         context.put(COMPLETION_COORDINATOR_KEY, coordinator);
+        context.put(TERMINAL_FALLBACK_BODY_KEY, terminalFallback);
         context.put(REQUEST_CONTEXT_KEY, owningContext);
         registerSettlementHooks(context, coordinator, startedAt);
         context.next();
@@ -2140,8 +2145,8 @@ final class McpRequestDispatcher {
             @Nullable SecurityContextSnapshot security,
             String toolName,
             Set<String> missingCapabilities) {
-        ObjectNode response = errorNode(envelope.get("id"), MISSING_REQUIRED_CLIENT_CAPABILITY,
-                "Missing required client capability");
+        ObjectNode response =
+                errorNode(envelope.get("id"), MISSING_REQUIRED_CLIENT_CAPABILITY, "Missing required client capability");
         ObjectNode requiredCapabilities = OUTPUT_ENCODER.createObjectNode();
         missingCapabilities.forEach(name -> requiredCapabilities.set(name, OUTPUT_ENCODER.createObjectNode()));
         ObjectNode data = OUTPUT_ENCODER.createObjectNode();
@@ -2463,6 +2468,7 @@ final class McpRequestDispatcher {
         context.response().putHeader("content-type", EVENT_STREAM_CONTENT_TYPE);
         context.response().putHeader("X-Accel-Buffering", "no");
         context.response().setChunked(true);
+        context.put(SSE_SELECTED_KEY, Boolean.TRUE);
     }
 
     /** Returns the already-schema-validated request progress token, when one was supplied. */
@@ -2956,16 +2962,35 @@ final class McpRequestDispatcher {
      */
     private static boolean writeSse(
             RoutingContext context, int status, byte[] jsonPayload, McpRequestTerminalEvent terminal) {
-        return write(context, status, sseFrame(jsonPayload), terminal);
+        return write(context, status, sseFrame(jsonPayload), terminal, context.get(TERMINAL_FALLBACK_BODY_KEY));
     }
 
     /** Frames one complete JSON-RPC message as a single {@code event: message} / {@code data:} SSE block. */
-    private static byte[] sseFrame(byte[] jsonPayload) {
+    static byte[] sseFrame(byte[] jsonPayload) {
         byte[] framed = new byte[SSE_FRAME_OVERHEAD + jsonPayload.length];
         System.arraycopy(SSE_PREFIX, 0, framed, 0, SSE_PREFIX.length);
         System.arraycopy(jsonPayload, 0, framed, SSE_PREFIX.length, jsonPayload.length);
         System.arraycopy(SSE_SUFFIX, 0, framed, SSE_PREFIX.length + jsonPayload.length, SSE_SUFFIX.length);
         return framed;
+    }
+
+    private static McpRequestTerminalEvent terminalForResponseBudget(McpRequestTerminalEvent terminal) {
+        Instant terminalAt = Instant.now();
+        if (terminalAt.isBefore(terminal.startedAt())) {
+            terminalAt = terminal.startedAt();
+        }
+        return McpRequestTerminalEvent.failed(
+                terminal.startedAt(),
+                terminalAt,
+                terminal.method(),
+                terminal.toolName(),
+                McpErrorType.SERIALIZATION,
+                500,
+                INTERNAL_ERROR,
+                terminal.protocolVersion(),
+                terminal.authorization(),
+                terminal.security(),
+                terminal.correlation());
     }
 
     /**
@@ -3237,7 +3262,29 @@ final class McpRequestDispatcher {
     // ignore it; only writeSse/writeToolResult
     // observe it, to gate the output observation on the write having actually won.
     static boolean write(RoutingContext context, int status, @Nullable byte[] body, McpRequestTerminalEvent terminal) {
+        @Nullable
+        byte[] terminalFallbackBody =
+                context.get(SSE_SELECTED_KEY) == Boolean.TRUE ? context.get(TERMINAL_FALLBACK_BODY_KEY) : null;
+        return write(context, status, body, terminal, terminalFallbackBody);
+    }
+
+    private static boolean write(
+            RoutingContext context,
+            int status,
+            @Nullable byte[] body,
+            McpRequestTerminalEvent terminal,
+            @Nullable byte[] terminalFallbackBody) {
         McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
+        byte[] effectiveBody = body;
+        McpRequestTerminalEvent effectiveTerminal = terminal;
+        if (coordinator != null
+                && body != null
+                && terminalFallbackBody != null
+                && !coordinator.canReserveResponseBytes(body.length)
+                && coordinator.canReserveResponseBytes(terminalFallbackBody.length)) {
+            effectiveBody = terminalFallbackBody;
+            effectiveTerminal = terminalForResponseBudget(terminal);
+        }
         // Logical settlement precedes the byte write: beginWrite publishes the terminal and claims
         // the shared first-observed latch. If a settlement (disconnect or reset) already won, the
         // client-visible write is superseded and must be suppressed — otherwise a slow handler's late
@@ -3256,10 +3303,10 @@ final class McpRequestDispatcher {
         // reads or writes again. McpServerConfigValidator's startup gate is what guarantees an enabled
         // mount always has at least one of the two qualifying timeouts armed, which is what makes this
         // comment true.
-        if (coordinator != null && !coordinator.beginWrite(terminal)) {
+        if (coordinator != null && !coordinator.beginWrite(effectiveTerminal)) {
             return false;
         }
-        if (coordinator != null && body != null && !coordinator.reserveResponseBytes(body.length)) {
+        if (coordinator != null && effectiveBody != null && !coordinator.reserveResponseBytes(effectiveBody.length)) {
             coordinator.finishWrite(
                     McpTransportOutcome.WRITE_FAILED, context.response().headWritten(), Instant.now());
             context.response().end();
@@ -3278,7 +3325,7 @@ final class McpRequestDispatcher {
                 && coordinator.hasRawEvidenceObservers()
                 && classifiedMethodOf(context) == McpMethod.TOOLS_CALL) {
             coordinator.publishResponseWritten(new McpResponseEvidence(
-                    body != null ? body : new byte[0],
+                    effectiveBody != null ? effectiveBody : new byte[0],
                     headerMapOf(context.response().headers())));
         }
         Handler<AsyncResult<Void>> onEnd = result -> {
@@ -3291,13 +3338,13 @@ final class McpRequestDispatcher {
                         Instant.now());
             }
         };
-        if (body == null) {
+        if (effectiveBody == null) {
             context.response().end().onComplete(onEnd);
             return true;
         }
         // SSE may already contain request-scoped progress frames, so the response is explicitly
         // chunked by selectSse and this terminal frame is appended to that same stream.
-        context.response().end(Buffer.buffer(body)).onComplete(onEnd);
+        context.response().end(Buffer.buffer(effectiveBody)).onComplete(onEnd);
         return true;
     }
 
@@ -3317,8 +3364,7 @@ final class McpRequestDispatcher {
         return errorNode(id, code, message, null);
     }
 
-    private static ObjectNode errorNode(
-            @Nullable JsonNode id, int code, String message, @Nullable JsonNode data) {
+    private static ObjectNode errorNode(@Nullable JsonNode id, int code, String message, @Nullable JsonNode data) {
         ObjectNode response = OUTPUT_ENCODER.createObjectNode();
         response.put("jsonrpc", "2.0");
         response.set("id", id != null ? id : NullNode.getInstance());

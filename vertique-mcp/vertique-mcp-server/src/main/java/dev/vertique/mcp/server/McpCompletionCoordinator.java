@@ -66,6 +66,7 @@ final class McpCompletionCoordinator {
     private double lastProgress = -1;
     private int progressMessages;
     private int responseBytesReserved;
+    private int terminalResponseBytesReserved;
 
     // Both latches are mutated only on the request-owning Vert.x context: the write path calls
     // beginWrite/finishWrite synchronously on that context, and settlement either completes inline
@@ -243,7 +244,27 @@ final class McpCompletionCoordinator {
     }
 
     boolean reserveResponseBytes(int bytes) {
-        if (bytes < 0 || (long) responseBytesReserved + bytes > responseMaxBytes) {
+        if (!canReserveResponseBytes(bytes)) {
+            return false;
+        }
+        responseBytesReserved += bytes;
+        return true;
+    }
+
+    boolean canReserveResponseBytes(int bytes) {
+        return bytes >= 0 && (long) responseBytesReserved + bytes <= responseMaxBytes;
+    }
+
+    /** Reserves exact capacity for the bounded terminal fallback before progress can use the budget. */
+    void bindTerminalResponseBytes(int bytes) {
+        if (bytes <= 0 || bytes > responseMaxBytes) {
+            throw new IllegalArgumentException("terminal response bytes must fit the response budget");
+        }
+        terminalResponseBytesReserved = bytes;
+    }
+
+    private boolean reserveProgressBytes(int bytes) {
+        if (bytes < 0 || (long) responseBytesReserved + bytes + terminalResponseBytesReserved > responseMaxBytes) {
             return false;
         }
         responseBytesReserved += bytes;
@@ -278,14 +299,9 @@ final class McpCompletionCoordinator {
             params.put("progress", progress);
             if (total != null) params.put("total", total);
             if (message != null) params.put("message", message);
-            byte[] prefix = "event: message\ndata: ".getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            byte[] payload = notification.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            byte[] suffix = "\n\n".getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            byte[] frame = new byte[prefix.length + payload.length + suffix.length];
-            System.arraycopy(prefix, 0, frame, 0, prefix.length);
-            System.arraycopy(payload, 0, frame, prefix.length, payload.length);
-            System.arraycopy(suffix, 0, frame, prefix.length + payload.length, suffix.length);
-            if (!reserveResponseBytes(frame.length)) {
+            byte[] frame = McpRequestDispatcher.sseFrame(
+                    notification.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            if (!reserveProgressBytes(frame.length)) {
                 result.complete();
                 return;
             }

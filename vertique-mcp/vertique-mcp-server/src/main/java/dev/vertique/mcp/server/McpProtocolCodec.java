@@ -76,6 +76,7 @@ final class McpProtocolCodec {
      * different stage.
      */
     private static final String MSG_NEGOTIATION_MISMATCH = "Header/body mismatch";
+
     private static final String MSG_UNSUPPORTED_PROTOCOL_VERSION = "Unsupported protocol version";
 
     // --- Protocol negotiation (contract §4.7) ---

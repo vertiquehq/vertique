@@ -296,9 +296,12 @@ final class McpToolInvokerEmitter {
                         .addAnnotation(Override.class)
                         .addModifiers(Modifier.PUBLIC)
                         .returns(SET)
-                        .addStatement("return $T.of($L)", SET, model.requiredClientCapabilities().stream()
-                                .map(value -> CodeBlock.of("$S", value))
-                                .collect(CodeBlock.joining(", ")))
+                        .addStatement(
+                                "return $T.of($L)",
+                                SET,
+                                model.requiredClientCapabilities().stream()
+                                        .map(value -> CodeBlock.of("$S", value))
+                                        .collect(CodeBlock.joining(", ")))
                         .build())
                 .addMethod(prepare(model, inputType, preparedCallType, cancellationAware))
                 .addType(preparedCall(model, inputType, preparedCallType, cancellationAware))

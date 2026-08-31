@@ -6,6 +6,7 @@ package dev.vertique.mcp.server;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -150,6 +151,54 @@ class McpProgressReporterTest {
 
             finished.future().toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
             org.mockito.Mockito.verifyNoInteractions(response);
+        } finally {
+            vertx.close().toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    @DisplayName("progress cannot consume the terminal response budget")
+    void shouldWriteTerminalFallbackWhenProgressLeavesNoRoomForTerminalBody() throws Exception {
+        Vertx vertx = Vertx.vertx();
+        try {
+            Context context = vertx.getOrCreateContext();
+            RoutingContext routing = mock(RoutingContext.class);
+            HttpServerResponse response = mock(HttpServerResponse.class);
+            when(routing.response()).thenReturn(response);
+            when(response.write(any(Buffer.class))).thenReturn(Future.succeededFuture());
+            when(response.end(any(Buffer.class))).thenReturn(Future.succeededFuture());
+
+            byte[] fallback =
+                    "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32603,\"message\":\"Internal error\"}}\n\n"
+                            .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            McpCompletionCoordinator coordinator = new McpCompletionCoordinator(
+                    context, Set.of(), Set.of(), Instant.now(), InstantSource.system(), routing, 512, null);
+            coordinator.bindTerminalResponseBytes(fallback.length);
+            when(routing.get(McpRequestDispatcher.COMPLETION_COORDINATOR_KEY)).thenReturn(coordinator);
+            when(routing.get(McpRequestDispatcher.SSE_SELECTED_KEY)).thenReturn(Boolean.TRUE);
+            when(routing.get(McpRequestDispatcher.TERMINAL_FALLBACK_BODY_KEY)).thenReturn(fallback);
+
+            Promise<Void> progressFinished = Promise.promise();
+            context.runOnContext(ignored -> {
+                coordinator.bindProgressToken(new ObjectMapper().valueToTree("token"));
+                McpProgressReporter reporter = coordinator.progressReporter();
+                reporter.report(1, null, "one")
+                        .compose(v -> reporter.report(2, null, "two"))
+                        .compose(v -> reporter.report(3, null, "three"))
+                        .onComplete(progressFinished);
+            });
+            progressFinished.future().toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
+
+            McpRequestTerminalEvent terminal = McpRequestTerminalEvent.success(
+                    Instant.now(), Instant.now(), McpMethod.TOOLS_CALL, "weather.current", 200, null, null, null, null);
+            assertThat(McpRequestDispatcher.write(routing, 200, new byte[300], terminal))
+                    .isTrue();
+
+            var end = org.mockito.ArgumentCaptor.forClass(Buffer.class);
+            verify(response).end(end.capture());
+            assertThat(end.getValue().toString())
+                    .isEqualTo(new String(fallback, java.nio.charset.StandardCharsets.UTF_8));
+            verify(response, never()).end();
         } finally {
             vertx.close().toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
         }
