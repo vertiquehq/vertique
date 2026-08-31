@@ -214,7 +214,10 @@ A disconnect, a stream reset, or a failed terminal write fires the request's `Mc
 exactly once, in addition to the exactly-once terminal/completion settlement above. A handler can
 call `cancellation.progressReporter().report(progress, total, message)` to emit standard
 request-scoped `notifications/progress`; the reporter is a no-op without a client-supplied
-`params._meta.progressToken`, and progress is never a partial result. The completion
+`params._meta.progressToken`, and progress is never a partial result. Opaque progress tokens are
+retained losslessly, bounded to 4,096 UTF-8 bytes, and are not narrowed to Java numeric primitives.
+Progress frames and the terminal frame consume one shared `mcp.outputMaxBytes` response budget, so
+repeated progress cannot amplify the response beyond the configured cap. The completion
 coordinator owns this signal and fires it from the same first-observed-wins guard that governs
 completion: a genuinely successful write never fires it, but every other settlement path does,
 including the stalled-write recovery below. Every `tools/call` invocation receives this signal through
@@ -242,7 +245,8 @@ writer that stops the moment the running count would exceed the cap, so an over-
 classified as a bounded internal error and never emitted — the full over-cap byte array is never
 materialized. Discovery and `tools/list` responses are far below the default cap; a `tools/call`
 structured result is bounded the same way — see [Bounded output pipeline](#bounded-output-pipeline)
-for the full output-stage order this cap is one part of.
+for the full output-stage order this cap is one part of. For SSE tool calls, the coordinator accounts
+for every progress and terminal frame against the same request-scoped byte budget.
 
 Every JSON-RPC error response — a negotiation-mismatch `-32020`, an official-params or
 unknown-or-unauthorized `-32602`, an interceptor rejection, an ordinary envelope-decode failure
@@ -583,7 +587,8 @@ The response write itself is bounded exactly like discovery and `tools/list` ([B
 output](#bounded-response-output)): serialization streams to the same byte-counting sink that aborts
 the moment the running count would exceed `mcp.outputMaxBytes`, so an over-cap structured result is
 classified as `SERIALIZATION` before its full byte array is ever materialized, covering structured
-content as well as discovery and listing payloads.
+content as well as discovery and listing payloads. Progress and terminal SSE frames additionally share
+the coordinator's request-scoped response budget, including the framing bytes.
 
 ## Tool runtime
 

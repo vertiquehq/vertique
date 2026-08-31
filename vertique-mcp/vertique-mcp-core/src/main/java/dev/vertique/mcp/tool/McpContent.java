@@ -4,6 +4,8 @@
 package dev.vertique.mcp.tool;
 
 import jakarta.annotation.Nullable;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.Base64;
 import java.util.Objects;
 
@@ -48,7 +50,7 @@ public sealed interface McpContent
             @Nullable String description,
             @Nullable String mimeType) implements McpContent {
         public ResourceLink {
-            Objects.requireNonNull(uri, "uri");
+            validateUri(uri);
             Objects.requireNonNull(name, "name");
         }
 
@@ -75,7 +77,7 @@ public sealed interface McpContent
     /** A text embedded resource. */
     record TextResource(String uri, @Nullable String mimeType, String text) implements Resource {
         public TextResource {
-            Objects.requireNonNull(uri, "uri");
+            validateUri(uri);
             Objects.requireNonNull(text, "text");
         }
     }
@@ -83,9 +85,21 @@ public sealed interface McpContent
     /** A base64-encoded binary embedded resource. */
     record BlobResource(String uri, @Nullable String mimeType, String blob) implements Resource {
         public BlobResource {
-            Objects.requireNonNull(uri, "uri");
+            validateUri(uri);
             Objects.requireNonNull(blob, "blob");
             Base64.getDecoder().decode(blob);
+        }
+    }
+
+    private static void validateUri(String uri) {
+        Objects.requireNonNull(uri, "uri");
+        if (uri.isEmpty()) {
+            throw new IllegalArgumentException("uri must not be empty");
+        }
+        try {
+            new URI(uri);
+        } catch (URISyntaxException invalidUri) {
+            throw new IllegalArgumentException("uri must be a valid URI", invalidUri);
         }
     }
 }

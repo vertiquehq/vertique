@@ -27,6 +27,7 @@ import io.vertx.core.Promise;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.RecordComponent;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -61,6 +62,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 class McpToolResultTest {
 
     @Test
+    @DisplayName("constructs all standard content blocks in order")
     void shouldConstructEveryStandardContentBlockInOrder() {
         List<McpContent> blocks = List.of(
                 new McpContent.Text("text"),
@@ -78,6 +80,7 @@ class McpToolResultTest {
     }
 
     @Test
+    @DisplayName("keeps structured content alongside standard content")
     void shouldSupportStructuredContentAlongsideStandardContent() {
         var structured = Map.of("condition", "clear");
 
@@ -90,6 +93,7 @@ class McpToolResultTest {
     }
 
     @Test
+    @DisplayName("rejects invalid base64 binary content")
     void shouldRejectInvalidBase64BinaryContent() {
         assertThatThrownBy(() -> new McpContent.Image("not base64!", "image/png"))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -97,6 +101,45 @@ class McpToolResultTest {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new McpContent.BlobResource("urn:example", null, "not base64!"))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("rejects empty and syntactically invalid resource URIs")
+    void shouldRejectInvalidResourceUris() {
+        assertThatThrownBy(() -> new McpContent.ResourceLink("not a URI", "example"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new McpContent.TextResource("", null, "resource"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new McpContent.BlobResource("urn:bad uri", null, "aGVsbG8="))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("defensively copies standard content")
+    void shouldDefensivelyCopyStandardContent() {
+        var mutableContent = new ArrayList<McpContent>(List.of(new McpContent.Text("one")));
+
+        McpToolResult<Void> result = McpToolResult.content(mutableContent);
+        mutableContent.add(new McpContent.Text("two"));
+
+        assertThat(result.content()).containsExactly(new McpContent.Text("one"));
+        assertThatThrownBy(() -> result.content().add(new McpContent.Text("three")))
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    @DisplayName("retains the legacy three-argument result constructor and accessors")
+    void shouldRetainLegacyResultApiContract() throws Exception {
+        McpToolResult<Void> result = new McpToolResult<>(List.of("text"), null, false);
+
+        assertThat(McpToolResult.class.isRecord()).isFalse();
+        assertThat(McpToolResult.class.getConstructor(List.class, Object.class, boolean.class))
+                .isNotNull();
+        assertThat(result.textContent()).containsExactly("text");
+        assertThat(result.structuredContent()).isNull();
+        assertThat(result.isError()).isFalse();
+        assertThat(result.toString())
+                .isEqualTo("McpToolResult[textContent=[text], structuredContent=null, isError=false]");
     }
 
     private static final String TOOL_PACKAGE = "com.example.resultalgebra";

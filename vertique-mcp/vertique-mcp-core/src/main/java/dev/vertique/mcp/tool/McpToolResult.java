@@ -107,7 +107,7 @@ public final class McpToolResult<T> {
 
     @Override
     public final String toString() {
-        return "McpToolResult[content=" + content() + ", structuredContent=" + structuredContent + ", isError="
+        return "McpToolResult[textContent=" + textContent + ", structuredContent=" + structuredContent + ", isError="
                 + isError + "]";
     }
 

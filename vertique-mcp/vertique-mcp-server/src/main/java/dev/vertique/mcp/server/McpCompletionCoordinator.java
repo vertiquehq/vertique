@@ -3,6 +3,9 @@
 
 package dev.vertique.mcp.server;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.vertique.core.correlation.TraceReference;
 import dev.vertique.mcp.lifecycle.McpCompletionScope;
 import dev.vertique.mcp.lifecycle.McpRawEvidenceObservation;
@@ -24,15 +27,14 @@ import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
-import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.annotation.Nullable;
 import java.time.Instant;
 import java.time.InstantSource;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -43,6 +45,7 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 final class McpCompletionCoordinator {
+    private static final int DEFAULT_RESPONSE_MAX_BYTES = 2_097_152;
     private final Context context;
     private final List<McpRequestObservation> observations;
     private final boolean hasValueObservers;
@@ -51,15 +54,18 @@ final class McpCompletionCoordinator {
     private final InstantSource clock;
     private final McpRequestCancellationSignal cancellationSignal;
     private final McpProgressReporter progressReporter;
+    private final int responseMaxBytes;
+    private final Supplier<McpRequestTerminalEvent> progressWriteFailureTerminal;
 
     @Nullable
     private final RoutingContext responseContext;
 
     @Nullable
-    private Object progressToken;
+    private JsonNode progressToken;
 
     private double lastProgress = -1;
     private int progressMessages;
+    private int responseBytesReserved;
 
     // Both latches are mutated only on the request-owning Vert.x context: the write path calls
     // beginWrite/finishWrite synchronously on that context, and settlement either completes inline
@@ -121,6 +127,21 @@ final class McpCompletionCoordinator {
             Instant startedAt,
             InstantSource clock,
             @Nullable RoutingContext responseContext) {
+        this(context, observers, listeners, startedAt, clock, responseContext, DEFAULT_RESPONSE_MAX_BYTES, null);
+    }
+
+    McpCompletionCoordinator(
+            Context context,
+            Set<McpRequestLifecycleObserver> observers,
+            Set<McpRequestCompletedListener> listeners,
+            Instant startedAt,
+            InstantSource clock,
+            @Nullable RoutingContext responseContext,
+            int responseMaxBytes,
+            @Nullable Supplier<McpRequestTerminalEvent> progressWriteFailureTerminal) {
+        if (responseMaxBytes <= 0) {
+            throw new IllegalArgumentException("responseMaxBytes must be positive");
+        }
         this.context = context;
         this.observations = openObservers(observers, startedAt);
         this.hasValueObservers =
@@ -130,6 +151,8 @@ final class McpCompletionCoordinator {
         this.listeners = Set.copyOf(listeners);
         this.clock = clock;
         this.responseContext = responseContext;
+        this.responseMaxBytes = responseMaxBytes;
+        this.progressWriteFailureTerminal = progressWriteFailureTerminal;
         this.progressReporter = responseContext == null ? McpProgressReporter.noop() : this::reportProgress;
         this.cancellationSignal = new McpRequestCancellationSignal(this.progressReporter);
     }
@@ -215,8 +238,16 @@ final class McpCompletionCoordinator {
         return progressReporter;
     }
 
-    void bindProgressToken(@Nullable Object progressToken) {
+    void bindProgressToken(@Nullable JsonNode progressToken) {
         this.progressToken = progressToken;
+    }
+
+    boolean reserveResponseBytes(int bytes) {
+        if (bytes < 0 || (long) responseBytesReserved + bytes > responseMaxBytes) {
+            return false;
+        }
+        responseBytesReserved += bytes;
+        return true;
     }
 
     private Future<Void> reportProgress(double progress, @Nullable Double total, @Nullable String message) {
@@ -239,20 +270,25 @@ final class McpCompletionCoordinator {
             }
             lastProgress = progress;
             progressMessages++;
-            Map<String, Object> params = new java.util.LinkedHashMap<>();
-            params.put("progressToken", progressToken);
+            ObjectNode notification = JsonNodeFactory.instance.objectNode();
+            notification.put("jsonrpc", "2.0");
+            notification.put("method", "notifications/progress");
+            ObjectNode params = notification.putObject("params");
+            params.set("progressToken", progressToken.deepCopy());
             params.put("progress", progress);
             if (total != null) params.put("total", total);
             if (message != null) params.put("message", message);
-            String json = new JsonObject(Map.of("jsonrpc", "2.0", "method", "notifications/progress", "params", params))
-                    .encode();
             byte[] prefix = "event: message\ndata: ".getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            byte[] payload = json.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            byte[] payload = notification.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
             byte[] suffix = "\n\n".getBytes(java.nio.charset.StandardCharsets.UTF_8);
             byte[] frame = new byte[prefix.length + payload.length + suffix.length];
             System.arraycopy(prefix, 0, frame, 0, prefix.length);
             System.arraycopy(payload, 0, frame, prefix.length, payload.length);
             System.arraycopy(suffix, 0, frame, prefix.length + payload.length, suffix.length);
+            if (!reserveResponseBytes(frame.length)) {
+                result.complete();
+                return;
+            }
             responseContextWrite(frame, result);
         });
         return result.future();
@@ -269,7 +305,14 @@ final class McpCompletionCoordinator {
                     if (ar.succeeded()) {
                         result.complete();
                     } else {
-                        cancellationSignal.cancel();
+                        if (progressWriteFailureTerminal != null) {
+                            settle(
+                                    progressWriteFailureTerminal.get(),
+                                    McpTransportOutcome.WRITE_FAILED,
+                                    responseContext.response().headWritten());
+                        } else {
+                            cancellationSignal.cancel();
+                        }
                         result.fail(ar.cause());
                     }
                 });

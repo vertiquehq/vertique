@@ -140,6 +140,7 @@ final class McpRequestDispatcher {
     private static final String EVENT_STREAM_CONTENT_TYPE = "text/event-stream";
     private static final String APPLICATION_WILDCARD_RANGE = "application/*";
     private static final String WILDCARD_RANGE = "*/*";
+    private static final int MAX_PROGRESS_TOKEN_BYTES = 4_096;
 
     private static final int PARSE_ERROR = -32700;
     private static final int INVALID_REQUEST = -32600;
@@ -557,7 +558,9 @@ final class McpRequestDispatcher {
                 completedListeners,
                 startedAt,
                 java.time.InstantSource.system(),
-                context);
+                context,
+                config.outputMaxBytes(),
+                () -> settlementTerminal(context, startedAt, McpErrorType.TRANSPORT));
         context.put(COMPLETION_COORDINATOR_KEY, coordinator);
         context.put(REQUEST_CONTEXT_KEY, owningContext);
         registerSettlementHooks(context, coordinator, startedAt);
@@ -2403,13 +2406,11 @@ final class McpRequestDispatcher {
 
     /** Returns the already-schema-validated request progress token, when one was supplied. */
     @Nullable
-    private static Object progressTokenOf(JsonNode envelope) {
+    static JsonNode progressTokenOf(JsonNode envelope) {
         JsonNode token = envelope.path("params").path("_meta").path("progressToken");
-        if (token.isTextual()) {
-            return token.textValue();
-        }
-        if (token.isIntegralNumber()) {
-            return token.longValue();
+        if ((token.isTextual() || token.isIntegralNumber())
+                && token.toString().getBytes(StandardCharsets.UTF_8).length <= MAX_PROGRESS_TOKEN_BYTES) {
+            return token.deepCopy();
         }
         return null;
     }
@@ -3196,6 +3197,12 @@ final class McpRequestDispatcher {
         // mount always has at least one of the two qualifying timeouts armed, which is what makes this
         // comment true.
         if (coordinator != null && !coordinator.beginWrite(terminal)) {
+            return false;
+        }
+        if (coordinator != null && body != null && !coordinator.reserveResponseBytes(body.length)) {
+            coordinator.finishWrite(
+                    McpTransportOutcome.WRITE_FAILED, context.response().headWritten(), Instant.now());
+            context.response().end();
             return false;
         }
         if (!context.response().headWritten()) {
