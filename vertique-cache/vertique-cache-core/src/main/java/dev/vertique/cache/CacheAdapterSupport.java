@@ -81,11 +81,15 @@ public final class CacheAdapterSupport {
      * an eviction can never silently address a different identity bucket than its
      * target cache. A programmatic-only definition deliberately never satisfies an
      * annotation eviction target; programmatic caches are invalidated through their own
-     * {@code Cache} handles.
+     * {@code Cache} handles. The ordered selector paths must match the registered
+     * annotation declaration exactly.
      */
-    public java.util.Optional<Cache<Object, Object>> evictionFor(String name, Function<Object, Object> selector) {
+    public java.util.Optional<Cache<Object, Object>> evictionFor(
+            String name, Function<Object, Object> selector, List<String> selectorPaths) {
+        String requestedSelectorPaths = joinedPaths(selectorPaths);
         return builder.registered(name)
-                .filter(CacheBuilder.RegisteredDefinition::annotationDeclared)
+                .filter(definition -> definition.selectorPaths() != null
+                        && Objects.equals(definition.selectorPaths(), requestedSelectorPaths))
                 .map(definition -> builder.buildUnregistered(
                         name,
                         definition.valueType(),
@@ -100,7 +104,8 @@ public final class CacheAdapterSupport {
 
     /**
      * Emits the terminal {@code EVICT}/{@code UNRESOLVED_TARGET} observation for an
-     * exact eviction that names a logical cache with no registered definition.
+     * exact eviction whose name and ordered selector paths have no matching registered
+     * annotation definition.
      */
     public void observeUnresolvedEviction(String name) {
         CacheObservationSupport.completed(

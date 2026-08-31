@@ -18,7 +18,7 @@ import java.lang.annotation.Target;
 public @interface CacheEvict {
     String name();
 
-    /** Ordered selector paths for exact invalidation; empty only with {@code clear=true}. */
+    /** Ordered selector paths for exact invalidation; an explicit empty array selects the constant key. */
     String[] key() default {};
 
     boolean clear() default false;
