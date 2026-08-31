@@ -77,6 +77,17 @@ public @interface McpTool {
     String description();
 
     /**
+     * The top-level client capabilities required before this tool may be invoked.
+     *
+     * <p>Names are validated by the MCP annotation processor and are emitted into the generated
+     * invoker. A request that does not advertise every named capability is rejected before input
+     * preparation or application invocation.
+     *
+     * @return required top-level client capability names, or an empty array when none are required
+     */
+    String[] requiredClientCapabilities() default {};
+
+    /**
      * Hint that the tool does not modify its environment.
      *
      * @return {@code true} when the tool only reads

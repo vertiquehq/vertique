@@ -18,7 +18,8 @@
       "public abstract boolean dev.vertique.mcp.annotation.McpTool.readOnlyHint()",
       "public abstract java.lang.String dev.vertique.mcp.annotation.McpTool.description()",
       "public abstract java.lang.String dev.vertique.mcp.annotation.McpTool.name()",
-      "public abstract java.lang.String dev.vertique.mcp.annotation.McpTool.title()"
+      "public abstract java.lang.String dev.vertique.mcp.annotation.McpTool.title()",
+      "public abstract java.lang.String[] dev.vertique.mcp.annotation.McpTool.requiredClientCapabilities()"
     ],
     "dev.vertique.mcp.annotation.McpToolParam": [
       "public abstract java.lang.String dev.vertique.mcp.annotation.McpToolParam.description()",
@@ -272,7 +273,8 @@
     "dev.vertique.mcp.tool.McpToolInvoker": [
       "public abstract dev.vertique.mcp.tool.McpPreparedToolCall dev.vertique.mcp.tool.McpToolInvoker.prepare(java.util.Map<java.lang.String, java.lang.Object>,dev.vertique.mcp.tool.McpCancellationSignal)",
       "public abstract dev.vertique.mcp.tool.McpToolDescriptor dev.vertique.mcp.tool.McpToolInvoker.descriptor()",
-      "public default java.util.Optional<dev.vertique.mcp.tool.McpStructuredOutputWriter> dev.vertique.mcp.tool.McpToolInvoker.structuredOutputWriter()"
+      "public default java.util.Optional<dev.vertique.mcp.tool.McpStructuredOutputWriter> dev.vertique.mcp.tool.McpToolInvoker.structuredOutputWriter()",
+      "public default java.util.Set<java.lang.String> dev.vertique.mcp.tool.McpToolInvoker.requiredClientCapabilities()"
     ],
     "dev.vertique.mcp.tool.McpStructuredOutputWriter": [
       "public abstract void dev.vertique.mcp.tool.McpStructuredOutputWriter.write(java.lang.Object,java.io.OutputStream) throws java.io.IOException"

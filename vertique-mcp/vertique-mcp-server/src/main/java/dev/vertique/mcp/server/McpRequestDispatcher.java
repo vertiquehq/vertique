@@ -149,6 +149,7 @@ final class McpRequestDispatcher {
     private static final int INVALID_REQUEST = -32600;
     private static final int METHOD_NOT_FOUND = -32601;
     private static final int INTERNAL_ERROR = -32603;
+    private static final int MISSING_REQUIRED_CLIENT_CAPABILITY = -32021;
 
     /**
      * The standard, non-leaking message paired with {@link #INTERNAL_ERROR}. Mirrors {@link
@@ -1407,7 +1408,7 @@ final class McpRequestDispatcher {
             // uses, so a large client-controlled id can never allocate the entire response before the
             // promised cap applies, degrading to the id-less internal error below only when the cap
             // actually trips while bytes are being produced.
-            errorBytes = encodeCapped(errorNode(envelope.get("id"), code, error.message()));
+            errorBytes = encodeCapped(errorNode(envelope.get("id"), code, error.message(), error.data()));
         } catch (OutputCapExceededException overCap) {
             byte[] fallback = boundedErrorResponse(null, INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
             McpRequestTerminalEvent overCapTerminal = McpRequestTerminalEvent.failed(
@@ -2123,8 +2124,65 @@ final class McpRequestDispatcher {
                 writeUnknownOrUnauthorized(context, envelope, security, McpMethod.TOOLS_CALL, toolName);
                 return;
             }
+            Set<String> missingCapabilities = missingRequiredClientCapabilities(envelope, invoker);
+            if (!missingCapabilities.isEmpty()) {
+                writeMissingRequiredClientCapability(context, envelope, security, toolName, missingCapabilities);
+                return;
+            }
             invokeAndRespond(context, envelope, security, toolName, invoker);
         });
+    }
+
+    /** Writes the standard pre-invocation error for a tool whose client capability is absent. */
+    private void writeMissingRequiredClientCapability(
+            RoutingContext context,
+            JsonNode envelope,
+            @Nullable SecurityContextSnapshot security,
+            String toolName,
+            Set<String> missingCapabilities) {
+        ObjectNode response = errorNode(envelope.get("id"), MISSING_REQUIRED_CLIENT_CAPABILITY,
+                "Missing required client capability");
+        ObjectNode requiredCapabilities = OUTPUT_ENCODER.createObjectNode();
+        missingCapabilities.forEach(name -> requiredCapabilities.set(name, OUTPUT_ENCODER.createObjectNode()));
+        ObjectNode data = OUTPUT_ENCODER.createObjectNode();
+        data.set("requiredCapabilities", requiredCapabilities);
+        ((ObjectNode) response.get("error")).set("data", data);
+
+        byte[] body;
+        int status = 400;
+        int code = MISSING_REQUIRED_CLIENT_CAPABILITY;
+        try {
+            body = encodeCapped(response);
+        } catch (OutputCapExceededException overCap) {
+            body = boundedErrorResponse(null, INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
+            status = 500;
+            code = INTERNAL_ERROR;
+        }
+        context.response().putHeader("content-type", JSON_CONTENT_TYPE);
+        McpRequestTerminalEvent terminal = McpRequestTerminalEvent.rejected(
+                startedAt(context),
+                Instant.now(),
+                McpMethod.TOOLS_CALL,
+                toolName,
+                code == INTERNAL_ERROR ? McpErrorType.SERIALIZATION : McpErrorType.PROTOCOL,
+                status,
+                code,
+                protocolVersionOf(context),
+                authorizationOf(context),
+                security,
+                correlationOf(context));
+        write(context, status, body, terminal);
+    }
+
+    private static Set<String> missingRequiredClientCapabilities(JsonNode envelope, McpToolInvoker invoker) {
+        JsonNode clientCapabilities = McpProtocolCodec.clientCapabilitiesOf(envelope);
+        Set<String> missing = new java.util.LinkedHashSet<>();
+        for (String required : invoker.requiredClientCapabilities()) {
+            if (!clientCapabilities.has(required)) {
+                missing.add(required);
+            }
+        }
+        return Collections.unmodifiableSet(missing);
     }
 
     /**
@@ -3130,6 +3188,7 @@ final class McpRequestDispatcher {
             case PARSE_ERROR, INVALID_REQUEST -> 400;
             case McpPolicyEnforcer.UNKNOWN_OR_UNAUTHORIZED_CODE -> 400;
             case NEGOTIATION_MISMATCH -> 400;
+            case MISSING_REQUIRED_CLIENT_CAPABILITY -> 400;
             case INTERCEPTOR_REJECTED -> 403;
             default -> 500;
         };
@@ -3255,12 +3314,20 @@ final class McpRequestDispatcher {
      * @return the unencoded response node
      */
     private static ObjectNode errorNode(@Nullable JsonNode id, int code, String message) {
+        return errorNode(id, code, message, null);
+    }
+
+    private static ObjectNode errorNode(
+            @Nullable JsonNode id, int code, String message, @Nullable JsonNode data) {
         ObjectNode response = OUTPUT_ENCODER.createObjectNode();
         response.put("jsonrpc", "2.0");
         response.set("id", id != null ? id : NullNode.getInstance());
         ObjectNode error = OUTPUT_ENCODER.createObjectNode();
         error.put("code", code);
         error.put("message", message);
+        if (data != null) {
+            error.set("data", data);
+        }
         response.set("error", error);
         return response;
     }

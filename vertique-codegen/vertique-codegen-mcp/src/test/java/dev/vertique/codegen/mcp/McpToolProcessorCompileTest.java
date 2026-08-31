@@ -490,6 +490,8 @@ class McpToolProcessorCompileTest {
                     .assertGeneratedSourceContains(WEATHER_INVOKER_FQN, "weather.lookup")
                     .assertGeneratedSourceContains(WEATHER_INVOKER_FQN, "record Input")
                     .assertGeneratedSourceContains(WEATHER_INVOKER_FQN, "structuredOutputWriter()")
+                    .assertGeneratedSourceContains(WEATHER_INVOKER_FQN, "requiredClientCapabilities()")
+                    .assertGeneratedSourceContains(WEATHER_INVOKER_FQN, "Set.of(\"sampling\")")
                     .assertGeneratedSourceContains(WEATHER_INVOKER_FQN, "Optional.of(runtime)")
                     .assertGeneratedSourceDoesNotContain(
                             WEATHER_INVOKER_FQN, "public class WeatherTools_lookup_McpToolInvoker")
@@ -1432,7 +1434,10 @@ class McpToolProcessorCompileTest {
                     @Inject
                     public WeatherTools() {}
 
-                    @McpTool(name = "weather.lookup", description = "Look up the current weather for a city.")
+                    @McpTool(
+                            name = "weather.lookup",
+                            description = "Look up the current weather for a city.",
+                            requiredClientCapabilities = {"sampling"})
                     public Future<WeatherReport> lookup(
                             @McpToolParam(name = "city", description = "The city to look up.") String city) {
                         return Future.succeededFuture(new WeatherReport(city, 21));

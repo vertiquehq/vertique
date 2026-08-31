@@ -19,6 +19,7 @@ import dev.vertique.codegen.CodegenContext;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import javax.annotation.processing.Generated;
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.Element;
@@ -139,6 +140,7 @@ final class McpToolInvokerEmitter {
     private static final ClassName MCP_TOOL_RESULT = ClassName.get("dev.vertique.mcp.tool", "McpToolResult");
     private static final ClassName MCP_STRUCTURED_OUTPUT_WRITER =
             ClassName.get("dev.vertique.mcp.tool", "McpStructuredOutputWriter");
+    private static final ClassName SET = ClassName.get(Set.class);
     private static final ClassName MCP_PREPARED_TOOL_CALL =
             ClassName.get("dev.vertique.mcp.tool", "McpPreparedToolCall");
     private static final ClassName MCP_CANCELLATION_SIGNAL =
@@ -289,6 +291,14 @@ final class McpToolInvokerEmitter {
                         .addModifiers(Modifier.PUBLIC)
                         .returns(ParameterizedTypeName.get(OPTIONAL, MCP_STRUCTURED_OUTPUT_WRITER))
                         .addStatement("return $T.of($N)", OPTIONAL, RUNTIME_FIELD)
+                        .build())
+                .addMethod(MethodSpec.methodBuilder("requiredClientCapabilities")
+                        .addAnnotation(Override.class)
+                        .addModifiers(Modifier.PUBLIC)
+                        .returns(SET)
+                        .addStatement("return $T.of($L)", SET, model.requiredClientCapabilities().stream()
+                                .map(value -> CodeBlock.of("$S", value))
+                                .collect(CodeBlock.joining(", ")))
                         .build())
                 .addMethod(prepare(model, inputType, preparedCallType, cancellationAware))
                 .addType(preparedCall(model, inputType, preparedCallType, cancellationAware))
