@@ -106,6 +106,8 @@ class McpToolResultTest {
     @Test
     @DisplayName("rejects empty and syntactically invalid resource URIs")
     void shouldRejectInvalidResourceUris() {
+        assertThatThrownBy(() -> new McpContent.ResourceLink("foo", "example"))
+                .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new McpContent.ResourceLink("not a URI", "example"))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new McpContent.TextResource("", null, "resource"))

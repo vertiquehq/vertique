@@ -140,6 +140,9 @@ final class McpRequestDispatcher {
     private static final String EVENT_STREAM_CONTENT_TYPE = "text/event-stream";
     private static final String APPLICATION_WILDCARD_RANGE = "application/*";
     private static final String WILDCARD_RANGE = "*/*";
+    private static final byte[] SSE_PREFIX = "event: message\ndata: ".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] SSE_SUFFIX = "\n\n".getBytes(StandardCharsets.UTF_8);
+    private static final int SSE_FRAME_OVERHEAD = SSE_PREFIX.length + SSE_SUFFIX.length;
     private static final int MAX_PROGRESS_TOKEN_BYTES = 4_096;
 
     private static final int PARSE_ERROR = -32700;
@@ -2544,7 +2547,7 @@ final class McpRequestDispatcher {
         // boundedErrorResponse serializes the id-bearing attempt through the capped stream and
         // degrades to the id-less internal error, itself encoded the same bounded way, only when that
         // attempt also exceeds the cap.
-        byte[] fallback = boundedErrorResponse(envelope.get("id"), INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
+        byte[] fallback = boundedSseErrorResponse(envelope.get("id"), INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
         McpRequestTerminalEvent terminal = McpRequestTerminalEvent.failed(
                 startedAt(context),
                 Instant.now(),
@@ -2637,7 +2640,7 @@ final class McpRequestDispatcher {
             @Nullable McpToolInvocationContext toolContext) {
         byte[] payload;
         try {
-            payload = encodeCapped(toolCallResponse(envelope, result, normalizedStructuredContent));
+            payload = encodeSseCapped(toolCallResponse(envelope, result, normalizedStructuredContent));
         } catch (OutputCapExceededException overCap) {
             writeSseFallback(context, envelope, security, toolName, overCap, McpErrorType.SERIALIZATION);
             return;
@@ -2865,7 +2868,7 @@ final class McpRequestDispatcher {
         // cause is deliberately never read (see writeDispatchByMethodFailure's identical note).
         // boundedErrorResponse serializes through the capped stream rather than materializing the
         // full response before measuring it.
-        byte[] fallback = boundedErrorResponse(envelope.get("id"), INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
+        byte[] fallback = boundedSseErrorResponse(envelope.get("id"), INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
         McpRequestTerminalEvent terminal = McpRequestTerminalEvent.failed(
                 startedAt(context),
                 Instant.now(),
@@ -2900,12 +2903,10 @@ final class McpRequestDispatcher {
 
     /** Frames one complete JSON-RPC message as a single {@code event: message} / {@code data:} SSE block. */
     private static byte[] sseFrame(byte[] jsonPayload) {
-        byte[] prefix = "event: message\ndata: ".getBytes(StandardCharsets.UTF_8);
-        byte[] suffix = "\n\n".getBytes(StandardCharsets.UTF_8);
-        byte[] framed = new byte[prefix.length + jsonPayload.length + suffix.length];
-        System.arraycopy(prefix, 0, framed, 0, prefix.length);
-        System.arraycopy(jsonPayload, 0, framed, prefix.length, jsonPayload.length);
-        System.arraycopy(suffix, 0, framed, prefix.length + jsonPayload.length, suffix.length);
+        byte[] framed = new byte[SSE_FRAME_OVERHEAD + jsonPayload.length];
+        System.arraycopy(SSE_PREFIX, 0, framed, 0, SSE_PREFIX.length);
+        System.arraycopy(jsonPayload, 0, framed, SSE_PREFIX.length, jsonPayload.length);
+        System.arraycopy(SSE_SUFFIX, 0, framed, SSE_PREFIX.length + jsonPayload.length, SSE_SUFFIX.length);
         return framed;
     }
 
@@ -3288,8 +3289,17 @@ final class McpRequestDispatcher {
      * @return the complete, bounded response bytes
      */
     private byte[] boundedErrorResponse(@Nullable JsonNode id, int code, String message) {
+        return boundedErrorResponse(id, code, message, config.outputMaxBytes());
+    }
+
+    /** Serializes an error payload with space reserved for the complete SSE frame. */
+    private byte[] boundedSseErrorResponse(@Nullable JsonNode id, int code, String message) {
+        return boundedErrorResponse(id, code, message, ssePayloadMaxBytes());
+    }
+
+    private byte[] boundedErrorResponse(@Nullable JsonNode id, int code, String message, int maxBytes) {
         try {
-            return encodeCapped(errorNode(id, code, message));
+            return encodeCapped(errorNode(id, code, message), maxBytes);
         } catch (OutputCapExceededException overCap) {
             // The id-less shape is trusted to fit without a further length check, exactly as every
             // degrade path in this class already trusted its own id-less fallback: every message this
@@ -3297,8 +3307,13 @@ final class McpRequestDispatcher {
             // floor on mcp.output.maxBytes (McpServerConfigValidator) makes a second cap trip here
             // unreachable in practice. Still routed through encodeCapped rather than assumed unencoded,
             // so a pathological misconfiguration fails loudly instead of silently.
-            return encodeCapped(errorNode(null, INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE));
+            return encodeCapped(errorNode(null, INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE), maxBytes);
         }
+    }
+
+    /** Returns the maximum JSON payload that can fit inside one configured SSE response frame. */
+    private int ssePayloadMaxBytes() {
+        return config.outputMaxBytes() - SSE_FRAME_OVERHEAD;
     }
 
     /**
@@ -3314,12 +3329,26 @@ final class McpRequestDispatcher {
      * @throws OutputCapExceededException when serialization would exceed the configured cap
      */
     private byte[] encodeCapped(Object value) {
-        return encodeCapped(value, NEUTRAL_OUTPUT_WRITER);
+        return encodeCapped(value, config.outputMaxBytes());
+    }
+
+    /** Encodes a terminal SSE payload while reserving bytes for its framing. */
+    private byte[] encodeSseCapped(Object value) {
+        return encodeCapped(value, ssePayloadMaxBytes());
+    }
+
+    private byte[] encodeCapped(Object value, int maxBytes) {
+        return encodeCapped(value, NEUTRAL_OUTPUT_WRITER, maxBytes);
     }
 
     /** Encodes through the selected writer while the dispatcher-owned sink enforces the byte cap. */
     private byte[] encodeCapped(Object value, McpStructuredOutputWriter writer) {
-        CappedOutputStream out = new CappedOutputStream(config.outputMaxBytes());
+        return encodeCapped(value, writer, config.outputMaxBytes());
+    }
+
+    /** Encodes through the selected writer and the supplied byte cap. */
+    private byte[] encodeCapped(Object value, McpStructuredOutputWriter writer, int maxBytes) {
+        CappedOutputStream out = new CappedOutputStream(maxBytes);
         try {
             writer.write(value, out);
         } catch (OutputCapExceededException overCap) {

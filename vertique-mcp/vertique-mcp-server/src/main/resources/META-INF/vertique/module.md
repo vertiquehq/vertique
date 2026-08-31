@@ -797,8 +797,8 @@ with its owning slice:
   normalized exactly once, validated against the tool's advertised output schema, and bounded at
   `mcp.outputMaxBytes` as bytes are produced — see [Bounded output
   pipeline](#bounded-output-pipeline). Standard text, image, audio, resource-link, and embedded-resource
-  blocks are also supported in one ordered complete result; extensions beyond those blocks remain a
-  later slice.
+  blocks are also supported in one ordered complete result. Resource-link and embedded-resource URIs
+  must be syntactically valid absolute URIs; extensions beyond those blocks remain a later slice.
 
 ## Authorized tool listing and pagination
 

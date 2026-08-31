@@ -97,7 +97,9 @@ public sealed interface McpContent
             throw new IllegalArgumentException("uri must not be empty");
         }
         try {
-            new URI(uri);
+            if (!new URI(uri).isAbsolute()) {
+                throw new IllegalArgumentException("uri must be absolute");
+            }
         } catch (URISyntaxException invalidUri) {
             throw new IllegalArgumentException("uri must be a valid URI", invalidUri);
         }
