@@ -41,6 +41,7 @@ import dev.vertique.mcp.lifecycle.McpToolOutputObservation;
 import dev.vertique.mcp.lifecycle.McpTransportOutcome;
 import dev.vertique.mcp.tool.McpAccessMode;
 import dev.vertique.mcp.tool.McpCancellationSignal;
+import dev.vertique.mcp.tool.McpContent;
 import dev.vertique.mcp.tool.McpInputRejectionException;
 import dev.vertique.mcp.tool.McpPreparedToolCall;
 import dev.vertique.mcp.tool.McpStructuredOutputWriter;
@@ -139,6 +140,10 @@ final class McpRequestDispatcher {
     private static final String EVENT_STREAM_CONTENT_TYPE = "text/event-stream";
     private static final String APPLICATION_WILDCARD_RANGE = "application/*";
     private static final String WILDCARD_RANGE = "*/*";
+    private static final byte[] SSE_PREFIX = "event: message\ndata: ".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] SSE_SUFFIX = "\n\n".getBytes(StandardCharsets.UTF_8);
+    private static final int SSE_FRAME_OVERHEAD = SSE_PREFIX.length + SSE_SUFFIX.length;
+    private static final int MAX_PROGRESS_TOKEN_BYTES = 4_096;
 
     private static final int PARSE_ERROR = -32700;
     private static final int INVALID_REQUEST = -32600;
@@ -550,8 +555,15 @@ final class McpRequestDispatcher {
         Instant startedAt = startedAt(context);
         bindCorrelation(context);
         Context owningContext = context.vertx().getOrCreateContext();
-        McpCompletionCoordinator coordinator =
-                new McpCompletionCoordinator(owningContext, lifecycleObservers, completedListeners, startedAt);
+        McpCompletionCoordinator coordinator = new McpCompletionCoordinator(
+                owningContext,
+                lifecycleObservers,
+                completedListeners,
+                startedAt,
+                java.time.InstantSource.system(),
+                context,
+                config.outputMaxBytes(),
+                () -> settlementTerminal(context, startedAt, McpErrorType.TRANSPORT));
         context.put(COMPLETION_COORDINATOR_KEY, coordinator);
         context.put(REQUEST_CONTEXT_KEY, owningContext);
         registerSettlementHooks(context, coordinator, startedAt);
@@ -2149,6 +2161,10 @@ final class McpRequestDispatcher {
             return;
         }
         selectSse(context);
+        McpCompletionCoordinator progressCoordinator = context.get(COMPLETION_COORDINATOR_KEY);
+        if (progressCoordinator != null) {
+            progressCoordinator.bindProgressToken(progressTokenOf(envelope));
+        }
         Map<String, Object> arguments = argumentsOf(envelope);
         if (!schemaValid(toolName, arguments)) {
             // Same rationale as above: rejected before invocation, no output observation.
@@ -2382,12 +2398,24 @@ final class McpRequestDispatcher {
     /**
      * Selects request-scoped SSE for this response: mutates the buffered response headers only — no
      * byte reaches the wire from this call, since Vert.x defers sending headers until the first
-     * {@code write}/{@code end} — so this may run freely before invocation without violating "no byte
-     * until a terminal message is ready" (§4.7).
+     * {@code write}/{@code end}. Standard progress notifications may then be written before the
+     * terminal result when the client supplied a progress token.
      */
     private static void selectSse(RoutingContext context) {
         context.response().putHeader("content-type", EVENT_STREAM_CONTENT_TYPE);
         context.response().putHeader("X-Accel-Buffering", "no");
+        context.response().setChunked(true);
+    }
+
+    /** Returns the already-schema-validated request progress token, when one was supplied. */
+    @Nullable
+    static JsonNode progressTokenOf(JsonNode envelope) {
+        JsonNode token = envelope.path("params").path("_meta").path("progressToken");
+        if ((token.isTextual() || token.isIntegralNumber())
+                && token.toString().getBytes(StandardCharsets.UTF_8).length <= MAX_PROGRESS_TOKEN_BYTES) {
+            return token.deepCopy();
+        }
+        return null;
     }
 
     /**
@@ -2519,7 +2547,7 @@ final class McpRequestDispatcher {
         // boundedErrorResponse serializes the id-bearing attempt through the capped stream and
         // degrades to the id-less internal error, itself encoded the same bounded way, only when that
         // attempt also exceeds the cap.
-        byte[] fallback = boundedErrorResponse(envelope.get("id"), INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
+        byte[] fallback = boundedSseErrorResponse(envelope.get("id"), INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
         McpRequestTerminalEvent terminal = McpRequestTerminalEvent.failed(
                 startedAt(context),
                 Instant.now(),
@@ -2612,7 +2640,7 @@ final class McpRequestDispatcher {
             @Nullable McpToolInvocationContext toolContext) {
         byte[] payload;
         try {
-            payload = encodeCapped(toolCallResponse(envelope, result, normalizedStructuredContent));
+            payload = encodeSseCapped(toolCallResponse(envelope, result, normalizedStructuredContent));
         } catch (OutputCapExceededException overCap) {
             writeSseFallback(context, envelope, security, toolName, overCap, McpErrorType.SERIALIZATION);
             return;
@@ -2722,13 +2750,10 @@ final class McpRequestDispatcher {
     private ObjectNode toolCallResponse(
             JsonNode envelope, McpToolResult<?> result, @Nullable Object normalizedStructuredContent) {
         ArrayNode content = OUTPUT_ENCODER.createArrayNode();
-        for (String text : result.textContent()) {
-            ObjectNode item = OUTPUT_ENCODER.createObjectNode();
-            item.put("type", "text");
-            item.put("text", text);
-            content.add(item);
+        for (McpContent item : result.content()) {
+            content.add(contentNode(item));
         }
-        if (result.textContent().isEmpty() && normalizedStructuredContent != null) {
+        if (result.content().isEmpty() && normalizedStructuredContent != null) {
             ObjectNode item = OUTPUT_ENCODER.createObjectNode();
             item.put("type", "text");
             item.put("text", canonicalStructuredText(normalizedStructuredContent));
@@ -2753,6 +2778,47 @@ final class McpRequestDispatcher {
         JsonNode id = envelope.get("id");
         response.set("id", id != null ? id : NullNode.getInstance());
         return response;
+    }
+
+    private static ObjectNode contentNode(McpContent content) {
+        ObjectNode node = OUTPUT_ENCODER.createObjectNode();
+        switch (content) {
+            case McpContent.Text text -> {
+                node.put("type", "text");
+                node.put("text", text.text());
+            }
+            case McpContent.Image image -> {
+                node.put("type", "image");
+                node.put("data", image.data());
+                node.put("mimeType", image.mimeType());
+            }
+            case McpContent.Audio audio -> {
+                node.put("type", "audio");
+                node.put("data", audio.data());
+                node.put("mimeType", audio.mimeType());
+            }
+            case McpContent.ResourceLink link -> {
+                node.put("type", "resource_link");
+                node.put("uri", link.uri());
+                node.put("name", link.name());
+                if (link.title() != null) node.put("title", link.title());
+                if (link.description() != null) node.put("description", link.description());
+                if (link.mimeType() != null) node.put("mimeType", link.mimeType());
+            }
+            case McpContent.EmbeddedResource embedded -> {
+                node.put("type", "resource");
+                ObjectNode resource = OUTPUT_ENCODER.createObjectNode();
+                McpContent.Resource value = embedded.resource();
+                resource.put("uri", value.uri());
+                if (value.mimeType() != null) resource.put("mimeType", value.mimeType());
+                switch (value) {
+                    case McpContent.TextResource text -> resource.put("text", text.text());
+                    case McpContent.BlobResource blob -> resource.put("blob", blob.blob());
+                }
+                node.set("resource", resource);
+            }
+        }
+        return node;
     }
 
     /**
@@ -2802,7 +2868,7 @@ final class McpRequestDispatcher {
         // cause is deliberately never read (see writeDispatchByMethodFailure's identical note).
         // boundedErrorResponse serializes through the capped stream rather than materializing the
         // full response before measuring it.
-        byte[] fallback = boundedErrorResponse(envelope.get("id"), INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
+        byte[] fallback = boundedSseErrorResponse(envelope.get("id"), INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
         McpRequestTerminalEvent terminal = McpRequestTerminalEvent.failed(
                 startedAt(context),
                 Instant.now(),
@@ -2837,12 +2903,10 @@ final class McpRequestDispatcher {
 
     /** Frames one complete JSON-RPC message as a single {@code event: message} / {@code data:} SSE block. */
     private static byte[] sseFrame(byte[] jsonPayload) {
-        byte[] prefix = "event: message\ndata: ".getBytes(StandardCharsets.UTF_8);
-        byte[] suffix = "\n\n".getBytes(StandardCharsets.UTF_8);
-        byte[] framed = new byte[prefix.length + jsonPayload.length + suffix.length];
-        System.arraycopy(prefix, 0, framed, 0, prefix.length);
-        System.arraycopy(jsonPayload, 0, framed, prefix.length, jsonPayload.length);
-        System.arraycopy(suffix, 0, framed, prefix.length + jsonPayload.length, suffix.length);
+        byte[] framed = new byte[SSE_FRAME_OVERHEAD + jsonPayload.length];
+        System.arraycopy(SSE_PREFIX, 0, framed, 0, SSE_PREFIX.length);
+        System.arraycopy(jsonPayload, 0, framed, SSE_PREFIX.length, jsonPayload.length);
+        System.arraycopy(SSE_SUFFIX, 0, framed, SSE_PREFIX.length + jsonPayload.length, SSE_SUFFIX.length);
         return framed;
     }
 
@@ -3136,6 +3200,15 @@ final class McpRequestDispatcher {
         if (coordinator != null && !coordinator.beginWrite(terminal)) {
             return false;
         }
+        if (coordinator != null && body != null && !coordinator.reserveResponseBytes(body.length)) {
+            coordinator.finishWrite(
+                    McpTransportOutcome.WRITE_FAILED, context.response().headWritten(), Instant.now());
+            context.response().end();
+            return false;
+        }
+        if (!context.response().headWritten()) {
+            context.response().setStatusCode(status);
+        }
         // Raw response-side evidence, published on the
         // mcp.tool.call surface only, immediately before the bytes below reach the wire — the single
         // shared terminal writer, so every settlement path that produces a response (success, a
@@ -3149,7 +3222,6 @@ final class McpRequestDispatcher {
                     body != null ? body : new byte[0],
                     headerMapOf(context.response().headers())));
         }
-        context.response().setStatusCode(status);
         Handler<AsyncResult<Void>> onEnd = result -> {
             if (coordinator != null) {
                 coordinator.finishWrite(
@@ -3164,8 +3236,8 @@ final class McpRequestDispatcher {
             context.response().end().onComplete(onEnd);
             return true;
         }
-        // end(body) sets Content-Length, so the response is framed by length instead of relying on
-        // connection-close framing the way a separate write() + end() pair does.
+        // SSE may already contain request-scoped progress frames, so the response is explicitly
+        // chunked by selectSse and this terminal frame is appended to that same stream.
         context.response().end(Buffer.buffer(body)).onComplete(onEnd);
         return true;
     }
@@ -3217,8 +3289,17 @@ final class McpRequestDispatcher {
      * @return the complete, bounded response bytes
      */
     private byte[] boundedErrorResponse(@Nullable JsonNode id, int code, String message) {
+        return boundedErrorResponse(id, code, message, config.outputMaxBytes());
+    }
+
+    /** Serializes an error payload with space reserved for the complete SSE frame. */
+    private byte[] boundedSseErrorResponse(@Nullable JsonNode id, int code, String message) {
+        return boundedErrorResponse(id, code, message, ssePayloadMaxBytes());
+    }
+
+    private byte[] boundedErrorResponse(@Nullable JsonNode id, int code, String message, int maxBytes) {
         try {
-            return encodeCapped(errorNode(id, code, message));
+            return encodeCapped(errorNode(id, code, message), maxBytes);
         } catch (OutputCapExceededException overCap) {
             // The id-less shape is trusted to fit without a further length check, exactly as every
             // degrade path in this class already trusted its own id-less fallback: every message this
@@ -3226,8 +3307,13 @@ final class McpRequestDispatcher {
             // floor on mcp.output.maxBytes (McpServerConfigValidator) makes a second cap trip here
             // unreachable in practice. Still routed through encodeCapped rather than assumed unencoded,
             // so a pathological misconfiguration fails loudly instead of silently.
-            return encodeCapped(errorNode(null, INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE));
+            return encodeCapped(errorNode(null, INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE), maxBytes);
         }
+    }
+
+    /** Returns the maximum JSON payload that can fit inside one configured SSE response frame. */
+    private int ssePayloadMaxBytes() {
+        return config.outputMaxBytes() - SSE_FRAME_OVERHEAD;
     }
 
     /**
@@ -3243,12 +3329,26 @@ final class McpRequestDispatcher {
      * @throws OutputCapExceededException when serialization would exceed the configured cap
      */
     private byte[] encodeCapped(Object value) {
-        return encodeCapped(value, NEUTRAL_OUTPUT_WRITER);
+        return encodeCapped(value, config.outputMaxBytes());
+    }
+
+    /** Encodes a terminal SSE payload while reserving bytes for its framing. */
+    private byte[] encodeSseCapped(Object value) {
+        return encodeCapped(value, ssePayloadMaxBytes());
+    }
+
+    private byte[] encodeCapped(Object value, int maxBytes) {
+        return encodeCapped(value, NEUTRAL_OUTPUT_WRITER, maxBytes);
     }
 
     /** Encodes through the selected writer while the dispatcher-owned sink enforces the byte cap. */
     private byte[] encodeCapped(Object value, McpStructuredOutputWriter writer) {
-        CappedOutputStream out = new CappedOutputStream(config.outputMaxBytes());
+        return encodeCapped(value, writer, config.outputMaxBytes());
+    }
+
+    /** Encodes through the selected writer and the supplied byte cap. */
+    private byte[] encodeCapped(Object value, McpStructuredOutputWriter writer, int maxBytes) {
+        CappedOutputStream out = new CappedOutputStream(maxBytes);
         try {
             writer.write(value, out);
         } catch (OutputCapExceededException overCap) {

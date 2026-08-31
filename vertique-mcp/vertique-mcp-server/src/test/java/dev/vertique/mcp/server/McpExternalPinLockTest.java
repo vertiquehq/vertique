@@ -46,17 +46,20 @@ class McpExternalPinLockTest {
             .map(JsonObject.class::cast)
             .toList();
     private static final byte[] MANIFEST = readResourceBytes(MANIFEST_RESOURCE);
-    private static final Set<String> SUPPORTED =
-            Set.of("tools-list", "tools-call-simple-text", "tools-call-error", "dns-rebinding-protection");
+    private static final Set<String> SUPPORTED = Set.of(
+            "tools-list",
+            "tools-call-simple-text",
+            "tools-call-error",
+            "tools-call-image",
+            "tools-call-audio",
+            "tools-call-embedded-resource",
+            "tools-call-mixed-content",
+            "tools-call-with-progress",
+            "dns-rebinding-protection");
     private static final Map<String, String> DEFERRED = Map.ofEntries(
             entry("server-stateless", "MCP-005"),
             entry("caching", "MCP-004"),
             entry("completion-complete", "MCP-004"),
-            entry("tools-call-image", "MCP-006"),
-            entry("tools-call-audio", "MCP-006"),
-            entry("tools-call-embedded-resource", "MCP-006"),
-            entry("tools-call-mixed-content", "MCP-006"),
-            entry("tools-call-with-progress", "MCP-005"),
             entry("server-sse-multiple-streams", "MCP-005"),
             entry("resources-list", "MCP-004"),
             entry("resources-read-text", "MCP-004"),
@@ -191,7 +194,7 @@ class McpExternalPinLockTest {
         JsonArray deferredValues = PIN_LOCK.getJsonArray("deferredScenarios", new JsonArray());
         JsonArray notScoredValues = PIN_LOCK.getJsonArray("notScoredUpstream", new JsonArray());
         assertThat(List.of(supportedValues.size(), deferredValues.size(), notScoredValues.size()))
-                .containsExactly(4, 33, 13);
+                .containsExactly(9, 28, 13);
         Set<String> recordedSupported = stringSet(supportedValues);
         Map<String, String> recordedDeferred = deferredMap(deferredValues);
         Set<String> recordedNotScored = stringSet(notScoredValues);

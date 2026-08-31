@@ -34,13 +34,16 @@ an `Optional<T>` parameter may be absent, every other parameter is required.
 excluded from the input schema and lets a handler stop cooperative work when the request settles as
 anything other than a successful write: a client disconnect, a response stream reset, a failed
 write, or the shared HTTP layer closing an idle or slow connection (MCP arms no whole-request
-timeout of its own). Cancellation is cooperative: the framework cannot stop a handler that ignores
-the signal.
+timeout of its own). Its `progressReporter()` exposes standard request-scoped progress and is a
+successful no-op when the request has no progress token. Cancellation is cooperative: the framework
+cannot stop a handler that ignores the signal.
 
 `McpToolResult` is the immutable, complete-only result type a handler may return when it needs
-explicit text content or a tool execution error; use its `text`, `structured`, and `error`
-factories. It carries no partial or intermediate state — a call either produces a settled
-`McpToolResult`, or it never produces one at all.
+explicit content or a tool execution error; use its `text`, `content`, `structured`, and `error`
+factories. `McpContent` provides the standard text, image, audio, resource-link, and embedded
+resource blocks, preserving the order supplied by the handler. It carries no partial or
+intermediate state — a call either produces one settled `McpToolResult`, or it never produces one
+at all.
 
 A tool method's declared return type must be one of exactly four supported shapes: a plain `T`, a
 `Future<T>`, a handler-authored `McpToolResult<T>`, or a `Future<McpToolResult<T>>`; every other

@@ -21,6 +21,11 @@ import io.vertx.core.Future;
  */
 public interface McpCancellationSignal {
 
+    /** Returns the request-scoped standard MCP progress reporter, which may be a no-op. */
+    default McpProgressReporter progressReporter() {
+        return McpProgressReporter.noop();
+    }
+
     /**
      * Reports whether the call has already been cancelled.
      *

@@ -62,6 +62,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -89,6 +90,26 @@ class McpResultEncodingCharacterizationTest {
     @AfterAll
     static void closeVertx() throws Exception {
         vertx.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+    }
+
+    @Test
+    @DisplayName("caps the complete SSE terminal frame at the configured byte limit")
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void shouldKeepTerminalSseFrameWithinOutputCap() throws Exception {
+        int outputMaxBytes = 1_024;
+        var fixture = new McpResultEncodingCharacterizationTestFixture(
+                outputMaxBytes, McpToolResult.text("x".repeat(800)), vertx);
+
+        Encoded actual = fixture.encode();
+
+        assertThat(actual.body().length)
+                .as("the complete terminal SSE frame, including framing, must fit the configured cap")
+                .isLessThanOrEqualTo(outputMaxBytes);
+        assertThat(actual.status()).isEqualTo(500);
+        assertThat(new JsonObject(Buffer.buffer(actual.payload()))
+                        .getJsonObject("error")
+                        .getInteger("code"))
+                .isEqualTo(-32603);
     }
 
     @ParameterizedTest(name = "{0}")
@@ -246,6 +267,38 @@ class McpResultEncodingCharacterizationTest {
                     .serverVersion("1.0")
                     .outputMaxBytes(seed.outputMaxBytes())
                     .outputMaxTokens(seed.outputMaxTokens())
+                    .build();
+            McpPolicyEnforcer policyEnforcer = mock(McpPolicyEnforcer.class);
+            when(policyEnforcer.decide(any(), any()))
+                    .thenReturn(Future.succeededFuture(AuthorizationDecision.permit("PERMITTED")));
+            SecurityRuntime securityRuntime = mock(SecurityRuntime.class);
+            SecurityContext anonymous = SecurityContexts.unauthenticated(SecurityIdentity.anonymous());
+            when(securityRuntime.current()).thenReturn(anonymous);
+            dispatcher = new McpRequestDispatcher(
+                    config,
+                    securityRuntime,
+                    Set.of(),
+                    Set.of(),
+                    Set.of(),
+                    Set.of(),
+                    HttpConfig.builder().build(),
+                    McpToolRegistry.build(Set.of(new FixedResultTool(result))),
+                    policyEnforcer,
+                    NO_OP_CONTEXT_HOLDER,
+                    new CorrelationContextFactory(Optional.empty()));
+            context = routingContext();
+            new RequestContextLifecycle().handle(context);
+            dispatcher.begin(context);
+        }
+
+        private McpResultEncodingCharacterizationTestFixture(int outputMaxBytes, McpToolResult<?> result, Vertx vertx)
+                throws Exception {
+            this.vertx = vertx;
+            McpServerConfig config = McpServerConfig.builder()
+                    .serverName("vertique-characterization")
+                    .serverVersion("1.0")
+                    .outputMaxBytes(outputMaxBytes)
+                    .outputMaxTokens(1_024)
                     .build();
             McpPolicyEnforcer policyEnforcer = mock(McpPolicyEnforcer.class);
             when(policyEnforcer.decide(any(), any()))

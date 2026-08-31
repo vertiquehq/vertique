@@ -15,6 +15,7 @@ import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
 import dev.vertique.mcp.server.support.McpSubprocessHarness;
 import dev.vertique.mcp.tool.McpAccessMode;
 import dev.vertique.mcp.tool.McpCancellationSignal;
+import dev.vertique.mcp.tool.McpContent;
 import dev.vertique.mcp.tool.McpPreparedToolCall;
 import dev.vertique.mcp.tool.McpToolAccess;
 import dev.vertique.mcp.tool.McpToolAnnotations;
@@ -72,7 +73,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * T027 TP-001 — runs the pinned official conformance runner against exactly MCP-001's four-id
+ * T027 TP-001 — runs the pinned official conformance runner against exactly MCP-001's nine-id
  * supported server partition. The longer timeout is deliberate: the first bounded runner process
  * installs the exact committed npm lock before executing; later scenario processes reuse that
  * target-local installation.
@@ -89,8 +90,16 @@ public class McpOfficialConformanceIT {
     private static final String MANIFEST_SHA256 = "ae2f4f6210fd729e2e318edd5bbfa31a43cee0bc608e48052fa26dbf1d939b57";
     private static final String RUNNER_INTEGRITY =
             "sha512-0V/HZDdWHcg6j0zVBzBsXcPZ571IVi6umKgTpnBhtTx/jm/LONmGF6cIWL2k4Xjyps0OiHV6B37nj2s0pUg0nQ==";
-    private static final List<String> EXPECTED_SUPPORTED =
-            List.of("tools-list", "tools-call-simple-text", "tools-call-error", "dns-rebinding-protection");
+    private static final List<String> EXPECTED_SUPPORTED = List.of(
+            "tools-list",
+            "tools-call-simple-text",
+            "tools-call-error",
+            "tools-call-image",
+            "tools-call-audio",
+            "tools-call-embedded-resource",
+            "tools-call-mixed-content",
+            "tools-call-with-progress",
+            "dns-rebinding-protection");
     private static final Path RETAINED_RESULTS = Path.of("target", "mcp-conformance-results");
 
     private static ConformanceFixture fixture;
@@ -124,7 +133,7 @@ public class McpOfficialConformanceIT {
         List<String> supported = stringList(pinLock.getJsonArray("supportedScenarios"));
         JsonArray deferredValues = pinLock.getJsonArray("deferredScenarios");
         List<String> notScored = stringList(pinLock.getJsonArray("notScoredUpstream"));
-        assertThat(deferredValues).hasSize(33).allSatisfy(value -> {
+        assertThat(deferredValues).hasSize(28).allSatisfy(value -> {
             JsonObject deferred = (JsonObject) value;
             assertThat(deferred.getString("id")).isNotBlank();
             assertThat(deferred.getString("owningSpecification")).matches("MCP-[0-9]{3}");
@@ -392,7 +401,28 @@ public class McpOfficialConformanceIT {
                         tool("test_simple_text", McpToolResult.text("This is a simple text response for testing.")),
                         tool(
                                 "test_error_handling",
-                                McpToolResult.error("This tool intentionally returns an error for testing"))));
+                                McpToolResult.error("This tool intentionally returns an error for testing")),
+                        tool(
+                                "test_image_content",
+                                McpToolResult.content(List.of(new McpContent.Image("aGVsbG8=", "image/png")))),
+                        tool(
+                                "test_audio_content",
+                                McpToolResult.content(List.of(new McpContent.Audio("aGVsbG8=", "audio/wav")))),
+                        tool(
+                                "test_embedded_resource",
+                                McpToolResult.content(
+                                        List.of(new McpContent.EmbeddedResource(new McpContent.TextResource(
+                                                "urn:vertique:conformance", "text/plain", "clear"))))),
+                        tool(
+                                "test_multiple_content_types",
+                                McpToolResult.content(List.of(
+                                        new McpContent.Text("mixed"),
+                                        new McpContent.Image("aGVsbG8=", "image/png"),
+                                        new McpContent.Audio("aGVsbG8=", "audio/wav"),
+                                        new McpContent.ResourceLink("https://example.test/source", "source"),
+                                        new McpContent.EmbeddedResource(new McpContent.TextResource(
+                                                "urn:vertique:mixed", "text/plain", "clear"))))),
+                        progressTool()));
                 RecordingSecurityRuntime securityRuntime = new RecordingSecurityRuntime();
                 McpPolicyEnforcer policyEnforcer = new McpPolicyEnforcer(new SecurityPolicyEnforcer(
                         Optional.empty(),
@@ -466,6 +496,45 @@ public class McpOfficialConformanceIT {
                         @Override
                         public Future<McpToolResult<?>> invoke() {
                             return Future.succeededFuture(result);
+                        }
+                    };
+                }
+            };
+        }
+
+        private static McpToolInvoker progressTool() {
+            McpToolDescriptor descriptor = new McpToolDescriptor(
+                    "test_tool_with_progress",
+                    null,
+                    "Official conformance fixture tool test_tool_with_progress",
+                    ANNOTATIONS,
+                    CLOSED_OBJECT_SCHEMA,
+                    null,
+                    new McpToolAccess(McpAccessMode.PERMIT_ALL, List.of(), null));
+            return new McpToolInvoker() {
+                @Override
+                public McpToolDescriptor descriptor() {
+                    return descriptor;
+                }
+
+                @Override
+                public McpPreparedToolCall prepare(Map<String, Object> arguments, McpCancellationSignal cancellation) {
+                    return new McpPreparedToolCall() {
+                        @Override
+                        public Map<String, Object> normalizedArguments() {
+                            return Map.of();
+                        }
+
+                        @Override
+                        public Future<McpToolResult<?>> invoke() {
+                            return cancellation
+                                    .progressReporter()
+                                    .report(0, 100.0, "starting")
+                                    .compose(ignored ->
+                                            cancellation.progressReporter().report(50, 100.0, "working"))
+                                    .compose(ignored ->
+                                            cancellation.progressReporter().report(100, 100.0, "complete"))
+                                    .map(ignored -> McpToolResult.text("progress complete"));
                         }
                     };
                 }

@@ -104,13 +104,14 @@ settings, with no direct replacement MCP setting.
 
 ## Conformance
 
-This module is Alpha maturity. It implements exactly 4 of the 37 server-leg scored scenarios in the
+This module is Alpha maturity. It implements exactly 9 of the 37 server-leg scored scenarios in the
 upstream Model Context Protocol conformance suite's frozen `2026-07-28` requirement set —
-`tools-list`, `tools-call-simple-text`, `tools-call-error`, and `dns-rebinding-protection` — each run
-to zero failures with no expected-failure baseline. The remaining 33 scored scenarios, and protocol
-capabilities this module does not implement (tasks, subscriptions, resources, prompts, rich
-tool-result content), are out of scope entirely, not partially implemented. This module claims
-conformance only to that scoped four-scenario partition, never to the full requirement set.
+`tools-list`, `tools-call-simple-text`, `tools-call-error`, the standard image/audio/embedded-resource
+and mixed-content result shapes, request-scoped progress, and `dns-rebinding-protection` — each run
+to zero failures with no expected-failure baseline. The remaining 28 scored scenarios, and protocol
+capabilities this module does not implement (tasks, subscriptions, resources, prompts, and result
+extensions beyond those standard blocks), are out of scope entirely, not partially implemented. This
+module claims conformance only to that scoped nine-scenario partition, never to the full requirement set.
 
 ## Stateless HTTP contract
 
@@ -210,7 +211,13 @@ observer's timer recording carries a valid span for a registry-level exemplar br
 ## Cancellation and write-phase settlement
 
 A disconnect, a stream reset, or a failed terminal write fires the request's `McpCancellationSignal`
-exactly once, in addition to the exactly-once terminal/completion settlement above. The completion
+exactly once, in addition to the exactly-once terminal/completion settlement above. A handler can
+call `cancellation.progressReporter().report(progress, total, message)` to emit standard
+request-scoped `notifications/progress`; the reporter is a no-op without a client-supplied
+`params._meta.progressToken`, and progress is never a partial result. Opaque progress tokens are
+retained losslessly, bounded to 4,096 UTF-8 bytes, and are not narrowed to Java numeric primitives.
+Progress frames and the terminal frame consume one shared `mcp.outputMaxBytes` response budget, so
+repeated progress cannot amplify the response beyond the configured cap. The completion
 coordinator owns this signal and fires it from the same first-observed-wins guard that governs
 completion: a genuinely successful write never fires it, but every other settlement path does,
 including the stalled-write recovery below. Every `tools/call` invocation receives this signal through
@@ -238,7 +245,8 @@ writer that stops the moment the running count would exceed the cap, so an over-
 classified as a bounded internal error and never emitted — the full over-cap byte array is never
 materialized. Discovery and `tools/list` responses are far below the default cap; a `tools/call`
 structured result is bounded the same way — see [Bounded output pipeline](#bounded-output-pipeline)
-for the full output-stage order this cap is one part of.
+for the full output-stage order this cap is one part of. For SSE tool calls, the coordinator accounts
+for every progress and terminal frame against the same request-scoped byte budget.
 
 Every JSON-RPC error response — a negotiation-mismatch `-32020`, an official-params or
 unknown-or-unauthorized `-32602`, an interceptor rejection, an ordinary envelope-decode failure
@@ -579,7 +587,8 @@ The response write itself is bounded exactly like discovery and `tools/list` ([B
 output](#bounded-response-output)): serialization streams to the same byte-counting sink that aborts
 the moment the running count would exceed `mcp.outputMaxBytes`, so an over-cap structured result is
 classified as `SERIALIZATION` before its full byte array is ever materialized, covering structured
-content as well as discovery and listing payloads.
+content as well as discovery and listing payloads. Progress and terminal SSE frames additionally share
+the coordinator's request-scoped response budget, including the framing bytes.
 
 ## Tool runtime
 
@@ -784,11 +793,12 @@ with its owning slice:
   request-interceptor stage described in [Request interceptor stage](#request-interceptor-stage), and
   the post-validation tool-interceptor stage described in
   [Tool interceptor stage](#tool-interceptor-stage).
-- **Single-pass bounded structured output.** A structured `McpToolResult` is
+- **Complete bounded tool output.** A structured `McpToolResult` is
   normalized exactly once, validated against the tool's advertised output schema, and bounded at
   `mcp.outputMaxBytes` as bytes are produced — see [Bounded output
-  pipeline](#bounded-output-pipeline). Rich (non-scalar-graph) result shapes beyond this remain a
-  later slice.
+  pipeline](#bounded-output-pipeline). Standard text, image, audio, resource-link, and embedded-resource
+  blocks are also supported in one ordered complete result. Resource-link and embedded-resource URIs
+  must be syntactically valid absolute URIs; extensions beyond those blocks remain a later slice.
 
 ## Authorized tool listing and pagination
 
