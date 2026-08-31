@@ -77,6 +77,8 @@ final class McpProtocolCodec {
      */
     private static final String MSG_NEGOTIATION_MISMATCH = "Header/body mismatch";
 
+    private static final String MSG_UNSUPPORTED_PROTOCOL_VERSION = "Unsupported protocol version";
+
     // --- Protocol negotiation (contract §4.7) ---
 
     private static final String HEADER_PROTOCOL_VERSION = "MCP-Protocol-Version";
@@ -85,7 +87,7 @@ final class McpProtocolCodec {
 
     private static final String META_FIELD = "_meta";
     private static final String META_PROTOCOL_VERSION = "io.modelcontextprotocol/protocolVersion";
-    private static final String META_CLIENT_CAPABILITIES = "io.modelcontextprotocol/clientCapabilities";
+    static final String META_CLIENT_CAPABILITIES = "io.modelcontextprotocol/clientCapabilities";
 
     /**
      * The plain, un-prefixed {@code _meta} keys {@link #extractBodyTraceContext}
@@ -285,9 +287,11 @@ final class McpProtocolCodec {
                 || !protocolVersionNode.isTextual()
                 || protocolVersionNode.asText().isBlank()
                 || protocolVersionNode.asText().length() > MAX_PROTOCOL_VERSION_CHARS
-                || protocolVersionNode.asText().chars().anyMatch(Character::isISOControl)
-                || !SUPPORTED_PROTOCOL_VERSIONS.contains(protocolVersionNode.asText())) {
+                || protocolVersionNode.asText().chars().anyMatch(Character::isISOControl)) {
             return NegotiationResult.failed(negotiationError());
+        }
+        if (!SUPPORTED_PROTOCOL_VERSIONS.contains(protocolVersionNode.asText())) {
+            return NegotiationResult.failed(unsupportedProtocolVersionError(protocolVersionNode.asText()));
         }
         JsonNode clientCapabilities = meta.get(META_CLIENT_CAPABILITIES);
         if (clientCapabilities == null || !clientCapabilities.isObject()) {
@@ -312,6 +316,11 @@ final class McpProtocolCodec {
             return NegotiationResult.failed(negotiationError());
         }
         return NegotiationResult.ok(protocolVersion);
+    }
+
+    /** Returns the validated request's client-capability object for server-side tool admission. */
+    static JsonNode clientCapabilitiesOf(JsonNode envelope) {
+        return envelope.path("params").path(META_FIELD).path(META_CLIENT_CAPABILITIES);
     }
 
     /**
@@ -405,6 +414,13 @@ final class McpProtocolCodec {
 
     private static CodecError negotiationError() {
         return new CodecError(NEGOTIATION_MISMATCH, MSG_NEGOTIATION_MISMATCH, null);
+    }
+
+    private static CodecError unsupportedProtocolVersionError(String requested) {
+        ObjectNode data = ENCODER.createObjectNode();
+        data.putArray("supported").add(McpCursorCodec.PROTOCOL_VERSION);
+        data.put("requested", requested);
+        return new CodecError(NEGOTIATION_MISMATCH, MSG_UNSUPPORTED_PROTOCOL_VERSION, data);
     }
 
     private static CodecError invalidParamsError() {

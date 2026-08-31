@@ -131,6 +131,9 @@ class McpToolProcessorCompileTest {
                         "shouldResolveGenericParameterMetadata",
                         McpToolProcessorCompileTest::shouldResolveGenericParameterMetadata),
                 new MatrixRow(
+                        "shouldPropagateValidCascadeAnnotation",
+                        McpToolProcessorCompileTest::shouldPropagateValidCascadeAnnotation),
+                new MatrixRow(
                         "shouldRejectAnUnresolvableParameterType",
                         McpToolProcessorCompileTest::shouldRejectAnUnresolvableParameterType));
     }
@@ -403,6 +406,48 @@ class McpToolProcessorCompileTest {
         }
     }
 
+    /**
+     * {@code @Valid} on a tool parameter is preserved on the generated input carrier so Jakarta
+     * Bean Validation can cascade into the materialized application object.
+     */
+    private static void shouldPropagateValidCascadeAnnotation() {
+        JavaFileObject request = SourceFiles.inline(TOOLS_PACKAGE + ".WeatherRequest", """
+                package com.example.tools;
+
+                import jakarta.validation.constraints.NotBlank;
+
+                public record WeatherRequest(@NotBlank String location) {}
+                """);
+        JavaFileObject cascadedTool = SourceFiles.inline(TOOLS_PACKAGE + ".CascadedValidationTools", """
+                package com.example.tools;
+
+                import dev.vertique.mcp.annotation.McpTool;
+                import dev.vertique.mcp.annotation.McpToolParam;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+                import jakarta.validation.Valid;
+
+                public class CascadedValidationTools {
+
+                    @Inject
+                    public CascadedValidationTools() {}
+
+                    @McpTool(name = "weather.cascaded", description = "Validate a weather request.")
+                    public Future<WeatherReport> lookup(
+                            @McpToolParam(name = "request", description = "The request to validate.")
+                            @Valid WeatherRequest request) {
+                        return Future.succeededFuture(new WeatherReport(request.location(), 21));
+                    }
+                }
+                """);
+        try (McpToolCompilation valid = McpToolCompilation.of(weatherReport(), request, cascadedTool)) {
+            valid.result()
+                    .assertSuccess()
+                    .assertGeneratedSourceContains(
+                            TOOLS_PACKAGE + ".CascadedValidationTools_lookup_McpToolInvoker", "@Valid");
+        }
+    }
+
     // --- Row 5: rejected unresolvable parameter type ---
 
     /**
@@ -490,6 +535,8 @@ class McpToolProcessorCompileTest {
                     .assertGeneratedSourceContains(WEATHER_INVOKER_FQN, "weather.lookup")
                     .assertGeneratedSourceContains(WEATHER_INVOKER_FQN, "record Input")
                     .assertGeneratedSourceContains(WEATHER_INVOKER_FQN, "structuredOutputWriter()")
+                    .assertGeneratedSourceContains(WEATHER_INVOKER_FQN, "requiredClientCapabilities()")
+                    .assertGeneratedSourceContains(WEATHER_INVOKER_FQN, "Set.of(\"sampling\")")
                     .assertGeneratedSourceContains(WEATHER_INVOKER_FQN, "Optional.of(runtime)")
                     .assertGeneratedSourceDoesNotContain(
                             WEATHER_INVOKER_FQN, "public class WeatherTools_lookup_McpToolInvoker")
@@ -1432,7 +1479,10 @@ class McpToolProcessorCompileTest {
                     @Inject
                     public WeatherTools() {}
 
-                    @McpTool(name = "weather.lookup", description = "Look up the current weather for a city.")
+                    @McpTool(
+                            name = "weather.lookup",
+                            description = "Look up the current weather for a city.",
+                            requiredClientCapabilities = {"sampling"})
                     public Future<WeatherReport> lookup(
                             @McpToolParam(name = "city", description = "The city to look up.") String city) {
                         return Future.succeededFuture(new WeatherReport(city, 21));

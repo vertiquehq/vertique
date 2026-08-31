@@ -55,9 +55,9 @@ class McpExternalPinLockTest {
             "tools-call-embedded-resource",
             "tools-call-mixed-content",
             "tools-call-with-progress",
+            "server-stateless",
             "dns-rebinding-protection");
     private static final Map<String, String> DEFERRED = Map.ofEntries(
-            entry("server-stateless", "MCP-005"),
             entry("caching", "MCP-004"),
             entry("completion-complete", "MCP-004"),
             entry("server-sse-multiple-streams", "MCP-005"),
@@ -194,7 +194,7 @@ class McpExternalPinLockTest {
         JsonArray deferredValues = PIN_LOCK.getJsonArray("deferredScenarios", new JsonArray());
         JsonArray notScoredValues = PIN_LOCK.getJsonArray("notScoredUpstream", new JsonArray());
         assertThat(List.of(supportedValues.size(), deferredValues.size(), notScoredValues.size()))
-                .containsExactly(9, 28, 13);
+                .containsExactly(10, 27, 13);
         Set<String> recordedSupported = stringSet(supportedValues);
         Map<String, String> recordedDeferred = deferredMap(deferredValues);
         Set<String> recordedNotScored = stringSet(notScoredValues);

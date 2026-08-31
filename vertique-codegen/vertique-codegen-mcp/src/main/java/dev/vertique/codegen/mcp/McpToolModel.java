@@ -24,6 +24,7 @@ import javax.lang.model.element.TypeElement;
  * @param title           the optional protocol title; {@code null} when blank and omitted from the
  *                        wire
  * @param description     the non-blank protocol description
+ * @param requiredClientCapabilities the required top-level client capability names
  * @param readOnlyHint    the {@code readOnlyHint} tool behavior annotation
  * @param destructiveHint the {@code destructiveHint} tool behavior annotation
  * @param idempotentHint  the {@code idempotentHint} tool behavior annotation
@@ -45,6 +46,7 @@ record McpToolModel(
         String toolName,
         String title,
         String description,
+        List<String> requiredClientCapabilities,
         boolean readOnlyHint,
         boolean destructiveHint,
         boolean idempotentHint,
@@ -71,6 +73,7 @@ record McpToolModel(
         Objects.requireNonNull(accessMode, "accessMode");
         Objects.requireNonNull(returnModel, "returnModel");
         roles = List.copyOf(roles);
+        requiredClientCapabilities = List.copyOf(requiredClientCapabilities);
         parameters = List.copyOf(parameters);
     }
 

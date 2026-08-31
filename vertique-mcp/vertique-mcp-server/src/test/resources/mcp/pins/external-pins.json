@@ -43,10 +43,10 @@
     "tools-call-embedded-resource",
     "tools-call-mixed-content",
     "tools-call-with-progress",
+    "server-stateless",
     "dns-rebinding-protection"
   ],
   "deferredScenarios": [
-    { "id": "server-stateless", "owningSpecification": "MCP-005" },
     { "id": "caching", "owningSpecification": "MCP-004" },
     { "id": "completion-complete", "owningSpecification": "MCP-004" },
     { "id": "server-sse-multiple-streams", "owningSpecification": "MCP-005" },

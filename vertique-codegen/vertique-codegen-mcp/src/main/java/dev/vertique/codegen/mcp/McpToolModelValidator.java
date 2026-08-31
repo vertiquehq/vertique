@@ -18,6 +18,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
 import javax.lang.model.element.AnnotationMirror;
+import javax.lang.model.element.AnnotationValue;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
@@ -67,6 +68,8 @@ final class McpToolModelValidator {
 
     /** The protocol tool-name grammar, mirroring {@link McpToolDescriptor}'s own bound. */
     private static final Pattern TOOL_NAME = Pattern.compile("[A-Za-z0-9_.-]{1,128}");
+
+    private static final Pattern CLIENT_CAPABILITY_NAME = Pattern.compile("[A-Za-z][A-Za-z0-9_-]{0,127}");
 
     /**
      * The frozen prefix of every generated carrier component name ({@code argument0},
@@ -294,6 +297,10 @@ final class McpToolModelValidator {
         }
         String title =
                 attribute(mirror, "title").filter(value -> !value.isBlank()).orElse(null);
+        Optional<List<String>> requiredClientCapabilities = requiredClientCapabilities(method, mirror, toolName);
+        if (requiredClientCapabilities.isEmpty()) {
+            return Optional.empty();
+        }
 
         Optional<McpToolReturnModel> returnModel = validateReturn(declaringType, method);
         if (returnModel.isEmpty()) {
@@ -318,6 +325,7 @@ final class McpToolModelValidator {
                 toolName,
                 title,
                 description,
+                requiredClientCapabilities.get(),
                 flag(mirror, "readOnlyHint", false),
                 flag(mirror, "destructiveHint", true),
                 flag(mirror, "idempotentHint", false),
@@ -838,6 +846,37 @@ final class McpToolModelValidator {
     }
 
     // --- Attribute helpers ---
+
+    private Optional<List<String>> requiredClientCapabilities(
+            ExecutableElement method, AnnotationMirror mirror, String toolName) {
+        List<String> capabilities = new ArrayList<>();
+        for (AnnotationValue value : ctx.annotations().attributeArray(mirror, "requiredClientCapabilities")) {
+            Object raw = value.getValue();
+            if (!(raw instanceof String capability)
+                    || !CLIENT_CAPABILITY_NAME.matcher(capability).matches()) {
+                ctx.diagnostics()
+                        .error(
+                                method,
+                                "@McpTool '%s' on %s has requiredClientCapabilities entry '%s'; each name must match %s",
+                                toolName,
+                                method.getSimpleName(),
+                                raw,
+                                CLIENT_CAPABILITY_NAME.pattern());
+                return Optional.empty();
+            }
+            if (!capabilities.add(capability)) {
+                ctx.diagnostics()
+                        .error(
+                                method,
+                                "@McpTool '%s' on %s repeats required client capability '%s'",
+                                toolName,
+                                method.getSimpleName(),
+                                capability);
+                return Optional.empty();
+            }
+        }
+        return Optional.of(List.copyOf(capabilities));
+    }
 
     private Optional<String> attribute(AnnotationMirror mirror, String name) {
         return ctx.annotations().attribute(mirror, name, String.class);

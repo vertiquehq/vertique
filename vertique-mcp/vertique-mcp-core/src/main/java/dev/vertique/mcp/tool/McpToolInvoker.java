@@ -5,6 +5,7 @@ package dev.vertique.mcp.tool;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * The generated-runtime contract between the MCP server and one published tool.
@@ -39,6 +40,19 @@ public interface McpToolInvoker {
      */
     default Optional<McpStructuredOutputWriter> structuredOutputWriter() {
         return Optional.empty();
+    }
+
+    /**
+     * Returns the immutable set of top-level client capabilities required before invocation.
+     *
+     * <p>The server evaluates this declaration after authorization and before input preparation.
+     * The default preserves compatibility for hand-written invokers that require no client
+     * capability.
+     *
+     * @return required client capability names, never {@code null}
+     */
+    default Set<String> requiredClientCapabilities() {
+        return Set.of();
     }
 
     /**

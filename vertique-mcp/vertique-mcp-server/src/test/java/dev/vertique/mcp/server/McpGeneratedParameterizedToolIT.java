@@ -110,7 +110,8 @@ class McpGeneratedParameterizedToolIT {
                 .contains("\"additionalProperties\":false");
 
         // --- When: a valid call, whose "name" argument the declared @Sanitize chain uppercases. ---
-        HttpResponse<Buffer> validCall = await(post().sendBuffer(callBody(RAW_NAME)));
+        HttpResponse<Buffer> validCall =
+                await(post(McpGeneratedParameterizedToolITFixture.TOOL_NAME).sendBuffer(callBody(RAW_NAME)));
 
         // --- Then (b): the tool's own response text was built from the post-sanitization value —
         // DECISIVE: this text can only appear if the real InputObjectProcessor genuinely invoked the
@@ -142,7 +143,8 @@ class McpGeneratedParameterizedToolIT {
         // --- When: a constraint-violating call — a blank/whitespace-only "name" the declared
         // @NotBlank rejects only after stage 2/3 succeed (the sanitizer's uppercase transform leaves
         // whitespace unchanged, and materialization itself cannot fail on a plain String). ---
-        HttpResponse<Buffer> rejectedCall = await(post().sendBuffer(callBody("   ")));
+        HttpResponse<Buffer> rejectedCall =
+                await(post(McpGeneratedParameterizedToolITFixture.TOOL_NAME).sendBuffer(callBody("   ")));
 
         // --- Then (c): the rejection settles as the bounded text-only isError=true tool-error outcome
         // — DECISIVE: not HTTP 500/INTERNAL. Before this remediation, McpBeanValidation was never
@@ -181,14 +183,42 @@ class McpGeneratedParameterizedToolIT {
                         McpGeneratedParameterizedToolITFixture.INVOKER_FQN, "java.lang.reflect");
     }
 
+    @Test
+    @DisplayName("shouldCascadeBeanValidationForAValidToolParameter")
+    void shouldCascadeBeanValidationForAValidToolParameter() throws Exception {
+        fixture = McpGeneratedParameterizedToolITFixture.start(vertx);
+        server = fixture.server();
+        rawClient = vertx.createHttpClient();
+        client = WebClient.wrap(rawClient);
+
+        HttpResponse<Buffer> validCall = await(
+                post(McpGeneratedParameterizedToolITFixture.CASCADED_TOOL_NAME).sendBuffer(cascadedCallBody("Ada")));
+        assertThat(validCall.statusCode()).isEqualTo(200);
+        JsonObject validResult = sseResult(validCall.bodyAsString());
+        assertThat(validResult.getBoolean("isError")).isFalse();
+        assertThat(validResult.getJsonArray("content").getJsonObject(0).getString("text"))
+                .isEqualTo("Hello, Ada!");
+
+        HttpResponse<Buffer> rejectedCall = await(
+                post(McpGeneratedParameterizedToolITFixture.CASCADED_TOOL_NAME).sendBuffer(cascadedCallBody("   ")));
+        assertThat(rejectedCall.statusCode()).isEqualTo(200);
+        JsonObject rejectedResult = sseResult(rejectedCall.bodyAsString());
+        assertThat(rejectedResult.getBoolean("isError")).isTrue();
+        assertThat(rejectedResult.getJsonArray("content").getJsonObject(0).getString("text"))
+                .isEqualTo(BEAN_VALIDATION_MESSAGE);
+        assertThat(fixture.session().toolInputCount())
+                .as("the invalid cascaded value must not reach tool-input observation")
+                .isEqualTo(1);
+    }
+
     // --- Wire helpers ---
 
-    private HttpRequest<Buffer> post() {
+    private HttpRequest<Buffer> post(String toolName) {
         return client.post(fixture.port(), "127.0.0.1", REQUEST_PATH)
                 .putHeader("content-type", "application/json")
                 .putHeader("MCP-Protocol-Version", PROTOCOL_VERSION)
                 .putHeader("Mcp-Method", "tools/call")
-                .putHeader("Mcp-Name", McpGeneratedParameterizedToolITFixture.TOOL_NAME);
+                .putHeader("Mcp-Name", toolName);
     }
 
     private static Buffer callBody(String name) {
@@ -201,6 +231,24 @@ class McpGeneratedParameterizedToolIT {
         JsonObject params = meta.copy()
                 .put("name", McpGeneratedParameterizedToolITFixture.TOOL_NAME)
                 .put("arguments", new JsonObject().put("name", name));
+        return new JsonObject()
+                .put("jsonrpc", "2.0")
+                .put("id", 1)
+                .put("method", "tools/call")
+                .put("params", params)
+                .toBuffer();
+    }
+
+    private static Buffer cascadedCallBody(String name) {
+        JsonObject meta = new JsonObject()
+                .put(
+                        "_meta",
+                        new JsonObject()
+                                .put("io.modelcontextprotocol/protocolVersion", PROTOCOL_VERSION)
+                                .put("io.modelcontextprotocol/clientCapabilities", new JsonObject()));
+        JsonObject params = meta.copy()
+                .put("name", McpGeneratedParameterizedToolITFixture.CASCADED_TOOL_NAME)
+                .put("arguments", new JsonObject().put("request", new JsonObject().put("name", name)));
         return new JsonObject()
                 .put("jsonrpc", "2.0")
                 .put("id", 1)

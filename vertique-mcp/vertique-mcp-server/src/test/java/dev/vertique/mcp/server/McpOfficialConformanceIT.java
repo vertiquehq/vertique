@@ -73,7 +73,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * T027 TP-001 — runs the pinned official conformance runner against exactly MCP-001's nine-id
+ * T027 TP-001 — runs the pinned official conformance runner against exactly MCP-001's ten-id
  * supported server partition. The longer timeout is deliberate: the first bounded runner process
  * installs the exact committed npm lock before executing; later scenario processes reuse that
  * target-local installation.
@@ -99,7 +99,16 @@ public class McpOfficialConformanceIT {
             "tools-call-embedded-resource",
             "tools-call-mixed-content",
             "tools-call-with-progress",
+            "server-stateless",
             "dns-rebinding-protection");
+    private static final Map<String, Set<String>> EXPECTED_OPTIONAL_SKIPS = Map.of(
+            "server-stateless",
+            Set.of(
+                    "sep-2575-server-sends-subscription-ack",
+                    "sep-2575-server-tags-subscription-id",
+                    "sep-2575-server-honors-notification-filter",
+                    "sep-2575-server-sends-prompts-list-changed-on-subscription",
+                    "sep-2575-server-sends-tools-list-changed-on-subscription"));
     private static final Path RETAINED_RESULTS = Path.of("target", "mcp-conformance-results");
 
     private static ConformanceFixture fixture;
@@ -133,7 +142,7 @@ public class McpOfficialConformanceIT {
         List<String> supported = stringList(pinLock.getJsonArray("supportedScenarios"));
         JsonArray deferredValues = pinLock.getJsonArray("deferredScenarios");
         List<String> notScored = stringList(pinLock.getJsonArray("notScoredUpstream"));
-        assertThat(deferredValues).hasSize(28).allSatisfy(value -> {
+        assertThat(deferredValues).hasSize(27).allSatisfy(value -> {
             JsonObject deferred = (JsonObject) value;
             assertThat(deferred.getString("id")).isNotBlank();
             assertThat(deferred.getString("owningSpecification")).matches("MCP-[0-9]{3}");
@@ -184,12 +193,24 @@ public class McpOfficialConformanceIT {
                     .as(scenario + " must execute and score at least one check")
                     .anySatisfy(check -> assertThat(check.getString("status")).isEqualTo("SUCCESS"));
             assertThat(report.checks())
-                    .noneSatisfy(check -> assertThat(check.getString("status")).isIn("FAILURE", "WARNING", "SKIPPED"));
+                    .noneSatisfy(check -> assertThat(check.getString("status")).isIn("FAILURE", "WARNING"));
+            Set<String> skipped = new LinkedHashSet<>();
+            report.checks().forEach(check -> {
+                if ("SKIPPED".equals(check.getString("status"))) {
+                    skipped.add(check.getString("id"));
+                }
+            });
+            assertThat(skipped)
+                    .as(scenario + " may skip only explicitly allowlisted optional checks")
+                    .containsExactlyInAnyOrderElementsOf(EXPECTED_OPTIONAL_SKIPS.getOrDefault(scenario, Set.of()));
 
             List<McpRequestTerminalEvent> terminalEvents = List.copyOf(fixture.terminalEvents());
             assertThat(terminalEvents)
                     .as(scenario + " must reach the real MCP request lifecycle")
                     .isNotEmpty()
+                    .anySatisfy(event -> assertThat(event.protocolVersion()).isEqualTo(PROTOCOL_VERSION));
+            assertThat(terminalEvents)
+                    .filteredOn(event -> event.protocolVersion() != null)
                     .allSatisfy(event -> assertThat(event.protocolVersion()).isEqualTo(PROTOCOL_VERSION));
             retainObservedVersions(report.directory(), terminalEvents);
             executed.add(scenario);
@@ -422,6 +443,12 @@ public class McpOfficialConformanceIT {
                                         new McpContent.ResourceLink("https://example.test/source", "source"),
                                         new McpContent.EmbeddedResource(new McpContent.TextResource(
                                                 "urn:vertique:mixed", "text/plain", "clear"))))),
+                        tool(
+                                "test_missing_capability",
+                                McpToolResult.text("sampling capability was supplied"),
+                                Set.of("sampling")),
+                        tool("test_streaming_elicitation", McpToolResult.text("streaming diagnostic complete")),
+                        tool("test_logging_tool", McpToolResult.text("logging diagnostic complete")),
                         progressTool()));
                 RecordingSecurityRuntime securityRuntime = new RecordingSecurityRuntime();
                 McpPolicyEnforcer policyEnforcer = new McpPolicyEnforcer(new SecurityPolicyEnforcer(
@@ -471,6 +498,11 @@ public class McpOfficialConformanceIT {
         }
 
         private static McpToolInvoker tool(String name, McpToolResult<?> result) {
+            return tool(name, result, Set.of());
+        }
+
+        private static McpToolInvoker tool(
+                String name, McpToolResult<?> result, Set<String> requiredClientCapabilities) {
             McpToolDescriptor descriptor = new McpToolDescriptor(
                     name,
                     null,
@@ -483,6 +515,11 @@ public class McpOfficialConformanceIT {
                 @Override
                 public McpToolDescriptor descriptor() {
                     return descriptor;
+                }
+
+                @Override
+                public Set<String> requiredClientCapabilities() {
+                    return requiredClientCapabilities;
                 }
 
                 @Override

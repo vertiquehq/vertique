@@ -29,6 +29,10 @@ Tool names are explicit, unique, case-sensitive, 1–128 characters, and match `
 Descriptions are non-blank and at most 4,096 characters; a blank title is omitted from the wire. A
 blank `@McpToolParam.name` resolves to the source parameter name. Requiredness is type-derived —
 an `Optional<T>` parameter may be absent, every other parameter is required.
+Tools may declare bounded top-level client capability requirements with
+`@McpTool(requiredClientCapabilities = {"sampling"})`. The server checks these after authorization
+and before input preparation; a missing capability produces HTTP 400 and JSON-RPC `-32021`. This
+metadata declares a prerequisite only and does not implement client-driven sampling.
 
 `McpCancellationSignal` is the only framework-supplied parameter a tool method may declare. It is
 excluded from the input schema and lets a handler stop cooperative work when the request settles as
