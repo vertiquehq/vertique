@@ -45,6 +45,12 @@ import org.junit.jupiter.api.Test;
  * <p>The test prints per-operation timings and the observed speedup ratio. It passes when the
  * ratio is ≥1.5×. CI finish-time protection: warm-up is 10 000 iterations; measurement is
  * 200 000 iterations.
+ *
+ * <p>The class name deliberately does not match Surefire's default include patterns, so it is
+ * excluded from {@code test}, {@code verify}, and CI regardless of the module it lives in. Run it
+ * manually via its {@link #main(String[])} entry point, or with {@code ./mvnw -ntp test
+ * -Dtest=InvocationBenchmark -pl vertique-codegen/vertique-codegen-jaxrs} (which forces Surefire to
+ * select it by name even though the default includes would skip it).
  */
 @DisplayName("InvocationBenchmark — generated execution plan vs reflective invocation speedup")
 class InvocationBenchmark {
