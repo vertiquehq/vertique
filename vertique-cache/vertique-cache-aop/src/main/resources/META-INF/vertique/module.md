@@ -24,6 +24,16 @@ explicitly empty `key = {}` declares a value-independent constant operation key.
 (the explicit empty array evicts the constant entry); code generation rejects a
 declaration with neither or both.
 
+An exact `@CacheEvict` resolves its target policy rather than guessing it: a
+co-located `@Cacheable` on the same method supplies the policy immediately, and a
+standalone eviction resolves lazily — at first invocation — from the runtime catalog,
+restricted to annotation-declared definitions, reusing the registered target's
+identity, mode, and TTL so it can never address a different identity bucket than its
+target. An unknown or programmatic-only target is a typed
+`EVICT`/`UNRESOLVED_TARGET` observed no-op: no provider is called and the eviction
+settles `false`. Programmatic caches are invalidated through their own `Cache`
+handles, never by annotations.
+
 The generic Vertique AOP processor generates the application proxy, reflection-free
 `MethodMetadata`, annotation literals, and interceptor chain. This module does not own
 proxy generation or cache storage behavior.

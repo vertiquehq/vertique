@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Alpha
 > **Package:** `dev.vertique.cache`
 > **Artifact:** `vertique-cache-core`
-> **Depends on:** `vertique-core`, `vertique-security-core`
+> **Depends on:** `vertique-core`, `vertique-context`, `vertique-security-core`
 
 `vertique-cache-core` is the provider-neutral foundation for programmatic method-result caching.
 Injected `CacheBuilder` creates immutable `Cache<K,V>` handles; annotation support is layered in
@@ -45,7 +45,8 @@ The typed cache configuration uses explicit duration units such as `defaultTtlSe
 `maxTtlSeconds`, and `backendTimeoutMs`. `jsonProfile` selects the existing JSON mapper
 profile for cache values; a per-cache `jsonProfile` override may inherit the global
 cache profile when omitted. Provider modules contribute storage bindings through the
-internal `CacheMode` Dagger map seam. The standard composition maps `LOCAL` to Caffeine and
+provider SPI Dagger map keys `CacheModeKey` and `CacheProviderIdKey`. The standard composition maps
+`LOCAL` to Caffeine and
 `CLUSTERED` to Redis. Annotation adapters in `vertique-cache-aop` (package
 `dev.vertique.cache.aop`) reach the same definition resolution through the public
 framework seam `CacheAdapterSupport`; it is integration surface for adapters and
@@ -63,10 +64,10 @@ empty by default and receives the sealed `dev.vertique.cache.spi.event` vocabula
 cache name, and elapsed time), at most one `CacheLateCompletion` supplement after a
 timed-out operation, and provider-maintenance `CacheCleanupCompleted` events. Observers
 implement the single `onEvent(CacheEvent)` method, must remain bounded and
-non-blocking, and their failures are suppressed. A standalone annotation eviction whose
-target definition is not yet registered emits `EVICT`/`UNRESOLVED_TARGET` instead of
-silently addressing the wrong identity bucket; once the target is registered, the
-eviction resolves and reuses that definition's identity, mode, and TTL policy. Identity-scoped cache definitions use
+non-blocking, and their failures are suppressed. The `EVICT`/`UNRESOLVED_TARGET`
+outcome exists for framework adapters whose eviction target has no registered
+definition; the annotation-side semantics are documented by `vertique-cache-aop`.
+Identity-scoped cache definitions use
 the standard `DefaultCacheIdentityResolver`, contributed by `CacheCoreModule`, to read
 the current `SecurityContext` from the framework `ContextHolder`. `ACTOR` uses the actor,
 `EFFECTIVE_PRINCIPAL` uses the subject when present and otherwise the actor, and
@@ -83,12 +84,13 @@ The provider-neutral `CacheStoreContractTest` runs the same contract against the
 Redis providers, covering hits, misses, TTL, clear, failure handling, declared types, value
 isolation, and repeatable eviction. Core operational validation rejects an oversized canonical
 key before a provider operation. Resolved providers consume only `ResolvedCacheKey` and
-`CacheValueDescriptor`; the pre-release `CacheKey` store contract was removed before mainline
-release, so no compatibility overload is provided.
+`CacheValueDescriptor`. The public `CacheKey` is a logical ordered-component value
+produced by selector functions; it is never a storage key and no provider SPI accepts
+it.
 Core does not validate values before provider work: Caffeine and
 Redis serialize values in their provider implementations and then enforce `maxValueBytes` on the
 serialized bytes; those provider failures are handled by the cache core's fail-open path. An
-explicit annotation TTL above `maxTtlSeconds` is rejected with
+explicit declared TTL — builder or annotation — above `maxTtlSeconds` is rejected with
 `IllegalArgumentException`; it is not silently clamped. `ttlSeconds = 0` retains provider size
 protection while disabling time expiration.
 
