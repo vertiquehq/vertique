@@ -228,7 +228,8 @@
     ],
     "dev.vertique.mcp.tool.McpCancellationSignal": [
       "public abstract boolean dev.vertique.mcp.tool.McpCancellationSignal.isCancelled()",
-      "public abstract io.vertx.core.Future<java.lang.Void> dev.vertique.mcp.tool.McpCancellationSignal.cancelled()"
+      "public abstract io.vertx.core.Future<java.lang.Void> dev.vertique.mcp.tool.McpCancellationSignal.cancelled()",
+      "public default dev.vertique.mcp.tool.McpProgressReporter dev.vertique.mcp.tool.McpCancellationSignal.progressReporter()"
     ],
     "dev.vertique.mcp.tool.McpPreparedToolCall": [
       "public abstract io.vertx.core.Future<dev.vertique.mcp.tool.McpToolResult<?>> dev.vertique.mcp.tool.McpPreparedToolCall.invoke()",
@@ -276,17 +277,91 @@
     "dev.vertique.mcp.tool.McpStructuredOutputWriter": [
       "public abstract void dev.vertique.mcp.tool.McpStructuredOutputWriter.write(java.lang.Object,java.io.OutputStream) throws java.io.IOException"
     ],
+    "dev.vertique.mcp.tool.McpContent": [],
+    "dev.vertique.mcp.tool.McpContent$Audio": [
+      "public dev.vertique.mcp.tool.McpContent$Audio(java.lang.String,java.lang.String)",
+      "public final boolean dev.vertique.mcp.tool.McpContent$Audio.equals(java.lang.Object)",
+      "public final int dev.vertique.mcp.tool.McpContent$Audio.hashCode()",
+      "public final java.lang.String dev.vertique.mcp.tool.McpContent$Audio.toString()",
+      "public java.lang.String dev.vertique.mcp.tool.McpContent$Audio.data()",
+      "public java.lang.String dev.vertique.mcp.tool.McpContent$Audio.mimeType()"
+    ],
+    "dev.vertique.mcp.tool.McpContent$BlobResource": [
+      "public dev.vertique.mcp.tool.McpContent$BlobResource(java.lang.String,java.lang.String,java.lang.String)",
+      "public final boolean dev.vertique.mcp.tool.McpContent$BlobResource.equals(java.lang.Object)",
+      "public final int dev.vertique.mcp.tool.McpContent$BlobResource.hashCode()",
+      "public final java.lang.String dev.vertique.mcp.tool.McpContent$BlobResource.toString()",
+      "public java.lang.String dev.vertique.mcp.tool.McpContent$BlobResource.blob()",
+      "public java.lang.String dev.vertique.mcp.tool.McpContent$BlobResource.mimeType()",
+      "public java.lang.String dev.vertique.mcp.tool.McpContent$BlobResource.uri()"
+    ],
+    "dev.vertique.mcp.tool.McpContent$EmbeddedResource": [
+      "public dev.vertique.mcp.tool.McpContent$EmbeddedResource(dev.vertique.mcp.tool.McpContent$Resource)",
+      "public final boolean dev.vertique.mcp.tool.McpContent$EmbeddedResource.equals(java.lang.Object)",
+      "public final int dev.vertique.mcp.tool.McpContent$EmbeddedResource.hashCode()",
+      "public final java.lang.String dev.vertique.mcp.tool.McpContent$EmbeddedResource.toString()",
+      "public dev.vertique.mcp.tool.McpContent$Resource dev.vertique.mcp.tool.McpContent$EmbeddedResource.resource()"
+    ],
+    "dev.vertique.mcp.tool.McpContent$Image": [
+      "public dev.vertique.mcp.tool.McpContent$Image(java.lang.String,java.lang.String)",
+      "public final boolean dev.vertique.mcp.tool.McpContent$Image.equals(java.lang.Object)",
+      "public final int dev.vertique.mcp.tool.McpContent$Image.hashCode()",
+      "public final java.lang.String dev.vertique.mcp.tool.McpContent$Image.toString()",
+      "public java.lang.String dev.vertique.mcp.tool.McpContent$Image.data()",
+      "public java.lang.String dev.vertique.mcp.tool.McpContent$Image.mimeType()"
+    ],
+    "dev.vertique.mcp.tool.McpContent$Resource": [
+      "public abstract java.lang.String dev.vertique.mcp.tool.McpContent$Resource.mimeType()",
+      "public abstract java.lang.String dev.vertique.mcp.tool.McpContent$Resource.uri()"
+    ],
+    "dev.vertique.mcp.tool.McpContent$ResourceLink": [
+      "public dev.vertique.mcp.tool.McpContent$ResourceLink(java.lang.String,java.lang.String)",
+      "public dev.vertique.mcp.tool.McpContent$ResourceLink(java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String)",
+      "public final boolean dev.vertique.mcp.tool.McpContent$ResourceLink.equals(java.lang.Object)",
+      "public final int dev.vertique.mcp.tool.McpContent$ResourceLink.hashCode()",
+      "public final java.lang.String dev.vertique.mcp.tool.McpContent$ResourceLink.toString()",
+      "public java.lang.String dev.vertique.mcp.tool.McpContent$ResourceLink.description()",
+      "public java.lang.String dev.vertique.mcp.tool.McpContent$ResourceLink.mimeType()",
+      "public java.lang.String dev.vertique.mcp.tool.McpContent$ResourceLink.name()",
+      "public java.lang.String dev.vertique.mcp.tool.McpContent$ResourceLink.title()",
+      "public java.lang.String dev.vertique.mcp.tool.McpContent$ResourceLink.uri()"
+    ],
+    "dev.vertique.mcp.tool.McpContent$Text": [
+      "public dev.vertique.mcp.tool.McpContent$Text(java.lang.String)",
+      "public final boolean dev.vertique.mcp.tool.McpContent$Text.equals(java.lang.Object)",
+      "public final int dev.vertique.mcp.tool.McpContent$Text.hashCode()",
+      "public final java.lang.String dev.vertique.mcp.tool.McpContent$Text.toString()",
+      "public java.lang.String dev.vertique.mcp.tool.McpContent$Text.text()"
+    ],
+    "dev.vertique.mcp.tool.McpContent$TextResource": [
+      "public dev.vertique.mcp.tool.McpContent$TextResource(java.lang.String,java.lang.String,java.lang.String)",
+      "public final boolean dev.vertique.mcp.tool.McpContent$TextResource.equals(java.lang.Object)",
+      "public final int dev.vertique.mcp.tool.McpContent$TextResource.hashCode()",
+      "public final java.lang.String dev.vertique.mcp.tool.McpContent$TextResource.toString()",
+      "public java.lang.String dev.vertique.mcp.tool.McpContent$TextResource.mimeType()",
+      "public java.lang.String dev.vertique.mcp.tool.McpContent$TextResource.text()",
+      "public java.lang.String dev.vertique.mcp.tool.McpContent$TextResource.uri()"
+    ],
+    "dev.vertique.mcp.tool.McpProgressReporter": [
+      "public abstract io.vertx.core.Future<java.lang.Void> dev.vertique.mcp.tool.McpProgressReporter.report(double,java.lang.Double,java.lang.String)",
+      "public static dev.vertique.mcp.tool.McpProgressReporter dev.vertique.mcp.tool.McpProgressReporter.noop()"
+    ],
     "dev.vertique.mcp.tool.McpToolResult": [
-      "public T dev.vertique.mcp.tool.McpToolResult.structuredContent()",
-      "public boolean dev.vertique.mcp.tool.McpToolResult.isError()",
+      "public final T dev.vertique.mcp.tool.McpToolResult.structuredContent()",
+      "public final boolean dev.vertique.mcp.tool.McpToolResult.isError()",
       "public dev.vertique.mcp.tool.McpToolResult(java.util.List<java.lang.String>,T,boolean)",
       "public final boolean dev.vertique.mcp.tool.McpToolResult.equals(java.lang.Object)",
       "public final int dev.vertique.mcp.tool.McpToolResult.hashCode()",
       "public final java.lang.String dev.vertique.mcp.tool.McpToolResult.toString()",
-      "public java.util.List<java.lang.String> dev.vertique.mcp.tool.McpToolResult.textContent()",
+      "public final java.util.List<dev.vertique.mcp.tool.McpContent> dev.vertique.mcp.tool.McpToolResult.content()",
+      "public final java.util.List<java.lang.String> dev.vertique.mcp.tool.McpToolResult.textContent()",
       "public static <T> dev.vertique.mcp.tool.McpToolResult<T> dev.vertique.mcp.tool.McpToolResult.structured(T)",
       "public static dev.vertique.mcp.tool.McpToolResult<java.lang.Void> dev.vertique.mcp.tool.McpToolResult.error(java.lang.String)",
-      "public static dev.vertique.mcp.tool.McpToolResult<java.lang.Void> dev.vertique.mcp.tool.McpToolResult.text(java.lang.String)"
+      "public static dev.vertique.mcp.tool.McpToolResult<java.lang.Void> dev.vertique.mcp.tool.McpToolResult.text(java.lang.String)",
+      "public static dev.vertique.mcp.tool.McpToolResult<java.lang.Void> dev.vertique.mcp.tool.McpToolResult.content(java.util.List<? extends dev.vertique.mcp.tool.McpContent>)",
+      "public static <T> dev.vertique.mcp.tool.McpToolResult<T> dev.vertique.mcp.tool.McpToolResult.content(java.util.List<? extends dev.vertique.mcp.tool.McpContent>,T)",
+      "public static dev.vertique.mcp.tool.McpToolResult<java.lang.Void> dev.vertique.mcp.tool.McpToolResult.errorContent(java.util.List<? extends dev.vertique.mcp.tool.McpContent>)",
+      "public static <T> dev.vertique.mcp.tool.McpToolResult<T> dev.vertique.mcp.tool.McpToolResult.errorContent(java.util.List<? extends dev.vertique.mcp.tool.McpContent>,T)"
     ]
   }
 }

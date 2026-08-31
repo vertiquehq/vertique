@@ -104,13 +104,14 @@ settings, with no direct replacement MCP setting.
 
 ## Conformance
 
-This module is Alpha maturity. It implements exactly 4 of the 37 server-leg scored scenarios in the
+This module is Alpha maturity. It implements exactly 9 of the 37 server-leg scored scenarios in the
 upstream Model Context Protocol conformance suite's frozen `2026-07-28` requirement set —
-`tools-list`, `tools-call-simple-text`, `tools-call-error`, and `dns-rebinding-protection` — each run
-to zero failures with no expected-failure baseline. The remaining 33 scored scenarios, and protocol
-capabilities this module does not implement (tasks, subscriptions, resources, prompts, rich
-tool-result content), are out of scope entirely, not partially implemented. This module claims
-conformance only to that scoped four-scenario partition, never to the full requirement set.
+`tools-list`, `tools-call-simple-text`, `tools-call-error`, the standard image/audio/embedded-resource
+and mixed-content result shapes, request-scoped progress, and `dns-rebinding-protection` — each run
+to zero failures with no expected-failure baseline. The remaining 28 scored scenarios, and protocol
+capabilities this module does not implement (tasks, subscriptions, resources, prompts, and result
+extensions beyond those standard blocks), are out of scope entirely, not partially implemented. This
+module claims conformance only to that scoped nine-scenario partition, never to the full requirement set.
 
 ## Stateless HTTP contract
 
@@ -210,7 +211,10 @@ observer's timer recording carries a valid span for a registry-level exemplar br
 ## Cancellation and write-phase settlement
 
 A disconnect, a stream reset, or a failed terminal write fires the request's `McpCancellationSignal`
-exactly once, in addition to the exactly-once terminal/completion settlement above. The completion
+exactly once, in addition to the exactly-once terminal/completion settlement above. A handler can
+call `cancellation.progressReporter().report(progress, total, message)` to emit standard
+request-scoped `notifications/progress`; the reporter is a no-op without a client-supplied
+`params._meta.progressToken`, and progress is never a partial result. The completion
 coordinator owns this signal and fires it from the same first-observed-wins guard that governs
 completion: a genuinely successful write never fires it, but every other settlement path does,
 including the stalled-write recovery below. Every `tools/call` invocation receives this signal through
@@ -784,10 +788,11 @@ with its owning slice:
   request-interceptor stage described in [Request interceptor stage](#request-interceptor-stage), and
   the post-validation tool-interceptor stage described in
   [Tool interceptor stage](#tool-interceptor-stage).
-- **Single-pass bounded structured output.** A structured `McpToolResult` is
+- **Complete bounded tool output.** A structured `McpToolResult` is
   normalized exactly once, validated against the tool's advertised output schema, and bounded at
   `mcp.outputMaxBytes` as bytes are produced — see [Bounded output
-  pipeline](#bounded-output-pipeline). Rich (non-scalar-graph) result shapes beyond this remain a
+  pipeline](#bounded-output-pipeline). Standard text, image, audio, resource-link, and embedded-resource
+  blocks are also supported in one ordered complete result; extensions beyond those blocks remain a
   later slice.
 
 ## Authorized tool listing and pagination

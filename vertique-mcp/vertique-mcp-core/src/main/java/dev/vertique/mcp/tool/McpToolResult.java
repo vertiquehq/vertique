@@ -4,6 +4,7 @@
 package dev.vertique.mcp.tool;
 
 import jakarta.annotation.Nullable;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
@@ -22,13 +23,16 @@ import java.util.Objects;
  * see and reason about. An unhandled exception, an output-schema failure, or a serialization
  * failure is not expressed here: it becomes a bounded protocol-level internal error instead.
  *
- * @param <T> the structured content type, or {@link Void} for a text-only result
- * @param textContent the text content items, defensively copied and free of null elements
- * @param structuredContent the structured content, or {@code null} for a text-only result
- * @param isError whether the call reports a tool execution error
+ * @param <T> the structured content type, or {@link Void} when the result has no structured value
  */
-public record McpToolResult<T>(
-        List<String> textContent, @Nullable T structuredContent, boolean isError) {
+public final class McpToolResult<T> {
+    private final List<String> textContent;
+    private final List<McpContent> content;
+
+    @Nullable
+    private final T structuredContent;
+
+    private final boolean isError;
 
     /**
      * Validates that the result carries content and defensively copies the text items.
@@ -36,12 +40,75 @@ public record McpToolResult<T>(
      * @throws NullPointerException if {@code textContent} is null or contains a null element
      * @throws IllegalArgumentException if the result has neither a text item nor structured content
      */
-    public McpToolResult {
+    public McpToolResult(List<String> textContent, @Nullable T structuredContent, boolean isError) {
         Objects.requireNonNull(textContent, "textContent");
-        textContent = List.copyOf(textContent);
+        this.textContent = List.copyOf(textContent);
+        this.content = List.of();
+        this.structuredContent = structuredContent;
+        this.isError = isError;
         if (textContent.isEmpty() && structuredContent == null) {
             throw new IllegalArgumentException("a result requires at least one text item or structured content");
         }
+    }
+
+    private McpToolResult(List<McpContent> content, @Nullable T structuredContent, boolean isError, boolean rich) {
+        Objects.requireNonNull(content, "content");
+        this.content = List.copyOf(content);
+        this.textContent = this.content.stream()
+                .filter(McpContent.Text.class::isInstance)
+                .map(McpContent.Text.class::cast)
+                .map(McpContent.Text::text)
+                .toList();
+        this.structuredContent = structuredContent;
+        this.isError = isError;
+        if (this.content.isEmpty() && structuredContent == null) {
+            throw new IllegalArgumentException("a result requires at least one content item or structured content");
+        }
+    }
+
+    public final List<String> textContent() {
+        return textContent;
+    }
+
+    /** Returns the handler-authored standard MCP content blocks in order. */
+    public final List<McpContent> content() {
+        if (!content.isEmpty()) {
+            return content;
+        }
+        return textContent.stream()
+                .map(McpContent.Text::new)
+                .map(McpContent.class::cast)
+                .toList();
+    }
+
+    @Nullable
+    public final T structuredContent() {
+        return structuredContent;
+    }
+
+    public final boolean isError() {
+        return isError;
+    }
+
+    @Override
+    public final boolean equals(Object other) {
+        if (this == other) return true;
+        if (!(other instanceof McpToolResult<?> that)) return false;
+        return isError == that.isError
+                && textContent.equals(that.textContent)
+                && content.equals(that.content)
+                && Objects.equals(structuredContent, that.structuredContent);
+    }
+
+    @Override
+    public final int hashCode() {
+        return Objects.hash(textContent, content, structuredContent, isError);
+    }
+
+    @Override
+    public final String toString() {
+        return "McpToolResult[content=" + content() + ", structuredContent=" + structuredContent + ", isError="
+                + isError + "]";
     }
 
     /**
@@ -78,5 +145,25 @@ public record McpToolResult<T>(
      */
     public static McpToolResult<Void> error(String safeMessage) {
         return new McpToolResult<>(List.of(safeMessage), null, true);
+    }
+
+    /** Creates a successful result carrying standard MCP content blocks in the given order. */
+    public static McpToolResult<Void> content(List<? extends McpContent> content) {
+        return new McpToolResult<>(new ArrayList<>(content), null, false, true);
+    }
+
+    /** Creates a successful result carrying standard content blocks and structured content. */
+    public static <T> McpToolResult<T> content(List<? extends McpContent> content, @Nullable T structuredContent) {
+        return new McpToolResult<>(new ArrayList<>(content), structuredContent, false, true);
+    }
+
+    /** Creates an error result carrying standard MCP content blocks in the given order. */
+    public static McpToolResult<Void> errorContent(List<? extends McpContent> content) {
+        return new McpToolResult<>(new ArrayList<>(content), null, true, true);
+    }
+
+    /** Creates an error result carrying standard content blocks and structured content. */
+    public static <T> McpToolResult<T> errorContent(List<? extends McpContent> content, @Nullable T structuredContent) {
+        return new McpToolResult<>(new ArrayList<>(content), structuredContent, true, true);
     }
 }

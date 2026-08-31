@@ -4,6 +4,7 @@
 package dev.vertique.mcp.server;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.fail;
 
 import dev.vertique.codegen.mcp.McpToolProcessor;
@@ -17,6 +18,7 @@ import dev.vertique.mcp.lifecycle.McpResultType;
 import dev.vertique.mcp.server.runtime.McpToolRuntimeFactory;
 import dev.vertique.mcp.server.runtime.McpToolRuntimeFactoryTestSupport;
 import dev.vertique.mcp.tool.McpCancellationSignal;
+import dev.vertique.mcp.tool.McpContent;
 import dev.vertique.mcp.tool.McpPreparedToolCall;
 import dev.vertique.mcp.tool.McpToolInvoker;
 import dev.vertique.mcp.tool.McpToolResult;
@@ -35,6 +37,7 @@ import java.util.stream.Stream;
 import javax.tools.JavaFileObject;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
@@ -56,6 +59,45 @@ import org.junit.jupiter.params.provider.MethodSource;
  */
 @DisplayName("MCP complete-only tool result algebra — T019 contract matrix")
 class McpToolResultTest {
+
+    @Test
+    void shouldConstructEveryStandardContentBlockInOrder() {
+        List<McpContent> blocks = List.of(
+                new McpContent.Text("text"),
+                new McpContent.Image("aGVsbG8=", "image/png"),
+                new McpContent.Audio("aGVsbG8=", "audio/wav"),
+                new McpContent.ResourceLink("https://example.test", "example"),
+                new McpContent.EmbeddedResource(new McpContent.TextResource("urn:example", "text/plain", "resource")));
+
+        McpToolResult<Void> result = McpToolResult.content(blocks);
+
+        assertThat(result.content()).containsExactlyElementsOf(blocks);
+        assertThat(result.textContent()).containsExactly("text");
+        assertThat(result.structuredContent()).isNull();
+        assertThat(result.isError()).isFalse();
+    }
+
+    @Test
+    void shouldSupportStructuredContentAlongsideStandardContent() {
+        var structured = Map.of("condition", "clear");
+
+        McpToolResult<Map<String, String>> result =
+                McpToolResult.content(List.of(new McpContent.Text("clear")), structured);
+
+        assertThat(result.content()).containsExactly(new McpContent.Text("clear"));
+        assertThat(result.structuredContent()).isEqualTo(structured);
+        assertThat(result.isError()).isFalse();
+    }
+
+    @Test
+    void shouldRejectInvalidBase64BinaryContent() {
+        assertThatThrownBy(() -> new McpContent.Image("not base64!", "image/png"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new McpContent.Audio("not base64!", "audio/wav"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new McpContent.BlobResource("urn:example", null, "not base64!"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 
     private static final String TOOL_PACKAGE = "com.example.resultalgebra";
     private static final String TOOLS_FQN = TOOL_PACKAGE + ".ResultAlgebraTools";

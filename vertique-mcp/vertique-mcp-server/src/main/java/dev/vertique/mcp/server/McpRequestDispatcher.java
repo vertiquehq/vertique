@@ -41,6 +41,7 @@ import dev.vertique.mcp.lifecycle.McpToolOutputObservation;
 import dev.vertique.mcp.lifecycle.McpTransportOutcome;
 import dev.vertique.mcp.tool.McpAccessMode;
 import dev.vertique.mcp.tool.McpCancellationSignal;
+import dev.vertique.mcp.tool.McpContent;
 import dev.vertique.mcp.tool.McpInputRejectionException;
 import dev.vertique.mcp.tool.McpPreparedToolCall;
 import dev.vertique.mcp.tool.McpStructuredOutputWriter;
@@ -550,8 +551,13 @@ final class McpRequestDispatcher {
         Instant startedAt = startedAt(context);
         bindCorrelation(context);
         Context owningContext = context.vertx().getOrCreateContext();
-        McpCompletionCoordinator coordinator =
-                new McpCompletionCoordinator(owningContext, lifecycleObservers, completedListeners, startedAt);
+        McpCompletionCoordinator coordinator = new McpCompletionCoordinator(
+                owningContext,
+                lifecycleObservers,
+                completedListeners,
+                startedAt,
+                java.time.InstantSource.system(),
+                context);
         context.put(COMPLETION_COORDINATOR_KEY, coordinator);
         context.put(REQUEST_CONTEXT_KEY, owningContext);
         registerSettlementHooks(context, coordinator, startedAt);
@@ -2149,6 +2155,10 @@ final class McpRequestDispatcher {
             return;
         }
         selectSse(context);
+        McpCompletionCoordinator progressCoordinator = context.get(COMPLETION_COORDINATOR_KEY);
+        if (progressCoordinator != null) {
+            progressCoordinator.bindProgressToken(progressTokenOf(envelope));
+        }
         Map<String, Object> arguments = argumentsOf(envelope);
         if (!schemaValid(toolName, arguments)) {
             // Same rationale as above: rejected before invocation, no output observation.
@@ -2382,12 +2392,26 @@ final class McpRequestDispatcher {
     /**
      * Selects request-scoped SSE for this response: mutates the buffered response headers only — no
      * byte reaches the wire from this call, since Vert.x defers sending headers until the first
-     * {@code write}/{@code end} — so this may run freely before invocation without violating "no byte
-     * until a terminal message is ready" (§4.7).
+     * {@code write}/{@code end}. Standard progress notifications may then be written before the
+     * terminal result when the client supplied a progress token.
      */
     private static void selectSse(RoutingContext context) {
         context.response().putHeader("content-type", EVENT_STREAM_CONTENT_TYPE);
         context.response().putHeader("X-Accel-Buffering", "no");
+        context.response().setChunked(true);
+    }
+
+    /** Returns the already-schema-validated request progress token, when one was supplied. */
+    @Nullable
+    private static Object progressTokenOf(JsonNode envelope) {
+        JsonNode token = envelope.path("params").path("_meta").path("progressToken");
+        if (token.isTextual()) {
+            return token.textValue();
+        }
+        if (token.isIntegralNumber()) {
+            return token.longValue();
+        }
+        return null;
     }
 
     /**
@@ -2722,13 +2746,10 @@ final class McpRequestDispatcher {
     private ObjectNode toolCallResponse(
             JsonNode envelope, McpToolResult<?> result, @Nullable Object normalizedStructuredContent) {
         ArrayNode content = OUTPUT_ENCODER.createArrayNode();
-        for (String text : result.textContent()) {
-            ObjectNode item = OUTPUT_ENCODER.createObjectNode();
-            item.put("type", "text");
-            item.put("text", text);
-            content.add(item);
+        for (McpContent item : result.content()) {
+            content.add(contentNode(item));
         }
-        if (result.textContent().isEmpty() && normalizedStructuredContent != null) {
+        if (result.content().isEmpty() && normalizedStructuredContent != null) {
             ObjectNode item = OUTPUT_ENCODER.createObjectNode();
             item.put("type", "text");
             item.put("text", canonicalStructuredText(normalizedStructuredContent));
@@ -2753,6 +2774,47 @@ final class McpRequestDispatcher {
         JsonNode id = envelope.get("id");
         response.set("id", id != null ? id : NullNode.getInstance());
         return response;
+    }
+
+    private static ObjectNode contentNode(McpContent content) {
+        ObjectNode node = OUTPUT_ENCODER.createObjectNode();
+        switch (content) {
+            case McpContent.Text text -> {
+                node.put("type", "text");
+                node.put("text", text.text());
+            }
+            case McpContent.Image image -> {
+                node.put("type", "image");
+                node.put("data", image.data());
+                node.put("mimeType", image.mimeType());
+            }
+            case McpContent.Audio audio -> {
+                node.put("type", "audio");
+                node.put("data", audio.data());
+                node.put("mimeType", audio.mimeType());
+            }
+            case McpContent.ResourceLink link -> {
+                node.put("type", "resource_link");
+                node.put("uri", link.uri());
+                node.put("name", link.name());
+                if (link.title() != null) node.put("title", link.title());
+                if (link.description() != null) node.put("description", link.description());
+                if (link.mimeType() != null) node.put("mimeType", link.mimeType());
+            }
+            case McpContent.EmbeddedResource embedded -> {
+                node.put("type", "resource");
+                ObjectNode resource = OUTPUT_ENCODER.createObjectNode();
+                McpContent.Resource value = embedded.resource();
+                resource.put("uri", value.uri());
+                if (value.mimeType() != null) resource.put("mimeType", value.mimeType());
+                switch (value) {
+                    case McpContent.TextResource text -> resource.put("text", text.text());
+                    case McpContent.BlobResource blob -> resource.put("blob", blob.blob());
+                }
+                node.set("resource", resource);
+            }
+        }
+        return node;
     }
 
     /**
@@ -3136,6 +3198,9 @@ final class McpRequestDispatcher {
         if (coordinator != null && !coordinator.beginWrite(terminal)) {
             return false;
         }
+        if (!context.response().headWritten()) {
+            context.response().setStatusCode(status);
+        }
         // Raw response-side evidence, published on the
         // mcp.tool.call surface only, immediately before the bytes below reach the wire — the single
         // shared terminal writer, so every settlement path that produces a response (success, a
@@ -3149,7 +3214,6 @@ final class McpRequestDispatcher {
                     body != null ? body : new byte[0],
                     headerMapOf(context.response().headers())));
         }
-        context.response().setStatusCode(status);
         Handler<AsyncResult<Void>> onEnd = result -> {
             if (coordinator != null) {
                 coordinator.finishWrite(
@@ -3164,8 +3228,8 @@ final class McpRequestDispatcher {
             context.response().end().onComplete(onEnd);
             return true;
         }
-        // end(body) sets Content-Length, so the response is framed by length instead of relying on
-        // connection-close framing the way a separate write() + end() pair does.
+        // SSE may already contain request-scoped progress frames, so the response is explicitly
+        // chunked by selectSse and this terminal frame is appended to that same stream.
         context.response().end(Buffer.buffer(body)).onComplete(onEnd);
         return true;
     }
