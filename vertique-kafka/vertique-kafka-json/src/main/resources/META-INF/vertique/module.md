@@ -196,8 +196,15 @@ public abstract class KafkaJsonModule {
     @Provides
     @Singleton
     @IntoSet
-    static KafkaSerdeProvider jsonSerdeProvider(JsonMapperProfileRegistry registry) {
-        return new JsonSerdeProvider(registry);
+    static KafkaSerdeProvider jsonSerdeProvider(JsonMapperProfileRegistry registry, JsonConfig jsonConfig) {
+        return new JsonSerdeProvider(registry, jsonConfig);
+    }
+
+    @Provides
+    @Singleton
+    @IntoSet
+    static ComposeValidator kafkaDefaultProfileValidator(KafkaDefaultProfileValidator impl) {
+        return impl;
     }
 }
 ```
@@ -244,6 +251,7 @@ The JSON provider is the reference implementation of the SPI. To implement a cus
 | Artifact | Scope | Purpose |
 |----------|-------|---------|
 | `dev.vertique:vertique-kafka-core` | compile | `KafkaSerdeProvider` SPI, `KafkaSerializer`, `KafkaDeserializer`, `DeserializationException` |
-| `dev.vertique:vertique-json` | compile | `JsonMapperProfileRegistry`, `JsonRuntimeModule`, `JsonProfileId` |
+| `dev.vertique:vertique-json` | compile | `JsonRuntimeModule`, `JsonConfig` |
+| `dev.vertique:vertique-core` | compile | `JsonMapperProfileRegistry`, `JsonProfileId` (package `dev.vertique.core.json`) |
 | `com.fasterxml.jackson.core:jackson-databind` | compile | `ObjectMapper`, `JsonNode`, `treeToValue` |
 | `io.vertx:vertx-core` | compile | `DatabindCodec.mapper()` (the shared ObjectMapper) |

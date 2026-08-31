@@ -30,7 +30,7 @@ public final class MDC {
 }
 ```
 
-**Storage is in this module.** `MDCContext` (package-private) is the mutable per-request MDC map. Its instance is bound in the substrate holder slot (`ContextLocal<Map<String,Object>>`) owned by `ContextLocalServiceProvider` in `vertique-context`, keyed by `MDCContext.class.getName()`. The slot itself is shared with all other typed context values — the substrate has no MDC-specific code. `MDCContexts` (in `dev.vertique.logging`) is the primary public API; `dev.vertique.logging.MDC` is a thin SLF4J-style delegation facade. `MDCContextValueAdapter` is the `ServiceLoader<ContextValueAdapter>` entry that gives the substrate deep-copy semantics for `MDCContext` on `duplicate(true)`. There is no separate `VertxServiceProvider` in this module (`LoggingServiceProvider` is gone).
+**The MDC data type lives in this module; the generic storage substrate lives in `vertique-context`.** `MDCContext` (package-private) is the mutable per-request MDC map, defined and owned by this module. Its instance is bound in the substrate holder slot (`ContextLocal<Map<String,Object>>`) owned by `ContextLocalServiceProvider` in `vertique-context`, keyed by `MDCContext.class.getName()`. The slot itself is shared with all other typed context values — the substrate has no MDC-specific code, and the `ContextHolder`/`ServiceDispatchContextEncoder`/`ServiceDispatchContextDecoder` SPI contracts it implements against are declared in `vertique-core`. `MDCContexts` (in `dev.vertique.logging`) is the primary public API; `dev.vertique.logging.MDC` is a thin SLF4J-style delegation facade. `MDCContextValueAdapter` is the `ServiceLoader<ContextValueAdapter>` entry that gives the substrate deep-copy semantics for `MDCContext` on `duplicate(true)`. There is no separate `VertxServiceProvider` in this module (`LoggingServiceProvider` is gone).
 
 **Fail-fast writes.** `MDC.put`, `MDC.remove`, `MDC.clear`, and `MDC.setContextMap` throw
 `IllegalStateException` when called outside a duplicated Vert.x context. This matches the substrate's
@@ -223,10 +223,26 @@ Map<String, String>  MDCContexts.copy()
 // Service-dispatch propagation wiring (used by LoggingContextModule)
 ServiceDispatchContextEncoder<?>  MDCContexts.serviceDispatchEncoder()
 ServiceDispatchContextDecoder<?>  MDCContexts.serviceDispatchDecoder()
+
+// Caller-override support for non-duplicated-context dispatch sites (e.g. cron, delayed-job)
+String               MDCContexts.holderKey()
+Object               MDCContexts.holderValue(Map<String, String> entries)
+
+// Scoped snapshot/restore independent of bindAll's own writes
+ContextHolder.Scope  MDCContexts.snapshotKeys(Set<String> keys)
 ```
 
 `bindAll` snapshots only the MDC keys it touches and restores them in reverse order on scope close.
 An empty-map call returns a no-op scope without triggering the duplicated-context guard.
+
+`holderKey()` returns the FQCN key under which the MDC holder value lives in the unified
+dispatch-context map; `holderValue(Map<String, String>)` wraps entries as the same
+`DiagnosticContextSnapshot` wire form `serviceDispatchEncoder()` produces, for callers composing a
+caller-override entry for `DispatchEnvelopeBuilder#build` from a non-duplicated Vert.x context
+(cron/delayed-job scheduler threads). `snapshotKeys(Set<String>)` snapshots the current value (or
+absence) of each given key and returns a scope that restores exactly those keys on close,
+independent of any `put`/`putAll`/`remove`/`removeAll` calls made between snapshot and close — used
+by correlation ingress to guarantee framework-mirrored MDC keys are restored at request end.
 
 ### MDCContextValueAdapter
 
@@ -284,32 +300,27 @@ needed.
 
 ### VertxAwareAppender
 
-`AsyncAppenderBase<ILoggingEvent>` subclass in `dev.vertique.logging.logback`. Enriches events with
-Vert.x context-local MDC on the caller (event-loop) thread via `MDC.getCopyOfContextMap()`, then
-queues them for delivery on a daemon worker thread. Requires `logback-classic` on the classpath
-(optional module dependency).
-
-### VertxAwareAppender
-
-`AsyncAppenderBase<ILoggingEvent>` subclass in `dev.vertique.logging.logback`. Merges Vert.x context-local MDC into each event on the caller thread before handing the event to a worker thread for I/O delivery. Requires `logback-classic` on the classpath (optional module dependency).
+`AsyncAppenderBase<ILoggingEvent>` subclass in `dev.vertique.logging.logback`. Merges Vert.x
+context-local MDC into each event on the caller thread before handing the event to a worker thread
+for I/O delivery. Requires `logback-classic` on the classpath (optional module dependency). See
+[Logback Appenders](#logback-appenders) above for the full behaviour and configuration reference.
 
 The MDC enrichment mechanism reads `MDC.getCopyOfContextMap()` (which delegates to
-`MDCContexts.copy()`) on the caller thread. `VertxAwareAppender` required no changes when MDC
-storage moved to `vertique-core`. Service-dispatch propagation now flows through the unified
-encoder/decoder pipeline (see `dev.vertique:vertique-core` — "MDC propagation through the unified
-dispatch-context channel"); there is no `MdcContextCapture` / `VertxMdcContextCapture` SPI to
-implement.
-
-### MarkerAwareAppender
-
-`UnsynchronizedAppenderBase<ILoggingEvent>` subclass in `dev.vertique.logging.logback`. Routes events to named child appenders by SLF4J marker name, falling back to a configured default. Validates configuration at startup and refuses to start if the setup is inconsistent. Requires `logback-classic` on the classpath (optional module dependency).
+`MDCContexts.copy()`) on the caller thread. `VertxAwareAppender` needs no per-value SPI: MDC values
+are a typed `MDCContext` map owned by this module and bound into the generic per-context holder slot
+that `vertique-context`'s `DefaultContextHolder`/`ContextLocalServiceProvider` implement against the
+`ContextHolder` SPI contracts declared in `vertique-core`. Service-dispatch propagation flows through
+the unified encoder/decoder pipeline (see `LoggingContextModule` above); there is no
+`MdcContextCapture` / `VertxMdcContextCapture` SPI to implement.
 
 ### MarkerAwareAppender
 
 `UnsynchronizedAppenderBase<ILoggingEvent>` subclass in `dev.vertique.logging.logback`. Routes
 events to named child appenders by SLF4J marker name, falling back to a configured default.
 Validates configuration at startup and refuses to start if the setup is inconsistent. Requires
-`logback-classic` on the classpath (optional module dependency).
+`logback-classic` on the classpath (optional module dependency). See
+[Logback Appenders](#logback-appenders) above for the full resolution order, startup validation, and
+configuration reference.
 
 ---
 
@@ -317,7 +328,7 @@ Validates configuration at startup and refuses to start if the setup is inconsis
 
 | Dependency | Scope | Notes |
 |---|---|---|
-| `dev.vertique:vertique-context` | compile | `ContextValues`, `DefaultContextHolder`, `ServiceDispatchCodecs`, `InboundDispatchScope` — required for MDC storage, facade, and encoder/decoder wiring |
+| `dev.vertique:vertique-context` | compile | `ContextValues`, `DefaultContextHolder`, `ContextLocalServiceProvider`, `ServiceDispatchCodecs`, `InboundDispatchScope` — the generic per-context holder slot mechanism this module's `MDCContext` is bound into, and the encoder/decoder wiring the facade uses |
 | `dev.vertique:core` | compile | `ContextHolder`, `ContextHolder.Scope`, `ServiceDispatchContextEncoder/Decoder` SPI contracts |
 | `io.vertx:vertx-core` | compile | — |
 | `com.google.dagger:dagger` | compile | `LoggingContextModule` |
@@ -332,7 +343,7 @@ Validates configuration at startup and refuses to start if the setup is inconsis
 
 - **Logging is async via worker thread** when using `VertxAwareAppender` — the event-loop thread is never blocked by I/O
 - **MDC enrichment happens on the caller thread** before the event is queued, so Vert.x context-local values are safely captured before the event crosses thread boundaries
-- **MDC storage lives in this module** (`MDCContexts` / `MDCContext` in `dev.vertique.logging`); `dev.vertique.logging.MDC` is a thin SLF4J-style delegation facade; the slot itself is provided by `vertique-context`
+- **The MDC data type and facade live in this module** (`MDCContexts` / `MDCContext` in `dev.vertique.logging`); `dev.vertique.logging.MDC` is a thin SLF4J-style delegation facade; the generic per-context holder slot `MDCContext` is bound into is provided by `vertique-context`, against `ContextHolder` SPI contracts declared in `vertique-core`
 - **Write-path fails fast** outside a duplicated Vert.x context — prevents silent no-ops
 - **Scheduler threads use `org.slf4j.MDC` directly** for pre-dispatch enrichment (cron, delayed-job) because the scheduler verticle runs on a non-duplicated context; receive-side enrichment inside consumer handlers uses the framework facade
 - **Logback appenders are opt-in** — `logback-classic` is an optional dependency and must be added explicitly by applications that use `VertxAwareAppender` or `MarkerAwareAppender`

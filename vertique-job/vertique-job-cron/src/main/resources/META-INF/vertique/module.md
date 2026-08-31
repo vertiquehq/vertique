@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Implemented
 > **Package:** `dev.vertique.job.cron`
 > **Artifact:** `vertique-job-cron`
-> **Depends on:** job-core, services, logging, deploy
+> **Depends on:** job-core, core, context, services, deploy, logging
 
 Timer-based cron scheduler for recurring jobs. Parses 6-field cron expressions, registers self-rescheduling Vert.x timers, and dispatches executions via fire-and-report over the event bus to service operation handlers (the reply-address delivery mode documented in `vertique-services`'s module reference). Jobs are discovered at startup by scanning service implementations for `@CronJob` annotations. Config-only jobs (without annotations) can be registered via the `cron.jobs` config subtree. Supports both in-memory (`CronModule`) and DB-backed (`CronPersistenceModule`) operation. `SINGLE_INSTANCE` mode uses INSERT ON CONFLICT leader election for cluster-wide singletons. Misfire recovery fires executions missed while all nodes were down.
 
@@ -65,7 +65,7 @@ public class CleanupServiceImpl implements CleanupService {
 | `maxAttempts` | No | `3` | Max retry attempts before dead-letter |
 | `overlapPolicy` | No | `SKIP` | What to do when the previous execution is still running |
 | `tracked` | No | `""` (use global) | `"true"`, `"false"`, or `""` (use `cron.tracked` config; default `true`) |
-| `misfirePolicy` | No | `FIRE_NOW` for `SINGLE_INSTANCE`, `SKIP` for `EVERY_INSTANCE` | How to handle fires missed while the app was down |
+| `misfirePolicy` | No | `FIRE_NOW` for `SINGLE_INSTANCE`, `SKIP` for `EVERY_INSTANCE` | How to handle fires missed while the app was down. The annotation's own default is `FIRE_NOW`; for `EVERY_INSTANCE` jobs, an unset (or explicit — the two are indistinguishable) `FIRE_NOW` is rewritten to `SKIP` at registration so the mode-based default applies |
 
 **Cron expression format (6 fields):**
 
@@ -114,6 +114,8 @@ Applied at startup during misfire recovery. Requires a `JobRepository` and a per
 | `FIRE_NOW` | Execute the most recent missed fire immediately (only one, even if multiple ticks were missed). Default for `SINGLE_INSTANCE`. |
 | `SKIP` | Ignore missed fires; wait for the next scheduled tick. Default for `EVERY_INSTANCE`. |
 | `FIRE_ALL` | Execute every missed fire in sequence, oldest to newest. Capped at `CronScheduler.MAX_MISFIRE_FIRES` (100). |
+
+**`EVERY_INSTANCE` + `FIRE_NOW` rewrite.** `@CronJob.misfirePolicy()` defaults to `FIRE_NOW`, so `CronJobRegistrar` cannot distinguish "user explicitly wrote `FIRE_NOW`" from "user left the default." For an `EVERY_INSTANCE` job, an annotation value of `FIRE_NOW` (explicit or defaulted — indistinguishable) is therefore rewritten to `SKIP` before registration. This gives the intended UX — `EVERY_INSTANCE` defaults to `SKIP`, `SINGLE_INSTANCE` defaults to `FIRE_NOW` — but means an `EVERY_INSTANCE` job cannot select `FIRE_NOW` via the annotation; use the `cron.jobs.<id>.misfirePolicy` config override instead, which takes precedence and is applied verbatim.
 
 ### `CronTargetReference`
 
@@ -376,6 +378,8 @@ static JobInterceptor metricsInterceptor(MetricsService metrics) {
 ## Dependencies
 
 - **job-core** — `JobContext`, `JobDispatchContext`, `JobInterceptor`, `JobRepository`, `JobCoordinatorConfig`, `CronJobSchedule`, `JobModule`, `JobCoordinatorModule`
+- **core** — `EventBusClient`, `ContextHolder`, `DeferredExecutionOrigin`, `LifecyclePhase`, `ConfigParser`, `ConfigurationException`, `KeyedBy`
+- **context** — `DispatchEnvelopeBuilder`, `ContextRuntimeModule` (wired via `CronModule`/`CronPersistenceModule`)
 - **services** — `ServiceContractRegistry` (scanned for `@CronJob` annotations), `ServiceMethodInvoker` (dispatches events and injects `JobContext`/`JobDispatchContext`), `ServiceTargetResolver` (mandatory; resolves `service:` target references once per fire)
 - **deploy** — `VerticleDeployment`, `LifecyclePhase`, `DeployerModule` (wired via `CronBaseModule` to auto-deploy `CronLifecycleVerticle`)
 - **logging** — MDC utilities

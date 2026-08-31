@@ -7,7 +7,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 > **Status:** Implemented
 > **Package:** `dev.vertique.deploy`
-> **Artifact:** `deploy`
+> **Artifact:** `vertique-deploy`
 > **Depends on:** core
 
 Verticle lifecycle management with phase-ordered startup/shutdown, multi-instance support, and supervised restart. Verticles are grouped into `LifecyclePhase` buckets (`BOOTSTRAP` → `INFRA` → `SERVICES` → `EDGE`) for coarse ordering, with `priority` for fine-grained ordering within each phase. A separate `VerticleSupervisor` handles crash detection, exponential-backoff restart, and availability signalling.
@@ -222,7 +222,7 @@ static VerticleDeployment workerVerticle(Provider<WorkerVerticle> provider) {
 
 ### `Set<ApplicationStartupStep>` — Non-Verticle Startup Steps
 
-Contribute non-verticle startup work (e.g. configuring Jackson, running Flyway) to the multibinding declared by `DeployerModule`. Steps are ordered by `LifecycleOrdered.comparator()` (phase → priority → orderKey). The Phase 2 lifecycle runner (`vertique-application`) will consume this set.
+Contribute non-verticle startup work (e.g. configuring Jackson, running Flyway) to the multibinding declared by `DeployerModule`. Steps are ordered by `LifecycleOrdered.comparator()` (phase → priority → orderKey). `vertique-application`'s `VertiqueApplicationBootstrap` consumes this set, running the ordered steps sequentially.
 
 ```java
 @Provides @IntoSet
@@ -239,7 +239,7 @@ static ApplicationStartupStep jacksonConfigureStep(JacksonConfigurer configurer)
 
 ### `Set<ApplicationShutdownStep>` — Non-Verticle Shutdown Steps
 
-Mirror of the startup-step multibinding for teardown work. Same ordering contract via `LifecycleOrdered.comparator()`. Consumed by the Phase 2 lifecycle runner.
+Mirror of the startup-step multibinding for teardown work. Same ordering contract via `LifecycleOrdered.comparator()`. Consumed by `vertique-application`'s `VertiqueApplicationBootstrap`.
 
 ---
 
