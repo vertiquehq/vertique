@@ -22,8 +22,9 @@ their composition.
 
 ## Core Concepts
 
-The registered `CacheAnnotationProcessor` validates `@Cacheable` and `@CacheEvict` declarations
-and returns all proxy and metadata generation to the generic AOP processor. Provider composition
+The registered `CacheAnnotationProcessor` validates `@Cacheable` and `@CacheEvict` declarations,
+rejects co-located cacheable and eviction annotations, and returns all proxy and metadata generation
+to the generic AOP processor. Provider composition
 is explicit: the application includes a concrete provider module, which includes the cache core
 and cache AOP bindings. The generic AOP processor emits the application-owned subclass proxy and
 reflection-free `MethodMetadata`; generated types belong to the consuming application

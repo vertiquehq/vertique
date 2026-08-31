@@ -236,6 +236,25 @@ class CacheEvictionTest {
                         && completed.outcome() == CacheOutcome.UNRESOLVED_TARGET));
     }
 
+    @Test
+    @DisplayName("co-located cache annotations fail open without eviction")
+    void coLocatedCacheAnnotationsDoNotEvictAtRuntime() throws NoSuchMethodException {
+        var store = new CacheTestFixtures.RecordingStore();
+        var method = CoLocatedTarget.class.getDeclaredMethod("refresh", String.class);
+        var metadata = CacheTestFixtures.metadata(method, "user");
+
+        Object result = new CacheEvictAspect(new CacheAnnotationAdapter(store, CacheConfig.defaults(), Set.of()))
+                .interceptor(metadata, method.getAnnotation(CacheEvict.class))
+                .intercept(CacheTestFixtures.invocation(metadata, new Object[] {"alice"}, new AtomicInteger()))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
+
+        assertEquals("result-1", result);
+        assertEquals(0, store.evictCalls, "invalid co-located annotations must not reach the provider");
+        assertEquals(0, store.clearCalls);
+    }
+
     private static void registerSharedProfile(CacheAdapterSupport support) {
         support.registered(new CacheAdapterSupport.AdapterDefinition(
                 "profile", String.class, null, -1, CacheIdentity.NONE, null, null, false, List.of("0")));
@@ -287,6 +306,14 @@ class CacheEvictionTest {
                 name = "profile",
                 key = {"request.userId", "request.tenant"})
         String mutate(SelectorInput request) {
+            return "unused";
+        }
+    }
+
+    static final class CoLocatedTarget {
+        @Cacheable(name = "profile", key = "0")
+        @CacheEvict(name = "profile", key = "0")
+        String refresh(String user) {
             return "unused";
         }
     }

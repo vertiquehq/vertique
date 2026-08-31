@@ -61,27 +61,30 @@ final class CacheAnnotationAdapter {
     }
 
     Cache<Object, Object> eviction(MethodMetadata target, CacheEvict annotation) {
-        Cacheable cacheable = target.findAnnotation(Cacheable.class).orElse(null);
         return support.unregistered(new CacheAdapterSupport.AdapterDefinition(
                 annotation.name(),
-                cacheable == null ? Object.class : valueType(target),
-                cacheable == null ? CacheMode.DEFAULT : cacheable.mode(),
-                cacheable == null ? -1 : cacheable.ttlSeconds(),
-                cacheable == null ? CacheIdentity.NONE : cacheable.identity(),
-                cacheable == null ? AnonymousCachePolicy.BYPASS : cacheable.anonymous(),
+                Object.class,
+                CacheMode.DEFAULT,
+                -1,
+                CacheIdentity.NONE,
+                AnonymousCachePolicy.BYPASS,
                 selector(annotation.key(), target),
                 false,
                 annotation.key().length == 0 ? null : List.of(annotation.key())));
     }
 
     /**
-     * Prepares one eviction. A clear or a co-located {@code @Cacheable} resolves
-     * immediately; a standalone exact eviction resolves its target policy lazily from
-     * the runtime catalog only when its ordered selector paths match the registered
-     * target definition, so it can never silently address a different identity bucket.
+     * Prepares one eviction. A clear resolves immediately; a standalone exact eviction
+     * resolves its target policy lazily from the runtime catalog only when its ordered
+     * selector paths match the registered target definition, so it can never silently
+     * address a different identity bucket. Co-located cache annotations are invalid and
+     * fail open when runtime metadata bypasses compile-time validation.
      */
     PreparedEviction prepared(MethodMetadata target, CacheEvict annotation) {
-        if (annotation.clear() || target.findAnnotation(Cacheable.class).isPresent()) {
+        if (target.findAnnotation(Cacheable.class).isPresent()) {
+            throw new IllegalArgumentException("@Cacheable and @CacheEvict must be declared on different methods");
+        }
+        if (annotation.clear()) {
             return PreparedEviction.immediate(eviction(target, annotation), annotation.clear());
         }
         return PreparedEviction.lazy(

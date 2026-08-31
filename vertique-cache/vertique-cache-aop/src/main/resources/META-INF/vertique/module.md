@@ -24,8 +24,10 @@ explicitly empty `key = {}` declares a value-independent constant operation key.
 (the explicit empty array evicts the constant entry); code generation rejects a
 declaration with neither or both.
 
-An exact `@CacheEvict` resolves its target policy rather than guessing it: a
-co-located `@Cacheable` on the same method supplies the policy immediately, and a
+An exact `@CacheEvict` resolves its target policy rather than guessing it. Co-located
+`@Cacheable` and `@CacheEvict` declarations are rejected by the processor because
+their ordering and result/cache ownership are ambiguous; runtime adapters fail open
+without evicting when manually supplied metadata bypasses that validation. A
 standalone eviction resolves lazily — at first invocation — from the runtime catalog,
 restricted to annotation-declared definitions whose ordered selector paths exactly
 match the eviction declaration. It reuses the registered target's identity, mode, and
