@@ -1,0 +1,14 @@
+{
+  "http": {
+    "host": "127.0.0.1",
+    "port": 8080,
+    "idleTimeoutSeconds": 30
+  },
+  "mcp": {
+    "enabled": true,
+    "mountPath": "/mcp/*",
+    "serverName": "vertique-weather-example",
+    "serverVersion": "1.0.0",
+    "jsonProfile": "weather-example"
+  }
+}
