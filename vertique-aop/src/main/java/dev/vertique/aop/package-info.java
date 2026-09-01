@@ -25,5 +25,16 @@
  * {@link io.vertx.core.Future} so that aspects never block the Vert.x event loop. Ordering of
  * aspects by {@link dev.vertique.aop.Aspect#ordering()} and annotation FQN is resolved at compile
  * time by the processor; the runtime nester simply applies the array it is handed in order.
+ *
+ * <p><b>Allocated {@code @Aspect(ordering)} registry.</b> Every aspect family records its chosen
+ * ordering value here so a future family never picks a colliding value blind. A higher value is
+ * outermost.
+ *
+ * <ul>
+ *   <li>{@code 100} — {@code @CacheEvict} ({@code vertique-cache-aop})
+ *   <li>{@code 200} — {@code @Cacheable} ({@code vertique-cache-aop})
+ *   <li>{@code 300} — {@code @RateLimited} ({@code vertique-rate-limit-aop})
+ *   <li>{@code 1000} — {@code @Timed} (default; {@link dev.vertique.aop.Aspect#ordering()})
+ * </ul>
  */
 package dev.vertique.aop;

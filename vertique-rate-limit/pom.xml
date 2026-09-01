@@ -16,5 +16,6 @@
     <description>Rate-limit support family: programmatic API, contracts, local/clustered backends, and optional adapters</description>
     <modules>
         <module>vertique-rate-limit-core</module>
+        <module>vertique-rate-limit-aop</module>
     </modules>
 </project>
