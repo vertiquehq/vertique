@@ -72,6 +72,44 @@ class RateLimitEdgeRuleCompositionTest {
                 .isInstanceOf(ConfigurationException.class);
     }
 
+    /**
+     * P02/P03 review repair (T017, item 5): a rule's declared {@code cost} must not exceed its
+     * referenced policy's capacity — validated at middleware construction time, before any request
+     * is ever admitted, mirroring the {@code RateLimiter#acquire} runtime check
+     * (contracts/rate-limit-runtime.md, "Handle semantics").
+     */
+    @Test
+    void shouldFailConstructionWhenRuleCostExceedsReferencedPolicyCapacity() {
+        RateLimiter limiter = mock(RateLimiter.class);
+        when(limiter.capacity()).thenReturn(100L);
+        RateLimiters rateLimiters = mock(RateLimiters.class);
+        when(rateLimiters.limiter(IP_POLICY)).thenReturn(limiter);
+        RateLimitEdgeRule rule = new RateLimitEdgeRule(
+                IP_POLICY,
+                List.of(RateLimitEdgeKeyDimension.IP),
+                Optional.empty(),
+                OptionalLong.of(101L),
+                MissingDimensionPolicy.SHARED_BUCKET,
+                OptionalInt.empty());
+        RateLimitEdgeConfig config = new RateLimitEdgeConfig(true, List.of(rule), "/*");
+
+        assertThatThrownBy(() -> new RateLimitEdgeMiddleware(config, rateLimiters, true))
+                .isInstanceOf(ConfigurationException.class)
+                .hasMessageContaining(IP_POLICY)
+                .hasMessageContaining("capacity");
+    }
+
+    /**
+     * P02/P03 review repair (T017, item 5): {@code enabled=true} with an empty {@code rules} list
+     * fails eagerly instead of silently admitting every request through a no-op edge limiter.
+     */
+    @Test
+    void shouldFailConstructionWhenEnabledWithNoRules() {
+        assertThatThrownBy(() -> new RateLimitEdgeConfig(true, List.of(), "/*"))
+                .isInstanceOf(ConfigurationException.class)
+                .hasMessageContaining("rules");
+    }
+
     @Test
     void shouldStopAtFirstNonPermittingRule() {
         Fixture fx = Fixture.ipThenHeader(MissingDimensionPolicy.SHARED_BUCKET);

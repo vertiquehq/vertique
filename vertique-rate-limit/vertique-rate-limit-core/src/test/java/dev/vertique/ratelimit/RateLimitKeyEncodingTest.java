@@ -103,6 +103,26 @@ class RateLimitKeyEncodingTest {
         assertThat(encodedShort).isEqualTo("S" + shortValue);
     }
 
+    @Test
+    void shouldRenderDistinctHashesForOversizedComponentsOfDifferentTypesSharingTheSameRawPayload() {
+        // Both String and BigInteger encode a purely-numeric payload identically via their own
+        // toString(); without tag domain separation folded into the oversized-component hash, this
+        // pair would collide on the same SHA-256 digest despite being distinct RateLimitKey
+        // components (B1-style forgery, oversized-path variant).
+        String digits = "9".repeat(300);
+        BigInteger sameDigitsAsBigInteger = new BigInteger(digits);
+        assertThat(sameDigitsAsBigInteger.toString()).isEqualTo(digits);
+
+        String encodedString = encodingOf(RateLimitKey.of(digits));
+        String encodedBigInteger = encodingOf(RateLimitKey.of(sameDigitsAsBigInteger));
+
+        assertThat(encodedString).matches("h:[0-9a-f]{64}");
+        assertThat(encodedBigInteger).matches("h:[0-9a-f]{64}");
+        assertThat(encodedString)
+                .as("String vs BigInteger, identical >256-byte payload, must not collide")
+                .isNotEqualTo(encodedBigInteger);
+    }
+
     /** Only the encoding-extraction accessor moves behind this small package-visible helper. */
     private static String encodingOf(RateLimitKey key) {
         return key.canonicalEncoding();

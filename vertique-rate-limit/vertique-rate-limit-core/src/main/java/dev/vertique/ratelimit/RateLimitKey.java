@@ -108,10 +108,14 @@ public final class RateLimitKey {
      * Per-component type-tag encoding: one letter tag plus a percent-encoded payload, bounded to
      * 256 bytes UTF-8 post-encoding ({@code contracts/rate-limit-runtime.md},
      * "Key-component byte bound"). A component that exceeds the bound is deterministically
-     * replaced by {@code h:} followed by the lowercase-hex {@code SHA-256} digest of its
-     * pre-encoding payload — fixed-width and distinctness-preserving, never a rejection or a
-     * silent truncation. {@code h:} can never collide with a real tag: every allowlisted tag is
-     * an uppercase letter, while the substitution marker starts with lowercase {@code h}.
+     * replaced by {@code h:} followed by the lowercase-hex {@code SHA-256} digest of its own type
+     * tag and pre-encoding payload, domain-separated by {@code :} — fixed-width and
+     * distinctness-preserving, never a rejection or a silent truncation. Domain separation by tag
+     * is required: two oversized components of different scalar types can share the identical raw
+     * payload text (e.g. a {@code String} and a {@code BigInteger} both spelling the same digits),
+     * and without the tag folded into the digest input those two distinct components would collide
+     * on the same hash. {@code h:} can never collide with a real tag: every allowlisted tag is an
+     * uppercase letter, while the substitution marker starts with lowercase {@code h}.
      */
     private static final class Scalar {
 
@@ -195,7 +199,7 @@ public final class RateLimitKey {
             if (utf8ByteLength(framed) <= MAX_COMPONENT_BYTES) {
                 return framed;
             }
-            return "h:" + sha256Hex(payload);
+            return "h:" + sha256Hex(tag + ":" + payload);
         }
 
         private static String text(String value) {

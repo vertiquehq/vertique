@@ -34,15 +34,22 @@ public record RateLimitEdgeConfig(boolean enabled, List<RateLimitEdgeRule> rules
     public static final String DEFAULT_PATH = "/*";
 
     /**
-     * Compact constructor — defensively copies {@code rules} and requires a non-blank {@code path}.
+     * Compact constructor — defensively copies {@code rules}, requires a non-blank {@code path},
+     * and requires at least one rule when {@code enabled} (an enabled edge limiter with no rules
+     * would silently admit every request rather than fail startup on the likely-unintended
+     * configuration).
      *
-     * @throws ConfigurationException if {@code path} is blank
+     * @throws ConfigurationException if {@code path} is blank, or {@code enabled} is {@code true}
+     *     with an empty {@code rules} list
      */
     public RateLimitEdgeConfig {
         Objects.requireNonNull(rules, "rules");
         rules = List.copyOf(rules);
         if (path == null || path.isBlank()) {
             throw new ConfigurationException("rateLimit.rest.edge.path must not be blank");
+        }
+        if (enabled && rules.isEmpty()) {
+            throw new ConfigurationException("rateLimit.rest.edge.rules must not be empty when enabled");
         }
     }
 

@@ -79,6 +79,10 @@ class RateLimitersEagerValidationTest {
                         RateLimitersEagerValidationTest
                                 ::shouldFailForEnabledClusteredPolicyWithSecretShorterThan32Bytes),
                 new MatrixRow(
+                        "shouldFailForEnabledClusteredPolicyWithUnresolvedPlaceholderSecret",
+                        RateLimitersEagerValidationTest
+                                ::shouldFailForEnabledClusteredPolicyWithUnresolvedPlaceholderSecret),
+                new MatrixRow(
                         "shouldSucceedForOneEnabledLocalPolicyWithNoClusteredPolicyPresent",
                         RateLimitersEagerValidationTest
                                 ::shouldSucceedForOneEnabledLocalPolicyWithNoClusteredPolicyPresent),
@@ -158,6 +162,24 @@ class RateLimitersEagerValidationTest {
                 .as("resolved keyDerivation.secret shorter than 32 bytes UTF-8")
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("32");
+    }
+
+    // --- Row 4b: enabled CLUSTERED policy, resolved secret looks like an unresolved placeholder ---
+
+    private static void shouldFailForEnabledClusteredPolicyWithUnresolvedPlaceholderSecret() {
+        RateLimitPolicy clustered = policy("clustered-quota", RateLimitMode.CLUSTERED, true, "r1");
+        Set<RateLimitPolicy> policies = Set.of(clustered);
+        Map<RateLimitMode, RateLimitBackend> backends =
+                Map.of(RateLimitMode.LOCAL, NOOP_BACKEND, RateLimitMode.CLUSTERED, NOOP_BACKEND);
+        // Deliberately >= 32 bytes so this row is decisive against the placeholder check alone,
+        // not merely re-triggering the shorter-than-32-bytes row above.
+        String unresolvedPlaceholder = "${RATE_LIMIT_KEY_DERIVATION_SECRET_ENV_VAR}";
+        assertThat(unresolvedPlaceholder.getBytes(StandardCharsets.UTF_8)).hasSizeGreaterThanOrEqualTo(32);
+
+        assertThatThrownBy(() -> newRateLimiters(policies, backends, unresolvedPlaceholder))
+                .as("resolved keyDerivation.secret still literally '${...}' — an unresolved config placeholder")
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("placeholder");
     }
 
     // --- Row 5 (control): one enabled LOCAL policy, no CLUSTERED policy present ---

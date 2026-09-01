@@ -108,7 +108,7 @@ public final class RateLimitAnnotationProcessor extends AbstractProcessor {
             return;
         }
         if (path.length() > 256) {
-            error(method, "rate-limit key selector path must not exceed 256 ASCII characters");
+            error(method, "rate-limit key selector path must not exceed 256 characters");
             return;
         }
         String[] segments = path.split("\\.", -1);
@@ -155,16 +155,25 @@ public final class RateLimitAnnotationProcessor extends AbstractProcessor {
         }
     }
 
+    /**
+     * Resolves the return type of the zero-arg accessor named {@code property} on {@code type},
+     * mirroring {@code dev.vertique.ratelimit.aop.MethodMetadataKeyResolver}'s own runtime accessor
+     * resolution exactly: a bare-name accessor (a record component's own accessor method) is
+     * accepted only when {@code type}'s declaring element is a record; every other declared type
+     * accepts only {@code getX}/{@code isX} (contracts/rate-limit-aop.md, "Selector path grammar").
+     */
     private TypeMirror propertyType(TypeMirror type, String property) {
         if (type.getKind() != TypeKind.DECLARED) {
             return null;
         }
         TypeElement element = (TypeElement) ((DeclaredType) type).asElement();
+        boolean bareNameEligible = element.getKind() == ElementKind.RECORD;
         String suffix = Character.toUpperCase(property.charAt(0)) + property.substring(1);
         for (Element member : elements.getAllMembers(element)) {
             if (member.getKind() == ElementKind.METHOD && member instanceof ExecutableElement method) {
                 String name = method.getSimpleName().toString();
-                if ((name.equals(property) || name.equals("get" + suffix) || name.equals("is" + suffix))
+                boolean bareNameMatch = bareNameEligible && name.equals(property);
+                if ((bareNameMatch || name.equals("get" + suffix) || name.equals("is" + suffix))
                         && method.getParameters().isEmpty()
                         && method.getModifiers().contains(Modifier.PUBLIC)
                         && !method.getModifiers().contains(Modifier.STATIC)) {

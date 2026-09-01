@@ -80,6 +80,21 @@ public final class RateLimiter {
     }
 
     /**
+     * Exposed for framework adapters that must validate a caller-declared cost against this
+     * handle's bound policy's capacity at their own construction time — e.g. the REST edge
+     * middleware's rule-composition validation (contracts/rest-adapter.md, "Configuration") —
+     * without independently re-deriving it from this handle's policy/algorithm internals. A cost
+     * above this value fails {@link #acquire(RateLimitKey, long)}/{@link #execute(RateLimitKey,
+     * long, Supplier)} with {@link RateLimitRequestException} ({@link
+     * RateLimitRequestFailure#COST_EXCEEDS_CAPACITY}) before either reaches the engine.
+     *
+     * @return this handle's bound policy's token-bucket capacity
+     */
+    public long capacity() {
+        return ((TokenBucketRateLimit) policy.algorithm()).capacity();
+    }
+
+    /**
      * Attempts to consume {@code policy.defaultCost()} tokens against {@code key}. Equivalent to
      * {@code acquire(key, policy.defaultCost())}.
      *

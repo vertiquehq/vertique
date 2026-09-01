@@ -199,6 +199,50 @@ class RateLimitAnnotationProcessorTest {
      * still be validated as a property-path segment rather than being waved through because it
      * happens to equal the root's text.
      */
+    /**
+     * P02/P03 review repair (T017, item 4): a bare-name (fluent, no {@code get}/{@code is} prefix)
+     * zero-arg accessor is only a valid property-path segment when its declaring type is a record —
+     * matching {@code MethodMetadataKeyResolver}'s runtime resolution exactly. {@code Holder} is an
+     * ordinary class with a fluent {@code value()} accessor (no {@code getValue()}/{@code
+     * isValue()}), so {@code "0.value"} must fail compilation instead of silently compiling.
+     */
+    @Test
+    @DisplayName("rejects a bare-name fluent accessor on a non-record property-path segment")
+    void shouldRejectABareNameFluentAccessorOnANonRecordType() {
+        JavaFileObject source = SourceFiles.inline(PACKAGE + ".FluentAccessorBean", """
+                package com.example;
+
+                import dev.vertique.ratelimit.aop.RateLimited;
+                import jakarta.inject.Inject;
+
+                public class FluentAccessorBean {
+
+                    @Inject
+                    public FluentAccessorBean() {}
+
+                    @RateLimited(policy = "search-quota", key = {"0.value"})
+                    public String search(Holder holder) {
+                        return holder.value();
+                    }
+
+                    public static final class Holder {
+                        private final String value;
+
+                        public Holder(String value) {
+                            this.value = value;
+                        }
+
+                        public String value() {
+                            return value;
+                        }
+                    }
+                }
+                """);
+        ProcessorTestHarness.run(new RateLimitAnnotationProcessor(), source)
+                .assertFailed()
+                .assertErrorMessage("rate-limit key property is not an accessible record or bean accessor");
+    }
+
     @Test
     @DisplayName(
             "rejects a non-root selector segment that is textually equal to the root but is not a valid identifier")

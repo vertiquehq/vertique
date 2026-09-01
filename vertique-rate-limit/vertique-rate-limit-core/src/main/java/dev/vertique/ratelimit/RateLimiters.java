@@ -21,6 +21,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 
 /**
  * Single injected runtime entry point: one instance per application graph, no static registry
@@ -29,7 +30,8 @@ import java.util.function.Function;
  * <p>The constructor eagerly walks every declared policy against the bound backend map and fails
  * fast, before any handle is requested, on: a duplicate policy name, an enabled policy whose mode
  * has no bound backend, a missing {@code keyDerivation.secret} when any enabled policy is {@code
- * CLUSTERED}, and a resolved secret shorter than 32 bytes (UTF-8) under the same condition
+ * CLUSTERED}, a resolved secret that looks like an unresolved {@code ${...}} placeholder under the
+ * same condition, and a resolved secret shorter than 32 bytes (UTF-8) under the same condition
  * (contracts/rate-limit-runtime.md, "Startup validation"; D013 — the same eager-construction
  * precedent {@code ResilienceModule} follows). {@code RateLimitCoreModule}'s {@code @IntoSet
  * ApplicationShutdownStep} forces this constructor to run unconditionally at bootstrap; this
@@ -46,6 +48,7 @@ public final class RateLimiters {
 
     private static final int MIN_SECRET_BYTES = 32;
     private static final int MAX_POLICIES = 10_000;
+    private static final Pattern UNRESOLVED_PLACEHOLDER_PATTERN = Pattern.compile("^\\$\\{.*}$");
 
     /**
      * {@code rateLimit.enabled}'s config default (contracts/rate-limit-runtime.md, "Configuration").
@@ -141,6 +144,9 @@ public final class RateLimiters {
         if (keyDerivationSecret == null || keyDerivationSecret.isEmpty()) {
             throw new IllegalStateException(
                     "rateLimit.keyDerivation.secret is required when any enabled policy is CLUSTERED");
+        }
+        if (UNRESOLVED_PLACEHOLDER_PATTERN.matcher(keyDerivationSecret).matches()) {
+            throw new IllegalStateException("rateLimit.keyDerivation.secret looks like an unresolved placeholder");
         }
         int secretBytes = keyDerivationSecret.getBytes(StandardCharsets.UTF_8).length;
         if (secretBytes < MIN_SECRET_BYTES) {

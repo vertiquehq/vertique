@@ -24,6 +24,8 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Optional, config-driven {@link Middleware} contributed at {@link MiddlewareScope#ROOT} that
@@ -38,6 +40,8 @@ import java.util.Objects;
  * {@code execute()}/exception-mapping path {@link RateLimitExceptionMapper} owns.
  */
 public final class RateLimitEdgeMiddleware implements Middleware {
+
+    private static final Logger log = LoggerFactory.getLogger(RateLimitEdgeMiddleware.class);
 
     /** {@link OriginCaptureMiddleware#ORDER} + 20 (contracts/rest-adapter.md, "Edge limiter"). */
     public static final int ORDER = OriginCaptureMiddleware.ORDER + 20;
@@ -66,7 +70,8 @@ public final class RateLimitEdgeMiddleware implements Middleware {
      *     (contracts/rest-adapter.md, "Rule composition semantics" — IP mechanism, startup
      *     validation)
      * @throws ConfigurationException if an {@code IP}-dimension rule is declared without {@code
-     *     originCaptureBound}
+     *     originCaptureBound}, or a rule's declared {@code cost} exceeds its referenced policy's
+     *     capacity
      * @throws IllegalArgumentException if a rule references an unknown policy
      */
     public RateLimitEdgeMiddleware(RateLimitEdgeConfig config, RateLimiters rateLimiters, boolean originCaptureBound) {
@@ -82,6 +87,11 @@ public final class RateLimitEdgeMiddleware implements Middleware {
                         + "co-install vertique-rest-security's AuthModule");
             }
             RateLimiter limiter = rateLimiters.limiter(rule.policy());
+            if (rule.cost().isPresent() && rule.cost().getAsLong() > limiter.capacity()) {
+                throw new ConfigurationException("rateLimit.rest.edge rule for policy '" + rule.policy()
+                        + "' declares cost " + rule.cost().getAsLong() + " exceeding policy capacity "
+                        + limiter.capacity());
+            }
             // Read directly off the resolved handle (RateLimiter#failureMode()) rather than
             // re-deriving it from a separate configuration source: this classifies correctly for a
             // policy declared only via a Dagger @IntoSet RateLimitPolicy contribution, which carries
@@ -140,6 +150,14 @@ public final class RateLimitEdgeMiddleware implements Middleware {
                 ctx.request().resume();
                 respondUnavailable(ctx);
             } else {
+                // OPEN admits without ever deriving a key or calling acquire() — log internally so
+                // an operator can see this rule is silently bypassed (never surfaced to the
+                // response body/headers: contracts/rest-adapter.md, "HTTP mapping" carries no
+                // policy/rule identity). Policy name only; never the request's key material.
+                log.warn(
+                        "rate-limit edge rule for policy '{}': RequestOrigin absent, failureMode=OPEN — admitting"
+                                + " request without evaluating this rule",
+                        compiled.rule().policy());
                 evaluate(ctx, index + 1);
             }
             return;
@@ -199,8 +217,12 @@ public final class RateLimitEdgeMiddleware implements Middleware {
      * "Cardinality caution"). {@code clientIp} is guaranteed to be a validated IP literal by {@link
      * RequestOrigin}'s own construction, so {@link InetAddress#getByName} below never triggers a
      * DNS lookup.
+     *
+     * <p>Package-private (rather than {@code private}) so {@code
+     * RateLimitEdgeMiddlewareIpKeyComponentTest} can pin this derivation's golden vectors directly,
+     * independent of a full HTTP round trip.
      */
-    private static String ipKeyComponent(String clientIp, int ipv6PrefixBits) {
+    static String ipKeyComponent(String clientIp, int ipv6PrefixBits) {
         if (!clientIp.contains(":")) {
             return clientIp;
         }

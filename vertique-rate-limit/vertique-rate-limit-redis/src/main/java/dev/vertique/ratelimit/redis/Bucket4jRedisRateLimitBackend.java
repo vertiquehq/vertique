@@ -159,7 +159,9 @@ final class Bucket4jRedisRateLimitBackend implements RateLimitBackend {
         ttlClient
                 .pexpire(List.of(physicalKey, Long.toString(ttlMs)))
                 .onFailure(cause -> log.warn(
-                        "PEXPIRE failed for a committed rate-limit consumption; admission decision unaffected", cause));
+                        "PEXPIRE failed for a committed rate-limit consumption; admission decision unaffected"
+                                + " (cause: {})",
+                        cause.getClass().getName()));
     }
 
     private static RateLimitBackendResult toResult(ConsumptionProbe probe) {
@@ -181,7 +183,9 @@ final class Bucket4jRedisRateLimitBackend implements RateLimitBackend {
      * CONTENTION_EXHAUSTED} or {@code QUOTA_EXCEEDED}. Never retried by Vertique.
      */
     private static RateLimitBackendResult ambiguousFailureResult(Throwable failure) {
-        log.debug("Redis CAS completed exceptionally before the operation deadline", failure);
+        log.debug(
+                "Redis CAS completed exceptionally before the operation deadline (cause: {})",
+                failure.getClass().getName());
         return failureResult(RateLimitFailureCode.UNAVAILABLE);
     }
 

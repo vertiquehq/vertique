@@ -140,6 +140,19 @@ class RateLimitEdgeIpDimensionIT {
                 rateLimiters, policy, RateLimitEdgeRule.DEFAULT_IPV6_PREFIX_BITS);
         AtomicBoolean invoked = new AtomicBoolean(false);
 
+        // P02/P03 review repair (T017, item 6): the absent-origin + OPEN path must log a bounded,
+        // internal-only warning (policy name + "RequestOrigin absent") since the response carries
+        // no policy/rule identity at all (contracts/rest-adapter.md, "HTTP mapping"). Attached
+        // around the request round trip only, detached in the finally below, so a failing
+        // assertion cannot leave the appender on the shared middleware logger.
+        ch.qos.logback.classic.Logger middlewareLogger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(RateLimitEdgeMiddleware.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> logAppender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        logAppender.setContext(middlewareLogger.getLoggerContext());
+        logAppender.start();
+        middlewareLogger.addAppender(logAppender);
+
         RateLimitEdgeIpTestFixture.deploy(vertx, invoked, edge).onComplete(ctx.succeeding(port -> {
             client = WebClient.create(vertx);
             // Capacity is 1: if the middleware ever fell back to remoteAddress() instead of
@@ -152,10 +165,26 @@ class RateLimitEdgeIpDimensionIT {
                         return postWithForwardedFor(port, "203.0.113.10");
                     })
                     .onComplete(ctx.succeeding(second -> {
-                        assertEquals(
-                                200,
-                                second.statusCode(),
-                                "OPEN must continue on absent RequestOrigin, never falling back to remoteAddress()");
+                        try {
+                            assertEquals(
+                                    200,
+                                    second.statusCode(),
+                                    "OPEN must continue on absent RequestOrigin, never falling back to"
+                                            + " remoteAddress()");
+                            long warningsForRule = logAppender.list.stream()
+                                    .filter(event -> event.getLevel() == ch.qos.logback.classic.Level.WARN)
+                                    .filter(event -> event.getFormattedMessage().contains(policy))
+                                    .filter(event -> event.getFormattedMessage().contains("RequestOrigin absent"))
+                                    .count();
+                            assertEquals(
+                                    2,
+                                    warningsForRule,
+                                    "absent-origin + OPEN must log a bounded internal warning naming the policy,"
+                                            + " once per request");
+                        } finally {
+                            middlewareLogger.detachAppender(logAppender);
+                            logAppender.stop();
+                        }
                         ctx.completeNow();
                     }));
         }));

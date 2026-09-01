@@ -46,10 +46,6 @@ public abstract class RateLimitRedisModule {
     private static final String REDIS = "redis";
     private static final String KEY_DERIVATION = "keyDerivation";
     private static final String SECRET = "secret";
-    private static final String CONNECTION = "connection";
-    private static final String NAMESPACE = "namespace";
-    private static final String OPERATION_TIMEOUT_MS = "operationTimeoutMs";
-    private static final String EXPIRATION_SLACK_MS = "expirationSlackMs";
 
     /** Prevents direct construction of the static binding module. */
     private RateLimitRedisModule() {}
@@ -59,9 +55,14 @@ public abstract class RateLimitRedisModule {
      * rateLimit.redis.connection} (contracts/rate-limit-runtime.md, "Redis integration contract" —
      * the exact, frozen {@code Bucket4jVertx.casBasedBuilder(...)} construction chain, performed
      * only inside {@link Bucket4jRedisRateLimitBackend#redis}, never as a Dagger binding itself).
-     * {@code rateLimit.redis.*}/{@code rateLimit.keyDerivation.secret} bounds are validated by
-     * startup config validation upstream (T003/T004's ownership); this provider only translates an
-     * already-valid configuration into the backend's construction arguments.
+     * {@code rateLimit.redis.*} is eagerly validated here, at this provider's own construction, by
+     * {@link RateLimitRedisConfig#fromJson} — {@code connection}/{@code namespace}/{@code
+     * operationTimeoutMs}/{@code expirationSlackMs} required with no default, {@code
+     * operationTimeoutMs}/{@code expirationSlackMs} bounds-checked — so a misconfigured bound fails
+     * application startup before any {@code consume(...)} is attempted, never lazily against a
+     * silently-defaulted 0 ms deadline. {@code rateLimit.keyDerivation.secret} presence/length
+     * remain {@link dev.vertique.ratelimit.RateLimiters}'s own startup-validation responsibility
+     * (T003/T004's ownership); this provider only reads the raw value through.
      *
      * @param config the raw application configuration
      * @param vertx application Vert.x instance, source of the operation-deadline timer
@@ -78,11 +79,7 @@ public abstract class RateLimitRedisModule {
         JsonObject redis = JsonConfigPaths.navigateObject(rateLimit, REDIS);
         String secret =
                 JsonConfigPaths.navigateObject(rateLimit, KEY_DERIVATION).getString(SECRET);
-        RateLimitRedisConfig redisConfig = new RateLimitRedisConfig(
-                redis.getString(CONNECTION),
-                redis.getString(NAMESPACE),
-                redis.getLong(OPERATION_TIMEOUT_MS, 0L),
-                redis.getLong(EXPIRATION_SLACK_MS, 0L));
+        RateLimitRedisConfig redisConfig = RateLimitRedisConfig.fromJson(redis);
         Redis sharedRedis = clients.client(redisConfig.connection());
         return Bucket4jRedisRateLimitBackend.redis(
                 sharedRedis,
