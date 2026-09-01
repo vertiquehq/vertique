@@ -9,21 +9,30 @@ import dev.vertique.ratelimit.RateLimitFailureMode;
 import dev.vertique.ratelimit.RateLimitKey;
 import dev.vertique.ratelimit.RateLimiter;
 import dev.vertique.ratelimit.RateLimiters;
+import dev.vertique.ratelimit.exception.RateLimitExceededException;
+import dev.vertique.ratelimit.exception.RateLimitUnavailableException;
 import dev.vertique.rest.core.ProblemDetail;
 import dev.vertique.rest.core.middleware.Middleware;
 import dev.vertique.rest.core.middleware.MiddlewareScope;
+import dev.vertique.rest.jaxrs.DefaultExceptionMapper;
+import dev.vertique.rest.jaxrs.ExceptionMapperRegistry;
 import dev.vertique.rest.security.OriginCaptureMiddleware;
 import dev.vertique.security.origin.RequestOrigin;
 import io.vertx.core.Future;
 import io.vertx.core.MultiMap;
+import io.vertx.core.buffer.Buffer;
+import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.json.Json;
 import io.vertx.ext.web.RoutingContext;
+import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.ext.ExceptionMapper;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,9 +44,40 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Rules are evaluated in declared order via {@link RateLimiter#acquire}; the first
  * non-permitting decision wins and stops further evaluation. Tokens already consumed by
- * earlier-permitting rules stay consumed. This class never throws or catches a rate-limit
- * exception — every {@link RateLimitDecision} is mapped directly to HTTP, distinct from the
- * {@code execute()}/exception-mapping path {@link RateLimitExceptionMapper} owns.
+ * earlier-permitting rules stay consumed.
+ *
+ * <p><b>Denial rendering.</b> A {@code QUOTA_EXCEEDED}/{@code BACKEND_FAILURE_CLOSED} decision
+ * mints the same {@link RateLimitExceededException}/{@link RateLimitUnavailableException} the
+ * {@code execute()}/{@code @RateLimited} path throws, and resolves it through the application's
+ * own {@link ExceptionMapperRegistry} — the same mapper-resolution semantics (most-specific
+ * registered {@code ExceptionMapper} by superclass walk) that path uses. This class still never
+ * uses Java {@code throw}/{@code catch} control flow for a rate-limit exception; the exception
+ * instance exists only as the typed argument an {@code ExceptionMapper<T>} expects. An
+ * application that contributes its own {@code ExceptionMapper<RateLimitExceededException>}/{@code
+ * ExceptionMapper<RateLimitUnavailableException>} (or a common supertype) therefore renders the
+ * edge denial the same way it already renders one thrown by {@code execute()} — no separate
+ * customization surface to learn. With no application override, the response is byte-identical to
+ * the framework's built-in {@code RateLimitExceptionMapper} shape.
+ *
+ * <p>Two paths carry no {@link RateLimitDecision} at all — an absent {@code RequestOrigin} under
+ * {@code failureMode=CLOSED} (no {@code acquire} was ever called) and a defensive
+ * {@code acquire()}-future failure — and always render the fixed, generic {@code 503} body
+ * directly; there is no decision to mint an exception from, so the application mapper chain is
+ * never consulted on those two paths.
+ *
+ * <p>Entity serialization supports the shapes the framework's own mappers produce: a {@code
+ * String}/{@link Buffer} entity is written through as-is, a {@code null} entity yields an empty
+ * body, and any other entity (e.g. {@link ProblemDetail}) is serialized via the shared Vert.x JSON
+ * codec ({@link Json#encode}) — the same codec the JAX-RS response pipeline itself falls back to
+ * outside a per-method resolved body-mapper profile. Full JAX-RS pipeline fidelity (a per-method
+ * profile mapper, response interceptors, {@code ProblemDetail} enrichment) is not reachable from
+ * this {@code ROOT}-scope construction point and is an accepted limitation — the {@code
+ * ExceptionMapper} itself is the customization contract, not the surrounding pipeline. If a
+ * resolved mapper throws, or response rendering itself fails, this middleware falls back to the
+ * fixed built-in response rather than ever propagating an unhandled failure. Redaction guarantees
+ * (no key material, identity, backend detail, or exception message) apply to the framework's own
+ * default mapper only; an application-contributed mapper choosing to expose more is its own
+ * decision.
  */
 public final class RateLimitEdgeMiddleware implements Middleware {
 
@@ -56,6 +96,7 @@ public final class RateLimitEdgeMiddleware implements Middleware {
 
     private final List<CompiledRule> rules;
     private final String path;
+    private final ExceptionMapperRegistry exceptionMapperRegistry;
 
     /**
      * Compiles {@code config}'s rules against {@code rateLimiters}, resolving one {@link
@@ -69,14 +110,26 @@ public final class RateLimitEdgeMiddleware implements Middleware {
      *     graph; an {@code IP}-dimension rule fails construction when this is {@code false}
      *     (contracts/rest-adapter.md, "Rule composition semantics" — IP mechanism, startup
      *     validation)
+     * @param exceptionMappers the application's full {@code Set<ExceptionMapper<?>>} multibinding
+     *     (rest-core's {@code RestCoreModule}, available at {@code ROOT} scope independent of
+     *     whether the JAX-RS routing runtime is installed) — resolved into an {@link
+     *     ExceptionMapperRegistry} this middleware alone owns, over an empty {@link
+     *     DefaultExceptionMapper} (no JAX-RS-pipeline-specific built-in mappings; see this class's
+     *     javadoc, "Denial rendering")
      * @throws ConfigurationException if an {@code IP}-dimension rule is declared without {@code
      *     originCaptureBound}, or a rule's declared {@code cost} exceeds its referenced policy's
      *     capacity
      * @throws IllegalArgumentException if a rule references an unknown policy
      */
-    public RateLimitEdgeMiddleware(RateLimitEdgeConfig config, RateLimiters rateLimiters, boolean originCaptureBound) {
+    public RateLimitEdgeMiddleware(
+            RateLimitEdgeConfig config,
+            RateLimiters rateLimiters,
+            boolean originCaptureBound,
+            Set<ExceptionMapper<?>> exceptionMappers) {
         Objects.requireNonNull(config, "config");
         Objects.requireNonNull(rateLimiters, "rateLimiters");
+        Objects.requireNonNull(exceptionMappers, "exceptionMappers");
+        this.exceptionMapperRegistry = new ExceptionMapperRegistry(new DefaultExceptionMapper(), exceptionMappers);
         this.path = config.path();
         List<CompiledRule> compiled = new ArrayList<>(config.rules().size());
         for (RateLimitEdgeRule rule : config.rules()) {
@@ -186,13 +239,49 @@ public final class RateLimitEdgeMiddleware implements Middleware {
                 }
                 case BACKEND_FAILURE_CLOSED -> {
                     ctx.request().resume();
-                    respondUnavailable(ctx);
+                    respondUnavailable(ctx, decision);
                 }
             }
         });
     }
 
-    private static void respondExceeded(RoutingContext ctx, RateLimitDecision decision) {
+    /**
+     * Renders a {@code QUOTA_EXCEEDED} decision by minting a {@link RateLimitExceededException}
+     * and resolving it through {@link #exceptionMapperRegistry} (this class's javadoc, "Denial
+     * rendering"). Falls back to the fixed built-in {@code 429} body if resolution or rendering
+     * fails for any reason — never an unhandled failure.
+     */
+    private void respondExceeded(RoutingContext ctx, RateLimitDecision decision) {
+        try {
+            writeResponse(ctx, exceptionMapperRegistry.toResponse(new RateLimitExceededException(decision)));
+        } catch (Throwable mapperFailure) {
+            log.warn(
+                    "Exception mapper resolution/rendering failed for a QUOTA_EXCEEDED edge denial;"
+                            + " falling back to the built-in 429 response (cause: {})",
+                    mapperFailure.getClass().getName());
+            writeExceededFallback(ctx, decision);
+        }
+    }
+
+    /**
+     * Renders a {@code BACKEND_FAILURE_CLOSED} decision by minting a {@link
+     * RateLimitUnavailableException} and resolving it through {@link #exceptionMapperRegistry}
+     * (this class's javadoc, "Denial rendering"). Falls back to the fixed built-in {@code 503}
+     * body if resolution or rendering fails for any reason — never an unhandled failure.
+     */
+    private void respondUnavailable(RoutingContext ctx, RateLimitDecision decision) {
+        try {
+            writeResponse(ctx, exceptionMapperRegistry.toResponse(new RateLimitUnavailableException(decision)));
+        } catch (Throwable mapperFailure) {
+            log.warn(
+                    "Exception mapper resolution/rendering failed for a BACKEND_FAILURE_CLOSED edge denial;"
+                            + " falling back to the built-in 503 response (cause: {})",
+                    mapperFailure.getClass().getName());
+            respondUnavailable(ctx);
+        }
+    }
+
+    private static void writeExceededFallback(RoutingContext ctx, RateLimitDecision decision) {
         long retryAfterSeconds =
                 RateLimitHttpMapping.retryAfterSeconds(decision.retryAfter().orElse(Duration.ZERO));
         ctx.response()
@@ -203,12 +292,58 @@ public final class RateLimitEdgeMiddleware implements Middleware {
                 .end(EXCEEDED_BODY);
     }
 
+    /**
+     * Writes the fixed, generic {@code 503} body directly — used both for the two paths that
+     * carry no {@link RateLimitDecision} at all (absent-origin fail-closed, defensive
+     * acquire()-future failure; this class's javadoc, "Denial rendering") and as the fallback when
+     * mapper resolution/rendering fails for a genuine {@code BACKEND_FAILURE_CLOSED} decision.
+     */
     private static void respondUnavailable(RoutingContext ctx) {
         ctx.response()
                 .putHeader(RateLimitHttpMapping.CACHE_CONTROL_HEADER, RateLimitHttpMapping.CACHE_CONTROL_NO_STORE)
                 .putHeader(CONTENT_TYPE_HEADER, RateLimitHttpMapping.PROBLEM_JSON)
                 .setStatusCode(503)
                 .end(UNAVAILABLE_BODY);
+    }
+
+    /**
+     * Writes a resolved JAX-RS {@link Response} onto {@code ctx}'s HTTP response: status, every
+     * header (verbatim — {@code Retry-After}/{@code Cache-Control} now come from the resolved
+     * mapper, not this middleware), and the entity. Entity handling covers the shapes the
+     * framework's own mappers produce (this class's javadoc, "Denial rendering"): {@code null}
+     * yields an empty body; a {@link Buffer}/{@link String} entity is written through as-is (a
+     * {@link String} without an explicit {@code Content-Type} defaults to {@code text/plain},
+     * matching the JAX-RS pipeline's own {@code StringBodyEncoder} default); any other entity is
+     * serialized via {@link Json#encode} (defaulting to {@code application/json} when no explicit
+     * {@code Content-Type} is set), the same fallback the JAX-RS pipeline's own {@code
+     * JsonBodyEncoder} uses outside a per-method resolved body-mapper profile — a profile never
+     * applies here since no JAX-RS operation has been dispatched yet.
+     */
+    private static void writeResponse(RoutingContext ctx, Response response) {
+        HttpServerResponse serverResponse = ctx.response();
+        serverResponse.setStatusCode(response.getStatus());
+        response.getStringHeaders().forEach(serverResponse::putHeader);
+        Object entity = response.getEntity();
+        if (entity == null) {
+            serverResponse.end();
+            return;
+        }
+        if (entity instanceof Buffer buffer) {
+            serverResponse.end(buffer);
+            return;
+        }
+        boolean hasContentType = response.getHeaderString(CONTENT_TYPE_HEADER) != null;
+        if (entity instanceof String str) {
+            if (!hasContentType) {
+                serverResponse.putHeader(CONTENT_TYPE_HEADER, "text/plain");
+            }
+            serverResponse.end(str);
+            return;
+        }
+        if (!hasContentType) {
+            serverResponse.putHeader(CONTENT_TYPE_HEADER, "application/json");
+        }
+        serverResponse.end(Json.encode(entity));
     }
 
     /**

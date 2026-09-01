@@ -44,6 +44,22 @@ whenever an `IP`-keyed rule evaluates. Because the edge limiter runs
 pre-authorization while `@RateLimited` runs post-authorization (at method-invocation
 time), unauthenticated edge traffic never poisons a per-operation business quota.
 
+A `QUOTA_EXCEEDED`/`BACKEND_FAILURE_CLOSED` edge decision renders through the same
+`Set<ExceptionMapper<?>>` chain the `execute()`/`@RateLimited` path uses — an
+application that contributes its own `ExceptionMapper<RateLimitExceededException>`/
+`ExceptionMapper<RateLimitUnavailableException>` (or a common supertype such as
+`ExceptionMapper<Throwable>`) overrides the edge denial's response the same way it
+already overrides one thrown by `execute()`, with no separate customization surface
+to learn. With no application override, the edge response is byte-identical to the
+"HTTP response mapping" shape above. Two admission paths carry no `RateLimitDecision`
+at all — an absent `RequestOrigin` under `failureMode: CLOSED`, and a defensive
+internal failure — and always render the fixed `503` body directly, never consulting
+an application mapper. If a resolved mapper itself throws, the edge limiter falls
+back to the fixed built-in response rather than ever surfacing an unhandled failure.
+The redaction guarantee above (no `policyName`, key, identity, mode, or other
+rate-limit-internal detail) applies to the framework's own default mapper only; an
+application-contributed mapper choosing to expose more is its own decision.
+
 Each configured rule names one policy and composes its key dimensions, in declared
 order, into one `RateLimitKey`:
 

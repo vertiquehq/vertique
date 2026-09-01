@@ -93,7 +93,8 @@ class RateLimitEdgeRuleCompositionTest {
                 OptionalInt.empty());
         RateLimitEdgeConfig config = new RateLimitEdgeConfig(true, List.of(rule), "/*");
 
-        assertThatThrownBy(() -> new RateLimitEdgeMiddleware(config, rateLimiters, true))
+        assertThatThrownBy(() -> new RateLimitEdgeMiddleware(
+                        config, rateLimiters, true, RateLimitEdgeTestFixture.defaultExceptionMappers()))
                 .isInstanceOf(ConfigurationException.class)
                 .hasMessageContaining(IP_POLICY)
                 .hasMessageContaining("capacity");
@@ -270,7 +271,8 @@ class RateLimitEdgeRuleCompositionTest {
             List<RateLimitEdgeRule> rules = ipFirst ? List.of(ipRule, headerRule) : List.of(headerRule, ipRule);
             RateLimitEdgeConfig config = new RateLimitEdgeConfig(true, rules, "/*");
 
-            this.middleware = new RateLimitEdgeMiddleware(config, rateLimiters, true);
+            this.middleware = new RateLimitEdgeMiddleware(
+                    config, rateLimiters, true, RateLimitEdgeTestFixture.defaultExceptionMappers());
 
             when(response.putHeader(anyString(), anyString())).thenReturn(response);
             when(response.setStatusCode(anyInt())).thenReturn(response);

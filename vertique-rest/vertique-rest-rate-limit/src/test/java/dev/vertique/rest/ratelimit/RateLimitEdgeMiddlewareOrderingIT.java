@@ -114,7 +114,8 @@ class RateLimitEdgeMiddlewareOrderingIT {
                 MissingDimensionPolicy.SHARED_BUCKET,
                 OptionalInt.empty());
         RateLimitEdgeConfig config = new RateLimitEdgeConfig(true, List.of(globalRule), "/*");
-        RateLimitEdgeMiddleware middleware = new RateLimitEdgeMiddleware(config, rateLimiters, false);
+        RateLimitEdgeMiddleware middleware = new RateLimitEdgeMiddleware(
+                config, rateLimiters, false, RateLimitEdgeTestFixture.defaultExceptionMappers());
         HttpVerticle verticle = new HttpVerticle(
                 RateLimitEdgeTestFixture.localhostOptions(),
                 Set.of(),
