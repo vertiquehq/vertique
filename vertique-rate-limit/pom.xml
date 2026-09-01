@@ -17,5 +17,6 @@
     <modules>
         <module>vertique-rate-limit-core</module>
         <module>vertique-rate-limit-aop</module>
+        <module>vertique-rate-limit-redis</module>
     </modules>
 </project>
