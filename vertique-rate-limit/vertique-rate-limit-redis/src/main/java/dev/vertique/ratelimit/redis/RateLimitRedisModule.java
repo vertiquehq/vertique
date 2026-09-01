@@ -8,6 +8,7 @@ import dagger.Provides;
 import dagger.multibindings.IntoMap;
 import dagger.multibindings.IntoSet;
 import dev.vertique.core.VertxConfig;
+import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.config.JsonConfigPaths;
 import dev.vertique.core.lifecycle.ApplicationShutdownStep;
 import dev.vertique.ratelimit.RateLimitMode;
@@ -55,16 +56,18 @@ public abstract class RateLimitRedisModule {
      * rateLimit.redis.connection} (contracts/rate-limit-runtime.md, "Redis integration contract" —
      * the exact, frozen {@code Bucket4jVertx.casBasedBuilder(...)} construction chain, performed
      * only inside {@link Bucket4jRedisRateLimitBackend#redis}, never as a Dagger binding itself).
-     * {@code rateLimit.redis.*} is eagerly validated here, at this provider's own construction, by
-     * {@link RateLimitRedisConfig#fromJson} — {@code connection}/{@code namespace}/{@code
-     * operationTimeoutMs}/{@code expirationSlackMs} required with no default, {@code
-     * operationTimeoutMs}/{@code expirationSlackMs} bounds-checked — so a misconfigured bound fails
-     * application startup before any {@code consume(...)} is attempted, never lazily against a
-     * silently-defaulted 0 ms deadline. {@code rateLimit.keyDerivation.secret} presence/length
-     * remain {@link dev.vertique.ratelimit.RateLimiters}'s own startup-validation responsibility
-     * (T003/T004's ownership); this provider only reads the raw value through.
+     * {@code rateLimit.redis.*} is eagerly validated here, at this provider's own construction,
+     * parsed through the canonical injected {@link ConfigParser} (docs/standards/config.md rule
+     * R10) into {@link RateLimitRedisConfig} — {@code connection}/{@code namespace} required,
+     * non-blank, with no default; {@code operationTimeoutMs}/{@code expirationSlackMs} required,
+     * bounds-checked, with no default — so a misconfigured bound fails application startup before
+     * any {@code consume(...)} is attempted, never lazily against a silently-defaulted 0 ms
+     * deadline. {@code rateLimit.keyDerivation.secret} presence/length remain {@link
+     * dev.vertique.ratelimit.RateLimiters}'s own startup-validation responsibility (T003/T004's
+     * ownership); this provider only reads the raw value through.
      *
      * @param config the raw application configuration
+     * @param parser the framework's config-parsing seam
      * @param vertx application Vert.x instance, source of the operation-deadline timer
      * @param clients the shared, lazily-created Redis client registry
      * @return the CLUSTERED {@link RateLimitBackend}
@@ -74,12 +77,12 @@ public abstract class RateLimitRedisModule {
     @Singleton
     @RateLimitModeKey(RateLimitMode.CLUSTERED)
     static RateLimitBackend clusteredRateLimitBackend(
-            @VertxConfig JsonObject config, Vertx vertx, RedisClientRegistry clients) {
+            @VertxConfig JsonObject config, ConfigParser parser, Vertx vertx, RedisClientRegistry clients) {
         JsonObject rateLimit = JsonConfigPaths.navigateObject(config, RATE_LIMIT);
         JsonObject redis = JsonConfigPaths.navigateObject(rateLimit, REDIS);
         String secret =
                 JsonConfigPaths.navigateObject(rateLimit, KEY_DERIVATION).getString(SECRET);
-        RateLimitRedisConfig redisConfig = RateLimitRedisConfig.fromJson(redis);
+        RateLimitRedisConfig redisConfig = parser.parse(redis, RateLimitRedisConfig.class);
         Redis sharedRedis = clients.client(redisConfig.connection());
         return Bucket4jRedisRateLimitBackend.redis(
                 sharedRedis,

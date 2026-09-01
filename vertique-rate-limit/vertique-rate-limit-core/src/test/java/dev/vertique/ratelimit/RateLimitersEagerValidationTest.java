@@ -87,6 +87,10 @@ class RateLimitersEagerValidationTest {
                         RateLimitersEagerValidationTest
                                 ::shouldSucceedForOneEnabledLocalPolicyWithNoClusteredPolicyPresent),
                 new MatrixRow(
+                        "shouldSucceedForDisabledClusteredPolicyWithNoClusteredBackendBound",
+                        RateLimitersEagerValidationTest
+                                ::shouldSucceedForDisabledClusteredPolicyWithNoClusteredBackendBound),
+                new MatrixRow(
                         "shouldFailForLocalMaxTrackedKeysBelowOneAtGlobalDefault",
                         RateLimitersEagerValidationTest::shouldFailForLocalMaxTrackedKeysBelowOneAtGlobalDefault),
                 new MatrixRow(
@@ -191,6 +195,19 @@ class RateLimitersEagerValidationTest {
 
         assertThatCode(() -> newRateLimiters(policies, backends, null))
                 .as("one enabled LOCAL policy, no secret configured, no CLUSTERED policy present")
+                .doesNotThrowAnyException();
+    }
+
+    // --- Row 5b (external deep-review finding 1): a disabled CLUSTERED policy needs no bound
+    // CLUSTERED backend -- eager backend-coverage validation must exempt disabled policies. ---
+
+    private static void shouldSucceedForDisabledClusteredPolicyWithNoClusteredBackendBound() {
+        RateLimitPolicy disabledClustered = policy("disabled-clustered-quota", RateLimitMode.CLUSTERED, false, "r1");
+        Set<RateLimitPolicy> policies = Set.of(disabledClustered);
+        Map<RateLimitMode, RateLimitBackend> backends = Map.of(RateLimitMode.LOCAL, NOOP_BACKEND);
+
+        assertThatCode(() -> newRateLimiters(policies, backends, null))
+                .as("a disabled CLUSTERED policy with only a LOCAL backend bound must not fail startup")
                 .doesNotThrowAnyException();
     }
 

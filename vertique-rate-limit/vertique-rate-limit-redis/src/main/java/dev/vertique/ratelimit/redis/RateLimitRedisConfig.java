@@ -3,6 +3,8 @@
 
 package dev.vertique.ratelimit.redis;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import dev.vertique.core.exception.ConfigurationException;
 import io.vertx.core.json.JsonObject;
 
@@ -31,15 +33,17 @@ record RateLimitRedisConfig(String connection, String namespace, long operationT
     /**
      * Compact constructor — validates every component.
      *
-     * @throws ConfigurationException if {@code connection}/{@code namespace} is {@code null}, or
-     *     {@code operationTimeoutMs}/{@code expirationSlackMs} is out of bounds
+     * @throws ConfigurationException if {@code connection}/{@code namespace} is {@code null} or
+     *     blank, or {@code operationTimeoutMs}/{@code expirationSlackMs} is out of bounds
      */
     RateLimitRedisConfig {
-        if (connection == null) {
-            throw new ConfigurationException("rateLimit.redis.connection is required (no default)");
+        if (connection == null || connection.isBlank()) {
+            throw new ConfigurationException(
+                    "rateLimit.redis.connection is required (no default) and must not be blank");
         }
-        if (namespace == null) {
-            throw new ConfigurationException("rateLimit.redis.namespace is required (no default)");
+        if (namespace == null || namespace.isBlank()) {
+            throw new ConfigurationException(
+                    "rateLimit.redis.namespace is required (no default) and must not be blank");
         }
         if (operationTimeoutMs < MIN_OPERATION_TIMEOUT_MS || operationTimeoutMs > MAX_OPERATION_TIMEOUT_MS) {
             throw new ConfigurationException("rateLimit.redis.operationTimeoutMs must be between "
@@ -52,27 +56,38 @@ record RateLimitRedisConfig(String connection, String namespace, long operationT
     }
 
     /**
-     * Jackson-free factory over the raw {@code rateLimit.redis} section, mirroring {@link
+     * Jackson-friendly factory over the raw {@code rateLimit.redis} section, mirroring {@link
      * dev.vertique.ratelimit.RateLimitPolicy#fromJson}: {@code operationTimeoutMs}/{@code
-     * expirationSlackMs} are read as boxed {@link Long} so an omitted value fails loudly ("required,
-     * no default") instead of silently coercing to {@code 0} before the compact constructor ever
-     * sees it.
+     * expirationSlackMs} are bound as boxed {@link Long} so an omitted value fails loudly
+     * ("required, no default") instead of silently coercing to {@code 0} before the compact
+     * constructor ever sees it. Invoked through the canonical injected {@code
+     * dev.vertique.core.config.ConfigParser} (docs/standards/config.md rule R10) — never {@link
+     * JsonObject#mapTo} or a hand-rolled reader — so a string-encoded value (e.g. {@code
+     * "operationTimeoutMs": "200"}) coerces reliably through the parser's dedicated,
+     * coercion-lenient mapper.
      *
-     * @param redis the raw {@code rateLimit.redis} configuration section
+     * @param connection the raw {@code rateLimit.redis.connection}, or {@code null} when omitted
+     * @param namespace the raw {@code rateLimit.redis.namespace}, or {@code null} when omitted
+     * @param operationTimeoutMs the raw {@code rateLimit.redis.operationTimeoutMs}, or {@code null}
+     *     when omitted
+     * @param expirationSlackMs the raw {@code rateLimit.redis.expirationSlackMs}, or {@code null}
+     *     when omitted
      * @return the resolved, validated config
      * @throws ConfigurationException if {@code operationTimeoutMs}/{@code expirationSlackMs} is
      *     omitted, or any component fails the compact constructor's own validation
      */
-    static RateLimitRedisConfig fromJson(JsonObject redis) {
-        Long operationTimeoutMs = redis.getLong("operationTimeoutMs");
+    @JsonCreator
+    static RateLimitRedisConfig fromJson(
+            @JsonProperty("connection") String connection,
+            @JsonProperty("namespace") String namespace,
+            @JsonProperty("operationTimeoutMs") Long operationTimeoutMs,
+            @JsonProperty("expirationSlackMs") Long expirationSlackMs) {
         if (operationTimeoutMs == null) {
             throw new ConfigurationException("rateLimit.redis.operationTimeoutMs is required (no default)");
         }
-        Long expirationSlackMs = redis.getLong("expirationSlackMs");
         if (expirationSlackMs == null) {
             throw new ConfigurationException("rateLimit.redis.expirationSlackMs is required (no default)");
         }
-        return new RateLimitRedisConfig(
-                redis.getString("connection"), redis.getString("namespace"), operationTimeoutMs, expirationSlackMs);
+        return new RateLimitRedisConfig(connection, namespace, operationTimeoutMs, expirationSlackMs);
     }
 }

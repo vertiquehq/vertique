@@ -5,6 +5,9 @@ package dev.vertique.ratelimit.redis;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import dev.vertique.config.parser.DefaultConfigMapper;
+import dev.vertique.config.parser.DefaultConfigParser;
+import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.exception.ConfigurationException;
 import io.vertx.core.json.JsonObject;
 import java.util.function.UnaryOperator;
@@ -23,6 +26,8 @@ import org.junit.jupiter.params.provider.MethodSource;
  * dereferenced before this validation runs, so every row below passes {@code null} for both.
  */
 class RateLimitRedisModuleEagerValidationTest {
+
+    private static final ConfigParser PARSER = new DefaultConfigParser(DefaultConfigMapper.lenient());
 
     private static final JsonObject VALID_REDIS_SECTION = new JsonObject()
             .put("connection", "primary")
@@ -57,7 +62,13 @@ class RateLimitRedisModuleEagerValidationTest {
                         redis -> redis.copy().put("expirationSlackMs", 86_400_001L),
                         "expirationSlackMs"),
                 new MatrixRow("shouldFailWhenConnectionIsAbsent", redis -> removed(redis, "connection"), "connection"),
-                new MatrixRow("shouldFailWhenNamespaceIsAbsent", redis -> removed(redis, "namespace"), "namespace"));
+                new MatrixRow("shouldFailWhenNamespaceIsAbsent", redis -> removed(redis, "namespace"), "namespace"),
+                new MatrixRow(
+                        "shouldFailWhenConnectionIsBlank",
+                        redis -> redis.copy().put("connection", "   "),
+                        "connection"),
+                new MatrixRow(
+                        "shouldFailWhenNamespaceIsBlank", redis -> redis.copy().put("namespace", ""), "namespace"));
     }
 
     private static JsonObject removed(JsonObject redis, String key) {
@@ -77,7 +88,7 @@ class RateLimitRedisModuleEagerValidationTest {
         JsonObject redis = mutation.apply(VALID_REDIS_SECTION);
         JsonObject config = new JsonObject().put("rateLimit", new JsonObject().put("redis", redis));
 
-        assertThatThrownBy(() -> RateLimitRedisModule.clusteredRateLimitBackend(config, null, null))
+        assertThatThrownBy(() -> RateLimitRedisModule.clusteredRateLimitBackend(config, PARSER, null, null))
                 .isInstanceOf(ConfigurationException.class)
                 .hasMessageContaining(expectedFragment);
     }

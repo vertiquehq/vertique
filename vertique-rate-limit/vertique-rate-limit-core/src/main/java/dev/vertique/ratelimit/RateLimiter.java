@@ -136,21 +136,31 @@ public final class RateLimiter {
         if (lifecycle.isClosed()) {
             return dispatchOnCallingContext(Future.failedFuture(closedException()));
         }
-        if (!rateLimitEnabled) {
+        if (!rateLimitEnabled || !policy.enabled()) {
             return dispatchOnCallingContext(Future.succeededFuture(disabledDecision(algorithm, cost)));
         }
         String storageKey = policy.name() + ':' + policy.revision() + ':' + key.canonicalEncoding();
         RateLimitBackendRequest request = new RateLimitBackendRequest(storageKey, algorithm, cost);
         long startedAt = System.nanoTime();
-        Future<RateLimitBackendResult> consumeFuture;
-        try {
-            consumeFuture = backend.consume(request);
-        } catch (Throwable synchronousFailure) {
-            consumeFuture = Future.failedFuture(synchronousFailure);
-        }
+        Future<RateLimitBackendResult> consumeFuture = fencedConsume(request);
         return dispatchOnCallingContext(consumeFuture
                 .map(result -> completeDecision(result, algorithm, cost, elapsedNanosSince(startedAt)))
-                .recover(failure -> Future.succeededFuture(backendFailureDecision(algorithm, cost))));
+                .recover(failure ->
+                        Future.succeededFuture(backendFailureDecision(algorithm, cost, elapsedNanosSince(startedAt)))));
+    }
+
+    /**
+     * Invokes {@code backend.consume(request)} through this runtime's shared {@link
+     * RateLimiterLifecycle}, exactly like {@link #runFenced(Supplier)} does for a guarded {@code
+     * execute(...)} action — so a direct {@code acquire(...)} call's backend consumption is tracked
+     * and fenced by {@link RateLimiters#close()} too, not only the ones reached through {@code
+     * execute(...)}. {@code close()} force-fails this call's tracked promise with {@link
+     * #closedException()} the instant it becomes observable; the underlying {@code
+     * backend.consume(...)} call may still be settling in the background, unattended, exactly as a
+     * fenced {@code execute(...)} action already tolerates.
+     */
+    private Future<RateLimitBackendResult> fencedConsume(RateLimitBackendRequest request) {
+        return registerFencedAndAwait(() -> backend.consume(request));
     }
 
     /**
@@ -196,31 +206,32 @@ public final class RateLimiter {
     }
 
     /**
-     * Registers this call's lifecycle fence <strong>before</strong> invoking {@code action}, so a
-     * concurrent {@link RateLimiters#close()} that becomes observable at any point up to and
-     * including registration is guaranteed to pre-empt the action — {@code action} is invoked at
-     * most once, and never at all once close is observable. Once registered, the action's returned
-     * future is tracked by this runtime's shared {@link RateLimiterLifecycle} so that same {@code
-     * close()} can force-fail this call's guarded future immediately, without waiting for (or ever
-     * surfacing) the action's real, possibly-late completion.
+     * Registers this call's lifecycle fence and invokes {@code action} atomically (via {@link
+     * RateLimiterLifecycle#registerAndInvoke}), so a concurrent {@link RateLimiters#close()} can
+     * never observe a state where registration has happened but invocation has not — {@code
+     * action} is invoked at most once, and never at all once close is observable. Once registered,
+     * the action's returned future is tracked by this runtime's shared {@link RateLimiterLifecycle}
+     * so that same {@code close()} can force-fail this call's guarded future immediately, without
+     * waiting for (or ever surfacing) the action's real, possibly-late completion.
      */
     private <T> Future<T> runFenced(Supplier<Future<T>> action) {
+        return dispatchOnCallingContext(registerFencedAndAwait(action));
+    }
+
+    /**
+     * Shared fencing plumbing behind both {@link #runFenced(Supplier)} (a guarded {@code
+     * execute(...)} action) and {@link #fencedConsume(RateLimitBackendRequest)} (a direct {@code
+     * acquire(...)}'s backend consumption): registers-and-invokes {@code action} atomically through
+     * {@link RateLimiterLifecycle#registerAndInvoke}, then wires the resulting future's completion
+     * back onto a guarded promise this runtime's {@link RateLimiterLifecycle#close()} can force-fail
+     * at any point, including before {@code action}'s real completion.
+     */
+    private <T> Future<T> registerFencedAndAwait(Supplier<Future<T>> action) {
         Promise<T> guarded = Promise.promise();
         Runnable fence = () -> guarded.tryFail(closedException());
-        Runnable registered = lifecycle.register(fence);
-        if (registered == null) {
-            return dispatchOnCallingContext(Future.failedFuture(closedException()));
-        }
-        Future<T> actionFuture;
-        try {
-            actionFuture = action.get();
-        } catch (Throwable failure) {
-            lifecycle.unregister(fence);
-            return Future.failedFuture(failure);
-        }
+        Future<T> actionFuture = lifecycle.registerAndInvoke(fence, action);
         if (actionFuture == null) {
-            lifecycle.unregister(fence);
-            return Future.failedFuture(new NullPointerException("execute action must not return a null Future"));
+            return Future.failedFuture(closedException());
         }
         actionFuture.onComplete(result -> {
             lifecycle.unregister(fence);
@@ -230,7 +241,7 @@ public final class RateLimiter {
                 guarded.tryFail(result.cause());
             }
         });
-        return dispatchOnCallingContext(guarded.future());
+        return guarded.future();
     }
 
     /**
@@ -289,7 +300,8 @@ public final class RateLimiter {
      * does, mirroring {@link RateLimitFailureCode}'s own "causes and messages never cross this
      * boundary" contract.
      */
-    private RateLimitDecision backendFailureDecision(TokenBucketRateLimit algorithm, long cost) {
+    private RateLimitDecision backendFailureDecision(
+            TokenBucketRateLimit algorithm, long cost, long backendLatencyNanos) {
         RateLimitOutcome outcome = classifyBackendFailureOutcome();
         RateLimitDecision decision = buildDecision(
                 outcome,
@@ -306,7 +318,7 @@ public final class RateLimiter {
                 Optional.empty(),
                 Optional.empty(),
                 Optional.of(RateLimitFailureCode.INTERNAL),
-                0L);
+                backendLatencyNanos);
         return decision;
     }
 

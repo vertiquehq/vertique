@@ -130,21 +130,59 @@ final class Bucket4jRedisRateLimitBackend implements RateLimitBackend {
             }
         });
 
-        bucket.tryConsumeAndReturnRemaining(request.cost()).whenComplete((probe, failure) -> {
-            // TTL maintenance runs for any actually-committed write, independent of whether this
-            // completion still wins the deadline race below — a late commit is still a real Redis
-            // write that must not silently outlive its intended expiry.
-            if (failure == null && probe.isConsumed()) {
-                issueTtl(physicalKey, algorithm);
+        // Guards a synchronous throw from consume setup itself (e.g. bucket.tryConsumeAndReturnRemaining
+        // throwing before ever returning a CompletableFuture, so .whenComplete(...) is never reached):
+        // without this guard, the exception would propagate straight out of consume(), leaving the
+        // timer above orphaned (never cancelled, firing uselessly later) and this promise settled
+        // only by that stray timer, misclassified as TIMEOUT instead of the real synchronous cause.
+        try {
+            bucket.tryConsumeAndReturnRemaining(request.cost()).whenComplete((probe, failure) -> {
+                // This entire callback body is guarded: unlike the outer try/catch above (which only
+                // ever sees a throw that happens on the calling thread, e.g. an already-completed
+                // CompletableFuture's whenComplete lambda running inline), a genuinely async Bucket4j
+                // completion runs this lambda on whatever thread completed it — outside the outer
+                // try/catch's stack entirely. Without this guard, a synchronous throw from either the
+                // TTL branch (already independently guarded below) or the result-mapping/settlement
+                // branch (toResult(probe)/ambiguousFailureResult(failure)) would propagate uncaught on
+                // that thread, leaving this promise permanently unsettled instead of classified.
+                try {
+                    // TTL maintenance runs for any actually-committed write, independent of whether this
+                    // completion still wins the deadline race below — a late commit is still a real Redis
+                    // write that must not silently outlive its intended expiry. A synchronous throw from
+                    // TTL setup itself (e.g. Bucket4jRedisTranslation.ttlMs, or RedisAPI#pexpire throwing
+                    // instead of returning a failed future) is guarded here so it can never prevent this
+                    // callback from reaching its own decisive promise.tryComplete(...) below.
+                    if (failure == null && probe.isConsumed()) {
+                        try {
+                            issueTtl(physicalKey, algorithm);
+                        } catch (Throwable ttlSetupFailure) {
+                            log.warn(
+                                    "PEXPIRE setup failed synchronously for a committed rate-limit consumption;"
+                                            + " admission decision unaffected (cause: {})",
+                                    ttlSetupFailure.getClass().getName());
+                        }
+                    }
+                    if (!decided.compareAndSet(false, true)) {
+                        // The operation deadline already fired; this completion (commit, rejection, or
+                        // failure) is discarded — never delivered to the caller or the observer a second
+                        // time.
+                        return;
+                    }
+                    vertx.cancelTimer(timerId);
+                    promise.tryComplete(failure == null ? toResult(probe) : ambiguousFailureResult(failure));
+                } catch (Throwable callbackFailure) {
+                    if (decided.compareAndSet(false, true)) {
+                        vertx.cancelTimer(timerId);
+                    }
+                    promise.tryComplete(ambiguousFailureResult(callbackFailure));
+                }
+            });
+        } catch (Throwable synchronousSetupFailure) {
+            if (decided.compareAndSet(false, true)) {
+                vertx.cancelTimer(timerId);
+                promise.tryComplete(ambiguousFailureResult(synchronousSetupFailure));
             }
-            if (!decided.compareAndSet(false, true)) {
-                // The operation deadline already fired; this completion (commit, rejection, or
-                // failure) is discarded — never delivered to the caller or the observer a second time.
-                return;
-            }
-            vertx.cancelTimer(timerId);
-            promise.tryComplete(failure == null ? toResult(probe) : ambiguousFailureResult(failure));
-        });
+        }
 
         return promise.future();
     }

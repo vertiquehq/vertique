@@ -214,10 +214,29 @@ public final class RateLimiters {
     }
 
     private RateLimiter newLimiter(RateLimitPolicy policy) {
+        RateLimitBackend backend = policy.enabled() ? requireBoundBackend(policy) : UNREACHABLE_DISABLED_BACKEND;
+        return new RateLimiter(policy, backend, vertx, observers, rateLimitEnabled, lifecycle);
+    }
+
+    private RateLimitBackend requireBoundBackend(RateLimitPolicy policy) {
         RateLimitBackend backend = backends.get(policy.mode());
         if (backend == null) {
             throw new IllegalStateException("No RateLimitBackend bound for mode " + policy.mode());
         }
-        return new RateLimiter(policy, backend, vertx, observers, rateLimitEnabled, lifecycle);
+        return backend;
     }
+
+    /**
+     * Bound to a disabled policy's handle in place of a real, possibly-unbound backend (contract
+     * (a), "Backend seam" — a disabled policy's handle always resolves and never constructs,
+     * requires, or invokes any {@link RateLimitBackend}): {@link RateLimiter#acquire} checks {@code
+     * !policy.enabled()} before ever reaching {@code backend.consume(...)}, so this reference is
+     * held but never invoked; it exists only to satisfy {@link RateLimiter}'s non-null constructor
+     * contract.
+     */
+    private static final RateLimitBackend UNREACHABLE_DISABLED_BACKEND = request -> {
+        throw new IllegalStateException(
+                "BUG: a disabled policy's handle must never invoke its backend (contracts/rate-limit-runtime.md, "
+                        + "\"Backend seam\")");
+    };
 }
