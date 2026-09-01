@@ -10,74 +10,71 @@ import java.util.concurrent.CountDownLatch;
 import org.junit.jupiter.api.Test;
 
 /**
- * External deep-review finding 2: the two-step sequence {@code RateLimiter#runFenced} used to
- * follow — {@code lifecycle.register(fence)} returning a non-null go-ahead, then <em>separately</em>
- * invoking the guarded action — carries no live guarantee once {@code register}'s own critical
- * section releases the lifecycle's monitor. A concurrent {@link RateLimiterLifecycle#close()} that
- * becomes fully observable strictly between those two steps could still let the action run, since
- * nothing re-validates {@code closed} between them.
+ * External deep-review finding 2 (T021 W2 — third round): a two-step {@code
+ * register(fence)}-then-invoke sequence carries no live guarantee once {@code register}'s own
+ * critical section releases the lifecycle's monitor — a concurrent {@link
+ * RateLimiterLifecycle#close()} that becomes fully observable strictly between those two steps
+ * could still let the action run.
  *
- * <p>{@link RateLimiterLifecycle#registerAndInvoke(Runnable, java.util.function.Supplier)} closes
- * this gap by holding the lifecycle's own monitor — the same one {@link
- * RateLimiterLifecycle#close()} synchronizes on — across <em>both</em> the closed-check/
- * registration step and the invocation of {@code action} itself. This is proven deterministically,
- * with no sleeps: while {@code action} is running (i.e. while this call still holds the monitor), a
- * concurrent thread's {@code close()} call is provably blocked from ever setting {@code
- * closed=true} — mutual exclusion on the shared monitor, not timing, is what makes this
- * deterministic. A {@link CountDownLatch} only confirms the closer thread has actually attempted
- * the call; the monitor itself is what prevents it from completing early.
+ * <p>T018 originally closed this gap by holding the lifecycle's monitor across <em>both</em>
+ * registration and invocation. A third external deep review found that fix serialized every LOCAL
+ * backend admission across every policy this runtime resolves a handle for, since {@code
+ * LocalBucket4jRateLimitBackend#consume} runs synchronously inside that critical section (one
+ * shared {@link RateLimiterLifecycle} monitor per {@link RateLimiters} runtime, not per policy).
  *
- * <p>Red evidence for this exact gap was captured separately, with the (temporary,
- * fully-reverted) two-step implementation of {@code registerAndInvoke} instrumented with a hook
- * firing deterministically between its {@code register()} and {@code action.get()} calls — proving
- * that a {@code close()} forced to run (and fully complete, via {@code Thread#join()}) inside that
- * exact gap still let the action run. That hook and its temporary call site never landed; this
- * test proves the landed, atomic implementation closes the gap structurally instead.
+ * <p>T021 W2 replaces lock-hold with a per-registration CAS ({@code REGISTERED -> INVOKING} raced
+ * against {@code close()}'s {@code REGISTERED -> FENCED}): registration still happens under the
+ * monitor, but the monitor is released <em>before</em> the action ever runs. This test proves the
+ * gap the CAS must close is real and is actually closed — deterministically, with no sleeps —
+ * using {@link RateLimiterLifecycle}'s package-private test-seam overload of {@code
+ * registerAndInvoke}, whose extra hook runs exactly in the gap between registration and the CAS
+ * attempt. A {@link CountDownLatch}-gated closer thread lands squarely in that gap and is joined
+ * (so it has fully completed, via {@code close()}'s own synchronous return) before this test
+ * inspects whether the action ran — no timing assumption, just happens-before from {@code
+ * Thread#join()}.
  */
 class RateLimiterLifecycleRegistrationInvocationRaceTest {
 
     @Test
-    void shouldKeepTheRuntimeOpenWhileAnInFlightRegisterAndInvokeActionStillHoldsTheSharedMonitor()
-            throws InterruptedException {
+    void shouldNeverInvokeTheActionWhenCloseLandsBetweenRegistrationAndTheInvocationCas() throws InterruptedException {
         RateLimiterLifecycle lifecycle = new RateLimiterLifecycle();
-        CountDownLatch closerAttempted = new CountDownLatch(1);
-        boolean[] observedClosedDuringAction = {true};
-        Thread[] closerThread = new Thread[1];
+        boolean[] actionInvoked = {false};
+        boolean[] guardedPromiseFenced = {false};
 
-        Future<String> result = lifecycle.registerAndInvoke(() -> {}, () -> {
-            closerThread[0] = new Thread(() -> {
-                closerAttempted.countDown();
-                lifecycle.close();
-            });
-            closerThread[0].start();
-            try {
-                closerAttempted.await();
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                throw new AssertionError(interrupted);
-            }
+        Future<String> result = lifecycle.registerAndInvoke(
+                () -> guardedPromiseFenced[0] = true,
+                () -> {
+                    actionInvoked[0] = true;
+                    return Future.succeededFuture("should never run");
+                },
+                // Runs after registration releases the monitor, before this call's own CAS attempt
+                // — landing close() here is exactly the gap the old two-step design left open.
+                () -> {
+                    Thread closer = new Thread(lifecycle::close);
+                    closer.start();
+                    try {
+                        closer.join();
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(interrupted);
+                    }
+                });
 
-            // Whether or not the closer thread has actually reached close()'s own synchronized
-            // section yet, it cannot possibly have completed it: THIS thread is still holding the
-            // exact same monitor, right now, inside this very action -- so close() cannot have set
-            // closed=true. No sleep, no timeout, no probabilistic race: this is a hard guarantee
-            // from mutual exclusion on the shared monitor, which is exactly what makes the fix
-            // (holding that monitor across registration AND invocation) close the original gap.
-            observedClosedDuringAction[0] = lifecycle.isClosed();
-            return Future.succeededFuture("action-result");
-        });
-
-        assertThat(observedClosedDuringAction[0])
-                .as("close() must be provably unable to complete while this atomic registerAndInvoke call still "
-                        + "holds the lifecycle's shared monitor, running its action")
+        assertThat(result)
+                .as("registerAndInvoke must report the same 'already closed' signal a pre-registration "
+                        + "close observes, once close has won the race for this registration")
+                .isNull();
+        assertThat(actionInvoked[0])
+                .as("close() won the CAS race for this registration (REGISTERED -> FENCED), so the "
+                        + "registering call's own REGISTERED -> INVOKING CAS must have failed -- the action "
+                        + "must never have been invoked at all")
                 .isFalse();
-        assertThat(result.result())
-                .as("the action still ran to completion and its result is delivered normally")
-                .isEqualTo("action-result");
-
-        closerThread[0].join();
+        assertThat(guardedPromiseFenced[0])
+                .as("close() must still have run this registration's fence, force-failing the caller's "
+                        + "guarded promise, even though the action never started")
+                .isTrue();
         assertThat(lifecycle.isClosed())
-                .as("once the atomic call releases the monitor, the waiting close() call proceeds and completes")
+                .as("the closer thread was joined before this assertion -- close() has fully completed")
                 .isTrue();
     }
 }

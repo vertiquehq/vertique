@@ -247,15 +247,25 @@ public final class RateLimitEdgeMiddleware implements Middleware {
      * <p>Package-private (rather than {@code private}) so {@code
      * RateLimitEdgeMiddlewareIpKeyComponentTest} can pin this derivation's golden vectors directly,
      * independent of a full HTTP round trip.
+     *
+     * <p>T021 S1: an IPv4-mapped IPv6 literal (e.g. {@code ::ffff:192.0.2.1}) resolves through
+     * {@link InetAddress#getByName} to a 4-byte {@code Inet4Address}, not a 16-byte {@code
+     * Inet6Address} — the {@code bytes.length != 16} branch below normalizes it to that resolved
+     * address's dotted-quad {@code getHostAddress()} form rather than passing the original literal
+     * through unmasked, so the mapped and bare-IPv4 forms of the same client always key identically.
+     * Defense-in-depth only: {@code RequestOriginCapturer.normalizeIp} already performs this
+     * normalization upstream, before {@code RequestOrigin.clientIp()} ever reaches this method, for
+     * every origin-capture flow this middleware relies on.
      */
     static String ipKeyComponent(String clientIp, int ipv6PrefixBits) {
         if (!clientIp.contains(":")) {
             return clientIp;
         }
         try {
-            byte[] bytes = InetAddress.getByName(clientIp).getAddress();
+            InetAddress address = InetAddress.getByName(clientIp);
+            byte[] bytes = address.getAddress();
             if (bytes.length != 16) {
-                return clientIp;
+                return address.getHostAddress();
             }
             byte[] masked = new byte[16];
             int fullBytes = ipv6PrefixBits / 8;

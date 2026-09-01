@@ -29,6 +29,8 @@ public record ErrorResponse(ErrorCategory type, String message, String id) {
         /** Authentication or authorization failures (HTTP 401/403). */
         SECURITY,
         /** Domain or business rule violations (HTTP 404, 409, etc.). */
-        BUSINESS
+        BUSINESS,
+        /** Rate or quota limit exceeded (HTTP 429). */
+        RATE_LIMITED
     }
 }

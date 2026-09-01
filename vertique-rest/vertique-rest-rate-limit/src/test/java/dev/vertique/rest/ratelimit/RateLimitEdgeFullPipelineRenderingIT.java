@@ -189,6 +189,33 @@ class RateLimitEdgeFullPipelineRenderingIT {
                 }));
     }
 
+    // --- Row: an application ValidationException mapper must not shadow the 429 default (T021 W1) ---
+
+    @Test
+    void applicationValidationExceptionMapperDoesNotShadowThe429Default(Vertx vertx, VertxTestContext ctx) {
+        RestTestContributions contributions = RestTestContributions.builder()
+                .addExceptionMapper(new ApplicationValidationExceptionMapper())
+                .build();
+
+        deployQuotaExceeded(vertx, contributions)
+                .compose(ignored -> post(vertx))
+                .onComplete(ctx.succeeding(response -> {
+                    assertEquals(
+                            429,
+                            response.statusCode(),
+                            "an application ExceptionMapper<ValidationException> must never intercept a "
+                                    + "rate-limit denial: TooManyRequestsException (and its RateLimitExceededException "
+                                    + "subtype) no longer extends ValidationException/BusinessRuleException (T021 W1), "
+                                    + "so the registry's hierarchy walk from RateLimitExceededException reaches the "
+                                    + "framework's Throwable-level default instead of this narrower application mapper");
+                    assertTrue(
+                            response.getHeader("Retry-After") != null
+                                    && Integer.parseInt(response.getHeader("Retry-After")) >= 1,
+                            "the framework default must still thread Retry-After from the decision");
+                    ctx.completeNow();
+                }));
+    }
+
     // --- Row: no rate-limit-specific mapper installed — the new framework default renders it ---
 
     @Test
@@ -390,6 +417,24 @@ class RateLimitEdgeFullPipelineRenderingIT {
         @Override
         public Response toResponse(RateLimitExceededException exception) {
             throw new IllegalStateException("synthetic mapper failure");
+        }
+    }
+
+    /**
+     * Simulates an application-owned {@code ExceptionMapper<ValidationException>} — a common,
+     * legitimate contribution with no rate-limit awareness at all. Before T021 W1,
+     * {@code RateLimitExceededException} was still a {@code ValidationException}, so the registry's
+     * hierarchy walk would find this mapper before ever reaching the framework's Throwable-level
+     * default, rendering 400 instead of 429.
+     */
+    private static final class ApplicationValidationExceptionMapper
+            implements ExceptionMapper<dev.vertique.core.exception.ValidationException> {
+        @Override
+        public Response toResponse(dev.vertique.core.exception.ValidationException exception) {
+            return Response.status(400)
+                    .type("text/plain")
+                    .entity("application-validation-handler")
+                    .build();
         }
     }
 

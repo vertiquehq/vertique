@@ -68,7 +68,13 @@ decision to mint a rate-limit-specific exception from). A denial on a request pa
 matching no mount at all is an accepted degradation: the correct status still reaches
 the client via `ctx.fail`, but the body is Vert.x's own plain-text unhandled-failure
 response, with no `Retry-After` and an `ERROR`-level Vert.x log line — the full
-pipeline dressing above is reachable only once a request has matched a mount. The
+pipeline dressing above is reachable only once a request has matched a mount.
+**Caution:** every such denial logs at `ERROR`, so a sustained attack against an
+unmounted (or intentionally unrouted) path guarded only by a `GLOBAL`/`IP` edge rule
+can flood application logs at `ERROR` volume — this is a Vert.x default-handler
+behavior this middleware does not (and cannot, since it never sees the failure again
+once `ctx.fail` returns) suppress; monitor log volume/cost accordingly and mount a
+catch-all route if the flood itself becomes the operational concern. The
 redaction guarantee above (no `policyName`, key, identity, mode, or other
 rate-limit-internal detail) applies to the framework's own mappers/defaults only; an
 application-contributed mapper choosing to expose more is its own decision.
@@ -82,7 +88,11 @@ order, into one `RateLimitKey`:
   `OriginCaptureMiddleware`; this adapter never parses forwarding headers itself and
   never falls back to the raw socket address. `ipv6PrefixBits` (`8..128`, default
   `64`) aggregates an IPv6 client IP onto an allocation-sized prefix; IPv4 always
-  keys on the full address.
+  keys on the full address, and an IPv4-mapped IPv6 literal (`::ffff:a.b.c.d`) is
+  normalized to its plain dotted-quad form before keying, so it always matches the
+  same client's bare-IPv4 key (defense-in-depth — `RequestOriginCapturer.normalizeIp`
+  already performs this same normalization upstream, before this adapter ever sees
+  the address).
 - `HEADER` — the named request header's value; requires `headerName`. A missing
   header, or one repeated more than once on the request, follows `missingDimension`
   (`SHARED_BUCKET`: all such callers share one bucket; `BYPASS`: skip this rule for

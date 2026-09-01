@@ -14,6 +14,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * One policy's bounded local Bucket4j registry (contracts/rate-limit-runtime.md, "Local engine
@@ -36,17 +38,47 @@ import java.util.concurrent.ConcurrentMap;
  * of this registry, only when admission for a not-yet-tracked key finds the registry at its budget
  * — never on a background timer. Every proof in {@code LocalRateLimitRegistryTest} triggers a sweep
  * this same way (either explicitly, or implicitly through an at-capacity admission).
+ *
+ * <p><strong>Sweep throttling (T021 W2).</strong> An at-capacity admission's own inline sweep is
+ * itself rate-limited to at most once per {@code cleanupIntervalMs} (tracked as {@link
+ * #lastSweepAtMs}, guarded by the same {@link #admissionMonitor} the sweep already runs under): a
+ * second at-capacity admission landing within that interval of the previous sweep skips the scan
+ * entirely and reports {@code CAPACITY_EXHAUSTED} immediately, amortizing the {@code
+ * O(maxTrackedKeys)} scan cost to {@code O(1)} on the admission hot path under sustained pressure.
+ * This applies only to the demand-driven sweep this class triggers for itself; {@link #sweep()}'s
+ * unconditional, caller-invoked form is untouched and never throttled.
+ *
+ * <p><strong>Saturation observability (T021 W3).</strong> Key-space saturation ({@code
+ * CAPACITY_EXHAUSTED}) previously had no log signal anywhere in the LOCAL backend/registry — under
+ * {@code failureMode: OPEN} it silently disabled a limiter with nothing but the
+ * {@code vertique.ratelimit.failures{code="capacity-exhausted"}} counter to notice by. The first
+ * {@code CAPACITY_EXHAUSTED} admission of a saturation episode now logs one {@code WARN} (policy
+ * name and configured budget only — no key material); the flag guarding it (guarded by {@link
+ * #admissionMonitor}, alongside {@link #lastSweepAtMs}) clears the moment a not-yet-tracked-key
+ * admission next succeeds, so a later, distinct episode warns again.
  */
 final class LocalRateLimitRegistry {
 
+    private static final Logger log = LoggerFactory.getLogger(LocalRateLimitRegistry.class);
+
+    private final String policyName;
     private final TokenBucketRateLimit algorithm;
     private final long maxTrackedKeys;
     private final long safeReclaimThresholdMs;
+    private final long cleanupIntervalMs;
     private final Clock clock;
     private final ConcurrentMap<String, TrackedBucket> buckets = new ConcurrentHashMap<>();
     private final Object admissionMonitor = new Object();
 
+    /** Guarded by {@link #admissionMonitor}; starts far enough in the past that the first at-capacity sweep is always due. */
+    private long lastSweepAtMs = Long.MIN_VALUE / 2;
+
+    /** Guarded by {@link #admissionMonitor}: true once this saturation episode's one WARN has fired. */
+    private boolean saturationWarned;
+
     /**
+     * @param policyName this registry's owning policy's name, for the saturation {@code WARN}
+     *     only — never used as a storage key or for any admission decision
      * @param algorithm this policy's resolved token-bucket algorithm; also drives the worst-case
      *     time-to-full used to compute safe reclaim eligibility
      * @param maxTrackedKeys this policy's own resolved registry budget (default or per-policy
@@ -57,11 +89,17 @@ final class LocalRateLimitRegistry {
      *     tests can control elapsed time deterministically, with no wall-clock sleep
      */
     public LocalRateLimitRegistry(
-            TokenBucketRateLimit algorithm, long maxTrackedKeys, long cleanupIntervalMs, Clock clock) {
+            String policyName,
+            TokenBucketRateLimit algorithm,
+            long maxTrackedKeys,
+            long cleanupIntervalMs,
+            Clock clock) {
+        this.policyName = Objects.requireNonNull(policyName, "policyName");
         this.algorithm = Objects.requireNonNull(algorithm, "algorithm");
         this.maxTrackedKeys = maxTrackedKeys;
         this.clock = Objects.requireNonNull(clock, "clock");
-        this.safeReclaimThresholdMs = addClamped(worstCaseTimeToFullMs(algorithm), Math.max(0L, cleanupIntervalMs));
+        this.cleanupIntervalMs = Math.max(0L, cleanupIntervalMs);
+        this.safeReclaimThresholdMs = addClamped(worstCaseTimeToFullMs(algorithm), this.cleanupIntervalMs);
     }
 
     /**
@@ -84,11 +122,13 @@ final class LocalRateLimitRegistry {
                 bucket = buckets.get(key);
                 if (bucket == null) {
                     if (buckets.size() >= maxTrackedKeys) {
-                        sweep(now);
+                        sweepIfDue(now);
                     }
                     if (buckets.size() >= maxTrackedKeys) {
+                        warnOnceForThisSaturationEpisode();
                         return capacityExhausted();
                     }
+                    saturationWarned = false;
                     bucket = new TrackedBucket(newBucket(), now);
                     buckets.put(key, bucket);
                 }
@@ -109,6 +149,22 @@ final class LocalRateLimitRegistry {
 
     private void sweep(long now) {
         buckets.entrySet().removeIf(entry -> entry.getValue().isSafelyReclaimable(now, safeReclaimThresholdMs));
+    }
+
+    /**
+     * The at-capacity admission path's own throttled trigger: runs {@link #sweep(long)} only when
+     * at least {@link #cleanupIntervalMs} has elapsed since {@link #lastSweepAtMs}, then records
+     * {@code now} as the new {@link #lastSweepAtMs} — always called from inside {@link
+     * #admissionMonitor}, so no separate synchronization is needed for either field. A skipped sweep
+     * leaves the registry unchanged; the caller's own at-capacity re-check then reports {@code
+     * CAPACITY_EXHAUSTED} immediately, exactly as if the scan had run and found nothing reclaimable.
+     */
+    private void sweepIfDue(long now) {
+        if (now - lastSweepAtMs < cleanupIntervalMs) {
+            return;
+        }
+        sweep(now);
+        lastSweepAtMs = now;
     }
 
     private Bucket newBucket() {
@@ -142,6 +198,25 @@ final class LocalRateLimitRegistry {
     private static RateLimitBackendResult capacityExhausted() {
         return new RateLimitBackendResult(
                 false, 0L, Optional.empty(), Optional.empty(), Optional.of(RateLimitFailureCode.CAPACITY_EXHAUSTED));
+    }
+
+    /**
+     * Logs one {@code WARN} for this saturation episode's first {@code CAPACITY_EXHAUSTED}
+     * admission only — always called from inside {@link #admissionMonitor}. Policy name and
+     * configured budget only; never key material. {@link #saturationWarned} is cleared the moment a
+     * not-yet-tracked-key admission next succeeds (see {@link #consume(String, long)}), so a later,
+     * distinct episode warns again.
+     */
+    private void warnOnceForThisSaturationEpisode() {
+        if (saturationWarned) {
+            return;
+        }
+        saturationWarned = true;
+        log.warn(
+                "rate-limit LOCAL registry for policy '{}' is saturated at its configured budget of {} tracked"
+                        + " keys -- new keys are being rejected as CAPACITY_EXHAUSTED",
+                policyName,
+                maxTrackedKeys);
     }
 
     /**

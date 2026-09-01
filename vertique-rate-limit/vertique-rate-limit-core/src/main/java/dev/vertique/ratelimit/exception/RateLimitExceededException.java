@@ -14,10 +14,10 @@ import java.util.Objects;
  * <p>Extends {@link TooManyRequestsException} (T020) so an application/framework graph with no
  * rate-limit-specific {@code ExceptionMapper} installed still renders this as {@code 429} — with
  * {@code Retry-After} threaded from {@code decision.retryAfter()} — via
- * {@code RestModule.defaultExceptionMapper()}'s core default mapping. Still a
- * {@code BusinessRuleException}/{@code ValidationException} subtype (behavior-compatible with
- * callers matching on either supertype), since {@link TooManyRequestsException} itself extends
- * {@code BusinessRuleException}.
+ * {@code RestModule.defaultExceptionMapper()}'s core default mapping. {@link
+ * TooManyRequestsException} extends {@code VertiqueException} directly (T021 W1) — never {@code
+ * BusinessRuleException}/{@code ValidationException} — so an application's own {@code
+ * ExceptionMapper<ValidationException>} can never out-rank that 429 default for this exception.
  */
 public final class RateLimitExceededException extends TooManyRequestsException {
 

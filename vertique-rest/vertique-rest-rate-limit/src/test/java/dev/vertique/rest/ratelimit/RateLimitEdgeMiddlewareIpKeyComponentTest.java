@@ -42,13 +42,16 @@ class RateLimitEdgeMiddlewareIpKeyComponentTest {
     /**
      * An IPv4-mapped IPv6 literal resolves through {@link java.net.InetAddress#getByName} to a
      * 4-byte {@code Inet4Address}, not a 16-byte {@code Inet6Address} — {@code ipKeyComponent}'s own
-     * {@code bytes.length != 16} guard then passes the literal through unmasked and un-suffixed,
-     * exactly as an IPv4 address would (contracts/rest-adapter.md, "Cardinality caution").
+     * {@code bytes.length != 16} guard then normalizes it to the resolved address's dotted-quad
+     * {@code getHostAddress()} form (T021 S1), exactly like a bare IPv4 address, so {@code
+     * ::ffff:192.0.2.1} and {@code 192.0.2.1} always key identically — defense-in-depth only:
+     * {@code RequestOriginCapturer.normalizeIp} already performs this normalization upstream for
+     * origin-capture flows (contracts/rest-adapter.md, "Cardinality caution").
      */
     @Test
-    void shouldPassThroughAnIpv4MappedIpv6LiteralUnmasked() {
+    void shouldNormalizeAnIpv4MappedIpv6LiteralToItsDottedQuadForm() {
         assertThat(RateLimitEdgeMiddleware.ipKeyComponent("::ffff:192.0.2.1", 64))
-                .isEqualTo("::ffff:192.0.2.1");
+                .isEqualTo("192.0.2.1");
     }
 
     @Test

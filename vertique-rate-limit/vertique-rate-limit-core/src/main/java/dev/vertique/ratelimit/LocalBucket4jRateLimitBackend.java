@@ -58,7 +58,7 @@ final class LocalBucket4jRateLimitBackend implements RateLimitBackend {
 
     private LocalRateLimitRegistry newRegistry(String policyName, TokenBucketRateLimit algorithm) {
         long maxTrackedKeys = maxTrackedKeysResolver.applyAsLong(policyName);
-        return new LocalRateLimitRegistry(algorithm, maxTrackedKeys, cleanupIntervalMs, clock);
+        return new LocalRateLimitRegistry(policyName, algorithm, maxTrackedKeys, cleanupIntervalMs, clock);
     }
 
     private static String policyNameOf(String storageKey) {

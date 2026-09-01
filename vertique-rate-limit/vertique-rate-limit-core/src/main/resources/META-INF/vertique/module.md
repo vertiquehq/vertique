@@ -64,7 +64,14 @@ A policy is one `RateLimitPolicy`: `name`, `enabled`, `mode` (`LOCAL`/`CLUSTERED
 and one `RateLimitAlgorithm` — v1 ships `TokenBucketRateLimit(capacity, refill)` with
 `GreedyRateLimitRefill`/`IntervalRateLimitRefill`. Configuration-declared policies
 replace a same-named Dagger-contributed policy wholesale (fields never merge); a
-semantic change needs a new `revision`.
+semantic change needs a new `revision`. **Choose `failureMode` deliberately for
+key-space saturation, not only for a genuine backend outage:** under `OPEN`, a LOCAL
+registry at its configured `maxTrackedKeys` budget silently *admits* every request for
+a not-yet-tracked key once saturated — an attacker who can mint high-cardinality keys
+(e.g. an unauthenticated per-IP or per-header dimension) can exploit this to disable
+the limiter's protection entirely; under `CLOSED` it denies instead. Either way,
+monitor `vertique.ratelimit.failures{code="capacity-exhausted"}` and the `WARN` log
+line below — this failure mode is silent otherwise.
 
 LOCAL mode stores `Bucket` state in a bounded, **per-policy** concurrent registry:
 each enabled policy owns its own registry sized by `rateLimit.local.maxTrackedKeys`
@@ -72,7 +79,18 @@ each enabled policy owns its own registry sized by `rateLimit.local.maxTrackedKe
 shared pool across policies — `CAPACITY_EXHAUSTED` pressure on one policy's key
 space can never surface as an outcome, latency change, or eviction on any other
 policy. Inactive state is reclaimable only after the worst-case time to full plus a
-configured retention slack; active state is never evicted merely to make room.
+configured retention slack; active state is never evicted merely to make room. The
+registry's internal storage key is `policyName:policyRevision:canonicalKeyEncoding`
+(the same canonical input `RateLimitKey` framing produces); LOCAL retains this raw key
+verbatim, in-memory, for the process's lifetime — by design (D015: LOCAL never leaves
+the process and needs no cross-instance unforgeability, so it carries no HMAC/hashing
+cost CLUSTERED's physical key does). If a key component can itself be sensitive
+(rarely — most policies key on tenant/user id or IP, not raw secrets), account for that
+retention in your threat model; CLUSTERED never retains the raw key, only its HMAC
+digest. The first `CAPACITY_EXHAUSTED` admission of a saturation episode also logs one
+`WARN` — the policy name and configured budget only, never key material — so an
+`OPEN`-mode silent-admit degradation and a `CLOSED`-mode denial spike both leave a
+signal an operator can alert on; see the `failureMode` caution above.
 
 A subject-resolution SPI (`RateLimitSubjectResolver`) and its shared framing helper
 (`RateLimitAdapterSupport`) let the annotation, REST, and future adapters resolve an

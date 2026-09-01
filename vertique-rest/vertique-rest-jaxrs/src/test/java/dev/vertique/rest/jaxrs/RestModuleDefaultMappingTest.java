@@ -28,8 +28,10 @@ import org.junit.jupiter.api.Test;
  *   <li>{@code dev.vertique.core.exception.UnauthorizedException} and subclasses → 401
  *   <li>{@code dev.vertique.core.exception.ForbiddenException} and subclasses → 403
  *   <li>{@link TooManyRequestsException} and subclasses → 429, with {@code Retry-After} when present
- *       (T020) — registered explicitly so it outranks the inherited
- *       {@code BusinessRuleException}/{@code ValidationException} → 400 fallback
+ *       (T020) — registered explicitly at the {@code Throwable}-level default; {@link
+ *       TooManyRequestsException} extends {@code VertiqueException} directly (T021 W1), so no
+ *       inherited {@code BusinessRuleException}/{@code ValidationException} → 400 fallback can ever
+ *       apply to it
  * </ul>
  */
 class RestModuleDefaultMappingTest {
@@ -190,8 +192,8 @@ class RestModuleDefaultMappingTest {
     }
 
     @Test
-    @DisplayName("TooManyRequestsException subclass should map to 429 via hierarchy walking, not the "
-            + "inherited BusinessRuleException 400 fallback")
+    @DisplayName("TooManyRequestsException subclass should map to 429 via hierarchy walking, never the "
+            + "ValidationException/BusinessRuleException 400 fallback (T021 W1 — no longer a shared ancestor)")
     void tooManyRequestsExceptionSubclassShouldMapTo429() {
         DefaultExceptionMapper mapper = RestModule.defaultExceptionMapper();
 

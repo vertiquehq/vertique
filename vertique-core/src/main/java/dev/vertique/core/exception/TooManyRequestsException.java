@@ -13,8 +13,17 @@ import java.util.Optional;
  *
  * <p>Represents a transient condition — the caller may retry, optionally after the duration
  * carried in {@link #retryAfter()}.
+ *
+ * <p>Extends {@link VertiqueException} directly — <em>not</em> {@link BusinessRuleException}/{@link
+ * ValidationException} (T021 W1; originally {@code BusinessRuleException} at T020). A third external
+ * deep review found that chain let an application's own {@code ExceptionMapper<ValidationException>}
+ * or {@code ExceptionMapper<BusinessRuleException>} out-rank the framework's Throwable-level 429
+ * default in {@code RestModule}'s hierarchy-aware {@code ExceptionMapperRegistry}: since a 429 denial
+ * is not a validation or business-rule failure, folding it into that chain was never semantically
+ * correct, and it created exactly this dispatch hazard for any application already handling
+ * validation errors.
  */
-public class TooManyRequestsException extends BusinessRuleException {
+public class TooManyRequestsException extends VertiqueException {
 
     private final Duration retryAfter;
 

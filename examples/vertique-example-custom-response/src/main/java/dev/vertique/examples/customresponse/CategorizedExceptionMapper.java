@@ -3,6 +3,7 @@
 
 package dev.vertique.examples.customresponse;
 
+import dev.vertique.core.exception.TooManyRequestsException;
 import dev.vertique.core.exception.ValidationException;
 import dev.vertique.examples.customresponse.ErrorResponse.ErrorCategory;
 import jakarta.inject.Inject;
@@ -24,6 +25,7 @@ import java.util.UUID;
  * <p>Categorization rules:
  * <ul>
  *   <li>{@link ValidationException}, {@link IllegalArgumentException} → {@link ErrorCategory#VALIDATION} (400)</li>
+ *   <li>{@link TooManyRequestsException} → {@link ErrorCategory#RATE_LIMITED} (429)</li>
  *   <li>{@link WebApplicationException} with 401/403 → {@link ErrorCategory#SECURITY} (original status)</li>
  *   <li>{@link WebApplicationException} with 400 → {@link ErrorCategory#VALIDATION} (400)</li>
  *   <li>{@link WebApplicationException} with other 4xx → {@link ErrorCategory#BUSINESS} (original status)</li>
@@ -64,6 +66,9 @@ public class CategorizedExceptionMapper implements ExceptionMapper<Throwable> {
      * @return the error category
      */
     private ErrorCategory categorize(Throwable t) {
+        if (t instanceof TooManyRequestsException) {
+            return ErrorCategory.RATE_LIMITED;
+        }
         if (t instanceof ValidationException || t instanceof IllegalArgumentException) {
             return ErrorCategory.VALIDATION;
         }
@@ -97,6 +102,7 @@ public class CategorizedExceptionMapper implements ExceptionMapper<Throwable> {
             case VALIDATION -> 400;
             case SECURITY -> 403;
             case BUSINESS -> 404;
+            case RATE_LIMITED -> 429;
             case TECHNICAL -> 500;
         };
     }
