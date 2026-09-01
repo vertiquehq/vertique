@@ -38,6 +38,7 @@ SPDX-License-Identifier: EUPL-1.2
         <module>vertique-codegen-jaxrs</module>
         <module>vertique-codegen-mcp</module>
         <module>vertique-codegen-cache</module>
+        <module>vertique-codegen-rate-limit</module>
         <module>vertique-codegen-all</module>
         <module>vertique-codegen-integration-tests</module>
     </modules>
