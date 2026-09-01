@@ -68,6 +68,18 @@ public final class RateLimiter {
     }
 
     /**
+     * Exposed for framework adapters that must classify a decision at their own boundary — e.g. an
+     * edge middleware's absent-origin classification (contracts/rest-adapter.md, "Rule composition
+     * semantics" — IP mechanism) — without independently re-deriving this handle's bound policy's
+     * {@code failureMode} from its own configuration source.
+     *
+     * @return this handle's bound policy's explicit backend-failure behavior
+     */
+    public RateLimitFailureMode failureMode() {
+        return policy.failureMode();
+    }
+
+    /**
      * Attempts to consume {@code policy.defaultCost()} tokens against {@code key}. Equivalent to
      * {@code acquire(key, policy.defaultCost())}.
      *

@@ -32,6 +32,7 @@ SPDX-License-Identifier: EUPL-1.2
         <module>vertique-rest-websocket</module>
         <module>vertique-rest-validation</module>
         <module>vertique-rest-openapi-validation</module>
+        <module>vertique-rest-rate-limit</module>
         <module>vertique-rest-test</module>
     </modules>
 </project>

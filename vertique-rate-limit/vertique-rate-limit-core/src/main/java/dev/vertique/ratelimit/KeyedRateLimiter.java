@@ -38,6 +38,14 @@ public final class KeyedRateLimiter<K> {
     }
 
     /**
+     * @return this handle's bound policy's explicit backend-failure behavior, delegating to {@link
+     *     RateLimiter#failureMode()}
+     */
+    public RateLimitFailureMode failureMode() {
+        return delegate.failureMode();
+    }
+
+    /**
      * Derives a {@link RateLimitKey} from {@code input} via this handle's selector function, then
      * attempts to consume {@code policyName()}'s default cost against it through the same decision
      * path {@link RateLimiter#acquire(RateLimitKey)} uses.
