@@ -10,7 +10,11 @@ package dev.vertique.core.exception;
  * <ul>
  *   <li>{@link ValidationException} — input validation failures (→ 400)
  *     <ul>
- *       <li>{@link BusinessRuleException} — business-rule / domain-rule violations (→ 400)</li>
+ *       <li>{@link BusinessRuleException} — business-rule / domain-rule violations (→ 400)
+ *         <ul>
+ *           <li>{@link TooManyRequestsException} — rate/quota limit exceeded (→ 429)</li>
+ *         </ul>
+ *       </li>
  *     </ul>
  *   </li>
  *   <li>{@link ConflictException} — state conflicts (→ 409)</li>

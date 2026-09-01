@@ -95,8 +95,8 @@ class RestRateLimitModuleProgrammaticPolicyIT {
         Optional<RequestOriginConfig> originCaptureBinding =
                 Optional.of(new RequestOriginConfig(Set.of(), 16, false, false));
 
-        Middleware edge = RestRateLimitModule.rateLimitEdgeMiddlewareContribution(
-                config, rateLimiters, originCaptureBinding, RateLimitEdgeTestFixture.defaultExceptionMappers());
+        Middleware edge =
+                RestRateLimitModule.rateLimitEdgeMiddlewareContribution(config, rateLimiters, originCaptureBinding);
 
         AtomicBoolean invoked = new AtomicBoolean(false);
         HttpVerticle verticle = new HttpVerticle(

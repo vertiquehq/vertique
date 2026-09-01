@@ -44,20 +44,33 @@ whenever an `IP`-keyed rule evaluates. Because the edge limiter runs
 pre-authorization while `@RateLimited` runs post-authorization (at method-invocation
 time), unauthenticated edge traffic never poisons a per-operation business quota.
 
-A `QUOTA_EXCEEDED`/`BACKEND_FAILURE_CLOSED` edge decision renders through the same
-`Set<ExceptionMapper<?>>` chain the `execute()`/`@RateLimited` path uses — an
-application that contributes its own `ExceptionMapper<RateLimitExceededException>`/
-`ExceptionMapper<RateLimitUnavailableException>` (or a common supertype such as
-`ExceptionMapper<Throwable>`) overrides the edge denial's response the same way it
-already overrides one thrown by `execute()`, with no separate customization surface
-to learn. With no application override, the edge response is byte-identical to the
-"HTTP response mapping" shape above. Two admission paths carry no `RateLimitDecision`
-at all — an absent `RequestOrigin` under `failureMode: CLOSED`, and a defensive
-internal failure — and always render the fixed `503` body directly, never consulting
-an application mapper. If a resolved mapper itself throws, the edge limiter falls
-back to the fixed built-in response rather than ever surfacing an unhandled failure.
-The redaction guarantee above (no `policyName`, key, identity, mode, or other
-rate-limit-internal detail) applies to the framework's own default mapper only; an
+A `QUOTA_EXCEEDED`/`BACKEND_FAILURE_CLOSED` edge decision delegates via
+`ctx.fail(status, exception)` into the full JAX-RS failure pipeline — the same
+`ErrorPipeline`/`ResponsePipeline` (interceptor chains, `ProblemDetail` instance
+enrichment, profile-aware error serialization) a resource method's own thrown
+exception traverses, resolved through the mount's own real `ExceptionMapperRegistry`
+rather than any middleware-local rendering. An application that contributes its own
+`ExceptionMapper<RateLimitExceededException>`/`ExceptionMapper<RateLimitUnavailableException>`
+(or a common supertype such as `ExceptionMapper<Throwable>`) overrides the edge
+denial's response the same way it already overrides one thrown by `execute()`, with
+no separate customization surface to learn — and a throwing application mapper falls
+through to the pipeline's own `500` fallback, exactly as it would for an `execute()`
+exception. With no application override, the packaged exception mappers render the
+"HTTP response mapping" shape above; with no rate-limit-specific mapper installed at
+all, `RateLimitExceededException` still renders `429` (with `Retry-After` threaded
+from the decision) because it extends the core `TooManyRequestsException` semantic
+root, and `RateLimitUnavailableException` still renders `503` because it extends the
+core `UnavailableException` root — both via `RestModule.defaultExceptionMapper()`'s
+built-in mappings. Two admission paths carry no `RateLimitDecision` at all — an
+absent `RequestOrigin` under `failureMode: CLOSED`, and a defensive internal failure
+— and always render the core `503` default directly (a fixed, redacted message, no
+decision to mint a rate-limit-specific exception from). A denial on a request path
+matching no mount at all is an accepted degradation: the correct status still reaches
+the client via `ctx.fail`, but the body is Vert.x's own plain-text unhandled-failure
+response, with no `Retry-After` and an `ERROR`-level Vert.x log line — the full
+pipeline dressing above is reachable only once a request has matched a mount. The
+redaction guarantee above (no `policyName`, key, identity, mode, or other
+rate-limit-internal detail) applies to the framework's own mappers/defaults only; an
 application-contributed mapper choosing to expose more is its own decision.
 
 Each configured rule names one policy and composes its key dimensions, in declared

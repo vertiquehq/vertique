@@ -6,8 +6,8 @@ package dev.vertique.rest.ratelimit;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isA;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -22,11 +22,11 @@ import dev.vertique.ratelimit.RateLimitMode;
 import dev.vertique.ratelimit.RateLimitOutcome;
 import dev.vertique.ratelimit.RateLimiter;
 import dev.vertique.ratelimit.RateLimiters;
+import dev.vertique.ratelimit.exception.RateLimitExceededException;
 import dev.vertique.security.origin.RequestOrigin;
 import io.vertx.core.Future;
 import io.vertx.core.MultiMap;
 import io.vertx.core.http.HttpServerRequest;
-import io.vertx.core.http.HttpServerResponse;
 import io.vertx.ext.web.RoutingContext;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -93,8 +93,7 @@ class RateLimitEdgeRuleCompositionTest {
                 OptionalInt.empty());
         RateLimitEdgeConfig config = new RateLimitEdgeConfig(true, List.of(rule), "/*");
 
-        assertThatThrownBy(() -> new RateLimitEdgeMiddleware(
-                        config, rateLimiters, true, RateLimitEdgeTestFixture.defaultExceptionMappers()))
+        assertThatThrownBy(() -> new RateLimitEdgeMiddleware(config, rateLimiters, true))
                 .isInstanceOf(ConfigurationException.class)
                 .hasMessageContaining(IP_POLICY)
                 .hasMessageContaining("capacity");
@@ -121,7 +120,8 @@ class RateLimitEdgeRuleCompositionTest {
         verify(fx.ipLimiter, times(1)).acquire(any(RateLimitKey.class));
         verify(fx.headerLimiter, times(1)).acquire(any(RateLimitKey.class));
         verify(ctx, never()).next();
-        verify(fx.response).setStatusCode(429);
+        verify(ctx.request()).resume();
+        verify(ctx).fail(eq(429), isA(RateLimitExceededException.class));
     }
 
     @Test
@@ -236,7 +236,6 @@ class RateLimitEdgeRuleCompositionTest {
 
         final RateLimiter ipLimiter = mock(RateLimiter.class);
         final RateLimiter headerLimiter = mock(RateLimiter.class);
-        final HttpServerResponse response = mock(HttpServerResponse.class);
         final List<String> callOrder = new ArrayList<>();
         final RateLimitEdgeMiddleware middleware;
 
@@ -271,12 +270,7 @@ class RateLimitEdgeRuleCompositionTest {
             List<RateLimitEdgeRule> rules = ipFirst ? List.of(ipRule, headerRule) : List.of(headerRule, ipRule);
             RateLimitEdgeConfig config = new RateLimitEdgeConfig(true, rules, "/*");
 
-            this.middleware = new RateLimitEdgeMiddleware(
-                    config, rateLimiters, true, RateLimitEdgeTestFixture.defaultExceptionMappers());
-
-            when(response.putHeader(anyString(), anyString())).thenReturn(response);
-            when(response.setStatusCode(anyInt())).thenReturn(response);
-            when(response.end(anyString())).thenReturn(Future.succeededFuture());
+            this.middleware = new RateLimitEdgeMiddleware(config, rateLimiters, true);
         }
 
         static Fixture ipThenHeader(MissingDimensionPolicy missingDimension) {
@@ -311,7 +305,6 @@ class RateLimitEdgeRuleCompositionTest {
             HttpServerRequest request = mock(HttpServerRequest.class);
             when(request.headers()).thenReturn(headers);
             when(ctx.request()).thenReturn(request);
-            when(ctx.response()).thenReturn(response);
             return ctx;
         }
     }

@@ -18,7 +18,6 @@ import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpServerOptions;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.handler.BodyHandler;
-import jakarta.ws.rs.ext.ExceptionMapper;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Set;
@@ -102,17 +101,6 @@ final class RateLimitEdgeTestFixture {
      */
     static HttpServerOptions localhostOptions() {
         return new HttpServerOptions().setPort(0).setHost("127.0.0.1");
-    }
-
-    /**
-     * The framework's own two mappers ({@link RateLimitExceptionMapper.Exceeded}/{@link
-     * RateLimitExceptionMapper.Unavailable}), exactly as {@code RestRateLimitModule} contributes
-     * them unconditionally in production — the {@code Set<ExceptionMapper<?>>} a manually
-     * constructed {@link RateLimitEdgeMiddleware} needs to reproduce the framework's default,
-     * no-application-override denial rendering (T019, "Denial rendering").
-     */
-    static Set<ExceptionMapper<?>> defaultExceptionMappers() {
-        return Set.of(new RateLimitExceptionMapper.Exceeded(), new RateLimitExceptionMapper.Unavailable());
     }
 
     /**

@@ -21,7 +21,6 @@ import io.vertx.ext.web.RoutingContext;
 import jakarta.inject.Singleton;
 import jakarta.ws.rs.ext.ExceptionMapper;
 import java.util.Optional;
-import java.util.Set;
 
 /**
  * Dagger wiring for the REST rate-limit adapter (contracts/rest-adapter.md, "Dagger wiring").
@@ -106,25 +105,16 @@ public abstract class RestRateLimitModule {
      * @param originCaptureBinding the optional {@link RequestOriginConfig} binding probe — present
      *     exactly when {@code AuthModule} (and therefore {@link OriginCaptureMiddleware}) is
      *     co-installed
-     * @param exceptionMappers the application's full {@code Set<ExceptionMapper<?>>} multibinding
-     *     (rest-core's {@code RestCoreModule}), including this module's own unconditionally
-     *     contributed {@code 429}/{@code 503} mappers plus any application override — resolved by
-     *     the edge middleware into its own {@link dev.vertique.rest.jaxrs.ExceptionMapperRegistry}
-     *     so a non-permitting edge decision renders through the same mapper chain {@code execute()}
-     *     uses (contracts/rest-adapter.md, "HTTP mapping")
      * @return the contributed middleware
      */
     @Provides
     @IntoSet
     static Middleware rateLimitEdgeMiddlewareContribution(
-            RateLimitEdgeConfig config,
-            RateLimiters rateLimiters,
-            Optional<RequestOriginConfig> originCaptureBinding,
-            Set<ExceptionMapper<?>> exceptionMappers) {
+            RateLimitEdgeConfig config, RateLimiters rateLimiters, Optional<RequestOriginConfig> originCaptureBinding) {
         if (!config.enabled()) {
             return NoOpMiddleware.INSTANCE;
         }
-        return new RateLimitEdgeMiddleware(config, rateLimiters, originCaptureBinding.isPresent(), exceptionMappers);
+        return new RateLimitEdgeMiddleware(config, rateLimiters, originCaptureBinding.isPresent());
     }
 
     /** Contributed instead of {@link RateLimitEdgeMiddleware} when the edge limiter is disabled. */

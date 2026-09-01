@@ -11,6 +11,7 @@ import dagger.multibindings.ElementsIntoSet;
 import dagger.multibindings.IntoSet;
 import dagger.multibindings.Multibinds;
 import dev.vertique.core.exception.ConflictException;
+import dev.vertique.core.exception.TooManyRequestsException;
 import dev.vertique.core.exception.UnavailableException;
 import dev.vertique.core.exception.ValidationException;
 import dev.vertique.core.extension.OrderedExtension;
@@ -210,6 +211,10 @@ public abstract class RestModule {
      *   <li>{@link WebApplicationException} — preserves an existing response entity if present,
      *       otherwise produces a {@link ProblemDetail} body with the embedded status code</li>
      *   <li>{@link ValidationException} (400) — framework input validation failures</li>
+     *   <li>{@link TooManyRequestsException} (429) — rate/quota limit exceeded, with a
+     *       {@code Retry-After} header when the exception carries one; registered explicitly so it
+     *       outranks the inherited {@code BusinessRuleException}/{@link ValidationException} → 400
+     *       fallback (mirrors {@link UnavailableException}'s 503 role)</li>
      *   <li>{@link ParamConversionException} (400) — inbound parameter value failed conversion to its
      *       declared type (FR-015-08a); registered explicitly so the default is self-documenting and
      *       independent of the {@link ValidationException} hierarchy fallback</li>
@@ -266,6 +271,20 @@ public abstract class RestModule {
                         .entity(ProblemDetail.of(400, ex.getMessage()))
                         .type("application/problem+json")
                         .build())
+                .on(TooManyRequestsException.class, ex -> {
+                    Response.ResponseBuilder builder = Response.status(429)
+                            .entity(ProblemDetail.of(429, ex.getMessage()))
+                            .type("application/problem+json");
+                    // max(1, ceil(millis / 1000)) — same rounding rule vertique-rest-rate-limit's
+                    // RateLimitHttpMapping.retryAfterSeconds applies, so an app-level TooManyRequestsException
+                    // and a rate-limit denial never disagree on how a sub-second hint rounds.
+                    ex.retryAfter().ifPresent(retryAfter -> {
+                        long millis = Math.max(0L, retryAfter.toMillis());
+                        long seconds = Math.max(1L, Math.ceilDiv(millis, 1000L));
+                        builder.header("Retry-After", Long.toString(seconds));
+                    });
+                    return builder.build();
+                })
                 .on(ParamConversionException.class, ex -> Response.status(400)
                         .entity(ProblemDetail.of(400, ex.getMessage()))
                         .type("application/problem+json")

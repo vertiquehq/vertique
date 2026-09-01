@@ -55,8 +55,7 @@ final class RateLimitEdgeIpTestFixture {
                 MissingDimensionPolicy.SHARED_BUCKET,
                 OptionalInt.of(ipv6PrefixBits));
         RateLimitEdgeConfig config = new RateLimitEdgeConfig(true, List.of(rule), "/*");
-        return new RateLimitEdgeMiddleware(
-                config, rateLimiters, true, RateLimitEdgeTestFixture.defaultExceptionMappers());
+        return new RateLimitEdgeMiddleware(config, rateLimiters, true);
     }
 
     /**
