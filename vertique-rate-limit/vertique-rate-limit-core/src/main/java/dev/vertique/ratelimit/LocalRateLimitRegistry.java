@@ -19,13 +19,13 @@ import java.util.concurrent.ConcurrentMap;
  * One policy's bounded local Bucket4j registry (contracts/rate-limit-runtime.md, "Local engine
  * contract"). Every enabled LOCAL policy owns exactly one instance, sized by its own resolved
  * {@code maxTrackedKeys} budget — never a pool shared across policies (§7.2, R2 amendment). {@link
- * dev.vertique.ratelimit.dagger.LocalBucket4jRateLimitBackend} owns routing each request to the
- * right per-policy instance and is this class's only production caller.
+ * LocalBucket4jRateLimitBackend} owns routing each request to the right per-policy instance and is
+ * this class's only production caller.
  *
- * <p><strong>Public but framework-private</strong> — visible outside this package only so the
- * {@code .dagger} backend implementation can construct and route to it (the same reason {@code
- * spi.RateLimitBackend}/{@code RateLimitBackendRequest}/{@code RateLimitBackendResult} are public);
- * never a supported application extension point. No Bucket4j type appears in any public signature.
+ * <p><strong>Package-private, framework-internal</strong> — reached only through {@link
+ * LocalBucket4jRateLimitBackend}, itself only reachable through {@link
+ * LocalRateLimitBackendFactory}'s public static factory; never a supported application extension
+ * point. No Bucket4j type appears in any public signature.
  *
  * <p>Eviction never removes active state merely to admit a new key: an entry is safely reclaimable
  * only once the worst-case time for its algorithm to refill from empty to full, plus a retention
@@ -37,7 +37,7 @@ import java.util.concurrent.ConcurrentMap;
  * — never on a background timer. Every proof in {@code LocalRateLimitRegistryTest} triggers a sweep
  * this same way (either explicitly, or implicitly through an at-capacity admission).
  */
-public final class LocalRateLimitRegistry {
+final class LocalRateLimitRegistry {
 
     private final TokenBucketRateLimit algorithm;
     private final long maxTrackedKeys;

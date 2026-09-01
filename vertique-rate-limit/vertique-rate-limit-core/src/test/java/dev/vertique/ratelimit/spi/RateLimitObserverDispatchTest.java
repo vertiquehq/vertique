@@ -55,7 +55,10 @@ class RateLimitObserverDispatchTest {
                 new MatrixRow(
                         "shouldCarryOnlyBoundedPolicyLevelFieldsNeverTheRawKeyIdentityOrAnException",
                         RateLimitObserverDispatchTest
-                                ::shouldCarryOnlyBoundedPolicyLevelFieldsNeverTheRawKeyIdentityOrAnException));
+                                ::shouldCarryOnlyBoundedPolicyLevelFieldsNeverTheRawKeyIdentityOrAnException),
+                new MatrixRow(
+                        "shouldRethrowAFatalObserverFailureInsteadOfSwallowingIt",
+                        RateLimitObserverDispatchTest::shouldRethrowAFatalObserverFailureInsteadOfSwallowingIt));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -146,6 +149,28 @@ class RateLimitObserverDispatchTest {
         }
     }
 
+    // --- Row 4 (Carried-3, review repair): a fatal observer failure propagates, never swallowed ---
+
+    private static void shouldRethrowAFatalObserverFailureInsteadOfSwallowingIt() throws Exception {
+        Vertx vertx = Vertx.vertx();
+        try {
+            RateLimiters rateLimiters =
+                    RateLimitCoreTestFixtures.singlePolicy(vertx, probePolicy(), Set.of(new FatalObserver()));
+            RateLimitKey key = RateLimitKey.of(SENSITIVE_KEY_COMPONENT);
+
+            Future<RateLimitDecision> future = rateLimiters.limiter(POLICY_NAME).acquire(key);
+
+            assertThat(future.failed())
+                    .as("acquire() future fails when an observer throws a fatal error, instead of swallowing it")
+                    .isTrue();
+            assertThat(future.cause())
+                    .as("the fatal observer failure propagates as the future's cause")
+                    .isInstanceOf(FatalObserverFailure.class);
+        } finally {
+            vertx.close();
+        }
+    }
+
     // --- Shared fixtures ---
 
     private static RateLimitPolicy probePolicy() {
@@ -203,6 +228,17 @@ class RateLimitObserverDispatchTest {
 
         List<RateLimitEvent> received() {
             return received;
+        }
+    }
+
+    /** A {@link VirtualMachineError} subclass — never a real JVM failure, just a fatal-classified marker. */
+    private static final class FatalObserverFailure extends VirtualMachineError {}
+
+    /** Throws a fatal error unconditionally; never records anything. */
+    private static final class FatalObserver implements RateLimitObserver {
+        @Override
+        public void onEvent(RateLimitEvent event) {
+            throw new FatalObserverFailure();
         }
     }
 

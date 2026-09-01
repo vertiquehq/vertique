@@ -6,17 +6,14 @@ package dev.vertique.ratelimit;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import dev.vertique.core.exception.ConfigurationException;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
  * One declared rate-limit policy — the exact contract-final public record
  * (contracts/rate-limit-runtime.md, "Policy model"). Resolves from typed
  * {@code rateLimit.policies.<name>} configuration and/or Dagger {@code @IntoSet RateLimitPolicy}
- * contributions; see {@link #mergeConfigOverProgrammatic} for the resolution rule between the two
- * tiers.
+ * contributions; {@code dev.vertique.ratelimit.dagger.RateLimitCoreModule} merges the two tiers
+ * (config replaces a same-name programmatic policy wholesale — fields never merge across tiers).
  *
  * <p>Every component is required with no default anywhere — including {@code failureMode} on a
  * disabled policy (FR-006, {@code spec.md} §5.5) — enforced by this record's compact constructor
@@ -111,26 +108,5 @@ public record RateLimitPolicy(
             throw new ConfigurationException(path + ".defaultCost is required (no default)");
         }
         return new RateLimitPolicy(name, enabled, mode, failureMode, revision, defaultCost, algorithm);
-    }
-
-    /**
-     * Merges root-configuration policies over Dagger {@code @IntoSet}-contributed (programmatic)
-     * policies: a config policy replaces a same-name programmatic policy <strong>wholesale</strong>
-     * — fields never merge across tiers (contracts/rate-limit-runtime.md, "Policy model"). A name
-     * present in only one tier passes through unchanged. This is a pure resolution step; it never
-     * rejects a same-name overlap between tiers as a duplicate — that override is the intended
-     * mechanism. {@link RateLimiters}'s own constructor separately rejects any duplicate name that
-     * survives resolution into one flat set.
-     *
-     * @param configPolicies policies resolved from typed {@code rateLimit.policies.<name>} configuration
-     * @param programmaticPolicies policies contributed via Dagger {@code @IntoSet RateLimitPolicy}
-     * @return the merged policy set, one entry per distinct name, config-tier winning on overlap
-     */
-    public static Set<RateLimitPolicy> mergeConfigOverProgrammatic(
-            Set<RateLimitPolicy> configPolicies, Set<RateLimitPolicy> programmaticPolicies) {
-        Map<String, RateLimitPolicy> merged = new LinkedHashMap<>();
-        programmaticPolicies.forEach(policy -> merged.put(policy.name(), policy));
-        configPolicies.forEach(policy -> merged.put(policy.name(), policy));
-        return Set.copyOf(merged.values());
     }
 }

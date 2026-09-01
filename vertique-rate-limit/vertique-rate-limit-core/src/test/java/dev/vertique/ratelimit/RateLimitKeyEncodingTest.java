@@ -64,6 +64,30 @@ class RateLimitKeyEncodingTest {
     }
 
     @Test
+    void shouldRenderDistinctCanonicalKeysAcrossPercentCraftedComponents() {
+        // '%' must never be pass-through in the percent-encoded payload alphabet: if it were, a
+        // literal '%' in one raw component could forge the encoding of an entirely different raw
+        // component that happens to spell out that component's own percent-escapes (B1).
+        RateLimitKey rawSlash = RateLimitKey.of("a/b");
+        RateLimitKey rawPercentEscape = RateLimitKey.of("a%2Fb");
+        RateLimitKey rawLiteralPercent = RateLimitKey.of("a%b");
+        RateLimitKey rawDoubleEscapedPercent = RateLimitKey.of("a%25b");
+
+        List<String> encodings = List.of(
+                encodingOf(rawSlash),
+                encodingOf(rawPercentEscape),
+                encodingOf(rawLiteralPercent),
+                encodingOf(rawDoubleEscapedPercent));
+
+        assertThat(encodings)
+                .as("distinct raw components, including crafted %%-sequences, must render distinct canonical keys")
+                .doesNotHaveDuplicates();
+        assertThat(encodingOf(RateLimitKey.of("a%b")))
+                .as("same raw component re-encoded must be stable")
+                .isEqualTo(encodingOf(rawLiteralPercent));
+    }
+
+    @Test
     void shouldReplaceOversizedComponentWithDistinctHashPreservingDistinctness() {
         String oversizedValueA = oversizedComponent('A');
         String oversizedValueB = oversizedComponent('B');

@@ -13,8 +13,10 @@ import dev.vertique.context.ContextRuntimeModule;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.config.JsonConfigPaths;
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.lifecycle.ApplicationShutdownStep;
 import dev.vertique.core.lifecycle.LifecyclePhase;
+import dev.vertique.ratelimit.LocalRateLimitBackendFactory;
 import dev.vertique.ratelimit.RateLimitMode;
 import dev.vertique.ratelimit.RateLimitPolicy;
 import dev.vertique.ratelimit.RateLimiters;
@@ -27,6 +29,8 @@ import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -37,11 +41,12 @@ import java.util.function.ToLongFunction;
  * Dagger configuration contribution for the application-scoped rate-limit runtime.
  *
  * <p>Policies resolve from typed {@code rateLimit.policies.<name>} configuration and/or Dagger
- * {@code @IntoSet RateLimitPolicy} contributions, merged via
- * {@link RateLimitPolicy#mergeConfigOverProgrammatic} (config wins wholesale on a same-name
- * overlap). A per-policy omitted {@code mode} inherits {@code rateLimit.defaultMode} (default
- * {@code LOCAL}) before config binding runs, so {@link RateLimitPolicy}'s own "required, no
- * default" rule for {@code mode} only ever fires for a truly unresolved value.
+ * {@code @IntoSet RateLimitPolicy} contributions, merged wholesale (config wins on a same-name
+ * overlap — fields never merge across tiers; see {@link #mergeConfigOverProgrammatic}, this
+ * module's own resolution step). A per-policy omitted {@code mode} inherits {@code
+ * rateLimit.defaultMode} (default {@code LOCAL}) before config binding runs, so {@link
+ * RateLimitPolicy}'s own "required, no default" rule for {@code mode} only ever fires for a truly
+ * unresolved value.
  *
  * <p>The {@code @IntoSet ApplicationShutdownStep} contributed below forces eager construction of
  * {@link RateLimiters} at bootstrap, so its startup validation runs unconditionally before any
@@ -124,14 +129,12 @@ public abstract class RateLimitCoreModule {
             DefaultRateLimitSubjectResolver defaultSubjectResolver,
             Optional<RateLimitSubjectResolver> customSubjectResolver) {
         JsonObject rateLimit = JsonConfigPaths.navigateObject(config, "rateLimit");
-        RateLimitMode defaultMode =
-                RateLimitMode.valueOf(rateLimit.getString(DEFAULT_MODE, RateLimitMode.LOCAL.name()));
+        RateLimitMode defaultMode = resolveDefaultMode(rateLimit);
         String keyDerivationSecret =
                 JsonConfigPaths.navigateObject(rateLimit, "keyDerivation").getString("secret");
         JsonObject policiesJson = withDefaultedMode(JsonConfigPaths.navigateObject(rateLimit, POLICIES), defaultMode);
         List<RateLimitPolicy> configPolicies = parser.parseKeyedObject(policiesJson, "name", RateLimitPolicy.class);
-        Set<RateLimitPolicy> policies =
-                RateLimitPolicy.mergeConfigOverProgrammatic(Set.copyOf(configPolicies), contributedPolicies);
+        Set<RateLimitPolicy> policies = mergeConfigOverProgrammatic(Set.copyOf(configPolicies), contributedPolicies);
         RateLimitSubjectResolver subjectResolver = customSubjectResolver.orElse(defaultSubjectResolver);
         boolean rateLimitEnabled = rateLimit.getBoolean(ENABLED, RateLimiters.DEFAULT_RATE_LIMIT_ENABLED);
         return new RateLimiters(
@@ -182,6 +185,47 @@ public abstract class RateLimitCoreModule {
     }
 
     /**
+     * Resolves {@code rateLimit.defaultMode}, wrapping an unrecognized value into a {@link
+     * ConfigurationException} instead of letting {@link RateLimitMode#valueOf}'s raw {@link
+     * IllegalArgumentException} cross this module's boundary.
+     *
+     * @param rateLimit the raw {@code rateLimit.*} configuration section
+     * @return the resolved default mode
+     * @throws ConfigurationException if {@code rateLimit.defaultMode} is present but not one of
+     *     {@link RateLimitMode}'s constants
+     */
+    private static RateLimitMode resolveDefaultMode(JsonObject rateLimit) {
+        String raw = rateLimit.getString(DEFAULT_MODE, RateLimitMode.LOCAL.name());
+        try {
+            return RateLimitMode.valueOf(raw);
+        } catch (IllegalArgumentException invalid) {
+            throw new ConfigurationException("rateLimit.defaultMode must be one of "
+                    + Arrays.toString(RateLimitMode.values()) + ", got '" + raw + "'");
+        }
+    }
+
+    /**
+     * Merges root-configuration policies over Dagger {@code @IntoSet}-contributed (programmatic)
+     * policies: a config policy replaces a same-name programmatic policy <strong>wholesale</strong>
+     * — fields never merge across tiers (contracts/rate-limit-runtime.md, "Policy model"). A name
+     * present in only one tier passes through unchanged. This is a pure resolution step; it never
+     * rejects a same-name overlap between tiers as a duplicate — that override is the intended
+     * mechanism. {@link RateLimiters}'s own constructor separately rejects any duplicate name that
+     * survives resolution into one flat set.
+     *
+     * @param configPolicies policies resolved from typed {@code rateLimit.policies.<name>} configuration
+     * @param programmaticPolicies policies contributed via Dagger {@code @IntoSet RateLimitPolicy}
+     * @return the merged policy set, one entry per distinct name, config-tier winning on overlap
+     */
+    private static Set<RateLimitPolicy> mergeConfigOverProgrammatic(
+            Set<RateLimitPolicy> configPolicies, Set<RateLimitPolicy> programmaticPolicies) {
+        Map<String, RateLimitPolicy> merged = new LinkedHashMap<>();
+        programmaticPolicies.forEach(policy -> merged.put(policy.name(), policy));
+        configPolicies.forEach(policy -> merged.put(policy.name(), policy));
+        return Set.copyOf(merged.values());
+    }
+
+    /**
      * Fills a per-policy {@code mode} from {@code defaultMode} when the raw config entry omits it,
      * leaving an explicit per-policy {@code mode} untouched. {@code rateLimit.policies.<name>.mode}
      * is optional in raw configuration only via this fallback (contracts/rate-limit-runtime.md,
@@ -210,26 +254,58 @@ public abstract class RateLimitCoreModule {
      * shared {@code rateLimit.local.maxTrackedKeys} default (contracts/rate-limit-runtime.md,
      * "Local engine contract" — per-policy budget, never one shared pool).
      *
+     * <p>{@code rateLimit.local.maxTrackedKeys}/{@code cleanupIntervalMs} (default and any
+     * per-policy override) are eagerly bounds-validated here, at this provider's own construction —
+     * forced eager the same way {@link RateLimiters}'s own startup validation is (this class's
+     * javadoc, "Dagger wiring"), so a misconfigured bound fails application startup before any
+     * handle is requested, never lazily at first LOCAL admission.
+     *
      * @param config the raw {@code rateLimit.*} configuration section
      * @return the LOCAL {@link RateLimitBackend}
+     * @throws ConfigurationException if the resolved global {@code maxTrackedKeys}/{@code
+     *     cleanupIntervalMs}, or any per-policy {@code maxTrackedKeys} override, is below 1
      */
     @Provides
     @IntoMap
+    @Singleton
     @RateLimitModeKey(RateLimitMode.LOCAL)
     static RateLimitBackend localRateLimitBackend(@VertxConfig JsonObject config) {
         JsonObject rateLimit = JsonConfigPaths.navigateObject(config, "rateLimit");
         JsonObject local = JsonConfigPaths.navigateObject(rateLimit, LOCAL);
         long defaultMaxTrackedKeys = local.getLong(MAX_TRACKED_KEYS, DEFAULT_MAX_TRACKED_KEYS);
         long cleanupIntervalMs = local.getLong(CLEANUP_INTERVAL_MS, DEFAULT_CLEANUP_INTERVAL_MS);
+        requireAtLeastOne(defaultMaxTrackedKeys, "rateLimit.local.maxTrackedKeys");
+        requireAtLeastOne(cleanupIntervalMs, "rateLimit.local.cleanupIntervalMs");
         JsonObject policiesJson = JsonConfigPaths.navigateObject(rateLimit, POLICIES);
+        validatePerPolicyMaxTrackedKeysOverrides(policiesJson);
         ToLongFunction<String> maxTrackedKeysResolver =
                 policyName -> maxTrackedKeysFor(policiesJson, policyName, defaultMaxTrackedKeys);
-        return new LocalBucket4jRateLimitBackend(maxTrackedKeysResolver, cleanupIntervalMs);
+        return LocalRateLimitBackendFactory.local(maxTrackedKeysResolver, cleanupIntervalMs);
     }
 
     private static long maxTrackedKeysFor(JsonObject policiesJson, String policyName, long defaultValue) {
         JsonObject policyJson = JsonConfigPaths.navigateObject(policiesJson, policyName);
         JsonObject policyLocal = JsonConfigPaths.navigateObject(policyJson, LOCAL);
         return policyLocal.getLong(MAX_TRACKED_KEYS, defaultValue);
+    }
+
+    /** Eagerly validates every present per-policy {@code local.maxTrackedKeys} override, by name. */
+    private static void validatePerPolicyMaxTrackedKeysOverrides(JsonObject policiesJson) {
+        policiesJson.forEach(entry -> {
+            if (entry.getValue() instanceof JsonObject policyJson) {
+                JsonObject policyLocal = JsonConfigPaths.navigateObject(policyJson, LOCAL);
+                if (policyLocal.containsKey(MAX_TRACKED_KEYS)) {
+                    requireAtLeastOne(
+                            policyLocal.getLong(MAX_TRACKED_KEYS),
+                            "rateLimit.policies." + entry.getKey() + ".local.maxTrackedKeys");
+                }
+            }
+        });
+    }
+
+    private static void requireAtLeastOne(long value, String path) {
+        if (value < 1) {
+            throw new ConfigurationException(path + " must be at least 1, got " + value);
+        }
     }
 }

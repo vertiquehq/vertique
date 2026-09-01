@@ -4,6 +4,7 @@
 package dev.vertique.ratelimit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import dev.vertique.ratelimit.exception.RateLimitExceededException;
 import dev.vertique.ratelimit.exception.RateLimitRequestException;
@@ -11,10 +12,17 @@ import dev.vertique.ratelimit.exception.RateLimitRequestFailure;
 import dev.vertique.ratelimit.exception.RateLimitUnavailableException;
 import dev.vertique.ratelimit.spi.RateLimitBackend;
 import dev.vertique.ratelimit.spi.RateLimitBackendResult;
+import dev.vertique.ratelimit.spi.RateLimitObserver;
+import dev.vertique.ratelimit.spi.event.RateLimitEvent;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
@@ -42,6 +50,7 @@ class RateLimiterExecuteTest {
         shouldFailWithExceededExceptionWhenQuotaExceeded();
         shouldFailWithUnavailableExceptionWhenBackendFailureClosed();
         shouldRunActionExactlyOnceWhenBackendFailureOpen();
+        shouldRunActionExactlyOnceWhenDisabled();
     }
 
     private static void shouldRunActionExactlyOnceWhenPermitted() {
@@ -168,6 +177,80 @@ class RateLimiterExecuteTest {
                 });
     }
 
+    // --- M2 (review repair): kill-switch row ---
+
+    private static void shouldRunActionExactlyOnceWhenDisabled() {
+        RateLimitPolicy policy = policy("disabled-switch-quota", 10L, RateLimitFailureMode.OPEN);
+
+        RecordingObserver untypedObserver = new RecordingObserver();
+        assertOnUntypedHandle(
+                policy,
+                RateLimitersUnitFixtures.disabled(VERTX, UNREACHABLE_BACKEND, Set.of(untypedObserver), policy),
+                "row-key",
+                result -> {
+                    assertThat(result.invocations())
+                            .as("DISABLED (untyped) invocation count")
+                            .isEqualTo(1);
+                    assertThat(result.future().succeeded())
+                            .as("DISABLED (untyped) future succeeded")
+                            .isTrue();
+                    assertThat(result.future().result())
+                            .as("DISABLED (untyped) action result")
+                            .isEqualTo(ACTION_RESULT);
+                });
+        assertThat(untypedObserver.received())
+                .as("DISABLED (untyped) event emitted despite the kill switch")
+                .hasSize(1);
+
+        RecordingObserver keyedObserver = new RecordingObserver();
+        assertOnKeyedHandle(
+                policy,
+                RateLimitersUnitFixtures.disabled(VERTX, UNREACHABLE_BACKEND, Set.of(keyedObserver), policy),
+                "row-key",
+                result -> {
+                    assertThat(result.invocations())
+                            .as("DISABLED (keyed) invocation count")
+                            .isEqualTo(1);
+                    assertThat(result.future().succeeded())
+                            .as("DISABLED (keyed) future succeeded")
+                            .isTrue();
+                    assertThat(result.future().result())
+                            .as("DISABLED (keyed) action result")
+                            .isEqualTo(ACTION_RESULT);
+                });
+        assertThat(keyedObserver.received())
+                .as("DISABLED (keyed) event emitted despite the kill switch")
+                .hasSize(1);
+    }
+
+    // --- B2 (review repair): cost < 1 fails synchronously, before any engine call ---
+
+    @Test
+    void shouldRejectCostBelowOneSynchronouslyOnBothAcquireAndExecute() {
+        RateLimitPolicy policy = policy("cost-floor-quota", 10L, RateLimitFailureMode.OPEN);
+
+        RateLimiters forAcquire = RateLimitersUnitFixtures.withBackend(VERTX, UNREACHABLE_BACKEND, policy);
+        assertThatThrownBy(() -> forAcquire.limiter(policy.name()).acquire(RateLimitKey.of("row-key"), 0L))
+                .as("acquire(key, 0) rejects synchronously, naming the bound")
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("1")
+                .hasMessageContaining("0");
+
+        AtomicInteger invocations = new AtomicInteger();
+        RateLimiters forExecute = RateLimitersUnitFixtures.withBackend(VERTX, UNREACHABLE_BACKEND, policy);
+        assertThatThrownBy(() -> forExecute.limiter(policy.name()).execute(RateLimitKey.of("row-key"), -1L, () -> {
+                    invocations.incrementAndGet();
+                    return Future.succeededFuture(ACTION_RESULT);
+                }))
+                .as("execute(key, -1, ...) rejects synchronously, naming the bound")
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("1")
+                .hasMessageContaining("-1");
+        assertThat(invocations.get())
+                .as("execute(key, -1, ...) action invocation count")
+                .isEqualTo(0);
+    }
+
     // --- TP-004 ---
 
     @Test
@@ -208,6 +291,35 @@ class RateLimiterExecuteTest {
         assertThat(invocations.get())
                 .as("execute(cost > capacity) action invocation count")
                 .isEqualTo(0);
+    }
+
+    // --- m5 (review repair minor): cost > capacity dispatches on the calling context, like sibling paths ---
+
+    @Test
+    void shouldDispatchCostAboveCapacityFailureOnTheCallingContextLikeSiblingPaths() throws Exception {
+        RateLimitPolicy policy = policy("cost-context-dispatch-quota", 10L, RateLimitFailureMode.OPEN);
+        long cost = 11L;
+        RateLimiters rateLimiters = RateLimitersUnitFixtures.withBackend(VERTX, UNREACHABLE_BACKEND, policy);
+
+        CompletableFuture<Boolean> completeSynchronouslyOnContext = new CompletableFuture<>();
+        CompletableFuture<Throwable> causeOnContext = new CompletableFuture<>();
+        VERTX.runOnContext(ignored -> {
+            Future<RateLimitDecision> future =
+                    rateLimiters.limiter(policy.name()).acquire(RateLimitKey.of("row-key"), cost);
+            // Read isComplete() BEFORE this context callback returns: a properly context-dispatched
+            // completion (context.runOnContext(...), like every sibling completion path) can only
+            // resolve on a LATER turn of this same context — never within this same call stack.
+            completeSynchronouslyOnContext.complete(future.isComplete());
+            future.onComplete(result -> causeOnContext.complete(result.cause()));
+        });
+
+        assertThat(completeSynchronouslyOnContext.get(5, TimeUnit.SECONDS))
+                .as("cost > capacity failure must be dispatched on the calling context, never already complete "
+                        + "within the same call stack that requested it")
+                .isFalse();
+        assertThat(causeOnContext.get(5, TimeUnit.SECONDS))
+                .as("dispatched failure's exception type")
+                .isInstanceOf(RateLimitRequestException.class);
     }
 
     // --- Shared fixtures ---
@@ -288,4 +400,18 @@ class RateLimiterExecuteTest {
 
     /** One row's outcome: the guarded future plus the action's observed invocation count. */
     private record ExecuteResult(Future<String> future, int invocations) {}
+
+    /** Records every {@link RateLimitEvent} it receives; never throws. */
+    private static final class RecordingObserver implements RateLimitObserver {
+        private final List<RateLimitEvent> received = new ArrayList<>();
+
+        @Override
+        public void onEvent(RateLimitEvent event) {
+            received.add(event);
+        }
+
+        List<RateLimitEvent> received() {
+            return received;
+        }
+    }
 }

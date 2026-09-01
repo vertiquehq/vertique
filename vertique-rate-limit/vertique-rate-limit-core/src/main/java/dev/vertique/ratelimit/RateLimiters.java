@@ -17,7 +17,6 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -49,15 +48,6 @@ public final class RateLimiters {
     private static final int MAX_POLICIES = 10_000;
 
     /**
-     * Degenerate resolver used by the legacy five-argument constructor: always reports no identity
-     * present, so every {@code subjectKey(...)} call behaves as an anonymous caller
-     * (contracts/rate-limit-runtime.md, "Framework adapter seam"). Real applications resolve
-     * through {@code RateLimitCoreModule}'s default-or-custom {@code RateLimitSubjectResolver}
-     * binding instead.
-     */
-    private static final RateLimitSubjectResolver ANONYMOUS_SUBJECT_RESOLVER = Optional::empty;
-
-    /**
      * {@code rateLimit.enabled}'s config default (contracts/rate-limit-runtime.md, "Configuration").
      * The single source of truth for this default; {@code RateLimitCoreModule} resolves the
      * configured value against this same constant rather than redeclaring it.
@@ -74,63 +64,16 @@ public final class RateLimiters {
     private final RateLimiterLifecycle lifecycle = new RateLimiterLifecycle();
 
     /**
-     * @param policies every declared policy, already resolved to one flat set (see
-     *     {@link RateLimitPolicy#mergeConfigOverProgrammatic})
-     * @param backends the bound backend provider map
-     * @param keyDerivationSecret the resolved {@code rateLimit.keyDerivation.secret}, or {@code
-     *     null}/blank when not configured
-     * @param vertx application Vert.x instance
-     * @param observers every bound {@link RateLimitObserver}, dispatched synchronously and
-     *     per-observer exception-isolated at every completed decision
-     * @throws IllegalStateException per the eager startup-validation matrix documented on this
-     *     class
-     */
-    public RateLimiters(
-            Set<RateLimitPolicy> policies,
-            Map<RateLimitMode, RateLimitBackend> backends,
-            String keyDerivationSecret,
-            Vertx vertx,
-            Set<RateLimitObserver> observers) {
-        this(policies, backends, keyDerivationSecret, vertx, observers, ANONYMOUS_SUBJECT_RESOLVER);
-    }
-
-    /**
-     * Full constructor, additionally threading the resolved (default-or-custom) {@link
-     * RateLimitSubjectResolver} that {@link #adapterSupport()}'s handle uses for identity framing.
-     * {@code rateLimit.enabled} defaults to {@code true} (contracts/rate-limit-runtime.md,
-     * "Configuration"); use the seven-argument constructor to override it explicitly.
+     * The one constructor: threads every dependency explicitly, including the resolved
+     * (default-or-custom) {@link RateLimitSubjectResolver} that {@link #adapterSupport()}'s handle
+     * uses for identity framing, and the resolved {@code rateLimit.enabled} root kill switch — when
+     * {@code false}, every {@code acquire(...)} across every handle this runtime resolves yields a
+     * {@code DISABLED} decision without engaging any backend (contracts/rate-limit-runtime.md,
+     * "Configuration" — {@code rateLimit.enabled}).
      *
-     * @param policies every declared policy, already resolved to one flat set (see
-     *     {@link RateLimitPolicy#mergeConfigOverProgrammatic})
-     * @param backends the bound backend provider map
-     * @param keyDerivationSecret the resolved {@code rateLimit.keyDerivation.secret}, or {@code
-     *     null}/blank when not configured
-     * @param vertx application Vert.x instance
-     * @param observers every bound {@link RateLimitObserver}, dispatched synchronously and
-     *     per-observer exception-isolated at every completed decision
-     * @param subjectResolver the resolved subject resolver {@link #adapterSupport()} frames
-     *     identity components through
-     * @throws IllegalStateException per the eager startup-validation matrix documented on this
-     *     class
-     */
-    public RateLimiters(
-            Set<RateLimitPolicy> policies,
-            Map<RateLimitMode, RateLimitBackend> backends,
-            String keyDerivationSecret,
-            Vertx vertx,
-            Set<RateLimitObserver> observers,
-            RateLimitSubjectResolver subjectResolver) {
-        this(policies, backends, keyDerivationSecret, vertx, observers, subjectResolver, DEFAULT_RATE_LIMIT_ENABLED);
-    }
-
-    /**
-     * Full constructor, additionally threading the resolved {@code rateLimit.enabled} root kill
-     * switch: when {@code false}, every {@code acquire(...)} across every handle this runtime
-     * resolves yields a {@code DISABLED} decision without engaging any backend
-     * (contracts/rate-limit-runtime.md, "Configuration" — {@code rateLimit.enabled}).
-     *
-     * @param policies every declared policy, already resolved to one flat set (see
-     *     {@link RateLimitPolicy#mergeConfigOverProgrammatic})
+     * @param policies every declared policy, already resolved to one flat set (config replaces a
+     *     same-name programmatic policy wholesale — {@code
+     *     dev.vertique.ratelimit.dagger.RateLimitCoreModule}'s own resolution step)
      * @param backends the bound backend provider map
      * @param keyDerivationSecret the resolved {@code rateLimit.keyDerivation.secret}, or {@code
      *     null}/blank when not configured

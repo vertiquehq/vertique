@@ -89,15 +89,22 @@ public final class RateLimiter {
      * @param cost tokens this request attempts to consume
      * @return a future that completes with the decision, dispatched on the calling Vert.x context
      *     when one is present
+     * @throws IllegalArgumentException synchronously (never as a failed future) when {@code cost}
+     *     is below 1 — checked, and rejected, before any engine call, so a Bucket4j {@code
+     *     IllegalArgumentException} for the same reason can never cross this boundary
      * @throws RateLimitRequestException (as a failed future, never thrown synchronously) with
      *     reason {@link RateLimitRequestFailure#COST_EXCEEDS_CAPACITY} when {@code cost} exceeds
      *     this policy's capacity
      */
     public Future<RateLimitDecision> acquire(RateLimitKey key, long cost) {
         Objects.requireNonNull(key, "key");
+        if (cost < 1) {
+            throw new IllegalArgumentException("rate-limit cost must be at least 1, got " + cost);
+        }
         TokenBucketRateLimit algorithm = (TokenBucketRateLimit) policy.algorithm();
         if (cost > algorithm.capacity()) {
-            return Future.failedFuture(new RateLimitRequestException(RateLimitRequestFailure.COST_EXCEEDS_CAPACITY));
+            return dispatchOnCallingContext(
+                    Future.failedFuture(new RateLimitRequestException(RateLimitRequestFailure.COST_EXCEEDS_CAPACITY)));
         }
         if (lifecycle.isClosed()) {
             return dispatchOnCallingContext(Future.failedFuture(closedException()));
@@ -108,8 +115,15 @@ public final class RateLimiter {
         String storageKey = policy.name() + ':' + policy.revision() + ':' + key.canonicalEncoding();
         RateLimitBackendRequest request = new RateLimitBackendRequest(storageKey, algorithm, cost);
         long startedAt = System.nanoTime();
-        return dispatchOnCallingContext(backend.consume(request)
-                .map(result -> completeDecision(result, algorithm, cost, elapsedNanosSince(startedAt))));
+        Future<RateLimitBackendResult> consumeFuture;
+        try {
+            consumeFuture = backend.consume(request);
+        } catch (Throwable synchronousFailure) {
+            consumeFuture = Future.failedFuture(synchronousFailure);
+        }
+        return dispatchOnCallingContext(consumeFuture
+                .map(result -> completeDecision(result, algorithm, cost, elapsedNanosSince(startedAt)))
+                .recover(failure -> Future.succeededFuture(backendFailureDecision(algorithm, cost))));
     }
 
     /**
@@ -155,26 +169,31 @@ public final class RateLimiter {
     }
 
     /**
-     * Invokes {@code action} exactly once and registers its returned future with this runtime's
-     * shared {@link RateLimiterLifecycle} so a concurrent {@link RateLimiters#close()} can
-     * force-fail this call's guarded future immediately, without waiting for (or ever surfacing)
-     * the action's real, possibly-late completion.
+     * Registers this call's lifecycle fence <strong>before</strong> invoking {@code action}, so a
+     * concurrent {@link RateLimiters#close()} that becomes observable at any point up to and
+     * including registration is guaranteed to pre-empt the action — {@code action} is invoked at
+     * most once, and never at all once close is observable. Once registered, the action's returned
+     * future is tracked by this runtime's shared {@link RateLimiterLifecycle} so that same {@code
+     * close()} can force-fail this call's guarded future immediately, without waiting for (or ever
+     * surfacing) the action's real, possibly-late completion.
      */
     private <T> Future<T> runFenced(Supplier<Future<T>> action) {
-        Future<T> actionFuture;
-        try {
-            actionFuture = action.get();
-        } catch (Throwable failure) {
-            return Future.failedFuture(failure);
-        }
-        if (actionFuture == null) {
-            return Future.failedFuture(new NullPointerException("execute action must not return a null Future"));
-        }
         Promise<T> guarded = Promise.promise();
         Runnable fence = () -> guarded.tryFail(closedException());
         Runnable registered = lifecycle.register(fence);
         if (registered == null) {
             return dispatchOnCallingContext(Future.failedFuture(closedException()));
+        }
+        Future<T> actionFuture;
+        try {
+            actionFuture = action.get();
+        } catch (Throwable failure) {
+            lifecycle.unregister(fence);
+            return Future.failedFuture(failure);
+        }
+        if (actionFuture == null) {
+            lifecycle.unregister(fence);
+            return Future.failedFuture(new NullPointerException("execute action must not return a null Future"));
         }
         actionFuture.onComplete(result -> {
             lifecycle.unregister(fence);
@@ -221,11 +240,47 @@ public final class RateLimiter {
      */
     private RateLimitOutcome classifyOutcome(RateLimitBackendResult result) {
         if (result.failureCode().isPresent()) {
-            return policy.failureMode() == RateLimitFailureMode.OPEN
-                    ? RateLimitOutcome.BACKEND_FAILURE_OPEN
-                    : RateLimitOutcome.BACKEND_FAILURE_CLOSED;
+            return classifyBackendFailureOutcome();
         }
         return result.consumed() ? RateLimitOutcome.PERMITTED : RateLimitOutcome.QUOTA_EXCEEDED;
+    }
+
+    /** This policy's {@code failureMode}, applied to any backend failure regardless of its source. */
+    private RateLimitOutcome classifyBackendFailureOutcome() {
+        return policy.failureMode() == RateLimitFailureMode.OPEN
+                ? RateLimitOutcome.BACKEND_FAILURE_OPEN
+                : RateLimitOutcome.BACKEND_FAILURE_CLOSED;
+    }
+
+    /**
+     * Normalizes a backend future that failed outright — rejected, or threw synchronously before
+     * ever returning one — into the same {@code BACKEND_FAILURE_OPEN}/{@code
+     * BACKEND_FAILURE_CLOSED} decision shape {@link #classifyOutcome} produces for an in-band
+     * backend failure, so {@code acquire(...)} still always yields a decision (decision-first) and
+     * still emits {@link RateLimitDecisionCompleted} exactly once. The underlying cause never
+     * crosses this boundary — only the fixed {@link RateLimitFailureCode#INTERNAL} classification
+     * does, mirroring {@link RateLimitFailureCode}'s own "causes and messages never cross this
+     * boundary" contract.
+     */
+    private RateLimitDecision backendFailureDecision(TokenBucketRateLimit algorithm, long cost) {
+        RateLimitOutcome outcome = classifyBackendFailureOutcome();
+        RateLimitDecision decision = buildDecision(
+                outcome,
+                algorithm,
+                OptionalLong.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.of(RateLimitFailureCode.INTERNAL));
+        emitIfObserved(
+                outcome,
+                algorithm,
+                cost,
+                OptionalLong.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.of(RateLimitFailureCode.INTERNAL),
+                0L);
+        return decision;
     }
 
     /**

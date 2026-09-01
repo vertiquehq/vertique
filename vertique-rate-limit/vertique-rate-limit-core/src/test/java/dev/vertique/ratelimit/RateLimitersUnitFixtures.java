@@ -6,6 +6,8 @@ package dev.vertique.ratelimit;
 import dev.vertique.ratelimit.spi.RateLimitBackend;
 import dev.vertique.ratelimit.spi.RateLimitBackendRequest;
 import dev.vertique.ratelimit.spi.RateLimitBackendResult;
+import dev.vertique.ratelimit.spi.RateLimitObserver;
+import dev.vertique.ratelimit.spi.RateLimitSubjectResolver;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import java.time.Duration;
@@ -24,6 +26,9 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 final class RateLimitersUnitFixtures {
 
+    /** Always reports no identity present — these fixtures never exercise subject resolution. */
+    private static final RateLimitSubjectResolver ANONYMOUS_SUBJECT_RESOLVER = Optional::empty;
+
     private RateLimitersUnitFixtures() {}
 
     static RateLimiters withPolicies(Vertx vertx, RateLimitPolicy... policies) {
@@ -32,8 +37,35 @@ final class RateLimitersUnitFixtures {
 
     /** Same wiring as {@link #withPolicies}, but over a caller-supplied LOCAL backend. */
     static RateLimiters withBackend(Vertx vertx, RateLimitBackend backend, RateLimitPolicy... policies) {
+        return withBackend(vertx, backend, Set.of(), policies);
+    }
+
+    /** Same wiring as {@link #withBackend(Vertx, RateLimitBackend, RateLimitPolicy...)}, plus bound observers. */
+    static RateLimiters withBackend(
+            Vertx vertx, RateLimitBackend backend, Set<RateLimitObserver> observers, RateLimitPolicy... policies) {
+        return build(vertx, backend, observers, true, policies);
+    }
+
+    /** Same wiring as {@link #withBackend(Vertx, RateLimitBackend, RateLimitPolicy...)}, but with the {@code rateLimit.enabled} kill switch off. */
+    static RateLimiters disabled(Vertx vertx, RateLimitBackend backend, RateLimitPolicy... policies) {
+        return disabled(vertx, backend, Set.of(), policies);
+    }
+
+    /** Same wiring as {@link #disabled(Vertx, RateLimitBackend, RateLimitPolicy...)}, plus bound observers. */
+    static RateLimiters disabled(
+            Vertx vertx, RateLimitBackend backend, Set<RateLimitObserver> observers, RateLimitPolicy... policies) {
+        return build(vertx, backend, observers, false, policies);
+    }
+
+    private static RateLimiters build(
+            Vertx vertx,
+            RateLimitBackend backend,
+            Set<RateLimitObserver> observers,
+            boolean rateLimitEnabled,
+            RateLimitPolicy... policies) {
         Map<RateLimitMode, RateLimitBackend> backends = Map.of(RateLimitMode.LOCAL, backend);
-        return new RateLimiters(Set.of(policies), backends, null, vertx, Set.of());
+        return new RateLimiters(
+                Set.of(policies), backends, null, vertx, observers, ANONYMOUS_SUBJECT_RESOLVER, rateLimitEnabled);
     }
 
     /** Admits while cumulative consumption per storage key stays within the request's capacity. */

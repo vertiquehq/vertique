@@ -1,10 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.ratelimit.dagger;
+package dev.vertique.ratelimit;
 
-import dev.vertique.ratelimit.LocalRateLimitRegistry;
-import dev.vertique.ratelimit.TokenBucketRateLimit;
 import dev.vertique.ratelimit.spi.RateLimitBackend;
 import dev.vertique.ratelimit.spi.RateLimitBackendRequest;
 import dev.vertique.ratelimit.spi.RateLimitBackendResult;
@@ -26,10 +24,10 @@ import java.util.function.ToLongFunction;
  * RateLimitStorageIdentity#canonicalInput}). One registry is created per policy name on first use,
  * sized by {@code maxTrackedKeysResolver}, and reused for every later request under that policy.
  *
- * <p>Package-private by design — reached only through the {@link RateLimitBackend} interface this
- * task's {@link RateLimitCoreModule} binds it under. No Bucket4j type appears past this class's own
- * boundary, and this class itself never touches a Bucket4j type directly — that stays inside {@link
- * LocalRateLimitRegistry}.
+ * <p>Package-private by design — reached only through {@link LocalRateLimitBackendFactory}'s public
+ * static factory, which {@code dev.vertique.ratelimit.dagger.RateLimitCoreModule} calls. No Bucket4j
+ * type appears past this class's own boundary, and this class itself never touches a Bucket4j type
+ * directly — that stays inside {@link LocalRateLimitRegistry}.
  */
 final class LocalBucket4jRateLimitBackend implements RateLimitBackend {
 
