@@ -442,6 +442,32 @@ class CacheAnnotationProcessorTest {
     }
 
     @Test
+    @DisplayName("cacheable and eviction annotations must be on different methods")
+    void coLocatedCacheAnnotationsAreRejected() {
+        ProcessorTestHarness.run(
+                        new CacheAnnotationProcessor(), SourceFiles.inline("com.example.CoLocatedCacheBean", """
+                                package com.example;
+
+                                import dev.vertique.cache.aop.CacheEvict;
+                                import dev.vertique.cache.aop.Cacheable;
+                                import jakarta.inject.Inject;
+
+                                public class CoLocatedCacheBean {
+                                    @Inject
+                                    public CoLocatedCacheBean() {}
+
+                                    @Cacheable(name = "users", key = "0")
+                                    @CacheEvict(name = "users", key = "0")
+                                    public String refresh(String id) {
+                                        return id;
+                                    }
+                                }
+                                """))
+                .assertFailed()
+                .assertErrorMessage("@Cacheable and @CacheEvict must be declared on different methods");
+    }
+
+    @Test
     @DisplayName("non-proxyable cache methods are rejected")
     void nonProxyableMethodsAreRejected() {
         ProcessorTestHarness.run(

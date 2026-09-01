@@ -14,9 +14,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.aop.Invocation;
+import dev.vertique.cache.AnonymousCachePolicy;
+import dev.vertique.cache.Cache;
+import dev.vertique.cache.CacheAdapterSupport;
 import dev.vertique.cache.CacheIdentity;
-import dev.vertique.cache.aop.CacheEvict;
-import dev.vertique.cache.aop.CacheEvictAspect;
+import dev.vertique.cache.CacheMode;
 import dev.vertique.cache.aop.Cacheable;
 import dev.vertique.cache.aop.CacheableAspect;
 import dev.vertique.cache.spi.CacheObserver;
@@ -102,9 +104,8 @@ class RedisCacheStoreTimeoutTest {
         commands.blockNextDelete();
         List<CacheEvent> events = new CopyOnWriteArrayList<>();
         CacheObserver observer = events::add;
-        Method method = BusinessTarget.class.getDeclaredMethod("evict");
 
-        Future<Object> result = evictionInvocation(store(commands), observer, method);
+        Future<Object> result = evictionInvocation(store(commands), observer);
         assertEquals("business-result", await(result));
         assertTrue(
                 observed(
@@ -153,12 +154,20 @@ class RedisCacheStoreTimeoutTest {
                 .intercept(invocation);
     }
 
-    private static Future<Object> evictionInvocation(RedisCacheStore store, CacheObserver observer, Method method) {
-        MethodMetadata metadata = new ReflectiveMethodMetadata(method, List.of());
-        Invocation invocation = invocation(metadata);
-        return new CacheEvictAspect(store, cacheConfig(), Set.of(observer))
-                .interceptor(metadata, method.getAnnotation(CacheEvict.class))
-                .intercept(invocation);
+    private static Future<Object> evictionInvocation(RedisCacheStore store, CacheObserver observer) {
+        CacheAdapterSupport support = CacheAdapterSupport.forStore(store, cacheConfig(), Set.of(observer), Set.of());
+        Cache<Object, Object> cache = support.registered(new CacheAdapterSupport.AdapterDefinition(
+                "profiles",
+                String.class,
+                CacheMode.CLUSTERED,
+                -1,
+                CacheIdentity.NONE,
+                AnonymousCachePolicy.BYPASS,
+                null,
+                false,
+                List.of()));
+        return Future.succeededFuture("business-result")
+                .compose(result -> cache.invalidate(new Object()).map(ignored -> result));
     }
 
     private static Invocation invocation(MethodMetadata metadata) {
@@ -191,18 +200,6 @@ class RedisCacheStoreTimeoutTest {
                 key = {},
                 identity = CacheIdentity.NONE)
         Future<String> load() {
-            return Future.succeededFuture("unused");
-        }
-
-        // Co-located so the eviction resolves immediately with the target policy.
-        @Cacheable(
-                name = "profiles",
-                key = {},
-                identity = CacheIdentity.NONE)
-        @CacheEvict(
-                name = "profiles",
-                key = {})
-        Future<String> evict() {
             return Future.succeededFuture("unused");
         }
     }
