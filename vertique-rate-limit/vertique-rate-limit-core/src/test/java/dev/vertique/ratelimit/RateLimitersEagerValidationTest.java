@@ -79,7 +79,7 @@ class RateLimitersEagerValidationTest {
         Set<RateLimitPolicy> policies = Set.of(fromConfig, fromIntoSet);
         Map<RateLimitMode, RateLimitBackend> backends = Map.of(RateLimitMode.LOCAL, NOOP_BACKEND);
 
-        assertThatThrownBy(() -> new RateLimiters(policies, backends, null, VERTX))
+        assertThatThrownBy(() -> new RateLimiters(policies, backends, null, VERTX, Set.of()))
                 .as("two policies named 'dup', one from config, one from @IntoSet")
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("dup");
@@ -92,7 +92,7 @@ class RateLimitersEagerValidationTest {
         Set<RateLimitPolicy> policies = Set.of(clustered);
         Map<RateLimitMode, RateLimitBackend> backends = Map.of(RateLimitMode.LOCAL, NOOP_BACKEND);
 
-        assertThatThrownBy(() -> new RateLimiters(policies, backends, null, VERTX))
+        assertThatThrownBy(() -> new RateLimiters(policies, backends, null, VERTX, Set.of()))
                 .as("enabled CLUSTERED policy with only a LOCAL backend bound")
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("CLUSTERED");
@@ -106,7 +106,7 @@ class RateLimitersEagerValidationTest {
         Map<RateLimitMode, RateLimitBackend> backends =
                 Map.of(RateLimitMode.LOCAL, NOOP_BACKEND, RateLimitMode.CLUSTERED, NOOP_BACKEND);
 
-        assertThatThrownBy(() -> new RateLimiters(policies, backends, null, VERTX))
+        assertThatThrownBy(() -> new RateLimiters(policies, backends, null, VERTX, Set.of()))
                 .as("enabled CLUSTERED policy with no keyDerivation.secret configured")
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("secret");
@@ -122,7 +122,7 @@ class RateLimitersEagerValidationTest {
         String secret31Bytes = "a".repeat(31);
         assertThat(secret31Bytes.getBytes(StandardCharsets.UTF_8)).hasSize(31);
 
-        assertThatThrownBy(() -> new RateLimiters(policies, backends, secret31Bytes, VERTX))
+        assertThatThrownBy(() -> new RateLimiters(policies, backends, secret31Bytes, VERTX, Set.of()))
                 .as("resolved keyDerivation.secret shorter than 32 bytes UTF-8")
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("32");
@@ -135,7 +135,7 @@ class RateLimitersEagerValidationTest {
         Set<RateLimitPolicy> policies = Set.of(local);
         Map<RateLimitMode, RateLimitBackend> backends = Map.of(RateLimitMode.LOCAL, NOOP_BACKEND);
 
-        assertThatCode(() -> new RateLimiters(policies, backends, null, VERTX))
+        assertThatCode(() -> new RateLimiters(policies, backends, null, VERTX, Set.of()))
                 .as("one enabled LOCAL policy, no secret configured, no CLUSTERED policy present")
                 .doesNotThrowAnyException();
     }

@@ -6,12 +6,15 @@ package dev.vertique.ratelimit;
 import dev.vertique.ratelimit.spi.RateLimitBackend;
 import dev.vertique.ratelimit.spi.RateLimitBackendRequest;
 import dev.vertique.ratelimit.spi.RateLimitBackendResult;
+import dev.vertique.ratelimit.spi.RateLimitObserver;
+import dev.vertique.ratelimit.spi.event.RateLimitDecisionCompleted;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import java.util.Objects;
 import java.util.OptionalLong;
+import java.util.Set;
 
 /**
  * Unkeyed handle bound to one policy, resolved from {@link RateLimiters#limiter(String)}.
@@ -28,11 +31,13 @@ public final class RateLimiter {
     private final RateLimitPolicy policy;
     private final RateLimitBackend backend;
     private final Vertx vertx;
+    private final Set<RateLimitObserver> observers;
 
-    RateLimiter(RateLimitPolicy policy, RateLimitBackend backend, Vertx vertx) {
+    RateLimiter(RateLimitPolicy policy, RateLimitBackend backend, Vertx vertx, Set<RateLimitObserver> observers) {
         this.policy = Objects.requireNonNull(policy, "policy");
         this.backend = Objects.requireNonNull(backend, "backend");
         this.vertx = Objects.requireNonNull(vertx, "vertx");
+        this.observers = Objects.requireNonNull(observers, "observers");
     }
 
     /**
@@ -55,21 +60,54 @@ public final class RateLimiter {
         TokenBucketRateLimit algorithm = (TokenBucketRateLimit) policy.algorithm();
         String storageKey = policy.name() + ':' + policy.revision() + ':' + key.canonicalEncoding();
         RateLimitBackendRequest request = new RateLimitBackendRequest(storageKey, algorithm, DEFAULT_COST);
-        return dispatchOnCallingContext(backend.consume(request).map(result -> toDecision(result, algorithm)));
+        long startedAt = System.nanoTime();
+        return dispatchOnCallingContext(backend.consume(request)
+                .map(result -> completeDecision(result, algorithm, DEFAULT_COST, elapsedNanosSince(startedAt))));
     }
 
-    private RateLimitDecision toDecision(RateLimitBackendResult result, TokenBucketRateLimit algorithm) {
+    /**
+     * Normalizes one backend result into a {@link RateLimitDecision} and, at this single
+     * decision-completion point, dispatches the corresponding redacted {@link
+     * RateLimitDecisionCompleted} event to every bound observer before returning the decision
+     * (contracts/rate-limit-runtime.md, "Observer SPI"). Observer dispatch never alters the
+     * decision already computed here.
+     */
+    private RateLimitDecision completeDecision(
+            RateLimitBackendResult result, TokenBucketRateLimit algorithm, long cost, long backendLatencyNanos) {
         RateLimitOutcome outcome = result.consumed() ? RateLimitOutcome.PERMITTED : RateLimitOutcome.QUOTA_EXCEEDED;
-        return new RateLimitDecision(
+        OptionalLong remaining = OptionalLong.of(result.remaining());
+        RateLimitDecision decision = new RateLimitDecision(
                 policy.name(),
                 outcome,
                 policy.mode(),
                 RateLimitAlgorithmType.TOKEN_BUCKET,
                 algorithm.capacity(),
-                OptionalLong.of(result.remaining()),
+                remaining,
                 result.retryAfter(),
                 result.resetAfter(),
                 result.failureCode());
+        if (!observers.isEmpty()) {
+            RateLimitObservationSupport.emit(
+                    observers,
+                    new RateLimitDecisionCompleted(
+                            policy.name(),
+                            policy.revision(),
+                            policy.mode(),
+                            RateLimitAlgorithmType.TOKEN_BUCKET,
+                            outcome,
+                            cost,
+                            algorithm.capacity(),
+                            remaining,
+                            result.retryAfter(),
+                            result.resetAfter(),
+                            result.failureCode(),
+                            backendLatencyNanos));
+        }
+        return decision;
+    }
+
+    private static long elapsedNanosSince(long startedAt) {
+        return Math.max(0L, System.nanoTime() - startedAt);
     }
 
     /**

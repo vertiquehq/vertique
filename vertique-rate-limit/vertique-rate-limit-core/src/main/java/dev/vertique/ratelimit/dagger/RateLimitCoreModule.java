@@ -15,6 +15,7 @@ import dev.vertique.ratelimit.RateLimitPolicy;
 import dev.vertique.ratelimit.RateLimiters;
 import dev.vertique.ratelimit.spi.RateLimitBackend;
 import dev.vertique.ratelimit.spi.RateLimitModeKey;
+import dev.vertique.ratelimit.spi.RateLimitObserver;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
@@ -32,9 +33,9 @@ import java.util.Set;
  * {@code LOCAL}) before config binding runs, so {@link RateLimitPolicy}'s own "required, no
  * default" rule for {@code mode} only ever fires for a truly unresolved value.
  *
- * <p>The observer/subject-resolver bindings and the {@code @IntoSet ApplicationShutdownStep} that
- * forces eager construction at bootstrap are a later task's artifacts
- * (contracts/rate-limit-runtime.md, "Dagger wiring"; `plan.md` pre-flight finding 5).
+ * <p>The subject-resolver binding and the {@code @IntoSet ApplicationShutdownStep} that forces
+ * eager construction at bootstrap are a later task's artifacts (contracts/rate-limit-runtime.md,
+ * "Dagger wiring"; `plan.md` pre-flight finding 5).
  */
 @Module
 public abstract class RateLimitCoreModule {
@@ -53,6 +54,10 @@ public abstract class RateLimitCoreModule {
     @Multibinds
     abstract Set<RateLimitPolicy> rateLimitPolicies();
 
+    /** Declares the optional bound observer set; zero, one, or many observers compose freely. */
+    @Multibinds
+    abstract Set<RateLimitObserver> rateLimitObservers();
+
     /**
      * Provides the one runtime owned by the application graph.
      *
@@ -61,6 +66,7 @@ public abstract class RateLimitCoreModule {
      * @param config the raw {@code rateLimit.*} configuration section
      * @param parser the framework's config-parsing seam
      * @param vertx application Vert.x instance
+     * @param observers every bound {@link RateLimitObserver} contribution
      * @return application-scoped rate-limit runtime
      */
     @Provides
@@ -70,7 +76,8 @@ public abstract class RateLimitCoreModule {
             Map<RateLimitMode, RateLimitBackend> backends,
             @VertxConfig JsonObject config,
             ConfigParser parser,
-            Vertx vertx) {
+            Vertx vertx,
+            Set<RateLimitObserver> observers) {
         JsonObject rateLimit = JsonConfigPaths.navigateObject(config, "rateLimit");
         RateLimitMode defaultMode =
                 RateLimitMode.valueOf(rateLimit.getString(DEFAULT_MODE, RateLimitMode.LOCAL.name()));
@@ -80,7 +87,7 @@ public abstract class RateLimitCoreModule {
         List<RateLimitPolicy> configPolicies = parser.parseKeyedObject(policiesJson, "name", RateLimitPolicy.class);
         Set<RateLimitPolicy> policies =
                 RateLimitPolicy.mergeConfigOverProgrammatic(Set.copyOf(configPolicies), contributedPolicies);
-        return new RateLimiters(policies, backends, keyDerivationSecret, vertx);
+        return new RateLimiters(policies, backends, keyDerivationSecret, vertx, observers);
     }
 
     /**

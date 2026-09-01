@@ -28,7 +28,7 @@ final class RateLimitersUnitFixtures {
 
     static RateLimiters withPolicies(Vertx vertx, RateLimitPolicy... policies) {
         Map<RateLimitMode, RateLimitBackend> backends = Map.of(RateLimitMode.LOCAL, new CountingLocalBackend());
-        return new RateLimiters(Set.of(policies), backends, null, vertx);
+        return new RateLimiters(Set.of(policies), backends, null, vertx, Set.of());
     }
 
     /** Admits while cumulative consumption per storage key stays within the request's capacity. */

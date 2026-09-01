@@ -4,11 +4,14 @@
 package dev.vertique.ratelimit;
 
 import dev.vertique.ratelimit.spi.RateLimitBackend;
+import dev.vertique.ratelimit.spi.RateLimitObserver;
 import io.vertx.core.Vertx;
 import jakarta.inject.Singleton;
 import java.nio.charset.StandardCharsets;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -42,6 +45,7 @@ public final class RateLimiters {
     private final Map<String, RateLimitPolicy> policiesByName;
     private final Map<RateLimitMode, RateLimitBackend> backends;
     private final Vertx vertx;
+    private final Set<RateLimitObserver> observers;
     private final ConcurrentMap<String, RateLimiter> limiters = new ConcurrentHashMap<>();
 
     /**
@@ -51,6 +55,8 @@ public final class RateLimiters {
      * @param keyDerivationSecret the resolved {@code rateLimit.keyDerivation.secret}, or {@code
      *     null}/blank when not configured
      * @param vertx application Vert.x instance
+     * @param observers every bound {@link RateLimitObserver}, dispatched synchronously and
+     *     per-observer exception-isolated at every completed decision
      * @throws IllegalStateException per the eager startup-validation matrix documented on this
      *     class
      */
@@ -58,11 +64,14 @@ public final class RateLimiters {
             Set<RateLimitPolicy> policies,
             Map<RateLimitMode, RateLimitBackend> backends,
             String keyDerivationSecret,
-            Vertx vertx) {
+            Vertx vertx,
+            Set<RateLimitObserver> observers) {
         Objects.requireNonNull(policies, "policies");
         this.policiesByName = indexByName(policies);
         this.backends = Map.copyOf(Objects.requireNonNull(backends, "backends"));
         this.vertx = Objects.requireNonNull(vertx, "vertx");
+        this.observers =
+                Collections.unmodifiableSet(new LinkedHashSet<>(Objects.requireNonNull(observers, "observers")));
         validateBackendCoverage(this.policiesByName.values(), this.backends);
         validateClusteredSecret(this.policiesByName.values(), keyDerivationSecret);
     }
@@ -151,6 +160,6 @@ public final class RateLimiters {
         if (backend == null) {
             throw new IllegalStateException("No RateLimitBackend bound for mode " + policy.mode());
         }
-        return new RateLimiter(policy, backend, vertx);
+        return new RateLimiter(policy, backend, vertx, observers);
     }
 }
