@@ -92,6 +92,24 @@ the Caffeine and Redis provider modules depend on that neutral core. Shared Redi
 connection profiles and client lifecycle belong to `vertique-redis-core`, which is
 independent of cache-specific behavior so other Redis-backed capabilities can reuse it.
 
+Rate limiting follows the same one-way boundary: `vertique-rate-limit-core` owns the
+programmatic quota-admission API, the policy and key models, and the in-process
+LOCAL engine, and depends only on `vertique-core`, `vertique-context`, and
+`vertique-security-core` — it never depends on Redis, REST, AOP, or either
+observability adapter. Every adapter depends on core and never the reverse:
+`vertique-rate-limit-aop` layers the transport-neutral `@RateLimited` annotation on
+the generic AOP proxy machinery (never on REST, so the annotation is reachable from
+services, REST resources, and future MCP tools alike); `vertique-rate-limit-redis`
+layers the CLUSTERED Bucket4j/Redis engine on `vertique-redis-core`;
+`vertique-rest-rate-limit` layers 429/503 HTTP mapping and an optional
+pre-authorization edge admission middleware on `vertique-rest-core`, with a narrow
+compile dependency on `vertique-rest-security` for the captured client-origin type
+only; and `vertique-micrometer-rate-limit`/`vertique-opentelemetry-rate-limit` layer
+metrics and tracing on the core observer SPI. `vertique-codegen-rate-limit`
+validates `@RateLimited` declarations at compile time and generates no sources.
+Bucket4j itself is a private implementation dependency of core and the Redis
+adapter; it never appears in a public signature of any rate-limit artifact.
+
 ## Compile-time wiring
 
 Annotation processors under `vertique-codegen` generate Dagger bindings, service
