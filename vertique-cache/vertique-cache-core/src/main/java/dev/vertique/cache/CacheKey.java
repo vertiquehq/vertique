@@ -161,7 +161,7 @@ public final class CacheKey {
                 if (ch >= 'A' && ch <= 'Z'
                         || ch >= 'a' && ch <= 'z'
                         || ch >= '0' && ch <= '9'
-                        || "._~%-".indexOf(ch) >= 0) result.append(ch);
+                        || "._~-".indexOf(ch) >= 0) result.append(ch);
                 else result.append('%').append(String.format(Locale.ROOT, "%02X", b & 0xff));
             }
             return result.toString();
