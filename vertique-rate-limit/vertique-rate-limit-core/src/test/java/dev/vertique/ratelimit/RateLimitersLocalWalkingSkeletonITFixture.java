@@ -8,15 +8,22 @@ import dagger.Component;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
+import dev.vertique.config.parser.DefaultConfigMapper;
+import dev.vertique.config.parser.DefaultConfigParser;
+import dev.vertique.core.VertxConfig;
+import dev.vertique.core.config.ConfigParser;
 import dev.vertique.ratelimit.dagger.RateLimitCoreModule;
 import io.vertx.core.Vertx;
+import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
+import java.time.Duration;
 
 /**
  * Builds a real Dagger graph installing {@link RateLimitCoreModule} alone, contributing one
  * enabled LOCAL TOKEN_BUCKET policy named {@code walking-skeleton} via the Dagger {@code
- * @IntoSet RateLimitPolicy} source (contracts/rate-limit-runtime.md, "Policy model" — this task's
- * minimal policy shape has no typed-config binding yet; that is a later task's artifact).
+ * @IntoSet RateLimitPolicy} source (contracts/rate-limit-runtime.md, "Policy model"), plus an
+ * empty {@code rateLimit} config section (so {@link RateLimitCoreModule}'s config-tree binding
+ * resolves to no config policies, leaving this fixture's programmatic policy untouched).
  */
 final class RateLimitersLocalWalkingSkeletonITFixture {
 
@@ -47,12 +54,35 @@ final class RateLimitersLocalWalkingSkeletonITFixture {
         @IntoSet
         RateLimitPolicy walkingSkeletonPolicy() {
             return new RateLimitPolicy(
-                    POLICY_NAME, true, RateLimitMode.LOCAL, POLICY_REVISION, capacity, REFILL_TOKENS, REFILL_PERIOD_MS);
+                    POLICY_NAME,
+                    true,
+                    RateLimitMode.LOCAL,
+                    RateLimitFailureMode.OPEN,
+                    POLICY_REVISION,
+                    1L,
+                    new TokenBucketRateLimit(
+                            capacity, new GreedyRateLimitRefill(REFILL_TOKENS, Duration.ofMillis(REFILL_PERIOD_MS))));
+        }
+    }
+
+    /** Supplies an empty config section and a real config parser, so no config policies resolve. */
+    @Module
+    static final class ConfigFixtureModule {
+
+        @Provides
+        @VertxConfig
+        static JsonObject vertxConfig() {
+            return new JsonObject();
+        }
+
+        @Provides
+        static ConfigParser configParser() {
+            return new DefaultConfigParser(DefaultConfigMapper.lenient());
         }
     }
 
     @Singleton
-    @Component(modules = {RateLimitCoreModule.class, PolicyModule.class})
+    @Component(modules = {RateLimitCoreModule.class, PolicyModule.class, ConfigFixtureModule.class})
     interface FixtureGraph {
 
         RateLimiters rateLimiters();

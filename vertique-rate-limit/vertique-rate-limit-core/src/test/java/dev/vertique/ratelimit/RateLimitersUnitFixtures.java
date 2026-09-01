@@ -28,7 +28,7 @@ final class RateLimitersUnitFixtures {
 
     static RateLimiters withPolicies(Vertx vertx, RateLimitPolicy... policies) {
         Map<RateLimitMode, RateLimitBackend> backends = Map.of(RateLimitMode.LOCAL, new CountingLocalBackend());
-        return new RateLimiters(Set.of(policies), backends, vertx);
+        return new RateLimiters(Set.of(policies), backends, null, vertx);
     }
 
     /** Admits while cumulative consumption per storage key stays within the request's capacity. */
@@ -37,14 +37,15 @@ final class RateLimitersUnitFixtures {
 
         @Override
         public Future<RateLimitBackendResult> consume(RateLimitBackendRequest request) {
+            long capacity = request.algorithm().capacity();
             AtomicLong consumed = consumedByKey.computeIfAbsent(request.storageKey(), ignored -> new AtomicLong());
             long updated = consumed.addAndGet(request.cost());
-            boolean admitted = updated <= request.capacity();
+            boolean admitted = updated <= capacity;
             if (!admitted) {
                 // Rejected consumption never changes state.
                 consumed.addAndGet(-request.cost());
             }
-            long remaining = Math.max(0, request.capacity() - consumed.get());
+            long remaining = Math.max(0, capacity - consumed.get());
             Optional<Duration> retryAfter = admitted ? Optional.empty() : Optional.of(Duration.ofMillis(1));
             return Future.succeededFuture(
                     new RateLimitBackendResult(admitted, remaining, retryAfter, Optional.empty(), Optional.empty()));

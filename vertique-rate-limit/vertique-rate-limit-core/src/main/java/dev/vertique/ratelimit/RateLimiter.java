@@ -52,20 +52,20 @@ public final class RateLimiter {
      */
     public Future<RateLimitDecision> acquire(RateLimitKey key) {
         Objects.requireNonNull(key, "key");
+        TokenBucketRateLimit algorithm = (TokenBucketRateLimit) policy.algorithm();
         String storageKey = policy.name() + ':' + policy.revision() + ':' + key.canonicalEncoding();
-        RateLimitBackendRequest request = new RateLimitBackendRequest(
-                storageKey, policy.capacity(), policy.refillTokens(), policy.refillPeriodMs(), DEFAULT_COST);
-        return dispatchOnCallingContext(backend.consume(request).map(this::toDecision));
+        RateLimitBackendRequest request = new RateLimitBackendRequest(storageKey, algorithm, DEFAULT_COST);
+        return dispatchOnCallingContext(backend.consume(request).map(result -> toDecision(result, algorithm)));
     }
 
-    private RateLimitDecision toDecision(RateLimitBackendResult result) {
+    private RateLimitDecision toDecision(RateLimitBackendResult result, TokenBucketRateLimit algorithm) {
         RateLimitOutcome outcome = result.consumed() ? RateLimitOutcome.PERMITTED : RateLimitOutcome.QUOTA_EXCEEDED;
         return new RateLimitDecision(
                 policy.name(),
                 outcome,
                 policy.mode(),
                 RateLimitAlgorithmType.TOKEN_BUCKET,
-                policy.capacity(),
+                algorithm.capacity(),
                 OptionalLong.of(result.remaining()),
                 result.retryAfter(),
                 result.resetAfter(),

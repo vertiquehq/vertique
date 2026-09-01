@@ -6,13 +6,15 @@ package dev.vertique.ratelimit;
 import dev.vertique.ratelimit.spi.RateLimitBackend;
 import io.vertx.core.Vertx;
 import jakarta.inject.Singleton;
+import java.nio.charset.StandardCharsets;
+import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.function.Function;
-import java.util.stream.Collectors;
 
 /**
  * Single injected runtime entry point: one instance per application graph, no static registry
@@ -20,23 +22,91 @@ import java.util.stream.Collectors;
  *
  * <p>This task's shape is a subset of the exact contract API: only the two {@code limiter(...)}
  * overloads exist here. {@code adapterSupport()} and {@code close()} are a later task's artifacts
- * (contracts/rate-limit-runtime.md, "Exact API shape"), and this task's constructor performs no
- * eager completeness validation — it proves only the known-policy path.
+ * (contracts/rate-limit-runtime.md, "Exact API shape").
+ *
+ * <p>The constructor eagerly walks every declared policy against the bound backend map and fails
+ * fast, before any handle is requested, on: a duplicate policy name, an enabled policy whose mode
+ * has no bound backend, a missing {@code keyDerivation.secret} when any enabled policy is {@code
+ * CLUSTERED}, and a resolved secret shorter than 32 bytes (UTF-8) under the same condition
+ * (contracts/rate-limit-runtime.md, "Startup validation"; D013 — the same eager-construction
+ * precedent {@code ResilienceModule} follows). T004 wires the {@code @IntoSet
+ * ApplicationShutdownStep} that forces this constructor to run unconditionally at bootstrap; this
+ * validation is independently provable by direct construction, as this task's tests do.
  */
 @Singleton
 public final class RateLimiters {
+
+    private static final int MIN_SECRET_BYTES = 32;
+    private static final int MAX_POLICIES = 10_000;
 
     private final Map<String, RateLimitPolicy> policiesByName;
     private final Map<RateLimitMode, RateLimitBackend> backends;
     private final Vertx vertx;
     private final ConcurrentMap<String, RateLimiter> limiters = new ConcurrentHashMap<>();
 
-    public RateLimiters(Set<RateLimitPolicy> policies, Map<RateLimitMode, RateLimitBackend> backends, Vertx vertx) {
+    /**
+     * @param policies every declared policy, already resolved to one flat set (see
+     *     {@link RateLimitPolicy#mergeConfigOverProgrammatic})
+     * @param backends the bound backend provider map
+     * @param keyDerivationSecret the resolved {@code rateLimit.keyDerivation.secret}, or {@code
+     *     null}/blank when not configured
+     * @param vertx application Vert.x instance
+     * @throws IllegalStateException per the eager startup-validation matrix documented on this
+     *     class
+     */
+    public RateLimiters(
+            Set<RateLimitPolicy> policies,
+            Map<RateLimitMode, RateLimitBackend> backends,
+            String keyDerivationSecret,
+            Vertx vertx) {
         Objects.requireNonNull(policies, "policies");
-        this.policiesByName =
-                policies.stream().collect(Collectors.toUnmodifiableMap(RateLimitPolicy::name, Function.identity()));
+        this.policiesByName = indexByName(policies);
         this.backends = Map.copyOf(Objects.requireNonNull(backends, "backends"));
         this.vertx = Objects.requireNonNull(vertx, "vertx");
+        validateBackendCoverage(this.policiesByName.values(), this.backends);
+        validateClusteredSecret(this.policiesByName.values(), keyDerivationSecret);
+    }
+
+    private static Map<String, RateLimitPolicy> indexByName(Set<RateLimitPolicy> policies) {
+        if (policies.size() > MAX_POLICIES) {
+            throw new IllegalStateException(
+                    "At most " + MAX_POLICIES + " rate-limit policies are permitted, got " + policies.size());
+        }
+        Map<String, RateLimitPolicy> byName = new LinkedHashMap<>();
+        for (RateLimitPolicy policy : policies) {
+            RateLimitPolicy previous = byName.putIfAbsent(policy.name(), policy);
+            if (previous != null) {
+                throw new IllegalStateException("Duplicate rate-limit policy name: " + policy.name());
+            }
+        }
+        return Map.copyOf(byName);
+    }
+
+    private static void validateBackendCoverage(
+            Collection<RateLimitPolicy> policies, Map<RateLimitMode, RateLimitBackend> backends) {
+        for (RateLimitPolicy policy : policies) {
+            if (policy.enabled() && !backends.containsKey(policy.mode())) {
+                throw new IllegalStateException("No RateLimitBackend bound for mode " + policy.mode()
+                        + " required by enabled rate-limit policy " + policy.name());
+            }
+        }
+    }
+
+    private static void validateClusteredSecret(Collection<RateLimitPolicy> policies, String keyDerivationSecret) {
+        boolean anyEnabledClustered =
+                policies.stream().anyMatch(policy -> policy.enabled() && policy.mode() == RateLimitMode.CLUSTERED);
+        if (!anyEnabledClustered) {
+            return;
+        }
+        if (keyDerivationSecret == null || keyDerivationSecret.isEmpty()) {
+            throw new IllegalStateException(
+                    "rateLimit.keyDerivation.secret is required when any enabled policy is CLUSTERED");
+        }
+        int secretBytes = keyDerivationSecret.getBytes(StandardCharsets.UTF_8).length;
+        if (secretBytes < MIN_SECRET_BYTES) {
+            throw new IllegalStateException("rateLimit.keyDerivation.secret must be at least " + MIN_SECRET_BYTES
+                    + " bytes (UTF-8) when any enabled policy is CLUSTERED");
+        }
     }
 
     /**

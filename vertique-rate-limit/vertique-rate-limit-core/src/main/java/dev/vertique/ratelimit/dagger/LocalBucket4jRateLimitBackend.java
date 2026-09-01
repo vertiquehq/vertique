@@ -3,6 +3,10 @@
 
 package dev.vertique.ratelimit.dagger;
 
+import dev.vertique.ratelimit.GreedyRateLimitRefill;
+import dev.vertique.ratelimit.IntervalRateLimitRefill;
+import dev.vertique.ratelimit.RateLimitRefill;
+import dev.vertique.ratelimit.TokenBucketRateLimit;
 import dev.vertique.ratelimit.spi.RateLimitBackend;
 import dev.vertique.ratelimit.spi.RateLimitBackendRequest;
 import dev.vertique.ratelimit.spi.RateLimitBackendResult;
@@ -18,7 +22,10 @@ import java.util.concurrent.ConcurrentMap;
 /**
  * LOCAL {@link RateLimitBackend}: consumes against Bucket4j's private local {@link Bucket},
  * built with {@code LocalBucketBuilder.withMillisecondPrecision()}
- * (contracts/rate-limit-runtime.md, "Local engine contract").
+ * (contracts/rate-limit-runtime.md, "Local engine contract"). {@link GreedyRateLimitRefill}/
+ * {@link IntervalRateLimitRefill} translate to Bucket4j's {@code refillGreedy}/{@code
+ * refillIntervally} respectively (contracts/rate-limit-runtime.md, "Bucket4j translation
+ * contract").
  *
  * <p>Package-private by design — reached only through the {@link RateLimitBackend} interface this
  * task's {@link RateLimitCoreModule} binds it under. No Bucket4j type appears past this class's
@@ -35,17 +42,27 @@ final class LocalBucket4jRateLimitBackend implements RateLimitBackend {
 
     @Override
     public Future<RateLimitBackendResult> consume(RateLimitBackendRequest request) {
-        Bucket bucket = buckets.computeIfAbsent(request.storageKey(), ignored -> newBucket(request));
+        Bucket bucket = buckets.computeIfAbsent(request.storageKey(), ignored -> newBucket(request.algorithm()));
         ConsumptionProbe probe = bucket.tryConsumeAndReturnRemaining(request.cost());
         return Future.succeededFuture(toResult(probe));
     }
 
-    private static Bucket newBucket(RateLimitBackendRequest request) {
-        Bandwidth bandwidth = Bandwidth.builder()
-                .capacity(request.capacity())
-                .refillGreedy(request.refillTokens(), Duration.ofMillis(request.refillPeriodMs()))
-                .build();
+    private static Bucket newBucket(TokenBucketRateLimit algorithm) {
+        Bandwidth bandwidth = toBandwidth(algorithm);
         return Bucket.builder().addLimit(bandwidth).withMillisecondPrecision().build();
+    }
+
+    private static Bandwidth toBandwidth(TokenBucketRateLimit algorithm) {
+        var refillStage = Bandwidth.builder().capacity(algorithm.capacity());
+        RateLimitRefill refill = algorithm.refill();
+        return switch (refill) {
+            case GreedyRateLimitRefill greedy ->
+                refillStage.refillGreedy(greedy.tokens(), greedy.period()).build();
+            case IntervalRateLimitRefill interval ->
+                refillStage
+                        .refillIntervally(interval.tokens(), interval.period())
+                        .build();
+        };
     }
 
     private static RateLimitBackendResult toResult(ConsumptionProbe probe) {

@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
+import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
@@ -21,8 +22,14 @@ class RateLimitersKeyedHandleTest {
     void shouldAcquireThroughKeyedHandleUsingSelectorFunction() throws Exception {
         Vertx vertx = Vertx.vertx();
         try {
-            RateLimitPolicy policy =
-                    new RateLimitPolicy("keyed-skeleton", true, RateLimitMode.LOCAL, "r1", 1L, 1L, 1_000L);
+            RateLimitPolicy policy = new RateLimitPolicy(
+                    "keyed-skeleton",
+                    true,
+                    RateLimitMode.LOCAL,
+                    RateLimitFailureMode.OPEN,
+                    "r1",
+                    1L,
+                    new TokenBucketRateLimit(1L, new GreedyRateLimitRefill(1L, Duration.ofMillis(1_000L))));
             RateLimiters rateLimiters = RateLimitersUnitFixtures.withPolicies(vertx, policy);
             KeyedRateLimiter<String> keyed =
                     rateLimiters.limiter("keyed-skeleton", (String callerId) -> RateLimitKey.of(callerId));
