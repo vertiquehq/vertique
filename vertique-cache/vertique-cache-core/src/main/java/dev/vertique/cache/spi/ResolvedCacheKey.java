@@ -20,7 +20,7 @@ public record ResolvedCacheKey(CacheRegion region, String identityComponent, Str
 
     private static void requireCanonicalComponent(String value, String field) {
         Objects.requireNonNull(value, field);
-        if (value.isBlank() || !value.matches("[A-Za-z0-9._~:/=%-]+")) {
+        if (value.isBlank() || !value.matches("(?:[A-Za-z0-9._~:/=-]|%[0-9A-F]{2})+")) {
             throw new IllegalArgumentException(field + " contains an invalid canonical key character");
         }
     }
