@@ -61,30 +61,34 @@ final class CacheAnnotationAdapter {
     }
 
     Cache<Object, Object> eviction(MethodMetadata target, CacheEvict annotation) {
-        Cacheable cacheable = target.findAnnotation(Cacheable.class).orElse(null);
         return support.unregistered(new CacheAdapterSupport.AdapterDefinition(
                 annotation.name(),
-                cacheable == null ? Object.class : valueType(target),
-                cacheable == null ? CacheMode.DEFAULT : cacheable.mode(),
-                cacheable == null ? -1 : cacheable.ttlSeconds(),
-                cacheable == null ? CacheIdentity.NONE : cacheable.identity(),
-                cacheable == null ? AnonymousCachePolicy.BYPASS : cacheable.anonymous(),
+                Object.class,
+                CacheMode.DEFAULT,
+                -1,
+                CacheIdentity.NONE,
+                AnonymousCachePolicy.BYPASS,
                 selector(annotation.key(), target),
                 false,
                 annotation.key().length == 0 ? null : List.of(annotation.key())));
     }
 
     /**
-     * Prepares one eviction. A clear or a co-located {@code @Cacheable} resolves
-     * immediately; a standalone exact eviction resolves its target policy lazily from
-     * the runtime catalog so it can never silently address a different identity bucket
-     * than the registered target definition.
+     * Prepares one eviction. A clear resolves immediately; a standalone exact eviction
+     * resolves its target policy lazily from the runtime catalog only when its ordered
+     * selector paths match the registered target definition, so it can never silently
+     * address a different identity bucket. Co-located cache annotations are invalid and
+     * fail open when runtime metadata bypasses compile-time validation.
      */
     PreparedEviction prepared(MethodMetadata target, CacheEvict annotation) {
-        if (annotation.clear() || target.findAnnotation(Cacheable.class).isPresent()) {
+        if (target.findAnnotation(Cacheable.class).isPresent()) {
+            throw new IllegalArgumentException("@Cacheable and @CacheEvict must be declared on different methods");
+        }
+        if (annotation.clear()) {
             return PreparedEviction.immediate(eviction(target, annotation), annotation.clear());
         }
-        return PreparedEviction.lazy(support, annotation.name(), selector(annotation.key(), target));
+        return PreparedEviction.lazy(
+                support, annotation.name(), selector(annotation.key(), target), List.of(annotation.key()));
     }
 
     List<PreparedEviction> evictions(MethodMetadata target, CacheEvict[] declarations) {
@@ -123,6 +127,7 @@ final class CacheAnnotationAdapter {
         private final CacheAdapterSupport support;
         private final String name;
         private final Function<Object, Object> selector;
+        private final List<String> selectorPaths;
         private volatile Cache<Object, Object> resolved;
 
         private PreparedEviction(
@@ -130,26 +135,32 @@ final class CacheAnnotationAdapter {
                 Cache<Object, Object> resolved,
                 CacheAdapterSupport support,
                 String name,
-                Function<Object, Object> selector) {
+                Function<Object, Object> selector,
+                List<String> selectorPaths) {
             this.clear = clear;
             this.resolved = resolved;
             this.support = support;
             this.name = name;
             this.selector = selector;
+            this.selectorPaths = selectorPaths;
         }
 
         static PreparedEviction immediate(Cache<Object, Object> cache, boolean clear) {
-            return new PreparedEviction(clear, cache, null, null, null);
+            return new PreparedEviction(clear, cache, null, null, null, null);
         }
 
-        static PreparedEviction lazy(CacheAdapterSupport support, String name, Function<Object, Object> selector) {
-            return new PreparedEviction(false, null, support, name, selector);
+        static PreparedEviction lazy(
+                CacheAdapterSupport support,
+                String name,
+                Function<Object, Object> selector,
+                List<String> selectorPaths) {
+            return new PreparedEviction(false, null, support, name, selector, List.copyOf(selectorPaths));
         }
 
         Future<Boolean> run(Object arguments) {
             Cache<Object, Object> cache = resolved;
             if (cache == null) {
-                cache = support.evictionFor(name, selector).orElse(null);
+                cache = support.evictionFor(name, selector, selectorPaths).orElse(null);
                 if (cache == null) {
                     support.observeUnresolvedEviction(name);
                     return Future.succeededFuture(false);

@@ -397,7 +397,7 @@ public final class CacheBuilder {
             long ttlSeconds,
             CacheIdentity identity,
             AnonymousCachePolicy anonymous,
-            boolean annotationDeclared) {}
+            String selectorPaths) {}
 
     Optional<RegisteredDefinition> registered(String name) {
         DefinitionFingerprint fingerprint = catalog.get(name);
@@ -409,7 +409,7 @@ public final class CacheBuilder {
                         fingerprint.ttl(),
                         fingerprint.identity(),
                         fingerprint.anonymous(),
-                        fingerprint.selectorPaths() != null));
+                        fingerprint.selectorPaths()));
     }
 
     Set<CacheObserver> observers() {

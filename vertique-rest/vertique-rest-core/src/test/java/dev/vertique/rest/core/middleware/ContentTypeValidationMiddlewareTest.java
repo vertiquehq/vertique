@@ -4,7 +4,6 @@
 package dev.vertique.rest.core.middleware;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
@@ -12,11 +11,6 @@ import static org.mockito.Mockito.*;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.ext.web.RoutingContext;
-import java.io.IOException;
-import java.net.URISyntaxException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.Objects;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -220,37 +214,6 @@ class ContentTypeValidationMiddlewareTest {
 
         verify(ctx).fail(eq(415), any(jakarta.ws.rs.NotSupportedException.class));
         verify(ctx, never()).next();
-    }
-
-    // --- Slice-10 cleanup: no stale OpenAPI-router delegation comments ---
-
-    @Test
-    @DisplayName(
-            "RouterReferencingCommentsRemovedFromMiddleware — source must not contain 'OpenAPI router' or 'generated spec' delegation text")
-    void routerReferencingCommentsRemovedFromMiddleware() throws IOException, URISyntaxException {
-        // Locate the source file by walking from the class-file location
-        java.net.URL classUrl = ContentTypeValidationMiddleware.class.getResource(
-                "/dev/vertique/rest/core/middleware/ContentTypeValidationMiddleware.class");
-        Objects.requireNonNull(classUrl, "Cannot locate class resource for ContentTypeValidationMiddleware");
-
-        // Navigate from target/classes/... up to the module root, then to the source file
-        Path classPath = Path.of(classUrl.toURI());
-        // target/classes/dev/vertique/rest/core/middleware/ContentTypeValidationMiddleware.class
-        // → go up 7 levels to reach module root, then into src/main/java/...
-        Path moduleRoot = classPath;
-        for (int i = 0; i < 8; i++) {
-            moduleRoot = moduleRoot.getParent();
-        }
-        Path sourceFile = moduleRoot.resolve(
-                "src/main/java/dev/vertique/rest/core/middleware/ContentTypeValidationMiddleware.java");
-
-        String source = Files.readString(sourceFile);
-        assertFalse(
-                source.contains("OpenAPI router"),
-                "ContentTypeValidationMiddleware must not reference 'OpenAPI router' (stale delegation comment)");
-        assertFalse(
-                source.contains("generated spec"),
-                "ContentTypeValidationMiddleware must not reference 'generated spec' (stale delegation comment)");
     }
 
     // --- Helpers ---

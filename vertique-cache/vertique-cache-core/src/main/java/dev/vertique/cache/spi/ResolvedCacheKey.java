@@ -20,8 +20,29 @@ public record ResolvedCacheKey(CacheRegion region, String identityComponent, Str
 
     private static void requireCanonicalComponent(String value, String field) {
         Objects.requireNonNull(value, field);
-        if (value.isBlank() || !value.matches("[A-Za-z0-9._~:/=%-]+")) {
+        // Iterative scan: a regex alternation under a quantifier recurses per
+        // character in java.util.regex and overflows the stack on long keys.
+        if (value.isEmpty()) {
             throw new IllegalArgumentException(field + " contains an invalid canonical key character");
         }
+        for (int i = 0; i < value.length(); i++) {
+            char ch = value.charAt(i);
+            if (ch == '%') {
+                if (i + 2 >= value.length() || !isUpperHex(value.charAt(i + 1)) || !isUpperHex(value.charAt(i + 2))) {
+                    throw new IllegalArgumentException(field + " contains an invalid canonical key character");
+                }
+                i += 2;
+            } else if (!isCanonicalChar(ch)) {
+                throw new IllegalArgumentException(field + " contains an invalid canonical key character");
+            }
+        }
+    }
+
+    private static boolean isCanonicalChar(char ch) {
+        return ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z' || ch >= '0' && ch <= '9' || "._~:/=-".indexOf(ch) >= 0;
+    }
+
+    private static boolean isUpperHex(char ch) {
+        return ch >= '0' && ch <= '9' || ch >= 'A' && ch <= 'F';
     }
 }

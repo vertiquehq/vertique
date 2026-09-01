@@ -33,6 +33,14 @@ class CacheKeyDeclarationTest {
     }
 
     @Test
+    void componentValuesCannotForgeAPercentEscapeSequence() {
+        assertNotEquals(selectorOf(input -> CacheKey.of("a/b")), selectorOf(input -> CacheKey.of("a%2Fb")));
+        assertNotEquals(selectorOf(input -> CacheKey.of("a%25b")), selectorOf(input -> CacheKey.of("a%b")));
+        assertEquals("k2Sa%2Fb", selectorOf(input -> CacheKey.of("a/b")));
+        assertEquals("k2Sa%252Fb", selectorOf(input -> CacheKey.of("a%2Fb")));
+    }
+
+    @Test
     void singleScalarAndOneComponentCacheKeyRenderIdentically() {
         assertEquals(selectorOf(input -> "product-1"), selectorOf(input -> CacheKey.of("product-1")));
     }

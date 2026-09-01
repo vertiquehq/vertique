@@ -69,6 +69,10 @@ public final class CacheAnnotationProcessor extends AbstractProcessor {
         }
         for (Element element : roundEnvironment.getElementsAnnotatedWith(CacheEvict.class)) {
             if (element.getKind() == ElementKind.METHOD) {
+                if (element.getAnnotation(Cacheable.class) != null) {
+                    error(element, "@Cacheable and @CacheEvict must be declared on different methods");
+                    continue;
+                }
                 validateProxyability((ExecutableElement) element);
                 for (EvictionDeclaration declaration : evictionDeclarations(element)) {
                     if (declaration.clear() && declaration.keyExplicit()) {
