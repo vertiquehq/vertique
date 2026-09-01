@@ -3,24 +3,29 @@
 
 package dev.vertique.ratelimit.dagger;
 
+import dagger.BindsOptionalOf;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoMap;
 import dagger.multibindings.Multibinds;
+import dev.vertique.context.ContextRuntimeModule;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.config.JsonConfigPaths;
 import dev.vertique.ratelimit.RateLimitMode;
 import dev.vertique.ratelimit.RateLimitPolicy;
 import dev.vertique.ratelimit.RateLimiters;
+import dev.vertique.ratelimit.spi.DefaultRateLimitSubjectResolver;
 import dev.vertique.ratelimit.spi.RateLimitBackend;
 import dev.vertique.ratelimit.spi.RateLimitModeKey;
 import dev.vertique.ratelimit.spi.RateLimitObserver;
+import dev.vertique.ratelimit.spi.RateLimitSubjectResolver;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -33,11 +38,15 @@ import java.util.Set;
  * {@code LOCAL}) before config binding runs, so {@link RateLimitPolicy}'s own "required, no
  * default" rule for {@code mode} only ever fires for a truly unresolved value.
  *
- * <p>The subject-resolver binding and the {@code @IntoSet ApplicationShutdownStep} that forces
- * eager construction at bootstrap are a later task's artifacts (contracts/rate-limit-runtime.md,
- * "Dagger wiring"; `plan.md` pre-flight finding 5).
+ * <p>The {@code @IntoSet ApplicationShutdownStep} that forces eager construction at bootstrap is a
+ * later task's artifact (contracts/rate-limit-runtime.md, "Dagger wiring"; `plan.md` pre-flight
+ * finding 5).
+ *
+ * <p>Includes {@code ContextRuntimeModule} (mirroring {@code CacheCoreModule}) so the default
+ * {@link RateLimitSubjectResolver} — {@link DefaultRateLimitSubjectResolver} — has a bound {@code
+ * ContextHolder} to read {@code SecurityContext} from.
  */
-@Module
+@Module(includes = ContextRuntimeModule.class)
 public abstract class RateLimitCoreModule {
 
     private static final String DEFAULT_MODE = "defaultMode";
@@ -59,6 +68,15 @@ public abstract class RateLimitCoreModule {
     abstract Set<RateLimitObserver> rateLimitObservers();
 
     /**
+     * Declares the optional custom {@link RateLimitSubjectResolver} binding. Present only when an
+     * application module explicitly binds one; the framework default ({@link
+     * DefaultRateLimitSubjectResolver}) applies otherwise (contracts/rate-limit-runtime.md,
+     * "Subject resolution SPI").
+     */
+    @BindsOptionalOf
+    abstract RateLimitSubjectResolver rateLimitSubjectResolver();
+
+    /**
      * Provides the one runtime owned by the application graph.
      *
      * @param contributedPolicies programmatic policies from every Dagger {@code @IntoSet} contribution
@@ -67,6 +85,9 @@ public abstract class RateLimitCoreModule {
      * @param parser the framework's config-parsing seam
      * @param vertx application Vert.x instance
      * @param observers every bound {@link RateLimitObserver} contribution
+     * @param defaultSubjectResolver the framework-default {@link RateLimitSubjectResolver}
+     * @param customSubjectResolver the optional application-bound {@link RateLimitSubjectResolver},
+     *     which wins over the default when present
      * @return application-scoped rate-limit runtime
      */
     @Provides
@@ -77,7 +98,9 @@ public abstract class RateLimitCoreModule {
             @VertxConfig JsonObject config,
             ConfigParser parser,
             Vertx vertx,
-            Set<RateLimitObserver> observers) {
+            Set<RateLimitObserver> observers,
+            DefaultRateLimitSubjectResolver defaultSubjectResolver,
+            Optional<RateLimitSubjectResolver> customSubjectResolver) {
         JsonObject rateLimit = JsonConfigPaths.navigateObject(config, "rateLimit");
         RateLimitMode defaultMode =
                 RateLimitMode.valueOf(rateLimit.getString(DEFAULT_MODE, RateLimitMode.LOCAL.name()));
@@ -87,7 +110,8 @@ public abstract class RateLimitCoreModule {
         List<RateLimitPolicy> configPolicies = parser.parseKeyedObject(policiesJson, "name", RateLimitPolicy.class);
         Set<RateLimitPolicy> policies =
                 RateLimitPolicy.mergeConfigOverProgrammatic(Set.copyOf(configPolicies), contributedPolicies);
-        return new RateLimiters(policies, backends, keyDerivationSecret, vertx, observers);
+        RateLimitSubjectResolver subjectResolver = customSubjectResolver.orElse(defaultSubjectResolver);
+        return new RateLimiters(policies, backends, keyDerivationSecret, vertx, observers, subjectResolver);
     }
 
     /**

@@ -15,6 +15,8 @@
     <description>Programmatic rate-limit API, policy model, typed keys, and the local Bucket4j engine</description>
     <dependencies>
         <dependency><groupId>dev.vertique</groupId><artifactId>vertique-core</artifactId></dependency>
+        <dependency><groupId>dev.vertique</groupId><artifactId>vertique-context</artifactId></dependency>
+        <dependency><groupId>dev.vertique</groupId><artifactId>vertique-security-core</artifactId></dependency>
         <dependency><groupId>io.vertx</groupId><artifactId>vertx-core</artifactId></dependency>
         <dependency><groupId>com.google.dagger</groupId><artifactId>dagger</artifactId></dependency>
         <dependency><groupId>jakarta.inject</groupId><artifactId>jakarta.inject-api</artifactId></dependency>

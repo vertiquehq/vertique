@@ -88,6 +88,23 @@ public final class RateLimitKey {
     }
 
     /**
+     * Two keys are equal exactly when their canonical encodings are equal — i.e. exactly when
+     * they were built from the same component tuple (or are both {@link #global()}). Public so
+     * adapter seams outside this package (e.g. {@code dev.vertique.ratelimit.spi.RateLimitAdapterSupport})
+     * can prove distinctness/stability of a framed key without access to the engine-private
+     * encoding itself.
+     */
+    @Override
+    public boolean equals(Object obj) {
+        return obj instanceof RateLimitKey other && canonicalEncoding.equals(other.canonicalEncoding);
+    }
+
+    @Override
+    public int hashCode() {
+        return canonicalEncoding.hashCode();
+    }
+
+    /**
      * Per-component type-tag encoding: one letter tag plus a percent-encoded payload, bounded to
      * 256 bytes UTF-8 post-encoding ({@code contracts/rate-limit-runtime.md},
      * "Key-component byte bound"). A component that exceeds the bound is deterministically
