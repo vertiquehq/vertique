@@ -27,7 +27,12 @@ final class RateLimitersUnitFixtures {
     private RateLimitersUnitFixtures() {}
 
     static RateLimiters withPolicies(Vertx vertx, RateLimitPolicy... policies) {
-        Map<RateLimitMode, RateLimitBackend> backends = Map.of(RateLimitMode.LOCAL, new CountingLocalBackend());
+        return withBackend(vertx, new CountingLocalBackend(), policies);
+    }
+
+    /** Same wiring as {@link #withPolicies}, but over a caller-supplied LOCAL backend. */
+    static RateLimiters withBackend(Vertx vertx, RateLimitBackend backend, RateLimitPolicy... policies) {
+        Map<RateLimitMode, RateLimitBackend> backends = Map.of(RateLimitMode.LOCAL, backend);
         return new RateLimiters(Set.of(policies), backends, null, vertx, Set.of());
     }
 

@@ -3,6 +3,10 @@
 
 package dev.vertique.ratelimit;
 
+import dev.vertique.ratelimit.exception.RateLimitExceededException;
+import dev.vertique.ratelimit.exception.RateLimitRequestException;
+import dev.vertique.ratelimit.exception.RateLimitRequestFailure;
+import dev.vertique.ratelimit.exception.RateLimitUnavailableException;
 import dev.vertique.ratelimit.spi.RateLimitBackend;
 import dev.vertique.ratelimit.spi.RateLimitBackendRequest;
 import dev.vertique.ratelimit.spi.RateLimitBackendResult;
@@ -12,32 +16,48 @@ import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
+import java.time.Duration;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /**
  * Unkeyed handle bound to one policy, resolved from {@link RateLimiters#limiter(String)}.
  *
- * <p>This task's shape is a subset of the exact contract API: only {@link #policyName()} and
- * {@link #acquire(RateLimitKey)} exist here. The cost-bearing overloads and the guarded {@code
- * execute(...)} wrapper are a later task's artifacts (contracts/rate-limit-runtime.md, "Exact API
- * shape").
+ * <p>{@code acquire(...)} never fails its returned {@link Future} for quota reasons — it always
+ * yields a {@link RateLimitDecision} (decision-first). {@code execute(...)} is the guarded wrapper
+ * (contracts/rate-limit-runtime.md, "Handle semantics"): {@code PERMITTED}/{@code
+ * BACKEND_FAILURE_OPEN}/{@code DISABLED} run the action exactly once, with no retry and no refund;
+ * {@code QUOTA_EXCEEDED} fails with {@link RateLimitExceededException}; {@code
+ * BACKEND_FAILURE_CLOSED} fails with {@link RateLimitUnavailableException}. A cost above policy
+ * capacity fails both {@code acquire} and {@code execute} with {@link RateLimitRequestException}
+ * ({@link RateLimitRequestFailure#COST_EXCEEDS_CAPACITY}) before either reaches the engine, even
+ * under {@code failureMode=OPEN}.
  */
 public final class RateLimiter {
-
-    private static final long DEFAULT_COST = 1L;
 
     private final RateLimitPolicy policy;
     private final RateLimitBackend backend;
     private final Vertx vertx;
     private final Set<RateLimitObserver> observers;
+    private final boolean rateLimitEnabled;
+    private final RateLimiterLifecycle lifecycle;
 
-    RateLimiter(RateLimitPolicy policy, RateLimitBackend backend, Vertx vertx, Set<RateLimitObserver> observers) {
+    RateLimiter(
+            RateLimitPolicy policy,
+            RateLimitBackend backend,
+            Vertx vertx,
+            Set<RateLimitObserver> observers,
+            boolean rateLimitEnabled,
+            RateLimiterLifecycle lifecycle) {
         this.policy = Objects.requireNonNull(policy, "policy");
         this.backend = Objects.requireNonNull(backend, "backend");
         this.vertx = Objects.requireNonNull(vertx, "vertx");
         this.observers = Objects.requireNonNull(observers, "observers");
+        this.rateLimitEnabled = rateLimitEnabled;
+        this.lifecycle = Objects.requireNonNull(lifecycle, "lifecycle");
     }
 
     /**
@@ -48,21 +68,123 @@ public final class RateLimiter {
     }
 
     /**
-     * Attempts to consume one token against {@code key}. Never fails the returned future for
-     * quota reasons — it always yields a {@link RateLimitDecision} (decision-first).
+     * Attempts to consume {@code policy.defaultCost()} tokens against {@code key}. Equivalent to
+     * {@code acquire(key, policy.defaultCost())}.
      *
      * @param key the caller-supplied key
      * @return a future that completes with the decision, dispatched on the calling Vert.x context
      *     when one is present
      */
     public Future<RateLimitDecision> acquire(RateLimitKey key) {
+        return acquire(key, policy.defaultCost());
+    }
+
+    /**
+     * Attempts to consume {@code cost} tokens against {@code key}. Never fails the returned future
+     * for quota reasons — it always yields a {@link RateLimitDecision} (decision-first); a request
+     * whose {@code cost} exceeds policy capacity fails the future instead, before the engine is
+     * ever consulted (contracts/rate-limit-runtime.md, "Handle semantics").
+     *
+     * @param key the caller-supplied key
+     * @param cost tokens this request attempts to consume
+     * @return a future that completes with the decision, dispatched on the calling Vert.x context
+     *     when one is present
+     * @throws RateLimitRequestException (as a failed future, never thrown synchronously) with
+     *     reason {@link RateLimitRequestFailure#COST_EXCEEDS_CAPACITY} when {@code cost} exceeds
+     *     this policy's capacity
+     */
+    public Future<RateLimitDecision> acquire(RateLimitKey key, long cost) {
         Objects.requireNonNull(key, "key");
         TokenBucketRateLimit algorithm = (TokenBucketRateLimit) policy.algorithm();
+        if (cost > algorithm.capacity()) {
+            return Future.failedFuture(new RateLimitRequestException(RateLimitRequestFailure.COST_EXCEEDS_CAPACITY));
+        }
+        if (lifecycle.isClosed()) {
+            return dispatchOnCallingContext(Future.failedFuture(closedException()));
+        }
+        if (!rateLimitEnabled) {
+            return dispatchOnCallingContext(Future.succeededFuture(disabledDecision(algorithm, cost)));
+        }
         String storageKey = policy.name() + ':' + policy.revision() + ':' + key.canonicalEncoding();
-        RateLimitBackendRequest request = new RateLimitBackendRequest(storageKey, algorithm, DEFAULT_COST);
+        RateLimitBackendRequest request = new RateLimitBackendRequest(storageKey, algorithm, cost);
         long startedAt = System.nanoTime();
         return dispatchOnCallingContext(backend.consume(request)
-                .map(result -> completeDecision(result, algorithm, DEFAULT_COST, elapsedNanosSince(startedAt))));
+                .map(result -> completeDecision(result, algorithm, cost, elapsedNanosSince(startedAt))));
+    }
+
+    /**
+     * Guarded wrapper around {@link #acquire(RateLimitKey)}: runs {@code action} exactly once when
+     * permitted, otherwise fails with the mapped exception. Equivalent to {@code execute(key,
+     * policy.defaultCost(), action)}.
+     *
+     * @param key the caller-supplied key
+     * @param action the guarded action; invoked at most once, never retried, never refunded
+     * @param <T> the action's result type
+     * @return a future completing with the action's result, or the mapped denial/failure
+     */
+    public <T> Future<T> execute(RateLimitKey key, Supplier<Future<T>> action) {
+        return execute(key, policy.defaultCost(), action);
+    }
+
+    /**
+     * Guarded wrapper around {@link #acquire(RateLimitKey, long)} (contracts/rate-limit-runtime.md,
+     * "Handle semantics"): {@code PERMITTED}/{@code BACKEND_FAILURE_OPEN}/{@code DISABLED} run
+     * {@code action} exactly once; {@code QUOTA_EXCEEDED} fails with {@link
+     * RateLimitExceededException}; {@code BACKEND_FAILURE_CLOSED} fails with {@link
+     * RateLimitUnavailableException}. A synchronous {@code action} throw becomes a failed future; a
+     * {@code null} action result is a contract failure; an application failure passes through
+     * unchanged.
+     *
+     * @param key the caller-supplied key
+     * @param cost tokens this request attempts to consume
+     * @param action the guarded action; invoked at most once, never retried, never refunded
+     * @param <T> the action's result type
+     * @return a future completing with the action's result, or the mapped denial/failure
+     */
+    public <T> Future<T> execute(RateLimitKey key, long cost, Supplier<Future<T>> action) {
+        Objects.requireNonNull(action, "action");
+        return acquire(key, cost).compose(decision -> runGuarded(decision, action));
+    }
+
+    private <T> Future<T> runGuarded(RateLimitDecision decision, Supplier<Future<T>> action) {
+        return switch (decision.outcome()) {
+            case PERMITTED, BACKEND_FAILURE_OPEN, DISABLED -> runFenced(action);
+            case QUOTA_EXCEEDED -> Future.failedFuture(new RateLimitExceededException(decision));
+            case BACKEND_FAILURE_CLOSED -> Future.failedFuture(new RateLimitUnavailableException(decision));
+        };
+    }
+
+    /**
+     * Invokes {@code action} exactly once and registers its returned future with this runtime's
+     * shared {@link RateLimiterLifecycle} so a concurrent {@link RateLimiters#close()} can
+     * force-fail this call's guarded future immediately, without waiting for (or ever surfacing)
+     * the action's real, possibly-late completion.
+     */
+    private <T> Future<T> runFenced(Supplier<Future<T>> action) {
+        Future<T> actionFuture;
+        try {
+            actionFuture = action.get();
+        } catch (Throwable failure) {
+            return Future.failedFuture(failure);
+        }
+        if (actionFuture == null) {
+            return Future.failedFuture(new NullPointerException("execute action must not return a null Future"));
+        }
+        Promise<T> guarded = Promise.promise();
+        Runnable fence = () -> guarded.tryFail(closedException());
+        Runnable registered = lifecycle.register(fence);
+        if (registered == null) {
+            return dispatchOnCallingContext(Future.failedFuture(closedException()));
+        }
+        actionFuture.onComplete(result -> {
+            lifecycle.unregister(fence);
+            if (result.succeeded()) {
+                guarded.tryComplete(result.result());
+            } else {
+                guarded.tryFail(result.cause());
+            }
+        });
+        return dispatchOnCallingContext(guarded.future());
     }
 
     /**
@@ -74,36 +196,120 @@ public final class RateLimiter {
      */
     private RateLimitDecision completeDecision(
             RateLimitBackendResult result, TokenBucketRateLimit algorithm, long cost, long backendLatencyNanos) {
-        RateLimitOutcome outcome = result.consumed() ? RateLimitOutcome.PERMITTED : RateLimitOutcome.QUOTA_EXCEEDED;
+        RateLimitOutcome outcome = classifyOutcome(result);
         OptionalLong remaining = OptionalLong.of(result.remaining());
-        RateLimitDecision decision = new RateLimitDecision(
+        RateLimitDecision decision = buildDecision(
+                outcome, algorithm, remaining, result.retryAfter(), result.resetAfter(), result.failureCode());
+        emitIfObserved(
+                outcome,
+                algorithm,
+                cost,
+                remaining,
+                result.retryAfter(),
+                result.resetAfter(),
+                result.failureCode(),
+                backendLatencyNanos);
+        return decision;
+    }
+
+    /**
+     * Classifies a backend result into an outcome: a present {@code failureCode} (e.g. {@code
+     * CAPACITY_EXHAUSTED}) is a backend failure, classified through this policy's {@code
+     * failureMode} into {@code BACKEND_FAILURE_OPEN}/{@code BACKEND_FAILURE_CLOSED}
+     * (contracts/rate-limit-runtime.md, "Failure classification"); otherwise the ordinary
+     * consumed/rejected mapping applies.
+     */
+    private RateLimitOutcome classifyOutcome(RateLimitBackendResult result) {
+        if (result.failureCode().isPresent()) {
+            return policy.failureMode() == RateLimitFailureMode.OPEN
+                    ? RateLimitOutcome.BACKEND_FAILURE_OPEN
+                    : RateLimitOutcome.BACKEND_FAILURE_CLOSED;
+        }
+        return result.consumed() ? RateLimitOutcome.PERMITTED : RateLimitOutcome.QUOTA_EXCEEDED;
+    }
+
+    /**
+     * The {@code rateLimit.enabled} root kill switch's decision: every request is admitted without
+     * engaging the engine, and an event is still emitted so observability stays continuous across
+     * the switch.
+     */
+    private RateLimitDecision disabledDecision(TokenBucketRateLimit algorithm, long cost) {
+        OptionalLong remaining = OptionalLong.of(algorithm.capacity());
+        RateLimitDecision decision = buildDecision(
+                RateLimitOutcome.DISABLED, algorithm, remaining, Optional.empty(), Optional.empty(), Optional.empty());
+        emitIfObserved(
+                RateLimitOutcome.DISABLED,
+                algorithm,
+                cost,
+                remaining,
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                0L);
+        return decision;
+    }
+
+    /** Synthetic fail-closed decision/exception used once this runtime has been closed. */
+    private RateLimitUnavailableException closedException() {
+        TokenBucketRateLimit algorithm = (TokenBucketRateLimit) policy.algorithm();
+        RateLimitDecision decision = buildDecision(
+                RateLimitOutcome.BACKEND_FAILURE_CLOSED,
+                algorithm,
+                OptionalLong.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.of(RateLimitFailureCode.UNAVAILABLE));
+        return new RateLimitUnavailableException(decision);
+    }
+
+    /** Builds the {@link RateLimitDecision} shape shared by every completion path on this handle. */
+    private RateLimitDecision buildDecision(
+            RateLimitOutcome outcome,
+            TokenBucketRateLimit algorithm,
+            OptionalLong remaining,
+            Optional<Duration> retryAfter,
+            Optional<Duration> resetAfter,
+            Optional<RateLimitFailureCode> failureCode) {
+        return new RateLimitDecision(
                 policy.name(),
                 outcome,
                 policy.mode(),
                 RateLimitAlgorithmType.TOKEN_BUCKET,
                 algorithm.capacity(),
                 remaining,
-                result.retryAfter(),
-                result.resetAfter(),
-                result.failureCode());
-        if (!observers.isEmpty()) {
-            RateLimitObservationSupport.emit(
-                    observers,
-                    new RateLimitDecisionCompleted(
-                            policy.name(),
-                            policy.revision(),
-                            policy.mode(),
-                            RateLimitAlgorithmType.TOKEN_BUCKET,
-                            outcome,
-                            cost,
-                            algorithm.capacity(),
-                            remaining,
-                            result.retryAfter(),
-                            result.resetAfter(),
-                            result.failureCode(),
-                            backendLatencyNanos));
+                retryAfter,
+                resetAfter,
+                failureCode);
+    }
+
+    /** Dispatches the {@link RateLimitDecisionCompleted} event shared by every completion path, when observed. */
+    private void emitIfObserved(
+            RateLimitOutcome outcome,
+            TokenBucketRateLimit algorithm,
+            long cost,
+            OptionalLong remaining,
+            Optional<Duration> retryAfter,
+            Optional<Duration> resetAfter,
+            Optional<RateLimitFailureCode> failureCode,
+            long backendLatencyNanos) {
+        if (observers.isEmpty()) {
+            return;
         }
-        return decision;
+        RateLimitObservationSupport.emit(
+                observers,
+                new RateLimitDecisionCompleted(
+                        policy.name(),
+                        policy.revision(),
+                        policy.mode(),
+                        RateLimitAlgorithmType.TOKEN_BUCKET,
+                        outcome,
+                        cost,
+                        algorithm.capacity(),
+                        remaining,
+                        retryAfter,
+                        resetAfter,
+                        failureCode,
+                        backendLatencyNanos));
     }
 
     private static long elapsedNanosSince(long startedAt) {

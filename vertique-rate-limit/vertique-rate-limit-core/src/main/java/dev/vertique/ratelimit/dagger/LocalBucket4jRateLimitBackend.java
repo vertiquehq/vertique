@@ -3,74 +3,68 @@
 
 package dev.vertique.ratelimit.dagger;
 
-import dev.vertique.ratelimit.GreedyRateLimitRefill;
-import dev.vertique.ratelimit.IntervalRateLimitRefill;
-import dev.vertique.ratelimit.RateLimitRefill;
+import dev.vertique.ratelimit.LocalRateLimitRegistry;
 import dev.vertique.ratelimit.TokenBucketRateLimit;
 import dev.vertique.ratelimit.spi.RateLimitBackend;
 import dev.vertique.ratelimit.spi.RateLimitBackendRequest;
 import dev.vertique.ratelimit.spi.RateLimitBackendResult;
-import io.github.bucket4j.Bandwidth;
-import io.github.bucket4j.Bucket;
-import io.github.bucket4j.ConsumptionProbe;
 import io.vertx.core.Future;
-import java.time.Duration;
-import java.util.Optional;
+import java.time.Clock;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.function.ToLongFunction;
 
 /**
- * LOCAL {@link RateLimitBackend}: consumes against Bucket4j's private local {@link Bucket},
- * built with {@code LocalBucketBuilder.withMillisecondPrecision()}
- * (contracts/rate-limit-runtime.md, "Local engine contract"). {@link GreedyRateLimitRefill}/
- * {@link IntervalRateLimitRefill} translate to Bucket4j's {@code refillGreedy}/{@code
- * refillIntervally} respectively (contracts/rate-limit-runtime.md, "Bucket4j translation
- * contract").
+ * LOCAL {@link RateLimitBackend}: routes each request to the requesting policy's own bounded
+ * {@link LocalRateLimitRegistry} (contracts/rate-limit-runtime.md, "Local engine contract" — the
+ * registry, and its {@code maxTrackedKeys} budget, is per policy, never one shared pool).
+ *
+ * <p>The policy name is recovered from {@code request.storageKey()}'s leading {@code ':'}-delimited
+ * segment — safe because policy-name syntax ({@code [A-Za-z0-9._~-]{1,128}}) never contains a colon,
+ * so this segment is always exactly the storage key's owning policy name (see {@code
+ * RateLimitStorageIdentity#canonicalInput}). One registry is created per policy name on first use,
+ * sized by {@code maxTrackedKeysResolver}, and reused for every later request under that policy.
  *
  * <p>Package-private by design — reached only through the {@link RateLimitBackend} interface this
- * task's {@link RateLimitCoreModule} binds it under. No Bucket4j type appears past this class's
- * own boundary.
- *
- * <p><strong>Deliberately unbounded.</strong> The bounded {@code maxTrackedKeys} registry,
- * cleanup sweep, and {@code CAPACITY_EXHAUSTED} classification are a later task's artifacts
- * (contracts/rate-limit-runtime.md, "Local engine contract"); this task's registry is an
- * unbounded per-process map, sufficient to prove the LOCAL decision path.
+ * task's {@link RateLimitCoreModule} binds it under. No Bucket4j type appears past this class's own
+ * boundary, and this class itself never touches a Bucket4j type directly — that stays inside {@link
+ * LocalRateLimitRegistry}.
  */
 final class LocalBucket4jRateLimitBackend implements RateLimitBackend {
 
-    private final ConcurrentMap<String, Bucket> buckets = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, LocalRateLimitRegistry> registriesByPolicy = new ConcurrentHashMap<>();
+    private final ToLongFunction<String> maxTrackedKeysResolver;
+    private final long cleanupIntervalMs;
+    private final Clock clock;
+
+    LocalBucket4jRateLimitBackend(ToLongFunction<String> maxTrackedKeysResolver, long cleanupIntervalMs) {
+        this(maxTrackedKeysResolver, cleanupIntervalMs, Clock.systemUTC());
+    }
+
+    LocalBucket4jRateLimitBackend(ToLongFunction<String> maxTrackedKeysResolver, long cleanupIntervalMs, Clock clock) {
+        this.maxTrackedKeysResolver = Objects.requireNonNull(maxTrackedKeysResolver, "maxTrackedKeysResolver");
+        this.cleanupIntervalMs = cleanupIntervalMs;
+        this.clock = Objects.requireNonNull(clock, "clock");
+    }
 
     @Override
     public Future<RateLimitBackendResult> consume(RateLimitBackendRequest request) {
-        Bucket bucket = buckets.computeIfAbsent(request.storageKey(), ignored -> newBucket(request.algorithm()));
-        ConsumptionProbe probe = bucket.tryConsumeAndReturnRemaining(request.cost());
-        return Future.succeededFuture(toResult(probe));
+        String policyName = policyNameOf(request.storageKey());
+        LocalRateLimitRegistry registry = registriesByPolicy.get(policyName);
+        if (registry == null) {
+            registry = registriesByPolicy.computeIfAbsent(policyName, name -> newRegistry(name, request.algorithm()));
+        }
+        return Future.succeededFuture(registry.consume(request.storageKey(), request.cost()));
     }
 
-    private static Bucket newBucket(TokenBucketRateLimit algorithm) {
-        Bandwidth bandwidth = toBandwidth(algorithm);
-        return Bucket.builder().addLimit(bandwidth).withMillisecondPrecision().build();
+    private LocalRateLimitRegistry newRegistry(String policyName, TokenBucketRateLimit algorithm) {
+        long maxTrackedKeys = maxTrackedKeysResolver.applyAsLong(policyName);
+        return new LocalRateLimitRegistry(algorithm, maxTrackedKeys, cleanupIntervalMs, clock);
     }
 
-    private static Bandwidth toBandwidth(TokenBucketRateLimit algorithm) {
-        var refillStage = Bandwidth.builder().capacity(algorithm.capacity());
-        RateLimitRefill refill = algorithm.refill();
-        return switch (refill) {
-            case GreedyRateLimitRefill greedy ->
-                refillStage.refillGreedy(greedy.tokens(), greedy.period()).build();
-            case IntervalRateLimitRefill interval ->
-                refillStage
-                        .refillIntervally(interval.tokens(), interval.period())
-                        .build();
-        };
-    }
-
-    private static RateLimitBackendResult toResult(ConsumptionProbe probe) {
-        boolean consumed = probe.isConsumed();
-        Optional<Duration> retryAfter =
-                consumed ? Optional.empty() : Optional.of(Duration.ofNanos(probe.getNanosToWaitForRefill()));
-        Optional<Duration> resetAfter = Optional.of(Duration.ofNanos(probe.getNanosToWaitForReset()));
-        return new RateLimitBackendResult(
-                consumed, probe.getRemainingTokens(), retryAfter, resetAfter, Optional.empty());
+    private static String policyNameOf(String storageKey) {
+        int separator = storageKey.indexOf(':');
+        return separator < 0 ? storageKey : storageKey.substring(0, separator);
     }
 }

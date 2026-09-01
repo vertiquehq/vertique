@@ -7,11 +7,14 @@ import dagger.BindsOptionalOf;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoMap;
+import dagger.multibindings.IntoSet;
 import dagger.multibindings.Multibinds;
 import dev.vertique.context.ContextRuntimeModule;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.config.JsonConfigPaths;
+import dev.vertique.core.lifecycle.ApplicationShutdownStep;
+import dev.vertique.core.lifecycle.LifecyclePhase;
 import dev.vertique.ratelimit.RateLimitMode;
 import dev.vertique.ratelimit.RateLimitPolicy;
 import dev.vertique.ratelimit.RateLimiters;
@@ -20,6 +23,7 @@ import dev.vertique.ratelimit.spi.RateLimitBackend;
 import dev.vertique.ratelimit.spi.RateLimitModeKey;
 import dev.vertique.ratelimit.spi.RateLimitObserver;
 import dev.vertique.ratelimit.spi.RateLimitSubjectResolver;
+import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
@@ -27,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.ToLongFunction;
 
 /**
  * Dagger configuration contribution for the application-scoped rate-limit runtime.
@@ -38,9 +43,10 @@ import java.util.Set;
  * {@code LOCAL}) before config binding runs, so {@link RateLimitPolicy}'s own "required, no
  * default" rule for {@code mode} only ever fires for a truly unresolved value.
  *
- * <p>The {@code @IntoSet ApplicationShutdownStep} that forces eager construction at bootstrap is a
- * later task's artifact (contracts/rate-limit-runtime.md, "Dagger wiring"; `plan.md` pre-flight
- * finding 5).
+ * <p>The {@code @IntoSet ApplicationShutdownStep} contributed below forces eager construction of
+ * {@link RateLimiters} at bootstrap, so its startup validation runs unconditionally before any
+ * handle is requested (contracts/rate-limit-runtime.md, "Dagger wiring"; `plan.md` pre-flight
+ * finding 5) — the same pattern {@code ResilienceModule} uses.
  *
  * <p>Includes {@code ContextRuntimeModule} (mirroring {@code CacheCoreModule}) so the default
  * {@link RateLimitSubjectResolver} — {@link DefaultRateLimitSubjectResolver} — has a bound {@code
@@ -51,6 +57,22 @@ public abstract class RateLimitCoreModule {
 
     private static final String DEFAULT_MODE = "defaultMode";
     private static final String MODE = "mode";
+    private static final String ENABLED = "enabled";
+    private static final String LOCAL = "local";
+    private static final String MAX_TRACKED_KEYS = "maxTrackedKeys";
+    private static final String CLEANUP_INTERVAL_MS = "cleanupIntervalMs";
+    private static final String POLICIES = "policies";
+
+    /**
+     * Pragmatic fallback when {@code rateLimit.local.maxTrackedKeys} is omitted. The config table
+     * (contracts/rate-limit-runtime.md) declares this path required with no default; rejecting an
+     * omitted/out-of-bounds value is config-validation's responsibility (T003's ownership, not this
+     * task's), so this class degrades gracefully instead of failing startup on an absent value.
+     */
+    private static final long DEFAULT_MAX_TRACKED_KEYS = 100_000L;
+
+    /** Same fallback rationale as {@link #DEFAULT_MAX_TRACKED_KEYS}, for {@code cleanupIntervalMs}. */
+    private static final long DEFAULT_CLEANUP_INTERVAL_MS = 60_000L;
 
     /** Prevents direct construction of the static binding module. */
     private RateLimitCoreModule() {}
@@ -106,12 +128,57 @@ public abstract class RateLimitCoreModule {
                 RateLimitMode.valueOf(rateLimit.getString(DEFAULT_MODE, RateLimitMode.LOCAL.name()));
         String keyDerivationSecret =
                 JsonConfigPaths.navigateObject(rateLimit, "keyDerivation").getString("secret");
-        JsonObject policiesJson = withDefaultedMode(JsonConfigPaths.navigateObject(rateLimit, "policies"), defaultMode);
+        JsonObject policiesJson = withDefaultedMode(JsonConfigPaths.navigateObject(rateLimit, POLICIES), defaultMode);
         List<RateLimitPolicy> configPolicies = parser.parseKeyedObject(policiesJson, "name", RateLimitPolicy.class);
         Set<RateLimitPolicy> policies =
                 RateLimitPolicy.mergeConfigOverProgrammatic(Set.copyOf(configPolicies), contributedPolicies);
         RateLimitSubjectResolver subjectResolver = customSubjectResolver.orElse(defaultSubjectResolver);
-        return new RateLimiters(policies, backends, keyDerivationSecret, vertx, observers, subjectResolver);
+        boolean rateLimitEnabled = rateLimit.getBoolean(ENABLED, RateLimiters.DEFAULT_RATE_LIMIT_ENABLED);
+        return new RateLimiters(
+                policies, backends, keyDerivationSecret, vertx, observers, subjectResolver, rateLimitEnabled);
+    }
+
+    /**
+     * Contributes the runtime shutdown step to the host lifecycle, forcing {@link RateLimiters} to
+     * construct eagerly at bootstrap so its startup validation (§4.3) runs unconditionally — the
+     * same {@code @IntoSet ApplicationShutdownStep} pattern {@code ResilienceModule} uses.
+     *
+     * @param rateLimiters application-scoped rate-limit runtime
+     * @return lifecycle-owned shutdown step
+     */
+    @Provides
+    @IntoSet
+    static ApplicationShutdownStep rateLimitersShutdownStep(RateLimiters rateLimiters) {
+        return new RateLimitersShutdownStep(rateLimiters);
+    }
+
+    private static final class RateLimitersShutdownStep implements ApplicationShutdownStep {
+
+        private final RateLimiters rateLimiters;
+
+        private RateLimitersShutdownStep(RateLimiters rateLimiters) {
+            this.rateLimiters = rateLimiters;
+        }
+
+        @Override
+        public LifecyclePhase phase() {
+            return LifecyclePhase.CONFIGURE;
+        }
+
+        @Override
+        public int priority() {
+            return Integer.MAX_VALUE;
+        }
+
+        @Override
+        public String orderKey() {
+            return RateLimitersShutdownStep.class.getName();
+        }
+
+        @Override
+        public Future<Void> stop() {
+            return rateLimiters.close();
+        }
     }
 
     /**
@@ -138,14 +205,31 @@ public abstract class RateLimitCoreModule {
     }
 
     /**
-     * Contributes the LOCAL Bucket4j backend.
+     * Contributes the LOCAL Bucket4j backend, resolving each policy's own bounded registry size
+     * lazily by name: {@code rateLimit.policies.<name>.local.maxTrackedKeys} when present, else the
+     * shared {@code rateLimit.local.maxTrackedKeys} default (contracts/rate-limit-runtime.md,
+     * "Local engine contract" — per-policy budget, never one shared pool).
      *
+     * @param config the raw {@code rateLimit.*} configuration section
      * @return the LOCAL {@link RateLimitBackend}
      */
     @Provides
     @IntoMap
     @RateLimitModeKey(RateLimitMode.LOCAL)
-    static RateLimitBackend localRateLimitBackend() {
-        return new LocalBucket4jRateLimitBackend();
+    static RateLimitBackend localRateLimitBackend(@VertxConfig JsonObject config) {
+        JsonObject rateLimit = JsonConfigPaths.navigateObject(config, "rateLimit");
+        JsonObject local = JsonConfigPaths.navigateObject(rateLimit, LOCAL);
+        long defaultMaxTrackedKeys = local.getLong(MAX_TRACKED_KEYS, DEFAULT_MAX_TRACKED_KEYS);
+        long cleanupIntervalMs = local.getLong(CLEANUP_INTERVAL_MS, DEFAULT_CLEANUP_INTERVAL_MS);
+        JsonObject policiesJson = JsonConfigPaths.navigateObject(rateLimit, POLICIES);
+        ToLongFunction<String> maxTrackedKeysResolver =
+                policyName -> maxTrackedKeysFor(policiesJson, policyName, defaultMaxTrackedKeys);
+        return new LocalBucket4jRateLimitBackend(maxTrackedKeysResolver, cleanupIntervalMs);
+    }
+
+    private static long maxTrackedKeysFor(JsonObject policiesJson, String policyName, long defaultValue) {
+        JsonObject policyJson = JsonConfigPaths.navigateObject(policiesJson, policyName);
+        JsonObject policyLocal = JsonConfigPaths.navigateObject(policyJson, LOCAL);
+        return policyLocal.getLong(MAX_TRACKED_KEYS, defaultValue);
     }
 }

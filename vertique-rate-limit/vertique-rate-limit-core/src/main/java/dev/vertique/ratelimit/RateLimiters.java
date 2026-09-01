@@ -7,6 +7,7 @@ import dev.vertique.ratelimit.spi.RateLimitAdapterSupport;
 import dev.vertique.ratelimit.spi.RateLimitBackend;
 import dev.vertique.ratelimit.spi.RateLimitObserver;
 import dev.vertique.ratelimit.spi.RateLimitSubjectResolver;
+import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import jakarta.inject.Singleton;
 import java.nio.charset.StandardCharsets;
@@ -26,18 +27,20 @@ import java.util.function.Function;
  * Single injected runtime entry point: one instance per application graph, no static registry
  * (D013, contracts/rate-limit-runtime.md "Exact API shape").
  *
- * <p>This task's shape is a subset of the exact contract API: the two {@code limiter(...)}
- * overloads and {@link #adapterSupport()} exist here; {@code close()} is a later task's artifact
- * (contracts/rate-limit-runtime.md, "Exact API shape").
- *
  * <p>The constructor eagerly walks every declared policy against the bound backend map and fails
  * fast, before any handle is requested, on: a duplicate policy name, an enabled policy whose mode
  * has no bound backend, a missing {@code keyDerivation.secret} when any enabled policy is {@code
  * CLUSTERED}, and a resolved secret shorter than 32 bytes (UTF-8) under the same condition
  * (contracts/rate-limit-runtime.md, "Startup validation"; D013 — the same eager-construction
- * precedent {@code ResilienceModule} follows). T004 wires the {@code @IntoSet
- * ApplicationShutdownStep} that forces this constructor to run unconditionally at bootstrap; this
- * validation is independently provable by direct construction, as this task's tests do.
+ * precedent {@code ResilienceModule} follows). {@code RateLimitCoreModule}'s {@code @IntoSet
+ * ApplicationShutdownStep} forces this constructor to run unconditionally at bootstrap; this
+ * validation is also independently provable by direct construction, as {@code
+ * RateLimitersEagerValidationTest} does.
+ *
+ * <p>{@link #close()} is idempotent under concurrent shutdown: every caller observes the same
+ * terminal future, and any in-flight {@code execute(...)} across every handle this runtime has
+ * resolved is fenced (force-failed) at that same moment, mirroring {@code Resilience}'s close
+ * idiom.
  */
 @Singleton
 public final class RateLimiters {
@@ -54,12 +57,21 @@ public final class RateLimiters {
      */
     private static final RateLimitSubjectResolver ANONYMOUS_SUBJECT_RESOLVER = Optional::empty;
 
+    /**
+     * {@code rateLimit.enabled}'s config default (contracts/rate-limit-runtime.md, "Configuration").
+     * The single source of truth for this default; {@code RateLimitCoreModule} resolves the
+     * configured value against this same constant rather than redeclaring it.
+     */
+    public static final boolean DEFAULT_RATE_LIMIT_ENABLED = true;
+
     private final Map<String, RateLimitPolicy> policiesByName;
     private final Map<RateLimitMode, RateLimitBackend> backends;
     private final Vertx vertx;
     private final Set<RateLimitObserver> observers;
+    private final boolean rateLimitEnabled;
     private final ConcurrentMap<String, RateLimiter> limiters = new ConcurrentHashMap<>();
     private final RateLimitAdapterSupport adapterSupport;
+    private final RateLimiterLifecycle lifecycle = new RateLimiterLifecycle();
 
     /**
      * @param policies every declared policy, already resolved to one flat set (see
@@ -85,6 +97,8 @@ public final class RateLimiters {
     /**
      * Full constructor, additionally threading the resolved (default-or-custom) {@link
      * RateLimitSubjectResolver} that {@link #adapterSupport()}'s handle uses for identity framing.
+     * {@code rateLimit.enabled} defaults to {@code true} (contracts/rate-limit-runtime.md,
+     * "Configuration"); use the seven-argument constructor to override it explicitly.
      *
      * @param policies every declared policy, already resolved to one flat set (see
      *     {@link RateLimitPolicy#mergeConfigOverProgrammatic})
@@ -106,12 +120,44 @@ public final class RateLimiters {
             Vertx vertx,
             Set<RateLimitObserver> observers,
             RateLimitSubjectResolver subjectResolver) {
+        this(policies, backends, keyDerivationSecret, vertx, observers, subjectResolver, DEFAULT_RATE_LIMIT_ENABLED);
+    }
+
+    /**
+     * Full constructor, additionally threading the resolved {@code rateLimit.enabled} root kill
+     * switch: when {@code false}, every {@code acquire(...)} across every handle this runtime
+     * resolves yields a {@code DISABLED} decision without engaging any backend
+     * (contracts/rate-limit-runtime.md, "Configuration" — {@code rateLimit.enabled}).
+     *
+     * @param policies every declared policy, already resolved to one flat set (see
+     *     {@link RateLimitPolicy#mergeConfigOverProgrammatic})
+     * @param backends the bound backend provider map
+     * @param keyDerivationSecret the resolved {@code rateLimit.keyDerivation.secret}, or {@code
+     *     null}/blank when not configured
+     * @param vertx application Vert.x instance
+     * @param observers every bound {@link RateLimitObserver}, dispatched synchronously and
+     *     per-observer exception-isolated at every completed decision
+     * @param subjectResolver the resolved subject resolver {@link #adapterSupport()} frames
+     *     identity components through
+     * @param rateLimitEnabled the resolved {@code rateLimit.enabled} root kill switch
+     * @throws IllegalStateException per the eager startup-validation matrix documented on this
+     *     class
+     */
+    public RateLimiters(
+            Set<RateLimitPolicy> policies,
+            Map<RateLimitMode, RateLimitBackend> backends,
+            String keyDerivationSecret,
+            Vertx vertx,
+            Set<RateLimitObserver> observers,
+            RateLimitSubjectResolver subjectResolver,
+            boolean rateLimitEnabled) {
         Objects.requireNonNull(policies, "policies");
         this.policiesByName = indexByName(policies);
         this.backends = Map.copyOf(Objects.requireNonNull(backends, "backends"));
         this.vertx = Objects.requireNonNull(vertx, "vertx");
         this.observers =
                 Collections.unmodifiableSet(new LinkedHashSet<>(Objects.requireNonNull(observers, "observers")));
+        this.rateLimitEnabled = rateLimitEnabled;
         validateBackendCoverage(this.policiesByName.values(), this.backends);
         validateClusteredSecret(this.policiesByName.values(), keyDerivationSecret);
         this.adapterSupport =
@@ -197,6 +243,18 @@ public final class RateLimiters {
         return adapterSupport;
     }
 
+    /**
+     * Closes this runtime, fencing every in-flight {@code execute(...)} across every handle this
+     * runtime has resolved. Idempotent under concurrent shutdown: every caller, including {@code
+     * RateLimitCoreModule}'s {@code @IntoSet ApplicationShutdownStep} contribution, observes the
+     * exact same terminal future.
+     *
+     * @return the shared close future
+     */
+    public Future<Void> close() {
+        return lifecycle.close();
+    }
+
     private RateLimitPolicy requirePolicy(String policyName) {
         Objects.requireNonNull(policyName, "policyName");
         RateLimitPolicy policy = policiesByName.get(policyName);
@@ -211,6 +269,6 @@ public final class RateLimiters {
         if (backend == null) {
             throw new IllegalStateException("No RateLimitBackend bound for mode " + policy.mode());
         }
-        return new RateLimiter(policy, backend, vertx, observers);
+        return new RateLimiter(policy, backend, vertx, observers, rateLimitEnabled, lifecycle);
     }
 }
