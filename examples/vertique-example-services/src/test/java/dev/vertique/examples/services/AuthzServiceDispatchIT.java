@@ -102,7 +102,16 @@ public class AuthzServiceDispatchIT {
     static final VertiqueAppExtension app = VertiqueAppExtension.forFactory(new AppComponentVertiqueComponentFactory())
             .withConfig(new JsonObject()
                     .put("http", new JsonObject().put("port", 0).put("host", "127.0.0.1"))
-                    .put("management", new JsonObject().put("enabled", false)));
+                    .put("management", new JsonObject().put("enabled", false))
+                    .put(
+                            "rateLimit",
+                            new JsonObject()
+                                    .put(
+                                            "policies",
+                                            new JsonObject()
+                                                    .put(
+                                                            "rate-limit-probe-shared",
+                                                            RateLimitTestPolicies.probeShared()))));
 
     /** Isolates each scenario's event/invocation assertions. */
     @BeforeEach

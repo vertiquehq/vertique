@@ -4,9 +4,6 @@
 package dev.vertique.examples.hello.resource;
 
 import dagger.Module;
-import dagger.Provides;
-import dagger.multibindings.IntoSet;
-import jakarta.ws.rs.ext.ExceptionMapper;
 
 /**
  * Dagger module for JAX-RS extension bindings in the example-hello application.
@@ -16,22 +13,11 @@ import jakarta.ws.rs.ext.ExceptionMapper;
  * {@code GeneratedJaxRsResourcesModule}, which is wired into {@link
  * dev.vertique.examples.hello.AppComponent} instead.
  *
- * <p>This module retains non-resource bindings such as {@link ExceptionMapper} contributions.
+ * <p>Retained as an explicit extension point for non-resource JAX-RS bindings; it currently
+ * contributes none. The prototype {@code GreetingLimitExceptionMapper} binding this module used to
+ * hold was retired (T013): {@code HelloResource#greetLimited} now carries {@code @RateLimited} and
+ * relies entirely on {@code RestRateLimitModule}'s own {@code 429}/{@code 503} exception mappers
+ * (installed on {@link dev.vertique.examples.hello.AppComponent}), never a hand-rolled mapper.
  */
 @Module
-public class ResourceModule {
-
-    /**
-     * Contributes the {@link GreetingLimitExceptionMapper} to the {@code Set<ExceptionMapper<?>>}
-     * multibinding so the framework registers it in the
-     * {@link dev.vertique.rest.jaxrs.ExceptionMapperRegistry}.
-     *
-     * @param mapper the mapper instance provided by Dagger
-     * @return the mapper as a typed {@link ExceptionMapper} for the multibinding set
-     */
-    @Provides
-    @IntoSet
-    ExceptionMapper<?> greetingLimitExceptionMapper(GreetingLimitExceptionMapper mapper) {
-        return mapper;
-    }
-}
+public class ResourceModule {}

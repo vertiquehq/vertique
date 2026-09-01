@@ -4,6 +4,8 @@
 package dev.vertique.examples.hello.resource;
 
 import dev.vertique.examples.hello.HelloConfig;
+import dev.vertique.ratelimit.aop.RateLimited;
+import dev.vertique.ratelimit.spi.RateLimitSubject;
 import dev.vertique.rest.core.security.Authorized;
 import dev.vertique.security.SecurityContext;
 import io.swagger.v3.oas.annotations.Operation;
@@ -155,26 +157,34 @@ public class HelloResource {
         return Future.succeededFuture(new GreetingResponse(String.format(config.hello(), name)));
     }
 
+    /**
+     * Rate-limited greeting, admitted through the real runtime via the generated {@code $AopProxy}
+     * Dagger substitution (plan.md Pre-flight finding 1): {@code @RateLimited} resolves the {@code
+     * hello-limited} policy handle at proxy-construction time and calls {@code
+     * RateLimiter#execute(...)} at invocation time, so a quota denial surfaces as {@code
+     * RateLimitExceededException}, mapped to {@code 429} by {@code RestRateLimitModule}'s exception
+     * mapper (contracts/rest-adapter.md) — never a hand-rolled response.
+     *
+     * @param name the name to greet
+     * @return a future completing with the greeting, or failing with {@code
+     *     RateLimitExceededException} once the shared quota for this endpoint is exhausted
+     */
     @GET
     @Path("/limited/{name}")
     @Produces(MediaType.APPLICATION_JSON)
+    @RateLimited(policy = "hello-limited", subject = RateLimitSubject.NONE)
     @Operation(
             operationId = "greetLimited",
-            summary = "Greet with a length limit",
-            description = "Returns a greeting, or 429 if the name exceeds 5 characters")
+            summary = "Rate-limited greeting",
+            description = "Returns a greeting, or 429 once the endpoint's shared quota is exhausted")
     @ApiResponse(
             responseCode = "200",
             description = "Greeting returned",
             content =
                     @Content(mediaType = "application/json", schema = @Schema(implementation = GreetingResponse.class)))
-    @ApiResponse(responseCode = "429", description = "Greeting limit exceeded")
+    @ApiResponse(responseCode = "429", description = "Rate limit exceeded")
     public Future<GreetingResponse> greetLimited(
-            @Parameter(description = "Name to greet (max 5 characters)", required = true) @PathParam("name")
-                    String name) {
-        int limit = 5;
-        if (name.length() > limit) {
-            throw new GreetingLimitExceededException(limit);
-        }
+            @Parameter(description = "Name to greet", required = true) @PathParam("name") String name) {
         return Future.succeededFuture(new GreetingResponse(String.format(config.hello(), name)));
     }
 

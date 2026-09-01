@@ -29,7 +29,17 @@ public class HelloResourceIT {
                     .put("http", new JsonObject().put("port", 0).put("host", "127.0.0.1"))
                     .put("hello", "Hello, %s!")
                     .put("management", new JsonObject().put("enabled", false))
-                    .put("jaxrs", new JsonObject().put("validationStrategy", "openapi-contract")));
+                    .put("jaxrs", new JsonObject().put("validationStrategy", "openapi-contract"))
+                    // greetLimited() carries @RateLimited (T013); the aspect resolves its policy
+                    // handle at proxy-construction time, so every app boot in this module must
+                    // declare it, whether or not a test exercises the endpoint.
+                    .put(
+                            "rateLimit",
+                            new JsonObject()
+                                    .put(
+                                            "policies",
+                                            new JsonObject()
+                                                    .put("hello-limited", RateLimitTestPolicies.helloLimited()))));
 
     @BeforeAll
     static void setUp() {
@@ -120,28 +130,8 @@ public class HelloResourceIT {
                 .body("title", equalTo("Not Found"));
     }
 
-    @Test
-    @DisplayName("GET /hello/limited/Ada returns greeting when name is within limit")
-    void greetLimited() {
-        given().when()
-                .get("/hello/limited/Ada")
-                .then()
-                .statusCode(200)
-                .contentType("application/json")
-                .body("message", equalTo("Hello, Ada!"));
-    }
-
-    @Test
-    @DisplayName("GET /hello/limited/Alexander returns 429 with custom Problem Detail")
-    void greetLimitedExceeded() {
-        given().when()
-                .get("/hello/limited/Alexander")
-                .then()
-                .statusCode(429)
-                .contentType("application/problem+json")
-                .body("status", equalTo(429))
-                .body("title", equalTo("Greeting Limit Exceeded"))
-                .body("type", equalTo("https://example.com/problems/greeting-limit-exceeded"))
-                .body("limit", equalTo(5));
-    }
+    // NOTE: the /hello/limited/{name} endpoint's rate-limiting behavior (admit-then-429) is
+    // retired from a hand-rolled name-length check (T013) in favor of a real @RateLimited quota,
+    // proven end to end by the dedicated RateLimitedGreetingIT — including the 429/Retry-After/
+    // Cache-Control contract, which no longer depends on the requested name.
 }
