@@ -16,8 +16,10 @@ import dev.vertique.examples.services.security.AuthzEventCollector;
 import dev.vertique.examples.services.service.GeneratedAopModule;
 import dev.vertique.examples.services.service.GeneratedServicesModule;
 import dev.vertique.management.ManagementModule;
+import dev.vertique.ratelimit.aop.RateLimitAopModule;
 import dev.vertique.rest.auth.jwt.JwtAuthModule;
 import dev.vertique.rest.jaxrs.RestModule;
+import dev.vertique.rest.ratelimit.RestRateLimitModule;
 import dev.vertique.rest.validation.RestValidationModule;
 import dev.vertique.security.runtime.authz.SecurityAuthzModule;
 import dev.vertique.security.runtime.events.SecurityEventsModule;
@@ -71,6 +73,12 @@ import jakarta.inject.Singleton;
  *       {@link dev.vertique.security.events.SecurityEventObserver} for the
  *       {@code @RequiresAction} dispatch proof
  *       ({@link dev.vertique.examples.services.service.AuthzProbeService})</li>
+ *   <li>{@link RateLimitAopModule} — {@code @RateLimited} aspect binding</li>
+ *   <li>{@link RestRateLimitModule} — the rate-limit runtime plus the {@code 429}/{@code 503}
+ *       exception mappers, shared by {@link
+ *       dev.vertique.examples.services.resource.RateLimitProbeResource}'s programmatic path and
+ *       {@link dev.vertique.examples.services.service.RateLimitProbeServiceHandler}'s annotated
+ *       path (T013, transport-neutrality proof)</li>
  * </ul>
  *
  * <p>{@link SecurityAuthzModule} (authorization engine only) and
@@ -99,7 +107,9 @@ import jakarta.inject.Singleton;
             JwtAuthModule.class,
             SecurityAuthzModule.class,
             SecurityEventsModule.class,
-            AuthzModule.class
+            AuthzModule.class,
+            RateLimitAopModule.class,
+            RestRateLimitModule.class
         })
 interface AppComponent extends VertiqueApplicationComponent {
 

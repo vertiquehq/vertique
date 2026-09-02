@@ -10,12 +10,15 @@ import dev.vertique.config.parser.ConfigParsingModule;
 import dev.vertique.core.VertxModule;
 import dev.vertique.core.lifecycle.CoreLifecycleStepsModule;
 import dev.vertique.deploy.DeployerModule;
+import dev.vertique.examples.hello.resource.GeneratedAopModule;
 import dev.vertique.examples.hello.resource.GeneratedJaxRsResourcesModule;
 import dev.vertique.examples.hello.resource.ResourceModule;
 import dev.vertique.management.ManagementModule;
+import dev.vertique.ratelimit.aop.RateLimitAopModule;
 import dev.vertique.rest.auth.jwt.JwtAuthModule;
 import dev.vertique.rest.jaxrs.RestModule;
 import dev.vertique.rest.openapi.validation.OpenApiContractValidationModule;
+import dev.vertique.rest.ratelimit.RestRateLimitModule;
 import dev.vertique.rest.security.VertxAuthorizationImportModule;
 import dev.vertique.rest.validation.RestValidationModule;
 import dev.vertique.security.runtime.authz.SecurityAuthzModule;
@@ -56,7 +59,15 @@ import jakarta.inject.Singleton;
  *   <li>{@link AppModule} — Application-specific configuration and verticle deployments</li>
  *   <li>{@code GeneratedJaxRsResourcesModule} — auto-generated JAX-RS resource registration
  *       (emitted by {@code vertique-codegen-dagger} AutoWireProcessor)</li>
- *   <li>{@link ResourceModule} — non-resource JAX-RS extension bindings (e.g., exception mappers)</li>
+ *   <li>{@link ResourceModule} — non-resource JAX-RS extension bindings</li>
+ *   <li>{@link RateLimitAopModule} — {@code @RateLimited} aspect binding</li>
+ *   <li>{@link RestRateLimitModule} — the rate-limit runtime plus the {@code 429}/{@code 503}
+ *       exception mappers for {@code HelloResource#greetLimited} (T013)</li>
+ *   <li>{@code GeneratedAopModule} — auto-generated {@code $AopProxy} substitution for {@link
+ *       dev.vertique.examples.hello.resource.HelloResource} (emitted by {@code
+ *       vertique-codegen-aop} once any method carries an {@code @Aspect}-family annotation such as
+ *       {@code @RateLimited}; plan.md Pre-flight finding 1 — reached only through {@code
+ *       Provider.get()})</li>
  * </ul>
  */
 @VertiqueApp
@@ -76,6 +87,9 @@ import jakarta.inject.Singleton;
             SecurityAuthzModule.class,
             AppModule.class,
             ResourceModule.class,
-            GeneratedJaxRsResourcesModule.class
+            GeneratedJaxRsResourcesModule.class,
+            RateLimitAopModule.class,
+            RestRateLimitModule.class,
+            GeneratedAopModule.class
         })
 interface AppComponent extends VertiqueApplicationComponent {}

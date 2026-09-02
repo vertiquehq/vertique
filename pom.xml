@@ -68,6 +68,7 @@ SPDX-License-Identifier: EUPL-1.2
         <module>vertique-db</module>
         <module>vertique-redis</module>
         <module>vertique-cache</module>
+        <module>vertique-rate-limit</module>
         <module>vertique-job</module>
         <module>vertique-deploy</module>
         <module>vertique-application</module>
@@ -130,6 +131,9 @@ SPDX-License-Identifier: EUPL-1.2
         <logback.version>1.5.34</logback.version>
         <slf4j.version>2.0.17</slf4j.version>
         <caffeine.version>3.2.4</caffeine.version>
+        <!-- Bucket4j is rate-limit-core's private local/cluster engine (contracts/rate-limit-runtime.md
+             "Boundary"): no com.bucket4j type may appear in a public signature. -->
+        <bucket4j.version>8.19.0</bucket4j.version>
 
         <!-- Test -->
         <junit.jupiter.version>5.14.4</junit.jupiter.version>
@@ -405,6 +409,21 @@ SPDX-License-Identifier: EUPL-1.2
             </dependency>
             <dependency>
                 <groupId>dev.vertique</groupId>
+                <artifactId>vertique-rest-rate-limit</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-micrometer-rate-limit</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-opentelemetry-rate-limit</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
                 <artifactId>vertique-logging</artifactId>
                 <version>${project.version}</version>
             </dependency>
@@ -476,6 +495,21 @@ SPDX-License-Identifier: EUPL-1.2
             <dependency>
                 <groupId>dev.vertique</groupId>
                 <artifactId>vertique-cache-redis</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-rate-limit-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-rate-limit-aop</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-rate-limit-redis</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
@@ -616,6 +650,11 @@ SPDX-License-Identifier: EUPL-1.2
             <dependency>
                 <groupId>dev.vertique</groupId>
                 <artifactId>vertique-codegen-cache</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-codegen-rate-limit</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

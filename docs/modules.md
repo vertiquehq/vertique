@@ -27,6 +27,7 @@ SPDX-License-Identifier: EUPL-1.2
 | `vertique-codegen-jaxrs` | [module.md](../vertique-codegen/vertique-codegen-jaxrs/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-codegen-kafka` | [module.md](../vertique-codegen/vertique-codegen-kafka/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-codegen-mcp` | [module.md](../vertique-codegen/vertique-codegen-mcp/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-codegen-rate-limit` | [module.md](../vertique-codegen/vertique-codegen-rate-limit/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-codegen-rest-client` | [module.md](../vertique-codegen/vertique-codegen-rest-client/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-codegen-sanitization` | [module.md](../vertique-codegen/vertique-codegen-sanitization/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-codegen-services` | [module.md](../vertique-codegen/vertique-codegen-services/src/main/resources/META-INF/vertique/module.md) |
@@ -71,6 +72,7 @@ SPDX-License-Identifier: EUPL-1.2
 | `vertique-micrometer-cache` | [module.md](../vertique-micrometer/vertique-micrometer-cache/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-micrometer-core` | [module.md](../vertique-micrometer/vertique-micrometer-core/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-micrometer-mcp` | [module.md](../vertique-micrometer/vertique-micrometer-mcp/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-micrometer-rate-limit` | [module.md](../vertique-micrometer/vertique-micrometer-rate-limit/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-micrometer-registry-prometheus` | [module.md](../vertique-micrometer/vertique-micrometer-registry-prometheus/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-micrometer-rest` | [module.md](../vertique-micrometer/vertique-micrometer-rest/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-micrometer-resilience` | [module.md](../vertique-micrometer/vertique-micrometer-resilience/src/main/resources/META-INF/vertique/module.md) |
@@ -79,8 +81,12 @@ SPDX-License-Identifier: EUPL-1.2
 | `vertique-opentelemetry-core` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-core/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-opentelemetry-mcp` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-mcp/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-opentelemetry-prometheus` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-prometheus/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-opentelemetry-rate-limit` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-rate-limit/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-opentelemetry-rest` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-rest/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-opentelemetry-services` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-services/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-rate-limit-aop` | [module.md](../vertique-rate-limit/vertique-rate-limit-aop/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-rate-limit-core` | [module.md](../vertique-rate-limit/vertique-rate-limit-core/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-rate-limit-redis` | [module.md](../vertique-rate-limit/vertique-rate-limit-redis/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-redis-core` | [module.md](../vertique-redis/vertique-redis-core/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-resilience` | [module.md](../vertique-resilience/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-rest-auth-jwt` | [module.md](../vertique-rest/vertique-rest-auth-jwt/src/main/resources/META-INF/vertique/module.md) |
@@ -90,6 +96,7 @@ SPDX-License-Identifier: EUPL-1.2
 | `vertique-rest-localization` | [module.md](../vertique-rest/vertique-rest-localization/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-rest-openapi-plugin` | [module.md](../vertique-rest/vertique-rest-openapi-plugin/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-rest-openapi-validation` | [module.md](../vertique-rest/vertique-rest-openapi-validation/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-rest-rate-limit` | [module.md](../vertique-rest/vertique-rest-rate-limit/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-rest-security` | [module.md](../vertique-rest/vertique-rest-security/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-rest-test` | [module.md](../vertique-rest/vertique-rest-test/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-rest-validation` | [module.md](../vertique-rest/vertique-rest-validation/src/main/resources/META-INF/vertique/module.md) |

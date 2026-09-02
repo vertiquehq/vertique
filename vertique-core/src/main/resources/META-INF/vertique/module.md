@@ -1028,6 +1028,12 @@ VertiqueException (RuntimeException)
 ├── ConfigurationException                  — startup/wiring/contract error
 ├── TechnicalException                      — runtime/infrastructure failure
 │   └── UnavailableException                — capability currently unavailable
+├── TooManyRequestsException                — rate/quota limit exceeded (429 analogue of
+│                                              UnavailableException's 503 role) — extends
+│                                              VertiqueException directly, never ValidationException/
+│                                              BusinessRuleException, so an application's own
+│                                              ExceptionMapper<ValidationException> can never
+│                                              out-rank the 429 default
 └── VertiqueSecurityException               — grouping root for the security family
     ├── UnauthorizedException               — authentication required or credential invalid
     └── ForbiddenException                  — authenticated but not authorized
@@ -1049,6 +1055,7 @@ The default mapper in `dev.vertique:vertique-rest-jaxrs` registers these core ty
 | `ForbiddenException` | 403 |
 | `NotFoundException` | 404 |
 | `ConflictException` | 409 |
+| `TooManyRequestsException` | 429 |
 | `UnavailableException` | 503 |
 | `Throwable` (fallback) | 500 |
 

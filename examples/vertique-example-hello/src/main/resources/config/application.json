@@ -2,5 +2,25 @@
   "jaxrs": {
     "validationStrategy": "openapi-contract",
     "openapiPath": "openapi.json"
+  },
+  "rateLimit": {
+    "policies": {
+      "hello-limited": {
+        "enabled": true,
+        "mode": "LOCAL",
+        "failureMode": "OPEN",
+        "revision": "v1",
+        "defaultCost": 1,
+        "algorithm": {
+          "type": "TOKEN_BUCKET",
+          "capacity": 2,
+          "refill": {
+            "type": "GREEDY",
+            "tokens": 2,
+            "periodMs": 3600000
+          }
+        }
+      }
+    }
   }
 }

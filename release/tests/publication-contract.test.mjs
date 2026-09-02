@@ -175,7 +175,7 @@ describe('PublicPublicationInventoryTest', () => {
 
     // The derived allowlist is exactly the declared inventory.
     assert.equal(inventory.published.length, policy.expectedPublishableGavCount);
-    assert.equal(inventory.published.length, 111);
+    assert.equal(inventory.published.length, 118);
     for (const fixed of ['vertique-parent', 'vertique-app-parent', 'vertique-bom']) {
       assert.ok(publishedIds.includes(fixed), `${fixed} must be published`);
     }

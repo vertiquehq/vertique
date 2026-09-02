@@ -1,0 +1,91 @@
+// SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+// SPDX-License-Identifier: EUPL-1.2
+
+package dev.vertique.ratelimit;
+
+import dev.vertique.ratelimit.spi.RateLimitBackend;
+import dev.vertique.ratelimit.spi.RateLimitBackendRequest;
+import dev.vertique.ratelimit.spi.RateLimitBackendResult;
+import dev.vertique.ratelimit.spi.RateLimitObserver;
+import dev.vertique.ratelimit.spi.RateLimitSubjectResolver;
+import io.vertx.core.Future;
+import io.vertx.core.Vertx;
+import java.time.Duration;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicLong;
+
+/**
+ * Constructs a real {@link RateLimiters} directly (no Dagger, no Bucket4j), bound to one LOCAL
+ * counting fixture backend. Keeps {@link RateLimiters}/{@link RateLimiter}/{@link
+ * KeyedRateLimiter} wiring under real test while the local Bucket4j engine itself stays covered
+ * by {@link RateLimitersLocalWalkingSkeletonIT}.
+ */
+final class RateLimitersUnitFixtures {
+
+    /** Always reports no identity present — these fixtures never exercise subject resolution. */
+    private static final RateLimitSubjectResolver ANONYMOUS_SUBJECT_RESOLVER = Optional::empty;
+
+    private RateLimitersUnitFixtures() {}
+
+    static RateLimiters withPolicies(Vertx vertx, RateLimitPolicy... policies) {
+        return withBackend(vertx, new CountingLocalBackend(), policies);
+    }
+
+    /** Same wiring as {@link #withPolicies}, but over a caller-supplied LOCAL backend. */
+    static RateLimiters withBackend(Vertx vertx, RateLimitBackend backend, RateLimitPolicy... policies) {
+        return withBackend(vertx, backend, Set.of(), policies);
+    }
+
+    /** Same wiring as {@link #withBackend(Vertx, RateLimitBackend, RateLimitPolicy...)}, plus bound observers. */
+    static RateLimiters withBackend(
+            Vertx vertx, RateLimitBackend backend, Set<RateLimitObserver> observers, RateLimitPolicy... policies) {
+        return build(vertx, backend, observers, true, policies);
+    }
+
+    /** Same wiring as {@link #withBackend(Vertx, RateLimitBackend, RateLimitPolicy...)}, but with the {@code rateLimit.enabled} kill switch off. */
+    static RateLimiters disabled(Vertx vertx, RateLimitBackend backend, RateLimitPolicy... policies) {
+        return disabled(vertx, backend, Set.of(), policies);
+    }
+
+    /** Same wiring as {@link #disabled(Vertx, RateLimitBackend, RateLimitPolicy...)}, plus bound observers. */
+    static RateLimiters disabled(
+            Vertx vertx, RateLimitBackend backend, Set<RateLimitObserver> observers, RateLimitPolicy... policies) {
+        return build(vertx, backend, observers, false, policies);
+    }
+
+    private static RateLimiters build(
+            Vertx vertx,
+            RateLimitBackend backend,
+            Set<RateLimitObserver> observers,
+            boolean rateLimitEnabled,
+            RateLimitPolicy... policies) {
+        Map<RateLimitMode, RateLimitBackend> backends = Map.of(RateLimitMode.LOCAL, backend);
+        return new RateLimiters(
+                Set.of(policies), backends, null, vertx, observers, ANONYMOUS_SUBJECT_RESOLVER, rateLimitEnabled);
+    }
+
+    /** Admits while cumulative consumption per storage key stays within the request's capacity. */
+    private static final class CountingLocalBackend implements RateLimitBackend {
+        private final ConcurrentMap<String, AtomicLong> consumedByKey = new ConcurrentHashMap<>();
+
+        @Override
+        public Future<RateLimitBackendResult> consume(RateLimitBackendRequest request) {
+            long capacity = request.algorithm().capacity();
+            AtomicLong consumed = consumedByKey.computeIfAbsent(request.storageKey(), ignored -> new AtomicLong());
+            long updated = consumed.addAndGet(request.cost());
+            boolean admitted = updated <= capacity;
+            if (!admitted) {
+                // Rejected consumption never changes state.
+                consumed.addAndGet(-request.cost());
+            }
+            long remaining = Math.max(0, capacity - consumed.get());
+            Optional<Duration> retryAfter = admitted ? Optional.empty() : Optional.of(Duration.ofMillis(1));
+            return Future.succeededFuture(
+                    new RateLimitBackendResult(admitted, remaining, retryAfter, Optional.empty(), Optional.empty()));
+        }
+    }
+}

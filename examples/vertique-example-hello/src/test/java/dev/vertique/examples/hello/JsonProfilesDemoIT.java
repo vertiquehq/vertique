@@ -55,7 +55,14 @@ class JsonProfilesDemoIT {
                     .put("http", new JsonObject().put("port", 0).put("host", "127.0.0.1"))
                     .put("hello", "Hello, %s!")
                     .put("management", new JsonObject().put("enabled", false))
-                    .put("jaxrs", new JsonObject().put("validationStrategy", "openapi-contract")));
+                    .put("jaxrs", new JsonObject().put("validationStrategy", "openapi-contract"))
+                    .put(
+                            "rateLimit",
+                            new JsonObject()
+                                    .put(
+                                            "policies",
+                                            new JsonObject()
+                                                    .put("hello-limited", RateLimitTestPolicies.helloLimited()))));
 
     @BeforeAll
     static void setUp() {

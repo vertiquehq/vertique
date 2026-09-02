@@ -4,10 +4,13 @@
 package dev.vertique.rest.jaxrs;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 import dev.vertique.core.exception.BusinessRuleException;
 import dev.vertique.core.exception.ConflictException;
+import dev.vertique.core.exception.TooManyRequestsException;
 import jakarta.ws.rs.core.Response;
+import java.time.Duration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -24,6 +27,11 @@ import org.junit.jupiter.api.Test;
  *   <li>{@link BusinessRuleException} and subclasses → 400 (via {@code ValidationException} parent)
  *   <li>{@code dev.vertique.core.exception.UnauthorizedException} and subclasses → 401
  *   <li>{@code dev.vertique.core.exception.ForbiddenException} and subclasses → 403
+ *   <li>{@link TooManyRequestsException} and subclasses → 429, with {@code Retry-After} when present
+ *       (T020) — registered explicitly at the {@code Throwable}-level default; {@link
+ *       TooManyRequestsException} extends {@code VertiqueException} directly (T021 W1), so no
+ *       inherited {@code BusinessRuleException}/{@code ValidationException} → 400 fallback can ever
+ *       apply to it
  * </ul>
  */
 class RestModuleDefaultMappingTest {
@@ -40,6 +48,13 @@ class RestModuleDefaultMappingTest {
     /** Concrete subclass of {@link BusinessRuleException} used to verify hierarchy walking. */
     private static final class QuotaExceededException extends BusinessRuleException {
         QuotaExceededException(String message) {
+            super(message);
+        }
+    }
+
+    /** Concrete subclass of {@link TooManyRequestsException} used to verify hierarchy walking. */
+    private static final class CustomTooManyRequestsException extends TooManyRequestsException {
+        CustomTooManyRequestsException(String message) {
             super(message);
         }
     }
@@ -152,5 +167,38 @@ class RestModuleDefaultMappingTest {
         Response response = mapper.toResponse(new InsufficientRoleException("requires admin role"));
 
         assertEquals(403, response.getStatus());
+    }
+
+    @Test
+    @DisplayName("TooManyRequestsException should map to 429 Too Many Requests with no Retry-After when absent")
+    void tooManyRequestsExceptionShouldMapTo429WithoutRetryAfter() {
+        DefaultExceptionMapper mapper = RestModule.defaultExceptionMapper();
+
+        Response response = mapper.toResponse(new TooManyRequestsException("slow down"));
+
+        assertEquals(429, response.getStatus());
+        assertNull(response.getHeaderString("Retry-After"));
+    }
+
+    @Test
+    @DisplayName("TooManyRequestsException should map to 429 Too Many Requests with Retry-After when present")
+    void tooManyRequestsExceptionShouldMapTo429WithRetryAfter() {
+        DefaultExceptionMapper mapper = RestModule.defaultExceptionMapper();
+
+        Response response = mapper.toResponse(new TooManyRequestsException("slow down", Duration.ofSeconds(7)));
+
+        assertEquals(429, response.getStatus());
+        assertEquals("7", response.getHeaderString("Retry-After"));
+    }
+
+    @Test
+    @DisplayName("TooManyRequestsException subclass should map to 429 via hierarchy walking, never the "
+            + "ValidationException/BusinessRuleException 400 fallback (T021 W1 — no longer a shared ancestor)")
+    void tooManyRequestsExceptionSubclassShouldMapTo429() {
+        DefaultExceptionMapper mapper = RestModule.defaultExceptionMapper();
+
+        Response response = mapper.toResponse(new CustomTooManyRequestsException("quota exceeded"));
+
+        assertEquals(429, response.getStatus());
     }
 }

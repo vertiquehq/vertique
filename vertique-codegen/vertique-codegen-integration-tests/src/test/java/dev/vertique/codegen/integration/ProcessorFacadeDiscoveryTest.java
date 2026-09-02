@@ -57,7 +57,9 @@ class ProcessorFacadeDiscoveryTest {
             new FacadeLeaf("vertique-codegen-aop", "dev.vertique.codegen.aop.AopProcessor"),
             new FacadeLeaf("vertique-codegen-events", "dev.vertique.codegen.events.EventsProcessor"),
             new FacadeLeaf("vertique-codegen-mcp", "dev.vertique.codegen.mcp.McpToolProcessor"),
-            new FacadeLeaf("vertique-codegen-cache", "dev.vertique.codegen.cache.CacheAnnotationProcessor"));
+            new FacadeLeaf("vertique-codegen-cache", "dev.vertique.codegen.cache.CacheAnnotationProcessor"),
+            new FacadeLeaf(
+                    "vertique-codegen-rate-limit", "dev.vertique.codegen.ratelimit.RateLimitAnnotationProcessor"));
 
     @Test
     void facadePomDeclaresExactlyFrozenLeaves() throws Exception {

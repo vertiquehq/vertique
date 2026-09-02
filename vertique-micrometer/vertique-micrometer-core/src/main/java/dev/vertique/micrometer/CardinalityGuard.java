@@ -83,7 +83,11 @@ final class CardinalityGuard {
             "circuit",
             "from",
             "to",
-            "mode");
+            "mode",
+            // The rate-limit metrics observer emits two derived keys this list must admit: the
+            // operator-declared policy name and the bounded backend-failure code.
+            "policy",
+            "code");
 
     /** Prevent instantiation — this class is a static factory only. */
     private CardinalityGuard() {}
