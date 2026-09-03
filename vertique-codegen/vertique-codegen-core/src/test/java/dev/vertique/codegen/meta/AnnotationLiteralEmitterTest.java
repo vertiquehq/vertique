@@ -14,14 +14,12 @@ import static org.mockito.Mockito.when;
 
 import com.palantir.javapoet.ClassName;
 import com.palantir.javapoet.JavaFile;
-import dev.vertique.codegen.meta.AnnotationLiteralEmitter.UnsupportedAttribute;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Optional;
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.AnnotationValue;
-import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ElementVisitor;
 import javax.lang.model.element.ExecutableElement;
@@ -30,8 +28,10 @@ import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.ArrayType;
 import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.PrimitiveType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
+import javax.lang.model.type.TypeVisitor;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 import org.junit.jupiter.api.DisplayName;
@@ -42,10 +42,11 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 /**
- * Unit tests for {@link AnnotationLiteralEmitter}'s rejection / backstop parity (P2R2-W2).
+ * Unit tests for {@link AnnotationLiteralEmitter}'s compatibility hook and literal rendering parity.
  *
- * <p>{@code firstUnsupportedAttribute} rejects unsupported primitive members before emission. Nested
- * annotation values are materialized recursively so repeatable annotation containers can be emitted.
+ * <p>{@code firstUnsupportedAttribute} is retained as an empty compatibility hook for the JAX-RS
+ * consumer. Nested annotation values are materialized recursively so repeatable annotation
+ * containers can be emitted.
  *
  * <p>Following the codegen-core convention (see {@code MetadataEmitterTest}), all
  * {@link javax.lang.model} elements are Mockito stubs — this module deliberately avoids a dependency
@@ -93,23 +94,20 @@ class AnnotationLiteralEmitterTest {
     }
 
     @Test
-    @DisplayName("firstUnsupportedAttribute flags an array of unsupported primitive values")
-    void firstUnsupportedAttributeFlagsUnsupportedPrimitiveArray() {
+    @DisplayName("firstUnsupportedAttribute allows an array of former unsupported primitive values")
+    void firstUnsupportedAttributeAllowsFormerlyUnsupportedPrimitiveArray() {
         ArrayType nestedArray = mockPrimitiveArray(TypeKind.CHAR);
         ExecutableElement member = mockMember("values", nestedArray);
         TypeElement annotationType = mockAnnotationTypeWithMembers(List.of(member));
 
-        Optional<UnsupportedAttribute> result = AnnotationLiteralEmitter.firstUnsupportedAttribute(annotationType);
+        Optional<?> result = AnnotationLiteralEmitter.firstUnsupportedAttribute(annotationType);
 
-        assertTrue(result.isPresent(), "an array of unsupported primitive values must be flagged");
-        assertTrue(
-                result.get().member().equals("values"),
-                "the flagged member must be the primitive array member 'values', got: " + result.get());
+        assertTrue(result.isEmpty(), "no annotation member kind remains unsupported");
     }
 
     @Test
-    @DisplayName("the emit/guard path rejects an empty array of unsupported primitive values")
-    void emitPathRejectsUnsupportedPrimitiveArray() {
+    @DisplayName("the emit path renders an empty array of former unsupported primitive values")
+    void emitPathRendersFormerlyUnsupportedPrimitiveArray() {
         ArrayType nestedArray = mockPrimitiveArray(TypeKind.CHAR);
         ExecutableElement member = mockMember("values", nestedArray);
 
@@ -125,33 +123,36 @@ class AnnotationLiteralEmitterTest {
                 .getElementValuesWithDefaults(mirror);
 
         Types types = mock(Types.class);
+        TypeMirror component = nestedArray.getComponentType();
+        org.mockito.Mockito.doReturn(component).when(types).erasure(component);
 
-        // The emit/guard path (constructorArgs -> arrayLiteral -> arrayComponentGuard, reached even on
-        // the empty-array branch) must refuse the unsupported primitive component.
-        assertThrows(
-                UnsupportedOperationException.class,
-                () -> AnnotationLiteralEmitter.constructorArgs(mirror, elements, types),
-                "the emit path must reject an unsupported primitive array");
+        assertTrue(
+                AnnotationLiteralEmitter.constructorArgs(mirror, elements, types)
+                        .toString()
+                        .contains("new char[0]"),
+                "the emit path must render an empty char array");
     }
 
     // --- helpers (Mockito-stubbed javax.lang.model elements) ---
 
     /**
-     * Builds a mock {@link ArrayType} whose component is a nested-annotation declared type (its
-     * element's kind is {@link ElementKind#ANNOTATION_TYPE}).
+     * Builds a mock {@link ArrayType} with a component of the requested kind.
      *
-     * @return the mock array type of a nested annotation
+     * @param kind the component kind
+     * @return the mock array type
      */
     private static ArrayType mockPrimitiveArray(TypeKind kind) {
-        Element nestedElement = mock(Element.class);
-        lenient().when(nestedElement.getKind()).thenReturn(ElementKind.CLASS);
-
-        DeclaredType nested = mock(DeclaredType.class);
-
         ArrayType array = mock(ArrayType.class);
         lenient().when(array.getKind()).thenReturn(TypeKind.ARRAY);
-        TypeMirror component = mock(TypeMirror.class);
+        PrimitiveType component = mock(PrimitiveType.class);
         lenient().when(component.getKind()).thenReturn(kind);
+        doAnswer(invocation -> {
+                    @SuppressWarnings("unchecked")
+                    TypeVisitor<Object, Object> visitor = (TypeVisitor<Object, Object>) invocation.getArgument(0);
+                    return visitor.visitPrimitive(component, invocation.getArgument(1));
+                })
+                .when(component)
+                .accept(any(), any());
         lenient().when(array.getComponentType()).thenReturn(component);
         return array;
     }

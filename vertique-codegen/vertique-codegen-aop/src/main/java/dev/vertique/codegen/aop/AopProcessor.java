@@ -8,7 +8,6 @@ import dev.vertique.aop.Aspect;
 import dev.vertique.codegen.AnnotationMirrors;
 import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.Diagnostics;
-import dev.vertique.codegen.meta.AnnotationLiteralEmitter;
 import dev.vertique.codegen.validate.InjectConstructorValidator;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -139,7 +138,6 @@ public final class AopProcessor extends AbstractProcessor {
                 triggers.add(annotation);
             }
         }
-
         Set<String> aspectFqns = triggers.stream()
                 .map(t -> t.getQualifiedName().toString())
                 .collect(Collectors.toCollection(LinkedHashSet::new));
@@ -198,17 +196,6 @@ public final class AopProcessor extends AbstractProcessor {
                 // clear up-front diagnostic so the build fails with the AOP message rather than a
                 // confusing generated-source javac error.
                 if (isNotProxyable(bean, entry.getValue())) {
-                    continue;
-                }
-
-                // (6) An aspect TRIGGER annotation with a member of an unsupported attribute kind
-                // (char/float/double, a nested annotation, or an array of those) cannot be
-                // materialized into the per-aspect <Ann>$AopLiteral the proxy bakes for it. Precheck the
-                // aspect's annotation type up front so an unsupported kind is a clean Diagnostics.error
-                // rather than an UnsupportedOperationException crash mid-emission in
-                // AnnotationLiteralEmitter (P2-W2). Mirrors the method-annotation precheck in
-                // AopProxyEmitter.materializeMethodAnnotations.
-                if (hasUnsupportedAspectAttribute(entry.getValue(), aspectFqns)) {
                     continue;
                 }
 
@@ -380,54 +367,6 @@ public final class AopProcessor extends AbstractProcessor {
     }
 
     /**
-     * Reports whether any aspect <em>trigger</em> annotation used on the bean's intercepted methods
-     * declares a member of an unsupported attribute kind ({@code char} / {@code float} / {@code double},
-     * a nested-annotation member, or an array of those), emitting a {@code Diagnostics.error} on each
-     * offending occurrence. Returns {@code true} if at least one such aspect was found, so the caller
-     * skips emitting a proxy for the bean.
-     *
-     * <p>The proxy bakes a per-aspect {@code <Ann>$AopLiteral} class and a per-occurrence literal instance
-     * for every aspect trigger on the bean. An unsupported member kind makes
-     * {@link dev.vertique.codegen.meta.AnnotationLiteralEmitter#emit} /
-     * {@link dev.vertique.codegen.meta.AnnotationLiteralEmitter#constructorArgs} throw
-     * {@code UnsupportedOperationException} mid-emission — a processor crash with a stack trace. This
-     * up-front precheck routes the same condition through {@code Diagnostics.error} for a clean compile
-     * error (FR-013-13 / FR-013-09c, P2-W2), mirroring the method-annotation precheck in
-     * {@code AopProxyEmitter.materializeMethodAnnotations}.
-     *
-     * <p>The diagnostic is emitted on the offending <em>method occurrence</em> so the error points at
-     * the use site; the same aspect type appearing on multiple methods is reported per occurrence (the
-     * method does not short-circuit) so a single build surfaces every problem.
-     *
-     * @param methods    the bean's intercepted methods
-     * @param aspectFqns the FQNs of the aspect trigger annotations the processor recognises
-     * @return {@code true} when at least one aspect trigger has an unsupported attribute kind
-     */
-    private boolean hasUnsupportedAspectAttribute(List<ExecutableElement> methods, Set<String> aspectFqns) {
-        boolean rejected = false;
-        for (ExecutableElement method : methods) {
-            for (AnnotationMirror mirror : method.getAnnotationMirrors()) {
-                TypeElement annType = (TypeElement) mirror.getAnnotationType().asElement();
-                if (!aspectFqns.contains(annType.getQualifiedName().toString())) {
-                    continue;
-                }
-                Optional<AnnotationLiteralEmitter.UnsupportedAttribute> unsupported =
-                        AnnotationLiteralEmitter.firstUnsupportedAttribute(annType);
-                if (unsupported.isPresent()) {
-                    AnnotationLiteralEmitter.UnsupportedAttribute bad = unsupported.get();
-                    ctx.diagnostics()
-                            .error(
-                                    method,
-                                    Diagnostics.unsupportedAnnotationAttributeKind(
-                                            annType.getQualifiedName().toString(), bad.member(), bad.kind()));
-                    rejected = true;
-                }
-            }
-        }
-        return rejected;
-    }
-
-    /**
      * Returns {@code true} when any of the method's declared {@code throws} types is a type variable
      * (e.g. {@code <E extends IOException> … throws E}). Such a throw makes the generated sync guard
      * emit a non-reifiable {@code instanceof E} (R3-1), so the method cannot be proxied.
@@ -492,6 +431,9 @@ public final class AopProcessor extends AbstractProcessor {
                     continue;
                 }
                 Element enclosing = method.getEnclosingElement();
+                if (enclosing.getKind() != ElementKind.CLASS) {
+                    continue;
+                }
                 if (enclosing instanceof TypeElement bean) {
                     beans.computeIfAbsent(bean, k -> new ArrayList<>()).add(method);
                 }

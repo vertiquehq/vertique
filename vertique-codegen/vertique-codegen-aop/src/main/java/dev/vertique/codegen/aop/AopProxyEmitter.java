@@ -17,7 +17,6 @@ import com.palantir.javapoet.TypeName;
 import com.palantir.javapoet.TypeSpec;
 import com.palantir.javapoet.TypeVariableName;
 import dev.vertique.codegen.CodegenContext;
-import dev.vertique.codegen.Diagnostics;
 import dev.vertique.codegen.meta.AnnotationLiteralEmitter;
 import dev.vertique.codegen.meta.MetadataEmitter;
 import dev.vertique.codegen.support.Identifiers;
@@ -28,7 +27,6 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.ExecutableElement;
@@ -218,9 +216,7 @@ final class AopProxyEmitter {
     /**
      * Materializes the method's {@code @Retention(RUNTIME)} annotations into
      * {@link MetadataEmitter.AnnotationLiteralRef}s backing the metadata impl's reflection-free
-     * method-level {@code findAnnotation}/{@code hasAnnotation} (FR-013-13), delegating to
-     * {@link #materializeAnnotations} with the method as both the annotated element and the diagnostic
-     * target.
+     * method-level {@code findAnnotation}/{@code hasAnnotation} (FR-013-13).
      *
      * @param method             the intercepted method whose annotations to materialize
      * @param emittedLiteralFqns the compilation-scoped set of already-written {@code <Ann>$AopLiteral} FQNs
@@ -228,7 +224,7 @@ final class AopProxyEmitter {
      */
     private List<MetadataEmitter.AnnotationLiteralRef> materializeMethodAnnotations(
             ExecutableElement method, Set<String> emittedLiteralFqns) {
-        return materializeAnnotations(method, method, emittedLiteralFqns);
+        return materializeAnnotations(method, emittedLiteralFqns);
     }
 
     /**
@@ -236,9 +232,7 @@ final class AopProxyEmitter {
      * {@link MetadataEmitter.AnnotationLiteralRef}s backing the nested {@code ParameterMetadataImpl}'s
      * reflection-free parameter-level {@code findAnnotation}/{@code hasAnnotation} (FR-015-07), the
      * parameter-level analogue of {@link #materializeMethodAnnotations}. Returns one list per parameter,
-     * in parameter order (parallel to {@code method.getParameters()}); an unsupported attribute kind on a
-     * parameter annotation is rejected via {@code Diagnostics.error} against the offending parameter
-     * element (FR-013-13 / FR-013-09c) and skipped.
+     * in parameter order (parallel to {@code method.getParameters()}).
      *
      * @param method             the intercepted method whose parameters' annotations to materialize
      * @param emittedLiteralFqns the compilation-scoped set of already-written {@code <Ann>$AopLiteral} FQNs
@@ -248,7 +242,7 @@ final class AopProxyEmitter {
             ExecutableElement method, Set<String> emittedLiteralFqns) {
         List<List<MetadataEmitter.AnnotationLiteralRef>> perParameter = new ArrayList<>();
         for (VariableElement parameter : method.getParameters()) {
-            perParameter.add(materializeAnnotations(parameter, parameter, emittedLiteralFqns));
+            perParameter.add(materializeAnnotations(parameter, emittedLiteralFqns));
         }
         return perParameter;
     }
@@ -260,37 +254,19 @@ final class AopProxyEmitter {
      * (deduplicated per compilation via {@code emittedLiteralFqns}) the {@code <Ann>$AopLiteral} class and
      * returns a ref carrying the literal class plus this occurrence's constructor arguments.
      *
-     * <p>{@code SOURCE}/{@code CLASS}-retained annotations are skipped. An annotation carrying a member
-     * of an unsupported attribute kind ({@code char}/{@code float}/{@code double}, a nested-annotation
-     * member, or an array of those) is rejected via {@code Diagnostics.error} against
-     * {@code diagnosticTarget} (FR-013-13 / FR-013-09c) and skipped, so the literal emitter never
-     * crashes on (or emits broken code for) an unrenderable kind.
+     * <p>{@code SOURCE}/{@code CLASS}-retained annotations are skipped. All legal annotation member
+     * kinds are materialized through {@link AnnotationLiteralEmitter}.
      *
      * @param annotated          the annotated element (a method or a parameter) to read mirrors from
-     * @param diagnosticTarget   the element the unsupported-kind diagnostic is attached to
      * @param emittedLiteralFqns the compilation-scoped set of already-written {@code <Ann>$AopLiteral} FQNs
      * @return the materialized literal refs, in annotation-declaration order (excluding skipped ones)
      */
     private List<MetadataEmitter.AnnotationLiteralRef> materializeAnnotations(
-            javax.lang.model.element.Element annotated,
-            javax.lang.model.element.Element diagnosticTarget,
-            Set<String> emittedLiteralFqns) {
+            javax.lang.model.element.Element annotated, Set<String> emittedLiteralFqns) {
         List<MetadataEmitter.AnnotationLiteralRef> refs = new ArrayList<>();
         for (AnnotationMirror mirror : annotated.getAnnotationMirrors()) {
             TypeElement annType = (TypeElement) mirror.getAnnotationType().asElement();
             if (!isRuntimeRetained(annType)) {
-                continue;
-            }
-            // Reject an unsupported attribute kind cleanly rather than letting the literal emitter crash.
-            Optional<AnnotationLiteralEmitter.UnsupportedAttribute> unsupported =
-                    AnnotationLiteralEmitter.firstUnsupportedAttribute(annType);
-            if (unsupported.isPresent()) {
-                AnnotationLiteralEmitter.UnsupportedAttribute bad = unsupported.get();
-                ctx.diagnostics()
-                        .error(
-                                diagnosticTarget,
-                                Diagnostics.unsupportedAnnotationAttributeKind(
-                                        annType.getQualifiedName().toString(), bad.member(), bad.kind()));
                 continue;
             }
             ClassName literalClass =
