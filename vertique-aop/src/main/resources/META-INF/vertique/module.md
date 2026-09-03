@@ -187,7 +187,7 @@ public @interface MyAnnotation {
 
 The processor discovers `@MyAnnotation` as an aspect trigger because it is meta-annotated with `@Aspect`. No registration step beyond annotating a method with `@MyAnnotation` is required — the proxy is generated automatically.
 
-**Supported annotation attribute kinds.** Aspect annotation attributes may be: `boolean`, `byte`, `short`, `int`, `long`, `String`, `Class<?>`, enum values, or arrays of any of these. Attributes of type `char`, `float`, `double`, nested annotations, or arrays of nested annotations are rejected at compile time with a clear error.
+**Supported annotation attribute kinds.** Aspect annotation attributes may use every legal annotation member kind: `boolean`, `byte`, `short`, `int`, `long`, `char`, `float`, `double`, `String`, `Class<?>`, enum values, nested annotations, or arrays of any of these. Generated literals emit char values as Java-source-safe numeric expressions and preserve exact floating-point values, including NaN, infinities, and signed zero. Equality follows the annotation contract, including `Float.compare`/`Double.compare` for primitive floating-point members in nested annotations.
 
 ---
 

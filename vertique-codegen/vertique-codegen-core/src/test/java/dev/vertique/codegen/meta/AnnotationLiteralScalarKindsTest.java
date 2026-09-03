@@ -3,6 +3,7 @@
 
 package dev.vertique.codegen.meta;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.doReturn;
@@ -55,7 +56,7 @@ class AnnotationLiteralScalarKindsTest {
     private static final String LITERAL_FQN = "com.example.ScalarMembers$CoreLiteral";
 
     @Test
-    @DisplayName("char, float, and double members render and obey the Annotation equality contract")
+    @DisplayName("char, char[], float, and double members render and obey the Annotation equality contract")
     void rendersCharFloatAndDoubleMembersWithAnnotationContractEquality() throws Exception {
         CompiledFixture fixture = compileFixture();
         Class<?> annotationType = fixture.loader().loadClass(ANNOTATION_FQN);
@@ -65,10 +66,11 @@ class AnnotationLiteralScalarKindsTest {
         Annotation liveAnnotation =
                 fixture.loader().loadClass(FIXTURES_FQN).getAnnotation(annotationType.asSubclass(Annotation.class));
         List<ScalarValues> rows = List.of(
-                new ScalarValues('x', 1.5f, -0.0d, new double[] {1.0d, -0.0d}),
-                new ScalarValues(' ', Float.NaN, Double.NaN, new double[] {Double.MIN_VALUE, -0.0d}),
-                new ScalarValues('x', -0.0f, Double.MIN_VALUE, new double[] {Double.NaN, 1.0d}),
-                new ScalarValues(' ', Float.MAX_VALUE, Double.POSITIVE_INFINITY, new double[0]));
+                new ScalarValues('x', 1.5f, -0.0d, new char[] {'x'}, new double[] {1.0d, -0.0d}),
+                new ScalarValues(' ', Float.NaN, Double.NaN, new char[] {' '}, new double[] {Double.MIN_VALUE, -0.0d}),
+                new ScalarValues('x', -0.0f, Double.MIN_VALUE, new char[] {'x'}, new double[] {Double.NaN, 1.0d}),
+                new ScalarValues(' ', Float.MAX_VALUE, Double.POSITIVE_INFINITY, new char[] {' '}, new double[0]),
+                new ScalarValues('\n', 1.5f, -0.0d, new char[] {'\n', '\r', '\t', 'x'}, new double[] {1.0d, -0.0d}));
 
         for (int i = 0; i < rows.size(); i++) {
             ScalarValues expectedValues = rows.get(i);
@@ -77,6 +79,10 @@ class AnnotationLiteralScalarKindsTest {
 
             assertEquals(annotationType, literal.annotationType(), "row " + i + " annotation type");
             assertEquals(expectedValues.character(), invoke(literalType, literal, "character"), "row " + i + " char");
+            assertArrayEquals(
+                    expectedValues.characters(),
+                    (char[]) invoke(literalType, literal, "characters"),
+                    "row " + i + " chars");
             assertFloatBitsEqual(expectedValues.floatValue(), invoke(literalType, literal, "floatValue"), "row " + i);
             assertDoubleBitsEqual(
                     expectedValues.doubleValue(), invoke(literalType, literal, "doubleValue"), "row " + i);
@@ -115,6 +121,7 @@ class AnnotationLiteralScalarKindsTest {
                                     @Target(TYPE)
                                     public @interface ScalarMembers {
                                         char character();
+                                        char[] characters();
                                         float floatValue();
                                         double doubleValue();
                                         double[] doubles();
@@ -122,7 +129,8 @@ class AnnotationLiteralScalarKindsTest {
                                     """), source(FIXTURES_FQN, """
                                     package com.example;
                                     @ScalarMembers(character = 'x', floatValue = 1.5f,
-                                            doubleValue = -0.0d, doubles = {1.0d, -0.0d})
+                                            characters = {'x'}, doubleValue = -0.0d,
+                                            doubles = {1.0d, -0.0d})
                                     public final class ScalarFixtures {}
                                     """)));
             task.setProcessors(List.of(new ScalarLiteralProcessor()));
@@ -181,6 +189,7 @@ class AnnotationLiteralScalarKindsTest {
     private static Annotation annotationProxy(Class<?> annotationType, ScalarValues values) {
         Map<String, Object> members = new LinkedHashMap<>();
         members.put("character", values.character());
+        members.put("characters", values.characters().clone());
         members.put("floatValue", values.floatValue());
         members.put("doubleValue", values.doubleValue());
         members.put("doubles", values.doubles().clone());
@@ -198,7 +207,9 @@ class AnnotationLiteralScalarKindsTest {
                         };
                     }
                     Object value = members.get(method.getName());
-                    return value instanceof double[] array ? array.clone() : value;
+                    return value instanceof char[] array
+                            ? array.clone()
+                            : value instanceof double[] array ? array.clone() : value;
                 });
     }
 
@@ -210,7 +221,11 @@ class AnnotationLiteralScalarKindsTest {
         for (Method method : annotationType.getDeclaredMethods()) {
             Object expected = members.get(method.getName());
             Object actual = method.invoke(annotation);
-            if (expected instanceof double[] expectedArray && actual instanceof double[] actualArray) {
+            if (expected instanceof char[] expectedArray && actual instanceof char[] actualArray) {
+                if (!java.util.Arrays.equals(expectedArray, actualArray)) {
+                    return false;
+                }
+            } else if (expected instanceof double[] expectedArray && actual instanceof double[] actualArray) {
                 if (!java.util.Arrays.equals(expectedArray, actualArray)) {
                     return false;
                 }
@@ -225,19 +240,24 @@ class AnnotationLiteralScalarKindsTest {
         int hash = 0;
         for (Method method : annotationType.getDeclaredMethods()) {
             Object value = members.get(method.getName());
-            int valueHash = value instanceof double[] array
+            int valueHash = value instanceof char[] array
                     ? java.util.Arrays.hashCode(array)
-                    : value instanceof Character character
-                            ? character.hashCode()
-                            : value instanceof Float floatValue
-                                    ? floatValue.hashCode()
-                                    : value instanceof Double doubleValue ? doubleValue.hashCode() : value.hashCode();
+                    : value instanceof double[] array
+                            ? java.util.Arrays.hashCode(array)
+                            : value instanceof Character character
+                                    ? character.hashCode()
+                                    : value instanceof Float floatValue
+                                            ? floatValue.hashCode()
+                                            : value instanceof Double doubleValue
+                                                    ? doubleValue.hashCode()
+                                                    : value.hashCode();
             hash += (127 * method.getName().hashCode()) ^ valueHash;
         }
         return hash;
     }
 
-    private record ScalarValues(char character, float floatValue, double doubleValue, double[] doubles) {}
+    private record ScalarValues(
+            char character, float floatValue, double doubleValue, char[] characters, double[] doubles) {}
 
     private record CompiledFixture(Map<String, byte[]> classBytes, ClassLoader loader) {}
 
@@ -281,10 +301,15 @@ class AnnotationLiteralScalarKindsTest {
                 writeSource(LITERAL_FQN, literal.toString());
 
                 List<ScalarValues> rows = List.of(
-                        new ScalarValues('x', 1.5f, -0.0d, new double[] {1.0d, -0.0d}),
-                        new ScalarValues(' ', Float.NaN, Double.NaN, new double[] {Double.MIN_VALUE, -0.0d}),
-                        new ScalarValues('x', -0.0f, Double.MIN_VALUE, new double[] {Double.NaN, 1.0d}),
-                        new ScalarValues(' ', Float.MAX_VALUE, Double.POSITIVE_INFINITY, new double[0]));
+                        new ScalarValues('x', 1.5f, -0.0d, new char[] {'x'}, new double[] {1.0d, -0.0d}),
+                        new ScalarValues(
+                                ' ', Float.NaN, Double.NaN, new char[] {' '}, new double[] {Double.MIN_VALUE, -0.0d}),
+                        new ScalarValues(
+                                'x', -0.0f, Double.MIN_VALUE, new char[] {'x'}, new double[] {Double.NaN, 1.0d}),
+                        new ScalarValues(
+                                ' ', Float.MAX_VALUE, Double.POSITIVE_INFINITY, new char[] {' '}, new double[0]),
+                        new ScalarValues(
+                                '\n', 1.5f, -0.0d, new char[] {'\n', '\r', '\t', 'x'}, new double[] {1.0d, -0.0d}));
                 StringBuilder factory =
                         new StringBuilder("package com.example;\npublic final class ScalarLiteralFixtures {\n");
                 for (int i = 0; i < rows.size(); i++) {
@@ -316,6 +341,13 @@ class AnnotationLiteralScalarKindsTest {
                 Object raw =
                         switch (member.getSimpleName().toString()) {
                             case "character" -> values.character();
+                            case "characters" -> {
+                                List<AnnotationValue> arrayValues = new ArrayList<>();
+                                for (char character : values.characters()) {
+                                    arrayValues.add(annotationValue(character));
+                                }
+                                yield arrayValues;
+                            }
                             case "floatValue" -> values.floatValue();
                             case "doubleValue" -> values.doubleValue();
                             case "doubles" -> {

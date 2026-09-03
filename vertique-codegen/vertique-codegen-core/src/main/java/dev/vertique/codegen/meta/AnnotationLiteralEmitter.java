@@ -376,7 +376,9 @@ public final class AnnotationLiteralEmitter {
         }
         TypeKind kind = memberType.getKind();
         if (kind == TypeKind.CHAR) {
-            return CodeBlock.of("'\\u$L'", String.format("%04x", (int) (Character) raw));
+            // Use a numeric cast instead of a Unicode escape: escapes for line terminators,
+            // quotes, and backslashes can change the generated source before it is tokenized.
+            return CodeBlock.of("(char) $L", (int) (Character) raw);
         }
         if (kind == TypeKind.FLOAT) {
             return CodeBlock.of("$T.intBitsToFloat($L)", Float.class, Float.floatToRawIntBits((Float) raw));
@@ -481,6 +483,10 @@ public final class AnnotationLiteralEmitter {
             String name = member.getSimpleName().toString();
             if (member.getReturnType().getKind() == TypeKind.ARRAY) {
                 expression.add("$T.equals($N(), that.$N())", Arrays.class, name, name);
+            } else if (member.getReturnType().getKind() == TypeKind.FLOAT) {
+                expression.add("$T.compare($N(), that.$N()) == 0", Float.class, name, name);
+            } else if (member.getReturnType().getKind() == TypeKind.DOUBLE) {
+                expression.add("$T.compare($N(), that.$N()) == 0", Double.class, name, name);
             } else if (member.getReturnType().getKind().isPrimitive()) {
                 expression.add("$N() == that.$N()", name, name);
             } else {
