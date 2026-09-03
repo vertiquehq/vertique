@@ -22,7 +22,8 @@ class ResiliencePolicyOverridesTest {
     @Test
     @DisplayName("preserves exact optional identity for empty and single-sided concerns")
     void preservesExactOptionalIdentityForEmptyAndSingleSidedConcerns() {
-        Optional<TimeoutOverride> lowerTimeout = Optional.of(new TimeoutOverride(Optional.empty(), OptionalLong.of(500L)));
+        Optional<TimeoutOverride> lowerTimeout =
+                Optional.of(new TimeoutOverride(Optional.empty(), OptionalLong.of(500L)));
         ResiliencePolicyOverrides lower = overrides(lowerTimeout, Optional.empty(), Optional.empty(), Optional.empty());
         ResiliencePolicyOverrides higher = ResiliencePolicyOverrides.none();
 
@@ -31,7 +32,8 @@ class ResiliencePolicyOverridesTest {
 
         Optional<TimeoutOverride> higherTimeout =
                 Optional.of(new TimeoutOverride(Optional.of(true), OptionalLong.empty()));
-        ResiliencePolicyOverrides higherOnly = overrides(higherTimeout, Optional.empty(), Optional.empty(), Optional.empty());
+        ResiliencePolicyOverrides higherOnly =
+                overrides(higherTimeout, Optional.empty(), Optional.empty(), Optional.empty());
         ResiliencePolicyOverrides higherResult = higherOnly.over(ResiliencePolicyOverrides.none());
         assertSame(higherTimeout, higherResult.timeout());
     }
@@ -51,15 +53,9 @@ class ResiliencePolicyOverridesTest {
         BulkheadOverride lowBulkhead = new BulkheadOverride(Optional.of(true), Optional.of(lowBulkheadConfig));
 
         ResiliencePolicyOverrides merged = overrides(
-                        Optional.of(highTimeout),
-                        Optional.empty(),
-                        Optional.of(highCircuit),
-                        Optional.of(highBulkhead))
+                        Optional.of(highTimeout), Optional.empty(), Optional.of(highCircuit), Optional.of(highBulkhead))
                 .over(overrides(
-                        Optional.of(lowTimeout),
-                        Optional.empty(),
-                        Optional.of(lowCircuit),
-                        Optional.of(lowBulkhead)));
+                        Optional.of(lowTimeout), Optional.empty(), Optional.of(lowCircuit), Optional.of(lowBulkhead)));
 
         TimeoutOverride timeout = merged.timeout().orElseThrow();
         CircuitBreakerOverride circuit = merged.circuitBreaker().orElseThrow();
@@ -125,13 +121,28 @@ class ResiliencePolicyOverridesTest {
                 () -> assertEquals(OptionalLong.of(700L), backoff.maxJitterMs()));
 
         RetryOverride higherSiblingWithLowerDisabled = new RetryOverride(
-                Optional.empty(), OptionalInt.of(2), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
+                Optional.empty(),
+                OptionalInt.of(2),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty());
         RetryOverride disabledLower = new RetryOverride(
-                Optional.of(false), OptionalInt.empty(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
+                Optional.of(false),
+                OptionalInt.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty());
         assertEquals(
                 Optional.empty(),
-                overrides(Optional.empty(), Optional.of(higherSiblingWithLowerDisabled), Optional.empty(), Optional.empty())
-                        .over(overrides(Optional.empty(), Optional.of(disabledLower), Optional.empty(), Optional.empty()))
+                overrides(
+                                Optional.empty(),
+                                Optional.of(higherSiblingWithLowerDisabled),
+                                Optional.empty(),
+                                Optional.empty())
+                        .over(overrides(
+                                Optional.empty(), Optional.of(disabledLower), Optional.empty(), Optional.empty()))
                         .retry()
                         .orElseThrow()
                         .enabled());
@@ -140,17 +151,29 @@ class ResiliencePolicyOverridesTest {
     @Test
     @DisplayName("higher disabled concerns win as complete records")
     void higherDisabledConcernsWinAsCompleteRecords() {
-        Optional<TimeoutOverride> higherTimeout = Optional.of(new TimeoutOverride(Optional.of(false), OptionalLong.empty()));
+        Optional<TimeoutOverride> higherTimeout =
+                Optional.of(new TimeoutOverride(Optional.of(false), OptionalLong.empty()));
         Optional<RetryOverride> higherRetry = Optional.of(new RetryOverride(
-                Optional.of(false), OptionalInt.empty(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty()));
+                Optional.of(false),
+                OptionalInt.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty()));
         Optional<CircuitBreakerOverride> higherCircuit =
                 Optional.of(new CircuitBreakerOverride(Optional.of(false), OptionalInt.empty(), OptionalLong.empty()));
-        Optional<BulkheadOverride> higherBulkhead = Optional.of(new BulkheadOverride(Optional.of(false), Optional.empty()));
+        Optional<BulkheadOverride> higherBulkhead =
+                Optional.of(new BulkheadOverride(Optional.of(false), Optional.empty()));
         ResiliencePolicyOverrides higher = overrides(higherTimeout, higherRetry, higherCircuit, higherBulkhead);
         ResiliencePolicyOverrides lower = overrides(
                 Optional.of(new TimeoutOverride(Optional.of(true), OptionalLong.of(2_000L))),
                 Optional.of(new RetryOverride(
-                        Optional.of(true), OptionalInt.of(4), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())),
+                        Optional.of(true),
+                        OptionalInt.of(4),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.empty())),
                 Optional.of(new CircuitBreakerOverride(Optional.of(true), OptionalInt.of(8), OptionalLong.of(12_000L))),
                 Optional.of(new BulkheadOverride(Optional.of(true), Optional.of(BulkheadConfig.reject(8)))));
 
@@ -168,9 +191,17 @@ class ResiliencePolicyOverridesTest {
         BackoffStrategy higherStrategy = retryCount -> 11L;
         BackoffStrategy lowerStrategy = retryCount -> 22L;
         BackoffOverride higherCustom = new BackoffOverride(
-                Optional.of(higherStrategy), OptionalLong.empty(), Optional.empty(), OptionalLong.empty(), OptionalLong.empty());
+                Optional.of(higherStrategy),
+                OptionalLong.empty(),
+                Optional.empty(),
+                OptionalLong.empty(),
+                OptionalLong.empty());
         BackoffOverride lowerCustom = new BackoffOverride(
-                Optional.of(lowerStrategy), OptionalLong.empty(), Optional.empty(), OptionalLong.empty(), OptionalLong.empty());
+                Optional.of(lowerStrategy),
+                OptionalLong.empty(),
+                Optional.empty(),
+                OptionalLong.empty(),
+                OptionalLong.empty());
         BackoffOverride higherScalar = new BackoffOverride(
                 Optional.empty(), OptionalLong.of(100L), Optional.empty(), OptionalLong.empty(), OptionalLong.empty());
 
@@ -178,17 +209,29 @@ class ResiliencePolicyOverridesTest {
         Optional<BackoffOverride> scalarResult = mergeBackoffs(higherScalar, lowerCustom);
         assertAll(
                 () -> assertSame(higherCustom, customResult.orElseThrow()),
-                () -> assertSame(higherStrategy, customResult.orElseThrow().custom().orElseThrow()),
+                () -> assertSame(
+                        higherStrategy, customResult.orElseThrow().custom().orElseThrow()),
                 () -> assertSame(higherScalar, scalarResult.orElseThrow()),
-                () -> assertEquals(OptionalLong.of(100L), scalarResult.orElseThrow().initialDelayMs()),
+                () -> assertEquals(
+                        OptionalLong.of(100L), scalarResult.orElseThrow().initialDelayMs()),
                 () -> assertEquals(Optional.empty(), scalarResult.orElseThrow().custom()));
     }
 
     private static Optional<BackoffOverride> mergeBackoffs(BackoffOverride higher, BackoffOverride lower) {
         RetryOverride higherRetry = new RetryOverride(
-                Optional.empty(), OptionalInt.empty(), Optional.of(higher), Optional.empty(), Optional.empty(), Optional.empty());
+                Optional.empty(),
+                OptionalInt.empty(),
+                Optional.of(higher),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty());
         RetryOverride lowerRetry = new RetryOverride(
-                Optional.empty(), OptionalInt.empty(), Optional.of(lower), Optional.empty(), Optional.empty(), Optional.empty());
+                Optional.empty(),
+                OptionalInt.empty(),
+                Optional.of(lower),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty());
         return overrides(Optional.empty(), Optional.of(higherRetry), Optional.empty(), Optional.empty())
                 .over(overrides(Optional.empty(), Optional.of(lowerRetry), Optional.empty(), Optional.empty()))
                 .retry()
