@@ -32,6 +32,7 @@ class UserServiceSandboxIT {
                     .put("http", new JsonObject().put("port", 0).put("host", "127.0.0.1"))
                     .put("sandboxEnabled", true)
                     .put("management", new JsonObject().put("enabled", false))
+                    .put("resilience", ResilienceTestPolicies.probeConfig())
                     .put(
                             "rateLimit",
                             new JsonObject()
