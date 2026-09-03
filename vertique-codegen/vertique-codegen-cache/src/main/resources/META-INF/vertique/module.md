@@ -44,8 +44,9 @@ positional (`"0"`) or parameter-name (`"user"`) root plus at most seven dot-sepa
 property segments (eight segments including the root). There is no template or literal
 text; the runtime alone composes and frames the canonical key. An explicitly empty
 `key = {}` declares a constant, value-independent operation key. Each property must
-resolve to a public, zero-argument instance accessor: a record accessor, a method named for
-the property, or a JavaBean `getX()`/`isX()` accessor. The terminal must be one of the
+resolve to a public, zero-argument instance accessor: a bare segment resolves only to a
+record component, while a bean property requires a JavaBean `getX()`/`isX()` accessor.
+The terminal must be one of the
 processor's supported scalar shapes:
 
 | Shape | Accepted types |

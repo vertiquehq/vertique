@@ -197,7 +197,7 @@ public final class CacheAnnotationProcessor extends AbstractProcessor {
         for (int index = 1; index < segments.length; index++) {
             type = propertyType(type, segments[index]);
             if (type == null) {
-                error(method, "cache key property is not an accessible record or bean accessor: " + segments[index]);
+                error(method, "cache property is not an accessible record or bean accessor: " + segments[index]);
                 return;
             }
         }
@@ -211,11 +211,13 @@ public final class CacheAnnotationProcessor extends AbstractProcessor {
             return null;
         }
         TypeElement element = (TypeElement) ((DeclaredType) type).asElement();
+        boolean bareNameEligible = element.getKind() == ElementKind.RECORD;
         String suffix = Character.toUpperCase(property.charAt(0)) + property.substring(1);
         for (Element member : elements.getAllMembers(element)) {
             if (member.getKind() == ElementKind.METHOD && member instanceof ExecutableElement method) {
                 String name = method.getSimpleName().toString();
-                if ((name.equals(property) || name.equals("get" + suffix) || name.equals("is" + suffix))
+                boolean bareNameMatch = bareNameEligible && name.equals(property);
+                if ((bareNameMatch || name.equals("get" + suffix) || name.equals("is" + suffix))
                         && method.getParameters().isEmpty()
                         && method.getModifiers().contains(Modifier.PUBLIC)
                         && !method.getModifiers().contains(Modifier.STATIC)) {

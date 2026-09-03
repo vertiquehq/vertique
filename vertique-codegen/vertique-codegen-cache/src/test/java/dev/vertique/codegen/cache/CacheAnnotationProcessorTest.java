@@ -306,6 +306,57 @@ class CacheAnnotationProcessorTest {
     }
 
     @Test
+    @DisplayName("bare accessors on non-record types are rejected")
+    void bareAccessorOnNonRecordTypeIsRejected() {
+        ProcessorTestHarness.run(
+                        new CacheAnnotationProcessor(), SourceFiles.inline("com.example.NonRecordCacheableBean", """
+                                package com.example;
+
+                                import dev.vertique.cache.aop.Cacheable;
+                                import jakarta.inject.Inject;
+
+                                public class NonRecordCacheableBean {
+                                    @Inject
+                                    public NonRecordCacheableBean() {}
+
+                                    @Cacheable(name = "users", key = "profile.region")
+                                    public String byProfile(Profile profile) {
+                                        return profile.region();
+                                    }
+                                }
+
+                                class Profile {
+                                    public String region() {
+                                        return "region";
+                                    }
+                                }
+                                """))
+                .assertFailed()
+                .assertErrorMessage("cache property is not an accessible record or bean accessor: region");
+
+        ProcessorTestHarness.run(
+                        new CacheAnnotationProcessor(), SourceFiles.inline("com.example.RecordCacheableBean", """
+                                package com.example;
+
+                                import dev.vertique.cache.aop.Cacheable;
+                                import jakarta.inject.Inject;
+
+                                public class RecordCacheableBean {
+                                    @Inject
+                                    public RecordCacheableBean() {}
+
+                                    @Cacheable(name = "users", key = "profile.region")
+                                    public String byProfile(Profile profile) {
+                                        return profile.region();
+                                    }
+                                }
+
+                                record Profile(String region) {}
+                                """))
+                .assertSuccess();
+    }
+
+    @Test
     @DisplayName("unbounded property paths are rejected")
     void excessivePropertyDepthIsRejected() {
         ProcessorTestHarness.run(
