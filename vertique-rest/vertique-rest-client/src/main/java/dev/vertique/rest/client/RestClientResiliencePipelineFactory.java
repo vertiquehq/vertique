@@ -6,6 +6,7 @@ package dev.vertique.rest.client;
 import dev.vertique.resilience.CircuitBreaker;
 import dev.vertique.resilience.Resilience;
 import dev.vertique.resilience.ResiliencePipeline;
+import dev.vertique.resilience.ResiliencePolicyRegistry;
 import dev.vertique.resilience.ResolvedResiliencePolicy;
 import dev.vertique.resilience.adapter.AdapterOperationIdentity;
 import dev.vertique.resilience.adapter.ResilienceAdapterContext;
@@ -37,6 +38,30 @@ final class RestClientResiliencePipelineFactory {
             RestClientConfig clientConfig,
             CircuitBreakerOptions interfaceCircuitBreakerOptions,
             Map<?, ClientMethodMeta> methodMetas) {
+        this(
+                resilience,
+                clientName,
+                clientInterface,
+                readTimeoutMs,
+                retryPolicy,
+                backoffStrategy,
+                clientConfig,
+                interfaceCircuitBreakerOptions,
+                methodMetas,
+                ResiliencePolicyRegistry.empty());
+    }
+
+    RestClientResiliencePipelineFactory(
+            Resilience resilience,
+            String clientName,
+            Class<?> clientInterface,
+            long readTimeoutMs,
+            RestClientRetryPolicy retryPolicy,
+            dev.vertique.resilience.BackoffStrategy backoffStrategy,
+            RestClientConfig clientConfig,
+            CircuitBreakerOptions interfaceCircuitBreakerOptions,
+            Map<?, ClientMethodMeta> methodMetas,
+            ResiliencePolicyRegistry registry) {
         this.clientName = clientName;
         this.clientInterface = clientInterface;
         this.context = resilience.adapterSupport().newContext();
@@ -46,7 +71,8 @@ final class RestClientResiliencePipelineFactory {
                 retryPolicy,
                 backoffStrategy,
                 clientConfig,
-                interfaceCircuitBreakerOptions);
+                interfaceCircuitBreakerOptions,
+                registry);
         dev.vertique.resilience.CircuitBreaker shared = null;
         var config = configAdapter.interfaceCircuitBreakerConfig();
         if (config != null) {

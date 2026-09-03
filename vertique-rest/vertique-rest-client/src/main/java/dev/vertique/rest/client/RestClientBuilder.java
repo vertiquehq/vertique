@@ -13,6 +13,7 @@ import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.resilience.BackoffStrategy;
 import dev.vertique.resilience.Resilience;
+import dev.vertique.resilience.ResiliencePolicyRegistry;
 import dev.vertique.resilience.annotation.CircuitBreaker;
 import dev.vertique.rest.client.config.RestClientCircuitBreakerConfig;
 import dev.vertique.rest.client.config.RestClientConfig;
@@ -111,6 +112,7 @@ public final class RestClientBuilder {
     // --- Builder state ---
 
     private final Vertx vertx;
+    private final ResiliencePolicyRegistry resiliencePolicyRegistry;
 
     @Nullable
     private Resilience suppliedResilience;
@@ -218,7 +220,17 @@ public final class RestClientBuilder {
      * @param vertx the Vert.x instance used to create the underlying WebClient
      */
     public RestClientBuilder(Vertx vertx) {
+        this(vertx, ResiliencePolicyRegistry.empty());
+    }
+
+    RestClientBuilder(Vertx vertx, ResiliencePolicyRegistry resiliencePolicyRegistry) {
         this.vertx = vertx;
+        this.resiliencePolicyRegistry = java.util.Objects.requireNonNull(resiliencePolicyRegistry, "registry");
+    }
+
+    RestClientBuilder suppliedResilience(@Nullable Resilience resilience) {
+        this.suppliedResilience = resilience;
+        return this;
     }
 
     // --- Static factory ---
@@ -866,7 +878,8 @@ public final class RestClientBuilder {
                 effectiveBackoffStrategy,
                 effectiveConfig,
                 effectiveCb,
-                methodMetas);
+                methodMetas,
+                resiliencePolicyRegistry);
 
         RestClientDispatcher dispatcher = new DefaultRestClientDispatcher(
                 webClient,
