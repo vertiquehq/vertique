@@ -9,7 +9,11 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.vertique.aop.Aspect;
+import dev.vertique.core.codegen.MethodMetadata;
+import dev.vertique.core.codegen.ReflectiveMethodMetadata;
 import dev.vertique.resilience.BackoffStrategy;
+import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
@@ -41,6 +45,25 @@ class ResilienceAnnotationsTest {
 
     interface NoAnnotations {
         void plainMethod();
+    }
+
+    interface ResilientFixtures {
+        @Resilient(policy = "x")
+        void anchorOnly();
+
+        @Resilient
+        @Retry(maxRetries = 6)
+        void blankPolicyWithRetry();
+
+        @Retry(maxRetries = 4)
+        void retryWithoutAnchor();
+    }
+
+    @Retry(maxRetries = 11)
+    interface MethodMetadataFixtures {
+        @Resilient(policy = "x")
+        @Timeout(2_000)
+        void methodLevelDeclarations();
     }
 
     @Timeout(value = 2, unit = TimeUnit.SECONDS)
@@ -83,6 +106,56 @@ class ResilienceAnnotationsTest {
         assertTrue(ResilienceAnnotations.NONE.circuitBreaker().isEmpty());
         assertTrue(ResilienceAnnotations.NONE.retry().isEmpty());
         assertTrue(ResilienceAnnotations.NONE.bulkhead().isEmpty());
+        assertTrue(ResilienceAnnotations.NONE.policy().isEmpty());
+    }
+
+    @Test
+    @DisplayName("TP-001: @Resilient resolves policy and activates resilience")
+    void resolvesTheResilientAnchorAsPolicyAndActivation() throws Exception {
+        Method anchorOnlyMethod = ResilientFixtures.class.getMethod("anchorOnly");
+        ResilienceAnnotations anchorOnly = ResilienceAnnotations.resolve(ResilientFixtures.class, anchorOnlyMethod);
+
+        assertEquals("x", anchorOnly.policy().orElseThrow());
+        assertTrue(anchorOnly.hasAny());
+        assertTrue(anchorOnly.timeout().isEmpty());
+        assertTrue(anchorOnly.circuitBreaker().isEmpty());
+        assertTrue(anchorOnly.retry().isEmpty());
+        assertTrue(anchorOnly.bulkhead().isEmpty());
+
+        Method blankPolicyMethod = ResilientFixtures.class.getMethod("blankPolicyWithRetry");
+        ResilienceAnnotations blankPolicy = ResilienceAnnotations.resolve(ResilientFixtures.class, blankPolicyMethod);
+
+        assertTrue(blankPolicy.policy().isEmpty());
+        assertTrue(blankPolicy.hasAny());
+        assertEquals(6, blankPolicy.retry().orElseThrow().maxRetries());
+
+        Method withoutAnchorMethod = ResilientFixtures.class.getMethod("retryWithoutAnchor");
+        ResilienceAnnotations withoutAnchor =
+                ResilienceAnnotations.resolve(ResilientFixtures.class, withoutAnchorMethod);
+
+        assertTrue(withoutAnchor.policy().isEmpty());
+        assertTrue(withoutAnchor.hasAny());
+        assertEquals(4, withoutAnchor.retry().orElseThrow().maxRetries());
+
+        assertPassiveDeclaration(Retry.class);
+        assertPassiveDeclaration(Timeout.class);
+        assertPassiveDeclaration(CircuitBreaker.class);
+        assertPassiveDeclaration(Bulkhead.class);
+        assertTrue(Resilient.class.isAnnotationPresent(java.lang.annotation.Documented.class));
+        assertEquals(50, Resilient.class.getAnnotation(Aspect.class).ordering());
+    }
+
+    @Test
+    @DisplayName("TP-002: MethodMetadata resolution is reflection-free and method-level only")
+    void resolvesTheMethodMetadataOverloadReflectionFreeAndMethodLevelOnly() throws Exception {
+        Method method = MethodMetadataFixtures.class.getMethod("methodLevelDeclarations");
+        MethodMetadata metadata = new ReflectiveMethodMetadata(method, List.of());
+
+        ResilienceAnnotations resolved = ResilienceAnnotations.resolve(metadata);
+
+        assertEquals("x", resolved.policy().orElseThrow());
+        assertEquals(2_000L, resolved.timeout().orElseThrow().value());
+        assertTrue(resolved.retry().isEmpty());
     }
 
     @Test
@@ -264,5 +337,11 @@ class ResilienceAnnotationsTest {
         assertEquals(20000L, resolved.timeout().orElseThrow().value());
         assertTrue(resolved.circuitBreaker().isPresent());
         assertEquals(7, resolved.circuitBreaker().orElseThrow().maxFailures());
+    }
+
+    private static void assertPassiveDeclaration(Class<? extends Annotation> declarationType) {
+        assertFalse(
+                declarationType.isAnnotationPresent(Aspect.class),
+                declarationType.getSimpleName() + " must remain passive metadata");
     }
 }

@@ -34,6 +34,20 @@ The AOP model is a compile-time subclass proxy. `vertique-codegen-aop` generates
 
 **Chain ordering.** Interceptors are ordered by descending `@Aspect.ordering()` — higher values are outermost and run first. Ties are broken deterministically by the fully-qualified name of the aspect annotation, making the chain order stable across compilations.
 
+### Allocated aspect-ordering registry
+
+The framework reserves these aspect bands. Higher values are outermost and run first:
+
+| Ordering | Aspect | Module |
+|----------|--------|--------|
+| `50` | `@Resilient` | `vertique-resilience` |
+| `100` | `@CacheEvict` | `vertique-cache-aop` |
+| `200` | `@Cacheable` | `vertique-cache-aop` |
+| `300` | `@RateLimited` | `vertique-rate-limit-aop` |
+| `1000` | `@Timed` | `vertique-micrometer-core` |
+
+An application aspect ordered below `50` runs inside retry and is re-executed once per retry attempt. `@RateLimited` at `300` consumes quota before the `@Cacheable` lookup at `200`, including on cache hits.
+
 **Sync-returning methods.** When the intercepted method returns a non-`Future` type, the generated override unwraps the completed future and returns the value synchronously. Framework built-ins never defer the future, so this unwrapping succeeds. A custom aspect that defers on a sync-returning method receives an `IllegalStateException` at call time — never a blocked thread.
 
 ---

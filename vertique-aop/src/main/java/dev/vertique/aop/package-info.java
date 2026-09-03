@@ -31,10 +31,14 @@
  * outermost.
  *
  * <ul>
+ *   <li>{@code 50} — {@code @Resilient} ({@code vertique-resilience})
  *   <li>{@code 100} — {@code @CacheEvict} ({@code vertique-cache-aop})
  *   <li>{@code 200} — {@code @Cacheable} ({@code vertique-cache-aop})
  *   <li>{@code 300} — {@code @RateLimited} ({@code vertique-rate-limit-aop})
  *   <li>{@code 1000} — {@code @Timed} (default; {@link dev.vertique.aop.Aspect#ordering()})
  * </ul>
+ *
+ * <p>An application aspect ordered below 50 runs inside retry and is re-executed once per
+ * retry attempt.
  */
 package dev.vertique.aop;

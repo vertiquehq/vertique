@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.vertique.core.codegen.MethodMetadata;
 import dev.vertique.resilience.BackoffStrategy;
 import dev.vertique.resilience.RetryPolicy;
 import java.lang.reflect.Constructor;
@@ -40,6 +41,10 @@ class CanonicalResilienceVocabularyTest {
                 Bulkhead.class,
                 "dev.vertique.resilience.annotation.Bulkhead",
                 "Ldev/vertique/resilience/annotation/Bulkhead;");
+        assertType(
+                Resilient.class,
+                "dev.vertique.resilience.annotation.Resilient",
+                "Ldev/vertique/resilience/annotation/Resilient;");
         assertType(
                 ResilienceAnnotations.class,
                 "dev.vertique.resilience.annotation.ResilienceAnnotations",
@@ -81,6 +86,7 @@ class CanonicalResilienceVocabularyTest {
         assertMethodDescriptor(Bulkhead.class, "mode", "()Ldev/vertique/resilience/annotation/Bulkhead$Mode;");
         assertMethodDescriptor(Bulkhead.class, "maxQueueSize", "()I");
         assertMethodDescriptor(Bulkhead.class, "queueTimeoutMs", "()J");
+        assertMethodDescriptor(Resilient.class, "policy", "()Ljava/lang/String;");
 
         assertFieldDescriptor(
                 ResilienceAnnotations.class, "NONE", "Ldev/vertique/resilience/annotation/ResilienceAnnotations;");
@@ -88,6 +94,7 @@ class CanonicalResilienceVocabularyTest {
         assertMethodDescriptor(ResilienceAnnotations.class, "circuitBreaker", "()Ljava/util/Optional;");
         assertMethodDescriptor(ResilienceAnnotations.class, "retry", "()Ljava/util/Optional;");
         assertMethodDescriptor(ResilienceAnnotations.class, "bulkhead", "()Ljava/util/Optional;");
+        assertMethodDescriptor(ResilienceAnnotations.class, "policy", "()Ljava/util/Optional;");
         assertMethodDescriptor(ResilienceAnnotations.class, "hasAny", "()Z");
         assertMethodDescriptor(
                 ResilienceAnnotations.class,
@@ -100,6 +107,27 @@ class CanonicalResilienceVocabularyTest {
                 "resolve",
                 "(Ljava/lang/reflect/Method;)Ldev/vertique/resilience/annotation/ResilienceAnnotations;",
                 Method.class);
+        assertMethodDescriptor(
+                ResilienceAnnotations.class,
+                "resolve",
+                "(Ldev/vertique/core/codegen/MethodMetadata;)Ldev/vertique/resilience/annotation/ResilienceAnnotations;",
+                MethodMetadata.class);
+
+        assertConstructorDescriptor(
+                ResilienceAnnotations.class,
+                "(Ljava/util/Optional;Ljava/util/Optional;Ljava/util/Optional;Ljava/util/Optional;Ljava/util/Optional;)V",
+                java.util.Optional.class,
+                java.util.Optional.class,
+                java.util.Optional.class,
+                java.util.Optional.class,
+                java.util.Optional.class);
+        assertConstructorDescriptor(
+                ResilienceAnnotations.class,
+                "(Ljava/util/Optional;Ljava/util/Optional;Ljava/util/Optional;Ljava/util/Optional;)V",
+                java.util.Optional.class,
+                java.util.Optional.class,
+                java.util.Optional.class,
+                java.util.Optional.class);
 
         assertConstructorDescriptor(
                 TimeoutDeclaration.class, "(JLjava/util/concurrent/TimeUnit;)V", long.class, TimeUnit.class);
