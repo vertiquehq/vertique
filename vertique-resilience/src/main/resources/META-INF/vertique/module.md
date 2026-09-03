@@ -314,6 +314,8 @@ also declares the empty-by-default multibound observer set.
 
 - `dev.vertique:vertique-core` — annotation hierarchy resolution, shared exception roots, and
   lifecycle contracts.
+- `dev.vertique:vertique-aop` — the `@Aspect` metadata used by `@Resilient` and the
+  `AspectProvider`/`MethodInterceptor` contracts used by the AOP integration.
 - `io.vertx:vertx-core` — runtime contexts, asynchronous futures, promises, and timers.
 - `com.google.dagger:dagger` and `jakarta.inject:jakarta.inject-api` — the singleton runtime and
   lifecycle bindings exposed by `ResilienceModule`.
