@@ -148,6 +148,56 @@ The type's own package is derived from its enclosing elements rather than passed
 
 ---
 
+### SelectorPathValidator
+
+Compile-time validator for selector paths used by annotation processors. Construct one per
+processor with a diagnostic family prefix, then call `validate` for the annotated method and its
+selector-path array. It reports every invalid path through `CodegenContext.diagnostics()` and
+returns `true` only when all paths are valid.
+
+```java
+SelectorPathValidator validator = new SelectorPathValidator(ctx, "cache");
+boolean valid = validator.validate(method, new String[] {"user.address.postalCode"});
+```
+
+The selector grammar is bounded and resolves against the method being processed:
+
+- A path is at most 256 UTF-16 code units and contains at most 8 dot-separated segments,
+  including its root parameter.
+- The root is either a decimal parameter position (`"0"`) or a declared parameter name.
+- Every later segment must be a valid Java identifier. On a record, a bare segment may resolve to
+  a public zero-argument record-component accessor; otherwise the segment must resolve to a public,
+  zero-argument, non-static `getX()` or `isX()` accessor.
+- The final type must be a supported scalar: any primitive except `void`; `String`, `Character`,
+  `Boolean`, `Byte`, `Short`, `Integer`, `Long`, `Float`, or `Double`; `BigInteger` or
+  `BigDecimal`; `UUID`; an enum; or `Instant`, `LocalDate`, `LocalDateTime`, `OffsetDateTime`,
+  or `ZonedDateTime`.
+
+Blank paths, invalid identifiers, missing parameters or accessors, excessive depth, and
+non-scalar terminal types produce family-prefixed compile-time diagnostics. The public bounds are
+`MAX_PATH_LENGTH` (`256`) and `MAX_SEGMENTS` (`8`).
+
+---
+
+### ProxyabilityValidator
+
+Compile-time validator for methods that an annotation processor will proxy. Construct one per
+processor with a diagnostic family prefix and call `validate` for each annotated method.
+
+```java
+ProxyabilityValidator validator = new ProxyabilityValidator(ctx, "cacheable");
+boolean valid = validator.validate(method);
+```
+
+Validation requires a public, non-final enclosing class with exactly one constructor annotated with
+`jakarta.inject.Inject` or `javax.inject.Inject`. The method must be an instance method that can be
+overridden: final, private, static, and abstract methods are rejected. Each failure is reported as
+a family-prefixed compile-time diagnostic. Enclosing-class checks are memoized per class, so
+co-located annotations do not repeat the same class-level diagnostics; method-level checks still
+apply to each method.
+
+---
+
 ### dagger.DaggerModuleWriter
 
 Thin JavaPoet wrapper (Palantir fork) for the most common Dagger emit patterns. Downstream processors use this to generate `@Module` classes without duplicating JavaPoet boilerplate.

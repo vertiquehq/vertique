@@ -180,6 +180,69 @@ public final class Diagnostics {
         return "@PathParam(\"%s\") on %s has no matching placeholder in @Path".formatted(paramName, context);
     }
 
+    // --- T003 shared selector-path and proxyability formatters ---
+
+    /** Returns the family-prefixed diagnostic for a blank selector path. */
+    public static String selectorPathBlank(String family) {
+        return "%s selector path must not be blank".formatted(selectorFamily(family));
+    }
+
+    /** Returns the family-prefixed diagnostic for a selector path exceeding the length bound. */
+    public static String selectorPathTooLong(String family) {
+        return "%s selector path must not exceed 256 characters".formatted(selectorFamily(family));
+    }
+
+    /** Returns the family-prefixed diagnostic for a selector path exceeding the segment bound. */
+    public static String propertyPathsTooDeep(String family) {
+        return "%s property paths are limited to eight segments including the root parameter"
+                .formatted(selectorFamily(family));
+    }
+
+    /** Returns the family-prefixed diagnostic for an invalid property-path identifier. */
+    public static String propertyPathInvalidIdentifier(String family, String segment) {
+        return "%s property path contains an invalid identifier: %s".formatted(selectorFamily(family), segment);
+    }
+
+    /** Returns the family-prefixed diagnostic for an unresolved selector root. */
+    public static String selectorParameterNotFound(String family, String root) {
+        return "%s selector does not resolve to a method parameter: %s".formatted(selectorFamily(family), root);
+    }
+
+    /** Returns the family-prefixed diagnostic for an inaccessible property accessor. */
+    public static String propertyAccessorNotFound(String family, String segment) {
+        String prefix = family.equals("cache") ? "cache" : family;
+        return "%s property is not an accessible record or bean accessor: %s".formatted(prefix, segment);
+    }
+
+    /** Returns the family-prefixed diagnostic for a selector ending in an unsupported type. */
+    public static String selectorNotScalar(String family) {
+        return "%s selector must end in a supported scalar type".formatted(selectorFamily(family));
+    }
+
+    private static String selectorFamily(String family) {
+        return family.equals("cache") ? "cache key" : family;
+    }
+
+    /** Returns the family-prefixed diagnostic for a non-public enclosing class. */
+    public static String methodsNotOnPublicClass(String family) {
+        return "%s methods must be declared on a public Dagger-managed class".formatted(family);
+    }
+
+    /** Returns the family-prefixed diagnostic for a final enclosing class. */
+    public static String methodsOnFinalClass(String family) {
+        return "%s methods cannot be declared on a final class".formatted(family);
+    }
+
+    /** Returns the family-prefixed diagnostic for an invalid inject-constructor shape. */
+    public static String methodsRequireInjectConstructor(String family) {
+        return "%s methods require exactly one @Inject constructor".formatted(family);
+    }
+
+    /** Returns the family-prefixed diagnostic for a non-overridable method shape. */
+    public static String methodsNotOverridable(String family) {
+        return "%s methods must be instance methods that can be overridden".formatted(family);
+    }
+
     // --- CG-009 JAX-RS validation formatters ---
 
     /**
