@@ -56,5 +56,10 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertx-junit5</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-config-core</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>

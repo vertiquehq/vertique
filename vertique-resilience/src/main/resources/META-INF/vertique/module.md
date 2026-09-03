@@ -250,6 +250,48 @@ do not attach the original throwable as a cause or suppressed exception.
 
 ---
 
+## Configuration
+
+Named policy tiers are an opt-in configuration surface under the keyed object
+`resilience.policies.<name>`. The entry key is injected as `ResiliencePolicyConfig.name` and must
+match `[A-Za-z0-9._~-]{1,128}`. For example:
+
+```json
+{
+  "resilience": {
+    "policies": {
+      "payments": {
+        "timeout": {"valueMs": 2000},
+        "retry": {"maxRetries": 5, "delayMs": 100},
+        "circuitBreaker": {"maxFailures": 3, "resetTimeoutMs": 10000},
+        "bulkhead": {"maxConcurrentCalls": 8, "mode": "QUEUE", "maxQueueSize": 16, "queueTimeoutMs": 250}
+      }
+    }
+  }
+}
+```
+
+Install `ResiliencePoliciesModule` alongside `ResilienceModule` when named tiers are used. The
+provider requires the application's `@VertxConfig JsonObject` and canonical `ConfigParser`
+bindings (normally supplied by `VertxModule` and `ConfigParsingModule`). Consumers inject
+`Optional<ResiliencePolicyRegistry>` and use `ResiliencePolicyRegistry.empty()` when the opt-in
+provider is absent:
+
+```java
+ResiliencePolicyRegistry registry = registryOptional.orElse(ResiliencePolicyRegistry.empty());
+```
+
+`ResiliencePolicyConfig.toOverrides()` preserves the raw partial tier: omitted fields remain
+omitted and no declaration defaults are filled while parsing. When a named tier is selected by
+`@Resilient(policy = "payments")`, `ResiliencePolicyRegistry.layer(...)` completes retry fields
+(`delayMs = 500`, `backoffMultiplier = 2.0`, `maxDelayMs = 30000`) and circuit-breaker fields
+(`maxFailures = 5`, `resetTimeoutMs = 10000`) only when that concern has no annotation declaration.
+Declared concern values remain partial so the resolver can apply them; transport overrides have
+higher precedence. Timeout and bulkhead tiers are complete by construction, and without a selected
+named tier `layer(...)` returns transport overrides unchanged.
+
+---
+
 ## Extension Points
 
 Implement `BackoffStrategy` when a consumer needs a custom delay schedule. The class may be supplied
