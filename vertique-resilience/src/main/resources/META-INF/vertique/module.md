@@ -62,6 +62,21 @@ hidden event queue, and observer implementations must keep callbacks bounded and
 
 ---
 
+## AOP integration
+
+`ResilienceAopModule` binds the internal `ResilientAspect` to the `vertique-aop` provider set and
+contributes its shutdown step. Add this module to the application component together with the
+runtime modules that provide `Resilience`; methods carrying `@Resilient` then activate the
+reflection-free resilience pipeline. The aspect resolves the effective method declarations once
+when an interceptor is built and memoizes the pipeline by the erased declaring type, method name,
+and parameter signature.
+
+The aspect does not intercept self-invocation or direct object construction. For a
+`ServiceHandler<C>` implementation, wire either the generated `ServiceContract` or the AOP
+provider, but do not apply both to the same method: doing so double-wraps one invocation and may
+duplicate retries, timeout events, and breaker accounting. The aspect owns adapter state and closes
+it during `VALIDATE` shutdown, before the synthetic runtime teardown step in `CONFIGURE`.
+
 ## Key Classes
 
 ### Resilience annotations
