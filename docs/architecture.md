@@ -107,6 +107,9 @@ compile dependency on `vertique-rest-security` for the captured client-origin ty
 only; and `vertique-micrometer-rate-limit`/`vertique-opentelemetry-rate-limit` layer
 metrics and tracing on the core observer SPI. `vertique-codegen-rate-limit`
 validates `@RateLimited` declarations at compile time and generates no sources.
+`vertique-codegen-resilience` similarly validates `@Resilient` and its declaration
+annotations at compile time, including proxyability and services double-wrap
+guardrails, and generates no sources.
 Bucket4j itself is a private implementation dependency of core and the Redis
 adapter; it never appears in a public signature of any rate-limit artifact.
 

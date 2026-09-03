@@ -200,6 +200,47 @@ class DiagnosticsTest {
                 Diagnostics.methodsNotOverridable("rate-limited"));
     }
 
+    @Test
+    @DisplayName("resilience formatters preserve the T011 diagnostic contract")
+    void resilienceFormatters_exactStrings() {
+        assertEquals(
+                "resilience declarations on a concrete class require @Resilient on the same method",
+                Diagnostics.resilienceDeclarationRequiresAnchor());
+        assertEquals(
+                "class-level resilience declarations are not honored on concrete classes; declare them on each @Resilient method",
+                Diagnostics.resilienceClassLevelDeclaration());
+        assertEquals(
+                "the services transport already wraps this operation from the contract; declare resilience on the contract or on the handler, not both",
+                Diagnostics.resilienceServiceDoubleWrap());
+        assertEquals(
+                "@Resilient must name a policy or be accompanied by at least one resilience declaration",
+                Diagnostics.resilientAnchorRequiresPolicyOrDeclaration());
+        assertEquals(
+                "resilience policy name must match [A-Za-z0-9._~-]{1,128}: invalid!",
+                Diagnostics.resiliencePolicyName("invalid!"));
+        assertEquals(
+                "@Resilient on an interface is honored only on a @ServiceContract or REST-client interface",
+                Diagnostics.resilientInterfaceNotAllowed());
+        assertEquals(
+                "resilient methods must return a concrete Future<T>", Diagnostics.resilientMethodsMustReturnFuture());
+        assertEquals("@Retry.maxRetries must be between 0 and 100", Diagnostics.retryMaxRetries());
+        assertEquals("@Retry.delayMs must be >= 0", Diagnostics.retryDelayMs());
+        assertEquals("@Retry.backoffMultiplier must be >= 1.0", Diagnostics.retryBackoffMultiplier());
+        assertEquals("@Retry.maxDelayMs must be >= 0", Diagnostics.retryMaxDelayMs());
+        assertEquals("@Timeout.value must be positive", Diagnostics.timeoutValue());
+        assertEquals("@CircuitBreaker.maxFailures must be positive", Diagnostics.circuitBreakerMaxFailures());
+        assertEquals("@CircuitBreaker.resetTimeoutMs must be positive", Diagnostics.circuitBreakerResetTimeoutMs());
+        assertEquals("@Bulkhead.maxConcurrentCalls must be positive", Diagnostics.bulkheadMaxConcurrentCalls());
+        assertEquals(
+                "@Bulkhead(mode = REJECT) cannot configure maxQueueSize or queueTimeoutMs",
+                Diagnostics.bulkheadRejectQueueFields());
+        assertEquals(
+                "@Bulkhead(mode = QUEUE).maxQueueSize must be between 1 and 1024", Diagnostics.bulkheadQueueSize());
+        assertEquals(
+                "@Bulkhead(mode = QUEUE).queueTimeoutMs must be between 1 and 60000",
+                Diagnostics.bulkheadQueueTimeoutMs());
+    }
+
     // --- CG-009 JAX-RS formatters (stable contract) ---
 
     @Test

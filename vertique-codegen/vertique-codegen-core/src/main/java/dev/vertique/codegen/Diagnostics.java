@@ -243,6 +243,98 @@ public final class Diagnostics {
         return "%s methods must be instance methods that can be overridden".formatted(family);
     }
 
+    // --- T011 resilience validation formatters ---
+
+    /** Returns the diagnostic for a resilience declaration without a method-level anchor. */
+    public static String resilienceDeclarationRequiresAnchor() {
+        return "resilience declarations on a concrete class require @Resilient on the same method";
+    }
+
+    /** Returns the diagnostic for a resilience declaration placed on a concrete type. */
+    public static String resilienceClassLevelDeclaration() {
+        return "class-level resilience declarations are not honored on concrete classes; declare them on each @Resilient method";
+    }
+
+    /** Returns the diagnostic for an anchor with neither a policy name nor a declaration. */
+    public static String resilientAnchorRequiresPolicyOrDeclaration() {
+        return "@Resilient must name a policy or be accompanied by at least one resilience declaration";
+    }
+
+    /** Returns the diagnostic for a malformed resilience policy name. */
+    public static String resiliencePolicyName(String policy) {
+        return "resilience policy name must match [A-Za-z0-9._~-]{1,128}: %s".formatted(policy);
+    }
+
+    /** Returns the diagnostic for an anchor on an unsupported interface. */
+    public static String resilientInterfaceNotAllowed() {
+        return "@Resilient on an interface is honored only on a @ServiceContract or REST-client interface";
+    }
+
+    /** Returns the diagnostic for an invalid Future return shape. */
+    public static String resilientMethodsMustReturnFuture() {
+        return "resilient methods must return a concrete Future<T>";
+    }
+
+    /** Returns the diagnostic for a services transport double-wrap. */
+    public static String resilienceServiceDoubleWrap() {
+        return "the services transport already wraps this operation from the contract; declare resilience on the contract or on the handler, not both";
+    }
+
+    /** Returns the diagnostic for an invalid retry maximum. */
+    public static String retryMaxRetries() {
+        return "@Retry.maxRetries must be between 0 and 100";
+    }
+
+    /** Returns the diagnostic for a negative retry delay. */
+    public static String retryDelayMs() {
+        return "@Retry.delayMs must be >= 0";
+    }
+
+    /** Returns the diagnostic for a retry multiplier below one. */
+    public static String retryBackoffMultiplier() {
+        return "@Retry.backoffMultiplier must be >= 1.0";
+    }
+
+    /** Returns the diagnostic for a negative maximum retry delay. */
+    public static String retryMaxDelayMs() {
+        return "@Retry.maxDelayMs must be >= 0";
+    }
+
+    /** Returns the diagnostic for a non-positive timeout. */
+    public static String timeoutValue() {
+        return "@Timeout.value must be positive";
+    }
+
+    /** Returns the diagnostic for a non-positive circuit-breaker failure threshold. */
+    public static String circuitBreakerMaxFailures() {
+        return "@CircuitBreaker.maxFailures must be positive";
+    }
+
+    /** Returns the diagnostic for a non-positive circuit-breaker reset timeout. */
+    public static String circuitBreakerResetTimeoutMs() {
+        return "@CircuitBreaker.resetTimeoutMs must be positive";
+    }
+
+    /** Returns the diagnostic for a non-positive bulkhead concurrency limit. */
+    public static String bulkheadMaxConcurrentCalls() {
+        return "@Bulkhead.maxConcurrentCalls must be positive";
+    }
+
+    /** Returns the diagnostic for queue-only fields on a reject-mode bulkhead. */
+    public static String bulkheadRejectQueueFields() {
+        return "@Bulkhead(mode = REJECT) cannot configure maxQueueSize or queueTimeoutMs";
+    }
+
+    /** Returns the diagnostic for a queue size outside its supported bounds. */
+    public static String bulkheadQueueSize() {
+        return "@Bulkhead(mode = QUEUE).maxQueueSize must be between 1 and 1024";
+    }
+
+    /** Returns the diagnostic for a queue timeout outside its supported bounds. */
+    public static String bulkheadQueueTimeoutMs() {
+        return "@Bulkhead(mode = QUEUE).queueTimeoutMs must be between 1 and 60000";
+    }
+
     // --- CG-009 JAX-RS validation formatters ---
 
     /**
