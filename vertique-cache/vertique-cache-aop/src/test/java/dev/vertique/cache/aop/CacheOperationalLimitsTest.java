@@ -86,7 +86,7 @@ class CacheOperationalLimitsTest {
                 name = "profile",
                 key = {},
                 ttlSeconds = 121,
-                identity = CacheIdentity.NONE)
+                subject = CacheIdentity.NONE)
         String value() {
             return "unused";
         }
@@ -95,7 +95,7 @@ class CacheOperationalLimitsTest {
                 name = "profile-at-maximum",
                 key = {},
                 ttlSeconds = 120,
-                identity = CacheIdentity.NONE)
+                subject = CacheIdentity.NONE)
         String valueAtMaximum() {
             return "unused";
         }

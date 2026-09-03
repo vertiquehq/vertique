@@ -7,6 +7,7 @@ import dev.vertique.aop.Aspect;
 import dev.vertique.cache.AnonymousCachePolicy;
 import dev.vertique.cache.CacheIdentity;
 import dev.vertique.cache.CacheMode;
+import java.lang.annotation.Documented;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -15,6 +16,7 @@ import java.lang.annotation.Target;
 /** Marks a method whose successful result may be stored in a named cache region. */
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
+@Documented
 @Aspect(ordering = 200)
 public @interface Cacheable {
     String name();
@@ -26,7 +28,7 @@ public @interface Cacheable {
 
     long ttlSeconds() default -1;
 
-    CacheIdentity identity() default CacheIdentity.EFFECTIVE_PRINCIPAL;
+    CacheIdentity subject() default CacheIdentity.EFFECTIVE_PRINCIPAL;
 
     AnonymousCachePolicy anonymous() default AnonymousCachePolicy.BYPASS;
 }

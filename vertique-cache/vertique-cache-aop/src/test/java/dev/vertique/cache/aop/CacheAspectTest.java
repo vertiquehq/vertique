@@ -249,7 +249,7 @@ class CacheAspectTest {
     }
 
     static final class Target {
-        @Cacheable(name = "profile", key = "0", identity = CacheIdentity.NONE)
+        @Cacheable(name = "profile", key = "0", subject = CacheIdentity.NONE)
         String value(String user) {
             return "unused";
         }

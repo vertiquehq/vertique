@@ -54,7 +54,7 @@ final class CacheAnnotationAdapter {
                 valueType(target),
                 annotation.mode(),
                 annotation.ttlSeconds(),
-                annotation.identity(),
+                annotation.subject(),
                 annotation.anonymous(),
                 selector(annotation.key(), target),
                 target.returnType() != Future.class,

@@ -4,6 +4,7 @@
 package dev.vertique.cache.aop;
 
 import dev.vertique.aop.Aspect;
+import java.lang.annotation.Documented;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Repeatable;
 import java.lang.annotation.Retention;
@@ -14,6 +15,7 @@ import java.lang.annotation.Target;
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
 @Repeatable(CacheEvict.List.class)
+@Documented
 @Aspect(ordering = 100)
 public @interface CacheEvict {
     String name();
@@ -26,6 +28,7 @@ public @interface CacheEvict {
     /** Container for repeatable eviction declarations. */
     @Target(ElementType.METHOD)
     @Retention(RetentionPolicy.RUNTIME)
+    @Documented
     @Aspect(ordering = 100)
     @interface List {
         CacheEvict[] value();

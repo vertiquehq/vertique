@@ -16,6 +16,8 @@ import dev.vertique.cache.spi.CacheRegion;
 import dev.vertique.cache.spi.ResolvedCacheKey;
 import dev.vertique.core.codegen.MethodMetadata;
 import dev.vertique.core.codegen.ParameterMetadata;
+import dev.vertique.ratelimit.aop.RateLimited;
+import java.lang.annotation.Documented;
 import java.lang.reflect.Method;
 import java.lang.reflect.Type;
 import java.util.List;
@@ -28,14 +30,19 @@ import org.junit.jupiter.api.Test;
 class CacheContractsTest {
 
     @Test
-    @DisplayName("cache annotations expose the frozen defaults")
-    void cacheAnnotationsExposeFrozenDefaults() throws NoSuchMethodException {
+    @DisplayName("cache annotations expose subject and documentation metadata")
+    void exposesSubjectAndIsDocumented() throws NoSuchMethodException {
         var cacheable = Sample.class.getDeclaredMethod("cached").getAnnotation(Cacheable.class);
 
         assertEquals(CacheMode.DEFAULT, cacheable.mode());
         assertEquals(-1, cacheable.ttlSeconds());
-        assertEquals(CacheIdentity.EFFECTIVE_PRINCIPAL, cacheable.identity());
+        assertEquals(CacheIdentity.EFFECTIVE_PRINCIPAL, cacheable.subject());
         assertEquals(AnonymousCachePolicy.BYPASS, cacheable.anonymous());
+        assertEquals("subject", Cacheable.class.getMethod("subject").getName());
+        assertThrows(NoSuchMethodException.class, () -> Cacheable.class.getMethod("identity"));
+        assertEquals(true, Cacheable.class.isAnnotationPresent(Documented.class));
+        assertEquals(true, CacheEvict.class.isAnnotationPresent(Documented.class));
+        assertEquals(true, RateLimited.class.isAnnotationPresent(Documented.class));
     }
 
     @Test

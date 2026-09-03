@@ -40,7 +40,7 @@ public class CompositionProbeServiceHandler implements ServiceHandler<Compositio
     @Cacheable(
             name = "composition",
             key = {"0"},
-            identity = CacheIdentity.NONE)
+            subject = CacheIdentity.NONE)
     @RateLimited(policy = "composition", subject = RateLimitSubject.NONE)
     @Resilient
     @CircuitBreaker(maxFailures = 1, resetTimeoutMs = 60_000)

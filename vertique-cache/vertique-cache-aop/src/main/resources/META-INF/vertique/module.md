@@ -16,8 +16,10 @@ adaptation, delegation to the shared runtime selector-path resolver, and the Dag
 for the cache aspects.
 
 Keys are declared as ordered selector paths, never as a template or format string:
-`@Cacheable(name = "users", key = {"tenantId", "productId"})`. Each path names a
-parameter (by name or position) plus optional record/bean accessor segments. The shared
+`@Cacheable(name = "users", key = {"tenantId", "productId"}, subject = CacheIdentity.ACTOR)`.
+The caller-subject dimension is selected with `subject`; the attribute is typed as
+`CacheIdentity`. Each path names a parameter (by name or position) plus optional
+record/bean accessor segments. The shared
 [selector-path grammar and runtime resolution rules](../../../../../../../vertique-aop/src/main/resources/META-INF/vertique/module.md#selector-path-grammar)
 define the accepted roots, accessors, limits, and scalar terminals. Path order is component
 order, and the runtime alone composes and frames the canonical key. An explicitly empty

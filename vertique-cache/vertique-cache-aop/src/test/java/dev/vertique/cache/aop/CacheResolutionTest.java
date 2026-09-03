@@ -82,7 +82,7 @@ class CacheResolutionTest {
                 key = "0",
                 mode = CacheMode.CLUSTERED,
                 ttlSeconds = 1,
-                identity = CacheIdentity.NONE)
+                subject = CacheIdentity.NONE)
         String value(String user) {
             return "unused";
         }

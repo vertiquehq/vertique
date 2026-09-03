@@ -276,7 +276,7 @@ class CacheEvictionTest {
     }
 
     static final class CacheableTarget {
-        @Cacheable(name = "profile", key = "0", identity = CacheIdentity.EFFECTIVE_PRINCIPAL)
+        @Cacheable(name = "profile", key = "0", subject = CacheIdentity.EFFECTIVE_PRINCIPAL)
         String value(String user) {
             return "unused";
         }
@@ -286,7 +286,7 @@ class CacheEvictionTest {
         @Cacheable(
                 name = "profile",
                 key = {"request.tenant", "request.userId"},
-                identity = CacheIdentity.NONE)
+                subject = CacheIdentity.NONE)
         String value(SelectorInput request) {
             return "unused";
         }

@@ -198,7 +198,7 @@ class RedisCacheStoreTimeoutTest {
         @Cacheable(
                 name = "profiles",
                 key = {},
-                identity = CacheIdentity.NONE)
+                subject = CacheIdentity.NONE)
         Future<String> load() {
             return Future.succeededFuture("unused");
         }
