@@ -53,6 +53,12 @@ otherwise every caller resolves as anonymous.
 `@Aspect(ordering = 300)` places `@RateLimited` outside `@Cacheable`(200)/
 `@CacheEvict`(100) and inside `@Timed`(1000) in the generated interceptor chain.
 
+When composed with `@Cacheable`, this ordering makes quota admission the outer
+boundary: every invocation consumes one quota unit before the cache lookup,
+including a cache hit. A cache miss enters the nested cache and resilience
+pipeline only after admission; retries remain inside that single admission and
+do not consume additional quota units.
+
 Handle resolution happens once, at generated-proxy-constructor time: an unknown
 policy name fails application startup, before any request is served, exactly as
 `@RateLimited`'s handle-creation contract in `vertique-rate-limit-core` describes.

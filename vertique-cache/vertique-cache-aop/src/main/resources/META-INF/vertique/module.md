@@ -53,6 +53,12 @@ definition resolution through the core's public `CacheAdapterSupport` seam.
 Programmatic callers should depend only on `vertique-cache-core` and use `CacheBuilder`
 and `Cache<K,V>` directly.
 
+When `@Cacheable` is composed with `@RateLimited`, the rate-limit aspect is
+outermost (`@RateLimited` ordering 300 versus `@Cacheable` ordering 200), so
+admission occurs before the cache lookup. A cache hit therefore still consumes
+one quota unit; a cache miss consumes one unit for the complete logical call,
+regardless of how many retries the nested resilience pipeline performs.
+
 ## Verification
 
 ```text

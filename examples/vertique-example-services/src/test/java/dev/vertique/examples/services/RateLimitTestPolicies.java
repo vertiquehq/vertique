@@ -43,4 +43,27 @@ final class RateLimitTestPolicies {
                                                 .put("tokens", 2)
                                                 .put("periodMs", 3_600_000)));
     }
+
+    /**
+     * @return the high-capacity local policy used by the composition probe
+     */
+    static JsonObject composition() {
+        return new JsonObject()
+                .put("enabled", true)
+                .put("mode", "LOCAL")
+                .put("failureMode", "OPEN")
+                .put("revision", "v1")
+                .put("defaultCost", 1)
+                .put(
+                        "algorithm",
+                        new JsonObject()
+                                .put("type", "TOKEN_BUCKET")
+                                .put("capacity", 100)
+                                .put(
+                                        "refill",
+                                        new JsonObject()
+                                                .put("type", "GREEDY")
+                                                .put("tokens", 100)
+                                                .put("periodMs", 3_600_000)));
+    }
 }

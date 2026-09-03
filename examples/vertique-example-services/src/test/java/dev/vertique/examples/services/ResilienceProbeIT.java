@@ -80,7 +80,8 @@ class ResilienceProbeIT {
                                 .put(
                                         "policies",
                                         new JsonObject()
-                                                .put("rate-limit-probe-shared", RateLimitTestPolicies.probeShared())))
+                                                .put("rate-limit-probe-shared", RateLimitTestPolicies.probeShared())
+                                                .put("composition", RateLimitTestPolicies.composition())))
                 .put("resilience", new JsonObject().put("policies", new JsonObject().put("probe", policy)))
                 .put(
                         "services",

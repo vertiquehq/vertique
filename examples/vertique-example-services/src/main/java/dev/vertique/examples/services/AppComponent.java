@@ -118,7 +118,8 @@ import jakarta.inject.Singleton;
             RestRateLimitModule.class,
             ResilienceModule.class,
             ResiliencePoliciesModule.class,
-            ResilienceAopModule.class
+            ResilienceAopModule.class,
+            CompositionObserverModule.class
         })
 interface AppComponent extends VertiqueApplicationComponent {
 
@@ -129,6 +130,20 @@ interface AppComponent extends VertiqueApplicationComponent {
      * @return the Dagger-provided resilience probe proxy
      */
     dev.vertique.examples.services.service.ResilienceProbeServiceHandler resilienceProbeServiceHandler();
+
+    /**
+     * Exposes the generated AOP proxy for the composition probe.
+     *
+     * @return the Dagger-provided composition probe proxy
+     */
+    dev.vertique.examples.services.service.CompositionProbeServiceHandler compositionProbeServiceHandler();
+
+    /**
+     * Exposes the ordered event sequence used by the composition characterization.
+     *
+     * @return the shared composition event collector
+     */
+    CompositionEventCollector compositionEventCollector();
 
     /**
      * Exposes the shared {@link AuthzEventCollector} so an integration test can read the

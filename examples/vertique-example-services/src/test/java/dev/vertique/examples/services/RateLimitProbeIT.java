@@ -47,7 +47,12 @@ class RateLimitProbeIT {
                     .put("resilience", ResilienceTestPolicies.probeConfig())
                     .put(
                             "rateLimit",
-                            new JsonObject().put("policies", new JsonObject().put(POLICY_NAME, sharedPolicy())))
+                            new JsonObject()
+                                    .put(
+                                            "policies",
+                                            new JsonObject()
+                                                    .put(POLICY_NAME, sharedPolicy())
+                                                    .put("composition", RateLimitTestPolicies.composition())))
                     .put(
                             "services",
                             new JsonObject()

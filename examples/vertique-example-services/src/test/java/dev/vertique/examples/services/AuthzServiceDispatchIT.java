@@ -110,9 +110,8 @@ public class AuthzServiceDispatchIT {
                                     .put(
                                             "policies",
                                             new JsonObject()
-                                                    .put(
-                                                            "rate-limit-probe-shared",
-                                                            RateLimitTestPolicies.probeShared()))));
+                                                    .put("rate-limit-probe-shared", RateLimitTestPolicies.probeShared())
+                                                    .put("composition", RateLimitTestPolicies.composition()))));
 
     /** Isolates each scenario's event/invocation assertions. */
     @BeforeEach
