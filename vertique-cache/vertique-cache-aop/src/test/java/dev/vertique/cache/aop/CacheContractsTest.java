@@ -6,6 +6,7 @@ package dev.vertique.cache.aop;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import dev.vertique.aop.SelectorPaths;
 import dev.vertique.cache.AnonymousCachePolicy;
 import dev.vertique.cache.CacheIdentity;
 import dev.vertique.cache.CacheMode;
@@ -86,8 +87,8 @@ class CacheContractsTest {
     void selectorPathsResolveDeclaredComponents() {
         MethodMetadata metadata = metadata("user");
 
-        Object[] values = MethodMetadataKeyResolver.resolve(
-                new String[] {"user.name", "0.active"}, metadata, new Object[] {new User("Åsa", true)});
+        Object[] values = SelectorPaths.resolve(
+                "cache key", new String[] {"user.name", "0.active"}, metadata, new Object[] {new User("Åsa", true)});
 
         // Canonical framing/joining of the resolved components is core-owned and
         // byte-proven by the cache-core declaration tests.
@@ -102,12 +103,12 @@ class CacheContractsTest {
 
         assertThrows(
                 IllegalArgumentException.class,
-                () -> MethodMetadataKeyResolver.resolve(
-                        new String[] {"user.missing"}, metadata, new Object[] {new User("Åsa", true)}));
+                () -> SelectorPaths.resolve(
+                        "cache key", new String[] {"user.missing"}, metadata, new Object[] {new User("Åsa", true)}));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> MethodMetadataKeyResolver.resolve(
-                        new String[] {"user..name"}, metadata, new Object[] {new User("Åsa", true)}));
+                () -> SelectorPaths.resolve(
+                        "cache key", new String[] {"user..name"}, metadata, new Object[] {new User("Åsa", true)}));
     }
 
     private static MethodMetadata metadata(String parameterName) {
@@ -190,7 +191,7 @@ class CacheContractsTest {
         };
     }
 
-    private record User(String name, boolean active) {}
+    public record User(String name, boolean active) {}
 
     static final class Sample {
         @Cacheable(name = "profile", key = "0")

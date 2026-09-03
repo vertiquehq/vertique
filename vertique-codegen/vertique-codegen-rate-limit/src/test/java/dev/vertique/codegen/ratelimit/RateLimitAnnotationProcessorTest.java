@@ -202,8 +202,8 @@ class RateLimitAnnotationProcessorTest {
     /**
      * P02/P03 review repair (T017, item 4): a bare-name (fluent, no {@code get}/{@code is} prefix)
      * zero-arg accessor is only a valid property-path segment when its declaring type is a record —
-     * matching {@code MethodMetadataKeyResolver}'s runtime resolution exactly. {@code Holder} is an
-     * ordinary class with a fluent {@code value()} accessor (no {@code getValue()}/{@code
+     * matching the shared runtime selector resolver's accessor rules exactly. {@code Holder} is
+     * an ordinary class with a fluent {@code value()} accessor (no {@code getValue()}/{@code
      * isValue()}), so {@code "0.value"} must fail compilation instead of silently compiling.
      */
     @Test

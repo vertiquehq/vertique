@@ -157,8 +157,8 @@ public final class RateLimitAnnotationProcessor extends AbstractProcessor {
 
     /**
      * Resolves the return type of the zero-arg accessor named {@code property} on {@code type},
-     * mirroring {@code dev.vertique.ratelimit.aop.MethodMetadataKeyResolver}'s own runtime accessor
-     * resolution exactly: a bare-name accessor (a record component's own accessor method) is
+     * mirroring the former rate-limit runtime resolver's accessor resolution exactly: a bare-name
+     * accessor (a record component's own accessor method) is
      * accepted only when {@code type}'s declaring element is a record; every other declared type
      * accepts only {@code getX}/{@code isX} (contracts/rate-limit-aop.md, "Selector path grammar").
      */

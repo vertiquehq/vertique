@@ -3,6 +3,7 @@
 
 package dev.vertique.cache.aop;
 
+import dev.vertique.aop.SelectorPaths;
 import dev.vertique.cache.AnonymousCachePolicy;
 import dev.vertique.cache.Cache;
 import dev.vertique.cache.CacheAdapterSupport;
@@ -106,7 +107,7 @@ final class CacheAnnotationAdapter {
         }
         String[] declared = paths.clone();
         return input -> {
-            Object[] values = MethodMetadataKeyResolver.resolve(declared, target, (Object[]) input);
+            Object[] values = SelectorPaths.resolve("cache key", declared, target, (Object[]) input);
             return values.length == 1
                     ? values[0]
                     : CacheKey.of(values[0], Arrays.copyOfRange(values, 1, values.length));
