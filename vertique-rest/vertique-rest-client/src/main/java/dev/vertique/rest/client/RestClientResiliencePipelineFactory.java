@@ -64,25 +64,31 @@ final class RestClientResiliencePipelineFactory {
             ResiliencePolicyRegistry registry) {
         this.clientName = clientName;
         this.clientInterface = clientInterface;
-        this.context = resilience.adapterSupport().newContext();
-        this.configAdapter = new RestClientResilienceConfigAdapter(
-                resilience.policyResolver(),
-                readTimeoutMs,
-                retryPolicy,
-                backoffStrategy,
-                clientConfig,
-                interfaceCircuitBreakerOptions,
-                registry);
-        dev.vertique.resilience.CircuitBreaker shared = null;
-        var config = configAdapter.interfaceCircuitBreakerConfig();
-        if (config != null) {
-            shared = context.circuitBreaker(
-                    new AdapterOperationIdentity(
-                            "rest-client.interface-circuit", List.of(clientName, clientInterface.getName())),
-                    config);
+        ResilienceAdapterContext context = resilience.adapterSupport().newContext();
+        this.context = context;
+        try {
+            this.configAdapter = new RestClientResilienceConfigAdapter(
+                    resilience.policyResolver(),
+                    readTimeoutMs,
+                    retryPolicy,
+                    backoffStrategy,
+                    clientConfig,
+                    interfaceCircuitBreakerOptions,
+                    registry);
+            dev.vertique.resilience.CircuitBreaker shared = null;
+            var config = configAdapter.interfaceCircuitBreakerConfig();
+            if (config != null) {
+                shared = context.circuitBreaker(
+                        new AdapterOperationIdentity(
+                                "rest-client.interface-circuit", List.of(clientName, clientInterface.getName())),
+                        config);
+            }
+            this.interfaceBreaker = shared;
+            methodMetas.values().forEach(this::pipeline);
+        } catch (RuntimeException | Error failure) {
+            context.close();
+            throw failure;
         }
-        this.interfaceBreaker = shared;
-        methodMetas.values().forEach(this::pipeline);
     }
 
     /** Returns the prebuilt pipeline for a method. */

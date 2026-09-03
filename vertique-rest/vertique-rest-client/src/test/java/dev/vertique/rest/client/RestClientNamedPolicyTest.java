@@ -22,9 +22,11 @@ import dev.vertique.rest.client.config.RestClientConfig;
 import dev.vertique.rest.client.config.RestClientRetryConfig;
 import dev.vertique.rest.client.exception.RestClientResponseException;
 import dev.vertique.rest.client.meta.ClientMethodMeta;
+import io.vertx.core.Future;
 import io.vertx.core.MultiMap;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
+import jakarta.ws.rs.GET;
 import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
@@ -61,7 +63,8 @@ class RestClientNamedPolicyTest {
 
         @Resilient(policy = "payments")
         @Retry(maxRetries = 2)
-        String namedRetry();
+        @GET
+        Future<String> namedRetry();
     }
 
     @RestClient(name = CLIENT_NAME, value = "http://payments")
@@ -126,20 +129,38 @@ class RestClientNamedPolicyTest {
     void unknownPolicyFailsDuringEagerPipelineFactoryConstruction() {
         MethodMetaFixture fixture = method(NamedRetryClient.class, "namedRetry");
         RestClientRetryPolicy retryPolicy = new DefaultRestClientRetryPolicy();
+        Resilience resilience = Resilience.create(vertx);
 
-        assertThatThrownBy(() -> new RestClientResiliencePipelineFactory(
-                        Resilience.create(vertx),
-                        CLIENT_NAME,
-                        NamedRetryClient.class,
-                        READ_TIMEOUT_MS,
-                        retryPolicy,
-                        BACKOFF,
-                        null,
-                        null,
-                        Map.of("namedRetry", fixture.meta()),
-                        registry(Map.of())))
-                .isInstanceOf(ConfigurationException.class)
-                .hasMessage("resilience.policies.payments is not defined");
+        try {
+            assertThatThrownBy(() -> new RestClientResiliencePipelineFactory(
+                            resilience,
+                            CLIENT_NAME,
+                            NamedRetryClient.class,
+                            READ_TIMEOUT_MS,
+                            retryPolicy,
+                            BACKOFF,
+                            null,
+                            null,
+                            Map.of("namedRetry", fixture.meta()),
+                            registry(Map.of())))
+                    .isInstanceOf(ConfigurationException.class)
+                    .hasMessage("resilience.policies.payments is not defined");
+        } finally {
+            resilience.close().toCompletionStage().toCompletableFuture().join();
+        }
+    }
+
+    @Test
+    void builderClosesResourcesWhenEagerNamedPolicyResolutionFails() {
+        RestClientBuilder builder = new RestClientBuilder(vertx, registry(Map.of()));
+
+        try {
+            assertThatThrownBy(() -> builder.build(NamedRetryClient.class))
+                    .isInstanceOf(ConfigurationException.class)
+                    .hasMessage("resilience.policies.payments is not defined");
+        } finally {
+            builder.close().toCompletionStage().toCompletableFuture().join();
+        }
     }
 
     @Test

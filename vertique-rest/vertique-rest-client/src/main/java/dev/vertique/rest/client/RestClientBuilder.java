@@ -868,40 +868,42 @@ public final class RestClientBuilder {
 
         RestClientInterceptorChain interceptorChain =
                 new RestClientInterceptorChain(clientName, sortedByPriority(List.copyOf(interceptors)));
-        Resilience runtime = resilienceRuntime();
-        RestClientResiliencePipelineFactory resilienceFactory = new RestClientResiliencePipelineFactory(
-                runtime,
-                clientName,
-                clientInterface,
-                effectiveReadTimeoutMs,
-                effectiveRetryPolicy,
-                effectiveBackoffStrategy,
-                effectiveConfig,
-                effectiveCb,
-                methodMetas,
-                resiliencePolicyRegistry);
-
-        RestClientDispatcher dispatcher = new DefaultRestClientDispatcher(
-                webClient,
-                resolvedBaseUrl,
-                cachedDefaultHeaders,
-                interceptorChain,
-                exceptionMapper,
-                effectiveMapper,
-                defaultExpectation,
-                resilienceFactory,
-                beanValidator,
-                clientName,
-                sortedCapturers(List.copyOf(contextCapturers)),
-                effectiveResolver);
-
-        // --- Try generated proxy first, fall back to JDK reflective proxy ---
-        // GeneratedCompanions.instantiate uses GeneratedNames.companionFqn (origin package,
-        // '$' → '_') so nested clients (Outer$Inner) resolve to Outer_Inner_RestClientProxy,
-        // matching exactly what the annotation processor emits. Catches both
-        // ReflectiveOperationException and LinkageError (static-initialiser failures).
+        Resilience runtime = null;
+        RestClientResiliencePipelineFactory resilienceFactory = null;
         T builtProxy;
         try {
+            runtime = resilienceRuntime();
+            resilienceFactory = new RestClientResiliencePipelineFactory(
+                    runtime,
+                    clientName,
+                    clientInterface,
+                    effectiveReadTimeoutMs,
+                    effectiveRetryPolicy,
+                    effectiveBackoffStrategy,
+                    effectiveConfig,
+                    effectiveCb,
+                    methodMetas,
+                    resiliencePolicyRegistry);
+
+            RestClientDispatcher dispatcher = new DefaultRestClientDispatcher(
+                    webClient,
+                    resolvedBaseUrl,
+                    cachedDefaultHeaders,
+                    interceptorChain,
+                    exceptionMapper,
+                    effectiveMapper,
+                    defaultExpectation,
+                    resilienceFactory,
+                    beanValidator,
+                    clientName,
+                    sortedCapturers(List.copyOf(contextCapturers)),
+                    effectiveResolver);
+
+            // --- Try generated proxy first, fall back to JDK reflective proxy ---
+            // GeneratedCompanions.instantiate uses GeneratedNames.companionFqn (origin package,
+            // '$' → '_') so nested clients (Outer$Inner) resolve to Outer_Inner_RestClientProxy,
+            // matching exactly what the annotation processor emits. Catches both
+            // ReflectiveOperationException and LinkageError (static-initialiser failures).
             builtProxy = GeneratedCompanions.instantiate(
                             clientInterface,
                             "_RestClientProxy",
@@ -928,8 +930,13 @@ public final class RestClientBuilder {
                                 clientInterface.getClassLoader(), new Class<?>[] {clientInterface}, handler);
                     });
         } catch (RuntimeException | Error failure) {
-            resilienceFactory.close();
+            if (resilienceFactory != null) {
+                resilienceFactory.close();
+            }
             webClient.close();
+            if (runtime != null && suppliedResilience == null) {
+                runtime.close();
+            }
             throw failure;
         }
         builtClients.add(new BuiltClientResources(resilienceFactory, webClient));
