@@ -21,7 +21,7 @@ import org.junit.jupiter.api.extension.RegisterExtension;
 /** Proves named resilience policy precedence through the generated service-handler proxy. */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
-class ResilienceProbeIT {
+public class ResilienceProbeIT {
 
     private static final String CONFIGURED_KEY = "configured";
     private static final String INLINE_KEY = "inline";

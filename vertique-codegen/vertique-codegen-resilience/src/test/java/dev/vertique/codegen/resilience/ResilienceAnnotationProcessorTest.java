@@ -193,6 +193,11 @@ class ResilienceAnnotationProcessorTest {
                         "interface-anchor-with-policy-name-compiles",
                         serviceContractInterfaceAnchor(),
                         serviceContractStub()),
+                error(
+                        "empty-anchor-allowed-interface",
+                        serviceContractInterfaceEmptyAnchor(),
+                        "@Resilient must name a policy or be accompanied by at least one resilience declaration",
+                        serviceContractStub()),
                 success("interface-declaration-compiles", plainInterfaceDeclaration()),
                 success(
                         "concrete-anchor-declaration-compiles",
@@ -299,6 +304,10 @@ class ResilienceAnnotationProcessorTest {
 
     private static String serviceContractInterfaceAnchor() {
         return "@dev.vertique.services.ServiceContract(\"contract\")\npublic interface Bean {\n    @Resilient(policy = \"payments\")\n    Future<String> call();\n}\n";
+    }
+
+    private static String serviceContractInterfaceEmptyAnchor() {
+        return "@dev.vertique.services.ServiceContract(\"contract\")\npublic interface Bean {\n    @Resilient\n    Future<String> call();\n}\n";
     }
 
     private static String plainInterfaceDeclaration() {

@@ -122,6 +122,7 @@ class ResiliencePolicyExecutionTest {
                 Optional.of(new TimeoutDeclaration(2L, TimeUnit.SECONDS)),
                 Optional.of(new CircuitBreakerDeclaration(4, 100L, 200L)),
                 Optional.empty(),
+                Optional.empty(),
                 Optional.empty());
         ResiliencePolicyOverrides overrides = new ResiliencePolicyOverrides(
                 Optional.of(new TimeoutOverride(Optional.empty(), OptionalLong.of(7L))),
@@ -181,6 +182,7 @@ class ResiliencePolicyExecutionTest {
                 Optional.empty(),
                 Optional.empty(),
                 Optional.of(new RetryDeclaration(3, 20L, 2.0, 200L, AnnotationBackoff.class, List.of(), List.of())),
+                Optional.empty(),
                 Optional.empty());
         RetryOverride operation = new RetryOverride(
                 Optional.empty(),
@@ -693,7 +695,8 @@ class ResiliencePolicyExecutionTest {
     }
 
     private static ResilienceAnnotations annotations(RetryDeclaration retry) {
-        return new ResilienceAnnotations(Optional.empty(), Optional.empty(), Optional.of(retry), Optional.empty());
+        return new ResilienceAnnotations(
+                Optional.empty(), Optional.empty(), Optional.of(retry), Optional.empty(), Optional.empty());
     }
 
     private static ResiliencePolicyOverrides retryOverrides(RetryOverride retry) {

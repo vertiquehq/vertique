@@ -24,6 +24,7 @@ import dev.vertique.resilience.spi.event.RetryScheduled;
 import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -33,8 +34,8 @@ import org.junit.jupiter.api.extension.RegisterExtension;
 
 /** Characterizes the shipped cache, quota, and resilience aspect ordering through one proxy. */
 @ExtendWith(VertxExtension.class)
-@Timeout(20)
-class AspectCompositionIT {
+@Timeout(value = 20, unit = TimeUnit.SECONDS)
+public class AspectCompositionIT {
 
     private static final String HIT_KEY = "hit";
     private static final String MISS_SUCCESS_KEY = "miss-success";

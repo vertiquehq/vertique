@@ -113,6 +113,8 @@ public final class ResilienceAnnotationProcessor extends AbstractProcessor {
         if (enclosingType.getKind() == ElementKind.INTERFACE) {
             if (!isAllowedInterface(enclosingType)) {
                 context.diagnostics().error(method, Diagnostics.resilientInterfaceNotAllowed());
+            } else if (policy.isEmpty() && !declaration) {
+                context.diagnostics().error(method, Diagnostics.resilientAnchorRequiresPolicyOrDeclaration());
             }
             return;
         }

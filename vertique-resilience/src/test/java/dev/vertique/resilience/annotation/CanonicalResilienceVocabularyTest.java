@@ -121,14 +121,14 @@ class CanonicalResilienceVocabularyTest {
                 java.util.Optional.class,
                 java.util.Optional.class,
                 java.util.Optional.class);
-        assertConstructorDescriptor(
-                ResilienceAnnotations.class,
-                "(Ljava/util/Optional;Ljava/util/Optional;Ljava/util/Optional;Ljava/util/Optional;)V",
-                java.util.Optional.class,
-                java.util.Optional.class,
-                java.util.Optional.class,
-                java.util.Optional.class);
-
+        assertFalse(
+                hasConstructor(
+                        ResilienceAnnotations.class,
+                        java.util.Optional.class,
+                        java.util.Optional.class,
+                        java.util.Optional.class,
+                        java.util.Optional.class),
+                "temporary four-component ResilienceAnnotations constructor must remain removed");
         assertConstructorDescriptor(
                 TimeoutDeclaration.class, "(JLjava/util/concurrent/TimeUnit;)V", long.class, TimeUnit.class);
         assertMethodDescriptor(TimeoutDeclaration.class, "value", "()J");
@@ -196,6 +196,15 @@ class CanonicalResilienceVocabularyTest {
         Constructor<?> constructor = owner.getDeclaredConstructor(parameterTypes);
         assertEquals(expectedDescriptor, descriptor(constructor), owner.getName() + " constructor");
         assertTrue(Modifier.isPublic(constructor.getModifiers()), "canonical constructor must be public");
+    }
+
+    private static boolean hasConstructor(Class<?> owner, Class<?>... parameterTypes) {
+        try {
+            owner.getDeclaredConstructor(parameterTypes);
+            return true;
+        } catch (NoSuchMethodException expected) {
+            return false;
+        }
     }
 
     private static void assertFieldDescriptor(Class<?> owner, String fieldName, String expectedDescriptor)

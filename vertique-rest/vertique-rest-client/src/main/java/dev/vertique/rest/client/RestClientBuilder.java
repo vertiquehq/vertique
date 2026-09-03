@@ -105,6 +105,11 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public final class RestClientBuilder {
 
+    @FunctionalInterface
+    interface WebClientFactory {
+        WebClient create(Vertx vertx, @Nullable WebClientOptions webClientOptions, @Nullable PoolOptions poolOptions);
+    }
+
     // --- Static meta cache shared across all builder instances ---
     private static final ConcurrentHashMap<Class<?>, Map<Method, ClientMethodMeta>> META_CACHE =
             new ConcurrentHashMap<>();
@@ -113,6 +118,7 @@ public final class RestClientBuilder {
 
     private final Vertx vertx;
     private final ResiliencePolicyRegistry resiliencePolicyRegistry;
+    private final WebClientFactory webClientFactory;
 
     @Nullable
     private Resilience suppliedResilience;
@@ -220,12 +226,18 @@ public final class RestClientBuilder {
      * @param vertx the Vert.x instance used to create the underlying WebClient
      */
     public RestClientBuilder(Vertx vertx) {
-        this(vertx, ResiliencePolicyRegistry.empty());
+        this(vertx, ResiliencePolicyRegistry.empty(), RestClientBuilder::buildWebClient);
     }
 
     RestClientBuilder(Vertx vertx, ResiliencePolicyRegistry resiliencePolicyRegistry) {
+        this(vertx, resiliencePolicyRegistry, RestClientBuilder::buildWebClient);
+    }
+
+    RestClientBuilder(
+            Vertx vertx, ResiliencePolicyRegistry resiliencePolicyRegistry, WebClientFactory webClientFactory) {
         this.vertx = vertx;
         this.resiliencePolicyRegistry = java.util.Objects.requireNonNull(resiliencePolicyRegistry, "registry");
+        this.webClientFactory = java.util.Objects.requireNonNull(webClientFactory, "webClientFactory");
     }
 
     RestClientBuilder suppliedResilience(@Nullable Resilience resilience) {
@@ -857,7 +869,7 @@ public final class RestClientBuilder {
         ObjectMapper effectiveMapper = resolveEffectiveMapper(effectiveConfig, clientInterface, clientName);
 
         // Build WebClient
-        WebClient webClient = buildWebClient(effectiveWebClientOptions, effectivePoolOptions);
+        WebClient webClient = webClientFactory.create(vertx, effectiveWebClientOptions, effectivePoolOptions);
 
         log.debug(
                 "Building REST client proxy for {} with baseUrl={}", clientInterface.getSimpleName(), resolvedBaseUrl);
@@ -986,7 +998,7 @@ public final class RestClientBuilder {
     }
 
     @Nullable
-    private Resilience ownedResilience() {
+    Resilience ownedResilience() {
         return suppliedResilience == null ? ownedResilience : null;
     }
 
@@ -1272,12 +1284,15 @@ public final class RestClientBuilder {
      * overridden by external config), so this method simply creates the client without
      * any further resolution.
      *
+     * @param vertx the Vert.x instance that owns the client
      * @param effectiveWebClientOptions the effective WebClient options to apply; {@code null} for defaults
      * @param effectivePoolOptions the pool options to apply; {@code null} for defaults
      * @return a new WebClient instance
      */
-    private WebClient buildWebClient(
-            @Nullable WebClientOptions effectiveWebClientOptions, @Nullable PoolOptions effectivePoolOptions) {
+    private static WebClient buildWebClient(
+            Vertx vertx,
+            @Nullable WebClientOptions effectiveWebClientOptions,
+            @Nullable PoolOptions effectivePoolOptions) {
         WebClientOptions opts = effectiveWebClientOptions != null ? effectiveWebClientOptions : new WebClientOptions();
         if (effectivePoolOptions != null) {
             return WebClient.create(vertx, opts, effectivePoolOptions);

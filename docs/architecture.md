@@ -35,8 +35,9 @@ core and JSON foundations
 
 `vertique-resilience` owns the canonical timeout, retry, and circuit-breaker vocabulary, immutable
 declaration metadata, and retry contracts shared by Services, REST clients, jobs, and code
-generation. It depends on `vertique-core`; core remains independent of resilience so foundation
-consumers do not acquire policy-specific API.
+generation. Its AOP integration consumes the generic `vertique-aop` substrate; the resilience
+runtime still depends on `vertique-core`, while core remains independent of resilience so
+foundation consumers do not acquire policy-specific API.
 
 The optional `vertique-micrometer-resilience` adapter consumes only the resilience observer SPI and
 the shared Micrometer registry. It stays outside the runtime so resilience execution remains free of

@@ -29,10 +29,12 @@ consumer modules such as `vertique-services` and `vertique-rest-client`.
 
 ## Core Concepts
 
-Annotations may be placed on a type or method. A method declaration replaces the corresponding
-type-level declaration; values are not merged attribute by attribute. `ResilienceAnnotations`
-resolves the effective declarations through the method and type hierarchy and exposes immutable
-declaration records through `Optional` accessors.
+Annotations may be placed on a type or method. Type-level declarations are supported on transport
+interfaces. On concrete classes, declarations must be placed on the same method as `@Resilient`;
+class-level declarations are rejected at compile time. A method declaration replaces the
+corresponding type-level declaration; values are not merged attribute by attribute.
+`ResilienceAnnotations` resolves the effective declarations through the method and type hierarchy
+and exposes immutable declaration records through `Optional` accessors.
 
 The four declaration families are independent: an operation may configure any combination of
 timeout, retry, circuit breaker, and bulkhead. `@Resilient` is a method-level anchor that may select

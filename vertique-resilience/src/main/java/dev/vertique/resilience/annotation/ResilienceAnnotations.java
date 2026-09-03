@@ -45,22 +45,6 @@ public record ResilienceAnnotations(
     }
 
     /**
-     * Creates declaration metadata without a named policy tier.
-     *
-     * @param timeout the resolved timeout declaration
-     * @param circuitBreaker the resolved circuit-breaker declaration
-     * @param retry the resolved retry declaration
-     * @param bulkhead the resolved bulkhead declaration
-     */
-    public ResilienceAnnotations(
-            Optional<TimeoutDeclaration> timeout,
-            Optional<CircuitBreakerDeclaration> circuitBreaker,
-            Optional<RetryDeclaration> retry,
-            Optional<BulkheadDeclaration> bulkhead) {
-        this(timeout, circuitBreaker, retry, bulkhead, Optional.empty());
-    }
-
-    /**
      * Returns whether at least one resilience declaration is present.
      *
      * @return {@code true} when a declaration is configured
