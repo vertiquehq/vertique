@@ -40,6 +40,9 @@ public final class ServiceResiliencePipelineFactory {
         AdapterOperationIdentity identity =
                 new AdapterOperationIdentity("services", List.of(meta.namespace(), meta.name(), meta.operation()));
         ResolvedResiliencePolicy policy = configAdapter.resolve(meta);
+        if (policy.isEmpty()) {
+            return null;
+        }
         return policy.circuitBreaker().isPresent()
                 ? context.pipeline(identity, policy, failure -> true)
                 : context.pipeline(identity, policy);

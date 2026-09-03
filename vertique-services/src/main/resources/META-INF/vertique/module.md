@@ -389,6 +389,12 @@ bulkhead configuration; admission is enabled only by an explicit `@Bulkhead` dec
 JSON configuration can override annotation values for an environment without changing the service
 contract. Invalid values fail during startup parsing.
 
+An operation may select a named resilience tier with `@Resilient(policy = "name")`. Services
+layers the selected `resilience.policies.<name>` tier below its operation and service transport
+overrides, while declaration attributes remain below the named tier and family defaults remain
+last. A named tier does not activate resilience without the `@Resilient` anchor; an unknown tier
+fails during graph construction rather than being silently ignored.
+
 ---
 
 ## Security and Dispatch Context

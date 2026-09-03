@@ -107,7 +107,8 @@ class ServiceResilienceCorrectionTest {
             ServiceResilienceConfigAdapter adapter = new ServiceResilienceConfigAdapter(
                     resilience,
                     new ServicesConfig(null, List.of(serviceConfig)),
-                    Map.of(new ServicesConfig.ServiceKey("test", "correction"), serviceConfig));
+                    Map.of(new ServicesConfig.ServiceKey("test", "correction"), serviceConfig),
+                    java.util.Optional.empty());
 
             ResolvedResiliencePolicy policy = adapter.resolve(meta);
             RetryBackoff.Exponential backoff = assertInstanceOf(

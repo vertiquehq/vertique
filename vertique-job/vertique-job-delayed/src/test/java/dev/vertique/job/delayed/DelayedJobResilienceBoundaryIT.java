@@ -59,8 +59,8 @@ class DelayedJobResilienceBoundaryIT {
     void preservesDurableRetryWatchdogAfterVocabularyMove(Vertx vertx) {
         List<ResilienceEvent> events = new CopyOnWriteArrayList<>();
         Resilience resilience = Resilience.create(vertx, Set.of(events::add));
-        ServiceResilienceConfigAdapter adapter =
-                new ServiceResilienceConfigAdapter(resilience, new ServicesConfig(null, List.of()), Map.of());
+        ServiceResilienceConfigAdapter adapter = new ServiceResilienceConfigAdapter(
+                resilience, new ServicesConfig(null, List.of()), Map.of(), java.util.Optional.empty());
         ServiceResiliencePipelineFactory pipelineFactory = new ServiceResiliencePipelineFactory(adapter, resilience);
         try {
             ContractEntry<?> entry = new DelayedJobContractContributor(Set.of(new BoundaryJobExecutor()))

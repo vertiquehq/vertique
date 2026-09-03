@@ -104,7 +104,7 @@ class ServiceRequestSenderBudgetTest {
 
     private static ServiceResilienceConfigAdapter adapter(
             Resilience resilience, ServicesConfig config, Map<ServicesConfig.ServiceKey, ServiceConfig> index) {
-        return new ServiceResilienceConfigAdapter(resilience, config, index);
+        return new ServiceResilienceConfigAdapter(resilience, config, index, java.util.Optional.empty());
     }
 
     @Test

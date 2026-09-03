@@ -77,8 +77,8 @@ final class KafkaTestSupport {
         when(supervisor.isAvailable(any())).thenReturn(true);
         ServicesConfig servicesConfig = ServicesConfig.fromConfig(new JsonObject(), configParser());
         Resilience resilience = Resilience.create(vertx);
-        ServiceResilienceConfigAdapter adapter =
-                new ServiceResilienceConfigAdapter(resilience, servicesConfig, servicesConfig.index());
+        ServiceResilienceConfigAdapter adapter = new ServiceResilienceConfigAdapter(
+                resilience, servicesConfig, servicesConfig.index(), java.util.Optional.empty());
         return new ServiceRequestSender(eventBusClient(vertx), supervisor, adapter);
     }
 
@@ -95,8 +95,8 @@ final class KafkaTestSupport {
     static ServiceResiliencePipelineFactory resiliencePipelineFactory(Vertx vertx, JsonObject config) {
         ServicesConfig servicesConfig = ServicesConfig.fromConfig(config, configParser());
         Resilience resilience = Resilience.create(vertx);
-        ServiceResilienceConfigAdapter adapter =
-                new ServiceResilienceConfigAdapter(resilience, servicesConfig, servicesConfig.index());
+        ServiceResilienceConfigAdapter adapter = new ServiceResilienceConfigAdapter(
+                resilience, servicesConfig, servicesConfig.index(), java.util.Optional.empty());
         return new ServiceResiliencePipelineFactory(adapter, resilience);
     }
 

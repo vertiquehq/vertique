@@ -127,7 +127,10 @@ class MdcPropagationTest {
                 eventBusClient,
                 supervisor,
                 new ServiceResilienceConfigAdapter(
-                        Resilience.create(vertx), new ServicesConfig(null, List.of()), Map.of()));
+                        Resilience.create(vertx),
+                        new ServicesConfig(null, List.of()),
+                        Map.of(),
+                        java.util.Optional.empty()));
 
         ServiceContractRegistry.ContractEntry<MdcTestService> entry = registry.resolve(MdcTestService.class);
         echoMdcMeta = entry.operations().get("echoMdc");
@@ -218,7 +221,10 @@ class MdcPropagationTest {
                     eventBusClient,
                     supervisor,
                     new ServiceResilienceConfigAdapter(
-                            Resilience.create(vertx), new ServicesConfig(null, List.of()), Map.of()));
+                            Resilience.create(vertx),
+                            new ServicesConfig(null, List.of()),
+                            Map.of(),
+                            java.util.Optional.empty()));
             ServiceClientFactory factory = mdcAwareFactory(localSender, localRegistry);
             MultiMdcService proxy = factory.create(MultiMdcService.class);
 

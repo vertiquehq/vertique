@@ -59,7 +59,7 @@ class ServiceResilienceCutoverStructureTest {
         Resilience resilience = Resilience.create(vertx);
         try {
             ServiceResilienceConfigAdapter adapter = new ServiceResilienceConfigAdapter(
-                    resilience, new ServicesConfig(null, List.of()), java.util.Map.of());
+                    resilience, new ServicesConfig(null, List.of()), java.util.Map.of(), java.util.Optional.empty());
             ServiceResiliencePipelineFactory factory = new ServiceResiliencePipelineFactory(adapter, resilience);
             assertNull(factory.pipeline(plainMeta()));
             assertDoesNotThrow(() -> dev.vertique.resilience.RetryConfig.builder()

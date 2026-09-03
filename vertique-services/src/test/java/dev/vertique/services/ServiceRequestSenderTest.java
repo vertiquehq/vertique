@@ -180,7 +180,9 @@ class ServiceRequestSenderTest {
         ServicesConfig servicesConfig = ServicesConfig.fromConfig(rootConfig, configParser());
         Map<ServicesConfig.ServiceKey, ServiceConfig> index = servicesConfig.index();
         return new ServiceRequestSender(
-                eventBusClient, supervisor, new ServiceResilienceConfigAdapter(resilience, servicesConfig, index));
+                eventBusClient,
+                supervisor,
+                new ServiceResilienceConfigAdapter(resilience, servicesConfig, index, java.util.Optional.empty()));
     }
 
     // --- Supervisor gating ---
