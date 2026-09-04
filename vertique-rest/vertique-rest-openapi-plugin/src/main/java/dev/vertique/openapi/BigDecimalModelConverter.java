@@ -86,6 +86,13 @@ import java.util.Iterator;
  */
 public final class BigDecimalModelConverter implements ModelConverter {
 
+    /**
+     * Creates a converter after safely initializing swagger-core's shared registry.
+     */
+    public BigDecimalModelConverter() {
+        ConverterRegistryBootstrap.initialize();
+    }
+
     /** Maximum accepted length, in characters, of the decimal literal (mirrors the deserializer). */
     private static final int MAX_LENGTH = 100;
 

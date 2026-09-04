@@ -35,6 +35,13 @@ import java.util.Iterator;
 public class FutureModelConverter implements ModelConverter {
 
     /**
+     * Creates a converter after safely initializing swagger-core's shared registry.
+     */
+    public FutureModelConverter() {
+        ConverterRegistryBootstrap.initialize();
+    }
+
+    /**
      * If the given type is {@code Future<T>}, returns an {@link AnnotatedType} wrapping {@code T}.
      * Otherwise returns {@code type} unchanged.
      *
