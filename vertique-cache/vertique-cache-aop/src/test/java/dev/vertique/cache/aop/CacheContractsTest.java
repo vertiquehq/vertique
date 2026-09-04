@@ -6,6 +6,7 @@ package dev.vertique.cache.aop;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import dev.vertique.aop.SelectorPaths;
 import dev.vertique.cache.AnonymousCachePolicy;
 import dev.vertique.cache.CacheIdentity;
 import dev.vertique.cache.CacheMode;
@@ -15,6 +16,8 @@ import dev.vertique.cache.spi.CacheRegion;
 import dev.vertique.cache.spi.ResolvedCacheKey;
 import dev.vertique.core.codegen.MethodMetadata;
 import dev.vertique.core.codegen.ParameterMetadata;
+import dev.vertique.ratelimit.aop.RateLimited;
+import java.lang.annotation.Documented;
 import java.lang.reflect.Method;
 import java.lang.reflect.Type;
 import java.util.List;
@@ -27,14 +30,19 @@ import org.junit.jupiter.api.Test;
 class CacheContractsTest {
 
     @Test
-    @DisplayName("cache annotations expose the frozen defaults")
-    void cacheAnnotationsExposeFrozenDefaults() throws NoSuchMethodException {
+    @DisplayName("cache annotations expose subject and documentation metadata")
+    void exposesSubjectAndIsDocumented() throws NoSuchMethodException {
         var cacheable = Sample.class.getDeclaredMethod("cached").getAnnotation(Cacheable.class);
 
         assertEquals(CacheMode.DEFAULT, cacheable.mode());
         assertEquals(-1, cacheable.ttlSeconds());
-        assertEquals(CacheIdentity.EFFECTIVE_PRINCIPAL, cacheable.identity());
+        assertEquals(CacheIdentity.EFFECTIVE_PRINCIPAL, cacheable.subject());
         assertEquals(AnonymousCachePolicy.BYPASS, cacheable.anonymous());
+        assertEquals("subject", Cacheable.class.getMethod("subject").getName());
+        assertThrows(NoSuchMethodException.class, () -> Cacheable.class.getMethod("identity"));
+        assertEquals(true, Cacheable.class.isAnnotationPresent(Documented.class));
+        assertEquals(true, CacheEvict.class.isAnnotationPresent(Documented.class));
+        assertEquals(true, RateLimited.class.isAnnotationPresent(Documented.class));
     }
 
     @Test
@@ -86,8 +94,8 @@ class CacheContractsTest {
     void selectorPathsResolveDeclaredComponents() {
         MethodMetadata metadata = metadata("user");
 
-        Object[] values = MethodMetadataKeyResolver.resolve(
-                new String[] {"user.name", "0.active"}, metadata, new Object[] {new User("Åsa", true)});
+        Object[] values = SelectorPaths.resolve(
+                "cache key", new String[] {"user.name", "0.active"}, metadata, new Object[] {new User("Åsa", true)});
 
         // Canonical framing/joining of the resolved components is core-owned and
         // byte-proven by the cache-core declaration tests.
@@ -102,12 +110,12 @@ class CacheContractsTest {
 
         assertThrows(
                 IllegalArgumentException.class,
-                () -> MethodMetadataKeyResolver.resolve(
-                        new String[] {"user.missing"}, metadata, new Object[] {new User("Åsa", true)}));
+                () -> SelectorPaths.resolve(
+                        "cache key", new String[] {"user.missing"}, metadata, new Object[] {new User("Åsa", true)}));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> MethodMetadataKeyResolver.resolve(
-                        new String[] {"user..name"}, metadata, new Object[] {new User("Åsa", true)}));
+                () -> SelectorPaths.resolve(
+                        "cache key", new String[] {"user..name"}, metadata, new Object[] {new User("Åsa", true)}));
     }
 
     private static MethodMetadata metadata(String parameterName) {
@@ -190,7 +198,7 @@ class CacheContractsTest {
         };
     }
 
-    private record User(String name, boolean active) {}
+    public record User(String name, boolean active) {}
 
     static final class Sample {
         @Cacheable(name = "profile", key = "0")

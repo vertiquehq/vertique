@@ -12,7 +12,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 `vertique-aop` is the runtime SPI module for compile-time method AOP. It defines the public contracts that annotated beans, generated proxies, and user-authored aspect providers depend on. The module contains no annotation processor and emits no generated sources — it is a pure runtime library that the `vertique-codegen-aop` processor targets during compilation.
 
-The design is reflection-free at dispatch time. The generated proxy calls `super.method(args)` directly; no `Method.invoke` appears on the hot path. Aspect annotation attribute values are captured in generated annotation-literals rather than read via `getAnnotation()` at runtime.
+The dispatch chain is reflection-free. The generated proxy calls `super.method(args)` directly; no `Method.invoke` appears on that hot path. Aspect annotation attribute values are captured in generated annotation-literals rather than read via `getAnnotation()` at runtime. The framework-internal `SelectorPaths` resolver is the documented exception: selector accessors are invoked reflectively when an annotation family resolves a path.
 
 ---
 
@@ -33,6 +33,20 @@ The AOP model is a compile-time subclass proxy. `vertique-codegen-aop` generates
 **Interceptor chain construction.** The chain is resolved once in the proxy constructor from the injected `AspectProvider<A>` instances and stored as a `MethodInterceptor[]` field per intercepted method. Each call to that method reuses the same pre-built array.
 
 **Chain ordering.** Interceptors are ordered by descending `@Aspect.ordering()` — higher values are outermost and run first. Ties are broken deterministically by the fully-qualified name of the aspect annotation, making the chain order stable across compilations.
+
+### Allocated aspect-ordering registry
+
+The framework reserves these aspect bands. Higher values are outermost and run first:
+
+| Ordering | Aspect | Module |
+|----------|--------|--------|
+| `50` | `@Resilient` | `vertique-resilience` |
+| `100` | `@CacheEvict` | `vertique-cache-aop` |
+| `200` | `@Cacheable` | `vertique-cache-aop` |
+| `300` | `@RateLimited` | `vertique-rate-limit-aop` |
+| `1000` | `@Timed` | `vertique-micrometer-core` |
+
+An application aspect ordered below `50` runs inside retry and is re-executed once per retry attempt. `@RateLimited` at `300` consumes quota before the `@Cacheable` lookup at `200`, including on cache hits.
 
 **Sync-returning methods.** When the intercepted method returns a non-`Future` type, the generated override unwraps the completed future and returns the value synchronously. Framework built-ins never defer the future, so this unwrapping succeeds. A custom aspect that defers on a sync-returning method receives an `IllegalStateException` at call time — never a blocked thread.
 
@@ -117,6 +131,24 @@ Represents a single method invocation flowing through the interceptor chain. Pas
 - **Never mutate `arguments()` after calling `proceed()` and then call it again** unless the argument change is intentional for the second call; the array is read live by the terminal on every invocation.
 - **Sync-returning method contract.** If the intercepted method does not return `Future`, the generated proxy unwraps the completed future synchronously. A custom interceptor that returns a not-yet-completed future on a sync-returning method receives an `IllegalStateException` at runtime. Only framework built-ins (which always complete synchronously) are safe with sync-returning methods in v1.
 
+### Selector-path grammar
+
+`SelectorPaths` is the framework-internal runtime resolver used by annotation families such as
+cache and rate limit. A selector path has a non-blank parameter root, identified by parameter name
+or non-negative position (for example, `"tenantId"` or `"0"`), followed by optional dot-separated
+property segments. A record segment resolves the matching record component accessor; on a bean,
+the resolver tries `getX()` and then `isX()` for a segment `x`. Segments must be valid Java
+identifiers. The path limit is 256 characters and eight segments, including the root. An explicitly
+empty family key declaration is the family-specific constant-key form and does not call
+`SelectorPaths.resolve`.
+
+The terminal value must be one supported scalar: a primitive other than `void`, `String`,
+`Character`, `Boolean`, `Byte`, `Short`, `Integer`, `Long`, `Float`, `Double`, `BigInteger`,
+`BigDecimal`, `UUID`, an enum, `Instant`, `LocalDate`, `LocalDateTime`, `OffsetDateTime`, or
+`ZonedDateTime`. The compile-time processors enforce this grammar; the runtime resolver preserves
+the family-prefixed diagnostics for blank paths, unresolved arguments or accessors, blank property
+segments, null results, and inaccessible scalar paths.
+
 ### `Invocations`
 
 Static utility class — the continuation nester. Called by generated proxies; not called by user code.
@@ -169,7 +201,7 @@ public @interface MyAnnotation {
 
 The processor discovers `@MyAnnotation` as an aspect trigger because it is meta-annotated with `@Aspect`. No registration step beyond annotating a method with `@MyAnnotation` is required — the proxy is generated automatically.
 
-**Supported annotation attribute kinds.** Aspect annotation attributes may be: `boolean`, `byte`, `short`, `int`, `long`, `String`, `Class<?>`, enum values, or arrays of any of these. Attributes of type `char`, `float`, `double`, nested annotations, or arrays of nested annotations are rejected at compile time with a clear error.
+**Supported annotation attribute kinds.** Aspect annotation attributes may use every legal annotation member kind: `boolean`, `byte`, `short`, `int`, `long`, `char`, `float`, `double`, `String`, `Class<?>`, enum values, nested annotations, or arrays of any of these. Generated literals emit char values as Java-source-safe numeric expressions and preserve exact floating-point values, including NaN, infinities, and signed zero. Equality follows the annotation contract, including `Float.compare`/`Double.compare` for primitive floating-point members in nested annotations.
 
 ---
 

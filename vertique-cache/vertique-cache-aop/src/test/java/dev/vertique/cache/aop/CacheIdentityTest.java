@@ -160,7 +160,7 @@ class CacheIdentityTest {
                 }
 
                 @Override
-                public CacheIdentity identity() {
+                public CacheIdentity subject() {
                     return identity;
                 }
 

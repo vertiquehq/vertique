@@ -5,6 +5,7 @@ package dev.vertique.ratelimit.aop;
 
 import dev.vertique.aop.AspectProvider;
 import dev.vertique.aop.MethodInterceptor;
+import dev.vertique.aop.SelectorPaths;
 import dev.vertique.core.codegen.MethodMetadata;
 import dev.vertique.ratelimit.RateLimitKey;
 import dev.vertique.ratelimit.RateLimiter;
@@ -75,6 +76,6 @@ final class RateLimitedAspect implements AspectProvider<RateLimited> {
         }
         // A fixed-size view over resolve()'s freshly allocated, never-mutated array — no
         // second copy or redundant null-check pass on this per-invocation hot path.
-        return Arrays.asList(MethodMetadataKeyResolver.resolve(selectorPaths, target, arguments));
+        return Arrays.asList(SelectorPaths.resolve("rate-limit key", selectorPaths, target, arguments));
     }
 }

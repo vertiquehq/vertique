@@ -6,6 +6,7 @@ package dev.vertique.rest.client;
 import dev.vertique.resilience.CircuitBreaker;
 import dev.vertique.resilience.Resilience;
 import dev.vertique.resilience.ResiliencePipeline;
+import dev.vertique.resilience.ResiliencePolicyRegistry;
 import dev.vertique.resilience.ResolvedResiliencePolicy;
 import dev.vertique.resilience.adapter.AdapterOperationIdentity;
 import dev.vertique.resilience.adapter.ResilienceAdapterContext;
@@ -37,26 +38,57 @@ final class RestClientResiliencePipelineFactory {
             RestClientConfig clientConfig,
             CircuitBreakerOptions interfaceCircuitBreakerOptions,
             Map<?, ClientMethodMeta> methodMetas) {
-        this.clientName = clientName;
-        this.clientInterface = clientInterface;
-        this.context = resilience.adapterSupport().newContext();
-        this.configAdapter = new RestClientResilienceConfigAdapter(
-                resilience.policyResolver(),
+        this(
+                resilience,
+                clientName,
+                clientInterface,
                 readTimeoutMs,
                 retryPolicy,
                 backoffStrategy,
                 clientConfig,
-                interfaceCircuitBreakerOptions);
-        dev.vertique.resilience.CircuitBreaker shared = null;
-        var config = configAdapter.interfaceCircuitBreakerConfig();
-        if (config != null) {
-            shared = context.circuitBreaker(
-                    new AdapterOperationIdentity(
-                            "rest-client.interface-circuit", List.of(clientName, clientInterface.getName())),
-                    config);
+                interfaceCircuitBreakerOptions,
+                methodMetas,
+                ResiliencePolicyRegistry.empty());
+    }
+
+    RestClientResiliencePipelineFactory(
+            Resilience resilience,
+            String clientName,
+            Class<?> clientInterface,
+            long readTimeoutMs,
+            RestClientRetryPolicy retryPolicy,
+            dev.vertique.resilience.BackoffStrategy backoffStrategy,
+            RestClientConfig clientConfig,
+            CircuitBreakerOptions interfaceCircuitBreakerOptions,
+            Map<?, ClientMethodMeta> methodMetas,
+            ResiliencePolicyRegistry registry) {
+        this.clientName = clientName;
+        this.clientInterface = clientInterface;
+        ResilienceAdapterContext context = resilience.adapterSupport().newContext();
+        this.context = context;
+        try {
+            this.configAdapter = new RestClientResilienceConfigAdapter(
+                    resilience.policyResolver(),
+                    readTimeoutMs,
+                    retryPolicy,
+                    backoffStrategy,
+                    clientConfig,
+                    interfaceCircuitBreakerOptions,
+                    registry);
+            dev.vertique.resilience.CircuitBreaker shared = null;
+            var config = configAdapter.interfaceCircuitBreakerConfig();
+            if (config != null) {
+                shared = context.circuitBreaker(
+                        new AdapterOperationIdentity(
+                                "rest-client.interface-circuit", List.of(clientName, clientInterface.getName())),
+                        config);
+            }
+            this.interfaceBreaker = shared;
+            methodMetas.values().forEach(this::pipeline);
+        } catch (RuntimeException | Error failure) {
+            context.close();
+            throw failure;
         }
-        this.interfaceBreaker = shared;
-        methodMetas.values().forEach(this::pipeline);
     }
 
     /** Returns the prebuilt pipeline for a method. */

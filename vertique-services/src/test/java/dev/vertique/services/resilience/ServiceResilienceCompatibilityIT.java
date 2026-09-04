@@ -100,8 +100,8 @@ class ServiceResilienceCompatibilityIT {
 
         Resilience resilience = Resilience.create(vertx);
         try {
-            ServiceResilienceConfigAdapter adapter =
-                    new ServiceResilienceConfigAdapter(resilience, new ServicesConfig(1_000L, List.of()), Map.of());
+            ServiceResilienceConfigAdapter adapter = new ServiceResilienceConfigAdapter(
+                    resilience, new ServicesConfig(1_000L, List.of()), Map.of(), java.util.Optional.empty());
             ServiceResiliencePipelineFactory factory = new ServiceResiliencePipelineFactory(adapter, resilience);
 
             ServiceMethodMeta plain = meta("plain");
@@ -141,7 +141,8 @@ class ServiceResilienceCompatibilityIT {
             ServiceRequestSender sender = new ServiceRequestSender(
                     eventBusClient,
                     supervisor,
-                    new ServiceResilienceConfigAdapter(resilience, new ServicesConfig(null, List.of()), Map.of()));
+                    new ServiceResilienceConfigAdapter(
+                            resilience, new ServicesConfig(null, List.of()), Map.of(), java.util.Optional.empty()));
             DeliveryOptions replyOptions = new DeliveryOptions().setCodecName("dispatch.result");
             vertx.eventBus()
                     .consumer(

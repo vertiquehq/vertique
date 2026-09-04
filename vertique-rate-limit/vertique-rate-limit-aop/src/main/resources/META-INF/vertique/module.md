@@ -12,7 +12,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 `vertique-rate-limit-aop` adapts one `@RateLimited` method declaration to the
 provider-neutral programmatic rate-limiting API. It owns the annotation vocabulary,
-selector-path resolution for annotated methods, and the Dagger binding for the
+delegation to the shared runtime selector-path resolver, and the Dagger binding for the
 rate-limit aspect. The generic Vertique AOP processor generates the application
 proxy and reflection-free method metadata; this module does not own proxy
 generation, quota math, or backend behavior.
@@ -40,9 +40,9 @@ public Future<SearchResult> search(String tenantId, String userId, Query query) 
 `@RateLimited` names exactly one policy and is non-repeatable in v1: numeric limits,
 algorithm, mode, revision, and failure behavior never appear in the annotation, only
 in the named policy's configuration. `key()` is an ordered array of selector paths —
-never a template or format string — reusing the cache path grammar: a parameter root
-by name or position, dot-separated record/bean accessor segments, and a terminal
-scalar type. `subject` (default `EFFECTIVE_PRINCIPAL`) and `anonymous` (default
+never a template or format string — following the shared
+[selector-path grammar](../../../../../../../vertique-aop/src/main/resources/META-INF/vertique/module.md#selector-path-grammar).
+`subject` (default `EFFECTIVE_PRINCIPAL`) and `anonymous` (default
 `SHARED_BUCKET`) control identity-scoped keying (see `vertique-rate-limit-core`'s
 `RateLimitSubjectResolver`/`RateLimitAdapterSupport`); `cost` (default `1`) is the
 per-invocation cost. An application that uses any `subject()` other than `NONE`
@@ -52,6 +52,12 @@ otherwise every caller resolves as anonymous.
 
 `@Aspect(ordering = 300)` places `@RateLimited` outside `@Cacheable`(200)/
 `@CacheEvict`(100) and inside `@Timed`(1000) in the generated interceptor chain.
+
+When composed with `@Cacheable`, this ordering makes quota admission the outer
+boundary: every invocation consumes one quota unit before the cache lookup,
+including a cache hit. A cache miss enters the nested cache and resilience
+pipeline only after admission; retries remain inside that single admission and
+do not consume additional quota units.
 
 Handle resolution happens once, at generated-proxy-constructor time: an unknown
 policy name fails application startup, before any request is served, exactly as

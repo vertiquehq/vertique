@@ -12,6 +12,7 @@ import javax.annotation.processing.Messager;
 import javax.lang.model.element.Element;
 import javax.tools.Diagnostic;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -110,6 +111,134 @@ class DiagnosticsTest {
         assertEquals(
                 "@PathParam(\"id\") on myMethod has no matching placeholder in @Path",
                 Diagnostics.pathParamMissingPlaceholder("id", "myMethod"));
+    }
+
+    // --- T003 shared selector and proxyability formatters (stable contract) ---
+
+    @Test
+    @DisplayName("selectorPathBlank formats the family-prefixed diagnostic")
+    void selectorPathBlank_exactString() {
+        assertEquals("cache key selector path must not be blank", Diagnostics.selectorPathBlank("cache key"));
+    }
+
+    @Test
+    @DisplayName("selectorPathTooLong formats the family-prefixed diagnostic")
+    void selectorPathTooLong_exactString() {
+        assertEquals(
+                "rate-limit key selector path must not exceed 256 characters",
+                Diagnostics.selectorPathTooLong("rate-limit key"));
+    }
+
+    @Test
+    @DisplayName("propertyPathsTooDeep formats the family-prefixed diagnostic")
+    void propertyPathsTooDeep_exactString() {
+        assertEquals(
+                "cache key property paths are limited to eight segments including the root parameter",
+                Diagnostics.propertyPathsTooDeep("cache key"));
+    }
+
+    @Test
+    @DisplayName("propertyPathInvalidIdentifier formats the family-prefixed diagnostic")
+    void propertyPathInvalidIdentifier_exactString() {
+        assertEquals(
+                "rate-limit key property path contains an invalid identifier: bad-name",
+                Diagnostics.propertyPathInvalidIdentifier("rate-limit key", "bad-name"));
+    }
+
+    @Test
+    @DisplayName("selectorParameterNotFound formats the family-prefixed diagnostic")
+    void selectorParameterNotFound_exactString() {
+        assertEquals(
+                "cache key selector does not resolve to a method parameter: missing",
+                Diagnostics.selectorParameterNotFound("cache key", "missing"));
+    }
+
+    @Test
+    @DisplayName("propertyAccessorNotFound formats the family-prefixed diagnostic")
+    void propertyAccessorNotFound_exactString() {
+        assertEquals(
+                "rate-limit key property is not an accessible record or bean accessor: region",
+                Diagnostics.propertyAccessorNotFound("rate-limit key", "region"));
+    }
+
+    @Test
+    @DisplayName("selectorNotScalar formats the family-prefixed diagnostic")
+    void selectorNotScalar_exactString() {
+        assertEquals(
+                "cache key selector must end in a supported scalar type", Diagnostics.selectorNotScalar("cache key"));
+    }
+
+    @Test
+    @DisplayName("methodsNotOnPublicClass formats the family-prefixed diagnostic")
+    void methodsNotOnPublicClass_exactString() {
+        assertEquals(
+                "cacheable methods must be declared on a public Dagger-managed class",
+                Diagnostics.methodsNotOnPublicClass("cacheable"));
+    }
+
+    @Test
+    @DisplayName("methodsOnFinalClass formats the family-prefixed diagnostic")
+    void methodsOnFinalClass_exactString() {
+        assertEquals(
+                "rate-limited methods cannot be declared on a final class",
+                Diagnostics.methodsOnFinalClass("rate-limited"));
+    }
+
+    @Test
+    @DisplayName("methodsRequireInjectConstructor formats the family-prefixed diagnostic")
+    void methodsRequireInjectConstructor_exactString() {
+        assertEquals(
+                "cacheable methods require exactly one @Inject constructor",
+                Diagnostics.methodsRequireInjectConstructor("cacheable"));
+    }
+
+    @Test
+    @DisplayName("methodsNotOverridable formats the family-prefixed diagnostic")
+    void methodsNotOverridable_exactString() {
+        assertEquals(
+                "rate-limited methods must be instance methods that can be overridden",
+                Diagnostics.methodsNotOverridable("rate-limited"));
+    }
+
+    @Test
+    @DisplayName("resilience formatters preserve the T011 diagnostic contract")
+    void resilienceFormatters_exactStrings() {
+        assertEquals(
+                "resilience declarations on a concrete class require @Resilient on the same method",
+                Diagnostics.resilienceDeclarationRequiresAnchor());
+        assertEquals(
+                "class-level resilience declarations are not honored on concrete classes; declare them on each @Resilient method",
+                Diagnostics.resilienceClassLevelDeclaration());
+        assertEquals(
+                "the services transport already wraps this operation from the contract; declare resilience on the contract or on the handler, not both",
+                Diagnostics.resilienceServiceDoubleWrap());
+        assertEquals(
+                "@Resilient must name a policy or be accompanied by at least one resilience declaration",
+                Diagnostics.resilientAnchorRequiresPolicyOrDeclaration());
+        assertEquals(
+                "resilience policy name must match [A-Za-z0-9._~-]{1,128}: invalid!",
+                Diagnostics.resiliencePolicyName("invalid!"));
+        assertEquals(
+                "@Resilient on an interface is honored only on a @ServiceContract or REST-client interface",
+                Diagnostics.resilientInterfaceNotAllowed());
+        assertEquals(
+                "resilient methods must return a concrete Future<T>", Diagnostics.resilientMethodsMustReturnFuture());
+        assertEquals("@Retry.maxRetries must be between 0 and 100", Diagnostics.retryMaxRetries());
+        assertEquals("@Retry.delayMs must be >= 0", Diagnostics.retryDelayMs());
+        assertEquals("@Retry.backoffMultiplier must be >= 1.0", Diagnostics.retryBackoffMultiplier());
+        assertEquals("@Retry.maxDelayMs must be >= 0", Diagnostics.retryMaxDelayMs());
+        assertEquals("@Timeout.value must be positive", Diagnostics.timeoutValue());
+        assertEquals("@CircuitBreaker.maxFailures must be positive", Diagnostics.circuitBreakerMaxFailures());
+        assertEquals("@CircuitBreaker.resetTimeoutMs must be positive", Diagnostics.circuitBreakerResetTimeoutMs());
+        assertEquals("@Bulkhead.maxConcurrentCalls must be positive", Diagnostics.bulkheadMaxConcurrentCalls());
+        assertEquals(
+                "@Bulkhead(mode = REJECT) cannot configure maxQueueSize or queueTimeoutMs",
+                Diagnostics.bulkheadRejectQueueFields());
+        assertEquals(
+                "@Bulkhead(mode = QUEUE).maxQueueSize must be between 1 and 1024", Diagnostics.bulkheadQueueSize());
+        assertEquals(
+                "@Bulkhead(mode = QUEUE).queueTimeoutMs must be between 1 and 60000",
+                Diagnostics.bulkheadQueueTimeoutMs());
     }
 
     // --- CG-009 JAX-RS formatters (stable contract) ---

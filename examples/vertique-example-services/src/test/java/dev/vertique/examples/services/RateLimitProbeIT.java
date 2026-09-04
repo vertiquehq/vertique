@@ -44,9 +44,15 @@ class RateLimitProbeIT {
             .withConfig(new JsonObject()
                     .put("http", new JsonObject().put("port", 0).put("host", "127.0.0.1"))
                     .put("management", new JsonObject().put("enabled", false))
+                    .put("resilience", ResilienceTestPolicies.probeConfig())
                     .put(
                             "rateLimit",
-                            new JsonObject().put("policies", new JsonObject().put(POLICY_NAME, sharedPolicy())))
+                            new JsonObject()
+                                    .put(
+                                            "policies",
+                                            new JsonObject()
+                                                    .put(POLICY_NAME, sharedPolicy())
+                                                    .put("composition", RateLimitTestPolicies.composition())))
                     .put(
                             "services",
                             new JsonObject()

@@ -8,11 +8,13 @@ import dev.vertique.resilience.CircuitBreakerConfig;
 import dev.vertique.resilience.CircuitBreakerOverride;
 import dev.vertique.resilience.ResilienceDefaults;
 import dev.vertique.resilience.ResiliencePolicyOverrides;
+import dev.vertique.resilience.ResiliencePolicyRegistry;
 import dev.vertique.resilience.ResiliencePolicyResolver;
 import dev.vertique.resilience.ResolvedResiliencePolicy;
 import dev.vertique.resilience.RetryBackoff;
 import dev.vertique.resilience.RetryConfig;
 import dev.vertique.resilience.RetryOverride;
+import dev.vertique.resilience.RetryPolicy;
 import dev.vertique.resilience.TimeoutConfig;
 import dev.vertique.resilience.TimeoutOverride;
 import dev.vertique.resilience.annotation.CircuitBreakerDeclaration;
@@ -35,6 +37,8 @@ final class RestClientResilienceConfigAdapter {
     private final long readTimeoutMs;
     private final RestClientRetryPolicy retryPolicy;
     private final dev.vertique.resilience.BackoffStrategy backoffStrategy;
+    private final ResiliencePolicyRegistry registry;
+    private final RetryPolicy restRetryFallbackPolicy;
 
     @Nullable
     private final RestClientConfig clientConfig;
@@ -49,12 +53,32 @@ final class RestClientResilienceConfigAdapter {
             dev.vertique.resilience.BackoffStrategy backoffStrategy,
             @Nullable RestClientConfig clientConfig,
             @Nullable CircuitBreakerOptions interfaceCircuitBreakerOptions) {
+        this(
+                resolver,
+                readTimeoutMs,
+                retryPolicy,
+                backoffStrategy,
+                clientConfig,
+                interfaceCircuitBreakerOptions,
+                ResiliencePolicyRegistry.empty());
+    }
+
+    RestClientResilienceConfigAdapter(
+            ResiliencePolicyResolver resolver,
+            long readTimeoutMs,
+            RestClientRetryPolicy retryPolicy,
+            dev.vertique.resilience.BackoffStrategy backoffStrategy,
+            @Nullable RestClientConfig clientConfig,
+            @Nullable CircuitBreakerOptions interfaceCircuitBreakerOptions,
+            ResiliencePolicyRegistry registry) {
         this.resolver = resolver;
         this.readTimeoutMs = readTimeoutMs;
         this.retryPolicy = retryPolicy;
         this.backoffStrategy = backoffStrategy;
         this.clientConfig = clientConfig;
         this.interfaceCircuitBreakerOptions = interfaceCircuitBreakerOptions;
+        this.registry = java.util.Objects.requireNonNull(registry, "registry");
+        this.restRetryFallbackPolicy = this::shouldRetry;
     }
 
     /** Resolves one method using operation/config, canonical annotations, and builder defaults. */
@@ -63,14 +87,19 @@ final class RestClientResilienceConfigAdapter {
         if (usesInterfaceBreaker && annotations.circuitBreaker().isPresent()) {
             CircuitBreakerDeclaration declaration = annotations.circuitBreaker().orElseThrow();
             annotations = new ResilienceAnnotations(
-                    annotations.timeout(), Optional.empty(), annotations.retry(), annotations.bulkhead());
+                    annotations.timeout(),
+                    Optional.empty(),
+                    annotations.retry(),
+                    annotations.bulkhead(),
+                    annotations.policy());
             if (declaration.timeoutMs() > 0 && annotations.timeout().isEmpty()) {
                 annotations = new ResilienceAnnotations(
                         Optional.of(new dev.vertique.resilience.annotation.TimeoutDeclaration(
                                 declaration.timeoutMs(), java.util.concurrent.TimeUnit.MILLISECONDS)),
                         annotations.circuitBreaker(),
                         annotations.retry(),
-                        annotations.bulkhead());
+                        annotations.bulkhead(),
+                        annotations.policy());
             }
         }
 
@@ -80,7 +109,11 @@ final class RestClientResilienceConfigAdapter {
                 retryConfig == null ? Optional.empty() : Optional.of(defaultRetry()),
                 Optional.empty(),
                 Optional.empty());
-        return resolver.resolve(annotations, overrides(retryConfig), defaults);
+        ResiliencePolicyOverrides effectiveOverrides = registry.layer(annotations, overrides(retryConfig));
+        if (retryIsActive(annotations, effectiveOverrides, defaults)) {
+            effectiveOverrides = withFallbackPolicy(effectiveOverrides);
+        }
+        return resolver.resolve(annotations, effectiveOverrides, defaults);
     }
 
     /** Builds the single shared interface breaker configuration, or {@code null} when disabled. */
@@ -140,19 +173,59 @@ final class RestClientResilienceConfigAdapter {
                     backoff,
                     Optional.empty(),
                     Optional.empty(),
-                    Optional.of(this::shouldRetry)));
+                    Optional.of(restRetryFallbackPolicy)));
         }
         return new ResiliencePolicyOverrides(timeout, retry, circuitBreaker, Optional.empty());
+    }
+
+    private boolean retryIsActive(
+            ResilienceAnnotations annotations, ResiliencePolicyOverrides overrides, ResilienceDefaults defaults) {
+        if (overrides
+                .retry()
+                .map(value -> value.enabled().filter(enabled -> !enabled).isPresent())
+                .orElse(false)) {
+            return false;
+        }
+        return annotations.retry().isPresent()
+                || overrides.retry().isPresent()
+                || defaults.retry().isPresent();
+    }
+
+    private ResiliencePolicyOverrides withFallbackPolicy(ResiliencePolicyOverrides overrides) {
+        RetryOverride current = overrides
+                .retry()
+                .orElse(new RetryOverride(
+                        Optional.empty(),
+                        OptionalInt.empty(),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.empty()));
+        if (current.fallbackPolicy()
+                .filter(value -> value == restRetryFallbackPolicy)
+                .isPresent()) {
+            return overrides;
+        }
+        RetryOverride withFallback = new RetryOverride(
+                current.enabled(),
+                current.maxRetries(),
+                current.backoff(),
+                current.retryOn(),
+                current.abortOn(),
+                Optional.of(restRetryFallbackPolicy));
+        return new ResiliencePolicyOverrides(
+                overrides.timeout(), Optional.of(withFallback), overrides.circuitBreaker(), overrides.bulkhead());
     }
 
     private RetryConfig defaultRetry() {
         return RetryConfig.builder()
                 .maxRetries(3)
                 .backoff(RetryBackoff.custom(backoffStrategy))
-                .fallbackPolicy(this::shouldRetry)
+                .fallbackPolicy(restRetryFallbackPolicy)
                 .build();
     }
 
+    /** Applies the REST exception mapping before consulting the builder-level retry policy. */
     private boolean shouldRetry(Throwable failure, int retryCount) {
         if (failure instanceof dev.vertique.resilience.exception.ResilienceTimeoutException) {
             return true;

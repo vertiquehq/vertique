@@ -3,6 +3,7 @@
 
 package dev.vertique.resilience.dagger;
 
+import dagger.BindsOptionalOf;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
@@ -10,6 +11,7 @@ import dagger.multibindings.Multibinds;
 import dev.vertique.core.lifecycle.ApplicationShutdownStep;
 import dev.vertique.core.lifecycle.LifecyclePhase;
 import dev.vertique.resilience.Resilience;
+import dev.vertique.resilience.ResiliencePolicyRegistry;
 import dev.vertique.resilience.spi.ResilienceObserver;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -22,6 +24,9 @@ public abstract class ResilienceModule {
 
     /** Prevents direct construction of the static binding module. */
     private ResilienceModule() {}
+
+    @BindsOptionalOf
+    abstract ResiliencePolicyRegistry resiliencePolicyRegistry();
 
     /** Declares the optional application-contributed resilience observer set. */
     @Multibinds

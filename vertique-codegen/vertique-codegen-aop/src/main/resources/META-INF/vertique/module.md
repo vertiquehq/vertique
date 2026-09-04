@@ -76,7 +76,7 @@ The following bean and method shapes are rejected with a compile error:
 | Raw `Future` return on an intercepted method | Misclassified as sync-returning; meters wrong outcome |
 | Wildcard `Future<? ...>` return on an intercepted method | Would require an invalid back-cast in the generated override |
 
-Unsupported annotation attribute kinds on the aspect annotation are also rejected: `char`, `float`, `double`, nested annotations, and arrays of nested annotations cannot be materialized into annotation-literal `equals`/`hashCode` implementations and are rejected with a compile error (see annotation-literal constraints below).
+All legal annotation member kinds are materialized into generated literals: `boolean`, `byte`, `short`, `int`, `long`, `char`, `float`, `double`, `String`, `Class`, enum constants, nested annotations, and arrays of those. `char` uses a four-hex-digit `\uXXXX` literal. `float` and `double` use `Float.intBitsToFloat(...)` and `Double.longBitsToDouble(...)` with the exact raw bit pattern, preserving NaN, infinities, and negative zero. Literal equality uses `Float.compare`/`Double.compare` for floating-point members and their hash codes use `Float.valueOf(...).hashCode()`/`Double.valueOf(...).hashCode()`; arrays use `Arrays.equals`/`Arrays.hashCode`.
 
 ---
 
@@ -179,13 +179,15 @@ The `@Binds` method replicates the target bean's declared scope — it never har
 
 Runs `@SupportedAnnotationTypes("*")` (wildcard) so it receives all annotations and can discover user-defined aspect triggers — annotations meta-annotated with `@Aspect` — without being configured for each one. Returns `false` to avoid claiming annotations; Dagger, Lombok, and other processors see the same elements.
 
+Only trigger methods enclosed by an `ElementKind.CLASS` are collected for proxy generation. A trigger annotation on an interface method — for example, a service-contract or REST-client interface method carrying `@Resilient` — is ignored for proxy generation: no `$AopProxy` is generated and proxyability or constructor validation is not run for that method.
+
 The module (`GeneratedAopModule`) is emitted in the **first round that yields any binding**, not in the `processingOver()` round. This ensures the module exists before Dagger's `ComponentProcessingStep` validates a `@Component` that references it.
 
 ### `AopProxyEmitter`
 
 Generates the `Bean$AopProxy` class, its `MethodMetadata` implementations (via `MetadataEmitter`), and the annotation-literal instances. Per-method member names (metadata constant, chain field, nested metadata type) are disambiguated by an ordinal (position in the intercepted-method list) so overloaded intercepted methods — same simple name, different parameter types — never collide.
 
-For each intercepted method, `materializeParameterAnnotations` walks every parameter's `@Retention(RUNTIME)` annotations and emits one `<Ann>$AopLiteral` per distinct annotation type encountered (deduplicated per compilation, same as the method-level literals), passing the per-parameter literal refs into `MetadataEmitter.methodMetadataType` so the nested `MethodMetadata`'s per-parameter `ParameterMetadata.findAnnotation`/`hasAnnotation` resolve from generated literals. An annotation carrying an unsupported attribute kind (`char`/`float`/`double`, a nested annotation, or an array of those) on a parameter is rejected with a compile error against that parameter — the same bounded-attribute-kind gate `AnnotationLiteralEmitter` applies to method-level literals — rather than silently falling back to reflection.
+For each intercepted method, `materializeParameterAnnotations` walks every parameter's `@Retention(RUNTIME)` annotations and emits one `<Ann>$AopLiteral` per distinct annotation type encountered (deduplicated per compilation, same as the method-level literals), passing the per-parameter literal refs into `MetadataEmitter.methodMetadataType` so the nested `MethodMetadata`'s per-parameter `ParameterMetadata.findAnnotation`/`hasAnnotation` resolve from generated literals. All legal annotation member kinds are supported on parameters as well as methods; the same exact-bit-pattern and `Annotation`-contract equality/hash behavior applies, rather than falling back to reflection.
 
 ### `GeneratedAopModuleEmitter`
 

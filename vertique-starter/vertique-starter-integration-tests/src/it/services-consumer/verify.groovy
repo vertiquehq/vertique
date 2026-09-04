@@ -93,6 +93,7 @@ forbidden.each { String description, Closure<Boolean> matches ->
 // must be a deliberate, reviewed change to the ledger below.
 Set<String> expectedVertique = [
         "vertique-application",
+        "vertique-aop",
         "vertique-config-core",
         "vertique-context",
         "vertique-core",

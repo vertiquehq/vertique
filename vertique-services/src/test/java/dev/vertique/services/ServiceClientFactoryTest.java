@@ -184,7 +184,10 @@ class ServiceClientFactoryTest {
                 eventBusClient,
                 availableSupervisor,
                 new ServiceResilienceConfigAdapter(
-                        Resilience.create(vertx), new ServicesConfig(null, List.of()), Map.of()));
+                        Resilience.create(vertx),
+                        new ServicesConfig(null, List.of()),
+                        Map.of(),
+                        java.util.Optional.empty()));
     }
 
     private static ServiceContractRegistry registry;
@@ -222,7 +225,10 @@ class ServiceClientFactoryTest {
                 eventBusClient,
                 supervisor,
                 new ServiceResilienceConfigAdapter(
-                        Resilience.create(vertx), new ServicesConfig(null, List.of()), Map.of()));
+                        Resilience.create(vertx),
+                        new ServicesConfig(null, List.of()),
+                        Map.of(),
+                        java.util.Optional.empty()));
 
         // Register echo consumers that reply with the received payload prefixed with "got:"
         DeliveryOptions replyOptions = new DeliveryOptions().setCodecName("dispatch.result");
@@ -387,7 +393,10 @@ class ServiceClientFactoryTest {
                 eventBusClient,
                 availableSupervisor,
                 new ServiceResilienceConfigAdapter(
-                        Resilience.create(vertx), new ServicesConfig(null, List.of()), Map.of()));
+                        Resilience.create(vertx),
+                        new ServicesConfig(null, List.of()),
+                        Map.of(),
+                        java.util.Optional.empty()));
         ServiceClientFactory factory = new ServiceClientFactory(localSender, localRegistry);
         FailureService proxy = factory.create(FailureService.class);
 
@@ -439,7 +448,10 @@ class ServiceClientFactoryTest {
                 eventBusClient,
                 availableSupervisor,
                 new ServiceResilienceConfigAdapter(
-                        Resilience.create(vertx), new ServicesConfig(null, List.of()), Map.of()));
+                        Resilience.create(vertx),
+                        new ServicesConfig(null, List.of()),
+                        Map.of(),
+                        java.util.Optional.empty()));
         ServiceClientFactory factory = new ServiceClientFactory(localSender, localRegistry);
         NoHandlerService proxy = factory.create(NoHandlerService.class);
 
@@ -476,7 +488,10 @@ class ServiceClientFactoryTest {
                 eventBusClient,
                 unavailableSupervisor,
                 new ServiceResilienceConfigAdapter(
-                        Resilience.create(vertx), new ServicesConfig(null, List.of()), Map.of()));
+                        Resilience.create(vertx),
+                        new ServicesConfig(null, List.of()),
+                        Map.of(),
+                        java.util.Optional.empty()));
         ServiceClientFactory factory = new ServiceClientFactory(localSender, registry);
         ProxyTestService proxy = factory.create(ProxyTestService.class);
 
@@ -612,7 +627,10 @@ class ServiceClientFactoryTest {
                     eventBusClient,
                     availableSupervisor,
                     new ServiceResilienceConfigAdapter(
-                            Resilience.create(vertx), new ServicesConfig(null, List.of()), Map.of()));
+                            Resilience.create(vertx),
+                            new ServicesConfig(null, List.of()),
+                            Map.of(),
+                            java.util.Optional.empty()));
 
             DeliveryOptions replyOptions = new DeliveryOptions().setCodecName("dispatch.result");
             ServiceContractRegistry.ContractEntry<ScPropService> entry = localRegistry.resolve(ScPropService.class);

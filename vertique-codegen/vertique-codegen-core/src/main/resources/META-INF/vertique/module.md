@@ -148,6 +148,56 @@ The type's own package is derived from its enclosing elements rather than passed
 
 ---
 
+### SelectorPathValidator
+
+Compile-time validator for selector paths used by annotation processors. Construct one per
+processor with a diagnostic family prefix, then call `validate` for the annotated method and its
+selector-path array. It reports every invalid path through `CodegenContext.diagnostics()` and
+returns `true` only when all paths are valid.
+
+```java
+SelectorPathValidator validator = new SelectorPathValidator(ctx, "cache");
+boolean valid = validator.validate(method, new String[] {"user.address.postalCode"});
+```
+
+The selector grammar is bounded and resolves against the method being processed:
+
+- A path is at most 256 UTF-16 code units and contains at most 8 dot-separated segments,
+  including its root parameter.
+- The root is either a decimal parameter position (`"0"`) or a declared parameter name.
+- Every later segment must be a valid Java identifier. On a record, a bare segment may resolve to
+  a public zero-argument record-component accessor; otherwise the segment must resolve to a public,
+  zero-argument, non-static `getX()` or `isX()` accessor.
+- The final type must be a supported scalar: any primitive except `void`; `String`, `Character`,
+  `Boolean`, `Byte`, `Short`, `Integer`, `Long`, `Float`, or `Double`; `BigInteger` or
+  `BigDecimal`; `UUID`; an enum; or `Instant`, `LocalDate`, `LocalDateTime`, `OffsetDateTime`,
+  or `ZonedDateTime`.
+
+Blank paths, invalid identifiers, missing parameters or accessors, excessive depth, and
+non-scalar terminal types produce family-prefixed compile-time diagnostics. The public bounds are
+`MAX_PATH_LENGTH` (`256`) and `MAX_SEGMENTS` (`8`).
+
+---
+
+### ProxyabilityValidator
+
+Compile-time validator for methods that an annotation processor will proxy. Construct one per
+processor with a diagnostic family prefix and call `validate` for each annotated method.
+
+```java
+ProxyabilityValidator validator = new ProxyabilityValidator(ctx, "cacheable");
+boolean valid = validator.validate(method);
+```
+
+Validation requires a public, non-final enclosing class with exactly one constructor annotated with
+`jakarta.inject.Inject` or `javax.inject.Inject`. The method must be an instance method that can be
+overridden: final, private, static, and abstract methods are rejected. Each failure is reported as
+a family-prefixed compile-time diagnostic. Enclosing-class checks are memoized per class, so
+co-located annotations do not repeat the same class-level diagnostics; method-level checks still
+apply to each method.
+
+---
+
 ### dagger.DaggerModuleWriter
 
 Thin JavaPoet wrapper (Palantir fork) for the most common Dagger emit patterns. Downstream processors use this to generate `@Module` classes without duplicating JavaPoet boilerplate.
@@ -197,7 +247,13 @@ JavaPoet emitter that, given a method element, generates a `dev.vertique.core.co
 
 Both the method-level and parameter-level `findAnnotation`/`hasAnnotation` surfaces are reflection-free and literal-backed: for each runtime-retained method annotation the emitter bakes a `static final <Ann>` literal constant (`ANNOTATION_<i>`) and resolves `findAnnotation` by a `type == <Ann>.class` match; for each parameter's runtime-retained annotations it bakes `PARAM_<p>_ANNOTATION_<i>` literal constants and passes them to the nested `ParameterMetadataImpl`, whose `findAnnotation` matches the looked-up `type` against each literal's `annotationType()` — never `Method.getAnnotation`/`Parameter.getAnnotation`. This backs `ParameterMetadata.findAnnotation`/`hasAnnotation` on the codegen path. Generated method metadata emits `genericReturnType()` as a reflection-free `Type` graph, including parameterized, wildcard, and generic-array return shapes. `asMethod()` and parameter `genericType()` remain stubbed and throw `UnsupportedOperationException`.
 
-The caller owns the generator namespace when materializing each `AnnotationLiteralRef`. `AnnotationLiteralEmitter.literalClassName(...)` and `emit(...)` require that namespace and generate `<Ann>$<Namespace>Literal`; there is no shared literal suffix or unnamespaced overload. `AopProxyEmitter` uses `Aop` and therefore emits `<Ann>$AopLiteral`; the JAX-RS emitters use `JaxRs` and emit `<Ann>$JaxRsLiteral`. Each caller deduplicates its own generated FQNs before writing them. The same bounded-attribute-kind gate protects method-level and parameter-level literal generation, but callers choose the failure policy: AOP rejects an unsupported attribute kind at compile time, while JAX-RS omits that literal and wires its documented lazy reflective fallback.
+The caller owns the generator namespace when materializing each `AnnotationLiteralRef`. `AnnotationLiteralEmitter.literalClassName(...)` and `emit(...)` require that namespace and generate `<Ann>$<Namespace>Literal`; there is no shared literal suffix or unnamespaced overload. `AopProxyEmitter` uses `Aop` and the JAX-RS emitters use `JaxRs`; each caller deduplicates its own generated FQNs before writing them. The dedicated `meta.AnnotationLiteralEmitter` entry below is authoritative for supported member kinds, exact floating-point representation, equality/hash semantics, defensive array behavior, and the retained JAX-RS compatibility hook.
+
+### meta.AnnotationLiteralEmitter
+
+Generates annotation implementations whose accessors return compile-time constants and whose `equals`/`hashCode` follow the `java.lang.annotation.Annotation` contract. All legal annotation member kinds are supported: the eight primitive kinds (`boolean`, `byte`, `short`, `int`, `long`, `char`, `float`, and `double`), `String`, `Class`, enum constants, nested annotations, and arrays of those kinds. `char` members use source-safe numeric `(char) <value>` expressions, including for control characters, so generated source cannot contain Unicode-escape line terminators. `float` and `double` members use `Float.intBitsToFloat` and `Double.longBitsToDouble` with the exact raw bit pattern read during processing, so NaN, infinities, and negative zero round-trip. Equality uses `Float.compare`/`Double.compare` for floating-point members and boxed `Float`/`Double` hash codes; other primitive members retain direct equality and boxed hash semantics. Arrays use `Arrays.equals` and `Arrays.hashCode`.
+
+`firstUnsupportedAttribute(TypeElement)` is retained for signature compatibility with `vertique-codegen-jaxrs` and returns `Optional.empty()` for every annotation type. No legal annotation member kind is rejected by this emitter.
 
 ---
 

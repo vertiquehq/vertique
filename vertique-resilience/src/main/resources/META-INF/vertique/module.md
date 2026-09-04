@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.resilience`
 > **Artifact:** `vertique-resilience`
-> **Depends on:** `vertique-core`, `vertx-core`, `vertx-circuit-breaker`, Dagger, `jakarta.inject-api`
+> **Depends on:** `vertique-core`, `vertique-aop`, `vertx-core`, `vertx-circuit-breaker`, Dagger, `jakarta.inject-api`
 
 `vertique-resilience` provides the shared resilience vocabulary and runtime foundation used by
 Vertique consumers. It contains type and method annotations for timeout, retry, circuit-breaker, and
@@ -29,14 +29,20 @@ consumer modules such as `vertique-services` and `vertique-rest-client`.
 
 ## Core Concepts
 
-Annotations may be placed on a type or method. A method declaration replaces the corresponding
-type-level declaration; values are not merged attribute by attribute. `ResilienceAnnotations`
-resolves the effective declarations through the method and type hierarchy and exposes immutable
-declaration records through `Optional` accessors.
+Annotations may be placed on a type or method. Type-level declarations are supported on transport
+interfaces. On concrete classes, declarations must be placed on the same method as `@Resilient`;
+class-level declarations are rejected at compile time. A method declaration replaces the
+corresponding type-level declaration; values are not merged attribute by attribute.
+`ResilienceAnnotations` resolves the effective declarations through the method and type hierarchy
+and exposes immutable declaration records through `Optional` accessors.
 
 The four declaration families are independent: an operation may configure any combination of
-timeout, retry, circuit breaker, and bulkhead. `ResilienceAnnotations.NONE` is the shared empty value, and
-`hasAny()` is the convenient test for whether a declaration is present.
+timeout, retry, circuit breaker, and bulkhead. `@Resilient` is a method-level anchor that may select
+a named policy tier; an anchor-only method is active when its policy name is nonblank.
+An empty or whitespace-only `policy()` is treated as no named tier.
+`ResilienceAnnotations.NONE` is the shared empty value, and `hasAny()` is true when any declaration
+or policy name is present. The `resolve(MethodMetadata)` overload reads only method-level metadata
+through `findAnnotation`, while the reflective overloads also resolve type-level declarations.
 
 The executable foundation is application-scoped. Create one `Resilience` for the application graph
 and construct timeout/retry/breaker/bulkhead components or pipelines from that owner. Timeout and
@@ -58,13 +64,29 @@ hidden event queue, and observer implementations must keep callbacks bounded and
 
 ---
 
+## AOP integration
+
+`ResilienceAopModule` binds the internal `ResilientAspect` to the `vertique-aop` provider set and
+contributes its shutdown step. Add this module to the application component together with the
+runtime modules that provide `Resilience`; methods carrying `@Resilient` then activate the
+reflection-free resilience pipeline. The aspect resolves the effective method declarations once
+when an interceptor is built and memoizes the pipeline by the erased declaring type, method name,
+and parameter signature.
+
+The aspect does not intercept self-invocation or direct object construction. For a
+`ServiceHandler<C>` implementation, wire either the generated `ServiceContract` or the AOP
+provider, but do not apply both to the same method: doing so double-wraps one invocation and may
+duplicate retries, timeout events, and breaker accounting. The aspect owns adapter state and closes
+it during `VALIDATE` shutdown, before the synthetic runtime teardown step in `CONFIGURE`.
+
 ## Key Classes
 
 ### Resilience annotations
 
 `dev.vertique.resilience.annotation.Timeout`, `Retry`, `CircuitBreaker`, and `Bulkhead` are runtime-retained
-annotations targeting types and methods. `Retry` references a `BackoffStrategy` class and lists
-exception types eligible for retry or immediate abort.
+annotations targeting types and methods. `dev.vertique.resilience.annotation.Resilient` is a
+runtime-retained method-level anchor whose `policy()` names an optional policy tier. `Retry` references
+a `BackoffStrategy` class and lists exception types eligible for retry or immediate abort.
 
 ```java
 @Timeout(value = 2, unit = TimeUnit.SECONDS)
@@ -78,9 +100,10 @@ public interface PaymentClient {
 ### Declaration metadata
 
 `ResilienceAnnotations.resolve(Method)` or `resolve(Class<?>, Method)` returns immutable
-`TimeoutDeclaration`, `RetryDeclaration`, `CircuitBreakerDeclaration`, and `BulkheadDeclaration` snapshots. The snapshots
-are suitable for generated contributors and reflective registration; they do not expose live
-annotation instances.
+`TimeoutDeclaration`, `RetryDeclaration`, `CircuitBreakerDeclaration`, and `BulkheadDeclaration` snapshots
+plus the optional named policy tier. `resolve(MethodMetadata)` provides the reflection-free method-level
+form for generated consumers. The snapshots are suitable for generated contributors and reflective
+registration; they do not expose live annotation instances.
 
 ### Runtime and timeout construction
 
@@ -244,6 +267,48 @@ do not attach the original throwable as a cause or suppressed exception.
 
 ---
 
+## Configuration
+
+Named policy tiers are an opt-in configuration surface under the keyed object
+`resilience.policies.<name>`. The entry key is injected as `ResiliencePolicyConfig.name` and must
+match `[A-Za-z0-9._~-]{1,128}`. For example:
+
+```json
+{
+  "resilience": {
+    "policies": {
+      "payments": {
+        "timeout": {"valueMs": 2000},
+        "retry": {"maxRetries": 5, "delayMs": 100},
+        "circuitBreaker": {"maxFailures": 3, "resetTimeoutMs": 10000},
+        "bulkhead": {"maxConcurrentCalls": 8, "mode": "QUEUE", "maxQueueSize": 16, "queueTimeoutMs": 250}
+      }
+    }
+  }
+}
+```
+
+Install `ResiliencePoliciesModule` alongside `ResilienceModule` when named tiers are used. The
+provider requires the application's `@VertxConfig JsonObject` and canonical `ConfigParser`
+bindings (normally supplied by `VertxModule` and `ConfigParsingModule`). Consumers inject
+`Optional<ResiliencePolicyRegistry>` and use `ResiliencePolicyRegistry.empty()` when the opt-in
+provider is absent:
+
+```java
+ResiliencePolicyRegistry registry = registryOptional.orElse(ResiliencePolicyRegistry.empty());
+```
+
+`ResiliencePolicyConfig.toOverrides()` preserves the raw partial tier: omitted fields remain
+omitted and no declaration defaults are filled while parsing. When a named tier is selected by
+`@Resilient(policy = "payments")`, `ResiliencePolicyRegistry.layer(...)` completes retry fields
+(`delayMs = 500`, `backoffMultiplier = 2.0`, `maxDelayMs = 30000`) and circuit-breaker fields
+(`maxFailures = 5`, `resetTimeoutMs = 10000`) only when that concern has no annotation declaration.
+Declared concern values remain partial so the resolver can apply them; transport overrides have
+higher precedence. Timeout and bulkhead tiers are complete by construction, and without a selected
+named tier `layer(...)` returns transport overrides unchanged.
+
+---
+
 ## Extension Points
 
 Implement `BackoffStrategy` when a consumer needs a custom delay schedule. The class may be supplied
@@ -266,6 +331,8 @@ also declares the empty-by-default multibound observer set.
 
 - `dev.vertique:vertique-core` — annotation hierarchy resolution, shared exception roots, and
   lifecycle contracts.
+- `dev.vertique:vertique-aop` — the `@Aspect` metadata used by `@Resilient` and the
+  `AspectProvider`/`MethodInterceptor` contracts used by the AOP integration.
 - `io.vertx:vertx-core` — runtime contexts, asynchronous futures, promises, and timers.
 - `com.google.dagger:dagger` and `jakarta.inject:jakarta.inject-api` — the singleton runtime and
   lifecycle bindings exposed by `ResilienceModule`.

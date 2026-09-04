@@ -13,6 +13,7 @@ import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.resilience.BackoffStrategy;
 import dev.vertique.resilience.Resilience;
+import dev.vertique.resilience.ResiliencePolicyRegistry;
 import dev.vertique.resilience.annotation.CircuitBreaker;
 import dev.vertique.rest.client.config.RestClientCircuitBreakerConfig;
 import dev.vertique.rest.client.config.RestClientConfig;
@@ -104,6 +105,11 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public final class RestClientBuilder {
 
+    @FunctionalInterface
+    interface WebClientFactory {
+        WebClient create(Vertx vertx, @Nullable WebClientOptions webClientOptions, @Nullable PoolOptions poolOptions);
+    }
+
     // --- Static meta cache shared across all builder instances ---
     private static final ConcurrentHashMap<Class<?>, Map<Method, ClientMethodMeta>> META_CACHE =
             new ConcurrentHashMap<>();
@@ -111,6 +117,8 @@ public final class RestClientBuilder {
     // --- Builder state ---
 
     private final Vertx vertx;
+    private final ResiliencePolicyRegistry resiliencePolicyRegistry;
+    private final WebClientFactory webClientFactory;
 
     @Nullable
     private Resilience suppliedResilience;
@@ -218,7 +226,23 @@ public final class RestClientBuilder {
      * @param vertx the Vert.x instance used to create the underlying WebClient
      */
     public RestClientBuilder(Vertx vertx) {
+        this(vertx, ResiliencePolicyRegistry.empty(), RestClientBuilder::buildWebClient);
+    }
+
+    RestClientBuilder(Vertx vertx, ResiliencePolicyRegistry resiliencePolicyRegistry) {
+        this(vertx, resiliencePolicyRegistry, RestClientBuilder::buildWebClient);
+    }
+
+    RestClientBuilder(
+            Vertx vertx, ResiliencePolicyRegistry resiliencePolicyRegistry, WebClientFactory webClientFactory) {
         this.vertx = vertx;
+        this.resiliencePolicyRegistry = java.util.Objects.requireNonNull(resiliencePolicyRegistry, "registry");
+        this.webClientFactory = java.util.Objects.requireNonNull(webClientFactory, "webClientFactory");
+    }
+
+    RestClientBuilder suppliedResilience(@Nullable Resilience resilience) {
+        this.suppliedResilience = resilience;
+        return this;
     }
 
     // --- Static factory ---
@@ -845,7 +869,7 @@ public final class RestClientBuilder {
         ObjectMapper effectiveMapper = resolveEffectiveMapper(effectiveConfig, clientInterface, clientName);
 
         // Build WebClient
-        WebClient webClient = buildWebClient(effectiveWebClientOptions, effectivePoolOptions);
+        WebClient webClient = webClientFactory.create(vertx, effectiveWebClientOptions, effectivePoolOptions);
 
         log.debug(
                 "Building REST client proxy for {} with baseUrl={}", clientInterface.getSimpleName(), resolvedBaseUrl);
@@ -856,39 +880,42 @@ public final class RestClientBuilder {
 
         RestClientInterceptorChain interceptorChain =
                 new RestClientInterceptorChain(clientName, sortedByPriority(List.copyOf(interceptors)));
-        Resilience runtime = resilienceRuntime();
-        RestClientResiliencePipelineFactory resilienceFactory = new RestClientResiliencePipelineFactory(
-                runtime,
-                clientName,
-                clientInterface,
-                effectiveReadTimeoutMs,
-                effectiveRetryPolicy,
-                effectiveBackoffStrategy,
-                effectiveConfig,
-                effectiveCb,
-                methodMetas);
-
-        RestClientDispatcher dispatcher = new DefaultRestClientDispatcher(
-                webClient,
-                resolvedBaseUrl,
-                cachedDefaultHeaders,
-                interceptorChain,
-                exceptionMapper,
-                effectiveMapper,
-                defaultExpectation,
-                resilienceFactory,
-                beanValidator,
-                clientName,
-                sortedCapturers(List.copyOf(contextCapturers)),
-                effectiveResolver);
-
-        // --- Try generated proxy first, fall back to JDK reflective proxy ---
-        // GeneratedCompanions.instantiate uses GeneratedNames.companionFqn (origin package,
-        // '$' → '_') so nested clients (Outer$Inner) resolve to Outer_Inner_RestClientProxy,
-        // matching exactly what the annotation processor emits. Catches both
-        // ReflectiveOperationException and LinkageError (static-initialiser failures).
+        Resilience runtime = null;
+        RestClientResiliencePipelineFactory resilienceFactory = null;
         T builtProxy;
         try {
+            runtime = resilienceRuntime();
+            resilienceFactory = new RestClientResiliencePipelineFactory(
+                    runtime,
+                    clientName,
+                    clientInterface,
+                    effectiveReadTimeoutMs,
+                    effectiveRetryPolicy,
+                    effectiveBackoffStrategy,
+                    effectiveConfig,
+                    effectiveCb,
+                    methodMetas,
+                    resiliencePolicyRegistry);
+
+            RestClientDispatcher dispatcher = new DefaultRestClientDispatcher(
+                    webClient,
+                    resolvedBaseUrl,
+                    cachedDefaultHeaders,
+                    interceptorChain,
+                    exceptionMapper,
+                    effectiveMapper,
+                    defaultExpectation,
+                    resilienceFactory,
+                    beanValidator,
+                    clientName,
+                    sortedCapturers(List.copyOf(contextCapturers)),
+                    effectiveResolver);
+
+            // --- Try generated proxy first, fall back to JDK reflective proxy ---
+            // GeneratedCompanions.instantiate uses GeneratedNames.companionFqn (origin package,
+            // '$' → '_') so nested clients (Outer$Inner) resolve to Outer_Inner_RestClientProxy,
+            // matching exactly what the annotation processor emits. Catches both
+            // ReflectiveOperationException and LinkageError (static-initialiser failures).
             builtProxy = GeneratedCompanions.instantiate(
                             clientInterface,
                             "_RestClientProxy",
@@ -915,8 +942,13 @@ public final class RestClientBuilder {
                                 clientInterface.getClassLoader(), new Class<?>[] {clientInterface}, handler);
                     });
         } catch (RuntimeException | Error failure) {
-            resilienceFactory.close();
+            if (resilienceFactory != null) {
+                resilienceFactory.close();
+            }
             webClient.close();
+            if (runtime != null && suppliedResilience == null) {
+                runtime.close();
+            }
             throw failure;
         }
         builtClients.add(new BuiltClientResources(resilienceFactory, webClient));
@@ -966,7 +998,7 @@ public final class RestClientBuilder {
     }
 
     @Nullable
-    private Resilience ownedResilience() {
+    Resilience ownedResilience() {
         return suppliedResilience == null ? ownedResilience : null;
     }
 
@@ -1252,12 +1284,15 @@ public final class RestClientBuilder {
      * overridden by external config), so this method simply creates the client without
      * any further resolution.
      *
+     * @param vertx the Vert.x instance that owns the client
      * @param effectiveWebClientOptions the effective WebClient options to apply; {@code null} for defaults
      * @param effectivePoolOptions the pool options to apply; {@code null} for defaults
      * @return a new WebClient instance
      */
-    private WebClient buildWebClient(
-            @Nullable WebClientOptions effectiveWebClientOptions, @Nullable PoolOptions effectivePoolOptions) {
+    private static WebClient buildWebClient(
+            Vertx vertx,
+            @Nullable WebClientOptions effectiveWebClientOptions,
+            @Nullable PoolOptions effectivePoolOptions) {
         WebClientOptions opts = effectiveWebClientOptions != null ? effectiveWebClientOptions : new WebClientOptions();
         if (effectivePoolOptions != null) {
             return WebClient.create(vertx, opts, effectivePoolOptions);

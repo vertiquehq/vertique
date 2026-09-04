@@ -222,6 +222,15 @@ public final class ResiliencePolicyResolver {
                 return RetryBackoff.custom(operation.custom().orElseThrow());
             }
             if (operationHasScalar(operation)) {
+                if (operation.initialDelayMs().isPresent()
+                        && operation.multiplier().isPresent()
+                        && operation.maxDelayMs().isPresent()) {
+                    return RetryBackoff.exponential(
+                            operation.initialDelayMs().orElseThrow(),
+                            operation.multiplier().orElseThrow(),
+                            operation.maxDelayMs().orElseThrow(),
+                            operation.maxJitterMs().orElse(1_000L));
+                }
                 RetryBackoff.Exponential defaultCompatible =
                         compatibleExponential(defaults == null ? null : defaults.backoff());
                 RetryBackoff.Exponential compatible =

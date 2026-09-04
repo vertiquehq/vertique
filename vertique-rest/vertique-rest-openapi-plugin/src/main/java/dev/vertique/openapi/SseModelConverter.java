@@ -38,6 +38,13 @@ import java.util.Iterator;
 public class SseModelConverter implements ModelConverter {
 
     /**
+     * Creates a converter after safely initializing swagger-core's shared registry.
+     */
+    public SseModelConverter() {
+        ConverterRegistryBootstrap.initialize();
+    }
+
+    /**
      * Resolves the schema for the given type. If the type is a {@link ReadStream} of
      * {@code SseEvent}, this converter returns a string schema (representing an SSE text
      * stream). Otherwise — including a {@code ReadStream} of any other element type — the

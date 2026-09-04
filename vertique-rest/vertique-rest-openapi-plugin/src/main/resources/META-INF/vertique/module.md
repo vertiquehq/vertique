@@ -9,11 +9,13 @@ SPDX-License-Identifier: EUPL-1.2
 > **Package:** `dev.vertique.openapi`
 > **Artifact:** `rest-openapi-plugin`
 
-A thin build-time module that provides Swagger `ModelConverter`s and an `OpenAPIExtension` for the swagger-maven-plugin. `FutureModelConverter` unwraps `Future<T>` return types to `T`, `SseModelConverter` resolves SSE `ReadStream` return types to a string schema, `BigDecimalModelConverter` resolves `BigDecimal` types to the `vertique-strict` string wire-form schema, `ScalarOptionalModelConverter` resolves `OptionalInt`/`OptionalLong`/`OptionalDouble` to scalar schemas, and `RequestParamsExtension` expands `@RequestParams`-annotated parameter objects into individual OpenAPI parameters — so the generated spec reflects the actual JAX-RS contract rather than the framework's internal wrapper/aggregation types.
+A thin build-time module that provides Swagger `ModelConverter`s and an `OpenAPIExtension` for the swagger-maven-plugin. `FutureModelConverter` unwraps `Future<T>` return types to `T`, `SseModelConverter` resolves SSE `ReadStream` return types to a string schema, `BigDecimalModelConverter` resolves `BigDecimal` types to the `vertique-strict` string wire-form schema, `ScalarOptionalModelConverter` resolves `OptionalInt`/`OptionalLong`/`OptionalDouble` to scalar schemas, and `RequestParamsExtension` expands `@RequestParams`-annotated parameter objects into individual OpenAPI parameters — so the generated spec reflects the actual JAX-RS contract rather than the framework's internal wrapper/aggregation types. Each model converter also initializes swagger-core's shared registry under the `ModelConverters` monitor before the Maven plugin registers application-specific converters, keeping parallel Maven reactor builds deterministic.
 
 ---
 
 ## Model Converters
+
+`swagger-maven-plugin` constructs configured model converters before registering them with swagger-core. `ConverterRegistryBootstrap` synchronizes the lazy first initialization of swagger-core's process-wide registry at converter construction time. This preserves the application-specific opt-in converter lists while allowing unrelated Maven modules to build in parallel; do not replace this guard with a reactor-wide serial build.
 
 Model converters are **not** auto-discovered — each application module's `pom.xml` must list the fully-qualified class name(s) under `swagger-maven-plugin`'s `<modelConverterClasses>` (see [Configuration](#configuration) below). Every converter must guard `chain.next()` with `chain.hasNext()`: a converter cannot know whether it is last in the configured chain, and an unconditional `chain.next()` throws `NoSuchElementException` when it is.
 

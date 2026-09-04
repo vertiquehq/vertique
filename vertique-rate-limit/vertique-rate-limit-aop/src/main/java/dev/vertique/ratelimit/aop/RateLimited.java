@@ -6,6 +6,7 @@ package dev.vertique.ratelimit.aop;
 import dev.vertique.aop.Aspect;
 import dev.vertique.ratelimit.spi.AnonymousRateLimitPolicy;
 import dev.vertique.ratelimit.spi.RateLimitSubject;
+import java.lang.annotation.Documented;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -31,6 +32,7 @@ import java.lang.annotation.Target;
  */
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
+@Documented
 @Aspect(ordering = 300) // outside @Cacheable(200)/@CacheEvict(100), inside @Timed(1000)
 public @interface RateLimited {
 

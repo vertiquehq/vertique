@@ -35,8 +35,9 @@ core and JSON foundations
 
 `vertique-resilience` owns the canonical timeout, retry, and circuit-breaker vocabulary, immutable
 declaration metadata, and retry contracts shared by Services, REST clients, jobs, and code
-generation. It depends on `vertique-core`; core remains independent of resilience so foundation
-consumers do not acquire policy-specific API.
+generation. Its AOP integration consumes the generic `vertique-aop` substrate; the resilience
+runtime still depends on `vertique-core`, while core remains independent of resilience so
+foundation consumers do not acquire policy-specific API.
 
 The optional `vertique-micrometer-resilience` adapter consumes only the resilience observer SPI and
 the shared Micrometer registry. It stays outside the runtime so resilience execution remains free of
@@ -107,6 +108,9 @@ compile dependency on `vertique-rest-security` for the captured client-origin ty
 only; and `vertique-micrometer-rate-limit`/`vertique-opentelemetry-rate-limit` layer
 metrics and tracing on the core observer SPI. `vertique-codegen-rate-limit`
 validates `@RateLimited` declarations at compile time and generates no sources.
+`vertique-codegen-resilience` similarly validates `@Resilient` and its declaration
+annotations at compile time, including proxyability and services double-wrap
+guardrails, and generates no sources.
 Bucket4j itself is a private implementation dependency of core and the Redis
 adapter; it never appears in a public signature of any rate-limit artifact.
 

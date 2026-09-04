@@ -28,6 +28,7 @@ SPDX-License-Identifier: EUPL-1.2
 | `vertique-codegen-kafka` | [module.md](../vertique-codegen/vertique-codegen-kafka/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-codegen-mcp` | [module.md](../vertique-codegen/vertique-codegen-mcp/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-codegen-rate-limit` | [module.md](../vertique-codegen/vertique-codegen-rate-limit/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-codegen-resilience` | [module.md](../vertique-codegen/vertique-codegen-resilience/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-codegen-rest-client` | [module.md](../vertique-codegen/vertique-codegen-rest-client/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-codegen-sanitization` | [module.md](../vertique-codegen/vertique-codegen-sanitization/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-codegen-services` | [module.md](../vertique-codegen/vertique-codegen-services/src/main/resources/META-INF/vertique/module.md) |

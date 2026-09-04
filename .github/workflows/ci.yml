@@ -128,8 +128,10 @@ jobs:
 
       # Per-module HTML reports are skipped: the vertique-coverage-report
       # aggregate XML produced by this same invocation is the only coverage
-      # output CI consumes. Reactor parallelism (-T1C) comes from
-      # .mvn/maven.config so local and CI builds share one setting.
+      # output CI consumes. Reactor execution mode comes from
+      # .mvn/maven.config so local and CI builds share one setting. The
+      # OpenAPI plugin guards swagger-core's shared registry initialization,
+      # so unrelated modules remain parallel.
       - name: Build and test
         run: ./mvnw -ntp -Djacoco.module.report.skip=true clean verify
 

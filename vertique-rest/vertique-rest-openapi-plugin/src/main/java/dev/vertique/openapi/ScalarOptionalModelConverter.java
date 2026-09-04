@@ -71,6 +71,13 @@ import java.util.OptionalLong;
 public final class ScalarOptionalModelConverter implements ModelConverter {
 
     /**
+     * Creates a converter after safely initializing swagger-core's shared registry.
+     */
+    public ScalarOptionalModelConverter() {
+        ConverterRegistryBootstrap.initialize();
+    }
+
+    /**
      * Maps each JDK scalar optional to the primitive class whose {@link PrimitiveType} schema
      * matches its JSON wire form.
      */

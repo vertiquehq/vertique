@@ -30,7 +30,7 @@ public class CacheProbeServiceHandler implements ServiceHandler<CacheProbeServic
     @Cacheable(
             name = "cache-probe",
             key = {},
-            identity = CacheIdentity.ACTOR,
+            subject = CacheIdentity.ACTOR,
             anonymous = AnonymousCachePolicy.BYPASS)
     public Future<CacheProbeResult> probe(SecurityContext securityContext) {
         String actor = securityContext == null

@@ -8,6 +8,7 @@ import dev.vertique.resilience.CircuitBreakerOverride;
 import dev.vertique.resilience.DurationBound;
 import dev.vertique.resilience.ResilienceDefaults;
 import dev.vertique.resilience.ResiliencePolicyOverrides;
+import dev.vertique.resilience.ResiliencePolicyRegistry;
 import dev.vertique.resilience.ResiliencePolicyResolver;
 import dev.vertique.resilience.ResolvedResiliencePolicy;
 import dev.vertique.resilience.RetryOverride;
@@ -41,15 +42,19 @@ public final class ServiceResilienceConfigAdapter {
     private static final long SEND_TIMEOUT_BUFFER_MS = 1_000L;
 
     private final ResiliencePolicyResolver resolver;
+    private final ResiliencePolicyRegistry registry;
     private final Long globalSendTimeoutMs;
     private final Map<ServicesConfig.ServiceKey, ServiceConfig> serviceConfigIndex;
 
+    /** Creates an adapter using the optionally configured named policy registry. */
     @Inject
     public ServiceResilienceConfigAdapter(
             dev.vertique.resilience.Resilience resilience,
             ServicesConfig servicesConfig,
-            Map<ServicesConfig.ServiceKey, ServiceConfig> serviceConfigIndex) {
+            Map<ServicesConfig.ServiceKey, ServiceConfig> serviceConfigIndex,
+            Optional<ResiliencePolicyRegistry> registry) {
         this.resolver = resilience.policyResolver();
+        this.registry = registry.orElseGet(ResiliencePolicyRegistry::empty);
         this.globalSendTimeoutMs = servicesConfig.sendTimeoutMs();
         this.serviceConfigIndex = serviceConfigIndex;
     }
@@ -59,7 +64,8 @@ public final class ServiceResilienceConfigAdapter {
         if (!meta.resilienceAnnotations().hasAny()) {
             return resolver.resolve(ResilienceAnnotations.NONE, ResiliencePolicyOverrides.none(), DEFAULTS);
         }
-        return resolver.resolve(meta.resilienceAnnotations(), overrides(meta), DEFAULTS);
+        return resolver.resolve(
+                meta.resilienceAnnotations(), registry.layer(meta.resilienceAnnotations(), overrides(meta)), DEFAULTS);
     }
 
     /** Returns the explicit transport timeout selected by operation, service, then global config. */

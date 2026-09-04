@@ -6,8 +6,10 @@ package dev.vertique.codegen.cache;
 import dev.vertique.cache.aop.CacheEvict;
 import dev.vertique.cache.aop.Cacheable;
 import dev.vertique.codegen.AnnotationMirrors;
+import dev.vertique.codegen.CodegenContext;
+import dev.vertique.codegen.ProxyabilityValidator;
+import dev.vertique.codegen.SelectorPathValidator;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import javax.annotation.processing.AbstractProcessor;
@@ -20,12 +22,10 @@ import javax.lang.model.element.AnnotationValue;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
-import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
-import javax.lang.model.util.ElementFilter;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 
@@ -50,13 +50,17 @@ public final class CacheAnnotationProcessor extends AbstractProcessor {
 
     private Types types;
     private Elements elements;
-    private final Set<Element> proxyabilityValidated = new HashSet<>();
+    private SelectorPathValidator selectorPathValidator;
+    private ProxyabilityValidator proxyabilityValidator;
 
     @Override
     public synchronized void init(javax.annotation.processing.ProcessingEnvironment environment) {
         super.init(environment);
         types = environment.getTypeUtils();
         elements = environment.getElementUtils();
+        CodegenContext context = new CodegenContext(environment);
+        selectorPathValidator = new SelectorPathValidator(context, "cache");
+        proxyabilityValidator = new ProxyabilityValidator(context, "cacheable");
     }
 
     @Override
@@ -73,7 +77,7 @@ public final class CacheAnnotationProcessor extends AbstractProcessor {
                     error(element, "@Cacheable and @CacheEvict must be declared on different methods");
                     continue;
                 }
-                validateProxyability((ExecutableElement) element);
+                proxyabilityValidator.validate((ExecutableElement) element);
                 for (EvictionDeclaration declaration : evictionDeclarations(element)) {
                     if (declaration.clear() && declaration.keyExplicit()) {
                         error(element, "cache eviction must specify exactly one of clear=true or an explicit key");
@@ -93,7 +97,7 @@ public final class CacheAnnotationProcessor extends AbstractProcessor {
     }
 
     private void validateMethod(ExecutableElement method, String[] paths, boolean resultRequired) {
-        validateProxyability(method);
+        proxyabilityValidator.validate(method);
         if (resultRequired && method.getReturnType().getKind() == TypeKind.VOID) {
             error(method, "@Cacheable methods must return a value");
         }
@@ -106,9 +110,7 @@ public final class CacheAnnotationProcessor extends AbstractProcessor {
 
     private void validateSelector(ExecutableElement method, String[] paths) {
         // An explicitly empty declared component list is the value-independent constant key.
-        for (String path : paths) {
-            validateSelectorPath(method, path);
-        }
+        selectorPathValidator.validate(method, paths);
     }
 
     private record EvictionDeclaration(boolean clear, boolean keyExplicit, String[] paths) {}
@@ -158,105 +160,6 @@ public final class CacheAnnotationProcessor extends AbstractProcessor {
         return new EvictionDeclaration(clear, keyExplicit, paths.toArray(String[]::new));
     }
 
-    private void validateSelectorPath(ExecutableElement method, String path) {
-        if (path.isBlank()) {
-            error(method, "cache key selector path must not be blank");
-            return;
-        }
-        if (path.length() > 256) {
-            error(method, "cache key selector path must not exceed 256 ASCII characters");
-            return;
-        }
-        String[] segments = path.split("\\.", -1);
-        if (segments.length > 8 || segments[0].isBlank()) {
-            error(method, "cache key property paths are limited to eight segments including the root parameter");
-            return;
-        }
-        for (String segment : segments) {
-            if (!isIdentifier(segment) && !segment.equals(segments[0])) {
-                error(method, "cache key property path contains an invalid identifier: " + segment);
-                return;
-            }
-        }
-        int parameterIndex = -1;
-        try {
-            parameterIndex = Integer.parseInt(segments[0]);
-        } catch (NumberFormatException ignored) {
-            for (int index = 0; index < method.getParameters().size(); index++) {
-                if (segments[0].contentEquals(method.getParameters().get(index).getSimpleName())) {
-                    parameterIndex = index;
-                    break;
-                }
-            }
-        }
-        if (parameterIndex < 0 || parameterIndex >= method.getParameters().size()) {
-            error(method, "cache key selector does not resolve to a method parameter: " + segments[0]);
-            return;
-        }
-        TypeMirror type = method.getParameters().get(parameterIndex).asType();
-        for (int index = 1; index < segments.length; index++) {
-            type = propertyType(type, segments[index]);
-            if (type == null) {
-                error(method, "cache key property is not an accessible record or bean accessor: " + segments[index]);
-                return;
-            }
-        }
-        if (!isScalar(type)) {
-            error(method, "cache key selector must end in a supported scalar type");
-        }
-    }
-
-    private TypeMirror propertyType(TypeMirror type, String property) {
-        if (type.getKind() != TypeKind.DECLARED) {
-            return null;
-        }
-        TypeElement element = (TypeElement) ((DeclaredType) type).asElement();
-        String suffix = Character.toUpperCase(property.charAt(0)) + property.substring(1);
-        for (Element member : elements.getAllMembers(element)) {
-            if (member.getKind() == ElementKind.METHOD && member instanceof ExecutableElement method) {
-                String name = method.getSimpleName().toString();
-                if ((name.equals(property) || name.equals("get" + suffix) || name.equals("is" + suffix))
-                        && method.getParameters().isEmpty()
-                        && method.getModifiers().contains(Modifier.PUBLIC)
-                        && !method.getModifiers().contains(Modifier.STATIC)) {
-                    return method.getReturnType();
-                }
-            }
-        }
-        return null;
-    }
-
-    private boolean isScalar(TypeMirror type) {
-        if (type.getKind().isPrimitive()) {
-            return type.getKind() != TypeKind.VOID;
-        }
-        if (type.getKind() != TypeKind.DECLARED) {
-            return false;
-        }
-        TypeElement element = (TypeElement) ((DeclaredType) type).asElement();
-        String name = element.getQualifiedName().toString();
-        return name.equals(String.class.getName())
-                || name.equals(Character.class.getName())
-                || name.equals(Boolean.class.getName())
-                || name.equals("java.lang.Byte")
-                || name.equals("java.lang.Short")
-                || name.equals("java.lang.Integer")
-                || name.equals("java.lang.Long")
-                || name.equals("java.lang.Float")
-                || name.equals("java.lang.Double")
-                || name.equals("java.math.BigInteger")
-                || name.equals("java.math.BigDecimal")
-                || name.equals("java.util.UUID")
-                || element.getKind() == ElementKind.ENUM
-                || Set.of(
-                                "java.time.Instant",
-                                "java.time.LocalDate",
-                                "java.time.LocalDateTime",
-                                "java.time.OffsetDateTime",
-                                "java.time.ZonedDateTime")
-                        .contains(name);
-    }
-
     private boolean isRawOrWildcardFuture(TypeMirror type) {
         if (type.getKind() != TypeKind.DECLARED) {
             return false;
@@ -269,42 +172,6 @@ public final class CacheAnnotationProcessor extends AbstractProcessor {
         return declared.getTypeArguments().size() != 1
                 || declared.getTypeArguments().getFirst().getKind() == TypeKind.WILDCARD
                 || declared.getTypeArguments().getFirst().getKind() == TypeKind.TYPEVAR;
-    }
-
-    private void validateProxyability(ExecutableElement method) {
-        if (!proxyabilityValidated.add(method)) {
-            return;
-        }
-        Element enclosing = method.getEnclosingElement();
-        if (!(enclosing instanceof TypeElement bean)) {
-            return;
-        }
-        if (!bean.getModifiers().contains(Modifier.PUBLIC)) {
-            error(method, "cacheable methods must be declared on a public Dagger-managed class");
-        }
-        if (bean.getModifiers().contains(Modifier.FINAL)) {
-            error(method, "cacheable methods cannot be declared on a final class");
-        }
-        if (!hasInjectConstructor(bean)) {
-            error(method, "cacheable methods require exactly one @Inject constructor");
-        }
-        Set<Modifier> modifiers = method.getModifiers();
-        if (modifiers.contains(Modifier.FINAL)
-                || modifiers.contains(Modifier.PRIVATE)
-                || modifiers.contains(Modifier.STATIC)
-                || modifiers.contains(Modifier.ABSTRACT)) {
-            error(method, "cacheable methods must be instance methods that can be overridden");
-        }
-    }
-
-    private boolean hasInjectConstructor(TypeElement bean) {
-        List<? extends ExecutableElement> constructors = ElementFilter.constructorsIn(bean.getEnclosedElements());
-        return constructors.size() == 1 && hasInject(constructors.getFirst());
-    }
-
-    private boolean hasInject(Element element) {
-        return AnnotationMirrors.isPresent(element, "jakarta.inject.Inject")
-                || AnnotationMirrors.isPresent(element, "javax.inject.Inject");
     }
 
     private void validateRestResult(ExecutableElement method) {
@@ -349,18 +216,6 @@ public final class CacheAnnotationProcessor extends AbstractProcessor {
 
     private boolean hasGetAnnotation(ExecutableElement method) {
         return AnnotationMirrors.isPresent(method, GET_FQN) || AnnotationMirrors.isPresent(method, LEGACY_GET_FQN);
-    }
-
-    private static boolean isIdentifier(String value) {
-        if (value.isEmpty() || !Character.isJavaIdentifierStart(value.charAt(0))) {
-            return false;
-        }
-        for (int index = 1; index < value.length(); index++) {
-            if (!Character.isJavaIdentifierPart(value.charAt(index))) {
-                return false;
-            }
-        }
-        return true;
     }
 
     private void error(Element element, String message) {

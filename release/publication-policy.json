@@ -35,7 +35,7 @@
       "packaging": "pom"
     }
   ],
-  "expectedPublishableGavCount": 118,
+  "expectedPublishableGavCount": 119,
   "expectedPublishableGavs": [
     "dev.vertique:vertique-aop",
     "dev.vertique:vertique-app-parent",
@@ -63,6 +63,7 @@
     "dev.vertique:vertique-codegen-kafka",
     "dev.vertique:vertique-codegen-mcp",
     "dev.vertique:vertique-codegen-rate-limit",
+    "dev.vertique:vertique-codegen-resilience",
     "dev.vertique:vertique-codegen-rest-client",
     "dev.vertique:vertique-codegen-sanitization",
     "dev.vertique:vertique-codegen-services",

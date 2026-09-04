@@ -28,14 +28,12 @@ import javax.lang.model.element.VariableElement;
  * adding or removing the annotation processor must not change runtime behavior. Each parameter's
  * annotations are therefore materialized per-parameter as follows:
  * <ul>
- *   <li>every annotation whose member shape {@code AnnotationLiteralEmitter} <em>can</em> render is
- *       baked into a compile-time {@code <Ann>$JaxRsLiteral} constant (the reflection-free fast path);</li>
- *   <li>if <em>any</em> runtime-retained annotation on the parameter carries an unsupported member
- *       shape (a {@code char}/{@code float}/{@code double} member, a nested-annotation member, or an
- *       array of those — most commonly Swagger's {@code @Parameter}, whose {@code schema} member
- *       defaults to a nested {@code @Schema}), the generated metadata additionally carries a
- *       <em>reflective fallback</em>: a {@code Supplier<Annotation[]>} producing the full merged
- *       effective annotation set via
+ *   <li>every legal Java annotation member shape that {@code AnnotationLiteralEmitter} can render is
+ *       baked into a compile-time {@code <Ann>$JaxRsLiteral} constant (the reflection-free fast path);
+ *       this includes {@code char}, floating-point, nested-annotation, and array members;</li>
+ *   <li>if a future or otherwise non-renderable annotation shape is reported by the retained
+ *       compatibility hook, the generated metadata additionally carries a <em>reflective fallback</em>:
+ *       a {@code Supplier<Annotation[]>} producing the full merged effective annotation set via
  *       {@code GeneratedJaxRsReflectiveAnnotations.mergedParameterAnnotations(...)}. The generated
  *       {@code findAnnotation} checks the literals first, then the fallback; {@code annotationsLazy()}
  *       returns the full merged set. Neither silently omits nor fails the build.</li>
@@ -112,8 +110,9 @@ final class ParameterAnnotationMaterializer {
     /**
      * Materializes the union of runtime-retained annotations across {@code annotationSources} (by
      * annotation type, concrete-first precedence) into literal refs, writing each distinct
-     * {@code <Ann>$JaxRsLiteral} class once. An annotation with an unsupported member shape is skipped from
-     * the literal set and flips {@code hasUnsupported[0]} so the caller wires a reflective fallback.
+     * {@code <Ann>$JaxRsLiteral} class once. An annotation reported by the retained compatibility hook
+     * is skipped from the literal set and flips {@code hasUnsupported[0]} so the caller wires a
+     * reflective fallback.
      *
      * <p><strong>Same-type / differing-member parity.</strong> This literal fast path dedups by
      * annotation <em>type</em> FQN (first-wins), but the runtime reflective merge

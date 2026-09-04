@@ -180,6 +180,161 @@ public final class Diagnostics {
         return "@PathParam(\"%s\") on %s has no matching placeholder in @Path".formatted(paramName, context);
     }
 
+    // --- T003 shared selector-path and proxyability formatters ---
+
+    /** Returns the family-prefixed diagnostic for a blank selector path. */
+    public static String selectorPathBlank(String family) {
+        return "%s selector path must not be blank".formatted(selectorFamily(family));
+    }
+
+    /** Returns the family-prefixed diagnostic for a selector path exceeding the length bound. */
+    public static String selectorPathTooLong(String family) {
+        return "%s selector path must not exceed 256 characters".formatted(selectorFamily(family));
+    }
+
+    /** Returns the family-prefixed diagnostic for a selector path exceeding the segment bound. */
+    public static String propertyPathsTooDeep(String family) {
+        return "%s property paths are limited to eight segments including the root parameter"
+                .formatted(selectorFamily(family));
+    }
+
+    /** Returns the family-prefixed diagnostic for an invalid property-path identifier. */
+    public static String propertyPathInvalidIdentifier(String family, String segment) {
+        return "%s property path contains an invalid identifier: %s".formatted(selectorFamily(family), segment);
+    }
+
+    /** Returns the family-prefixed diagnostic for an unresolved selector root. */
+    public static String selectorParameterNotFound(String family, String root) {
+        return "%s selector does not resolve to a method parameter: %s".formatted(selectorFamily(family), root);
+    }
+
+    /** Returns the family-prefixed diagnostic for an inaccessible property accessor. */
+    public static String propertyAccessorNotFound(String family, String segment) {
+        String prefix = family.equals("cache") ? "cache" : family;
+        return "%s property is not an accessible record or bean accessor: %s".formatted(prefix, segment);
+    }
+
+    /** Returns the family-prefixed diagnostic for a selector ending in an unsupported type. */
+    public static String selectorNotScalar(String family) {
+        return "%s selector must end in a supported scalar type".formatted(selectorFamily(family));
+    }
+
+    private static String selectorFamily(String family) {
+        return family.equals("cache") ? "cache key" : family;
+    }
+
+    /** Returns the family-prefixed diagnostic for a non-public enclosing class. */
+    public static String methodsNotOnPublicClass(String family) {
+        return "%s methods must be declared on a public Dagger-managed class".formatted(family);
+    }
+
+    /** Returns the family-prefixed diagnostic for a final enclosing class. */
+    public static String methodsOnFinalClass(String family) {
+        return "%s methods cannot be declared on a final class".formatted(family);
+    }
+
+    /** Returns the family-prefixed diagnostic for an invalid inject-constructor shape. */
+    public static String methodsRequireInjectConstructor(String family) {
+        return "%s methods require exactly one @Inject constructor".formatted(family);
+    }
+
+    /** Returns the family-prefixed diagnostic for a non-overridable method shape. */
+    public static String methodsNotOverridable(String family) {
+        return "%s methods must be instance methods that can be overridden".formatted(family);
+    }
+
+    // --- T011 resilience validation formatters ---
+
+    /** Returns the diagnostic for a resilience declaration without a method-level anchor. */
+    public static String resilienceDeclarationRequiresAnchor() {
+        return "resilience declarations on a concrete class require @Resilient on the same method";
+    }
+
+    /** Returns the diagnostic for a resilience declaration placed on a concrete type. */
+    public static String resilienceClassLevelDeclaration() {
+        return "class-level resilience declarations are not honored on concrete classes; declare them on each @Resilient method";
+    }
+
+    /** Returns the diagnostic for an anchor with neither a policy name nor a declaration. */
+    public static String resilientAnchorRequiresPolicyOrDeclaration() {
+        return "@Resilient must name a policy or be accompanied by at least one resilience declaration";
+    }
+
+    /** Returns the diagnostic for a malformed resilience policy name. */
+    public static String resiliencePolicyName(String policy) {
+        return "resilience policy name must match [A-Za-z0-9._~-]{1,128}: %s".formatted(policy);
+    }
+
+    /** Returns the diagnostic for an anchor on an unsupported interface. */
+    public static String resilientInterfaceNotAllowed() {
+        return "@Resilient on an interface is honored only on a @ServiceContract or REST-client interface";
+    }
+
+    /** Returns the diagnostic for an invalid Future return shape. */
+    public static String resilientMethodsMustReturnFuture() {
+        return "resilient methods must return a concrete Future<T>";
+    }
+
+    /** Returns the diagnostic for a services transport double-wrap. */
+    public static String resilienceServiceDoubleWrap() {
+        return "the services transport already wraps this operation from the contract; declare resilience on the contract or on the handler, not both";
+    }
+
+    /** Returns the diagnostic for an invalid retry maximum. */
+    public static String retryMaxRetries() {
+        return "@Retry.maxRetries must be between 0 and 100";
+    }
+
+    /** Returns the diagnostic for a negative retry delay. */
+    public static String retryDelayMs() {
+        return "@Retry.delayMs must be >= 0";
+    }
+
+    /** Returns the diagnostic for a retry multiplier below one. */
+    public static String retryBackoffMultiplier() {
+        return "@Retry.backoffMultiplier must be >= 1.0";
+    }
+
+    /** Returns the diagnostic for a negative maximum retry delay. */
+    public static String retryMaxDelayMs() {
+        return "@Retry.maxDelayMs must be >= 0";
+    }
+
+    /** Returns the diagnostic for a non-positive timeout. */
+    public static String timeoutValue() {
+        return "@Timeout.value must be positive";
+    }
+
+    /** Returns the diagnostic for a non-positive circuit-breaker failure threshold. */
+    public static String circuitBreakerMaxFailures() {
+        return "@CircuitBreaker.maxFailures must be positive";
+    }
+
+    /** Returns the diagnostic for a non-positive circuit-breaker reset timeout. */
+    public static String circuitBreakerResetTimeoutMs() {
+        return "@CircuitBreaker.resetTimeoutMs must be positive";
+    }
+
+    /** Returns the diagnostic for a non-positive bulkhead concurrency limit. */
+    public static String bulkheadMaxConcurrentCalls() {
+        return "@Bulkhead.maxConcurrentCalls must be positive";
+    }
+
+    /** Returns the diagnostic for queue-only fields on a reject-mode bulkhead. */
+    public static String bulkheadRejectQueueFields() {
+        return "@Bulkhead(mode = REJECT) cannot configure maxQueueSize or queueTimeoutMs";
+    }
+
+    /** Returns the diagnostic for a queue size outside its supported bounds. */
+    public static String bulkheadQueueSize() {
+        return "@Bulkhead(mode = QUEUE).maxQueueSize must be between 1 and 1024";
+    }
+
+    /** Returns the diagnostic for a queue timeout outside its supported bounds. */
+    public static String bulkheadQueueTimeoutMs() {
+        return "@Bulkhead(mode = QUEUE).queueTimeoutMs must be between 1 and 60000";
+    }
+
     // --- CG-009 JAX-RS validation formatters ---
 
     /**

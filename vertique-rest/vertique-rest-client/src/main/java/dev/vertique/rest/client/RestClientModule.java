@@ -16,6 +16,7 @@ import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.json.JsonRuntimeModule;
 import dev.vertique.resilience.Resilience;
+import dev.vertique.resilience.ResiliencePolicyRegistry;
 import dev.vertique.resilience.dagger.ResilienceModule;
 import dev.vertique.rest.client.config.RestClientConfig;
 import dev.vertique.rest.client.config.RestClientDefaults;
@@ -170,6 +171,8 @@ public abstract class RestClientModule {
      * @param paramConversionResolver the Dagger-managed conversion resolver (from the included
      *     {@link RestCoreModule}); seeded into every builder to enable outbound serialization of
      *     typed path/query/header/cookie parameters via the full application converter set
+     * @param resiliencePolicyRegistry the optional named resilience-policy registry; seeded into
+     *     every builder when the resilience policy module is installed
      * @return the singleton factory instance
      */
     @Provides
@@ -185,7 +188,8 @@ public abstract class RestClientModule {
             RestClientDefaults restClientDefaults,
             JsonConfig jsonConfig,
             ParamConversionResolver paramConversionResolver,
-            Resilience resilience) {
+            Resilience resilience,
+            Optional<ResiliencePolicyRegistry> resiliencePolicyRegistry) {
         return new RestClientFactory(
                 vertx,
                 interceptors,
@@ -197,7 +201,8 @@ public abstract class RestClientModule {
                 restClientDefaults.jsonProfile(),
                 jsonConfig,
                 paramConversionResolver,
-                resilience);
+                resilience,
+                resiliencePolicyRegistry.orElse(ResiliencePolicyRegistry.empty()));
     }
 
     /**

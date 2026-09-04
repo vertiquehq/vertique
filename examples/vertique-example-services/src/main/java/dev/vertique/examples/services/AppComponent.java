@@ -17,6 +17,9 @@ import dev.vertique.examples.services.service.GeneratedAopModule;
 import dev.vertique.examples.services.service.GeneratedServicesModule;
 import dev.vertique.management.ManagementModule;
 import dev.vertique.ratelimit.aop.RateLimitAopModule;
+import dev.vertique.resilience.aop.ResilienceAopModule;
+import dev.vertique.resilience.dagger.ResilienceModule;
+import dev.vertique.resilience.dagger.ResiliencePoliciesModule;
 import dev.vertique.rest.auth.jwt.JwtAuthModule;
 import dev.vertique.rest.jaxrs.RestModule;
 import dev.vertique.rest.ratelimit.RestRateLimitModule;
@@ -79,6 +82,9 @@ import jakarta.inject.Singleton;
  *       dev.vertique.examples.services.resource.RateLimitProbeResource}'s programmatic path and
  *       {@link dev.vertique.examples.services.service.RateLimitProbeServiceHandler}'s annotated
  *       path (T013, transport-neutrality proof)</li>
+ *   <li>{@link ResilienceModule} — resilience runtime components</li>
+ *   <li>{@link ResiliencePoliciesModule} — named resilience policy configuration</li>
+ *   <li>{@link ResilienceAopModule} — generated {@code @Resilient} aspect binding</li>
  * </ul>
  *
  * <p>{@link SecurityAuthzModule} (authorization engine only) and
@@ -109,9 +115,35 @@ import jakarta.inject.Singleton;
             SecurityEventsModule.class,
             AuthzModule.class,
             RateLimitAopModule.class,
-            RestRateLimitModule.class
+            RestRateLimitModule.class,
+            ResilienceModule.class,
+            ResiliencePoliciesModule.class,
+            ResilienceAopModule.class,
+            CompositionObserverModule.class
         })
 interface AppComponent extends VertiqueApplicationComponent {
+
+    /**
+     * Exposes the generated AOP proxy for the resilience probe so the integration test can invoke
+     * it directly without adding another transport or client to the example.
+     *
+     * @return the Dagger-provided resilience probe proxy
+     */
+    dev.vertique.examples.services.service.ResilienceProbeServiceHandler resilienceProbeServiceHandler();
+
+    /**
+     * Exposes the generated AOP proxy for the composition probe.
+     *
+     * @return the Dagger-provided composition probe proxy
+     */
+    dev.vertique.examples.services.service.CompositionProbeServiceHandler compositionProbeServiceHandler();
+
+    /**
+     * Exposes the ordered event sequence used by the composition characterization.
+     *
+     * @return the shared composition event collector
+     */
+    CompositionEventCollector compositionEventCollector();
 
     /**
      * Exposes the shared {@link AuthzEventCollector} so an integration test can read the

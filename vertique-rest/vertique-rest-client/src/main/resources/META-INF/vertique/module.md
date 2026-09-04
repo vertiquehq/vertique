@@ -257,6 +257,13 @@ public interface PaymentClient {
 The retry decision is evaluated in that order: `abortOn` first, then `retryOn`, and only when
 `retryOn` is empty does the builder-level `RestClientRetryPolicy` decide.
 
+Named resilience tiers selected with `@Resilient(policy = "...")` are available on Dagger-managed
+REST clients when `ResiliencePoliciesModule` is installed. The client-level `restClient.{name}.retry`
+configuration remains the higher-precedence transport override. Standalone builders use an empty
+named-policy registry and therefore retain their existing behavior. Named policies and all other
+resilience configuration are resolved while `build()` constructs the per-method pipelines; an
+unknown policy name fails at client build time.
+
 **`@Timeout`** takes `value` (must be positive) and `unit` (default `MILLISECONDS`). It outranks
 `readTimeout(long, TimeUnit)`; external config outranks it.
 

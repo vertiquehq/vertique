@@ -30,6 +30,10 @@ component is independently type-framed and the framed components are joined with
 runtime-owned `:` separator, which component payloads percent-encode and cannot forge, so
 distinct component tuples always render distinct keys.
 
+The programmatic builder keeps its `identity(CacheIdentity)` method. The annotation API in
+`vertique-cache-aop` uses `@Cacheable`'s `subject = CacheIdentity...` attribute for the same
+caller-subject dimension; the two names are intentionally distinct API surfaces.
+
 ```java
 Cache<ProductQuery, Product> products = cacheBuilder
         .cache("products", Product.class)

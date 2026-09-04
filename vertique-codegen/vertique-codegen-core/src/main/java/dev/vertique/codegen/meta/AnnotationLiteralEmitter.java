@@ -48,15 +48,10 @@ import javax.lang.model.util.Types;
  *       {@code (127 * memberName.hashCode()) ^ memberValueHashCode}.
  * </ul>
  *
- * <p><strong>Supported attribute kinds:</strong> {@code int} (and the other integral primitives),
- * {@code String}, {@code Class<?>}, enum constants, and arrays of those. The remaining primitives
- * ({@code char} / {@code float} / {@code double}) and <em>nested-annotation</em> members (and arrays
- * of either) are <strong>not</strong> renderable in v1 and are never emitted as broken code. Callers
- * run {@link #firstUnsupportedAttribute} first and apply their documented policy: AOP reports a
- * compile error (FR-013-13 / FR-013-09c), while JAX-RS wires its lazy reflective fallback. The
- * {@link #emit} / {@link #constructorArgs} methods themselves raise an
- * {@link UnsupportedOperationException} on such a kind as a defensive backstop, so an un-prechecked
- * caller fails loudly rather than silently.
+ * <p><strong>Supported attribute kinds:</strong> all legal annotation member kinds, including the
+ * primitive types, {@code String}, {@code Class<?>}, enum constants, nested annotations, and arrays
+ * of those. Primitive floating-point values are rendered from their exact bit patterns so the
+ * generated literal preserves values such as NaN, infinities, and negative zero.
  *
  * <p>The literal is emitted as a top-level class in the annotation's own package, named
  * {@code <AnnSimpleName>$<Namespace>Literal} (binary-name style); the consuming processor
@@ -66,83 +61,19 @@ public final class AnnotationLiteralEmitter {
 
     private AnnotationLiteralEmitter() {}
 
-    /**
-     * Describes an annotation member whose attribute kind this emitter cannot render into a literal:
-     * a {@code char} / {@code float} / {@code double} scalar, a <em>nested annotation</em> member, or
-     * an array of any of those.
-     *
-     * @param member the offending member's simple name (e.g. {@code "weight"})
-     * @param kind   the unsupported kind as text (e.g. {@code "float"}, {@code "float[]"}, or the
-     *               nested annotation's name), suitable for a {@link dev.vertique.codegen.Diagnostics}
-     *               message
-     */
+    /** Retained result type for the compatibility hook that historically identified unsupported kinds. */
     public record UnsupportedAttribute(String member, String kind) {}
 
     /**
-     * Scans the annotation type's declared members for one of an unsupported attribute kind — a
-     * {@code char} / {@code float} / {@code double} scalar, a <em>nested-annotation</em> member, or an
-     * array of any of those — returning the <em>first</em> such member if any.
+     * Retained compatibility hook for consumers that historically detected member kinds the emitter
+     * could not render. All legal annotation member kinds are now renderable, so this method always
+     * returns {@link java.util.Optional#empty()}.
      *
-     * <p>This is the non-throwing pre-check the metadata emitter and the aspect-literal emission path
-     * use to route an unsupported kind through {@code Diagnostics.error(...)} (a clean compile error,
-     * FR-013-13 / FR-013-09c) instead of letting {@link #emit} / {@link #constructorArgs} crash with an
-     * {@link UnsupportedOperationException} (for {@code char}/{@code float}/{@code double}) or emit
-     * broken {@code String.valueOf(<mirror>)} code (for a nested annotation). The set of rejected kinds
-     * matches exactly the kinds those methods refuse to render: full nested-annotation <em>support</em>
-     * is out of scope for v1 — the contract is a clean rejection, not broken code.
-     *
-     * @param annotationType the annotation type element to inspect; must not be {@code null}
-     * @return the first unsupported member if present, otherwise {@link java.util.Optional#empty()}
+     * @param annotationType the annotation type element; retained for signature compatibility
+     * @return always {@link java.util.Optional#empty()}
      */
     public static java.util.Optional<UnsupportedAttribute> firstUnsupportedAttribute(TypeElement annotationType) {
-        for (ExecutableElement member :
-                javax.lang.model.util.ElementFilter.methodsIn(annotationType.getEnclosedElements())) {
-            TypeMirror returnType = member.getReturnType();
-            TypeMirror checked =
-                    returnType.getKind() == TypeKind.ARRAY ? ((ArrayType) returnType).getComponentType() : returnType;
-            if (isUnsupportedMemberType(checked)) {
-                String name = member.getSimpleName().toString();
-                String kind = returnType.getKind() == TypeKind.ARRAY
-                        ? TypeName.get(checked) + "[]"
-                        : TypeName.get(checked).toString();
-                return java.util.Optional.of(new UnsupportedAttribute(name, kind));
-            }
-        }
         return java.util.Optional.empty();
-    }
-
-    /**
-     * Returns {@code true} for an annotation member's scalar (or array-component) type this emitter
-     * cannot render: a {@code char} / {@code float} / {@code double} primitive, or a nested-annotation
-     * type. The check operates on the {@link TypeMirror} (not just its {@link TypeKind}) so it can
-     * distinguish a nested-annotation member ({@link TypeKind#DECLARED} whose element is an
-     * {@link javax.lang.model.element.ElementKind#ANNOTATION_TYPE}) from a renderable
-     * String/Class/enum member.
-     *
-     * @param type the member's type, or the component type of an array member
-     * @return {@code true} when the type is an unsupported scalar primitive or a nested annotation
-     */
-    private static boolean isUnsupportedMemberType(TypeMirror type) {
-        return isUnsupportedScalarKind(type.getKind());
-    }
-
-    /** Returns {@code true} for the scalar primitive kinds this emitter cannot render ({@code char/float/double}). */
-    private static boolean isUnsupportedScalarKind(TypeKind kind) {
-        return kind == TypeKind.CHAR || kind == TypeKind.FLOAT || kind == TypeKind.DOUBLE;
-    }
-
-    /**
-     * Returns {@code true} when the type is a nested-annotation type — a {@link TypeKind#DECLARED}
-     * type whose element is an {@link javax.lang.model.element.ElementKind#ANNOTATION_TYPE}. Such a
-     * member is a legal annotation member type but cannot be materialized into a literal in v1, so it
-     * is rejected (not rendered).
-     *
-     * @param type the member's type, or an array's component type
-     * @return {@code true} when the type is a nested annotation
-     */
-    private static boolean isAnnotationType(TypeMirror type) {
-        return type.getKind() == TypeKind.DECLARED
-                && ((DeclaredType) type).asElement().getKind() == javax.lang.model.element.ElementKind.ANNOTATION_TYPE;
     }
 
     /**
@@ -220,8 +151,7 @@ public final class AnnotationLiteralEmitter {
                     .build());
 
             // hashCode term: (127 * "member".hashCode()) ^ <valueHash>
-            CodeBlock valueHash =
-                    isArray ? arrayValueHash(member, (ArrayType) memberType) : memberValueHash(member, fieldType);
+            CodeBlock valueHash = isArray ? arrayValueHash(member) : memberValueHash(member, fieldType);
             if (first) {
                 hashBody.add("return ((127 * $S.hashCode()) ^ $L)", member, valueHash);
             } else {
@@ -323,16 +253,13 @@ public final class AnnotationLiteralEmitter {
      * Builds the per-member hashCode value term, boxing primitives so the {@code .hashCode()}
      * call is valid (the {@link Annotation} spec uses the boxed value's hash for primitive members).
      *
-     * <p>Routes on {@link TypeName#isPrimitive()} so an unsupported primitive kind ({@code char},
-     * {@code float}, {@code double}) raises a clear emit-time error rather than silently emitting a
-     * {@code char.hashCode()} reference call that does not compile (FR-013-09c — an unsupported
-     * attribute kind is a loud error, never silent wrong code). Full primitive support lands in
-     * Phase 2 slice 2.1.
+     * <p>Routes on {@link TypeName#isPrimitive()} so every primitive kind, including
+     * {@code char}, {@code float}, and {@code double}, uses the corresponding boxed value's
+     * contract-defined hash implementation.
      *
      * @param member    the annotation member name
      * @param fieldType the member's resolved field {@link TypeName}
      * @return the {@link CodeBlock} computing the member's value hash
-     * @throws UnsupportedOperationException if the member is a not-yet-supported primitive kind
      */
     private static CodeBlock memberValueHash(String member, TypeName fieldType) {
         if (fieldType.isPrimitive()) {
@@ -351,7 +278,15 @@ public final class AnnotationLiteralEmitter {
             if (fieldType.equals(TypeName.BYTE)) {
                 return CodeBlock.of("$T.valueOf($N).hashCode()", Byte.class, member);
             }
-            throw unsupportedPrimitive(member, fieldType);
+            if (fieldType.equals(TypeName.CHAR)) {
+                return CodeBlock.of("$T.valueOf($N).hashCode()", Character.class, member);
+            }
+            if (fieldType.equals(TypeName.FLOAT)) {
+                return CodeBlock.of("$T.valueOf($N).hashCode()", Float.class, member);
+            }
+            if (fieldType.equals(TypeName.DOUBLE)) {
+                return CodeBlock.of("$T.valueOf($N).hashCode()", Double.class, member);
+            }
         }
         // String, Class, enum — reference types with a direct hashCode()
         return CodeBlock.of("$N.hashCode()", member);
@@ -363,17 +298,10 @@ public final class AnnotationLiteralEmitter {
      * ({@code Arrays.hashCode(Object[])} for String/Class/enum component arrays, the primitive
      * overload for primitive-component arrays).
      *
-     * <p>Routes through {@link #arrayComponentGuard} so an array whose component is a not-yet-supported
-     * primitive kind ({@code char[]}/{@code float[]}/{@code double[]}) raises a clear emit-time error
-     * rather than silently emitting a miscompiling reference (FR-013-09c).
-     *
      * @param member    the annotation member name
-     * @param arrayType the member's array type
      * @return the {@link CodeBlock} computing the member's value hash via {@code Arrays.hashCode}
-     * @throws UnsupportedOperationException if the array component is a not-yet-supported primitive kind
      */
-    private static CodeBlock arrayValueHash(String member, ArrayType arrayType) {
-        arrayComponentGuard(member, arrayType.getComponentType());
+    private static CodeBlock arrayValueHash(String member) {
         return CodeBlock.of("$T.hashCode($N)", Arrays.class, member);
     }
 
@@ -383,73 +311,26 @@ public final class AnnotationLiteralEmitter {
      * component kind ({@code Arrays.equals(Object[], Object[])} for reference-component arrays, the
      * primitive overload for primitive-component arrays).
      *
-     * <p>Mirrors {@link #arrayValueHash}'s component-kind guard.
-     *
      * @param member    the annotation member name
      * @param arrayType the member's array type
      * @return the {@link CodeBlock} comparing the array against {@code other.<member>()}
-     * @throws UnsupportedOperationException if the array component is a not-yet-supported primitive kind
      */
     private static CodeBlock arrayEquals(String member, ArrayType arrayType) {
-        arrayComponentGuard(member, arrayType.getComponentType());
         return CodeBlock.of("$T.equals(this.$N, other.$N())", Arrays.class, member, member);
-    }
-
-    /**
-     * Validates that an array member's component kind is one this emitter can render. The supported
-     * scalar kinds (String, Class, enum, and the integral primitives {@code int/long/boolean/short/byte})
-     * have valid {@code Arrays.equals}/{@code Arrays.hashCode} overloads and a renderable element literal;
-     * the not-yet-supported scalar kinds ({@code char/float/double}) raise the same loud error their
-     * scalar counterparts do (FR-013-09c).
-     *
-     * <p>A <em>nested-annotation</em> component is also refused here, so this backstop matches
-     * {@link #firstUnsupportedAttribute} exactly (which already rejects arrays of nested annotations):
-     * the emitter never silently materializes a {@code new NestedAnn[...]} literal even if a caller
-     * skipped the pre-check. Production callers always pre-check; this guard is the defensive parity
-     * backstop.
-     *
-     * @param member        the offending member name
-     * @param componentType the array's component type
-     * @throws UnsupportedOperationException if the component is a not-yet-supported primitive kind or a
-     *                                       nested-annotation type
-     */
-    private static void arrayComponentGuard(String member, TypeMirror componentType) {
-        arrayComponentGuard(member, componentType, false);
-    }
-
-    private static void arrayComponentGuard(String member, TypeMirror componentType, boolean nestedAnnotationValue) {
-        TypeKind kind = componentType.getKind();
-        if (!nestedAnnotationValue && (kind == TypeKind.CHAR || kind == TypeKind.FLOAT || kind == TypeKind.DOUBLE)) {
-            throw new UnsupportedOperationException("Annotation member '" + member + "' is an array of primitive type '"
-                    + TypeName.get(componentType)
-                    + "', which is not yet supported by AnnotationLiteralEmitter"
-                    + " (char/float/double land in Phase 2 slice 2.1).");
-        }
     }
 
     /** Builds the per-member equality check against {@code other.<member>()}. */
     private static CodeBlock memberEquals(String member, TypeName fieldType) {
-        // A primitive == comparison is valid for every primitive kind (incl. char/float/double), so
-        // this path has no silent-miscompile gap; the unsupported-primitive guard lives in
-        // memberValueHash (hashCode) and valueLiteral (constructor args), which do.
+        if (fieldType.equals(TypeName.FLOAT)) {
+            return CodeBlock.of("$T.compare(this.$N, other.$N()) == 0", Float.class, member, member);
+        }
+        if (fieldType.equals(TypeName.DOUBLE)) {
+            return CodeBlock.of("$T.compare(this.$N, other.$N()) == 0", Double.class, member, member);
+        }
         if (fieldType.isPrimitive()) {
             return CodeBlock.of("$N == other.$N()", member, member);
         }
         return CodeBlock.of("$N.equals(other.$N())", member, member);
-    }
-
-    /**
-     * Builds the {@link UnsupportedOperationException} thrown when an annotation member is a
-     * primitive kind not yet supported by this emitter ({@code char}, {@code float}, {@code double}).
-     *
-     * @param member    the offending member name
-     * @param fieldType the member's resolved (primitive) field type
-     * @return the exception to raise at emit time
-     */
-    private static UnsupportedOperationException unsupportedPrimitive(String member, TypeName fieldType) {
-        return new UnsupportedOperationException("Annotation member '" + member + "' has primitive type '" + fieldType
-                + "', which is not yet supported by AnnotationLiteralEmitter"
-                + " (char/float/double land in Phase 2 slice 2.1).");
     }
 
     /**
@@ -465,39 +346,17 @@ public final class AnnotationLiteralEmitter {
     public static CodeBlock constructorArgs(AnnotationMirror mirror, Elements elements, Types types) {
         List<Map.Entry<ExecutableElement, AnnotationValue>> values = orderedValues(mirror, elements);
         List<CodeBlock> args = values.stream()
-                .map(e -> valueLiteral(e.getKey().getReturnType(), e.getValue(), elements, types, false))
+                .map(e -> valueLiteral(e.getKey().getReturnType(), e.getValue(), elements, types))
                 .toList();
         return CodeBlock.join(args, ", ");
     }
 
-    /**
-     * Renders an annotation-member value as a Java constant literal for the kinds supported in this
-     * slice (int/integral, String, Class, enum).
-     *
-     * <p>Mirrors {@link #memberValueHash}'s primitive routing: {@code char}, {@code float}, and
-     * {@code double} members raise a clear emit-time error rather than producing an unquoted or
-     * wrong-suffix literal that does not compile (FR-013-09c). Full primitive support lands in
-     * Phase 2 slice 2.1.
-     *
-     * <p>A nested-annotation member (whose {@code raw} value is an {@link AnnotationMirror}) is also
-     * unsupported in v1 and likewise raises a clear emit-time error rather than falling through to
-     * {@code String.valueOf(<mirror>)} — which would emit the mirror's {@code toString()} as broken
-     * generated code. Callers route nested-annotation members through
-     * {@link #firstUnsupportedAttribute} → {@code Diagnostics.error} before reaching here; this guard
-     * is the defensive backstop ensuring no {@code AnnotationMirror} is ever silently stringified.
-     *
-     * @throws UnsupportedOperationException if the member is a not-yet-supported primitive kind or a
-     *                                       nested-annotation member
-     */
+    /** Renders an annotation-member value as a Java constant literal. */
     private static CodeBlock valueLiteral(
-            TypeMirror memberType,
-            AnnotationValue value,
-            Elements elements,
-            Types types,
-            boolean nestedAnnotationValue) {
+            TypeMirror memberType, AnnotationValue value, Elements elements, Types types) {
         Object raw = value.getValue();
         if (memberType.getKind() == TypeKind.ARRAY) {
-            return arrayLiteral((ArrayType) memberType, raw, elements, types, nestedAnnotationValue);
+            return arrayLiteral((ArrayType) memberType, raw, elements, types);
         }
         if (isClassMember(memberType)) {
             // Class<?> attribute — value is a TypeMirror; emit <Erased>.class
@@ -516,14 +375,19 @@ public final class AnnotationLiteralEmitter {
                     enumConstant.getSimpleName().toString());
         }
         TypeKind kind = memberType.getKind();
-        if (!nestedAnnotationValue && (kind == TypeKind.CHAR || kind == TypeKind.FLOAT || kind == TypeKind.DOUBLE)) {
-            throw new UnsupportedOperationException("Annotation member of primitive type '"
-                    + TypeName.get(memberType)
-                    + "' is not yet supported by AnnotationLiteralEmitter"
-                    + " (char/float/double land in Phase 2 slice 2.1).");
+        if (kind == TypeKind.CHAR) {
+            // Use a numeric cast instead of a Unicode escape: escapes for line terminators,
+            // quotes, and backslashes can change the generated source before it is tokenized.
+            return CodeBlock.of("(char) $L", (int) (Character) raw);
         }
-        // Nested-annotation member — the raw value is an AnnotationMirror. Never String.valueOf it
-        // (that emits the mirror's toString() as broken code); a clean rejection is the v1 contract.
+        if (kind == TypeKind.FLOAT) {
+            return CodeBlock.of("$T.intBitsToFloat($L)", Float.class, Float.floatToRawIntBits((Float) raw));
+        }
+        if (kind == TypeKind.DOUBLE) {
+            long bits = Double.doubleToRawLongBits((Double) raw);
+            return CodeBlock.of("$T.longBitsToDouble($L)", Double.class, bits + "L");
+        }
+        // Nested-annotation member — the raw value is an AnnotationMirror.
         if (raw instanceof AnnotationMirror nested) {
             return nestedLiteral(nested, elements, types);
         }
@@ -543,16 +407,9 @@ public final class AnnotationLiteralEmitter {
      *                  {@code List<? extends AnnotationValue>}
      * @param types     the {@link Types} utility (component erasure, element recursion)
      * @return the {@link CodeBlock} for the array initializer
-     * @throws UnsupportedOperationException if an element is a not-yet-supported component kind
      */
-    private static CodeBlock arrayLiteral(
-            ArrayType arrayType, Object raw, Elements processingElements, Types types, boolean nestedAnnotationValue) {
+    private static CodeBlock arrayLiteral(ArrayType arrayType, Object raw, Elements processingElements, Types types) {
         TypeMirror component = arrayType.getComponentType();
-        // Guard the component kind up front — before erasing it for the new T[...] element type — so an
-        // unsupported component (a char/float/double primitive or a nested-annotation type) is refused
-        // loudly and consistently for both the empty and non-empty cases, exactly matching
-        // firstUnsupportedAttribute (FR-013-09c).
-        arrayComponentGuard("<array>", component, nestedAnnotationValue);
         TypeName componentTypeName = TypeName.get(types.erasure(component));
 
         @SuppressWarnings("unchecked")
@@ -563,7 +420,7 @@ public final class AnnotationLiteralEmitter {
         }
 
         List<CodeBlock> elementLiterals = values.stream()
-                .map(e -> valueLiteral(component, e, processingElements, types, nestedAnnotationValue))
+                .map(e -> valueLiteral(component, e, processingElements, types))
                 .toList();
         return CodeBlock.of("new $T[]{$L}", componentTypeName, CodeBlock.join(elementLiterals, ", "));
     }
@@ -608,7 +465,7 @@ public final class AnnotationLiteralEmitter {
                     "@Override public $T $N() { return $L; }\n",
                     TypeName.get(member.getReturnType()),
                     member.getSimpleName().toString(),
-                    valueLiteral(member.getReturnType(), entry.getValue(), elements, types, true));
+                    valueLiteral(member.getReturnType(), entry.getValue(), elements, types));
         }
         expression.add(
                 "@Override public $T annotationType() { return $T.class; }\n",
@@ -626,6 +483,10 @@ public final class AnnotationLiteralEmitter {
             String name = member.getSimpleName().toString();
             if (member.getReturnType().getKind() == TypeKind.ARRAY) {
                 expression.add("$T.equals($N(), that.$N())", Arrays.class, name, name);
+            } else if (member.getReturnType().getKind() == TypeKind.FLOAT) {
+                expression.add("$T.compare($N(), that.$N()) == 0", Float.class, name, name);
+            } else if (member.getReturnType().getKind() == TypeKind.DOUBLE) {
+                expression.add("$T.compare($N(), that.$N()) == 0", Double.class, name, name);
             } else if (member.getReturnType().getKind().isPrimitive()) {
                 expression.add("$N() == that.$N()", name, name);
             } else {

@@ -6,6 +6,7 @@ package dev.vertique.rest.client;
 import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.resilience.Resilience;
+import dev.vertique.resilience.ResiliencePolicyRegistry;
 import dev.vertique.rest.client.config.RestClientConfig;
 import dev.vertique.rest.client.interceptor.RestClientContextCapturer;
 import dev.vertique.rest.client.interceptor.RestClientInterceptor;
@@ -89,6 +90,8 @@ public class RestClientFactory {
     @Nullable
     private final ParamConversionResolver paramConversionResolver;
 
+    private final ResiliencePolicyRegistry resiliencePolicyRegistry;
+
     /**
      * Creates a new factory using the shared {@link BeanParamAccessorRegistry} and an empty
      * capturer set. Intended for direct construction in tests or when the DI graph does not
@@ -115,7 +118,9 @@ public class RestClientFactory {
                 null,
                 null,
                 null,
-                null);
+                null,
+                null,
+                ResiliencePolicyRegistry.empty());
     }
 
     /**
@@ -137,6 +142,8 @@ public class RestClientFactory {
      *     precedence; {@code null} when unconfigured
      * @param paramConversionResolver the Dagger-managed conversion resolver seeded into every
      *     builder; {@code null} in tests that use the short constructor
+     * @param resiliencePolicyRegistry the named resilience-policy registry seeded into every
+     *     builder; use {@link ResiliencePolicyRegistry#empty()} when no registry is installed
      */
     RestClientFactory(
             Vertx vertx,
@@ -160,7 +167,8 @@ public class RestClientFactory {
                 defaultsJsonProfileId,
                 jsonConfig,
                 paramConversionResolver,
-                null);
+                null,
+                ResiliencePolicyRegistry.empty());
     }
 
     RestClientFactory(
@@ -175,6 +183,34 @@ public class RestClientFactory {
             @Nullable JsonConfig jsonConfig,
             @Nullable ParamConversionResolver paramConversionResolver,
             @Nullable Resilience resilience) {
+        this(
+                vertx,
+                globalInterceptors,
+                globalContextCapturers,
+                configIndex,
+                beanValidator,
+                beanParamAccessorRegistry,
+                jsonMapperProfileRegistry,
+                defaultsJsonProfileId,
+                jsonConfig,
+                paramConversionResolver,
+                resilience,
+                ResiliencePolicyRegistry.empty());
+    }
+
+    RestClientFactory(
+            Vertx vertx,
+            Set<RestClientInterceptor> globalInterceptors,
+            Set<RestClientContextCapturer<?>> globalContextCapturers,
+            Map<String, RestClientConfig> configIndex,
+            @Nullable dev.vertique.core.validation.BeanValidator beanValidator,
+            BeanParamAccessorRegistry beanParamAccessorRegistry,
+            @Nullable JsonMapperProfileRegistry jsonMapperProfileRegistry,
+            @Nullable String defaultsJsonProfileId,
+            @Nullable JsonConfig jsonConfig,
+            @Nullable ParamConversionResolver paramConversionResolver,
+            @Nullable Resilience resilience,
+            ResiliencePolicyRegistry resiliencePolicyRegistry) {
         this.vertx = vertx;
         this.resilience = resilience;
         this.globalInterceptors = globalInterceptors;
@@ -186,6 +222,7 @@ public class RestClientFactory {
         this.defaultsJsonProfileId = defaultsJsonProfileId;
         this.jsonConfig = jsonConfig;
         this.paramConversionResolver = paramConversionResolver;
+        this.resiliencePolicyRegistry = java.util.Objects.requireNonNull(resiliencePolicyRegistry, "registry");
     }
 
     /**
@@ -202,8 +239,7 @@ public class RestClientFactory {
      * @return a new builder with global interceptors, config, and optional validator pre-registered
      */
     public RestClientBuilder builder() {
-        RestClientBuilder b =
-                resilience == null ? new RestClientBuilder(vertx) : RestClientBuilder.create(vertx, resilience);
+        RestClientBuilder b = new RestClientBuilder(vertx, resiliencePolicyRegistry).suppliedResilience(resilience);
         globalInterceptors.forEach(b::register);
         globalContextCapturers.forEach(b::registerCapturer);
         b.configIndex(configIndex);
