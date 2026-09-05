@@ -119,7 +119,7 @@ Per-request timer. One sample is recorded per `McpRequestCompletedEvent`.
 |-----|--------|-------|
 | `method` | `SERVER_DISCOVER`, `TOOLS_LIST`, `TOOLS_CALL`, `_OTHER` | `McpMethod.OTHER` is remapped to `_OTHER` |
 | `outcome` | `SUCCESS`, `TOOL_ERROR`, `REJECTED`, `FAILED`, `CANCELLED` | `McpOutcome` enum name |
-| `error.type` | `NONE`, `HTTP`, `PROTOCOL`, `AUTHENTICATION`, `AUTHORIZATION`, `INPUT_VALIDATION`, `INPUT_PROCESSING`, `INTERCEPTOR`, `HANDLER`, `OUTPUT_VALIDATION`, `SERIALIZATION`, `TIMEOUT`, `TRANSPORT`, `INTERNAL` | `McpErrorType` enum name |
+| `error.type` | `NONE`, `HTTP`, `PROTOCOL`, `AUTHENTICATION`, `AUTHORIZATION`, `INPUT_VALIDATION`, `INPUT_PROCESSING`, `INTERCEPTOR`, `HANDLER`, `OUTPUT_VALIDATION`, `SERIALIZATION`, `TIMEOUT`, `TRANSPORT`, `RATE_LIMIT`, `INTERNAL` | `McpErrorType` enum name |
 | `result.type` | `NONE`, `COMPLETE` | `McpResultType` enum name |
 | `transport.outcome` | `WRITTEN`, `DISCONNECTED`, `RESET`, `WRITE_FAILED` | `McpTransportOutcome` enum name |
 
