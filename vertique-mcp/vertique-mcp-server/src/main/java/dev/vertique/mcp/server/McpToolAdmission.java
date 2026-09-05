@@ -160,7 +160,8 @@ final class McpToolAdmission {
         return switch (decision.outcome()) {
             case PERMITTED -> Admission.continueRequest();
             case QUOTA_EXCEEDED -> Admission.quotaExceeded(decision.retryAfter());
-            case DISABLED, BACKEND_FAILURE_OPEN, BACKEND_FAILURE_CLOSED -> Admission.failed();
+            case DISABLED, BACKEND_FAILURE_OPEN -> Admission.continueRequest();
+            case BACKEND_FAILURE_CLOSED -> Admission.rejected();
         };
     }
 
@@ -182,6 +183,10 @@ final class McpToolAdmission {
             return new Admission(Outcome.QUOTA_EXCEEDED, retryAfter);
         }
 
+        static Admission rejected() {
+            return new Admission(Outcome.REJECTED, Optional.empty());
+        }
+
         static Admission failed() {
             return FAILED_RESULT;
         }
@@ -191,6 +196,7 @@ final class McpToolAdmission {
     enum Outcome {
         CONTINUE,
         QUOTA_EXCEEDED,
+        REJECTED,
         FAILED
     }
 

@@ -2462,6 +2462,9 @@ final class McpRequestDispatcher {
                             security,
                             toolName,
                             admission.result().retryAfter());
+                case REJECTED ->
+                    writeRateLimitResponse(
+                            context, envelope, security, toolName, 503, RATE_LIMIT_UNAVAILABLE_MESSAGE, false);
                 case FAILED -> writeRateLimitUnavailable(context, envelope, security, toolName);
             }
         });
