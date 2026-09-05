@@ -263,7 +263,7 @@ class McpToolAdmissionWalkingSkeletonIT {
 
         private McpToolAdmissionWalkingSkeletonFixture(
                 Vertx vertx, McpRateLimitConfig rateLimitConfig, Optional<RateLimiters> rateLimiters) throws Exception {
-            this(vertx, rateLimitConfig, rateLimiters, new AnonymousIdentityResolver());
+            this(vertx, rateLimitConfig, rateLimiters, new AnonymousIdentityResolver(), Optional.empty());
         }
 
         private McpToolAdmissionWalkingSkeletonFixture(
@@ -271,6 +271,16 @@ class McpToolAdmissionWalkingSkeletonIT {
                 McpRateLimitConfig rateLimitConfig,
                 Optional<RateLimiters> rateLimiters,
                 SecurityIdentityResolver identityResolver)
+                throws Exception {
+            this(vertx, rateLimitConfig, rateLimiters, identityResolver, Optional.empty());
+        }
+
+        private McpToolAdmissionWalkingSkeletonFixture(
+                Vertx vertx,
+                McpRateLimitConfig rateLimitConfig,
+                Optional<RateLimiters> rateLimiters,
+                SecurityIdentityResolver identityResolver,
+                Optional<McpRequestLifecycleObserver> additionalObserver)
                 throws Exception {
             McpServerConfig config = McpServerConfig.builder()
                     .enabled(true)
@@ -287,6 +297,9 @@ class McpToolAdmissionWalkingSkeletonIT {
                     terminalEvents.add(observation.event());
                 }
             };
+            Set<McpRequestLifecycleObserver> lifecycleObservers = new java.util.LinkedHashSet<>();
+            lifecycleObservers.add(lifecycleObserver);
+            additionalObserver.ifPresent(lifecycleObservers::add);
             RecordingSecurityRuntime securityRuntime = new RecordingSecurityRuntime();
             McpPolicyEnforcer policyEnforcer = new McpPolicyEnforcer(new SecurityPolicyEnforcer(
                     Optional.empty(),
@@ -301,7 +314,7 @@ class McpToolAdmissionWalkingSkeletonIT {
             McpRequestDispatcher dispatcher = new McpRequestDispatcher(
                     config,
                     securityRuntime,
-                    Set.of(lifecycleObserver),
+                    lifecycleObservers,
                     Set.of(),
                     Set.of(),
                     Set.of(),
@@ -338,6 +351,20 @@ class McpToolAdmissionWalkingSkeletonIT {
                 SecurityIdentityResolver identityResolver)
                 throws Exception {
             return new McpToolAdmissionWalkingSkeletonFixture(vertx, rateLimitConfig, rateLimiters, identityResolver);
+        }
+
+        static McpToolAdmissionWalkingSkeletonFixture start(
+                Vertx vertx,
+                McpRateLimitConfig rateLimitConfig,
+                Optional<RateLimiters> rateLimiters,
+                McpRequestLifecycleObserver additionalObserver)
+                throws Exception {
+            return new McpToolAdmissionWalkingSkeletonFixture(
+                    vertx,
+                    rateLimitConfig,
+                    rateLimiters,
+                    new AnonymousIdentityResolver(),
+                    Optional.of(additionalObserver));
         }
 
         HttpServer server() {
