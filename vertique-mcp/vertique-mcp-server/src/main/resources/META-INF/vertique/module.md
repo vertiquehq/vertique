@@ -4,7 +4,8 @@
 > **Package:** `dev.vertique.mcp.server`
 > **Artifact:** `vertique-mcp-server`
 > **Depends on:** `vertique-mcp-core`, `vertique-core`, `vertique-input-processing`, `vertique-json`,
-> `vertique-json-schema`, `vertique-rest-core`, `vertique-rest-security`
+> `vertique-json-schema`, `vertique-rate-limit-core`, `vertique-resilience`, `vertique-rest-core`,
+> `vertique-rest-security`
 
 `vertique-mcp-server` composes the optional HTTP Model Context Protocol server. Include
 `McpServerModule` explicitly in the application's Dagger component and supply an immutable

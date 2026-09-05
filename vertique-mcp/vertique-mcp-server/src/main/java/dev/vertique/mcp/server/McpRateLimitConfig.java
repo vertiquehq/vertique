@@ -10,8 +10,10 @@ import dev.vertique.core.json.KeyedBy;
 import dev.vertique.ratelimit.spi.AnonymousRateLimitPolicy;
 import dev.vertique.ratelimit.spi.RateLimitSubject;
 import jakarta.annotation.Nullable;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 /** Typed configuration for config-bound MCP tool rate-limit admission. */
 public record McpRateLimitConfig(
@@ -28,6 +30,13 @@ public record McpRateLimitConfig(
         subject = Objects.requireNonNull(subject, "subject");
         anonymous = Objects.requireNonNull(anonymous, "anonymous");
         tools = List.copyOf(Objects.requireNonNull(tools, "tools"));
+        Set<String> configuredToolNames = new HashSet<>();
+        for (McpToolRateLimitConfig toolConfig : tools) {
+            if (!configuredToolNames.add(toolConfig.tool())) {
+                throw new ConfigurationException(
+                        "mcp.rateLimit.tools[" + toolConfig.tool() + "] is configured more than once");
+            }
+        }
     }
 
     /** Deserializes configuration while applying the MCP rate-limit defaults. */

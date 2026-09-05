@@ -44,8 +44,10 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 /** T002 TP-002 — production Dagger composition validates MCP rate-limit references before mounts. */
+@Timeout(value = 20, unit = TimeUnit.SECONDS)
 class McpToolAdmissionCompositionIT {
 
     private static final String TOOL_NAME = "orders.create";

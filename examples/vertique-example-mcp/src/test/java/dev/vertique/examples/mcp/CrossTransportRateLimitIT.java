@@ -10,6 +10,8 @@ import dev.vertique.application.test.VertiqueAppExtension;
 import dev.vertique.ratelimit.spi.event.RateLimitDecisionCompleted;
 import dev.vertique.rest.auth.jwt.JwtAuthFactory;
 import io.restassured.RestAssured;
+import io.restassured.filter.log.RequestLoggingFilter;
+import io.restassured.filter.log.ResponseLoggingFilter;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClient;
@@ -51,6 +53,7 @@ class CrossTransportRateLimitIT {
     static void setUp() {
         RestAssured.baseURI = "http://127.0.0.1";
         RestAssured.port = app.httpPort();
+        RestAssured.filters(new RequestLoggingFilter(), new ResponseLoggingFilter());
         rawHttpClient = app.vertx().createHttpClient();
         mcpClient = WebClient.wrap(rawHttpClient);
         JWTAuth auth = JwtAuthFactory.fromSymmetricKey(app.vertx(), "HS256", TOKEN_KEY);

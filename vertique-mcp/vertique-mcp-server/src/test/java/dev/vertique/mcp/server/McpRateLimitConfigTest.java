@@ -4,7 +4,9 @@
 package dev.vertique.mcp.server;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.ratelimit.spi.AnonymousRateLimitPolicy;
 import dev.vertique.ratelimit.spi.RateLimitSubject;
 import java.util.List;
@@ -31,6 +33,19 @@ class McpRateLimitConfigTest {
     }
 
     @Test
+    @DisplayName("shouldRejectDuplicatePerToolConfigurations")
+    void shouldRejectDuplicatePerToolConfigurations() {
+        assertThatThrownBy(() -> new McpRateLimitConfig(
+                        DEFAULT_POLICY,
+                        RateLimitSubject.EFFECTIVE_PRINCIPAL,
+                        AnonymousRateLimitPolicy.SHARED_BUCKET,
+                        List.of(tool("orders.create", PER_TOOL_POLICY), tool("orders.create", "mcp-create-retry"))))
+                .isInstanceOf(ConfigurationException.class)
+                .hasMessage("mcp.rateLimit.tools[orders.create] is configured more than once");
+    }
+
+    @Test
+    @DisplayName("shouldFallBackToDefaultWhenThePerToolEntryIsRemoved")
     void shouldFallBackToDefaultWhenThePerToolEntryIsRemoved() {
         McpRateLimitConfig config = new McpRateLimitConfig(
                 DEFAULT_POLICY,

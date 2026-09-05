@@ -20,7 +20,10 @@ import java.io.OutputStream;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -111,13 +114,17 @@ class McpResilienceIT {
             output.write(headers.getBytes(StandardCharsets.US_ASCII));
             output.write(body);
             output.flush();
-            awaitInvocation(probe, 5, TimeUnit.SECONDS);
+            awaitCondition(
+                    () -> probe.disconnectInvocations() == 1,
+                    "the disconnect-sensitive tool invocation must begin before the peer resets");
             socket.setSoLinger(true, 0);
         }
 
         await(probe.cancellationObserved());
+        awaitCondition(
+                () -> recorder.events().size() == 1,
+                "the disconnected request must publish exactly one completion before its late result resolves");
         probe.completeDisconnectLate();
-        Thread.sleep(200);
 
         assertThat(probe.disconnectInvocations()).isEqualTo(1);
         assertThat(recorder.events()).hasSize(1);
@@ -218,12 +225,20 @@ class McpResilienceIT {
                                                 .put("periodMs", 3_600_000)));
     }
 
-    private static void awaitInvocation(McpResilienceProbe probe, long timeout, TimeUnit unit) throws Exception {
-        long deadline = System.nanoTime() + unit.toNanos(timeout);
-        while (probe.disconnectInvocations() == 0 && System.nanoTime() < deadline) {
-            Thread.sleep(10);
+    private static void awaitCondition(BooleanSupplier condition, String description) throws Exception {
+        CompletableFuture<Void> completed = new CompletableFuture<>();
+        long timerId = app.vertx().setPeriodic(10, ignored -> {
+            if (condition.getAsBoolean()) {
+                completed.complete(null);
+            }
+        });
+        try {
+            completed.get(5, TimeUnit.SECONDS);
+        } catch (TimeoutException timeout) {
+            throw new AssertionError(description, timeout);
+        } finally {
+            app.vertx().cancelTimer(timerId);
         }
-        assertThat(probe.disconnectInvocations()).isEqualTo(1);
     }
 
     private static <T> T await(Future<T> future) throws Exception {
