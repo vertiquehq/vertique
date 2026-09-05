@@ -351,6 +351,16 @@ class McpHandlerPathRateLimitClassificationTest {
                 false,
                 null);
         assertFailure(
+                new UnavailableException("backend detail must stay private"),
+                InvocationMode.SYNCHRONOUS,
+                500,
+                INTERNAL_ERROR_CODE,
+                "Internal error",
+                McpErrorType.INTERNAL,
+                McpOutcome.FAILED,
+                false,
+                null);
+        assertFailure(
                 new ResiliencePolicyException(ResiliencePolicyFailureReason.INVALID_CONFIGURATION),
                 InvocationMode.ASYNCHRONOUS,
                 500,
