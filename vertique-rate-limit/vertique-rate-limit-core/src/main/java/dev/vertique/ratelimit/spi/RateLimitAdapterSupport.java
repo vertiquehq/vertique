@@ -10,7 +10,9 @@ import dev.vertique.ratelimit.exception.RateLimitRequestException;
 import dev.vertique.ratelimit.exception.RateLimitRequestFailure;
 import dev.vertique.security.ClientRef;
 import dev.vertique.security.PrincipalRef;
+import dev.vertique.security.PrincipalType;
 import dev.vertique.security.SecurityIdentity;
+import dev.vertique.security.origin.RequestOrigin;
 import jakarta.inject.Singleton;
 import java.util.ArrayList;
 import java.util.List;
@@ -83,9 +85,20 @@ public final class RateLimitAdapterSupport {
         if (subject == RateLimitSubject.NONE) {
             return Optional.of(keyOf(extraComponents));
         }
+        Optional<RequestOrigin> origin = originFor(subject);
         Optional<SecurityIdentity> identity = subjectResolver.current();
+        if (identity.filter(RateLimitAdapterSupport::isCanonicalAnonymous).isPresent()) {
+            identity = Optional.empty();
+        }
         if (identity.isPresent()) {
-            return Optional.of(keyOf(withLeading(facetComponents(subject, identity.get()), extraComponents)));
+            return Optional.of(keyOf(withLeading(facetComponents(subject, identity.get(), origin), extraComponents)));
+        }
+        if (isOriginAware(subject)) {
+            if (subject == RateLimitSubject.IP || anonymous == AnonymousRateLimitPolicy.SHARED_BUCKET) {
+                return Optional.of(
+                        keyOf(withLeading(List.of(subject, origin.orElseThrow().clientIp()), extraComponents)));
+            }
+            return Optional.empty();
         }
         return switch (anonymous) {
             case SHARED_BUCKET -> Optional.of(keyOf(withLeading(List.of(AnonymousMarker.SHARED), extraComponents)));
@@ -93,7 +106,33 @@ public final class RateLimitAdapterSupport {
         };
     }
 
-    private static List<Object> facetComponents(RateLimitSubject subject, SecurityIdentity identity) {
+    private Optional<RequestOrigin> originFor(RateLimitSubject subject) {
+        if (!isOriginAware(subject)) {
+            return Optional.empty();
+        }
+        Optional<RequestOrigin> origin = subjectResolver.currentOrigin();
+        if (origin.isEmpty()) {
+            throw new RateLimitRequestException(RateLimitRequestFailure.SUBJECT_UNRESOLVABLE);
+        }
+        return origin;
+    }
+
+    private static boolean isOriginAware(RateLimitSubject subject) {
+        return subject == RateLimitSubject.IP
+                || subject == RateLimitSubject.ACTOR_OR_IP
+                || subject == RateLimitSubject.CLIENT_OR_IP;
+    }
+
+    private static boolean isCanonicalAnonymous(SecurityIdentity identity) {
+        return identity.actor().type() == PrincipalType.ANONYMOUS
+                && identity.actor().id().equals("anonymous")
+                && identity.subject().isEmpty()
+                && identity.delegation().isEmpty()
+                && identity.client().isEmpty();
+    }
+
+    private static List<Object> facetComponents(
+            RateLimitSubject subject, SecurityIdentity identity, Optional<RequestOrigin> origin) {
         return switch (subject) {
             case ACTOR -> principalComponents(subject, identity.actor());
             case EFFECTIVE_PRINCIPAL ->
@@ -103,6 +142,12 @@ public final class RateLimitAdapterSupport {
                         .orElseThrow(() -> new RateLimitRequestException(RateLimitRequestFailure.SUBJECT_UNRESOLVABLE));
                 yield List.of(subject, client.clientId());
             }
+            case IP -> List.of(subject, origin.orElseThrow().clientIp());
+            case ACTOR_OR_IP -> principalComponents(subject, identity.actor());
+            case CLIENT_OR_IP ->
+                identity.client()
+                        .<List<Object>>map(client -> List.of(subject, client.clientId()))
+                        .orElseGet(() -> List.of(subject, origin.orElseThrow().clientIp()));
             case NONE ->
                 throw new IllegalStateException("unreachable: subjectKey short-circuits NONE before resolving a facet");
         };

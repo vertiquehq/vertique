@@ -6,6 +6,7 @@ package dev.vertique.ratelimit.spi;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityIdentity;
+import dev.vertique.security.origin.RequestOrigin;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.util.Objects;
@@ -32,5 +33,10 @@ public final class DefaultRateLimitSubjectResolver implements RateLimitSubjectRe
     @Override
     public Optional<SecurityIdentity> current() {
         return contextHolder.current(SecurityContext.class).map(SecurityContext::identity);
+    }
+
+    @Override
+    public Optional<RequestOrigin> currentOrigin() {
+        return contextHolder.current(SecurityContext.class).flatMap(SecurityContext::origin);
     }
 }

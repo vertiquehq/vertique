@@ -22,5 +22,14 @@ public enum RateLimitSubject {
     EFFECTIVE_PRINCIPAL,
 
     /** {@code SecurityIdentity.client()} — the OAuth 2.0 client the request arrived through. */
-    CLIENT
+    CLIENT,
+
+    /** The trusted client IP from {@code RequestOrigin.clientIp()}. */
+    IP,
+
+    /** The authenticated actor, or the trusted client IP for an anonymous caller. */
+    ACTOR_OR_IP,
+
+    /** The authenticated OAuth client, or the trusted client IP when no client facet exists. */
+    CLIENT_OR_IP
 }

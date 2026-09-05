@@ -4,6 +4,7 @@
 package dev.vertique.ratelimit.spi;
 
 import dev.vertique.security.SecurityIdentity;
+import dev.vertique.security.origin.RequestOrigin;
 import java.util.Optional;
 
 /**
@@ -20,4 +21,13 @@ public interface RateLimitSubjectResolver {
 
     /** Supplies the typed current identity, or empty when no request identity is available. */
     Optional<SecurityIdentity> current();
+
+    /**
+     * Supplies the trusted network origin for the current request, or empty when origin capture is
+     * unavailable. The default keeps existing custom resolvers source-compatible; origin-aware
+     * subjects fail closed when an implementation does not provide this value.
+     */
+    default Optional<RequestOrigin> currentOrigin() {
+        return Optional.empty();
+    }
 }
