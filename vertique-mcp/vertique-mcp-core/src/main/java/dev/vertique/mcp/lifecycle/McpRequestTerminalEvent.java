@@ -6,6 +6,7 @@ package dev.vertique.mcp.lifecycle;
 import dev.vertique.core.correlation.CorrelationContextSnapshot;
 import dev.vertique.mcp.tool.McpToolDescriptor;
 import dev.vertique.security.SecurityContextSnapshot;
+import dev.vertique.security.origin.RequestOrigin;
 import jakarta.annotation.Nullable;
 import java.time.Instant;
 import java.util.Objects;
@@ -27,6 +28,7 @@ public record McpRequestTerminalEvent(
         int httpStatus,
         @Nullable Integer protocolErrorCode,
         @Nullable String protocolVersion,
+        @Nullable RequestOrigin origin,
         @Nullable McpAuthorizationSummary authorization,
         @Nullable SecurityContextSnapshot security,
         @Nullable CorrelationContextSnapshot correlation) {
@@ -106,6 +108,7 @@ public record McpRequestTerminalEvent(
             String toolName,
             int httpStatus,
             @Nullable String protocolVersion,
+            @Nullable RequestOrigin origin,
             @Nullable McpAuthorizationSummary authorization,
             @Nullable SecurityContextSnapshot security,
             @Nullable CorrelationContextSnapshot correlation) {
@@ -120,6 +123,7 @@ public record McpRequestTerminalEvent(
                 httpStatus,
                 null,
                 protocolVersion,
+                origin,
                 authorization,
                 security,
                 correlation);
@@ -134,6 +138,7 @@ public record McpRequestTerminalEvent(
             McpErrorType errorType,
             int httpStatus,
             @Nullable String protocolVersion,
+            @Nullable RequestOrigin origin,
             @Nullable McpAuthorizationSummary authorization,
             @Nullable SecurityContextSnapshot security,
             @Nullable CorrelationContextSnapshot correlation) {
@@ -148,6 +153,7 @@ public record McpRequestTerminalEvent(
                 httpStatus,
                 null,
                 protocolVersion,
+                origin,
                 authorization,
                 security,
                 correlation);
@@ -163,6 +169,7 @@ public record McpRequestTerminalEvent(
             int httpStatus,
             @Nullable Integer protocolErrorCode,
             @Nullable String protocolVersion,
+            @Nullable RequestOrigin origin,
             @Nullable McpAuthorizationSummary authorization,
             @Nullable SecurityContextSnapshot security,
             @Nullable CorrelationContextSnapshot correlation) {
@@ -176,6 +183,7 @@ public record McpRequestTerminalEvent(
                 httpStatus,
                 protocolErrorCode,
                 protocolVersion,
+                origin,
                 authorization,
                 security,
                 correlation);
@@ -191,6 +199,7 @@ public record McpRequestTerminalEvent(
             int httpStatus,
             @Nullable Integer protocolErrorCode,
             @Nullable String protocolVersion,
+            @Nullable RequestOrigin origin,
             @Nullable McpAuthorizationSummary authorization,
             @Nullable SecurityContextSnapshot security,
             @Nullable CorrelationContextSnapshot correlation) {
@@ -204,6 +213,7 @@ public record McpRequestTerminalEvent(
                 httpStatus,
                 protocolErrorCode,
                 protocolVersion,
+                origin,
                 authorization,
                 security,
                 correlation);
@@ -219,6 +229,7 @@ public record McpRequestTerminalEvent(
             int httpStatus,
             @Nullable Integer protocolErrorCode,
             @Nullable String protocolVersion,
+            @Nullable RequestOrigin origin,
             @Nullable McpAuthorizationSummary authorization,
             @Nullable SecurityContextSnapshot security,
             @Nullable CorrelationContextSnapshot correlation) {
@@ -232,6 +243,7 @@ public record McpRequestTerminalEvent(
                 httpStatus,
                 protocolErrorCode,
                 protocolVersion,
+                origin,
                 authorization,
                 security,
                 correlation);
@@ -247,6 +259,7 @@ public record McpRequestTerminalEvent(
             int httpStatus,
             @Nullable Integer protocolErrorCode,
             @Nullable String protocolVersion,
+            @Nullable RequestOrigin origin,
             @Nullable McpAuthorizationSummary authorization,
             @Nullable SecurityContextSnapshot security,
             @Nullable CorrelationContextSnapshot correlation) {
@@ -261,6 +274,7 @@ public record McpRequestTerminalEvent(
                 httpStatus,
                 protocolErrorCode,
                 protocolVersion,
+                origin,
                 authorization,
                 security,
                 correlation);

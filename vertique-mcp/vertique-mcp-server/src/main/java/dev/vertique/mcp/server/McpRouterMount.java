@@ -8,7 +8,9 @@ import dev.vertique.rest.core.router.MountMeta;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.security.IdentityResolutionMiddleware;
+import dev.vertique.rest.security.RequestOriginCapturer;
 import dev.vertique.security.authz.Authorizer;
+import dev.vertique.security.origin.RequestOrigin;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.ext.web.Router;
@@ -25,6 +27,7 @@ final class McpRouterMount implements RouterMount {
     private final McpRequestDispatcher dispatcher;
     private final McpIdentityEstablisher identityEstablisher;
     private final HttpConfig httpConfig;
+    private final RequestOriginCapturer originCapturer;
 
     McpRouterMount(
             McpServerConfig config,
@@ -42,6 +45,7 @@ final class McpRouterMount implements RouterMount {
                 identityResolutionMiddleware,
                 httpConfig,
                 toolRegistry,
+                new RequestOriginCapturer(dev.vertique.rest.security.RequestOriginConfig.defaults()),
                 Optional.empty());
     }
 
@@ -65,10 +69,33 @@ final class McpRouterMount implements RouterMount {
             HttpConfig httpConfig,
             McpToolRegistry toolRegistry,
             Optional<Authorizer> authorizer) {
+        this(
+                config,
+                configValidator,
+                dispatcher,
+                routeAuthHandlers,
+                identityResolutionMiddleware,
+                httpConfig,
+                toolRegistry,
+                new RequestOriginCapturer(dev.vertique.rest.security.RequestOriginConfig.defaults()),
+                authorizer);
+    }
+
+    McpRouterMount(
+            McpServerConfig config,
+            McpServerConfigValidator configValidator,
+            McpRequestDispatcher dispatcher,
+            Set<RouteAuthHandler> routeAuthHandlers,
+            IdentityResolutionMiddleware identityResolutionMiddleware,
+            HttpConfig httpConfig,
+            McpToolRegistry toolRegistry,
+            RequestOriginCapturer originCapturer,
+            Optional<Authorizer> authorizer) {
         this.config = config;
         this.configValidator = configValidator;
         this.dispatcher = dispatcher;
         this.httpConfig = httpConfig;
+        this.originCapturer = originCapturer;
         // The three-argument (registry-visibility, §4.5), HttpConfig-liveness-gate, and
         // no-authorizer-for-@RequiresAction rules all matter only at the one real
         // production mount point: this constructor. Test fixtures that exercise a narrower slice of
@@ -133,15 +160,20 @@ final class McpRouterMount implements RouterMount {
             context.addEndHandler(v -> context.cancelAndCleanupFileUploads());
             context.next();
         });
+        router.route().order(Integer.MIN_VALUE + 1).handler(context -> {
+            RequestOrigin origin = originCapturer.capture(context.request());
+            context.put(RequestOrigin.class.getName(), origin);
+            context.next();
+        });
         // Cheap admission (method, Origin, Content-Type, Accept) runs strictly before BodyHandler: it
         // inspects only the request line and headers, never the body, so a disallowed Origin, an
         // unsupported method, or an unacceptable media type is rejected without the framework ever
         // aggregating the request body.
-        router.route().order(Integer.MIN_VALUE + 1).handler(dispatcher::admitCheap);
+        router.route().order(Integer.MIN_VALUE + 2).handler(dispatcher::admitCheap);
         // create(false): the MCP contract carries only JSON bodies, so file uploads are never handled
         // and nothing is written to the default upload directory.
         router.route()
-                .order(Integer.MIN_VALUE + 2)
+                .order(Integer.MIN_VALUE + 3)
                 .handler(BodyHandler.create(false).setBodyLimit(httpConfig.maxBodySize()));
         router.route()
                 .handler(dispatcher::begin)

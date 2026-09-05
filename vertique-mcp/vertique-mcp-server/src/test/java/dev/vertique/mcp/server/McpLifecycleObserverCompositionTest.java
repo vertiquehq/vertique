@@ -27,6 +27,7 @@ import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.rest.security.IdentityResolutionMiddleware;
+import dev.vertique.rest.security.RequestOriginConfig;
 import dev.vertique.security.authz.Authorizer;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
@@ -451,6 +452,12 @@ class McpLifecycleObserverCompositionTest {
             // idleTimeoutSeconds armed: McpServerConfigValidator's startup gate (P04, issue W1) refuses
             // an enabled mount unless at least one HttpConfig liveness timeout is nonzero.
             return HttpConfig.builder().idleTimeoutSeconds(60).build();
+        }
+
+        @Provides
+        @Singleton
+        static RequestOriginConfig requestOriginConfig() {
+            return RequestOriginConfig.defaults();
         }
 
         /**

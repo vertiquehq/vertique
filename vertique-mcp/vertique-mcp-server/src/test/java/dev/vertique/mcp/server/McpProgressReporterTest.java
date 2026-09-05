@@ -190,7 +190,16 @@ class McpProgressReporterTest {
             progressFinished.future().toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
 
             McpRequestTerminalEvent terminal = McpRequestTerminalEvent.success(
-                    Instant.now(), Instant.now(), McpMethod.TOOLS_CALL, "weather.current", 200, null, null, null, null);
+                    Instant.now(),
+                    Instant.now(),
+                    McpMethod.TOOLS_CALL,
+                    "weather.current",
+                    200,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null);
             assertThat(McpRequestDispatcher.write(routing, 200, new byte[300], terminal))
                     .isTrue();
 
@@ -230,6 +239,7 @@ class McpProgressReporterTest {
                             "weather.current",
                             McpErrorType.TRANSPORT,
                             0,
+                            null,
                             null,
                             null,
                             null,

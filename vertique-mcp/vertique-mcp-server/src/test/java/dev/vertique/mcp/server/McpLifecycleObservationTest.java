@@ -160,6 +160,7 @@ class McpLifecycleObservationTest {
                 null,
                 null,
                 null,
+                null,
                 null);
     }
 

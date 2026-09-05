@@ -312,12 +312,21 @@ class McpServerSpanObserverTest {
 
     private static McpRequestTerminalEvent successTerminal() {
         return McpRequestTerminalEvent.success(
-                STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, KNOWN_TOOL, 200, null, null, null, null);
+                STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, KNOWN_TOOL, 200, null, null, null, null, null);
     }
 
     private static McpRequestTerminalEvent successTerminalWithProtocolVersion(String protocolVersion) {
         return McpRequestTerminalEvent.success(
-                STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, KNOWN_TOOL, 200, protocolVersion, null, null, null);
+                STARTED_AT,
+                TERMINAL_AT,
+                McpMethod.TOOLS_CALL,
+                KNOWN_TOOL,
+                200,
+                protocolVersion,
+                null,
+                null,
+                null,
+                null);
     }
 
     private static McpRequestTerminalObservation terminalObservation(

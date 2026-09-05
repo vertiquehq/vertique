@@ -78,6 +78,7 @@ class McpMetricsCardinalityGuardContractTest {
                 null,
                 null,
                 null,
+                null,
                 null);
         McpRequestObservation session = observer.open(STARTED_AT);
         session.onCompleted(McpRequestCompletedEvent.written(terminal, COMPLETED_AT));

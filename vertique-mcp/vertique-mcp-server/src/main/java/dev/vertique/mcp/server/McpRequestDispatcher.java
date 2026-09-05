@@ -60,6 +60,7 @@ import dev.vertique.security.SecurityContexts;
 import dev.vertique.security.SecurityIdentity;
 import dev.vertique.security.authz.AuthorizationDecision;
 import dev.vertique.security.authz.AuthzReasonCodes;
+import dev.vertique.security.origin.RequestOrigin;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
@@ -1283,6 +1284,7 @@ final class McpRequestDispatcher {
                 500,
                 INTERNAL_ERROR,
                 protocolVersionOf(context),
+                originOf(context),
                 authorizationOf(context),
                 security,
                 correlationOf(context));
@@ -1321,6 +1323,7 @@ final class McpRequestDispatcher {
                 500,
                 INTERNAL_ERROR,
                 protocolVersionOf(context),
+                originOf(context),
                 authorizationOf(context),
                 security,
                 correlationOf(context));
@@ -1480,6 +1483,7 @@ final class McpRequestDispatcher {
                     500,
                     INTERNAL_ERROR,
                     protocolVersionOf(context),
+                    originOf(context),
                     authorizationOf(context),
                     security,
                     correlationOf(context));
@@ -1495,6 +1499,7 @@ final class McpRequestDispatcher {
                 status,
                 INTERCEPTOR_REJECTED,
                 protocolVersionOf(context),
+                originOf(context),
                 authorizationOf(context),
                 security,
                 correlationOf(context));
@@ -1543,6 +1548,7 @@ final class McpRequestDispatcher {
                     500,
                     INTERNAL_ERROR,
                     null,
+                    originOf(context),
                     null,
                     security,
                     correlationOf(context));
@@ -1558,6 +1564,7 @@ final class McpRequestDispatcher {
                 status,
                 code,
                 null,
+                originOf(context),
                 null,
                 security,
                 correlationOf(context));
@@ -1588,6 +1595,7 @@ final class McpRequestDispatcher {
                     500,
                     INTERNAL_ERROR,
                     protocolVersionOf(context),
+                    originOf(context),
                     authorizationOf(context),
                     security,
                     correlationOf(context));
@@ -1601,6 +1609,7 @@ final class McpRequestDispatcher {
                 McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
                 200,
                 protocolVersionOf(context),
+                originOf(context),
                 authorizationOf(context),
                 security,
                 correlationOf(context));
@@ -1944,6 +1953,7 @@ final class McpRequestDispatcher {
                 500,
                 INTERNAL_ERROR,
                 protocolVersionOf(context),
+                originOf(context),
                 authorizationOf(context),
                 security,
                 correlationOf(context));
@@ -1969,6 +1979,7 @@ final class McpRequestDispatcher {
                 500,
                 INTERNAL_ERROR,
                 protocolVersionOf(context),
+                originOf(context),
                 authorizationOf(context),
                 security,
                 correlationOf(context));
@@ -1999,6 +2010,7 @@ final class McpRequestDispatcher {
                     500,
                     INTERNAL_ERROR,
                     protocolVersionOf(context),
+                    originOf(context),
                     authorizationOf(context),
                     security,
                     correlationOf(context));
@@ -2012,6 +2024,7 @@ final class McpRequestDispatcher {
                 McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
                 200,
                 protocolVersionOf(context),
+                originOf(context),
                 authorizationOf(context),
                 security,
                 correlationOf(context));
@@ -2134,6 +2147,7 @@ final class McpRequestDispatcher {
                     500,
                     INTERNAL_ERROR,
                     protocolVersionOf(context),
+                    originOf(context),
                     authorizationOf(context),
                     security,
                     correlationOf(context));
@@ -2149,6 +2163,7 @@ final class McpRequestDispatcher {
                 status,
                 error.code(),
                 protocolVersionOf(context),
+                originOf(context),
                 authorizationOf(context),
                 security,
                 correlationOf(context));
@@ -2196,6 +2211,7 @@ final class McpRequestDispatcher {
                         status,
                         RATE_LIMITED,
                         protocolVersionOf(context),
+                        originOf(context),
                         authorizationOf(context),
                         security,
                         correlationOf(context))
@@ -2208,6 +2224,7 @@ final class McpRequestDispatcher {
                         status,
                         RATE_LIMITED,
                         protocolVersionOf(context),
+                        originOf(context),
                         authorizationOf(context),
                         security,
                         correlationOf(context));
@@ -2376,6 +2393,7 @@ final class McpRequestDispatcher {
                 status,
                 code,
                 protocolVersionOf(context),
+                originOf(context),
                 authorizationOf(context),
                 security,
                 correlationOf(context));
@@ -2853,6 +2871,7 @@ final class McpRequestDispatcher {
                 500,
                 INTERNAL_ERROR,
                 protocolVersionOf(context),
+                originOf(context),
                 authorizationOf(context),
                 security,
                 correlationOf(context));
@@ -2973,6 +2992,7 @@ final class McpRequestDispatcher {
                     toolName,
                     200,
                     protocolVersionOf(context),
+                    originOf(context),
                     authorizationOf(context),
                     security,
                     correlationOf(context));
@@ -2987,6 +3007,7 @@ final class McpRequestDispatcher {
                     200,
                     null,
                     protocolVersionOf(context),
+                    originOf(context),
                     authorizationOf(context),
                     security,
                     correlationOf(context));
@@ -2999,6 +3020,7 @@ final class McpRequestDispatcher {
                 errorType,
                 200,
                 protocolVersionOf(context),
+                originOf(context),
                 authorizationOf(context),
                 security,
                 correlationOf(context));
@@ -3174,6 +3196,7 @@ final class McpRequestDispatcher {
                 500,
                 INTERNAL_ERROR,
                 protocolVersionOf(context),
+                originOf(context),
                 authorizationOf(context),
                 security,
                 correlationOf(context));
@@ -3220,6 +3243,7 @@ final class McpRequestDispatcher {
                 500,
                 INTERNAL_ERROR,
                 terminal.protocolVersion(),
+                terminal.origin(),
                 terminal.authorization(),
                 terminal.security(),
                 terminal.correlation());
@@ -3430,6 +3454,7 @@ final class McpRequestDispatcher {
                 0,
                 null,
                 protocolVersionOf(context),
+                originOf(context),
                 authorizationOf(context),
                 establishedSecurity(),
                 correlationOf(context));
@@ -3504,6 +3529,7 @@ final class McpRequestDispatcher {
                 status,
                 code,
                 protocolVersionOf(context),
+                originOf(context),
                 authorizationOf(context),
                 security,
                 correlationOf(context));
@@ -3538,6 +3564,10 @@ final class McpRequestDispatcher {
         return startedAt == null ? Instant.now() : startedAt;
     }
 
+    private static @Nullable RequestOrigin originOf(RoutingContext context) {
+        return context.get(RequestOrigin.class.getName());
+    }
+
     private static void reject(
             RoutingContext context,
             McpMethod method,
@@ -3557,6 +3587,7 @@ final class McpRequestDispatcher {
                         status,
                         null,
                         protocolVersionOf(context),
+                        originOf(context),
                         authorizationOf(context),
                         security,
                         correlationOf(context)));

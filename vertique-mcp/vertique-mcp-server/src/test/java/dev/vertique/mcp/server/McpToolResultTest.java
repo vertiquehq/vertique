@@ -259,6 +259,7 @@ class McpToolResultTest {
                                 null,
                                 null,
                                 null,
+                                null,
                                 null)
                         .resultType())
                 .as("a successful adaptation settles as the one completed result type")
@@ -306,6 +307,7 @@ class McpToolResultTest {
                                 null,
                                 null,
                                 null,
+                                null,
                                 null)
                         .resultType())
                 .as("a failed invocation never reaches a completed result")
@@ -328,6 +330,7 @@ class McpToolResultTest {
                                 "result.explicit-error",
                                 McpErrorType.HANDLER,
                                 200,
+                                null,
                                 null,
                                 null,
                                 null,
@@ -356,6 +359,7 @@ class McpToolResultTest {
                 null,
                 null,
                 null,
+                null,
                 null);
         assertThat(List.of(rejected))
                 .as("terminal event count for the rejected outcome")
@@ -373,6 +377,7 @@ class McpToolResultTest {
                 null,
                 null,
                 null,
+                null,
                 null);
         assertThat(List.of(failed))
                 .as("terminal event count for the failed outcome")
@@ -386,6 +391,7 @@ class McpToolResultTest {
                 "result.cancelled-fixture",
                 McpErrorType.TRANSPORT,
                 0,
+                null,
                 null,
                 null,
                 null,

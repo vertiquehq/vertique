@@ -20,6 +20,7 @@ import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.security.IdentityResolutionMiddleware;
 import dev.vertique.security.authz.ActionRegistry;
+import dev.vertique.rest.security.RequestOriginCapturer;
 import dev.vertique.security.authz.Authorizer;
 import jakarta.inject.Singleton;
 import jakarta.validation.Validator;
@@ -153,6 +154,7 @@ public abstract class McpServerModule {
             IdentityResolutionMiddleware identityResolutionMiddleware,
             HttpConfig httpConfig,
             McpToolRegistry toolRegistry,
+            RequestOriginCapturer originCapturer,
             Optional<Authorizer> authorizer) {
         return new McpRouterMount(
                 config,
@@ -162,6 +164,7 @@ public abstract class McpServerModule {
                 identityResolutionMiddleware,
                 httpConfig,
                 toolRegistry,
+                originCapturer,
                 authorizer);
     }
 }

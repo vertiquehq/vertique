@@ -565,6 +565,7 @@ class McpLifecycleEventTest {
                                 PROTOCOL_VERSION,
                                 null,
                                 null,
+                                null,
                                 null)),
                 Arguments.of("a non-tool method carrying a named tool", (ThrowingConstruction)
                         () -> McpRequestTerminalEvent.success(
@@ -576,9 +577,19 @@ class McpLifecycleEventTest {
                                 PROTOCOL_VERSION,
                                 null,
                                 null,
+                                null,
                                 null)),
                 Arguments.of("a blank tool name", (ThrowingConstruction) () -> McpRequestTerminalEvent.success(
-                        STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, "  ", 200, PROTOCOL_VERSION, null, null, null)),
+                        STARTED_AT,
+                        TERMINAL_AT,
+                        McpMethod.TOOLS_CALL,
+                        "  ",
+                        200,
+                        PROTOCOL_VERSION,
+                        null,
+                        null,
+                        null,
+                        null)),
                 // P04 remediation (issue W7): a resolved tool identity must be bounded by the published
                 // McpToolDescriptor name grammar ([A-Za-z0-9_.-]{1,128}), not merely non-blank — an
                 // unresolved name never touches a real descriptor, so nothing else would bound it before
@@ -593,6 +604,7 @@ class McpLifecycleEventTest {
                                 PROTOCOL_VERSION,
                                 null,
                                 null,
+                                null,
                                 null)),
                 Arguments.of("a tool name longer than the published 128-character bound", (ThrowingConstruction)
                         () -> McpRequestTerminalEvent.success(
@@ -602,6 +614,7 @@ class McpLifecycleEventTest {
                                 "a".repeat(129),
                                 200,
                                 PROTOCOL_VERSION,
+                                null,
                                 null,
                                 null,
                                 null)),
@@ -615,6 +628,7 @@ class McpLifecycleEventTest {
                                 401,
                                 null,
                                 PROTOCOL_VERSION,
+                                null,
                                 null,
                                 SECURITY,
                                 null)),
@@ -633,6 +647,7 @@ class McpLifecycleEventTest {
                                 "v".repeat(65),
                                 null,
                                 null,
+                                null,
                                 null)),
                 Arguments.of("a blank protocolVersion", (ThrowingConstruction) () -> McpRequestTerminalEvent.success(
                         STARTED_AT,
@@ -641,6 +656,7 @@ class McpLifecycleEventTest {
                         McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
                         200,
                         "   ",
+                        null,
                         null,
                         null,
                         null)));
@@ -658,6 +674,7 @@ class McpLifecycleEventTest {
                                 PROTOCOL_VERSION,
                                 null,
                                 null,
+                                null,
                                 null)),
                 Arguments.of("a tool call carrying a named tool", (ThrowingConstruction)
                         () -> McpRequestTerminalEvent.success(
@@ -669,6 +686,7 @@ class McpLifecycleEventTest {
                                 PROTOCOL_VERSION,
                                 null,
                                 null,
+                                null,
                                 null)),
                 Arguments.of("a tool call using the UNKNOWN literal", (ThrowingConstruction)
                         () -> McpRequestTerminalEvent.success(
@@ -678,6 +696,7 @@ class McpLifecycleEventTest {
                                 McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
                                 200,
                                 PROTOCOL_VERSION,
+                                null,
                                 null,
                                 null,
                                 null)),
@@ -693,6 +712,7 @@ class McpLifecycleEventTest {
                                 PROTOCOL_VERSION,
                                 null,
                                 null,
+                                null,
                                 null)),
                 Arguments.of("an authorization rejection carrying security facts", (ThrowingConstruction)
                         () -> McpRequestTerminalEvent.rejected(
@@ -704,6 +724,7 @@ class McpLifecycleEventTest {
                                 403,
                                 null,
                                 PROTOCOL_VERSION,
+                                null,
                                 AUTHORIZATION,
                                 SECURITY,
                                 null)),
@@ -719,6 +740,7 @@ class McpLifecycleEventTest {
                         null,
                         null,
                         null,
+                        null,
                         null)),
                 Arguments.of("a protocolVersion at the 64-character bound", (ThrowingConstruction)
                         () -> McpRequestTerminalEvent.success(
@@ -728,6 +750,7 @@ class McpLifecycleEventTest {
                                 McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
                                 200,
                                 "v".repeat(64),
+                                null,
                                 null,
                                 null,
                                 null)));
@@ -882,6 +905,7 @@ class McpLifecycleEventTest {
                 tuple.httpStatus(),
                 tuple.protocolErrorCode(),
                 PROTOCOL_VERSION,
+                null,
                 AUTHORIZATION,
                 securityFor(tuple),
                 CORRELATION);
@@ -906,6 +930,7 @@ class McpLifecycleEventTest {
                 McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
                 200,
                 PROTOCOL_VERSION,
+                null,
                 null,
                 null,
                 null);

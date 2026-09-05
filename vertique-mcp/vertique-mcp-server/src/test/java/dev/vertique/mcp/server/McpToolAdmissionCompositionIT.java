@@ -30,6 +30,7 @@ import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.security.IdentityResolutionMiddleware;
+import dev.vertique.rest.security.RequestOriginConfig;
 import dev.vertique.security.authz.Authorizer;
 import io.vertx.core.Vertx;
 import jakarta.inject.Singleton;
@@ -172,6 +173,11 @@ class McpToolAdmissionCompositionIT {
         @Provides
         static HttpConfig httpConfig() {
             return HttpConfig.builder().build();
+        }
+
+        @Provides
+        static RequestOriginConfig requestOriginConfig() {
+            return RequestOriginConfig.defaults();
         }
 
         @Provides
