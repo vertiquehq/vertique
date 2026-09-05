@@ -8,6 +8,7 @@ public enum McpErrorType {
     NONE,
     HTTP,
     PROTOCOL,
+    RATE_LIMIT,
     AUTHENTICATION,
     AUTHORIZATION,
     INPUT_VALIDATION,

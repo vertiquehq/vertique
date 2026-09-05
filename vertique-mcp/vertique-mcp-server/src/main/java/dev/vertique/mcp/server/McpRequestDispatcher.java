@@ -78,12 +78,14 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -151,6 +153,7 @@ final class McpRequestDispatcher {
     private static final int METHOD_NOT_FOUND = -32601;
     private static final int INTERNAL_ERROR = -32603;
     private static final int MISSING_REQUIRED_CLIENT_CAPABILITY = -32021;
+    private static final int RATE_LIMITED = -32022;
 
     /**
      * The standard, non-leaking message paired with {@link #INTERNAL_ERROR}. Mirrors {@link
@@ -160,6 +163,12 @@ final class McpRequestDispatcher {
      * serialization step is unbounded (see {@link #boundedErrorResponse}).
      */
     private static final String INTERNAL_ERROR_MESSAGE = "Internal error";
+
+    /** The fixed, non-leaking response for an exhausted configured admission policy. */
+    private static final String RATE_LIMIT_EXCEEDED_MESSAGE = "Rate limit exceeded";
+
+    /** The fixed, non-leaking response for an unavailable admission decision. */
+    private static final String RATE_LIMIT_UNAVAILABLE_MESSAGE = "Rate limiting unavailable";
 
     /**
      * The bounded JSON-RPC server-error-range code {@link McpProtocolCodec#validateNegotiation} settles
@@ -351,6 +360,7 @@ final class McpRequestDispatcher {
     private final McpProtocolCodec codec;
     private final McpToolRegistry toolRegistry;
     private final McpPolicyEnforcer policyEnforcer;
+    private final McpToolAdmission toolAdmission;
     private final McpCursorCodec cursorCodec;
     private final ContextHolder contextHolder;
     private final CorrelationContextFactory correlationContextFactory;
@@ -366,6 +376,7 @@ final class McpRequestDispatcher {
             HttpConfig httpConfig,
             McpToolRegistry toolRegistry,
             McpPolicyEnforcer policyEnforcer,
+            McpToolAdmission toolAdmission,
             ContextHolder contextHolder,
             CorrelationContextFactory correlationContextFactory) {
         this.config = config;
@@ -377,10 +388,38 @@ final class McpRequestDispatcher {
         this.codec = new McpProtocolCodec(httpConfig, config.ingressMaxTokens());
         this.toolRegistry = toolRegistry;
         this.policyEnforcer = policyEnforcer;
+        this.toolAdmission = toolAdmission;
         this.cursorCodec = new McpCursorCodec();
         this.contextHolder = contextHolder;
         this.correlationContextFactory = correlationContextFactory;
         this.normalizationDecoder = buildNormalizationDecoder(config.outputMaxBytes(), config.outputMaxTokens());
+    }
+
+    McpRequestDispatcher(
+            McpServerConfig config,
+            SecurityRuntime securityRuntime,
+            Set<McpRequestLifecycleObserver> lifecycleObservers,
+            Set<McpRequestCompletedListener> completedListeners,
+            Set<McpRequestInterceptor> requestInterceptors,
+            Set<McpToolInterceptor> toolInterceptors,
+            HttpConfig httpConfig,
+            McpToolRegistry toolRegistry,
+            McpPolicyEnforcer policyEnforcer,
+            ContextHolder contextHolder,
+            CorrelationContextFactory correlationContextFactory) {
+        this(
+                config,
+                securityRuntime,
+                lifecycleObservers,
+                completedListeners,
+                requestInterceptors,
+                toolInterceptors,
+                httpConfig,
+                toolRegistry,
+                policyEnforcer,
+                McpToolAdmission.noPolicy(),
+                contextHolder,
+                correlationContextFactory);
     }
 
     /**
@@ -2116,6 +2155,74 @@ final class McpRequestDispatcher {
         write(context, status, body, terminal);
     }
 
+    private void writeRateLimitExceeded(
+            RoutingContext context,
+            JsonNode envelope,
+            @Nullable SecurityContextSnapshot security,
+            String toolName,
+            Optional<Duration> retryAfter) {
+        retryAfter.ifPresent(duration -> context.response().putHeader("Retry-After", retryAfterSeconds(duration)));
+        writeRateLimitResponse(context, envelope, security, toolName, 429, RATE_LIMIT_EXCEEDED_MESSAGE, false);
+    }
+
+    private void writeRateLimitUnavailable(
+            RoutingContext context, JsonNode envelope, @Nullable SecurityContextSnapshot security, String toolName) {
+        writeRateLimitResponse(context, envelope, security, toolName, 503, RATE_LIMIT_UNAVAILABLE_MESSAGE, true);
+    }
+
+    private void writeRateLimitResponse(
+            RoutingContext context,
+            JsonNode envelope,
+            @Nullable SecurityContextSnapshot security,
+            String toolName,
+            int status,
+            String message,
+            boolean failed) {
+        byte[] body;
+        try {
+            body = encodeCapped(errorNode(envelope.get("id"), RATE_LIMITED, message));
+        } catch (OutputCapExceededException overCap) {
+            body = boundedErrorResponse(null, RATE_LIMITED, message);
+        }
+        context.response().putHeader("content-type", JSON_CONTENT_TYPE);
+        context.response().putHeader("Cache-Control", "no-store");
+        McpRequestTerminalEvent terminal = failed
+                ? McpRequestTerminalEvent.failed(
+                        startedAt(context),
+                        Instant.now(),
+                        McpMethod.TOOLS_CALL,
+                        toolName,
+                        McpErrorType.RATE_LIMIT,
+                        status,
+                        RATE_LIMITED,
+                        protocolVersionOf(context),
+                        authorizationOf(context),
+                        security,
+                        correlationOf(context))
+                : McpRequestTerminalEvent.rejected(
+                        startedAt(context),
+                        Instant.now(),
+                        McpMethod.TOOLS_CALL,
+                        toolName,
+                        McpErrorType.RATE_LIMIT,
+                        status,
+                        RATE_LIMITED,
+                        protocolVersionOf(context),
+                        authorizationOf(context),
+                        security,
+                        correlationOf(context));
+        write(context, status, body, terminal);
+    }
+
+    private static String retryAfterSeconds(Duration retryAfter) {
+        long milliseconds = retryAfter.toMillis();
+        long seconds = milliseconds / 1_000L;
+        if (milliseconds % 1_000L != 0) {
+            seconds++;
+        }
+        return Long.toString(Math.max(1L, seconds));
+    }
+
     // --- tools/call ---
 
     /**
@@ -2319,6 +2426,35 @@ final class McpRequestDispatcher {
         if (isSettled(context)) {
             return;
         }
+        Context owningContext = requestOwningContext(context);
+        anchoredOnContext(toolAdmission.admit(toolName), owningContext).onComplete(admission -> {
+            if (isSettled(context)) {
+                return;
+            }
+            if (admission.failed() || admission.result() == null) {
+                writeRateLimitUnavailable(context, envelope, security, toolName);
+                return;
+            }
+            switch (admission.result().outcome()) {
+                case CONTINUE -> invokeAfterAdmission(context, envelope, security, toolName, invoker);
+                case QUOTA_EXCEEDED ->
+                    writeRateLimitExceeded(
+                            context,
+                            envelope,
+                            security,
+                            toolName,
+                            admission.result().retryAfter());
+                case FAILED -> writeRateLimitUnavailable(context, envelope, security, toolName);
+            }
+        });
+    }
+
+    private void invokeAfterAdmission(
+            RoutingContext context,
+            JsonNode envelope,
+            @Nullable SecurityContextSnapshot security,
+            String toolName,
+            McpToolInvoker invoker) {
         selectSse(context);
         McpCompletionCoordinator progressCoordinator = context.get(COMPLETION_COORDINATOR_KEY);
         if (progressCoordinator != null) {

@@ -75,6 +75,7 @@
       "public static final dev.vertique.mcp.lifecycle.McpErrorType dev.vertique.mcp.lifecycle.McpErrorType.NONE",
       "public static final dev.vertique.mcp.lifecycle.McpErrorType dev.vertique.mcp.lifecycle.McpErrorType.OUTPUT_VALIDATION",
       "public static final dev.vertique.mcp.lifecycle.McpErrorType dev.vertique.mcp.lifecycle.McpErrorType.PROTOCOL",
+      "public static final dev.vertique.mcp.lifecycle.McpErrorType dev.vertique.mcp.lifecycle.McpErrorType.RATE_LIMIT",
       "public static final dev.vertique.mcp.lifecycle.McpErrorType dev.vertique.mcp.lifecycle.McpErrorType.SERIALIZATION",
       "public static final dev.vertique.mcp.lifecycle.McpErrorType dev.vertique.mcp.lifecycle.McpErrorType.TIMEOUT",
       "public static final dev.vertique.mcp.lifecycle.McpErrorType dev.vertique.mcp.lifecycle.McpErrorType.TRANSPORT"

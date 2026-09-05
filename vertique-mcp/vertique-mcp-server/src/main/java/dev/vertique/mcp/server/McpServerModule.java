@@ -14,6 +14,7 @@ import dev.vertique.mcp.interceptor.McpToolInterceptor;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.tool.McpToolInvoker;
+import dev.vertique.ratelimit.RateLimiters;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.core.security.RouteAuthHandler;
@@ -70,6 +71,10 @@ public abstract class McpServerModule {
     @BindsOptionalOf
     abstract Validator validator();
 
+    /** Declares the optional rate-limit runtime required only by configured MCP admission policies. */
+    @BindsOptionalOf
+    abstract RateLimiters rateLimiters();
+
     /**
      * Declares {@link ActionRegistry} as an optional binding, so mount validation can check that the
      * action a typed access policy requires is registered without requiring {@code
@@ -87,6 +92,14 @@ public abstract class McpServerModule {
     @Singleton
     static McpToolRegistry toolRegistry(Set<McpToolInvoker> toolInvokers) {
         return McpToolRegistry.build(toolInvokers);
+    }
+
+    /** Builds the immutable MCP tool-admission plan during component composition. */
+    @Provides
+    @Singleton
+    static McpToolAdmission mcpToolAdmission(
+            McpServerConfig config, McpToolRegistry registry, Optional<RateLimiters> rateLimiters) {
+        return McpToolAdmission.create(config, registry, rateLimiters);
     }
 
     /** Contributes profile validation to the mandatory compose-validation phase. */

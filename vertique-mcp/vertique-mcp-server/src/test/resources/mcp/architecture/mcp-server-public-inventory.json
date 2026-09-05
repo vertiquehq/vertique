@@ -23,6 +23,7 @@
       "public int dev.vertique.mcp.server.McpServerConfig.outputMaxBytes()",
       "public int dev.vertique.mcp.server.McpServerConfig.outputMaxTokens()",
       "public int dev.vertique.mcp.server.McpServerConfig.toolsPageSize()",
+      "public dev.vertique.mcp.server.McpRateLimitConfig dev.vertique.mcp.server.McpServerConfig.rateLimit()",
       "public java.lang.String dev.vertique.mcp.server.McpServerConfig.authenticationScheme()",
       "public java.lang.String dev.vertique.mcp.server.McpServerConfig.instructions()",
       "public java.lang.String dev.vertique.mcp.server.McpServerConfig.jsonProfile()",
@@ -46,6 +47,7 @@
       "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.mountPath(java.lang.String)",
       "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.outputMaxBytes(int)",
       "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.outputMaxTokens(int)",
+      "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.rateLimit(dev.vertique.mcp.server.McpRateLimitConfig)",
       "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.serverName(java.lang.String)",
       "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.serverVersion(java.lang.String)",
       "public dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.toolsPageSize(int)",
@@ -53,6 +55,28 @@
       "public java.lang.String dev.vertique.mcp.server.McpServerConfig$McpServerConfigBuilder.toString()"
     ],
     "dev.vertique.mcp.server.McpServerModule": [],
+    "dev.vertique.mcp.server.McpRateLimitConfig": [
+      "public dev.vertique.mcp.server.McpRateLimitConfig(java.lang.String,dev.vertique.ratelimit.spi.RateLimitSubject,dev.vertique.ratelimit.spi.AnonymousRateLimitPolicy,java.util.List<dev.vertique.mcp.server.McpToolRateLimitConfig>)",
+      "public dev.vertique.ratelimit.spi.AnonymousRateLimitPolicy dev.vertique.mcp.server.McpRateLimitConfig.anonymous()",
+      "public dev.vertique.ratelimit.spi.RateLimitSubject dev.vertique.mcp.server.McpRateLimitConfig.subject()",
+      "public final boolean dev.vertique.mcp.server.McpRateLimitConfig.equals(java.lang.Object)",
+      "public final int dev.vertique.mcp.server.McpRateLimitConfig.hashCode()",
+      "public final java.lang.String dev.vertique.mcp.server.McpRateLimitConfig.toString()",
+      "public java.lang.String dev.vertique.mcp.server.McpRateLimitConfig.defaultPolicy()",
+      "public java.util.List<dev.vertique.mcp.server.McpToolRateLimitConfig> dev.vertique.mcp.server.McpRateLimitConfig.tools()",
+      "public static dev.vertique.mcp.server.McpRateLimitConfig dev.vertique.mcp.server.McpRateLimitConfig.defaults()"
+    ],
+    "dev.vertique.mcp.server.McpToolRateLimitConfig": [
+      "public dev.vertique.mcp.server.McpToolRateLimitConfig(java.lang.String,java.lang.String,dev.vertique.ratelimit.spi.RateLimitSubject,dev.vertique.ratelimit.spi.AnonymousRateLimitPolicy,long)",
+      "public dev.vertique.ratelimit.spi.AnonymousRateLimitPolicy dev.vertique.mcp.server.McpToolRateLimitConfig.anonymous()",
+      "public dev.vertique.ratelimit.spi.RateLimitSubject dev.vertique.mcp.server.McpToolRateLimitConfig.subject()",
+      "public final boolean dev.vertique.mcp.server.McpToolRateLimitConfig.equals(java.lang.Object)",
+      "public final int dev.vertique.mcp.server.McpToolRateLimitConfig.hashCode()",
+      "public final java.lang.String dev.vertique.mcp.server.McpToolRateLimitConfig.toString()",
+      "public java.lang.String dev.vertique.mcp.server.McpToolRateLimitConfig.policy()",
+      "public java.lang.String dev.vertique.mcp.server.McpToolRateLimitConfig.tool()",
+      "public long dev.vertique.mcp.server.McpToolRateLimitConfig.cost()"
+    ],
     "dev.vertique.mcp.server.runtime.McpToolParameterMetadata": [
       "public dev.vertique.mcp.server.runtime.McpToolParameterMetadata(java.lang.String,java.lang.String,java.lang.String)",
       "public final boolean dev.vertique.mcp.server.runtime.McpToolParameterMetadata.equals(java.lang.Object)",
