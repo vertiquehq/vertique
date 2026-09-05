@@ -9,7 +9,7 @@ Thank you for contributing to Vertique.
 
 ## Local verification
 
-Vertique requires Java 21. Before submitting a change, run:
+Vertique requires Java 21 or later. Before submitting a change, run:
 
 ```bash
 ./mvnw -ntp clean verify

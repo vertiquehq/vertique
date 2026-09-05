@@ -22,7 +22,7 @@ maven-shade fat-JARs.
 ### Recommended: public application parent
 
 Inherit `vertique-app-parent` and declare only runtime capabilities. The parent imports
-`vertique-bom`, targets Java 21, and configures Dagger together with the complete Vertique
+`vertique-bom`, targets Java 21 (applications run on Java 21+), and configures Dagger together with the complete Vertique
 processor facade:
 
 ```xml

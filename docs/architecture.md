@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Architecture
 
-Vertique is a Java 21 multi-module Maven framework built around Vert.x. It uses
+Vertique is a Java 21+ multi-module Maven framework built around Vert.x. It uses
 compile-time code generation and Dagger dependency injection to keep application
 wiring explicit and reflection-light.
 
