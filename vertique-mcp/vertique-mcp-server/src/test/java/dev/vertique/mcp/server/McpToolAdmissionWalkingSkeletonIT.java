@@ -243,7 +243,7 @@ class McpToolAdmissionWalkingSkeletonIT {
         }
     }
 
-    private static final class McpToolAdmissionWalkingSkeletonFixture {
+    static final class McpToolAdmissionWalkingSkeletonFixture {
         private static final ContextHolder NO_OP_CONTEXT_HOLDER = new ContextHolder() {
             @Override
             public <T> Optional<T> current(Class<T> type) {
@@ -263,6 +263,15 @@ class McpToolAdmissionWalkingSkeletonIT {
 
         private McpToolAdmissionWalkingSkeletonFixture(
                 Vertx vertx, McpRateLimitConfig rateLimitConfig, Optional<RateLimiters> rateLimiters) throws Exception {
+            this(vertx, rateLimitConfig, rateLimiters, new AnonymousIdentityResolver());
+        }
+
+        private McpToolAdmissionWalkingSkeletonFixture(
+                Vertx vertx,
+                McpRateLimitConfig rateLimitConfig,
+                Optional<RateLimiters> rateLimiters,
+                SecurityIdentityResolver identityResolver)
+                throws Exception {
             McpServerConfig config = McpServerConfig.builder()
                     .enabled(true)
                     .serverName("vertique-test")
@@ -307,7 +316,7 @@ class McpToolAdmissionWalkingSkeletonIT {
                     new McpServerConfigValidator(),
                     dispatcher,
                     Set.of(),
-                    identityResolution(securityRuntime),
+                    identityResolution(securityRuntime, identityResolver),
                     httpConfig,
                     registry);
             Router router = Router.router(vertx);
@@ -322,6 +331,15 @@ class McpToolAdmissionWalkingSkeletonIT {
             return new McpToolAdmissionWalkingSkeletonFixture(vertx, rateLimitConfig, rateLimiters);
         }
 
+        static McpToolAdmissionWalkingSkeletonFixture start(
+                Vertx vertx,
+                McpRateLimitConfig rateLimitConfig,
+                Optional<RateLimiters> rateLimiters,
+                SecurityIdentityResolver identityResolver)
+                throws Exception {
+            return new McpToolAdmissionWalkingSkeletonFixture(vertx, rateLimitConfig, rateLimiters, identityResolver);
+        }
+
         HttpServer server() {
             return server;
         }
@@ -334,13 +352,18 @@ class McpToolAdmissionWalkingSkeletonIT {
             return tool;
         }
 
+        long toolInvocationCount() {
+            return tool.invocationCount();
+        }
+
         List<McpRequestTerminalEvent> terminalEvents() {
             return terminalEvents;
         }
 
-        private static IdentityResolutionMiddleware identityResolution(SecurityRuntime securityRuntime) {
+        private static IdentityResolutionMiddleware identityResolution(
+                SecurityRuntime securityRuntime, SecurityIdentityResolver identityResolver) {
             return new IdentityResolutionMiddleware(
-                    Set.of(new AnonymousIdentityResolver()),
+                    Set.of(identityResolver),
                     Optional.of(new DefaultSecurityClaimMapper()),
                     new SecurityEventEmitter(Set.of()),
                     securityRuntime,
