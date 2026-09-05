@@ -13,7 +13,9 @@ import dev.vertique.ratelimit.spi.RateLimitAdapterSupport;
 import dev.vertique.ratelimit.spi.RateLimitSubject;
 import io.vertx.core.Future;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -23,12 +25,12 @@ final class McpToolAdmission {
     private static final long DEFAULT_COST = 1L;
 
     private final Optional<RateLimitAdapterSupport> adapterSupport;
-    private final Optional<AdmissionPolicy> defaultPolicy;
+    private final Map<String, AdmissionPolicy> policiesByTool;
 
-    private McpToolAdmission(Optional<RateLimiters> rateLimiters, Optional<AdmissionPolicy> defaultPolicy) {
+    private McpToolAdmission(Optional<RateLimiters> rateLimiters, Map<String, AdmissionPolicy> policiesByTool) {
         this.adapterSupport =
                 Objects.requireNonNull(rateLimiters, "rateLimiters").map(RateLimiters::adapterSupport);
-        this.defaultPolicy = Objects.requireNonNull(defaultPolicy, "defaultPolicy");
+        this.policiesByTool = Map.copyOf(Objects.requireNonNull(policiesByTool, "policiesByTool"));
     }
 
     static McpToolAdmission create(
@@ -37,40 +39,61 @@ final class McpToolAdmission {
         Objects.requireNonNull(registry, "registry");
         Objects.requireNonNull(rateLimiters, "rateLimiters");
         McpRateLimitConfig rateLimit = config.rateLimit();
-        String defaultPolicyName = rateLimit.defaultPolicy();
-        if (defaultPolicyName == null) {
+        validateConfiguredTools(rateLimit, registry);
+        if (rateLimit.defaultPolicy() == null && rateLimit.tools().isEmpty()) {
             return noPolicy();
         }
-        RateLimiters runtime = rateLimiters.orElseThrow(() ->
-                new ConfigurationException("mcp.rateLimit.defaultPolicy requires RateLimitCoreModule to be installed"));
-        RateLimiter limiter;
-        try {
-            limiter = runtime.adapterSupport().limiter(defaultPolicyName);
-        } catch (IllegalArgumentException unknownPolicy) {
-            throw new ConfigurationException(
-                    "mcp.rateLimit.defaultPolicy references unknown rate-limit policy '" + defaultPolicyName + "'",
-                    unknownPolicy);
+        RateLimiters runtime = rateLimiters.orElseThrow(
+                () -> new ConfigurationException("mcp.rateLimit requires RateLimitCoreModule to be installed"));
+        RateLimitAdapterSupport adapterSupport = runtime.adapterSupport();
+        Map<String, RateLimiter> limitersByPolicy = new LinkedHashMap<>();
+        Map<String, AdmissionPolicy> policiesByTool = new LinkedHashMap<>();
+        if (rateLimit.defaultPolicy() != null) {
+            resolveLimiter(adapterSupport, limitersByPolicy, rateLimit.defaultPolicy());
         }
-        AdmissionPolicy policy = new AdmissionPolicy(limiter, rateLimit.subject(), rateLimit.anonymous(), DEFAULT_COST);
-        return new McpToolAdmission(rateLimiters, Optional.of(policy));
+        for (String toolName : registry.invokersByName().keySet()) {
+            Optional<String> policyName = resolvePolicy(rateLimit, toolName);
+            if (policyName.isEmpty()) {
+                continue;
+            }
+            McpToolRateLimitConfig toolConfig = toolConfig(rateLimit, toolName);
+            long cost = toolConfig != null ? toolConfig.cost() : DEFAULT_COST;
+            RateLimiter limiter = resolveLimiter(adapterSupport, limitersByPolicy, policyName.orElseThrow());
+            validateCost(toolName, cost, policyName.orElseThrow(), limiter.capacity());
+            RateLimitSubject subject =
+                    toolConfig != null && toolConfig.subject() != null ? toolConfig.subject() : rateLimit.subject();
+            AnonymousRateLimitPolicy anonymous = toolConfig != null && toolConfig.anonymous() != null
+                    ? toolConfig.anonymous()
+                    : rateLimit.anonymous();
+            policiesByTool.put(toolName, new AdmissionPolicy(limiter, subject, anonymous, cost));
+        }
+        return new McpToolAdmission(rateLimiters, policiesByTool);
     }
 
     static McpToolAdmission noPolicy() {
-        return new McpToolAdmission(Optional.empty(), Optional.empty());
+        return new McpToolAdmission(Optional.empty(), Map.of());
+    }
+
+    /** Resolves a generated MCP tool's configured policy without inspecting annotations. */
+    static Optional<String> resolvePolicy(McpRateLimitConfig rateLimit, String toolName) {
+        Objects.requireNonNull(rateLimit, "rateLimit");
+        Objects.requireNonNull(toolName, "toolName");
+        McpToolRateLimitConfig toolConfig = toolConfig(rateLimit, toolName);
+        return Optional.ofNullable(toolConfig != null ? toolConfig.policy() : rateLimit.defaultPolicy());
     }
 
     /**
-     * Acquires the configured default policy before a tool call selects its response transport.
+     * Acquires the configured tool policy before a tool call selects its response transport.
      *
      * @param toolName the resolved MCP tool name
      * @return the bounded admission result; never a failed future
      */
     Future<Admission> admit(String toolName) {
         Objects.requireNonNull(toolName, "toolName");
-        if (defaultPolicy.isEmpty()) {
+        AdmissionPolicy policy = policiesByTool.get(toolName);
+        if (policy == null) {
             return Future.succeededFuture(Admission.continueRequest());
         }
-        AdmissionPolicy policy = defaultPolicy.orElseThrow();
         RateLimitKey key;
         try {
             key = keyFor(policy);
@@ -95,6 +118,39 @@ final class McpToolAdmission {
                 .orElseThrow(() -> new IllegalStateException("rate-limit adapter support is unavailable"))
                 .subjectKey(policy.subject(), policy.anonymous(), List.of())
                 .orElse(null);
+    }
+
+    private static void validateConfiguredTools(McpRateLimitConfig rateLimit, McpToolRegistry registry) {
+        for (McpToolRateLimitConfig toolConfig : rateLimit.tools()) {
+            if (!registry.invokersByName().containsKey(toolConfig.tool())) {
+                throw new ConfigurationException(
+                        "mcp.rateLimit.tools[" + toolConfig.tool() + "] references an unknown generated MCP tool");
+            }
+        }
+    }
+
+    private static McpToolRateLimitConfig toolConfig(McpRateLimitConfig rateLimit, String toolName) {
+        return rateLimit.tools().stream()
+                .filter(candidate -> candidate.tool().equals(toolName))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private static RateLimiter resolveLimiter(
+            RateLimitAdapterSupport adapterSupport, Map<String, RateLimiter> limitersByPolicy, String policyName) {
+        try {
+            return limitersByPolicy.computeIfAbsent(policyName, adapterSupport::limiter);
+        } catch (IllegalArgumentException unknownPolicy) {
+            throw new ConfigurationException(
+                    "mcp.rateLimit references unknown rate-limit policy '" + policyName + "'", unknownPolicy);
+        }
+    }
+
+    private static void validateCost(String toolName, long cost, String policyName, long capacity) {
+        if (cost > capacity) {
+            throw new ConfigurationException("mcp.rateLimit.tools[" + toolName + "].cost declares cost " + cost
+                    + " exceeding policy '" + policyName + "' capacity " + capacity);
+        }
     }
 
     private static Admission admissionFor(RateLimitDecision decision) {

@@ -5,6 +5,7 @@ package dev.vertique.mcp.server;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.json.KeyedBy;
 import dev.vertique.ratelimit.spi.AnonymousRateLimitPolicy;
 import dev.vertique.ratelimit.spi.RateLimitSubject;
@@ -21,6 +22,9 @@ public record McpRateLimitConfig(
 
     /** Makes the keyed tool collection immutable and requires resolved parent defaults. */
     public McpRateLimitConfig {
+        if (defaultPolicy != null && defaultPolicy.isBlank()) {
+            throw new ConfigurationException("mcp.rateLimit.defaultPolicy must be non-blank");
+        }
         subject = Objects.requireNonNull(subject, "subject");
         anonymous = Objects.requireNonNull(anonymous, "anonymous");
         tools = List.copyOf(Objects.requireNonNull(tools, "tools"));

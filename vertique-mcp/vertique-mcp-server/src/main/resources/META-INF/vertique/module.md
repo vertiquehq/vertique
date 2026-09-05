@@ -66,6 +66,22 @@ Jackson using the field names exactly as declared: `mcp.outputMaxBytes`, `mcp.in
 Ordinary unknown keys remain deliberately forward-compatible and are silently ignored, so use the
 declared field names rather than dotted prose spellings.
 
+### MCP tool rate-limit admission
+
+MCP can bind generated tools to the shared rate-limit engine with `mcp.rateLimit`. Its complete
+configuration surface is `mcp.rateLimit.defaultPolicy` (absent by default),
+`mcp.rateLimit.subject` (defaults to `EFFECTIVE_PRINCIPAL`),
+`mcp.rateLimit.anonymous` (defaults to `SHARED_BUCKET`), and the per-generated-tool entries
+`mcp.rateLimit.tools.<tool>.policy`, `.subject`, `.anonymous`, and `.cost` (defaults to `1`). A
+per-tool `subject` or `anonymous` inherits the corresponding parent value when omitted.
+
+Policy selection uses the generated MCP tool name, never a Java method name or `@RateLimited`
+annotation: `tools.<tool>.policy` wins, then `defaultPolicy`, then no admission. In a flat-key
+source, bracket-quote a dotted generated tool name so it remains one key, for example
+`mcp.rateLimit.tools.[weather.current].policy=mcp-weather`. JSON configuration already represents that dotted name as one object key, for example `"weather.current": { "policy": "mcp-weather" }`.
+
+Ordinary unknown properties under `mcp.rateLimit` are ignored; numeric limits, windows, backend selection, and policy capacities remain shared `rateLimit.*` configuration. Reference the shared policy by name from `mcp.rateLimit` rather than duplicating its settings.
+
 **`mcp.bodyTracePolicy` governs body-borne trace-reference extraction.** Enum
 `McpBodyTracePolicy`, `IGNORE` (`@Builder.Default`) or `LINK` — mirroring Vert.x's own `TracingPolicy`
 default-off posture. Under the default `IGNORE`, the request body's `params._meta.traceparent`/
