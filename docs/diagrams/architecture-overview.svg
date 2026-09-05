@@ -46,7 +46,7 @@ text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Ar
 <rect class="fill-gray" x="18" y="74" width="784" height="502" rx="20" stroke-width="0.5"/>
 <text class="wordmark" x="30" y="100">Vertique</text>
 <text class="cap" x="30" y="120">Enterprise microservices on Vert.x — compile-time wired, event-bus native</text>
-<g><rect class="fill-gray" x="596" y="86" width="80" height="22" rx="11" stroke-width="0.5"/><text class="sub gray-t" x="636" y="98" text-anchor="middle" dominant-baseline="central">Java 21</text></g>
+<g><rect class="fill-gray" x="596" y="86" width="80" height="22" rx="11" stroke-width="0.5"/><text class="sub gray-t" x="636" y="98" text-anchor="middle" dominant-baseline="central">Java 21+</text></g>
 <g><rect class="fill-gray" x="684" y="86" width="96" height="22" rx="11" stroke-width="0.5"/><text class="sub gray-t" x="732" y="98" text-anchor="middle" dominant-baseline="central">Vert.x 5.1</text></g>
 
 <text class="cap" x="30" y="140">Inbound edge — protocol adapters</text>
