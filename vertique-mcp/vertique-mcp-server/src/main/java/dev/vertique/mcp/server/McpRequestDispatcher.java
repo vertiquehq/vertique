@@ -50,6 +50,9 @@ import dev.vertique.mcp.tool.McpToolAnnotations;
 import dev.vertique.mcp.tool.McpToolDescriptor;
 import dev.vertique.mcp.tool.McpToolInvoker;
 import dev.vertique.mcp.tool.McpToolResult;
+import dev.vertique.ratelimit.exception.RateLimitUnavailableException;
+import dev.vertique.resilience.exception.ResilienceTimeoutException;
+import dev.vertique.resilience.exception.ResilienceUnavailableException;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.events.RequestCompletionRecorder;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
@@ -83,9 +86,11 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
@@ -155,6 +160,7 @@ final class McpRequestDispatcher {
     private static final int INTERNAL_ERROR = -32603;
     private static final int MISSING_REQUIRED_CLIENT_CAPABILITY = -32021;
     private static final int RATE_LIMITED = -32022;
+    private static final int MAX_HANDLER_FAILURE_CAUSE_HOPS = 8;
 
     /**
      * The standard, non-leaking message paired with {@link #INTERNAL_ERROR}. Mirrors {@link
@@ -170,6 +176,12 @@ final class McpRequestDispatcher {
 
     /** The fixed, non-leaking response for an unavailable admission decision. */
     private static final String RATE_LIMIT_UNAVAILABLE_MESSAGE = "Rate limiting unavailable";
+
+    /** The fixed, non-leaking response for a resilience attempt timeout. */
+    private static final String RESILIENCE_TIMEOUT_MESSAGE = "Request timed out";
+
+    /** The fixed, non-leaking response for resilience runtime unavailability. */
+    private static final String RESILIENCE_UNAVAILABLE_MESSAGE = "Service unavailable";
 
     /**
      * The bounded JSON-RPC server-error-range code {@link McpProtocolCodec#validateNegotiation} settles
@@ -3186,24 +3198,124 @@ final class McpRequestDispatcher {
             String toolName,
             Throwable cause,
             McpErrorType errorType) {
-        // cause is deliberately never read (see writeDispatchByMethodFailure's identical note).
-        // boundedErrorResponse serializes through the capped stream rather than materializing the
-        // full response before measuring it.
-        byte[] fallback = boundedSseErrorResponse(envelope.get("id"), INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
-        McpRequestTerminalEvent terminal = McpRequestTerminalEvent.failed(
-                startedAt(context),
-                Instant.now(),
-                McpMethod.TOOLS_CALL,
-                toolName,
-                errorType,
-                500,
-                INTERNAL_ERROR,
-                protocolVersionOf(context),
-                originOf(context),
-                authorizationOf(context),
-                security,
-                correlationOf(context));
-        writeSse(context, 500, fallback, terminal);
+        HandlerFailureMapping mapping = errorType == McpErrorType.INTERNAL
+                ? classifyHandlerFailure(cause)
+                : HandlerFailureMapping.internal(errorType);
+        boolean responseCommitted = context.response().headWritten();
+        if (!responseCommitted) {
+            mapping.retryAfter()
+                    .ifPresent(duration -> context.response().putHeader("Retry-After", retryAfterSeconds(duration)));
+            if (mapping.noStore()) {
+                context.response().putHeader("Cache-Control", "no-store");
+            }
+        }
+        // boundedSseErrorResponse serializes through the capped stream rather than materializing the
+        // full response before measuring it. The selected mapping is still recorded on the terminal
+        // event after SSE has committed, while the write status is kept at the transport's already
+        // committed status in that case.
+        byte[] fallback = boundedSseErrorResponse(envelope.get("id"), mapping.protocolCode(), mapping.message());
+        McpRequestTerminalEvent terminal = mapping.rejected()
+                ? McpRequestTerminalEvent.rejected(
+                        startedAt(context),
+                        Instant.now(),
+                        McpMethod.TOOLS_CALL,
+                        toolName,
+                        mapping.errorType(),
+                        mapping.httpStatus(),
+                        mapping.protocolCode(),
+                        protocolVersionOf(context),
+                        originOf(context),
+                        authorizationOf(context),
+                        security,
+                        correlationOf(context))
+                : McpRequestTerminalEvent.failed(
+                        startedAt(context),
+                        Instant.now(),
+                        McpMethod.TOOLS_CALL,
+                        toolName,
+                        mapping.errorType(),
+                        mapping.httpStatus(),
+                        mapping.protocolCode(),
+                        protocolVersionOf(context),
+                        originOf(context),
+                        authorizationOf(context),
+                        security,
+                        correlationOf(context));
+        int writeStatus = responseCommitted ? context.response().getStatusCode() : mapping.httpStatus();
+        writeSse(context, writeStatus, fallback, terminal);
+    }
+
+    private static HandlerFailureMapping classifyHandlerFailure(Throwable failure) {
+        Set<Throwable> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+        Throwable current = failure;
+        for (int hop = 0; current != null && hop <= MAX_HANDLER_FAILURE_CAUSE_HOPS; hop++) {
+            if (!visited.add(current)) {
+                break;
+            }
+            if (current instanceof dev.vertique.core.exception.TooManyRequestsException rateLimited) {
+                return new HandlerFailureMapping(
+                        McpErrorType.RATE_LIMIT,
+                        429,
+                        RATE_LIMITED,
+                        RATE_LIMIT_EXCEEDED_MESSAGE,
+                        rateLimited.retryAfter(),
+                        true,
+                        true);
+            }
+            if (current instanceof RateLimitUnavailableException) {
+                return new HandlerFailureMapping(
+                        McpErrorType.RATE_LIMIT,
+                        503,
+                        RATE_LIMITED,
+                        RATE_LIMIT_UNAVAILABLE_MESSAGE,
+                        Optional.empty(),
+                        true,
+                        true);
+            }
+            if (current instanceof ResilienceTimeoutException) {
+                return new HandlerFailureMapping(
+                        McpErrorType.TIMEOUT,
+                        504,
+                        INTERNAL_ERROR,
+                        RESILIENCE_TIMEOUT_MESSAGE,
+                        Optional.empty(),
+                        true,
+                        false);
+            }
+            if (current instanceof ResilienceUnavailableException) {
+                return new HandlerFailureMapping(
+                        McpErrorType.INTERNAL,
+                        503,
+                        INTERNAL_ERROR,
+                        RESILIENCE_UNAVAILABLE_MESSAGE,
+                        Optional.empty(),
+                        true,
+                        false);
+            }
+            current = current.getCause();
+        }
+        return HandlerFailureMapping.internal(McpErrorType.INTERNAL);
+    }
+
+    private record HandlerFailureMapping(
+            McpErrorType errorType,
+            int httpStatus,
+            int protocolCode,
+            String message,
+            Optional<Duration> retryAfter,
+            boolean noStore,
+            boolean rejected) {
+
+        private HandlerFailureMapping {
+            Objects.requireNonNull(errorType, "errorType");
+            Objects.requireNonNull(message, "message");
+            Objects.requireNonNull(retryAfter, "retryAfter");
+        }
+
+        private static HandlerFailureMapping internal(McpErrorType errorType) {
+            return new HandlerFailureMapping(
+                    errorType, 500, INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE, Optional.empty(), false, false);
+        }
     }
 
     /**
