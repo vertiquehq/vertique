@@ -3456,6 +3456,7 @@ final class McpRequestDispatcher {
                 status,
                 null,
                 protocolVersionOf(context),
+                originOf(context),
                 authorizationOf(context),
                 security,
                 correlationOf(context));
