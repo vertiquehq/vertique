@@ -16,6 +16,9 @@ import dev.vertique.mcp.server.McpServerModule;
 import dev.vertique.ratelimit.aop.RateLimitAopModule;
 import dev.vertique.ratelimit.dagger.RateLimitCoreModule;
 import dev.vertique.ratelimit.spi.RateLimitObserver;
+import dev.vertique.resilience.aop.ResilienceAopModule;
+import dev.vertique.resilience.dagger.ResilienceModule;
+import dev.vertique.resilience.dagger.ResiliencePoliciesModule;
 import dev.vertique.rest.auth.jwt.JwtAuthModule;
 import dev.vertique.rest.jaxrs.RestModule;
 import dev.vertique.rest.ratelimit.RestRateLimitModule;
@@ -35,6 +38,9 @@ import java.util.Set;
             JwtAuthModule.class,
             RateLimitCoreModule.class,
             RateLimitAopModule.class,
+            ResilienceModule.class,
+            ResiliencePoliciesModule.class,
+            ResilienceAopModule.class,
             RestRateLimitModule.class,
             McpServerModule.class,
             SanitizationModule.class,
@@ -49,4 +55,8 @@ interface McpExampleComponent extends VertiqueApplicationComponent {
     Set<RateLimitObserver> rateLimitObservers();
 
     RateLimitObservationRecorder rateLimitObservationRecorder();
+
+    McpResilienceObservationRecorder mcpResilienceObservationRecorder();
+
+    McpResilienceProbe mcpResilienceProbe();
 }

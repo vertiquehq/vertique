@@ -11,6 +11,7 @@ import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.lifecycle.LifecyclePhase;
 import dev.vertique.deploy.VerticleDeployment;
+import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
 import dev.vertique.mcp.server.McpServerConfig;
 import dev.vertique.ratelimit.spi.RateLimitObserver;
 import dev.vertique.rest.auth.jwt.JwtAuthFactory;
@@ -48,6 +49,24 @@ public final class McpExampleModule {
     @Provides
     @IntoSet
     static RateLimitObserver rateLimitObserver(RateLimitObservationRecorder recorder) {
+        return recorder;
+    }
+
+    @Provides
+    @Singleton
+    static McpResilienceObservationRecorder mcpResilienceObservationRecorder() {
+        return new McpResilienceObservationRecorder();
+    }
+
+    @Provides
+    @Singleton
+    static McpResilienceProbe mcpResilienceProbe() {
+        return McpResilienceProbe.shared();
+    }
+
+    @Provides
+    @IntoSet
+    static McpRequestCompletedListener mcpRequestCompletedListener(McpResilienceObservationRecorder recorder) {
         return recorder;
     }
 

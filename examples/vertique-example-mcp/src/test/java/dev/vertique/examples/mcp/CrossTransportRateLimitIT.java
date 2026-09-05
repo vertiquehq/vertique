@@ -228,6 +228,7 @@ class CrossTransportRateLimitIT {
                 .put("jaxrs", new JsonObject().put("validationStrategy", "none"))
                 .put("management", new JsonObject().put("enabled", false))
                 .put("mcp", mcp)
+                .put("resilience", new JsonObject().put("policies", new JsonObject()))
                 .put("rateLimit", new JsonObject().put("enabled", true).put("policies", policies));
     }
 
