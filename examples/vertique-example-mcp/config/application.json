@@ -4,11 +4,60 @@
     "port": 8080,
     "idleTimeoutSeconds": 30
   },
+  "jaxrs": {
+    "validationStrategy": "none"
+  },
   "mcp": {
     "enabled": true,
     "mountPath": "/mcp/*",
     "serverName": "vertique-weather-example",
     "serverVersion": "1.0.0",
-    "jsonProfile": "weather-example"
+    "jsonProfile": "weather-example",
+    "authenticationScheme": "bearerAuth",
+    "rateLimit": {
+      "tools": {
+        "weather.current": {"policy": "mcp-shared"},
+        "weather.observed": {"policy": "mcp-observed"},
+        "weather.ip": {"policy": "mcp-ip", "subject": "IP"},
+        "weather.double-charged": {"policy": "mcp-double"}
+      }
+    }
+  },
+  "rateLimit": {
+    "enabled": true,
+    "policies": {
+      "mcp-shared": {
+        "enabled": true,
+        "mode": "LOCAL",
+        "failureMode": "OPEN",
+        "revision": "v1",
+        "defaultCost": 1,
+        "algorithm": {"type": "TOKEN_BUCKET", "capacity": 2, "refill": {"type": "GREEDY", "tokens": 2, "periodMs": 3600000}}
+      },
+      "mcp-observed": {
+        "enabled": true,
+        "mode": "LOCAL",
+        "failureMode": "OPEN",
+        "revision": "v1",
+        "defaultCost": 1,
+        "algorithm": {"type": "TOKEN_BUCKET", "capacity": 10, "refill": {"type": "GREEDY", "tokens": 10, "periodMs": 3600000}}
+      },
+      "mcp-ip": {
+        "enabled": true,
+        "mode": "LOCAL",
+        "failureMode": "OPEN",
+        "revision": "v1",
+        "defaultCost": 1,
+        "algorithm": {"type": "TOKEN_BUCKET", "capacity": 1, "refill": {"type": "GREEDY", "tokens": 1, "periodMs": 3600000}}
+      },
+      "mcp-double": {
+        "enabled": true,
+        "mode": "LOCAL",
+        "failureMode": "OPEN",
+        "revision": "v1",
+        "defaultCost": 1,
+        "algorithm": {"type": "TOKEN_BUCKET", "capacity": 4, "refill": {"type": "GREEDY", "tokens": 4, "periodMs": 3600000}}
+      }
+    }
   }
 }

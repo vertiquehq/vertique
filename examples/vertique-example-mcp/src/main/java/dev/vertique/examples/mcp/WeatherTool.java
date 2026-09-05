@@ -9,13 +9,16 @@ import dev.vertique.mcp.annotation.McpToolParam;
 import dev.vertique.mcp.tool.McpCancellationSignal;
 import dev.vertique.mcp.tool.McpContent;
 import dev.vertique.mcp.tool.McpToolResult;
+import dev.vertique.ratelimit.aop.RateLimited;
+import dev.vertique.ratelimit.spi.AnonymousRateLimitPolicy;
+import dev.vertique.ratelimit.spi.RateLimitSubject;
 import io.vertx.core.Future;
 import jakarta.inject.Inject;
 import jakarta.validation.Valid;
 import java.util.List;
 
 /** Dependency-injected tool published by the MCP annotation processor. */
-public final class WeatherTool {
+public class WeatherTool {
     @Inject
     public WeatherTool() {}
 
@@ -52,5 +55,42 @@ public final class WeatherTool {
                         new McpContent.ResourceLink("https://example.test/weather", "weather-source"),
                         new McpContent.EmbeddedResource(
                                 new McpContent.TextResource("urn:vertique:weather", "text/plain", "clear")))));
+    }
+
+    @McpTool(
+            name = "weather.double-charged",
+            description = "A tool intentionally admitted by both MCP config and @RateLimited.",
+            readOnlyHint = true,
+            destructiveHint = false,
+            idempotentHint = true,
+            openWorldHint = false)
+    @RateLimited(
+            policy = "mcp-double",
+            subject = RateLimitSubject.EFFECTIVE_PRINCIPAL,
+            anonymous = AnonymousRateLimitPolicy.SHARED_BUCKET)
+    public Future<String> doubleCharged() {
+        return Future.succeededFuture("double-charge-proof");
+    }
+
+    @McpTool(
+            name = "weather.observed",
+            description = "A tool used to compare provider-neutral rate-limit observations.",
+            readOnlyHint = true,
+            destructiveHint = false,
+            idempotentHint = true,
+            openWorldHint = false)
+    public Future<String> observed() {
+        return Future.succeededFuture("observation-proof");
+    }
+
+    @McpTool(
+            name = "weather.ip",
+            description = "A tool admitted using the captured client IP subject.",
+            readOnlyHint = true,
+            destructiveHint = false,
+            idempotentHint = true,
+            openWorldHint = false)
+    public Future<String> ip() {
+        return Future.succeededFuture("ip-proof");
     }
 }

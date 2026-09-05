@@ -12,8 +12,12 @@ import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.lifecycle.LifecyclePhase;
 import dev.vertique.deploy.VerticleDeployment;
 import dev.vertique.mcp.server.McpServerConfig;
+import dev.vertique.ratelimit.spi.RateLimitObserver;
+import dev.vertique.rest.auth.jwt.JwtAuthFactory;
 import dev.vertique.rest.core.router.HttpVerticle;
+import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
+import io.vertx.ext.auth.jwt.JWTAuth;
 import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
 
@@ -26,6 +30,25 @@ public final class McpExampleModule {
     @Singleton
     static McpServerConfig mcpServerConfig(@VertxConfig JsonObject root, ConfigParser parser) {
         return parser.parse(root.getJsonObject("mcp", new JsonObject()), McpServerConfig.class);
+    }
+
+    @Provides
+    @Singleton
+    static JWTAuth jwtAuth(Vertx vertx) {
+        return JwtAuthFactory.fromSymmetricKey(
+                vertx, "HS256", "super-secret-key-for-example-app-minimum-256-bits-long!!");
+    }
+
+    @Provides
+    @Singleton
+    static RateLimitObservationRecorder rateLimitObservationRecorder() {
+        return new RateLimitObservationRecorder();
+    }
+
+    @Provides
+    @IntoSet
+    static RateLimitObserver rateLimitObserver(RateLimitObservationRecorder recorder) {
+        return recorder;
     }
 
     @Provides
