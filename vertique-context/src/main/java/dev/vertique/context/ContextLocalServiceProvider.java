@@ -13,7 +13,11 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Vert.x SPI provider that registers the single shared {@link ContextLocal} slot for the
+ * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
+ * outside the maturity promise. Applications program against the SPIs in
+ * {@code dev.vertique.core.context} and receive this runtime through the framework's Dagger wiring.
+ *
+ * <p>Vert.x SPI provider that registers the single shared {@link ContextLocal} slot for the
  * context-propagation substrate.
  *
  * <p>Loaded automatically via {@code META-INF/services/io.vertx.core.spi.VertxServiceProvider}

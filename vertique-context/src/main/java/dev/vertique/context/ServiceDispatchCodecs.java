@@ -15,6 +15,10 @@ import java.util.Objects;
 import java.util.function.Function;
 
 /**
+ * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
+ * outside the maturity promise. Applications program against the SPIs in
+ * {\ dev.vertique.core.context} and receive this runtime through the framework's Dagger wiring.
+ *
  * Static factory methods for common {@link ServiceDispatchContextEncoder} and
  * {@link ServiceDispatchContextDecoder} implementation patterns.
  *

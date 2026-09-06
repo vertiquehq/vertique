@@ -15,7 +15,11 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Validating registry for durable context metadata encoders and decoders.
+ * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
+ * outside the maturity promise. Applications program against the SPIs in
+ * {@code dev.vertique.core.context} and receive this runtime through the framework's Dagger wiring.
+ *
+ * <p>Validating registry for durable context metadata encoders and decoders.
  *
  * <p>Boot-time validation in the constructor enforces:
  * <ul>

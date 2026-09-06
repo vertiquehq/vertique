@@ -28,6 +28,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
+ * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
+ * outside the maturity promise. Applications program against the SPIs in
+ * {\ dev.vertique.core.context} and receive this runtime through the framework's Dagger wiring.
+ *
  * Orchestrates durable context metadata propagation across persistent boundaries such as Kafka
  * headers and outbox message metadata.
  *

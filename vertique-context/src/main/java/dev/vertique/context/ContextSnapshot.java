@@ -6,6 +6,10 @@ package dev.vertique.context;
 import java.util.Map;
 
 /**
+ * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
+ * outside the maturity promise. Applications program against the SPIs in
+ * {\ dev.vertique.core.context} and receive this runtime through the framework's Dagger wiring.
+ *
  * An opaque, immutable snapshot of all values bound in a Vert.x context-local slot at the moment
  * {@link ContextValues#snapshot()} was called.
  *
