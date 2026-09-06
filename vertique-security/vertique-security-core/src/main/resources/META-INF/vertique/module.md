@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Security Core Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.security` (identity/authentication/context), `dev.vertique.security.authz` (authorization model), `dev.vertique.security.events` (event records + observer SPI), `dev.vertique.security.origin` (network origin), `dev.vertique.security.resolver` (identity resolver SPI), `dev.vertique.security.channel` (channel SPI), `dev.vertique.security.verification` (verification sources)
 > **Artifact:** `vertique-security-core`
 > **Depends on:** core (ContextValue, correlation, extension ordering, exception roots), Vert.x core (Future), Jakarta Annotations

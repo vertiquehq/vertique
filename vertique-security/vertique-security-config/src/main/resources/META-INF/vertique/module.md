@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Security Config Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.security.config`
 > **Artifact:** `vertique-security-config`
 > **Depends on:** security-core, config-core
