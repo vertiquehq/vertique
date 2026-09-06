@@ -7,7 +7,11 @@ import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextScopes;
 
 /**
- * A public composite {@link ContextHolder.Scope} that closes its constituent scopes in reverse
+ * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
+ * outside the maturity promise. Applications program against the SPIs in
+ * {@code dev.vertique.core.context} and receive this runtime through the framework's Dagger wiring.
+ *
+ * <p>A public composite {@link ContextHolder.Scope} that closes its constituent scopes in reverse
  * (LIFO) order.
  *
  * <p>This is the public lift of the private inner {@code CompositeScope} inside

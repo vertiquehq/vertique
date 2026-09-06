@@ -14,7 +14,11 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * Internal framework binder that installs multiple context values into {@link ContextHolder} and
+ * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
+ * outside the maturity promise. Applications program against the SPIs in
+ * {@code dev.vertique.core.context} and receive this runtime through the framework's Dagger wiring.
+ *
+ * <p>Internal framework binder that installs multiple context values into {@link ContextHolder} and
  * returns a single scope that unwinds all of them on close.
  *
  * <p><b>Internal framework API; not for consumer use.</b>

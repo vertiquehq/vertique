@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Context Module (vertique-context)
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.context`
 > **Artifact:** `vertique-context`
 > **Depends on:** `dev.vertique:vertique-core`
@@ -217,6 +217,17 @@ If any initializer throws, every scope already opened is closed — initializer 
 The Dagger module that wires the substrate. It binds `ContextHolder` to the substrate implementation, declares the five empty multibinding sets (`ServiceDispatchContextEncoder`, `ServiceDispatchContextDecoder`, `DurableContextMetadataEncoder`, `DurableContextMetadataDecoder`, `InboundContextInitializer`), and contributes the built-in service-dispatch encoder/decoder pair for `DurablePropagationMetadata` so raw durable metadata survives in-process hops without any feature module (FR-CTX-143).
 
 No feature-specific bindings live here.
+
+### Framework seams
+
+This artifact has no application-facing type. Every public class in `dev.vertique.context` is a
+framework seam consumed by sibling framework modules, and each one says so in its Javadoc. What the
+Stable status promises is the documented behavior above — the write guard, the deep-copy rule, the
+registry validation, one namespace per durable encoder, decode-failure containment — and the Dagger
+wiring `ContextRuntimeModule` declares. Application code programs against the SPIs in
+`dev.vertique.core.context`: it injects `ContextHolder`, implements `ContextValue`, and contributes
+encoders, decoders, and initializers through the multibinding sets in its own Dagger module. A
+starter installs this runtime; no application imports it.
 
 ### Invariants & Gotchas
 

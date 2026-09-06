@@ -15,7 +15,11 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Captures the currently bound context values into a service-dispatch context map by iterating the
+ * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
+ * outside the maturity promise. Applications program against the SPIs in
+ * {@code dev.vertique.core.context} and receive this runtime through the framework's Dagger wiring.
+ *
+ * <p>Captures the currently bound context values into a service-dispatch context map by iterating the
  * registered {@link ServiceDispatchContextEncoder encoders}.
  *
  * <p>Used by framework service client factories before constructing the outgoing

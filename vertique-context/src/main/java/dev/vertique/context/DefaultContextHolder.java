@@ -22,7 +22,11 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /**
- * Default {@link ContextHolder} implementation backed by a Vert.x {@link ContextLocal} slot.
+ * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
+ * outside the maturity promise. Applications program against the SPIs in
+ * {@code dev.vertique.core.context} and receive this runtime through the framework's Dagger wiring.
+ *
+ * <p>Default {@link ContextHolder} implementation backed by a Vert.x {@link ContextLocal} slot.
  *
  * <p><b>Per-dispatch isolation via duplicated contexts.</b> Each FQCN key maps directly to its
  * currently-bound value in a per-context map. Concurrent dispatches must each run on their own

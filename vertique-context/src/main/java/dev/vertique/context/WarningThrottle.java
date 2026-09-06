@@ -8,7 +8,11 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 /**
- * Once-per-key WARN-log throttler used by the context substrate. Each unique key fires the
+ * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
+ * outside the maturity promise. Applications program against the SPIs in
+ * {@code dev.vertique.core.context} and receive this runtime through the framework's Dagger wiring.
+ *
+ * <p>Once-per-key WARN-log throttler used by the context substrate. Each unique key fires the
  * provided log action exactly once per process lifetime — useful for decode-warning logs that
  * would otherwise flood at one entry per record under a misbehaving encoder/decoder pair
  * (FR-CTX-132).

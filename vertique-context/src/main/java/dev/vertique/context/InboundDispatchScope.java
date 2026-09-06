@@ -9,7 +9,11 @@ import jakarta.inject.Singleton;
 import java.util.Map;
 
 /**
- * Internal Dagger-injected accessor for the framework's inbound dispatch path.
+ * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
+ * outside the maturity promise. Applications program against the SPIs in
+ * {@code dev.vertique.core.context} and receive this runtime through the framework's Dagger wiring.
+ *
+ * <p>Internal Dagger-injected accessor for the framework's inbound dispatch path.
  *
  * <p>Wraps two operations that the inbound service dispatcher
  * ({@code ServiceMethodInvoker}) needs at the start and during arg extraction of every dispatch:

@@ -8,7 +8,11 @@ import dev.vertique.core.context.ServiceDispatchContextEncoder;
 import dev.vertique.core.context.ServiceDispatchEncodeContext;
 
 /**
- * Service-dispatch encoder for {@link DurablePropagationMetadata}.
+ * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
+ * outside the maturity promise. Applications program against the SPIs in
+ * {@code dev.vertique.core.context} and receive this runtime through the framework's Dagger wiring.
+ *
+ * <p>Service-dispatch encoder for {@link DurablePropagationMetadata}.
  *
  * <p>Passes the {@link DurablePropagationMetadata} value through unchanged into the
  * service-dispatch context map. This allows service handlers invoked from a durable consumer

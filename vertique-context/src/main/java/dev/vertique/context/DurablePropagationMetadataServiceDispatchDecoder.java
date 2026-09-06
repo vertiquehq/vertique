@@ -11,7 +11,11 @@ import dev.vertique.core.context.ServiceDispatchDecodeContext;
 import java.util.List;
 
 /**
- * Service-dispatch decoder for {@link DurablePropagationMetadata}.
+ * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
+ * outside the maturity promise. Applications program against the SPIs in
+ * {@code dev.vertique.core.context} and receive this runtime through the framework's Dagger wiring.
+ *
+ * <p>Service-dispatch decoder for {@link DurablePropagationMetadata}.
  *
  * <p>Accepts an in-process dispatch-context map value as {@link DurablePropagationMetadata} if it
  * is already of that type (the matching encoder passes it through unchanged). Returns a failure
