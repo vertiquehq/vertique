@@ -112,7 +112,7 @@ public class ProfiledErrorResponseIT {
 
     private static final String OPINIONATED_PROFILE = "error-profile";
     private static final String THROWING_PROFILE = "throwing-error-profile";
-    private static final String VERTX_PROFILE = "vertx";
+    private static final String SYSTEM_PROFILE = "system";
 
     private HttpServer server;
     private WebClient client;
@@ -294,7 +294,7 @@ public class ProfiledErrorResponseIT {
     }
 
     /**
-     * Resource with an EXPLICIT {@code @JsonProfile("vertx")} and a {@code @Consumes("application/json")},
+     * Resource with an EXPLICIT {@code @JsonProfile("system")} and a {@code @Consumes("application/json")},
      * used by the 415-on-explicit-vertx regression test. The 415 check fires <em>before</em> the resource
      * method runs and (because the effective profile is the reserved {@code vertx} floor) before any
      * request-side mapper stash. Under a NON-{@code vertx} boundary default ({@code jaxrs.jsonProfile}),
@@ -302,7 +302,7 @@ public class ProfiledErrorResponseIT {
      * route's explicit decision, NOT the boundary default.
      */
     @Path("/vertx-consumes")
-    @JsonProfile(VERTX_PROFILE)
+    @JsonProfile(SYSTEM_PROFILE)
     public static class VertxConsumesResource {
 
         /**
@@ -348,7 +348,7 @@ public class ProfiledErrorResponseIT {
     }
 
     /**
-     * Static EXPLICIT {@code @JsonProfile("vertx")} route at {@code /overlap/fixed} with a
+     * Static EXPLICIT {@code @JsonProfile("system")} route at {@code /overlap/fixed} with a
      * {@code @Consumes("application/json")}, used by the overlapping-route idempotency regression test.
      * It overlaps with {@link OverlapParamResource} at {@code /overlap/{id}}: a POST to
      * {@code /overlap/fixed} pattern-matches BOTH routes. Registered MOST-SPECIFIC-FIRST (the static
@@ -359,7 +359,7 @@ public class ProfiledErrorResponseIT {
      * via the param route's opinionated profile.
      */
     @Path("/overlap/fixed")
-    @JsonProfile(VERTX_PROFILE)
+    @JsonProfile(SYSTEM_PROFILE)
     public static class OverlapFixedResource {
 
         /**
@@ -583,7 +583,7 @@ public class ProfiledErrorResponseIT {
 
     @Test
     @DisplayName(
-            "A 415 on a @JsonProfile(\"vertx\") route under a non-vertx boundary default serializes its body via vertx (null present), status+media-type preserved")
+            "A 415 on a @JsonProfile(\"system\") route under a non-system boundary default serializes its body via the system floor (null present), status+media-type preserved")
     void consumes415_explicitVertxRoute_usesVertxNotBoundaryDefault(Vertx vertx, VertxTestContext ctx) {
         // The route's effective profile is the EXPLICIT vertx floor, so NO request-side mapper is stashed,
         // and the @Consumes 415 check fires before the resource method. jaxrs.jsonProfile=error-profile
@@ -659,7 +659,7 @@ public class ProfiledErrorResponseIT {
             "A 415 on an explicit-vertx static route overlapping a profiled param route serializes its body via vertx (null present), NOT the param route's profile")
     void consumes415_overlappingExplicitVertxStaticAndProfiledParam_usesVertxNotParamProfile(
             Vertx vertx, VertxTestContext ctx) {
-        // /overlap/fixed is an EXPLICIT @JsonProfile("vertx") static route; /overlap/{id} is a profiled
+        // /overlap/fixed is an EXPLICIT @JsonProfile("system") static route; /overlap/{id} is a profiled
         // (@JsonProfile("error-profile")) param route that ALSO matches /overlap/fixed. Both are POST.
         // Under a NON-vertx boundary default (jaxrs.jsonProfile=error-profile), a POST to /overlap/fixed
         // with a mismatched Content-Type fires the static route's @Consumes 415 check. The static route

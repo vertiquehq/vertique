@@ -22,11 +22,11 @@ import jakarta.annotation.Nullable;
  * <p>Delegates serialization to {@link JacksonKafkaSerializer} and deserialization to
  * {@link JacksonKafkaDeserializer}. The backing Jackson {@code ObjectMapper} is resolved per endpoint
  * with a three-tier precedence (see {@link #resolveMapper}): a <strong>non-blank</strong>
- * {@code jsonProfile} bag key wins outright — an explicit {@code "vertx"} selects the shared
+ * {@code jsonProfile} bag key wins outright — an explicit {@code "system"} selects the shared
  * {@code DatabindCodec.mapper()} and <em>stops</em> (it does not fall through to the global default),
  * any other id is looked up in the injected {@link JsonMapperProfileRegistry} (FR-JSON-034/035); when
  * the bag carries no explicit id, the global {@code json.jsonProfile} default from the injected
- * {@link JsonConfig} applies (pre-resolved once at construction); otherwise the {@code vertx} floor.
+ * {@link JsonConfig} applies (pre-resolved once at construction); otherwise the {@code system} floor.
  * An unknown id fails fast with a {@code JsonProfileConfigurationException} (a bag id at
  * deserializer-build time; the global {@code json.jsonProfile} at construction/startup).
  *
@@ -60,7 +60,7 @@ public final class JsonSerdeProvider implements KafkaSerdeProvider {
      * (blank) {@code jsonProfile} key.
      *
      * <p>Precedence inside {@link #resolveMapper}: bag {@code jsonProfile} (non-blank) &gt;
-     * {@code json.jsonProfile} (non-blank) &gt; {@code vertx} floor ({@link DatabindCodec#mapper()}).
+     * {@code json.jsonProfile} (non-blank) &gt; {@code system} floor ({@link DatabindCodec#mapper()}).
      *
      * <p>The global-default mapper is resolved once at construction time — when
      * {@code jsonConfig.jsonProfile()} is non-null and non-blank, the result of
@@ -68,7 +68,7 @@ public final class JsonSerdeProvider implements KafkaSerdeProvider {
      * The per-message path then avoids a repeated {@code JsonProfileId.of} allocation and registry
      * lookup.
      *
-     * @param registry   the JSON mapper profile registry used to resolve non-{@code vertx} profile ids
+     * @param registry   the JSON mapper profile registry used to resolve non-{@code system} profile ids
      * @param jsonConfig the global JSON config carrying {@code json.jsonProfile}; use
      *                   {@link JsonConfig#defaults()} when no global default is configured
      */
@@ -227,11 +227,11 @@ public final class JsonSerdeProvider implements KafkaSerdeProvider {
      * three-tier precedence:
      * <ol>
      *   <li>Bag {@code jsonProfile} (non-blank) — an explicit per-endpoint / kafka-boundary
-     *       selection wins outright and stops resolution; an explicit {@code "vertx"} resolves to
+     *       selection wins outright and stops resolution; an explicit {@code "system"} resolves to
      *       {@link DatabindCodec#mapper()} and does NOT fall through to the global default.</li>
      *   <li>{@code json.jsonProfile} global default (non-blank) — the {@link JsonConfig} tier, applied
      *       only when the bag carries no explicit selection.</li>
-     *   <li>{@link DatabindCodec#mapper()} — the reserved {@code vertx} floor.</li>
+     *   <li>{@link DatabindCodec#mapper()} — the reserved {@code system} floor.</li>
      * </ol>
      *
      * <p>An unknown <strong>bag</strong> id throws {@code JsonProfileConfigurationException} here —
@@ -246,14 +246,14 @@ public final class JsonSerdeProvider implements KafkaSerdeProvider {
         String bagId = endpointConfig != null ? endpointConfig.getString("jsonProfile") : null;
         if (bagId != null && !bagId.isBlank()) {
             // An explicit per-endpoint / kafka-boundary selection wins outright and STOPS resolution —
-            // including an explicit "vertx", which resolves to DatabindCodec.mapper() and must NOT fall
+            // including an explicit "system", which resolves to DatabindCodec.mapper() and must NOT fall
             // through to the json.jsonProfile global default (precedence correctness).
-            return JsonProfileId.VERTX.value().equals(bagId)
+            return JsonProfileId.SYSTEM.value().equals(bagId)
                     ? DatabindCodec.mapper()
                     : registry.mapper(JsonProfileId.of(bagId));
         }
         // No explicit selection: apply the json.jsonProfile global default (pre-resolved once at
-        // construction to avoid a per-message JsonProfileId.of allocation), else the vertx floor.
+        // construction to avoid a per-message JsonProfileId.of allocation), else the system floor.
         return globalDefaultMapper != null ? globalDefaultMapper : DatabindCodec.mapper();
     }
 

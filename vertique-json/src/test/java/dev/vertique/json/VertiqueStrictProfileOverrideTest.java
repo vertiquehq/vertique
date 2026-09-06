@@ -70,14 +70,14 @@ class VertiqueStrictProfileOverrideTest {
     }
 
     @Test
-    @DisplayName("the vertx and vertique built-in profiles declare no schema overrides")
-    void vertxAndVertiqueProfilesDeclareNoOverrides() {
+    @DisplayName("the system and vertique built-in profiles declare no schema overrides")
+    void systemAndVertiqueProfilesDeclareNoOverrides() {
         DefaultJsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
 
-        JsonMapperProfile vertx = registry.profile(VertxJsonMapperProfile.ID);
+        JsonMapperProfile system = registry.profile(SystemJsonMapperProfile.ID);
         JsonMapperProfile vertique = registry.profile(VertiqueJsonMapperProfile.ID);
 
-        assertTrue(vertx.jsonSchemaTypeOverrides().isEmpty(), "vertx profile must declare no schema overrides");
+        assertTrue(system.jsonSchemaTypeOverrides().isEmpty(), "system profile must declare no schema overrides");
         assertTrue(vertique.jsonSchemaTypeOverrides().isEmpty(), "vertique profile must declare no schema overrides");
     }
 }

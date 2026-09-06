@@ -27,9 +27,9 @@ import java.util.Set;
  * profiles still wires) and binds {@link JsonMapperProfileRegistry} to
  * {@link DefaultJsonMapperProfileRegistry}.
  *
- * <p>The built-in {@code vertx} profile is <strong>not</strong> contributed into the set here — it
- * is seeded inside {@link DefaultJsonMapperProfileRegistry} separately from application profiles
- * (FR-JSON-007A).
+ * <p>The three built-in profiles ({@code system}, {@code vertique}, {@code vertique-strict}) are
+ * <strong>not</strong> contributed into the set here — they are seeded inside
+ * {@link DefaultJsonMapperProfileRegistry} separately from application profiles (FR-JSON-007A).
  */
 @Module
 public abstract class JsonRuntimeModule {
@@ -57,9 +57,14 @@ public abstract class JsonRuntimeModule {
      * Parses the {@code json} configuration section into a typed {@link JsonConfig} at the Dagger
      * provider boundary, via the injected canonical {@link ConfigParser} (config.md R10).
      *
+     * <p>The section carries both keys: {@code json.jsonProfile} (the managed-edge default, floor
+     * {@code vertique}) and {@code json.systemProfile} (the process-codec profile, floor
+     * {@code system}). Absent keys stay {@code null}; the floors live in the {@link JsonConfig}
+     * accessors.
+     *
      * @param config the root Vert.x configuration object
      * @param parser the canonical config parser
-     * @return the parsed {@link JsonConfig} carrying the global default profile id (or its default)
+     * @return the parsed {@link JsonConfig} carrying both profile ids (or their unset defaults)
      */
     @Provides
     @Singleton
@@ -68,11 +73,11 @@ public abstract class JsonRuntimeModule {
     }
 
     /**
-     * Contributes the global-default {@link JsonDefaultProfileValidator} into the
+     * Contributes the managed-edge-default {@link JsonDefaultProfileValidator} into the
      * {@code Set<ComposeValidator>} multibinding so the {@code VALIDATE} startup phase forces its
      * construction, failing fast when {@code json.jsonProfile} names an unknown profile.
      *
-     * @param impl the global default-profile validator
+     * @param impl the managed-edge default-profile validator
      * @return the validator contributed into the compose-validator set
      */
     @Provides

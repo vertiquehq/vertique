@@ -4,6 +4,7 @@
 package dev.vertique.json;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.core.StreamReadConstraints;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -16,7 +17,25 @@ import java.util.OptionalInt;
 import java.util.OptionalLong;
 
 /**
- * Applies the broadly-safe {@code vertique} opinionated JSON defaults to an {@link ObjectMapper}.
+ * Applies the framework's JSON recipes to an {@link ObjectMapper}, in two composable halves.
+ *
+ * <ul>
+ *   <li>{@link #applySystem(ObjectMapper)} — the <strong>baseline</strong> recipe backing the
+ *       reserved {@code system} profile: type support only ({@code Jdk8Module},
+ *       {@code JavaTimeModule}, ISO-8601 dates, Vert.x's Jackson module re-registered last) plus the
+ *       raw Vert.x factory's {@code StreamReadConstraints}. It carries <strong>no</strong>
+ *       inclusion, number, or enum opinion, so a mapper seeded from Vert.x's own mapper stays
+ *       byte-identical to it for every type it could already handle — except
+ *       {@code java.util.Date}/{@code Calendar}, which move from epoch millis to ISO-8601 (a
+ *       recorded, pinned delta: date support is the point of the recipe).</li>
+ *   <li>{@link #applyOpinionated(ObjectMapper)} — the framework's <strong>opinions</strong> on top:
+ *       {@code NON_NULL} default property inclusion, {@code NON_ABSENT} for the four
+ *       {@code Optional*} types, {@code USE_BIG_DECIMAL_FOR_FLOATS}, and
+ *       {@code READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE}.</li>
+ *   <li>{@link #apply(ObjectMapper)} — the existing public entry point, exactly
+ *       {@code applySystem} followed by {@code applyOpinionated}. It remains the definition of the
+ *       {@code vertique} profile.</li>
+ * </ul>
  *
  * <p>The defaults applied by {@link #apply(ObjectMapper)} are:
  * <ol>
@@ -39,6 +58,9 @@ import java.util.OptionalLong;
  *   <li>Empty optionals omitted on serialization (per-type {@code NON_ABSENT} inclusion overrides for
  *       the four {@code Optional*} types) — see the narrowed contract below.</li>
  * </ol>
+ *
+ * <p>Items 2 and 5 belong to the baseline half ({@code applySystem}); items 1, 3, 4 and 6 belong to
+ * the opinionated half ({@code applyOpinionated}).
  *
  * <p><strong>Empty-optional omission is narrowed to bean/record properties.</strong> Precisely:
  * <ul>
@@ -63,25 +85,33 @@ import java.util.OptionalLong;
  * {@link StrictStringDeserializer}) are deliberately <strong>not</strong> registered here.
  *
  * <p>The only <strong>persistent</strong> changes this helper makes are the six defaults listed
- * above. {@code MapperFeature.IGNORE_DUPLICATE_MODULE_REGISTRATIONS} is toggled off transiently to
- * force the final {@code VertxModule} re-registration to win, then restored to the value it had on
- * entry — a caller who deliberately disabled that feature keeps it disabled.
+ * above plus the {@code StreamReadConstraints} copy. {@code MapperFeature.IGNORE_DUPLICATE_MODULE_REGISTRATIONS}
+ * is toggled off transiently to force the final {@code VertxModule} re-registration to win, then
+ * restored to the value it had on entry — a caller who deliberately disabled that feature keeps it
+ * disabled.
  *
- * <p>The {@code vertique} built-in profile is exactly the output of
- * {@code JacksonDefaults.apply(new ObjectMapper())}.
+ * <p>The {@code system} built-in profile is exactly the output of
+ * {@code JacksonDefaults.applySystem(DatabindCodec.mapper().copy())}; the {@code vertique} built-in
+ * profile is exactly the output of {@code JacksonDefaults.apply(new ObjectMapper())}. The
+ * <strong>sanctioned seed for an application profile</strong> is
+ * {@code JacksonDefaults.applySystem(new ObjectMapper())}, then whatever the application needs.
  */
 public final class JacksonDefaults {
 
     private JacksonDefaults() {}
 
     /**
-     * Applies the broadly-safe {@code vertique} defaults to {@code mapper} and returns the same
-     * instance (mutates and returns).
+     * Applies the <strong>baseline</strong> ({@code system}) recipe to {@code mapper} and returns the
+     * same instance (mutates and returns). This is type support only — no inclusion, number, or enum
+     * opinion is applied, so a mapper seeded from Vert.x's own mapper keeps Vert.x's wire shape for
+     * every type it could already handle.
      *
      * <p>Applied in order:
      * <ol>
      *   <li>Register {@link JavaTimeModule} (ISO-8601 for the full {@code java.time} set).</li>
-     *   <li>Disable {@code WRITE_DATES_AS_TIMESTAMPS} (emit ISO-8601 strings, not numeric arrays).</li>
+     *   <li>Disable {@code WRITE_DATES_AS_TIMESTAMPS} (emit ISO-8601 strings, not numeric arrays —
+     *       this is also what moves {@code java.util.Date}/{@code Calendar} from epoch millis to
+     *       ISO-8601, the one recorded delta from the raw Vert.x mapper).</li>
      *   <li>Disable {@code ADJUST_DATES_TO_CONTEXT_TIME_ZONE} (preserve the original offset/zone on
      *       deserialization; a deserialized {@code OffsetDateTime} keeps its {@code +02:00}, not UTC).</li>
      *   <li>Register {@code Jdk8Module} ({@link java.util.Optional}, {@link java.util.OptionalInt},
@@ -89,6 +119,71 @@ public final class JacksonDefaults {
      *       their contained value; {@code java.util.stream} types are <strong>serialize-only</strong>,
      *       deserialization deliberately not provided). Registered <em>before</em> the {@code VertxModule}
      *       re-registration below so Vert.x's {@code Instant} serializer stays authoritative.</li>
+     *   <li>Copy the raw Vert.x factory's {@link StreamReadConstraints} onto this mapper's factory, so
+     *       an operator's {@code vertx.jackson.defaultRead*} limits hold for every mapper built from
+     *       this recipe — including one seeded from a fresh {@link ObjectMapper}, which would
+     *       otherwise carry Jackson's stock limits.</li>
+     *   <li>Re-register {@link VertxJsonSupport#module()} <strong>last</strong> so that Vert.x's
+     *       {@code Instant} serializer overrides the one from {@code JavaTimeModule} — keeping
+     *       {@code Instant} output byte-identical to the raw Vert.x mapper (NFR-JSON-012).
+     *       Because {@code MapperFeature.IGNORE_DUPLICATE_MODULE_REGISTRATIONS} is ON by default, the
+     *       final registration is wrapped in a temporary toggle of that feature so it still takes effect
+     *       even when a caller had already registered {@code VertxModule} on the mapper — otherwise the
+     *       re-registration would be a silent no-op and jsr310's serializer would stay authoritative
+     *       (FR-JSON-047). The toggle is scoped to this one registration and the feature is restored in a
+     *       {@code finally} block to the value it had on entry.</li>
+     * </ol>
+     *
+     * @param mapper the {@link ObjectMapper} to configure; must not be {@code null}
+     * @return the same {@code mapper} instance, now carrying the baseline recipe
+     */
+    public static ObjectMapper applySystem(ObjectMapper mapper) {
+        mapper.registerModule(new JavaTimeModule());
+        mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        mapper.disable(DeserializationFeature.ADJUST_DATES_TO_CONTEXT_TIME_ZONE);
+        // JDK8 Optional/OptionalInt/OptionalLong/OptionalDouble ser+deser (java.util.stream types are
+        // serialize-only). Registered BEFORE the VertxModule re-registration below so that Vert.x's
+        // Instant serializer stays authoritative (NFR-JSON-012).
+        mapper.registerModule(new Jdk8Module());
+        // Carry the raw Vert.x factory's stream-read limits explicitly. A copy() of Vert.x's mapper
+        // already inherits them, but a fresh ObjectMapper does not — and the operator-tuned
+        // vertx.jackson.defaultRead* limits must hold for every mapper built from this recipe.
+        // SystemJsonMapperProfile is the single file in this package that reads Vert.x's raw mapper.
+        mapper.getFactory().setStreamReadConstraints(SystemJsonMapperProfile.rawStreamReadConstraints());
+        // Re-register VertxModule LAST so Vert.x's Instant/JsonObject/Buffer serializers remain
+        // authoritative — they override JavaTimeModule's Instant serializer (NFR-JSON-012, FR-JSON-047).
+        //
+        // MapperFeature.IGNORE_DUPLICATE_MODULE_REGISTRATIONS is ON by default, so if a CALLER already
+        // registered VertxJsonSupport.module() on this mapper before calling applySystem(), a plain
+        // registerModule(VertxModule) here would be a silent no-op — leaving JavaTimeModule's jsr310
+        // Instant serializer authoritative instead of Vert.x's. Temporarily disable dedup so this final
+        // registration always re-applies Vert.x's serializers (making them win), then restore the
+        // feature to the value it had on entry. The toggle is scoped to this single registration; a
+        // caller who deliberately disabled dedup keeps it disabled (we never force it back to true).
+        //
+        // Jackson records a module's type id in getRegisteredModuleIds() only when dedup is ENABLED at
+        // registration time. The process-codec install guard reads that set to prove VertxModule is
+        // present, so register once with dedup on (records the id; a no-op on a mapper that already
+        // carries it) before the dedup-off re-registration below that makes Vert.x's serializers win.
+        boolean origDedup = mapper.isEnabled(MapperFeature.IGNORE_DUPLICATE_MODULE_REGISTRATIONS);
+        try {
+            mapper.configure(MapperFeature.IGNORE_DUPLICATE_MODULE_REGISTRATIONS, true);
+            mapper.registerModule(VertxJsonSupport.module());
+            mapper.configure(MapperFeature.IGNORE_DUPLICATE_MODULE_REGISTRATIONS, false);
+            mapper.registerModule(VertxJsonSupport.module());
+        } finally {
+            mapper.configure(MapperFeature.IGNORE_DUPLICATE_MODULE_REGISTRATIONS, origDedup);
+        }
+        return mapper;
+    }
+
+    /**
+     * Applies the framework's <strong>opinions</strong> to {@code mapper} and returns the same
+     * instance (mutates and returns). Intended to be layered on
+     * {@link #applySystem(ObjectMapper)}; it registers no module and changes no type support.
+     *
+     * <p>Applied in order:
+     * <ol>
      *   <li>Set a per-type {@link JsonInclude.Include#NON_ABSENT} inclusion override
      *       ({@code configOverride}) on each of the four {@code Optional*} types, so an empty optional is
      *       omitted from a serialized bean/record property. {@code NON_ABSENT} (rather than
@@ -100,17 +195,6 @@ public final class JacksonDefaults {
      *       {@code null} element/value, and an explicit {@code @JsonInclude} on a property wins over this
      *       override. Missing properties bind to {@code Optional.empty()} through creator/record binding;
      *       an unset mutable-POJO setter/field stays Java {@code null}.</li>
-     *   <li>Re-register {@link VertxJsonSupport#module()} <strong>last</strong> so that Vert.x's
-     *       {@code Instant} serializer overrides the one from {@code JavaTimeModule} — keeping
-     *       {@code Instant} output byte-identical to the {@code vertx} built-in profile (NFR-JSON-012).
-     *       Because {@code MapperFeature.IGNORE_DUPLICATE_MODULE_REGISTRATIONS} is ON by default, the
-     *       final registration is wrapped in a temporary toggle of that feature so it still takes effect
-     *       even when a caller had already registered {@code VertxModule} on the mapper — otherwise the
-     *       re-registration would be a silent no-op and jsr310's serializer would stay authoritative
-     *       (FR-JSON-047). The toggle is scoped to this one registration and the feature is restored in a
-     *       {@code finally} block to the value it had on entry — so a caller who deliberately disabled
-     *       dedup keeps it disabled; this method's only persistent changes are the six documented
-     *       defaults listed here.</li>
      *   <li>Enable {@code READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE} (unknown enum strings map to
      *       the {@code @JsonEnumDefaultValue}-annotated constant; enums without that annotation still
      *       reject unknown values).</li>
@@ -119,28 +203,10 @@ public final class JacksonDefaults {
      *   <li>Set serialization inclusion to {@link JsonInclude.Include#NON_NULL} (null fields omitted).</li>
      * </ol>
      *
-     * <p>This method does <strong>not</strong> change {@link java.math.BigDecimal} serialization (stays
-     * a JSON number — stock Jackson behavior) or {@link String} coercion. Callers wishing string-form
-     * {@code BigDecimal} or strict-string deserialization should register the opt-in serdes separately.
-     *
-     * <p>The empty-optional omission contract is narrowed to bean/record properties; see the class
-     * javadoc for the exact boundaries (root values, collection elements, map values, mutable-POJO
-     * binding, and per-property {@code @JsonInclude} precedence).
-     *
      * @param mapper the {@link ObjectMapper} to configure; must not be {@code null}
-     * @return the same {@code mapper} instance, now configured with the {@code vertique} defaults
-     * @see BigDecimalAsStringSerializer
-     * @see BigDecimalStrictStringDeserializer
-     * @see StrictStringDeserializer
+     * @return the same {@code mapper} instance, now carrying the framework's opinions
      */
-    public static ObjectMapper apply(ObjectMapper mapper) {
-        mapper.registerModule(new JavaTimeModule());
-        mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
-        mapper.disable(DeserializationFeature.ADJUST_DATES_TO_CONTEXT_TIME_ZONE);
-        // JDK8 Optional/OptionalInt/OptionalLong/OptionalDouble ser+deser (java.util.stream types are
-        // serialize-only). Registered BEFORE the VertxModule re-registration below so that Vert.x's
-        // Instant serializer stays authoritative (NFR-JSON-012).
-        mapper.registerModule(new Jdk8Module());
+    public static ObjectMapper applyOpinionated(ObjectMapper mapper) {
         // Empty optionals are omitted from bean/record properties. NON_ABSENT (not NON_NULL) is what
         // reaches "inside" the reference type: NON_NULL only suppresses a null Optional reference,
         // while NON_ABSENT also suppresses a present-but-empty Optional. The value-inclusion slot is
@@ -152,26 +218,34 @@ public final class JacksonDefaults {
         mapper.configOverride(OptionalInt.class).setInclude(optIncl);
         mapper.configOverride(OptionalLong.class).setInclude(optIncl);
         mapper.configOverride(OptionalDouble.class).setInclude(optIncl);
-        // Re-register VertxModule LAST so Vert.x's Instant/JsonObject/Buffer serializers remain
-        // authoritative — they override JavaTimeModule's Instant serializer (NFR-JSON-012, FR-JSON-047).
-        //
-        // MapperFeature.IGNORE_DUPLICATE_MODULE_REGISTRATIONS is ON by default, so if a CALLER already
-        // registered VertxJsonSupport.module() on this mapper before calling apply(), a plain
-        // registerModule(VertxModule) here would be a silent no-op — leaving JavaTimeModule's jsr310
-        // Instant serializer authoritative instead of Vert.x's. Temporarily disable dedup so this final
-        // registration always re-applies Vert.x's serializers (making them win), then restore the
-        // feature to the value it had on entry. The toggle is scoped to this single registration; a
-        // caller who deliberately disabled dedup keeps it disabled (we never force it back to true).
-        boolean origDedup = mapper.isEnabled(MapperFeature.IGNORE_DUPLICATE_MODULE_REGISTRATIONS);
-        try {
-            mapper.configure(MapperFeature.IGNORE_DUPLICATE_MODULE_REGISTRATIONS, false);
-            mapper.registerModule(VertxJsonSupport.module());
-        } finally {
-            mapper.configure(MapperFeature.IGNORE_DUPLICATE_MODULE_REGISTRATIONS, origDedup);
-        }
         mapper.enable(DeserializationFeature.READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE);
         mapper.enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
         mapper.setSerializationInclusion(JsonInclude.Include.NON_NULL);
         return mapper;
+    }
+
+    /**
+     * Applies the broadly-safe {@code vertique} defaults to {@code mapper} and returns the same
+     * instance (mutates and returns) — exactly {@link #applySystem(ObjectMapper)} followed by
+     * {@link #applyOpinionated(ObjectMapper)}.
+     *
+     * <p>This method does <strong>not</strong> change {@link java.math.BigDecimal} serialization (stays
+     * a JSON number — stock Jackson behavior) or {@link String} coercion. Callers wishing string-form
+     * {@code BigDecimal} or strict-string deserialization should register the opt-in serdes separately.
+     *
+     * <p>The empty-optional omission contract is narrowed to bean/record properties; see the class
+     * javadoc for the exact boundaries (root values, collection elements, map values, mutable-POJO
+     * binding, and per-property {@code @JsonInclude} precedence).
+     *
+     * @param mapper the {@link ObjectMapper} to configure; must not be {@code null}
+     * @return the same {@code mapper} instance, now configured with the {@code vertique} defaults
+     * @see #applySystem(ObjectMapper)
+     * @see #applyOpinionated(ObjectMapper)
+     * @see BigDecimalAsStringSerializer
+     * @see BigDecimalStrictStringDeserializer
+     * @see StrictStringDeserializer
+     */
+    public static ObjectMapper apply(ObjectMapper mapper) {
+        return applyOpinionated(applySystem(mapper));
     }
 }

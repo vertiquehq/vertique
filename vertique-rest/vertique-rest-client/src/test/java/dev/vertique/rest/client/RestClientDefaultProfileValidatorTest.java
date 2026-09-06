@@ -241,15 +241,15 @@ class RestClientDefaultProfileValidatorTest {
         }
 
         /**
-         * Provides {@link RestClientDefaults} with the reserved {@code vertx} id (always
+         * Provides {@link RestClientDefaults} with the reserved {@code system} id (always
          * registered).
          *
-         * @return a {@link RestClientDefaults} carrying the {@code "vertx"} id
+         * @return a {@link RestClientDefaults} carrying the {@code "system"} id
          */
         @Provides
         @Singleton
         static RestClientDefaults restClientDefaults() {
-            return new RestClientDefaults("vertx");
+            return new RestClientDefaults("system");
         }
     }
 

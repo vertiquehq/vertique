@@ -58,7 +58,7 @@ class CaffeineCacheStoreTest {
     @Test
     void storesOneBoundPerLogicalRegion() {
         CacheConfig config =
-                new CacheConfig(true, CacheMode.LOCAL, 60, 86_400, "vertx", 1_024, 1_048_576, 1, 100, Map.of());
+                new CacheConfig(true, CacheMode.LOCAL, 60, 86_400, "system", 1_024, 1_048_576, 1, 100, Map.of());
         CaffeineCacheStore store = new CaffeineCacheStore(config);
         ResolvedCacheKey secondUser = new ResolvedCacheKey(REGION, "i2:N", "43");
         ResolvedCacheKey order = new ResolvedCacheKey(new CacheRegion("cache", "orders", 2), "i2:N", "42");
@@ -90,7 +90,7 @@ class CaffeineCacheStoreTest {
     @Test
     void disabledAndNullWritesRemainMisses() {
         CacheConfig disabled =
-                new CacheConfig(false, CacheMode.LOCAL, 60, 86_400, "vertx", 1_024, 1_048_576, 10, 100, Map.of());
+                new CacheConfig(false, CacheMode.LOCAL, 60, 86_400, "system", 1_024, 1_048_576, 10, 100, Map.of());
         CaffeineCacheStore store = new CaffeineCacheStore(disabled);
 
         await(put(store, KEY, "ignored", String.class, Duration.ZERO));
@@ -100,12 +100,12 @@ class CaffeineCacheStoreTest {
     }
 
     private static Future<Optional<Object>> get(CaffeineCacheStore store, ResolvedCacheKey key, Class<?> type) {
-        return store.get(key, new CacheValueDescriptor(type, "vertx"));
+        return store.get(key, new CacheValueDescriptor(type, "system"));
     }
 
     private static Future<Void> put(
             CaffeineCacheStore store, ResolvedCacheKey key, Object value, Class<?> type, Duration ttl) {
-        return store.put(key, new CacheValueDescriptor(type, "vertx"), value, ttl);
+        return store.put(key, new CacheValueDescriptor(type, "system"), value, ttl);
     }
 
     private static <T> T await(io.vertx.core.Future<T> future) {

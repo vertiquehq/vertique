@@ -63,7 +63,7 @@ class CacheDaggerGraphIT {
                                 .put("defaultMode", "CLUSTERED")
                                 .put("defaultTtlSeconds", 60)
                                 .put("maxTtlSeconds", 86_400)
-                                .put("jsonProfile", "vertx")
+                                .put("jsonProfile", "system")
                                 .put("maxKeyBytes", 1_024)
                                 .put("maxValueBytes", 1_048_576)
                                 .put("maximumEntries", 10_000)

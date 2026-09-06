@@ -270,7 +270,7 @@ class RestClientMapperPrecedenceTest {
         @DisplayName("explicitVertxProfile_resolvesDatabindCodec_withoutRegistry — id 'vertx' needs no registry")
         void explicitVertxProfile_resolvesDatabindCodec_withoutRegistry() {
             // Builder-level profile explicitly set to vertx; no registry seeded.
-            RestClientBuilder builder = RestClientBuilder.create(vertx).jsonProfile(JsonProfileId.VERTX);
+            RestClientBuilder builder = RestClientBuilder.create(vertx).jsonProfile(JsonProfileId.SYSTEM);
 
             ObjectMapper resolved = builder.resolveEffectiveMapper(null, PlainClient.class, "svc");
 

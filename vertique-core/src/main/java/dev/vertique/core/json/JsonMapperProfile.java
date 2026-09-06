@@ -12,8 +12,9 @@ import java.util.List;
  * <p>A profile pairs a stable {@link JsonProfileId} with a configured Jackson {@link ObjectMapper}.
  * Applications contribute profiles to bind framework JSON boundaries (request body parsing, REST
  * client serialization, Kafka serde) to a specific mapper configuration. The reserved
- * {@link JsonProfileId#VERTX} profile is the zero-config default and is supplied by the framework;
- * applications must not contribute a profile with that id.
+ * {@link JsonProfileId#SYSTEM} profile is the framework-supplied baseline; applications must not
+ * contribute a profile with that id, with either of the other reserved ids ({@code vertique},
+ * {@code vertique-strict}), or with the retired {@code vertx} id.
  */
 public interface JsonMapperProfile {
 
@@ -25,8 +26,13 @@ public interface JsonMapperProfile {
     JsonProfileId id();
 
     /**
-     * Returns the configured Jackson mapper this profile exposes. Implementations return the same
-     * mapper instance on each call; callers must not mutate it.
+     * Returns the configured Jackson mapper this profile exposes.
+     *
+     * <p>Implementations return <strong>one stable instance per profile</strong>: every call returns
+     * the same {@link ObjectMapper} reference, so callers may compare mappers by identity to decide
+     * whether two boundaries share a configuration. Callers must not mutate the returned mapper —
+     * Jackson forbids reconfiguring a mapper after first use, and the registry validates a profile
+     * once, at construction: it cannot prevent post-boot reconfiguration, which this contract forbids.
      *
      * @return the non-null {@link ObjectMapper} backing this profile
      */

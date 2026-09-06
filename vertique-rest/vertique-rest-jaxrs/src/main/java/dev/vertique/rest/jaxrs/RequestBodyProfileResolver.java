@@ -49,16 +49,16 @@ final class RequestBodyProfileResolver {
      * @param meta the resource-method metadata carrying the method and class annotations
      * @param config the JAX-RS routing config supplying the {@code jaxrs.jsonProfile} default
      * @param jsonConfig the global JSON config supplying the {@code json.jsonProfile} default
-     * @param registry the profile registry used to resolve a non-{@code vertx} id to its mapper
-     * @return the resolved {@link ObjectMapper} when a non-{@code vertx} profile applies, or
-     *     {@code null} when the effective profile is {@code vertx} (today's default path)
-     * @throws dev.vertique.core.json.JsonProfileConfigurationException if the effective non-{@code vertx}
+     * @param registry the profile registry used to resolve a non-{@code system} id to its mapper
+     * @return the resolved {@link ObjectMapper} when a non-{@code system} profile applies, or
+     *     {@code null} when the effective profile is {@code system} (today's default path)
+     * @throws dev.vertique.core.json.JsonProfileConfigurationException if the effective non-{@code system}
      *     id is not registered
      */
     static @Nullable ObjectMapper resolveRequestBodyMapper(
             ResourceMethodMeta meta, JaxRsConfig config, JsonConfig jsonConfig, JsonMapperProfileRegistry registry) {
         String effectiveId = resolveEffectiveId(meta, config, jsonConfig);
-        if (JsonProfileId.VERTX.value().equals(effectiveId)) {
+        if (JsonProfileId.SYSTEM.value().equals(effectiveId)) {
             return null;
         }
         return registry.mapper(JsonProfileId.of(effectiveId));
@@ -69,7 +69,7 @@ final class RequestBodyProfileResolver {
      * <em>absent</em> (harmonized blank-fall-through, mirroring rest-client/kafka): the non-blank
      * method {@code @JsonProfile} value, then the non-blank class {@code @JsonProfile} value, then the
      * non-blank {@code jaxrs.jsonProfile} default, then the non-blank global {@code json.jsonProfile}
-     * default, then the reserved {@code vertx} id.
+     * default, then the reserved {@code system} id.
      *
      * <p>A blank ({@code ""} or whitespace) method-level {@code @JsonProfile} therefore falls through
      * to the class annotation rather than masking it, and a blank class-level {@code @JsonProfile}
@@ -84,13 +84,13 @@ final class RequestBodyProfileResolver {
     private static String resolveEffectiveId(ResourceMethodMeta meta, JaxRsConfig config, JsonConfig jsonConfig) {
         // Precedence with blank-as-absent: method annotation, then class annotation, then the per-boundary
         // jaxrs.jsonProfile, then the global json.jsonProfile. A null/blank at every tier falls through to
-        // the reserved vertx floor (resolved to a null mapper by the caller).
+        // the reserved system floor (resolved to a null mapper by the caller).
         String resolved = Strings.firstNonBlank(
                 annotationValue(meta.methodAnnotations()),
                 annotationValue(meta.classAnnotations()),
                 config.jsonProfile(),
                 jsonConfig.jsonProfile());
-        return resolved != null ? resolved : JsonProfileId.VERTX.value();
+        return resolved != null ? resolved : JsonProfileId.SYSTEM.value();
     }
 
     /**

@@ -50,7 +50,7 @@ final class McpJsonProfileITFixture {
         private final Map<JsonProfileId, JsonMapperProfile> profilesById = new LinkedHashMap<>();
 
         private FixtureProfileRegistry() {
-            profilesById.put(JsonProfileId.VERTX, new NoOverrideProfile(JsonProfileId.VERTX));
+            profilesById.put(JsonProfileId.SYSTEM, new NoOverrideProfile(JsonProfileId.SYSTEM));
             JsonProfileId vertiqueId = JsonProfileId.of("vertique");
             profilesById.put(vertiqueId, new NoOverrideProfile(vertiqueId));
             JsonProfileId overrideId = JsonProfileId.of(STRING_OVERRIDE_PROFILE_ID);

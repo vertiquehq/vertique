@@ -258,7 +258,7 @@ class McpJsonProfileBindingTest {
                             "mcp-default",
                             "global-default",
                             "strict",
-                            JsonProfileId.VERTX.value(),
+                            JsonProfileId.SYSTEM.value(),
                             "vertique")
                     .map(StubProfile::new)
                     .forEach(profile -> profilesById.put(profile.id(), profile));

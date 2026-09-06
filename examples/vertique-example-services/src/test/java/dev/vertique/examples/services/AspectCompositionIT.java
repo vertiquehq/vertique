@@ -160,7 +160,7 @@ public class AspectCompositionIT {
                 .put("defaultMode", "LOCAL")
                 .put("defaultTtlSeconds", 60)
                 .put("maxTtlSeconds", 86_400)
-                .put("jsonProfile", "vertx")
+                .put("jsonProfile", "system")
                 .put("maxKeyBytes", 1_024)
                 .put("maxValueBytes", 1_048_576)
                 .put("maximumEntries", 10_000)
@@ -173,13 +173,13 @@ public class AspectCompositionIT {
                                         new JsonObject()
                                                 .put("mode", "LOCAL")
                                                 .put("ttlSeconds", 60)
-                                                .put("jsonProfile", "vertx"))
+                                                .put("jsonProfile", "system"))
                                 .put(
                                         "composition",
                                         new JsonObject()
                                                 .put("mode", "LOCAL")
                                                 .put("ttlSeconds", 60)
-                                                .put("jsonProfile", "vertx")));
+                                                .put("jsonProfile", "system")));
     }
 
     private static void assertThrowsCompletion(CompositionProbeServiceHandler handler, String key) {

@@ -214,16 +214,16 @@ class JaxRsDefaultProfileValidatorTest {
         }
     }
 
-    /** Supplies a {@link JaxRsConfig} whose {@code jaxrs.jsonProfile} is the reserved {@code vertx} id. */
+    /** Supplies a {@link JaxRsConfig} whose {@code jaxrs.jsonProfile} is the reserved {@code system} id. */
     @Module
     abstract static class KnownConfigModule {
 
         /**
-         * @return a {@link JaxRsConfig} with {@code jsonProfile} set to {@code vertx}
+         * @return a {@link JaxRsConfig} with {@code jsonProfile} set to {@code system}
          */
         @Provides
         static JaxRsConfig jaxRsConfig() {
-            return JaxRsConfig.builder().jsonProfile("vertx").build();
+            return JaxRsConfig.builder().jsonProfile("system").build();
         }
 
         /**

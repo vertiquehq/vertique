@@ -81,7 +81,7 @@ class CacheContractsTest {
                         CacheMode.LOCAL,
                         60,
                         120,
-                        "vertx",
+                        "system",
                         1_024,
                         1_048_576,
                         10_000,

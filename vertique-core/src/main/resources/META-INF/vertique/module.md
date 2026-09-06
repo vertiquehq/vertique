@@ -428,7 +428,7 @@ surfaces under different Jackson policies.
 
 ```java
 public record JsonProfileId(String value) {
-    public static final JsonProfileId VERTX;     // "vertx"
+    public static final JsonProfileId SYSTEM;    // "system"
     public static JsonProfileId of(String value);
 }
 
@@ -446,6 +446,10 @@ MCP tools accept both TYPE and METHOD with method-level overriding type-level, w
 interfaces and Kafka listeners/producers accept TYPE only. `JsonProfileId` trims its value and
 rejects `null` or blank. Looking up an unknown id throws `JsonProfileConfigurationException`, which
 extends `ConfigurationException`. The registry implementation ships in `dev.vertique:vertique-json`.
+
+`JsonProfileId.SYSTEM` (`"system"`) is the reserved baseline id. The id `"vertx"` is **retired**: it
+was renamed `system`, and the registry rejects it — as a configured id and as an
+application-contributed profile id — with a message naming the rename.
 
 ### JSON schema overrides on a profile
 
@@ -812,8 +816,11 @@ public interface JsonMapperProfile {
 ```
 
 The registry that collects profiles ships in `dev.vertique:vertique-json`; contribute a profile
-through that module's multibinding. `JsonProfileId.VERTX` (`"vertx"`) is reserved for the Vert.x
-shared mapper.
+through that module's multibinding. `JsonProfileId.SYSTEM` (`"system"`) is reserved for the baseline
+profile; `vertique` and `vertique-strict` are reserved too. `mapper()` returns **one stable instance
+per profile** — the same reference on every call — and callers never mutate it. A registry
+implementation must register all three reserved ids; no application profile may activate Jackson
+default typing or claim the retired `vertx` id.
 
 `jsonSchemaTypeOverrides()` declares the schema overrides described under
 [JSON schema overrides on a profile](#json-schema-overrides-on-a-profile). It defaults to an empty

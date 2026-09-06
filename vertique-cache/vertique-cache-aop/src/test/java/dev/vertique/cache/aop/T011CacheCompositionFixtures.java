@@ -39,7 +39,7 @@ public final class T011CacheCompositionFixtures {
 
     /** Returns a deterministic cache configuration for one selected placement mode. */
     public static CacheConfig config(CacheMode mode, boolean enabled) {
-        return new CacheConfig(enabled, mode, 60, 86_400, "vertx", 1_024, 1_048_576, 100, 100, Map.of());
+        return new CacheConfig(enabled, mode, 60, 86_400, "system", 1_024, 1_048_576, 100, 100, Map.of());
     }
 
     /** Awaits a Vert.x future with a bounded test timeout. */

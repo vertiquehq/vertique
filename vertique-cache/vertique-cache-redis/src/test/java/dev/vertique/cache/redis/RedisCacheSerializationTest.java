@@ -51,7 +51,8 @@ class RedisCacheSerializationTest {
         String entryKey = RedisCacheKey.entry(KEY, "generation-1", REDIS_CONFIG, cacheConfig());
         commands.values.put(generationKey, "generation-1");
         commands.values.put(entryKey, "not-json");
-        RedisCacheStore store = RedisTestFixtures.store(commands, cacheConfig(), profiles("vertx", new ObjectMapper()));
+        RedisCacheStore store =
+                RedisTestFixtures.store(commands, cacheConfig(), profiles("system", new ObjectMapper()));
 
         assertThrows(Exception.class, () -> await(get(store, KEY, Profile.class)));
     }

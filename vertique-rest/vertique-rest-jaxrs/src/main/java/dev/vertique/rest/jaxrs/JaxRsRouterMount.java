@@ -346,15 +346,15 @@ public class JaxRsRouterMount implements RouterMount {
      *
      * @param jaxRsConfig the JAX-RS routing config supplying the {@code jaxrs.jsonProfile} default
      * @param jsonConfig the global JSON config supplying the {@code json.jsonProfile} default
-     * @param registry the profile registry used to resolve a non-{@code vertx} id to its mapper
-     * @return the resolved default mapper, or {@code null} when the effective default is {@code vertx}
-     * @throws dev.vertique.core.json.JsonProfileConfigurationException if the effective non-{@code vertx}
+     * @param registry the profile registry used to resolve a non-{@code system} id to its mapper
+     * @return the resolved default mapper, or {@code null} when the effective default is {@code system}
+     * @throws dev.vertique.core.json.JsonProfileConfigurationException if the effective non-{@code system}
      *     id is not registered
      */
     private static @Nullable ObjectMapper resolveNoMethodDefaultMapper(
             JaxRsConfig jaxRsConfig, JsonConfig jsonConfig, JsonMapperProfileRegistry registry) {
         String configured = Strings.firstNonBlank(jaxRsConfig.jsonProfile(), jsonConfig.jsonProfile());
-        if (configured == null || JsonProfileId.VERTX.value().equals(configured)) {
+        if (configured == null || JsonProfileId.SYSTEM.value().equals(configured)) {
             return null;
         }
         return registry.mapper(JsonProfileId.of(configured));

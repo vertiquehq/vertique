@@ -494,12 +494,12 @@ public final class RestClientBuilder {
      * <p>Precedence at build time (highest to lowest): explicit {@code objectMapper} &gt; config
      * {@code restClient.&lt;name&gt;.jsonProfile} &gt; this builder-level profile &gt;
      * interface-level {@link JsonProfile} annotation &gt; {@code restClient.defaults.jsonProfile}
-     * boundary default &gt; global {@code json.jsonProfile} &gt; {@code vertx} default.
+     * boundary default &gt; global {@code json.jsonProfile} &gt; the reserved {@code system} default.
      *
      * <p>Passing {@code null} clears any builder-level selection; the effective profile then falls
      * through to the config {@code jsonProfile}, the interface-level {@link JsonProfile} annotation,
      * the {@code restClient.defaults.jsonProfile} boundary default, the global
-     * {@code json.jsonProfile}, and finally the {@code vertx} default (per the precedence above).
+     * {@code json.jsonProfile}, and finally the reserved {@code system} default (per the precedence above).
      *
      * @param profileId the profile to select, or {@code null} to clear the builder-level selection
      * @return this builder
@@ -541,7 +541,7 @@ public final class RestClientBuilder {
      * Called by {@link RestClientFactory#builder()} after parsing the reserved {@code defaults}
      * sub-object from the root config. A {@code null}/blank id means no boundary-level default is
      * configured; resolution falls through to the global {@code json.jsonProfile} tier or the
-     * {@code vertx} floor.
+     * {@code system} floor.
      *
      * @param defaultsJsonProfileId the resolved defaults profile id, or {@code null}
      * @return this builder
@@ -556,7 +556,7 @@ public final class RestClientBuilder {
      * {@code json.jsonProfile} default). Called by {@link RestClientFactory#builder()} from the
      * Dagger-provided {@link JsonConfig} binding. A {@code null} config or a {@code null}/blank
      * {@link JsonConfig#jsonProfile()} means no global default; resolution falls through to the
-     * {@code vertx} floor.
+     * {@code system} floor.
      *
      * @param jsonConfig the parsed global JSON config, or {@code null}
      * @return this builder
@@ -865,7 +865,7 @@ public final class RestClientBuilder {
         }
 
         // Effective ObjectMapper resolved by JSON-profile precedence (FR-JSON-030A):
-        // explicit objectMapper > config jsonProfile > builder jsonProfile > @JsonProfile > vertx.
+        // explicit objectMapper > config jsonProfile > builder jsonProfile > @JsonProfile > system.
         ObjectMapper effectiveMapper = resolveEffectiveMapper(effectiveConfig, clientInterface, clientName);
 
         // Build WebClient
@@ -1124,14 +1124,14 @@ public final class RestClientBuilder {
      *   <li>the {@code restClient.defaults.jsonProfile} boundary default
      *       ({@link #defaultsJsonProfileId}, when non-blank);</li>
      *   <li>the global {@code json.jsonProfile} default ({@link #jsonConfig}, when non-blank);</li>
-     *   <li>the reserved {@code vertx} profile ({@link DatabindCodec#mapper()}) — the zero-config
+     *   <li>the reserved {@code system} profile ({@link DatabindCodec#mapper()}) — the zero-config
      *       floor, never requires a registry.</li>
      * </ol>
      *
      * <p>The resolved profile id is then mapped to a mapper: a {@code null} id or
-     * {@link JsonProfileId#VERTX} resolves to {@link DatabindCodec#mapper()} <strong>without</strong>
+     * {@link JsonProfileId#SYSTEM} resolves to {@link DatabindCodec#mapper()} <strong>without</strong>
      * requiring a registry (FR-JSON-031); any other id is resolved through the seeded
-     * {@link JsonMapperProfileRegistry}. A non-{@code vertx} profile with no seeded registry (the
+     * {@link JsonMapperProfileRegistry}. A non-{@code system} profile with no seeded registry (the
      * standalone-builder case) fails fast with a {@link RestClientConfigurationException}; an id the
      * registry does not know fails fast with a {@link JsonProfileConfigurationException} — both at
      * client-build time, never at first request.
@@ -1143,7 +1143,7 @@ public final class RestClientBuilder {
      * @param clientInterface the client interface, read for the interface-level {@link JsonProfile}
      * @param clientName the resolved client name, used in error messages
      * @return the effective {@link ObjectMapper}; never {@code null}
-     * @throws RestClientConfigurationException if a non-{@code vertx} profile is selected but no
+     * @throws RestClientConfigurationException if a non-{@code system} profile is selected but no
      *     {@link JsonMapperProfileRegistry} was seeded (standalone builder)
      * @throws dev.vertique.core.json.JsonProfileConfigurationException if the selected profile id is
      *     not registered in the seeded registry
@@ -1165,12 +1165,12 @@ public final class RestClientBuilder {
         JsonProfileId effectiveId = resolveEffectiveProfileId(effectiveConfig, clientInterface);
 
         // --- Resolve the id to a mapper. ---
-        // null id or the reserved vertx id → the zero-config default, no registry required.
-        if (effectiveId == null || JsonProfileId.VERTX.equals(effectiveId)) {
+        // null id or the reserved system id → the zero-config default, no registry required.
+        if (effectiveId == null || JsonProfileId.SYSTEM.equals(effectiveId)) {
             return DatabindCodec.mapper();
         }
 
-        // A non-vertx profile requires the seeded registry.
+        // A non-system profile requires the seeded registry.
         if (this.jsonMapperProfileRegistry == null) {
             throw new RestClientConfigurationException(
                     "REST client '" + clientName + "' selects JSON profile '" + effectiveId.value()
@@ -1193,11 +1193,11 @@ public final class RestClientBuilder {
      *   <li>{@code restClient.defaults.jsonProfile} boundary default ({@link #defaultsJsonProfileId})</li>
      *   <li>global {@code json.jsonProfile} default ({@link #jsonConfig})</li>
      * </ol>
-     * Returns {@code null} when no source selects a profile (meaning the {@code vertx} default applies).
+     * Returns {@code null} when no source selects a profile (meaning the {@code system} default applies).
      *
      * @param effectiveConfig the per-client external config, or {@code null}
      * @param clientInterface the client interface, read for the interface-level {@link JsonProfile}
-     * @return the resolved profile id, or {@code null} when none is selected (vertx floor)
+     * @return the resolved profile id, or {@code null} when none is selected (system floor)
      */
     @Nullable
     private JsonProfileId resolveEffectiveProfileId(
@@ -1228,7 +1228,7 @@ public final class RestClientBuilder {
                 return JsonProfileId.of(globalId);
             }
         }
-        // No selection → vertx default (represented as null here).
+        // No selection → system default (represented as null here).
         return null;
     }
 

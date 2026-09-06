@@ -262,10 +262,10 @@ class RequestBodyProfileResolverTest {
                 methodAnnotations(UnannotatedResource.class, "plain"),
                 classAnnotations(UnannotatedResource.class));
 
-        // No annotation, no config, and an explicit "vertx" config both resolve to null.
+        // No annotation, no config, and an explicit "system" config both resolve to null.
         assertNull(RequestBodyProfileResolver.resolveRequestBodyMapper(meta, configWith(null), noGlobal, registry));
         assertNull(RequestBodyProfileResolver.resolveRequestBodyMapper(meta, configWith("  "), noGlobal, registry));
-        assertNull(RequestBodyProfileResolver.resolveRequestBodyMapper(meta, configWith("vertx"), noGlobal, registry));
+        assertNull(RequestBodyProfileResolver.resolveRequestBodyMapper(meta, configWith("system"), noGlobal, registry));
     }
 
     // --- Tests: new tiers (jaxrs.jsonProfile + json.jsonProfile) — slice 2.2 ---

@@ -25,9 +25,10 @@ import java.util.stream.Collectors;
  * <p>Construction order (NFR-JSON-002A — all validation is eager, in the {@code @Inject} ctor):
  *
  * <ol>
- *   <li>The built-in {@code vertx} profile ({@link VertxJsonMapperProfile}) is seeded
+ *   <li>The built-in {@code system} profile ({@link SystemJsonMapperProfile}) is seeded
  *       <strong>separately</strong> from the application set and is <strong>not</strong> probed —
- *       its mapper is Vert.x's trusted {@code DatabindCodec.mapper()} (FR-JSON-007A, FR-JSON-015E).
+ *       its mapper is a trusted copy of Vert.x's {@code DatabindCodec.mapper()} carrying the
+ *       baseline recipe (FR-JSON-007A, FR-JSON-015E).
  *   <li>The built-in {@code vertique} profile ({@link VertiqueJsonMapperProfile}) is likewise seeded
  *       <strong>separately</strong> and is <strong>not</strong> probed (FR-JSON-043, FR-JSON-045): its
  *       opinionated mapper applies {@code NON_NULL} inclusion, which the structural round-trip probe
@@ -36,19 +37,33 @@ import java.util.stream.Collectors;
  *       likewise seeded <strong>separately</strong> and is <strong>not</strong> probed (json-004): it
  *       inherits the same {@code NON_NULL} inclusion, and additionally requires the string wire form
  *       for {@code BigDecimal} — neither of which the probe payload is written against.
- *   <li>Each application-contributed profile is validated: an id equal to {@link JsonProfileId#VERTX}
- *       or one of the reserved built-in ids ({@link VertiqueJsonMapperProfile#ID},
- *       {@link VertiqueStrictJsonMapperProfile#ID}) is rejected (FR-JSON-005, FR-JSON-044, json-004);
- *       a duplicate application id is rejected (FR-JSON-004); the mapper is run through a structural
- *       round-trip probe (FR-JSON-015C).
+ *   <li>Each application-contributed profile is validated, in this order and <strong>before</strong>
+ *       the probe runs: the retired {@code vertx} id is rejected naming the rename to {@code system}
+ *       (it is a <em>retired reserved</em> id and cannot be re-registered); an id equal to one of the
+ *       reserved built-in ids ({@link SystemJsonMapperProfile#ID},
+ *       {@link VertiqueJsonMapperProfile#ID}, {@link VertiqueStrictJsonMapperProfile#ID}) is rejected
+ *       (FR-JSON-005, FR-JSON-044, json-004); a mapper with Jackson <em>default typing</em> active is
+ *       rejected (every profile role binds untrusted input); a duplicate application id is rejected
+ *       (FR-JSON-004); only then is the mapper run through the structural round-trip probe
+ *       (FR-JSON-015C).
  * </ol>
  *
  * <p>The resulting {@link JsonProfileId}-keyed map is immutable; lookups are {@code O(1)}
  * (NFR-JSON-001). Resolving an unknown id throws {@link JsonProfileConfigurationException} with a
- * message listing every discovered id (FR-JSON-008).
+ * message listing every discovered id (FR-JSON-008); resolving the retired {@code vertx} id names
+ * the rename instead.
  */
 @Singleton
 public final class DefaultJsonMapperProfileRegistry implements JsonMapperProfileRegistry {
+
+    /** The retired reserved id that {@link JsonProfileId#SYSTEM} replaced. */
+    private static final JsonProfileId RETIRED_VERTX_ID = JsonProfileId.of("vertx");
+
+    /** Message naming the rename, used for every rejection of the retired id. */
+    private static final String RENAMED_MESSAGE =
+            "the 'vertx' JSON profile was renamed 'system'; it is retired and cannot be selected or re-registered"
+                    + " — configure 'system' instead (it is the same Vert.x mapper recipe, now with Optional and"
+                    + " java.time support)";
 
     private final Map<JsonProfileId, JsonMapperProfile> profilesById;
 
@@ -56,38 +71,51 @@ public final class DefaultJsonMapperProfileRegistry implements JsonMapperProfile
      * Builds and validates the registry from the application-contributed profile set.
      *
      * @param applicationProfiles the application {@code @IntoSet} profiles (may be empty); the
-     *     reserved {@code vertx}, {@code vertique} and {@code vertique-strict} profiles are never
+     *     reserved {@code system}, {@code vertique} and {@code vertique-strict} profiles are never
      *     expected here and are seeded separately
-     * @throws JsonProfileConfigurationException if an application profile uses the reserved
-     *     {@code vertx}, {@code vertique} or {@code vertique-strict} id, two application profiles
-     *     share an id, or a non-built-in mapper fails the structural round-trip probe
+     * @throws JsonProfileConfigurationException if an application profile uses the retired
+     *     {@code vertx} id or the reserved {@code system}, {@code vertique} or
+     *     {@code vertique-strict} id, exposes a mapper with Jackson default typing active, two
+     *     application profiles share an id, or a non-built-in mapper fails the structural round-trip
+     *     probe
      */
     @Inject
     public DefaultJsonMapperProfileRegistry(Set<JsonMapperProfile> applicationProfiles) {
         Map<JsonProfileId, JsonMapperProfile> byId = new LinkedHashMap<>();
 
-        // --- Seed the built-in vertx profile separately; its trusted mapper is not probed. ---
-        JsonMapperProfile vertxProfile = new VertxJsonMapperProfile();
-        byId.put(vertxProfile.id(), vertxProfile);
+        // --- Seed the built-in system profile separately; its trusted mapper is not probed, but it
+        // IS checked for default typing: it is a copy of the process-global mapper, which classpath
+        // libraries (or a not-yet-retired customizer) could have mutated before the copy. ---
+        JsonMapperProfile systemProfile = new SystemJsonMapperProfile();
+        seedBuiltIn(byId, systemProfile);
 
         // --- Seed the built-in vertique profile separately; its opinionated mapper is probe-exempt
         // (the structural probe round-trips a null-bearing JsonObject, which NON_NULL would drop). ---
         JsonMapperProfile vertiqueProfile = new VertiqueJsonMapperProfile();
-        byId.put(vertiqueProfile.id(), vertiqueProfile);
+        seedBuiltIn(byId, vertiqueProfile);
 
         // --- Seed the built-in vertique-strict profile separately; probe-exempt for the same
         // NON_NULL reason, plus its BigDecimal properties require the string wire form. ---
         JsonMapperProfile vertiqueStrictProfile = new VertiqueStrictJsonMapperProfile();
-        byId.put(vertiqueStrictProfile.id(), vertiqueStrictProfile);
+        seedBuiltIn(byId, vertiqueStrictProfile);
 
-        // --- Validate and register each application profile. ---
+        // --- Validate and register each application profile. Every guard runs BEFORE the probe, so a
+        // rejected profile fails with its own diagnostic rather than an incidental probe failure. ---
         for (JsonMapperProfile profile : applicationProfiles) {
             JsonProfileId id = profile.id();
-            if (JsonProfileId.VERTX.equals(id)
+            if (RETIRED_VERTX_ID.equals(id)) {
+                throw new JsonProfileConfigurationException(RENAMED_MESSAGE);
+            }
+            if (SystemJsonMapperProfile.ID.equals(id)
                     || VertiqueJsonMapperProfile.ID.equals(id)
                     || VertiqueStrictJsonMapperProfile.ID.equals(id)) {
                 throw new JsonProfileConfigurationException(
                         "application profiles must not override the reserved '" + id.value() + "' profile");
+            }
+            if (hasDefaultTypingActive(profile.mapper())) {
+                throw new JsonProfileConfigurationException("JSON profile '" + id.value()
+                        + "' activates Jackson default typing; every profile binds untrusted input, so default typing"
+                        + " is not allowed — use annotation-driven @JsonTypeInfo instead");
             }
             if (byId.containsKey(id)) {
                 throw new JsonProfileConfigurationException(
@@ -115,16 +143,26 @@ public final class DefaultJsonMapperProfileRegistry implements JsonMapperProfile
     /**
      * {@inheritDoc}
      *
+     * <p>The retired {@code vertx} id fails with a message naming the rename to {@code system}, so a
+     * configuration carried over from before the rename fails at startup with the remedy in hand.
+     *
      * @param id the profile id to resolve
      * @return the named profile
      * @throws JsonProfileConfigurationException if {@code id} is not registered
      */
     @Override
     public JsonMapperProfile profile(JsonProfileId id) {
+        if (id == null) {
+            throw new JsonProfileConfigurationException(
+                    "JSON profile id must not be null. Known profiles: " + sortedIdValues());
+        }
+        if (RETIRED_VERTX_ID.equals(id)) {
+            throw new JsonProfileConfigurationException(RENAMED_MESSAGE);
+        }
         JsonMapperProfile profile = profilesById.get(id);
         if (profile == null) {
-            throw new JsonProfileConfigurationException("Unknown JSON profile id '" + (id == null ? null : id.value())
-                    + "'. Known profiles: " + sortedIdValues());
+            throw new JsonProfileConfigurationException(
+                    "Unknown JSON profile id '" + id.value() + "'. Known profiles: " + sortedIdValues());
         }
         return profile;
     }
@@ -132,7 +170,7 @@ public final class DefaultJsonMapperProfileRegistry implements JsonMapperProfile
     /**
      * {@inheritDoc}
      *
-     * @return an immutable set of every registered profile id, including the {@code vertx},
+     * @return an immutable set of every registered profile id, including the {@code system},
      *     {@code vertique} and {@code vertique-strict} built-ins
      */
     @Override
@@ -140,10 +178,39 @@ public final class DefaultJsonMapperProfileRegistry implements JsonMapperProfile
         return profilesById.keySet();
     }
 
+    // --- Application-profile guards ---
+
+    /**
+     * Reports whether Jackson polymorphic <em>default typing</em> is active on {@code mapper}.
+     * Annotation-driven {@code @JsonTypeInfo} is unaffected — only a blanket
+     * {@code activateDefaultTyping(...)} installs a default typer.
+     *
+     * @param mapper the profile mapper to inspect
+     * @return {@code true} when the mapper resolves a default typer for an untyped base
+     */
+    /**
+     * Seeds one built-in profile, refusing it when its mapper carries Jackson default typing. The
+     * built-ins are probe-exempt (trusted recipes), but the {@code system} recipe copies the
+     * process-global mapper, so the default-typing rule is enforced on every profile role.
+     */
+    private static void seedBuiltIn(Map<JsonProfileId, JsonMapperProfile> byId, JsonMapperProfile builtIn) {
+        if (hasDefaultTypingActive(builtIn.mapper())) {
+            throw new JsonProfileConfigurationException(
+                    "built-in JSON profile '" + builtIn.id().value()
+                            + "' inherited Jackson default typing from the process mapper (DatabindCodec.mapper() was"
+                            + " mutated before the registry was built); default typing is not allowed on any profile");
+        }
+        byId.put(builtIn.id(), builtIn);
+    }
+
+    private static boolean hasDefaultTypingActive(ObjectMapper mapper) {
+        return mapper.getDeserializationConfig().getDefaultTyper(null) != null;
+    }
+
     // --- Round-trip probe (FR-JSON-015C) ---
 
     /**
-     * Runs the structural round-trip probe for a non-{@code vertx} profile mapper: serializes then
+     * Runs the structural round-trip probe for an application profile mapper: serializes then
      * deserializes a representative {@link JsonObject} and {@link JsonArray} and requires structural
      * equality after decode. Any thrown exception, or a structural mismatch, is a probe failure.
      *
@@ -179,7 +246,7 @@ public final class DefaultJsonMapperProfileRegistry implements JsonMapperProfile
     /**
      * Returns the sorted profile-id values as a bracketed list for inclusion in error messages.
      *
-     * @return e.g. {@code [legacy-crm, payments-v1, vertique, vertique-strict, vertx]}
+     * @return e.g. {@code [legacy-crm, payments-v1, system, vertique, vertique-strict]}
      */
     private String sortedIdValues() {
         return profilesById.keySet().stream()

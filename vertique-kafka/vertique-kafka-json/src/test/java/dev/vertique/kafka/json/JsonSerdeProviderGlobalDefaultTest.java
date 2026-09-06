@@ -217,12 +217,12 @@ class JsonSerdeProviderGlobalDefaultTest {
     // --- Precedence regression guards (review findings) ---
 
     /**
-     * Regression guard: an explicit bag {@code jsonProfile="vertx"} must resolve to
+     * Regression guard: an explicit bag {@code jsonProfile="system"} must resolve to
      * {@link DatabindCodec#mapper()} and STOP — it must NOT fall through to the
      * {@code json.jsonProfile} global default, even when that global is a registered strict profile.
      *
      * <p>Observable: the global default profile disables coercion (rejects {@code {"count":"5"}}),
-     * while {@code DatabindCodec.mapper()} permits coercion. If the explicit {@code "vertx"} bag id
+     * while {@code DatabindCodec.mapper()} permits coercion. If the explicit {@code "system"} bag id
      * correctly stops at the floor, deserialization of {@code {"count":"5"}} succeeds. If it
      * erroneously falls through to the global strict mapper, it throws.
      *
@@ -230,60 +230,61 @@ class JsonSerdeProviderGlobalDefaultTest {
      * confirm all three {@code resolveMapper} call sites honour the early-return.
      */
     @Nested
-    @DisplayName("explicitVertxStopsAtFloor: bag='vertx' returns DatabindCodec.mapper() even when global is configured")
+    @DisplayName(
+            "explicitVertxStopsAtFloor: bag='system' returns DatabindCodec.mapper() even when global is configured")
     class ExplicitVertxStopsAtFloor {
 
         /**
-         * Deserializer path: bag {@code jsonProfile="vertx"} with a configured global must use
+         * Deserializer path: bag {@code jsonProfile="system"} with a configured global must use
          * {@link DatabindCodec#mapper()} (permissive, accepts coercion) and never the global's strict
          * mapper.
          *
          * <p>Given: a {@link JsonConfig} with {@code json.jsonProfile="c"} (a registered strict
-         * no-coercion profile) AND a serde bag whose {@code jsonProfile} is {@code "vertx"}.
+         * no-coercion profile) AND a serde bag whose {@code jsonProfile} is {@code "system"}.
          * When: deserializing {@code {"count":"5"}} into a {@link Counter} (int field).
          * Then: deserialization succeeds — proving {@code DatabindCodec.mapper()} was used, not the
-         * strict global. If the precedence bug regresses (explicit "vertx" falls through), the strict
+         * strict global. If the precedence bug regresses (explicit "system" falls through), the strict
          * mapper would reject the coercion and throw {@link DeserializationException}.
          */
         @Test
         @DisplayName(
-                "deserializer: bag='vertx' + global='c' → DatabindCodec.mapper() used (permissive, coercion accepted)")
+                "deserializer: bag='system' + global='c' → DatabindCodec.mapper() used (permissive, coercion accepted)")
         void deserializer_explicitVertxIgnoresGlobal() {
             DefaultJsonMapperProfileRegistry registry = strictRegistry();
-            // global is "c" (strict, rejects coercion), but the bag explicitly selects "vertx"
+            // global is "c" (strict, rejects coercion), but the bag explicitly selects "system"
             JsonSerdeProvider provider = providerWith(registry, new JsonConfig("c"));
 
             // DatabindCodec.mapper() is the same singleton — verify we get the permissive mapper
             // by observing that string→int coercion succeeds (strict mapper would throw).
             Counter result = assertDoesNotThrow(
-                    () -> deserialize(provider, bagWith("vertx")),
-                    "bag='vertx' must resolve DatabindCodec.mapper() and accept coercion, not fall through to the"
+                    () -> deserialize(provider, bagWith("system")),
+                    "bag='system' must resolve DatabindCodec.mapper() and accept coercion, not fall through to the"
                             + " strict global");
             assertSame(
                     DatabindCodec.mapper(),
-                    resolveMapperViaReflection(provider, bagWith("vertx")),
-                    "resolveMapper must return the DatabindCodec.mapper() singleton for an explicit 'vertx' bag id"
+                    resolveMapperViaReflection(provider, bagWith("system")),
+                    "resolveMapper must return the DatabindCodec.mapper() singleton for an explicit 'system' bag id"
                             + " regardless of the configured global default");
         }
 
         /**
-         * Serializer path: bag {@code jsonProfile="vertx"} with a configured global must use
+         * Serializer path: bag {@code jsonProfile="system"} with a configured global must use
          * {@link DatabindCodec#mapper()}. The compact JSON produced by {@code DatabindCodec.mapper()}
          * has no newlines; a strict-or-pretty profile might differ. Here we confirm the mapper
          * instance via reflection.
          */
         @Test
-        @DisplayName("serializer: bag='vertx' + global='c' → DatabindCodec.mapper() used")
+        @DisplayName("serializer: bag='system' + global='c' → DatabindCodec.mapper() used")
         void serializer_explicitVertxIgnoresGlobal() {
             DefaultJsonMapperProfileRegistry registry = strictRegistry();
             JsonSerdeProvider provider = providerWith(registry, new JsonConfig("c"));
 
             // Confirm the mapper instance is the DatabindCodec singleton
-            ObjectMapper resolved = resolveMapperViaReflection(provider, bagWith("vertx"));
+            ObjectMapper resolved = resolveMapperViaReflection(provider, bagWith("system"));
             assertSame(
                     DatabindCodec.mapper(),
                     resolved,
-                    "serializer with bag='vertx' must use DatabindCodec.mapper() singleton, not fall through to global");
+                    "serializer with bag='system' must use DatabindCodec.mapper() singleton, not fall through to global");
         }
     }
 

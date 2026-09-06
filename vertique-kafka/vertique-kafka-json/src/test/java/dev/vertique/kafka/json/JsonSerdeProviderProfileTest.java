@@ -218,14 +218,14 @@ class JsonSerdeProviderProfileTest {
     class VertxDefault {
 
         @Test
-        @DisplayName("vertxDefault_unchanged: absent and explicit 'vertx' profile both coerce string->int")
+        @DisplayName("vertxDefault_unchanged: absent and explicit 'system' profile both coerce string->int")
         void vertxDefault_unchanged() throws Exception {
             JsonSerdeProvider provider = providerWithStrictProfile();
 
             KafkaDeserializer<Counter> absent = provider.deserializer(Counter.class, serdeConfigWith(null));
             assertEquals(new Counter(5), absent.deserialize(bytes("{\"count\":\"5\"}"), "t", Map.of()));
 
-            KafkaDeserializer<Counter> vertx = provider.deserializer(Counter.class, serdeConfigWith("vertx"));
+            KafkaDeserializer<Counter> vertx = provider.deserializer(Counter.class, serdeConfigWith("system"));
             assertEquals(new Counter(5), vertx.deserialize(bytes("{\"count\":\"5\"}"), "t", Map.of()));
         }
     }

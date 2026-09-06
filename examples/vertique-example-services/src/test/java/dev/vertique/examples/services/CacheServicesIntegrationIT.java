@@ -60,7 +60,7 @@ public class CacheServicesIntegrationIT {
                                     .put("defaultMode", "LOCAL")
                                     .put("defaultTtlSeconds", 60)
                                     .put("maxTtlSeconds", 86_400)
-                                    .put("jsonProfile", "vertx")
+                                    .put("jsonProfile", "system")
                                     .put("maxKeyBytes", 1_024)
                                     .put("maxValueBytes", 1_048_576)
                                     .put("maximumEntries", 10_000)
@@ -73,7 +73,7 @@ public class CacheServicesIntegrationIT {
                                                             new JsonObject()
                                                                     .put("mode", "LOCAL")
                                                                     .put("ttlSeconds", 60)
-                                                                    .put("jsonProfile", "vertx"))))
+                                                                    .put("jsonProfile", "system"))))
                     .put(
                             "services",
                             new JsonObject()
