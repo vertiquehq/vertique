@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
+import dev.vertique.core.context.DispatchBoundary;
 import dev.vertique.core.correlation.CorrelationContext;
 import dev.vertique.core.correlation.CorrelationIdentifier;
 import dev.vertique.correlation.CorrelationContextFactory;
@@ -34,6 +35,7 @@ import dev.vertique.security.authz.AuthorizationDecision;
 import dev.vertique.security.authz.AuthorizationRequest;
 import dev.vertique.security.authz.Authorizer;
 import dev.vertique.security.authz.AuthzReasonCodes;
+import dev.vertique.security.authz.InvocationOrigin;
 import dev.vertique.security.authz.ResourceRef;
 import dev.vertique.security.events.AuthorizationDecisionEvent;
 import dev.vertique.security.events.SecurityEventObserver;
@@ -173,7 +175,8 @@ public class WebSocketRequiresActionIT {
         WebSocketEndpointRegistrar registrar = new WebSocketEndpointRegistrar(
                 new WebSocketMessageCodec(),
                 policyEnforcer,
-                identityMiddleware,
+                // The handler assembled for the websocket origin, as WebSocketMount.Factory installs it.
+                identityMiddleware.handlerFor(InvocationOrigin.of(DispatchBoundary.WEBSOCKET)),
                 securityRuntime,
                 Set.of(stubAuth),
                 null,
