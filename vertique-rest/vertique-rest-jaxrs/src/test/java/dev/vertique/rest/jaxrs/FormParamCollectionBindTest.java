@@ -757,6 +757,7 @@ class FormParamCollectionBindTest {
                             registrar,
                             Set.of(resource),
                             router,
+                            RegistrarTestSupport.TEST_MOUNT_META,
                             List.of(),
                             List.of(),
                             null,

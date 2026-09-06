@@ -277,6 +277,7 @@ public class JaxRsRouterMount implements RouterMount {
                 resources,
                 apiRouter,
                 strategy,
+                meta(),
                 factory.operationSchemaSource,
                 securityHandlers,
                 sortedOperationInterceptors,

@@ -103,6 +103,18 @@ public interface RequestValidationStrategy {
         JaxRsOperationDescriptor operation,
         OperationSchemas schemas);
 
+    /**
+     * Mount-aware overload, called once per operation in place of the 2-arg form. The default
+     * delegates to the 2-arg {@code gateFor}; a strategy whose validation is driven by per-mount
+     * state (e.g. {@code openapi-contract}) overrides this form to read {@code mount.openapiPath()}.
+     */
+    default Optional<Handler<RoutingContext>> gateFor(
+        JaxRsOperationDescriptor operation,
+        OperationSchemas schemas,
+        MountMeta mount) {
+        return gateFor(operation, schemas);
+    }
+
     /** Called once per mount before gateFor; no-op unless mount metadata is relevant. */
     default void bindToMount(MountMeta mountMeta) {}
 }
@@ -110,8 +122,9 @@ public interface RequestValidationStrategy {
 
 `JaxRsRouterMount` selects one strategy per mount, warns once when file verifiers are bound but the
 selected strategy reports `runsFileVerifiers() == false`, calls `bindToMount(mountMeta)`, then asks
-the strategy for each operation's gate. A present handler is installed between the `@Consumes` gate
-and operation contributors; `Optional.empty()` installs no validation handler.
+the strategy for each operation's gate via the mount-aware 3-arg `gateFor` — the only form
+`JaxRsRouteRegistrar` calls. A present handler is installed between the `@Consumes` gate and
+operation contributors; `Optional.empty()` installs no validation handler.
 
 Built-in strategy IDs:
 

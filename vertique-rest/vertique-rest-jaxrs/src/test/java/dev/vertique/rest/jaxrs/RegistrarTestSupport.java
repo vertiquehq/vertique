@@ -14,6 +14,7 @@ import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.interceptor.OperationInterceptor;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
 import dev.vertique.rest.core.response.ResponseBodyEncoder;
+import dev.vertique.rest.core.router.MountMeta;
 import dev.vertique.rest.core.router.OperationHandlerContributor;
 import dev.vertique.rest.core.security.SecurityPolicyValidator;
 import dev.vertique.rest.jaxrs.validation.NoneValidationStrategy;
@@ -39,6 +40,14 @@ import java.util.Set;
  */
 final class RegistrarTestSupport {
 
+    /**
+     * Shared {@link MountMeta} fixture for tests that exercise {@link JaxRsRouteRegistrar#registerAll}
+     * directly (via this helper) and do not vary the mount metadata threaded to the mount-aware 3-arg
+     * {@link RequestValidationStrategy#gateFor(dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor,
+     * dev.vertique.rest.jaxrs.validation.OperationSchemas, MountMeta)} call.
+     */
+    static final MountMeta TEST_MOUNT_META = new MountMeta("test-mount", "/", null, Set.of());
+
     private RegistrarTestSupport() {}
 
     /**
@@ -49,6 +58,7 @@ final class RegistrarTestSupport {
      * @param registrar             the registrar under test
      * @param resources             the resource instances to scan
      * @param apiRouter             the plain Vert.x router to register routes on
+     * @param mount                 the mount metadata threaded to the registrar
      * @param operationInterceptors the operation interceptors
      * @param contributors          the operation handler contributors
      * @param securityPolicyValidator optional security policy validator; {@code null} when absent
@@ -65,6 +75,7 @@ final class RegistrarTestSupport {
             JaxRsRouteRegistrar registrar,
             Set<Object> resources,
             Router apiRouter,
+            MountMeta mount,
             List<OperationInterceptor> operationInterceptors,
             List<OperationHandlerContributor> contributors,
             @Nullable SecurityPolicyValidator securityPolicyValidator,
@@ -80,6 +91,7 @@ final class RegistrarTestSupport {
                 registrar,
                 resources,
                 apiRouter,
+                mount,
                 new SecuritySchemeHandlerCollector(),
                 operationInterceptors,
                 contributors,
@@ -102,6 +114,7 @@ final class RegistrarTestSupport {
      * @param registrar             the registrar under test
      * @param resources             the resource instances to scan
      * @param apiRouter             the plain Vert.x router to register routes on
+     * @param mount                 the mount metadata threaded to the registrar
      * @param securityHandlers      the collected authentication handlers keyed by scheme name
      * @param operationInterceptors the operation interceptors
      * @param contributors          the operation handler contributors
@@ -119,6 +132,7 @@ final class RegistrarTestSupport {
             JaxRsRouteRegistrar registrar,
             Set<Object> resources,
             Router apiRouter,
+            MountMeta mount,
             SecuritySchemeHandlerCollector securityHandlers,
             List<OperationInterceptor> operationInterceptors,
             List<OperationHandlerContributor> contributors,
@@ -135,6 +149,7 @@ final class RegistrarTestSupport {
                 resources,
                 apiRouter,
                 new NoneValidationStrategy(),
+                mount,
                 Optional.<OperationSchemaSource>empty(),
                 securityHandlers,
                 operationInterceptors,

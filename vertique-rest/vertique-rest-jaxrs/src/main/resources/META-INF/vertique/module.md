@@ -507,6 +507,12 @@ ones this module owns are below. `RequestValidationStrategy`, `OperationSchemaSo
 `FileContentVerifier` are declared here but documented with their reference implementations in
 `dev.vertique:vertique-rest-validation`.
 
+`RequestValidationStrategy` gains a mount-aware `gateFor(op, schemas, MountMeta mount)` default
+overload alongside the original 2-arg form. `JaxRsRouteRegistrar` calls only the 3-arg form —
+threading the mount's own `MountMeta` (from `JaxRsRouterMount.meta()`) into every gate it builds — so
+a strategy overriding only the 2-arg form is unaffected, while one overriding the 3-arg form (e.g. a
+per-mount OpenAPI contract) receives the registering mount's metadata for every operation.
+
 ### `RestExceptionMapperCustomizer`
 
 Contributes `Throwable → Throwable` translations to the REST error pipeline.

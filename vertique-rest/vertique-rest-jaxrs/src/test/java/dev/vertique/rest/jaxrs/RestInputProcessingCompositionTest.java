@@ -273,6 +273,7 @@ class RestInputProcessingCompositionTest {
                 registrar,
                 resources,
                 router,
+                RegistrarTestSupport.TEST_MOUNT_META,
                 List.of(),
                 List.of(),
                 null,
