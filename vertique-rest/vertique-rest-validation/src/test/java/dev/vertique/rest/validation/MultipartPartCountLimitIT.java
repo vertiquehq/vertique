@@ -272,7 +272,8 @@ public class MultipartPartCountLimitIT {
                 .get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         Router root = Router.router(vertx);
         root.route("/*").subRouter(apiRouter);
-        server = vertx.createHttpServer(httpConfig.toHttpServerOptions().setPort(0))
+        server = vertx.createHttpServer(
+                        httpConfig.toHttpServerOptions().setHost("127.0.0.1").setPort(0))
                 .requestHandler(root)
                 .listen()
                 .toCompletionStage()
