@@ -14,6 +14,9 @@ Flyway-backed implementation of the `MigrationRunner` contract from `db-core`. S
 
 When used with the framework lifecycle runner (`@VertiqueApp` + `VertiqueApplicationBootstrap`), `DbFlywayModule` also contributes a `MIGRATE`-phase `ApplicationStartupStep` (`FlywayMigrationStartupStep`) that runs migrations automatically — no manual `migrationRunner().migrate(vertx)` call is needed. See [`FlywayMigrationStartupStep` and `DbFlywayModule`](#flywaymigrationstartupstep-and-dbflywaymodule) below.
 
+This adapter is Beta. The `MigrationRunner` contract it implements is owned by
+`dev.vertique:vertique-db-core`, which is Stable.
+
 ---
 
 ## Key Classes
