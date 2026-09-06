@@ -16,6 +16,12 @@ It also provides the opt-in authorization-narrowing composition and the reconstr
 
 Config-backed policy and role-resolver contributions live in `dev.vertique:vertique-security-config`.
 
+This engine is Beta. The SPIs it implements — `Authorizer`, `PolicyDefinitionSource`,
+`RolePolicyResolver`, `PrincipalAuthorityResolver`, `AuthorizationNarrower`,
+`DelegationGrantValidator`, and `IdentityReconstruction` — and the ones it wires for contributors —
+`SecurityEventObserver` and `SecurityIdentityResolver` — are owned by
+`dev.vertique:vertique-security-core`, which is Stable.
+
 ---
 
 ## When To Use It

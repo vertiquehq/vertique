@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Security Core Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.security` (identity/authentication/context), `dev.vertique.security.authz` (authorization model), `dev.vertique.security.events` (event records + observer SPI), `dev.vertique.security.origin` (network origin), `dev.vertique.security.resolver` (identity resolver SPI), `dev.vertique.security.channel` (channel SPI), `dev.vertique.security.verification` (verification sources)
 > **Artifact:** `vertique-security-core`
 > **Depends on:** core (ContextValue, correlation, extension ordering, exception roots), Vert.x core (Future), Jakarta Annotations
@@ -78,7 +78,7 @@ Interface extending `ContextValue`. The four pillars (`identity()`, `authenticat
 
 `snapshot()` pins the current facts into an immutable `SecurityContextSnapshot` — capture a snapshot before crossing a thread boundary so a later context rebind cannot replace the fact records under an off-thread projection. `SecurityContextSnapshot` carries `identity`, `authentication`, and `origin` only — **not** `authorization()`.
 
-`reconstruction()` returns the typed, unforgeable `ReconstructionMarker` present only on a framework verified reconstruction.
+`reconstruction()` returns the typed, unforgeable `ReconstructionMarker`, which every framework-built context carries only after a verified reconstruction.
 
 ```java
 // Read-only use in a request handler
@@ -115,6 +115,18 @@ Typed factory methods, each rejecting a mismatched actor type with `IllegalArgum
 `SYSTEM` identities must be created via `SystemIdentities` — there is intentionally no `system(...)` factory on this class.
 
 ---
+
+### TokenAttributes
+
+Decoded, non-secret token metadata captured at authentication: the JWT header, the JWT claims, and
+selected introspection fields, each optional and defensively copied. It never holds a raw token.
+Its `toString()` is safe to log: the header renders in full; claims and introspection fields render
+by name, with the value shown only for the registered non-sensitive names (`iss`, `aud`, `exp`,
+`nbf`, `iat`, `jti`, `azp`, `typ`, `scope`, `scp`, `client_id`, `token_type`, `active`) and
+`<redacted>` for every other name. Audit observers read the maps through the accessors, which are
+not redacted. A nested object under a disclosed name is redacted, and scope strings render
+verbatim — do not encode tenant, user, or resource identifiers into scope names if the rendering
+reaches shared logs.
 
 ### SystemIdentities
 
@@ -163,7 +175,7 @@ public final class SecurityContexts {
 
 - **`system(...)` is doubly constrained.** It throws `IllegalArgumentException` unless the actor's `PrincipalType` is `SYSTEM` *and* the identity is actor-only (no `subject`, `delegation`, or `client`). Stamping `custom("system")` onto a `SERVICE` actor would misattribute it as system-acting, so use `unauthenticated(...)` for a `SERVICE` actor instead. Both factories assemble with `AuthorizationClaims.empty()` and no origin.
 - None of these methods emit `SecurityEventObserver` events — a static method cannot invoke an injected emitter by construction, so consuming flows decide whether and how to audit.
-- The concrete types built here are package-private; callers use `SecurityContexts` and the `SecurityContext` interface, never a concrete record. `assembleReconstructed` is the only route to a non-empty `reconstruction()`.
+- The concrete types built here are package-private; callers use `SecurityContexts` and the `SecurityContext` interface, never a concrete record. No framework-built context reaches a non-empty `reconstruction()` except through `assembleReconstructed`; an application that implements the `SecurityContext` interface directly can return one without it.
 - `assemble(...)` takes `authorization()` verbatim from its `claims` argument and makes no authority decision of its own. Reconstruction exploits this by passing `AuthorizationClaims.empty()`, so a reconstructed context carries no frozen authority (FR-ID-CA-010).
 
 ---
