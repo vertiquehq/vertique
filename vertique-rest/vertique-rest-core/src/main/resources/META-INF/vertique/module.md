@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # REST Core Module
 
-> **Status:** Implemented
+> **Status:** Beta
 > **Package:** `dev.vertique.rest.core` (+ 17 sub-packages)
 > **Artifact:** `vertique-rest-core`
 > **Depends on:** core, context, correlation, logging, security-core

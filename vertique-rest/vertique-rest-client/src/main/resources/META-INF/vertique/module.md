@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # REST Client Module
 
-> **Status:** Implemented
+> **Status:** Beta
 > **Package:** `dev.vertique.rest.client`
 > **Artifact:** `vertique-rest-client`
 > **Depends on:** core, rest-core, json

@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # REST Localization Module
 
-> **Status:** Alpha
+> **Status:** Beta
 > **Package:** `dev.vertique.rest.localization`
 > **Artifact:** `vertique-rest-localization`
 > **Depends on:** core, rest-core, localization

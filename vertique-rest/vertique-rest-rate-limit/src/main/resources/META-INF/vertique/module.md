@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Rest Rate Limit
 
-> **Status:** Alpha
+> **Status:** Beta
 > **Package:** `dev.vertique.rest.ratelimit`
 > **Artifact:** `vertique-rest-rate-limit`
 > **Depends on:** `vertique-rate-limit-core`, `vertique-rest-core`, `vertique-rest-security` (narrow: `RequestOrigin` type and the `OriginCaptureMiddleware.ORDER` constant only)

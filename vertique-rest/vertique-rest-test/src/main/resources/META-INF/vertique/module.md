@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # REST Test
 
-> **Status:** Alpha
+> **Status:** Beta
 > **Package:** `dev.vertique.rest.test`
 > **Artifact:** `vertique-rest-test`
 > **Depends on:** rest-jaxrs, rest-core, config-core

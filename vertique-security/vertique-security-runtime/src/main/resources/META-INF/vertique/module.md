@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Security Runtime Module
 
-> **Status:** Alpha
+> **Status:** Beta
 > **Package:** `dev.vertique.security.runtime` (identity-snapshot durable carriage + reconstruction), `dev.vertique.security.runtime.authz`, `dev.vertique.security.runtime.events`
 > **Artifact:** `vertique-security-runtime`
 > **Depends on:** security-core, core, context, config-core
