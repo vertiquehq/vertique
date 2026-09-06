@@ -82,12 +82,12 @@ policy. Inactive state is reclaimable only after the worst-case time to full plu
 configured retention slack; active state is never evicted merely to make room. The
 registry's internal storage key is `policyName:policyRevision:canonicalKeyEncoding`
 (the same canonical input `RateLimitKey` framing produces); LOCAL retains this raw key
-verbatim, in-memory, for the process's lifetime — by design (D015: LOCAL never leaves
-the process and needs no cross-instance unforgeability, so it carries no HMAC/hashing
-cost CLUSTERED's physical key does). If a key component can itself be sensitive
-(rarely — most policies key on tenant/user id or IP, not raw secrets), account for that
-retention in your threat model; CLUSTERED never retains the raw key, only its HMAC
-digest. The first `CAPACITY_EXHAUSTED` admission of a saturation episode also logs one
+verbatim, in-memory, for the process's lifetime — by design: LOCAL state never leaves
+the process and needs no cross-instance unforgeability, so it carries none of the
+HMAC/hashing cost CLUSTERED's physical key does. If a key component can itself be
+sensitive (rarely — most policies key on tenant/user id or IP, not raw secrets), account
+for that retention in your threat model; CLUSTERED never retains the raw key, only its
+HMAC digest. The first `CAPACITY_EXHAUSTED` admission of a saturation episode also logs one
 `WARN` — the policy name and configured budget only, never key material — so an
 `OPEN`-mode silent-admit degradation and a `CLOSED`-mode denial spike both leave a
 signal an operator can alert on; see the `failureMode` caution above.
