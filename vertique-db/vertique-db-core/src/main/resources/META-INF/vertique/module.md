@@ -666,6 +666,9 @@ produced.
 
 Unknown keys are ignored. `keyPath` and `certPath` are a pair — mutual TLS needs both.
 
+`password`, `trustStorePassword`, and `properties` are write-only: they are read from configuration
+but never serialized back out by Jackson, and `toString()` renders them as `<redacted>`.
+
 ---
 
 ## Extension Points

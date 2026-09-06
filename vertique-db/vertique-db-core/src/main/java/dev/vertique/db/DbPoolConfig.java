@@ -5,6 +5,7 @@ package dev.vertique.db;
 
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +35,11 @@ import lombok.extern.jackson.Jacksonized;
  *   }
  * }
  * }</pre>
+ *
+ * <p><strong>Secret hygiene.</strong> {@code password}, {@code trustStorePassword}, and the vendor
+ * {@code properties} bag are read from configuration but are {@link JsonProperty.Access#WRITE_ONLY}:
+ * Jackson never serializes them back out, and {@link #toString()} renders them redacted, so a config
+ * dump, diagnostics endpoint, or log line cannot reveal them.
  */
 @Getter
 @Builder
@@ -58,6 +64,7 @@ public class DbPoolConfig {
     private final String user;
 
     /** The database password. */
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     private final String password;
 
     // --- Pool sizing ---
@@ -143,6 +150,7 @@ public class DbPoolConfig {
      * Vendor-specific connection properties (e.g., {@code ApplicationName} for PostgreSQL). Defaults
      * to an empty map.
      */
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     @Builder.Default
     private final Map<String, String> properties = Map.of();
 
@@ -172,6 +180,7 @@ public class DbPoolConfig {
     /**
      * Password for the trust store. Required for JKS and PKCS12 formats; ignored for PEM.
      */
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     private final String trustStorePassword;
 
     /**
@@ -191,6 +200,67 @@ public class DbPoolConfig {
      * for mutual TLS (mTLS).
      */
     private final String certPath;
+
+    // --- Secret hygiene ---
+
+    /**
+     * Redacted rendering: {@code password}, {@code trustStorePassword}, and the vendor {@code
+     * properties} bag are never included, so a log line or exception message can never reveal them.
+     *
+     * @return a redacted string rendering of this config
+     */
+    @Override
+    public String toString() {
+        return "DbPoolConfig[host=" + host
+                + ", port=" + port
+                + ", database=" + database
+                + ", user=" + user
+                + ", password=" + redact(password)
+                + ", maxPoolSize=" + maxPoolSize
+                + ", maxWaitQueueSize=" + maxWaitQueueSize
+                + ", eventLoopSize=" + eventLoopSize
+                + ", connectionTimeoutMs=" + connectionTimeoutMs
+                + ", idleTimeoutMs=" + idleTimeoutMs
+                + ", maxLifetimeMs=" + maxLifetimeMs
+                + ", poolCleanerPeriodMs=" + poolCleanerPeriodMs
+                + ", cachePreparedStatements=" + cachePreparedStatements
+                + ", preparedStatementCacheMaxSize=" + preparedStatementCacheMaxSize
+                + ", reconnectAttempts=" + reconnectAttempts
+                + ", reconnectIntervalMs=" + reconnectIntervalMs
+                + ", properties=" + (properties == null || properties.isEmpty() ? "{}" : "<redacted>")
+                + ", sslMode=" + sslMode
+                + ", trustAll=" + trustAll
+                + ", trustStorePath=" + trustStorePath
+                + ", trustStorePassword=" + redact(trustStorePassword)
+                + ", trustStoreType=" + trustStoreType
+                + ", keyPath=" + keyPath
+                + ", certPath=" + certPath
+                + "]";
+    }
+
+    private static String redact(String secret) {
+        return secret != null ? "<redacted>" : "null";
+    }
+
+    /**
+     * Builder shell declared so the generated builder does not render secrets: Lombok merges this
+     * class with the generated one and keeps this {@code toString()} instead of generating its own.
+     */
+    public static class DbPoolConfigBuilder {
+
+        @Override
+        public String toString() {
+            return "DbPoolConfig.DbPoolConfigBuilder[host=" + host
+                    + ", port=" + port
+                    + ", database=" + database
+                    + ", user=" + user
+                    + ", password=" + redact(password)
+                    + ", properties=<redacted>"
+                    + ", trustStorePath=" + trustStorePath
+                    + ", trustStorePassword=" + redact(trustStorePassword)
+                    + "]";
+        }
+    }
 
     // --- Validation ---
 
