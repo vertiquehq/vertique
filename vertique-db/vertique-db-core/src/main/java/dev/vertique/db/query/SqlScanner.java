@@ -8,7 +8,10 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * SQL scanning utility that is aware of parenthesis depth, single-quoted string literals, and
+ * INTERNAL — consumed only by the framework's query builders; not an application contract and free
+ * to change without notice.
+ *
+ * <p>SQL scanning utility that is aware of parenthesis depth, single-quoted string literals, and
  * double-quoted identifiers. Used to detect SQL clauses at the top level of a query without
  * false-positive matches inside subqueries, CTEs, or window functions.
  *

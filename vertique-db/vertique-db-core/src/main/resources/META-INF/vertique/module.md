@@ -425,6 +425,12 @@ repository.transaction().serializable().execute(conn ->
                 .recover(err -> doFallback(conn)));
 ```
 
+`TransactionOptions` is the record the builder hands to the vendor base class: `isolationLevel`
+(`null` means the database default) and `readOnly`, with `TransactionOptions.DEFAULTS` for read-write
+at the database default. Application code never constructs it. A custom vendor repository that
+overrides `applyTransactionOptions(SqlConnection, TransactionOptions)` reads it and issues
+`IsolationLevel.sql()` — `READ COMMITTED`, `REPEATABLE READ`, or `SERIALIZABLE`.
+
 `withConnection(fn)` runs on a pooled connection with **no** transaction, translating failures the
 same way. Use it for read paths and for `stream(...)`.
 
@@ -508,8 +514,10 @@ migrationRunner.migrate(vertx)
 
 ### `DbModule`
 
-Provides `DbPoolConfig` as a `@Singleton`, parsed from the `db` config section. Include it alongside
-a vendor module.
+Provides `DbPoolConfig` as a `@Singleton`, parsed from the `db` config section. Each warning from
+`DbPoolConfig.validate()` — missing host, non-positive pool size, a trust store under `sslMode`
+`DISABLE` — is logged at WARN when the binding is created; a warning never fails startup. Include it
+alongside a vendor module.
 
 ```java
 @Singleton
@@ -665,6 +673,9 @@ produced.
 | `certPath` | string | — | Client certificate (PEM) for mutual TLS |
 
 Unknown keys are ignored. `keyPath` and `certPath` are a pair — mutual TLS needs both.
+
+`password`, `trustStorePassword`, and `properties` are write-only: they are read from configuration
+but never serialized back out by Jackson, and `toString()` renders them as `<redacted>`.
 
 ---
 
