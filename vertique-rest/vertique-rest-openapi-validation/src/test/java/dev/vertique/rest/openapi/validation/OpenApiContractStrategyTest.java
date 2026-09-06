@@ -19,11 +19,18 @@ import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
 import dev.vertique.rest.jaxrs.validation.OperationSchemas;
 import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
 import dev.vertique.rest.jaxrs.validation.RequestValidationStrategySelector;
+import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
+import io.vertx.core.buffer.Buffer;
+import io.vertx.core.json.JsonObject;
+import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.handler.BodyHandler;
 import io.vertx.json.schema.OutputUnit;
 import io.vertx.junit5.VertxExtension;
+import io.vertx.junit5.VertxTestContext;
 import io.vertx.openapi.validation.SchemaValidationException;
 import io.vertx.openapi.validation.ValidatorErrorType;
 import io.vertx.openapi.validation.ValidatorException;
@@ -52,6 +59,9 @@ class OpenApiContractStrategyTest {
 
     private static final String CONTRACT_PATH = "openapi-contract-strategy-test.json";
 
+    /** A second contract fixture (disjoint operationId, disjoint schema) used to prove per-mount binding. */
+    private static final String MOUNT_B_CONTRACT_PATH = "openapi-contract-mount-b.json";
+
     private OpenApiContractValidationStrategy strategy(Vertx vertx) {
         return new OpenApiContractValidationStrategy(
                 vertx, JaxRsConfig.builder().openapiPath(CONTRACT_PATH).build());
@@ -67,6 +77,21 @@ class OpenApiContractStrategyTest {
      */
     private static MountMeta mountMeta(String openapiPath) {
         return new MountMeta("jaxrs:/api/*", "/api/*", openapiPath, Set.of());
+    }
+
+    /**
+     * Builds a {@link MountMeta} with an explicit mount id and mount path, distinct from
+     * {@link #mountMeta(String)}'s fixed identity. Used where two mounts must be individually
+     * addressable (e.g. per-mount cache proofs), since the mount path matters to the sensitivity of
+     * those proofs even though the strategy itself keys its contract cache by {@code openapiPath}.
+     *
+     * @param mountId     the mount identifier to embed in the metadata
+     * @param mountPath   the mount path prefix to embed in the metadata
+     * @param openapiPath the OpenAPI contract path to embed in the metadata
+     * @return a {@link MountMeta} carrying all three values
+     */
+    private static MountMeta mountMeta(String mountId, String mountPath, String openapiPath) {
+        return new MountMeta(mountId, mountPath, openapiPath, Set.of());
     }
 
     @Test
@@ -107,33 +132,134 @@ class OpenApiContractStrategyTest {
     }
 
     @Test
-    @DisplayName("bindToMount() fails closed when two mounts declare divergent openapiPaths")
-    void bindToMountDivergentMountPathsFailClosed(Vertx vertx) {
+    @DisplayName("The legacy mount-agnostic gateFor() fails closed once a divergent mount is bound")
+    void legacyGateForFailsClosedAfterDivergentBind(Vertx vertx) {
+        // The framework calls the 3-arg gateFor, which resolves each mount's own contract. The retained
+        // 2-arg form is mount-agnostic and validates against the global contract only, so once a mount
+        // declaring a DIFFERENT openapiPath is bound it cannot tell which contract an operation belongs
+        // to: it must fail closed naming the bound paths rather than silently validating against the
+        // global contract (the divergence guard moved here from bindToMount).
         OpenApiContractValidationStrategy s = strategy(vertx);
-        s.bindToMount(mountMeta(CONTRACT_PATH));
-        // A second mount declaring a DIFFERENT contract path must fail fast: the singleton strategy
-        // resolves one global contract and cannot validate this mount's operations against a different
-        // contract. It must throw rather than silently validate against the first mount's contract.
-        RestConfigurationException ex =
-                assertThrows(RestConfigurationException.class, () -> s.bindToMount(mountMeta("other-openapi.json")));
+        s.bindToMount(mountMeta("jaxrs:/a/*", "/a/*", CONTRACT_PATH));
+        s.bindToMount(mountMeta("jaxrs:/b/*", "/b/*", MOUNT_B_CONTRACT_PATH));
+
+        IllegalStateException ex = assertThrows(
+                IllegalStateException.class,
+                () -> s.gateFor(op("POST", "/widgets", "createWidget"), OperationSchemas.empty()));
         assertTrue(
-                ex.getMessage().contains("other-openapi.json")
-                        && ex.getMessage().contains(CONTRACT_PATH),
-                "the message must name both divergent contract paths; was: " + ex.getMessage());
+                ex.getMessage().contains(CONTRACT_PATH) && ex.getMessage().contains(MOUNT_B_CONTRACT_PATH),
+                "the message must name both bound contract paths; was: " + ex.getMessage());
     }
 
     @Test
-    @DisplayName("bindToMount() fails closed when a single mount's path diverges from the loaded contract path")
-    void bindToMountSingleDivergentMountFailsClosed(Vertx vertx) {
-        // The strategy loads CONTRACT_PATH (the global jaxrs.openapiPath). If the ONLY mount declares a
-        // different openapiPath, the strategy would validate that mount's operations against the global
-        // contract, not the mount's — a silent mismatch even with one mount. It must fail closed.
+    @DisplayName("bindToMount() loads one contract per distinct mount openapiPath; each mount's 3-arg gate validates"
+            + " against its own contract")
+    void bindToMountDivergentPathsLoadsOneContractPerPath(Vertx vertx, VertxTestContext ctx) {
+        // The strategy's construction pre-warms CONTRACT_PATH (fixture A: POST /widgets -> createWidget,
+        // required: name). mountB's openapiPath is the disjoint fixture B (POST /gadgets -> createGadget,
+        // required: sku).
         OpenApiContractValidationStrategy s = strategy(vertx);
-        RestConfigurationException ex = assertThrows(
-                RestConfigurationException.class, () -> s.bindToMount(mountMeta("divergent-openapi.json")));
+        MountMeta mountA = mountMeta("jaxrs:/a/*", "/a/*", CONTRACT_PATH);
+        MountMeta mountB = mountMeta("jaxrs:/b/*", "/b/*", MOUNT_B_CONTRACT_PATH);
+
+        assertDoesNotThrow(
+                () -> {
+                    s.bindToMount(mountA);
+                    s.bindToMount(mountB);
+                    s.bindToMount(mountA);
+                    s.bindToMount(mountB);
+                },
+                "binding two mounts with distinct openapiPaths, each bound twice, must not throw");
+
+        JaxRsOperationDescriptor createWidget = op("POST", "/widgets", "createWidget");
+        JaxRsOperationDescriptor createGadget = op("POST", "/gadgets", "createGadget");
+        Handler<RoutingContext> gateA =
+                s.gateFor(createWidget, OperationSchemas.empty(), mountA).orElseThrow();
+        Handler<RoutingContext> gateB =
+                s.gateFor(createGadget, OperationSchemas.empty(), mountB).orElseThrow();
+
+        Router router = Router.router(vertx);
+        router.route().handler(BodyHandler.create());
+        router.post("/a")
+                .handler(gateA)
+                .handler(rc -> rc.response().setStatusCode(201).end("created"));
+        router.post("/b")
+                .handler(gateB)
+                .handler(rc -> rc.response().setStatusCode(201).end("created"));
+        // Minimal failure handler mirroring the framework REST error pipeline: RestValidationException
+        // -> 400, anything else -> 500 (same shape as OpenApiContractStrategyIT's harness).
+        router.route().failureHandler(rc -> {
+            Throwable failure = rc.failure();
+            int status = failure instanceof RestValidationException ? 400 : 500;
+            rc.response().setStatusCode(status).end(failure == null ? "" : String.valueOf(failure.getMessage()));
+        });
+
+        // Valid only under B's contract (requires "sku"); A requires "name" and rejects any undeclared
+        // property under additionalProperties:false, so A's gate must reject this body while B's gate
+        // must accept it.
+        String bodyValidOnlyUnderB = new JsonObject().put("sku", "s").encode();
+
+        vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1").onComplete(ctx.succeeding(server -> {
+            WebClient client = WebClient.create(vertx);
+            runGate(client, server.actualPort(), "/a", bodyValidOnlyUnderB)
+                    .compose(aStatus -> runGate(client, server.actualPort(), "/b", bodyValidOnlyUnderB)
+                            .map(bStatus -> new int[] {aStatus, bStatus}))
+                    .onComplete(ctx.succeeding(statuses -> ctx.verify(() -> {
+                        try {
+                            assertEquals(400, statuses[0], "A's gate must reject a body valid only under B's contract");
+                            assertTrue(
+                                    statuses[1] >= 200 && statuses[1] < 300,
+                                    "B's gate must accept a body valid under its own contract; was " + statuses[1]);
+                        } finally {
+                            client.close();
+                            server.close();
+                        }
+                        ctx.completeNow();
+                    })));
+        }));
+    }
+
+    @Test
+    @DisplayName("bindToMount() fails closed naming the mount id when a mount declares no openapiPath")
+    void bindToMountNullOpenapiPathFailsClosed(Vertx vertx) {
+        OpenApiContractValidationStrategy s = strategy(vertx);
+        MountMeta mountWithNullPath = mountMeta("jaxrs:/null-path/*", "/null-path/*", null);
+
+        RestConfigurationException ex =
+                assertThrows(RestConfigurationException.class, () -> s.bindToMount(mountWithNullPath));
         assertTrue(
-                ex.getMessage().contains("divergent-openapi.json"),
-                "the message must name the divergent mount path; was: " + ex.getMessage());
+                ex.getMessage().contains("jaxrs:/null-path/*"),
+                "the message must name the mount id; was: " + ex.getMessage());
+
+        // An explicitly null GLOBAL openapiPath must not throw and must load nothing (no NPE on the
+        // construction pre-warm's cache key).
+        assertDoesNotThrow(
+                () -> new OpenApiContractValidationStrategy(
+                        vertx, JaxRsConfig.builder().openapiPath(null).build()),
+                "constructing with an explicitly null global openapiPath must not throw");
+
+        // Once a divergent mount has been bound, the legacy 2-arg gateFor must fail closed naming both
+        // bound paths (the relocated divergence guard), while the 3-arg form still returns a gate for a
+        // properly-bound mount (per-mount validation is unaffected by the legacy guard).
+        OpenApiContractValidationStrategy divergent = strategy(vertx);
+        MountMeta mountA = mountMeta("jaxrs:/a/*", "/a/*", CONTRACT_PATH);
+        MountMeta mountB = mountMeta("jaxrs:/b/*", "/b/*", MOUNT_B_CONTRACT_PATH);
+        divergent.bindToMount(mountA);
+        divergent.bindToMount(mountB);
+
+        JaxRsOperationDescriptor createWidget = op("POST", "/widgets", "createWidget");
+        IllegalStateException legacyEx = assertThrows(
+                IllegalStateException.class, () -> divergent.gateFor(createWidget, OperationSchemas.empty()));
+        assertTrue(
+                legacyEx.getMessage().contains(CONTRACT_PATH)
+                        && legacyEx.getMessage().contains(MOUNT_B_CONTRACT_PATH),
+                "the legacy 2-arg gateFor message must name both bound paths; was: " + legacyEx.getMessage());
+
+        assertDoesNotThrow(
+                () -> divergent
+                        .gateFor(createWidget, OperationSchemas.empty(), mountA)
+                        .orElseThrow(),
+                "the 3-arg gateFor must still return a gate for a properly-bound mount even after a divergent bind");
     }
 
     @Nested
@@ -208,5 +334,24 @@ class OpenApiContractStrategyTest {
                 .httpMethod(method)
                 .routeTemplate(route)
                 .build();
+    }
+
+    /**
+     * Posts {@code jsonBody} to {@code path} on the given already-listening server and resolves the
+     * response status code. A gate installed ahead of a route must have already reached {@code ctx.next()}
+     * or {@code ctx.fail(...)} for the response to complete, so this drives the gate exactly as production
+     * does — over a real request — without building a full mount/registrar.
+     *
+     * @param client   the client to send through
+     * @param port     the server's bound port
+     * @param path     the route the gate is installed on
+     * @param jsonBody the request body
+     * @return the resolved HTTP status code
+     */
+    private static Future<Integer> runGate(WebClient client, int port, String path, String jsonBody) {
+        return client.post(port, "127.0.0.1", path)
+                .putHeader("content-type", "application/json")
+                .sendBuffer(Buffer.buffer(jsonBody))
+                .map(resp -> resp.statusCode());
     }
 }

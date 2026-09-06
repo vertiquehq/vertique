@@ -26,30 +26,49 @@ For most new applications, the default `web-validation` strategy (annotation-syn
 
 ## Core Concepts
 
-The `openapi-contract` strategy starts one asynchronous `OpenAPIContract` load at strategy
-construction, caches the contract and the standalone Vert.x validator derived from it
-(`io.vertx.openapi.validation.RequestValidator` — a `vertx-openapi` type, not a Vertique one), and
-returns a contract-backed gate for every operation. Validation strictness is therefore whatever the
-Vert.x validator enforces against the contract; the framework adds no schema layer of its own.
-`jaxrs.validationMode` belongs to `web-validation`; this strategy uses the standalone validator's
-result directly.
+The `openapi-contract` strategy loads an `OpenAPIContract` asynchronously, caches the contract and the
+standalone Vert.x validator derived from it (`io.vertx.openapi.validation.RequestValidator` — a
+`vertx-openapi` type, not a Vertique one), and returns a contract-backed gate for every operation.
+Validation strictness is therefore whatever the Vert.x validator enforces against the contract; the
+framework adds no schema layer of its own. `jaxrs.validationMode` belongs to `web-validation`; this
+strategy uses the standalone validator's result directly.
 
-`OpenApiContractValidationStrategy` is a Dagger singleton and loads the one global
-`jaxrs.openapiPath` configured for that instance. Multiple mounts can use it only when their
-`MountMeta.openapiPath()` values match that loaded path.
+`OpenApiContractValidationStrategy` is a Dagger singleton, but the contract it validates against is
+resolved **per mount**: it keeps one loaded contract plus validator per distinct
+`MountMeta.openapiPath()`. Mounts declaring different `openapiPath` values are supported and each
+validates against its own contract; mounts sharing one path share one load. The global
+`jaxrs.openapiPath` is loaded ("pre-warmed") when the singleton is constructed, so the usual
+single-mount application still starts its contract load as early as possible.
 
-**Per-mount contract binding (`bindToMount`).** Before any operation gate is produced, the
-framework calls `bindToMount(MountMeta)` once for the selected strategy. This implementation compares
-`mountMeta.openapiPath()` with the global contract path and throws `RestConfigurationException` at
-startup on divergence, preventing wrong-contract validation.
+**Per-mount contract binding (`bindToMount`).** Before any of a mount's operation gates are produced,
+the framework calls `bindToMount(MountMeta)` once for that mount. This implementation caches the
+mount's contract under `mountMeta.openapiPath()`, starting the load only the first time a given path
+is seen (`computeIfAbsent`), so binding is idempotent and safe when several mounts — or several
+`HttpVerticle` instances — bind concurrently. A mount declaring **no** `openapiPath` is rejected with
+`RestConfigurationException` naming the mount id, because this strategy cannot validate without a
+contract. A contract that fails to load is logged as a WARN naming the mount and the path, and its
+failure is cached: it is never retried, and it fails only that mount's own operations.
+
+A multi-mount application whose mounts use contracts other than the default `openapi.json` should set
+`jaxrs.openapiPath` to one of its mount contract paths (or to `null`) so the construction pre-warm
+does not log a spurious WARN for a contract no mount uses.
 
 **Gate lifecycle (`gateFor`).** After mount binding, `JaxRsRouteRegistrar` calls
-`gateFor(JaxRsOperationDescriptor, OperationSchemas)` once per operation at router-build time. This
-strategy ignores the synthesized schemas and always returns a handler. At request time the handler
-looks up the exact operationId, extracts a `ValidatableRequest` from the body already buffered by
-`BodyHandler`, and composes validation with the cached contract future. A contract-load failure or a
-missing operationId is a server/configuration failure: it is logged and reaches the REST pipeline as
-HTTP 500. Validator request failures become sanitized HTTP 400 responses.
+`gateFor(JaxRsOperationDescriptor, OperationSchemas, MountMeta)` once per operation at router-build
+time, and the gate closes over that mount's contract. This strategy ignores the synthesized schemas
+and always returns a handler. At request time the handler looks up the exact operationId, extracts a
+`ValidatableRequest` from the body already buffered by `BodyHandler`, and validates it against the
+mount's cached contract. A contract-load failure or a missing operationId is a server/configuration
+failure: it is logged with the mount path and the contract path, and reaches the REST pipeline as
+HTTP 500. Validator request failures become sanitized HTTP 400 responses. The gate reads an
+already-loaded contract synchronously and continues the request on the request's own Vert.x context;
+a still-loading contract is awaited and the continuation is dispatched back onto that context, so a
+request is never continued on the event loop that loaded the contract.
+
+The two-argument `gateFor(JaxRsOperationDescriptor, OperationSchemas)` is a legacy form the framework
+no longer calls. It validates against the global `jaxrs.openapiPath` contract and fails closed with an
+`IllegalStateException` — naming the bound contract paths — once any mount with a different
+`openapiPath` is bound, rather than validating that mount against the wrong contract.
 
 `openapi-contract` does not execute `FileContentVerifier` bindings and inherits
 `runsFileVerifiers() == false`. When such verifiers are bound, `JaxRsRouterMount` emits one startup
@@ -104,26 +123,33 @@ Then activate it in config:
 
 ### OpenApiContractValidationStrategy
 
-`RequestValidationStrategy` implementation that loads the `OpenAPIContract` from the configured
-`openapiPath` and produces Vert.x contract-backed validation gates per operation.
+`RequestValidationStrategy` implementation that loads an `OpenAPIContract` per mount `openapiPath` and
+produces Vert.x contract-backed validation gates per operation.
 
 ```java
 public class OpenApiContractValidationStrategy implements RequestValidationStrategy {
     @Override public String id() { return "openapi-contract"; }
 
+    // Caches this mount's contract; rejects a mount that declares no openapiPath.
     @Override
     public void bindToMount(MountMeta mountMeta) { ... }
 
+    // The form the framework calls: validates against the registering mount's own contract.
+    @Override
+    public Optional<Handler<RoutingContext>> gateFor(
+            JaxRsOperationDescriptor operation, OperationSchemas schemas, MountMeta mount) { ... }
+
+    // Legacy, mount-agnostic form: the global contract only, fails closed on divergent mounts.
     @Override
     public Optional<Handler<RoutingContext>> gateFor(
             JaxRsOperationDescriptor operation, OperationSchemas schemas) { ... }
 }
 ```
 
-The contract load begins once when the singleton is constructed and is reused by every returned
-gate. A missing or malformed contract fails the cached future; the failure surfaces as HTTP 500 when
-a request reaches a gate. The separate mount-path divergence check fails synchronously at router
-startup.
+Each distinct contract path is loaded once — at construction for the global `jaxrs.openapiPath`, at
+`bindToMount` for a mount's own path — and that one load is reused by every gate built for it. A
+missing or malformed contract fails the cached future and is not retried; the failure surfaces as
+HTTP 500 when a request reaches one of that mount's gates, while other mounts keep working.
 
 The strategy also injects the framework's `ParamConversionResolver` (`vertique-rest-core`) and threads it into the `DefaultBoundRequest` it constructs to trigger the JSON-profile first-parse, so this strategy's parameter coercion goes through the same shared conversion chain as the `web-validation` strategy and the `rest-jaxrs` dispatch path rather than a separate one.
 
@@ -132,10 +158,17 @@ The strategy also injects the framework's `ParamConversionResolver` (`vertique-r
 ## Invariants and Gotchas
 
 - **`openapiPath` must resolve through Vert.x file-system loading.** A missing or malformed spec
-  fails the cached contract future and produces HTTP 500 when a request reaches the gate; the
-  framework does not fall back silently.
-- **operationId matching is exact.** A route whose operationId is absent from the loaded contract
-  fails requests with HTTP 500 and logs an `ERROR`; it never falls back to an unvalidated route.
+  fails the cached contract future and produces HTTP 500 when a request reaches that mount's gate; the
+  failure is cached rather than retried per request, and the framework does not fall back silently.
+- **Every mount must declare an `openapiPath`.** Binding a mount without one throws
+  `RestConfigurationException` at startup naming the mount id; the strategy never borrows another
+  mount's contract.
+- **The contract is chosen per mount, not per application.** Two mounts with different `openapiPath`
+  values validate against different contracts. An operationId therefore only has to exist in the
+  contract of the mount that serves it.
+- **operationId matching is exact.** A route whose operationId is absent from its mount's contract
+  fails requests with HTTP 500 and logs an `ERROR` naming the mount path and the contract path; it
+  never falls back to an unvalidated route.
 - **File verification is inactive.** `openapi-contract` does not run `@FilePart` constraints or
   `FileContentVerifier`; bound verifiers cause a per-mount startup WARN.
 - **`vertx-openapi` is a preview artifact.** Its API shape may change across Vert.x minor versions. This module pins the `vertx-openapi` version via the parent BOM.
