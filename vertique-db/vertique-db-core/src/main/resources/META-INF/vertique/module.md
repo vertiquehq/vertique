@@ -508,8 +508,10 @@ migrationRunner.migrate(vertx)
 
 ### `DbModule`
 
-Provides `DbPoolConfig` as a `@Singleton`, parsed from the `db` config section. Include it alongside
-a vendor module.
+Provides `DbPoolConfig` as a `@Singleton`, parsed from the `db` config section. Each warning from
+`DbPoolConfig.validate()` — missing host, non-positive pool size, a trust store under `sslMode`
+`DISABLE` — is logged at WARN when the binding is created; a warning never fails startup. Include it
+alongside a vendor module.
 
 ```java
 @Singleton
