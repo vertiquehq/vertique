@@ -116,6 +116,18 @@ Typed factory methods, each rejecting a mismatched actor type with `IllegalArgum
 
 ---
 
+### TokenAttributes
+
+Decoded, non-secret token metadata captured at authentication: the JWT header, the JWT claims, and
+selected introspection fields, each optional and defensively copied. It never holds a raw token.
+Its `toString()` is safe to log: the header renders in full; claims and introspection fields render
+by name, with the value shown only for the registered non-sensitive names (`iss`, `aud`, `exp`,
+`nbf`, `iat`, `jti`, `azp`, `typ`, `scope`, `scp`, `client_id`, `token_type`, `active`) and
+`<redacted>` for every other name. Audit observers read the maps through the accessors, which are
+not redacted. A nested object under a disclosed name is redacted, and scope strings render
+verbatim — do not encode tenant, user, or resource identifiers into scope names if the rendering
+reaches shared logs.
+
 ### SystemIdentities
 
 Static factory for `SYSTEM`-typed, actor-only identities. Each factory requires a non-blank `reason`, which is recorded as the actor's `system.reason` attribute — the one attribute that survives identity-snapshot durable capture.
