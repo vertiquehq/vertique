@@ -1183,19 +1183,19 @@ public class SecurityPolicyEnforcer {
 
     /**
      * Returns the ambient {@link InvocationOrigin} bound on {@link #contextHolder} for the current
-     * request, falling back to {@link InvocationOrigin#of(String)} {@code "rest"} when nothing is
-     * ambient (identity-002 P2.S5b-i).
+     * request, falling back to {@link IdentityResolutionMiddleware#REST_ORIGIN} when nothing is
+     * ambient.
      *
      * <p>This enforcer is unconditionally the REST authorization boundary, so a missing ambient
-     * origin — before {@code IdentityResolutionMiddleware} has installed one, or in a unit test that
+     * origin — before {@link IdentityResolutionMiddleware} has installed one, or in a unit test that
      * does not wire the middleware chain — still yields a real REST origin on the emitted
      * {@link AuthorizationRequest} rather than degrading to {@link InvocationOrigin#unspecified()}.
      *
-     * @return the ambient invocation origin, or {@code InvocationOrigin.of("rest")}; never
-     *         {@code null}
+     * @return the ambient invocation origin, or {@link IdentityResolutionMiddleware#REST_ORIGIN};
+     *         never {@code null}
      */
     private InvocationOrigin currentOrigin() {
-        return contextHolder.current(InvocationOrigin.class).orElseGet(() -> InvocationOrigin.of("rest"));
+        return contextHolder.current(InvocationOrigin.class).orElse(IdentityResolutionMiddleware.REST_ORIGIN);
     }
 
     /**

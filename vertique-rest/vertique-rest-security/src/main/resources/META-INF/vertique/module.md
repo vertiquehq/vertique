@@ -370,6 +370,54 @@ module (issue #453) is the intended longer-term successor for bounding and recov
 misbehaving decision point or authorizer; `AuthorizationGateConfig` is scoped to this one timeout
 value in the meantime.
 
+### `IdentityPipelineFactory`
+
+The single assembly point for the identity pipeline: it holds every security collaborator once and
+hands out the identity-resolution middleware and the policy enforcer that transports install.
+`AuthModule` provides it. A transport that must also work without security injects
+`Optional<IdentityPipelineFactory>` and installs what it needs from it, instead of re-assembling the
+pipeline from the individual collaborators.
+
+| Method | Returns |
+|---|---|
+| `securityRuntime()` | the `SecurityRuntime` the pipeline binds resolved contexts into |
+| `restIdentityResolution()` | the REST `IdentityResolutionMiddleware` — the instance `AuthModule` binds |
+| `identityResolutionHandler(IdentityPipelineOptions)` | the `Handler<RoutingContext>` a non-REST transport installs as its identity step |
+| `policyEnforcer()` | the graph's one `SecurityPolicyEnforcer` |
+
+Every accessor is memoized, so one factory yields one middleware per capture choice and one enforcer.
+`identityResolutionHandler` is the only accessor that honours an origin; there is deliberately no
+accessor taking options and returning a middleware, because a middleware's `handle(ctx)` always binds
+the REST origin.
+
+The class has no `@Inject` constructor by design: Dagger cannot declare `@BindsOptionalOf` for an
+`@Inject`-constructible type, and a transport that works without security must be able to declare the
+pipeline optional. `AuthModule` is therefore its only binding — do not declare the collaborator
+bindings it consumes in another module, or a graph can assemble a second pipeline that transports do
+not share.
+
+### `IdentityPipelineOptions`
+
+`record IdentityPipelineOptions(InvocationOrigin origin, boolean identitySnapshotCapture)` — what a
+transport asks the factory to assemble for it. Use the presets; they are the supported combinations.
+
+| Preset | `origin` | `identitySnapshotCapture` |
+|---|---|---|
+| `IdentityPipelineOptions.rest()` | `IdentityResolutionMiddleware.REST_ORIGIN` — kind `DispatchBoundary.REST` (`"rest"`) | `true` |
+| `IdentityPipelineOptions.webSocket()` | `InvocationOrigin.of(DispatchBoundary.WEBSOCKET)` (`"websocket"`) | `false` |
+
+`identitySnapshotCapture = false` assembles the middleware with no capture seam at all, so no identity
+snapshot is taken at that transport's ingress even when the application installs identity-snapshot
+carriage. A channel upgrade establishes a long-lived identity rather than a per-request one, so it
+deliberately does not capture at upgrade.
+
+```java
+// A non-REST transport's identity step and enforcement, from one optional binding.
+Handler<RoutingContext> identityStep =
+        pipeline.identityResolutionHandler(IdentityPipelineOptions.webSocket());
+SecurityPolicyEnforcer enforcer = pipeline.policyEnforcer();
+```
+
 ### `JaxRsSecurityContext`
 
 Bridges the framework context to `jakarta.ws.rs.core.SecurityContext` so standard JAX-RS code works
@@ -599,6 +647,30 @@ grants, and blank values — is dropped and logged once per `(provider, authoriz
 WARN; the authorization value is never logged. The Vert.x `jwt-claims` provider bucket is always
 excluded: its scope→permission projection is lossy, and the JWT principal already reaches
 `AuthorizationClaims` with full kind fidelity through `SecurityClaimMapper`.
+
+### Dagger bindings
+
+What the two modules put in the graph, and where each instance comes from:
+
+| Binding key | Module | Source |
+|---|---|---|
+| `SecurityRuntime` | `SecurityModule` | `HolderBackedSecurityRuntime` (context-holder-backed) |
+| `JaxRsSecurityContextFactory` | `SecurityModule` | `JaxRsSecurityContext::new` |
+| `IdentityPipelineFactory` | `AuthModule` | assembled from the security collaborators; `@Singleton` |
+| `IdentityResolutionMiddleware` | `AuthModule` | `identityPipelineFactory.restIdentityResolution()` |
+| `SecurityPolicyEnforcer` | `AuthModule` | `identityPipelineFactory.policyEnforcer()` |
+| `SecurityPolicyValidator` | `AuthModule` | `DefaultSecurityPolicyValidator` |
+| `AuthEnforcementCapability` | `AuthModule` | the install signal the route registrar checks before accepting restrictive annotations |
+| `CredentialRejectionReporter` | `AuthModule` | `DefaultCredentialRejectionReporter` |
+| `ChannelIdentityManager` | `AuthModule` | `DefaultChannelIdentityManager` |
+| `RequestOriginConfig` | `AuthModule` | `RequestOriginConfig.defaults()` |
+| `Set<OperationHandlerContributor>` | `AuthModule` | identity resolution, authorization, and action-gate authentication contributors |
+| `Set<Middleware>` | `AuthModule` | `OriginCaptureMiddleware` |
+
+`IdentityResolutionMiddleware` and `SecurityPolicyEnforcer` also carry `@Inject` constructors for
+hand-wiring outside a Dagger graph, but the explicit `AuthModule` bindings above take precedence
+wherever both could apply — so a graph including `AuthModule` holds exactly one of each, obtained
+from the factory.
 
 ### Replaceable bindings
 

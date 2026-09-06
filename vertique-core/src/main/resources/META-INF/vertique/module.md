@@ -857,6 +857,9 @@ the record is `(Optional<T> value, List<ContextDecodeWarning> warnings)` with th
 
 `DispatchBoundary` supplies the boundary identifiers an encoder or decoder can branch on:
 `MCP`, `SERVICE_DISPATCH`, `KAFKA`, `OUTBOX`, `OUTBOX_SERVICE`, `DELAYED_JOB`, `WORKFLOW`, `CAMEL`.
+The same class also names the ingress kinds an entry point binds as the request's ambient invocation
+origin for authorization — `REST` (`"rest"`) and `WEBSOCKET` (`"websocket"`) alongside the boundary
+identifiers above — so a transport, an encoder, and a policy all read one vocabulary.
 
 ---
 
