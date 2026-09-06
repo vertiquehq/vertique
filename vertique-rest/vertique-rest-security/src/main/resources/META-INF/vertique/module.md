@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # REST Security Module
 
-> **Status:** Implemented
+> **Status:** Beta
 > **Package:** `dev.vertique.rest.security`
 > **Artifact:** `vertique-rest-security`
 > **Depends on:** rest-core, security-core, security-runtime, context, logging

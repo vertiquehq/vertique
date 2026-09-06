@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # REST Validation Module
 
-> **Status:** Alpha
+> **Status:** Beta
 > **Package:** `dev.vertique.rest.validation`
 > **Artifact:** `vertique-rest-validation`
 > **Depends on:** rest-jaxrs, json-schema

@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # DB PostgreSQL Module
 
-> **Status:** Implemented
+> **Status:** Beta
 > **Package:** `dev.vertique.db.postgresql`
 > **Artifact:** `db-postgresql`
 > **Depends on:** db-core, core

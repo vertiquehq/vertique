@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # REST Auth JWT Module
 
-> **Status:** Implemented
+> **Status:** Beta
 > **Package:** `dev.vertique.rest.auth.jwt`
 > **Artifact:** `vertique-rest-auth-jwt`
 > **Depends on:** rest-security, security-core, security-runtime

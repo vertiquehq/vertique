@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Deploy Module
 
-> **Status:** Implemented
+> **Status:** Beta
 > **Package:** `dev.vertique.deploy`
 > **Artifact:** `vertique-deploy`
 > **Depends on:** core

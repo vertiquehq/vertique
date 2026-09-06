@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # vertique-correlation
 
-> **Status:** Implemented
+> **Status:** Beta
 > **Package:** `dev.vertique.correlation`
 > **Artifact:** `vertique-correlation`
 > **Depends on:** `vertique-core`, `vertique-context`, `vertique-logging`

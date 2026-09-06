@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Logging Module
 
-> **Status:** Implemented
+> **Status:** Beta
 > **Package:** `dev.vertique.logging`
 > **Artifact:** `logging`
 > **Depends on:** vertique-context, vertique-core

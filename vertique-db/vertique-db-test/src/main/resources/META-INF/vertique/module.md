@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # DB Test Module
 
-> **Status:** Implemented
+> **Status:** Beta
 > **Package:** `dev.vertique.db.test`
 > **Artifact:** `vertique-db-test`
 > **Depends on:** `dev.vertique:vertique-db-core`, `dev.vertique:vertique-db-flyway` (optional)

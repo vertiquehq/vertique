@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Inbox/Outbox PostgreSQL Module
 
-> **Status:** Implemented
+> **Status:** Beta
 > **Package:** `dev.vertique.inboxoutbox.postgresql`
 > **Artifact:** `vertique-inbox-outbox-postgresql`
 > **Depends on:** inbox-outbox-core, db-postgresql, db-flyway

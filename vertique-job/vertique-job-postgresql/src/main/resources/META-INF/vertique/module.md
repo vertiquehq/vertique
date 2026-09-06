@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Job PostgreSQL Module
 
-> **Status:** Implemented
+> **Status:** Beta
 > **Package:** `dev.vertique.job.postgresql`
 > **Artifact:** `vertique-job-postgresql`
 > **Depends on:** job-core, db-postgresql, db-flyway

@@ -24,7 +24,7 @@ Module docs are **evergreen reference**: they describe the current state of the 
 ```markdown
 # Module Name
 
-> **Status:** Experimental | Alpha | Beta | Implemented | Stable
+> **Status:** Experimental | Alpha | Beta | Stable
 > **Package:** `dev.vertique.{module}`
 > **Artifact:** `vertique-{module}`
 > **Depends on:** core, ...
@@ -90,7 +90,6 @@ Which other framework modules this module depends on, and why each dependency ex
   mechanics, and test topology belong in the maintainer document. Mention an implementation type only
   when an application must call, implement, configure, or deliberately replace it.
 - **Status header** uses blockquote and one of the controlled vocabulary values:
-  `Experimental`, `Alpha`, `Beta`, `Implemented`, or `Stable`. `Implemented` means the artifact's
-  intended implementation is present but its compatibility maturity has not been promoted to
-  `Stable`; it is not a free-form progress note.
+  `Experimental`, `Alpha`, `Beta`, or `Stable`. The value is a compatibility promise, not a
+  progress note; the retired `Implemented` value must not be reintroduced.
 - **Evergreen tone** — describe the current behavior. Do not write "as of cycle N" or "added in version X". If a fact will rot the moment the next change lands, it does not belong here.

@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # JSON Module
 
-> **Status:** Experimental
+> **Status:** Alpha
 > **Package:** `dev.vertique.json`
 > **Artifact:** `vertique-json`
 > **Depends on:** core

@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # REST JAX-RS Module
 
-> **Status:** Implemented
+> **Status:** Beta
 > **Package:** `dev.vertique.rest.jaxrs`
 > **Artifact:** `vertique-rest-jaxrs`
 > **Depends on:** rest-core, security-core, json

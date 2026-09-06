@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # REST WebSocket Module
 
-> **Status:** Implemented
+> **Status:** Beta
 > **Package:** `dev.vertique.rest.websocket`
 > **Artifact:** `vertique-rest-websocket`
 > **Depends on:** rest-core, rest-security, core, context, security-core, security-runtime, logging

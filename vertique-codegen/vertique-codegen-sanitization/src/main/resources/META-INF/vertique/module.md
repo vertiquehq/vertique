@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Codegen Sanitization Input Processor Module
 
-> **Status:** Implemented
+> **Status:** Beta
 > **Package:** `dev.vertique.codegen.sanitization.processor`
 > **Artifact:** `vertique-codegen-sanitization`
 > **Depends on:** `vertique-codegen-core`, `vertique-input-processing`, `vertique-rest-core` (compile)
