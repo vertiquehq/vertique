@@ -161,18 +161,6 @@ The count query is automatically wrapped as `SELECT COUNT(*) FROM (<base SQL>) _
 
 Obtained automatically via `PgSqlRepository.offsetPagedQuery()` / `PgSqlRepository.offsetPagedQuery(String)` — do not construct directly.
 
-### `PgSqlComposer`
-
-Package-private shared utility extracted from `PgPagedQuery` to avoid duplication between keyset and offset pagination. Provides:
-
-| Method | Description |
-|--------|-------------|
-| `validateBaseSql(String)` | Rejects SQL containing `ORDER BY`, `LIMIT`, `OFFSET`, or lock clauses at the top level (outside subqueries, string literals, and quoted identifiers) using `SqlScanner` |
-| `quoteColumns(List<OrderKey>)` | Pre-computes double-quoted column names for all order keys |
-| `appendOrderBy(StringBuilder, String[], List<OrderKey>)` | Appends `ORDER BY` with per-column direction and `NULLS FIRST`/`NULLS LAST` |
-
-Not part of the public API — used internally by `PgPagedQuery` and `PgOffsetPagedQuery`.
-
 ### `PgLockMode`
 
 PostgreSQL row-level lock mode enum implementing `QueryClause`. Apply via `.queryClause(PgLockMode.xxx)` on a `Query` or `PagedQuery` builder.

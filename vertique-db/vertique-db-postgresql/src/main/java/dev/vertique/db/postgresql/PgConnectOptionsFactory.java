@@ -15,12 +15,16 @@ import io.vertx.pgclient.SslMode;
 import java.util.Locale;
 
 /**
- * Factory for creating {@link PgConnectOptions} from {@link DbPoolConfig}.
+ * INTERNAL — consumed only by {@link DbPostgresqlModule}; not an application contract and free to
+ * change without notice. Applications reach its output through the {@link PgConnectOptions} binding.
  *
- * <p>Centralizes PostgreSQL connection option construction so that both the connection pool
- * (via {@link DbPostgresqlModule}) and dedicated subscriber connections (e.g., LISTEN/NOTIFY)
- * use identical configuration: host, port, user, password, database, SSL mode, trust/key
- * material, reconnect settings, prepared-statement cache, and vendor properties.
+ * <p>Factory for creating {@link PgConnectOptions} from {@link DbPoolConfig}.
+ *
+ * <p>Centralizes PostgreSQL connection option construction so that the connection pool and any
+ * dedicated subscriber connection (e.g., LISTEN/NOTIFY) built from the {@link PgConnectOptions}
+ * binding that {@link DbPostgresqlModule} provides use identical configuration: host, port, user,
+ * password, database, SSL mode, trust/key material, reconnect settings, prepared-statement cache,
+ * and vendor properties.
  */
 public final class PgConnectOptionsFactory {
 

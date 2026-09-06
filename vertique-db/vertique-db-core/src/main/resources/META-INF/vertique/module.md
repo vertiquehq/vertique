@@ -425,6 +425,12 @@ repository.transaction().serializable().execute(conn ->
                 .recover(err -> doFallback(conn)));
 ```
 
+`TransactionOptions` is the record the builder hands to the vendor base class: `isolationLevel`
+(`null` means the database default) and `readOnly`, with `TransactionOptions.DEFAULTS` for read-write
+at the database default. Application code never constructs it. A custom vendor repository that
+overrides `applyTransactionOptions(SqlConnection, TransactionOptions)` reads it and issues
+`IsolationLevel.sql()` — `READ COMMITTED`, `REPEATABLE READ`, or `SERIALIZABLE`.
+
 `withConnection(fn)` runs on a pooled connection with **no** transaction, translating failures the
 same way. Use it for read paths and for `stream(...)`.
 
