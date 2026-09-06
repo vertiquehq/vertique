@@ -89,7 +89,7 @@ more-specific value is configured.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `json.jsonProfile` | string | *(unset)* | Global default profile id for every JSON boundary. `null` or blank means the `system` profile. An id that names no registered profile — including the retired `vertx` — fails startup. |
-| `json.systemProfile` | string | *(unset)* | Profile id for the process JSON codec role, read through `JsonConfig.effectiveSystemProfile()`. `null` or blank means the reserved `system` profile. |
+| `json.systemProfile` | string | *(unset)* | Profile installed as the **process JSON codec's** mapper, read through `JsonConfig.effectiveSystemProfile()` and consumed by the `CONFIGURE`-phase install step below. `null` or blank means the reserved `system` profile. An unknown id — including the retired `vertx` — fails the boot there. |
 
 ```json
 {
@@ -112,6 +112,48 @@ The value is validated unconditionally during the `VALIDATE` startup phase, so a
 when every active binding overrides the global default, and even when no boundary has any active
 bindings at all. Each boundary validates its own default key (`jaxrs.jsonProfile`,
 `restClient.defaults.jsonProfile`, `kafka.jsonProfile`) the same way.
+
+---
+
+## The Process JSON Codec
+
+Vert.x routes every `Json.encode`, `Json.decodeValue`, `new JsonObject(String|Buffer)`,
+`JsonObject.encode()`, `mapTo` and `mapFrom` call through one process-wide codec. `vertique-core`
+owns that codec and exposes it as `VertiqueJson`; this module owns the startup step that decides
+which profile it runs.
+
+`JsonRuntimeModule` contributes a `CONFIGURE`-phase `ApplicationStartupStep` that resolves
+`json.systemProfile` (floor: `system`) through the registry and installs that profile's mapper with
+`VertiqueJson.install(id, mapper)`. `CONFIGURE` is the first startup phase, so every later step,
+validator and verticle already sees the installed codec. An application graph that does not include
+`JsonRuntimeModule` never installs anything and keeps Vert.x's raw JSON behavior — where
+`Json.encode(LocalDate.now())` still fails.
+
+The step fails the boot with `JsonProfileConfigurationException`, naming the profile and the remedy,
+when:
+
+| Check | Failure |
+|---|---|
+| Unknown or retired id | `json.systemProfile` names no registered profile; the retired `vertx` id names the rename to `system`. |
+| Codec ownership | Vert.x did not select the framework's codec, so installing a mapper would change nothing. The message names the actual `Json.CODEC` class and points at `META-INF/services` visibility (a shaded jar must merge service files) and competing `io.vertx.core.spi.JsonFactory` registrations. |
+| Vert.x Jackson module | The profile's mapper does not register `VertxJsonSupport.module()`, so `JsonObject`, `JsonArray` and `Buffer` values would be bean-serialized instead of round-tripping. Build the mapper from the sanctioned seed. |
+| Default typing | The profile's mapper activates Jackson default typing, which would let any payload the process decodes choose the type it instantiates. |
+
+Anything about the selected profile that accepts **more** than the baseline `system` recipe is logged
+at `WARN` before the install — `FAIL_ON_UNKNOWN_PROPERTIES` off, unknown-enum and case-insensitive-enum
+leniency, parser-leniency features `system` leaves off, and any stream-read limit weaker than Vert.x's.
+Those settings then apply to every payload the process decodes, including payloads that no
+request-validation gate has seen.
+
+Installation is keyed by profile id, so two applications booted in one JVM under the **same** effective
+system profile both start (the second install swaps to its own equivalent instance and logs the swap at
+`INFO`); a **different** id fails the second boot naming both ids.
+
+**Selecting a non-default system profile changes the whole process.** With
+`json.systemProfile: vertique`, every `Json.encode` in the process omits nulls, `JsonObject` parsing
+binds JSON floats to `BigDecimal`, `JsonObject.encode()` drops explicit nulls, and the enum leniency of
+that profile applies to every process-codec path. That reaches durable and cross-service formats —
+correlation envelopes, workflow state, cache entries — so treat it as a wire-format decision.
 
 ---
 
@@ -147,18 +189,21 @@ side — Jackson still accepts a numeric timestamp.
 `ObjectMapper` instead, so it still rejects JSON comments at the body-binding boundary.
 
 **`system` is a snapshot, not the live shared mapper.** The copy is taken when the profile registry is
-first constructed. Anything registered on `DatabindCodec.mapper()` before that moment is inherited;
+first constructed, before the install step points the process codec at it. Anything registered on `DatabindCodec.mapper()` before that moment is inherited;
 anything after it is not — the shared mapper and `system` never share state. The registry refuses to
 seed `system` when the copied mapper carries Jackson default typing, so a classpath library that
 activated it on the shared mapper fails the boot instead of feeding a polymorphic mapper into every
 profile role.
 
 **Where `system` binds today.** Through the registry (`registry.mapper(JsonProfileId.SYSTEM)`, the cache
-stores, `@JsonProfile("system")` resolved by the registry) it is the recipe above. The REST request
-body, rest-client, and Kafka JSON edges still short-circuit the reserved id to the raw Vert.x mapper
-without consulting the registry; those edges move onto the registry's `system`/`vertique` mappers in
-the follow-up slices that retune their defaults, and until then `Optional`/`java.time` do not work at
-those edges under `system` and `java.util.Date` renders as epoch millis there.
+stores, `@JsonProfile("system")` resolved by the registry) it is the recipe above. It is also the
+zero-config **process JSON codec**: the install step above puts this profile's mapper behind every
+`Json.*` and `JsonObject` operation, so `Optional` and `java.time` work there and `java.util.Date`
+renders ISO-8601. The REST request body, rest-client, and Kafka JSON edges still short-circuit the
+reserved id to the raw Vert.x mapper without consulting the registry; those edges move onto the
+registry's `system`/`vertique` mappers in the follow-up slices that retune their defaults, and until
+then `Optional`/`java.time` do not work at those edges under `system` and `java.util.Date` renders as
+epoch millis there.
 
 ## The `vertique` Profile
 
@@ -491,13 +536,14 @@ every registered id.
 
 The registry is a Dagger `@Singleton`, so it is constructed on first access. An application with a
 REST, REST-client, or Kafka boundary gets that access during startup automatically. An application
-with **none** of those boundaries must force it, alongside the existing Jackson-configurer step:
+with **none** of those boundaries gets it from this module's `CONFIGURE`-phase install step, which
+resolves the system profile through the registry. An application that drives startup by hand, without
+the lifecycle runner, must force the access itself:
 
 ```java
 @Override
 public Future<Void> start() {
     AppComponent c = DaggerAppComponent.create();
-    c.jacksonConfigurer().configure();      // configure the shared Vert.x mapper
     c.jsonMapperProfileRegistry();          // force eager validation of profiles
     // ... deploy HttpVerticle, etc.
 }
@@ -516,6 +562,7 @@ A validation failure then propagates out of `start()` and the verticle never bec
 | `Set<JsonMapperProfile>` | `@Multibinds` seed — the application-contributed profile set, possibly empty. The built-ins are not members. |
 | `JsonMapperProfileRegistry` | Bound to the validating default implementation. |
 | `JsonConfig` | Parsed from the `json` config section through the injected `ConfigParser` — both `jsonProfile` and `systemProfile`. |
+| `ApplicationStartupStep` (`@IntoSet`) | The `CONFIGURE`-phase step that installs the `json.systemProfile` profile's mapper as the process JSON codec's mapper. |
 | `ComposeValidator` (`@IntoSet`) | The `json.jsonProfile` validator, forced during the `VALIDATE` phase. It is a pure delegate to `JsonMapperProfileRegistry.validateConfigured(...)`, which owns every message. |
 
 ---
@@ -524,7 +571,7 @@ A validation failure then propagates out of `start()` and the verticle never bec
 
 | Artifact | Scope | Purpose |
 |----------|-------|---------|
-| `dev.vertique:vertique-core` | compile | `JsonProfileId`, `JsonMapperProfile`, `JsonMapperProfileRegistry`, `JsonProfileConfigurationException`, `@JsonProfile`, `@KeyedBy`, `ConfigurationException`, `ConfigParser`, `ComposeValidator`, `InputFieldNameResolver` — the codec-neutral projection contract `JacksonFieldNameResolver` implements |
+| `dev.vertique:vertique-core` | compile | `JsonProfileId`, `JsonMapperProfile`, `JsonMapperProfileRegistry`, `JsonProfileConfigurationException`, `@JsonProfile`, `@KeyedBy`, `ConfigurationException`, `ConfigParser`, `ComposeValidator`, `ApplicationStartupStep`, `LifecyclePhase`, `VertiqueJson`, `InputFieldNameResolver` — the codec-neutral projection contract `JacksonFieldNameResolver` implements |
 | `io.vertx:vertx-core` | compile | `DatabindCodec.mapper()`, the Vert.x Jackson module, `JsonObject`, `JsonArray` |
 | `com.fasterxml.jackson.core:jackson-databind` | compile | `ObjectMapper`, `Module`, `BeanDeserializerModifier`, `ContextualDeserializer` |
 | `com.fasterxml.jackson.datatype:jackson-datatype-jsr310` | compile | `JavaTimeModule` — ISO-8601 `java.time` support in the `vertique` defaults |

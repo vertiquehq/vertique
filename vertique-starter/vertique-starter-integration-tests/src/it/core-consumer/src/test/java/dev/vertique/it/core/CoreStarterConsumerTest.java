@@ -99,9 +99,12 @@ class CoreStarterConsumerTest {
 
             Set<LifecyclePhase> phases =
                     startupSteps.stream().map(ApplicationStartupStep::phase).collect(Collectors.toSet());
+            // The core starter carries no JSON runtime, so the only framework step it contributes is
+            // the VALIDATE-phase compose validation; the CONFIGURE-phase process-codec install step
+            // arrives with the JSON runtime module in the fuller starters.
             assertTrue(
-                    phases.containsAll(Set.of(LifecyclePhase.CONFIGURE, LifecyclePhase.VALIDATE)),
-                    "Core starter must wire the CONFIGURE and VALIDATE steps, found phases " + phases);
+                    phases.contains(LifecyclePhase.VALIDATE),
+                    "Core starter must wire the VALIDATE step, found phases " + phases);
 
             assertNotNull(component.shutdownSteps(), "shutdownSteps() must resolve");
             assertNotNull(component.verticleDeploymentManager(), "verticleDeploymentManager() must resolve");

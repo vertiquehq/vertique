@@ -5,6 +5,7 @@ package dev.vertique.json;
 
 import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.json.JsonProfileConfigurationException;
+import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.lifecycle.ComposeValidator;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
@@ -48,5 +49,16 @@ public final class JsonDefaultProfileValidator implements ComposeValidator {
     public JsonDefaultProfileValidator(JsonConfig config, JsonMapperProfileRegistry registry) {
         registry.validateConfigured(config.jsonProfile());
         registry.validateConfigured(config.systemProfile());
+        // Security review: the install seam checks the mapper it is handed, but the installed
+        // mapper stays a live ObjectMapper. Re-check one phase later so default typing activated
+        // on it during CONFIGURE fails the boot instead of serving.
+        if (VertiqueJson.ownsProcessCodec()
+                && VertiqueJson.installedProfile().isPresent()
+                && VertiqueJson.mapper().getDeserializationConfig().getDefaultTyper(null) != null) {
+            throw new JsonProfileConfigurationException("the process JSON codec's mapper (profile '"
+                    + VertiqueJson.installedProfile().get().value()
+                    + "') had Jackson default typing activated after installation; default typing is not"
+                    + " allowed on the process codec");
+        }
     }
 }

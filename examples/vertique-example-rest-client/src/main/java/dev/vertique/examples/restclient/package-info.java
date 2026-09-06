@@ -11,10 +11,10 @@
  * that component; at runtime the launcher's bootstrap verticle discovers that factory and the
  * host-neutral lifecycle runner ({@code VertiqueApplicationBootstrap}) builds the component from the
  * pre-resolved {@code config()} tree and runs the framework {@code CONFIGURE}/{@code VALIDATE} steps
- * (Jackson configuration via {@code CoreLifecycleStepsModule}).
+ * (the process JSON codec install and the compose-validator harness).
  *
  * <p>This is a pure REST <em>client</em> application — it deploys no verticles. {@code AppComponent}
- * wires {@code VertxModule}, {@code JsonModule}, {@code RestClientModule}, {@code DeployerModule},
+ * wires {@code VertxModule}, {@code RestClientModule}, {@code DeployerModule},
  * {@code CoreLifecycleStepsModule}, and the auto-generated {@code GeneratedRestClientsModule}. The
  * {@link dev.vertique.examples.restclient.client.UserClient} proxy's base URL is resolved from
  * {@code restClient.userService.baseUrl} in the application config.

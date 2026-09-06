@@ -13,6 +13,7 @@ import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.config.JsonConfigPaths;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.lifecycle.ApplicationStartupStep;
 import dev.vertique.core.lifecycle.ComposeValidator;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
@@ -70,6 +71,28 @@ public abstract class JsonRuntimeModule {
     @Singleton
     static JsonConfig jsonConfig(@VertxConfig JsonObject config, ConfigParser parser) {
         return parser.parse(JsonConfigPaths.navigateObject(config, "json"), JsonConfig.class);
+    }
+
+    /**
+     * Contributes the {@link JsonSystemProfileInstallStep} into the
+     * {@code Set<ApplicationStartupStep>} multibinding, so an application whose graph includes this
+     * module installs the configured system profile as the process JSON codec's mapper during the
+     * {@code CONFIGURE} phase.
+     *
+     * <p>Dagger merges multibinding contributions across modules, so this entry joins the
+     * empty-by-default {@code Set<ApplicationStartupStep>} declared by the module that owns the
+     * lifecycle runner's inputs; no local {@code @Multibinds} declaration is needed here. An
+     * application graph that does not include this module never installs a mapper and keeps Vert.x's
+     * raw JSON behaviour.
+     *
+     * @param step the process-codec install step
+     * @return the step contributed into the startup-step set
+     */
+    @Provides
+    @Singleton
+    @IntoSet
+    static ApplicationStartupStep jsonSystemProfileInstallStep(JsonSystemProfileInstallStep step) {
+        return step;
     }
 
     /**

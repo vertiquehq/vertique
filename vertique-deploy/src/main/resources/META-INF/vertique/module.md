@@ -222,16 +222,15 @@ static VerticleDeployment workerVerticle(Provider<WorkerVerticle> provider) {
 
 ### `Set<ApplicationStartupStep>` — Non-Verticle Startup Steps
 
-Contribute non-verticle startup work (e.g. configuring Jackson, running Flyway) to the multibinding declared by `DeployerModule`. Steps are ordered by `LifecycleOrdered.comparator()` (phase → priority → orderKey). `vertique-application`'s `VertiqueApplicationBootstrap` consumes this set, running the ordered steps sequentially.
+Contribute non-verticle startup work (e.g. warming a cache, running Flyway) to the multibinding declared by `DeployerModule`. Steps are ordered by `LifecycleOrdered.comparator()` (phase → priority → orderKey). `vertique-application`'s `VertiqueApplicationBootstrap` consumes this set, running the ordered steps sequentially.
 
 ```java
 @Provides @IntoSet
-static ApplicationStartupStep jacksonConfigureStep(JacksonConfigurer configurer) {
+static ApplicationStartupStep warmCachesStep(CacheWarmer warmer) {
     return new ApplicationStartupStep() {
         @Override public LifecyclePhase phase() { return LifecyclePhase.CONFIGURE; }
         @Override public Future<Void> start() {
-            configurer.configure();
-            return Future.succeededFuture();
+            return warmer.warm();
         }
     };
 }
