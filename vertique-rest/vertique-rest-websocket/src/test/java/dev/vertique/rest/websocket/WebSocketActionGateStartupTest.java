@@ -64,6 +64,30 @@ class WebSocketActionGateStartupTest {
         }
     }
 
+    @Test
+    @DisplayName("registrar rejects the raw IdentityResolutionMiddleware in the identity-step slot (REST origin)")
+    void registrarRejectsRawRestOriginMiddleware() {
+        dev.vertique.rest.security.IdentityResolutionMiddleware rawRestMiddleware =
+                mock(dev.vertique.rest.security.IdentityResolutionMiddleware.class);
+
+        IllegalArgumentException rejected = assertThrows(
+                IllegalArgumentException.class,
+                () -> new WebSocketEndpointRegistrar(
+                        new WebSocketMessageCodec(),
+                        mock(SecurityPolicyEnforcer.class),
+                        rawRestMiddleware,
+                        null,
+                        Set.of(),
+                        null,
+                        null,
+                        null,
+                        null,
+                        null),
+                "the identity step must be the websocket-origin handler, never the REST-origin middleware");
+        org.junit.jupiter.api.Assertions.assertTrue(
+                rejected.getMessage().contains("IdentityPipelineOptions.webSocket()"), rejected.getMessage());
+    }
+
     // --- Fixtures ---
 
     @WebSocketEndpoint("/ws/content")

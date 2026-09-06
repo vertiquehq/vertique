@@ -319,6 +319,35 @@ class IdentityPipelineFactoryTest {
     // --- TP-003 ---
 
     @Test
+    @DisplayName("identityResolutionHandler rejects the REST origin — REST goes through restIdentityResolution()")
+    void identityResolutionHandlerRejectsRestOrigin() {
+        IdentityPipelineFactory factory = new IdentityPipelineFactory(
+                Set.of(new DefaultSecurityIdentityResolver()),
+                Optional.empty(),
+                new SecurityEventEmitter(Set.of()),
+                new StubSecurityRuntime(),
+                NOOP_HOLDER,
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Set.of(),
+                Optional.empty(),
+                Optional.empty());
+
+        IllegalArgumentException rejected = org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class,
+                () -> factory.identityResolutionHandler(
+                        new IdentityPipelineOptions(IdentityResolutionMiddleware.REST_ORIGIN, false)),
+                "a non-REST transport must not be able to label itself rest through the options record");
+        org.junit.jupiter.api.Assertions.assertTrue(
+                rejected.getMessage().contains("restIdentityResolution()"), rejected.getMessage());
+        org.junit.jupiter.api.Assertions.assertNotNull(
+                factory.identityResolutionHandler(IdentityPipelineOptions.webSocket()),
+                "the websocket preset stays accepted");
+    }
+
+    @Test
     @DisplayName("Factory constructor covers every parameter of the two @Inject constructors (AR-006 drift guard)")
     void factoryConstructorCoversEveryInjectedCollaborator() {
         Set<String> factoryParams = genericParameterTypeNames(onlyPublicConstructor(IdentityPipelineFactory.class));

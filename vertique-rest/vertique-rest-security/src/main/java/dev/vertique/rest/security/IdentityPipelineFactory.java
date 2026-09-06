@@ -72,6 +72,11 @@ public final class IdentityPipelineFactory {
      * list is the union of the collaborators {@link IdentityResolutionMiddleware} and
      * {@link SecurityPolicyEnforcer} inject; adding a collaborator to either of them adds it here.
      *
+     * <p><b>Do not construct this in application code.</b> Obtain the factory from the Dagger graph
+     * ({@code AuthModule} provides it). Memoization is per instance: a second factory yields a second
+     * enforcer and a second middleware, which share neither the operator-configured gate deadline nor
+     * the application's security-event observers with the graph's pipeline.
+     *
      * @param identityResolvers           the identity resolver set; must not be {@code null}
      * @param claimMapper                 the optional custom claim mapper; must not be {@code null}
      *                                    as an {@link Optional}
@@ -163,9 +168,16 @@ public final class IdentityPipelineFactory {
      * @param options the transport's assembly options; must not be {@code null}
      * @return a handler running the shared identity pipeline under {@code options.origin()}; never
      *         {@code null}
+     * @throws IllegalArgumentException if {@code options.origin()} is the REST origin — REST goes
+     *         through {@link #restIdentityResolution()}; labelling another transport {@code rest}
+     *         would misattribute its authorization decisions and sidestep origin-narrowing policies
      */
     public Handler<RoutingContext> identityResolutionHandler(IdentityPipelineOptions options) {
         Objects.requireNonNull(options, "options");
+        if (IdentityResolutionMiddleware.REST_ORIGIN.equals(options.origin())) {
+            throw new IllegalArgumentException("identityResolutionHandler() is for non-REST transports; use"
+                    + " restIdentityResolution() for the REST origin");
+        }
         return middlewareFor(options.identitySnapshotCapture()).handlerFor(options.origin());
     }
 

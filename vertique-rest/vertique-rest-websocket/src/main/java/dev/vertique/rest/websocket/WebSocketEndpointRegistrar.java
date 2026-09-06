@@ -184,6 +184,13 @@ class WebSocketEndpointRegistrar {
             @Nullable Authorizer authorizer) {
         this.messageCodec = messageCodec;
         this.securityPolicyEnforcer = securityPolicyEnforcer;
+        if (identityResolutionHandler instanceof dev.vertique.rest.security.IdentityResolutionMiddleware) {
+            // The middleware's own handle(ctx) binds the REST origin and runs capture; the WebSocket
+            // identity step must be the origin-bound handler IdentityPipelineFactory assembles.
+            throw new IllegalArgumentException("identityResolutionHandler must be the handler assembled for the"
+                    + " websocket origin (IdentityPipelineFactory.identityResolutionHandler(IdentityPipelineOptions"
+                    + ".webSocket())), not the raw IdentityResolutionMiddleware");
+        }
         this.identityResolutionHandler = identityResolutionHandler;
         this.securityRuntime = securityRuntime;
         this.routeAuthHandlers = routeAuthHandlers;
@@ -393,7 +400,7 @@ class WebSocketEndpointRegistrar {
      */
     private void registerEndpoint(WebSocketEndpointMeta meta, Router router) {
         // Second line behind checkSecurityWithoutPipeline (registerAll), whose predicate already
-        // covers every  endpoint when the enforcer is absent; kept so the invariant
+        // covers every endpoint when the enforcer is absent; kept so the invariant
         // does not silently reopen if that pre-scan predicate is ever narrowed.
         if (meta.requiredAction().isPresent() && securityPolicyEnforcer == null) {
             throw new IllegalStateException("@RequiresAction('"

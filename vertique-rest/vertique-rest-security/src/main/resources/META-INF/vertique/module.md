@@ -388,7 +388,10 @@ pipeline from the individual collaborators.
 Every accessor is memoized, so one factory yields one middleware per capture choice and one enforcer.
 `identityResolutionHandler` is the only accessor that honours an origin; there is deliberately no
 accessor taking options and returning a middleware, because a middleware's `handle(ctx)` always binds
-the REST origin.
+the REST origin. It rejects the REST origin itself with `IllegalArgumentException` — REST goes through
+`restIdentityResolution()` — so no other transport can label its decisions `rest`. Do not construct the
+factory in application code: memoization is per instance, so a second factory yields a second
+enforcer and middleware that share neither the gate deadline nor the security-event observers.
 
 The class has no `@Inject` constructor by design: Dagger cannot declare `@BindsOptionalOf` for an
 `@Inject`-constructible type, and a transport that works without security must be able to declare the

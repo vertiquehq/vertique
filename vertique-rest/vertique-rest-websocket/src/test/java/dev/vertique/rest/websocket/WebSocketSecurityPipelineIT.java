@@ -240,7 +240,7 @@ public class WebSocketSecurityPipelineIT {
         WebSocketEndpointRegistrar registrar = new WebSocketEndpointRegistrar(
                 new WebSocketMessageCodec(),
                 policyEnforcer,
-                identityMiddleware,
+                identityMiddleware.handlerFor(InvocationOrigin.of(DispatchBoundary.WEBSOCKET)),
                 securityRuntime,
                 Set.of(stubAuth),
                 null,
@@ -540,8 +540,8 @@ public class WebSocketSecurityPipelineIT {
     }
 
     /**
-     * Scenario 5c — retention control: a factory built via the pre-existing injected constructor
-     * (no importer parameter) with the {@code teams} provider contributed through the
+     * Scenario 5c — retention control: a factory whose identity pipeline carries no importer
+     * (empty importer optional) with the {@code teams} provider contributed through the
      * {@code authorizationProviders} set must keep today's behavior: the provider set does not feed
      * the claims pipeline, so the constrained upgrade is rejected.
      *
@@ -549,10 +549,10 @@ public class WebSocketSecurityPipelineIT {
      * @param ctx   the test context
      */
     @Test
-    @DisplayName("legacy factory constructor still compiles and behaves: provider set alone does not authorize")
-    void legacyFactoryConstructorStillCompilesAndBehaves(Vertx vertx, VertxTestContext ctx) {
+    @DisplayName("provider set alone does not authorize: no importer, no claims from providers")
+    void providerSetAloneDoesNotAuthorize(Vertx vertx, VertxTestContext ctx) {
         WebSocketMount.Factory factory =
-                legacyFactory(Set.of(grantingProvider("teams", RoleBasedAuthorization.create("team-lead"))));
+                noImporterFactory(Set.of(grantingProvider("teams", RoleBasedAuthorization.create("team-lead"))));
 
         startTeamServer(vertx, factory).onComplete(ctx.succeeding(srv -> connectWithToken(
                         srv.actualPort(), "/ws/team", TOKEN_ALICE_VIEWER)
@@ -669,7 +669,7 @@ public class WebSocketSecurityPipelineIT {
      * @param providers the Vert.x authorization providers passed to the enforcer's provider set
      * @return the configured factory
      */
-    private static WebSocketMount.Factory legacyFactory(Set<AuthorizationProvider> providers) {
+    private static WebSocketMount.Factory noImporterFactory(Set<AuthorizationProvider> providers) {
         IdentityPipelineFactory identityPipelineFactory = new IdentityPipelineFactory(
                 Set.<SecurityIdentityResolver>of(new EvidenceBasedIdentityResolver()),
                 Optional.<dev.vertique.rest.security.SecurityClaimMapper>of(new DefaultSecurityClaimMapper()),
