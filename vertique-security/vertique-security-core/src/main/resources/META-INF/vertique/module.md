@@ -78,7 +78,7 @@ Interface extending `ContextValue`. The four pillars (`identity()`, `authenticat
 
 `snapshot()` pins the current facts into an immutable `SecurityContextSnapshot` — capture a snapshot before crossing a thread boundary so a later context rebind cannot replace the fact records under an off-thread projection. `SecurityContextSnapshot` carries `identity`, `authentication`, and `origin` only — **not** `authorization()`.
 
-`reconstruction()` returns the typed, unforgeable `ReconstructionMarker` present only on a framework verified reconstruction.
+`reconstruction()` returns the typed, unforgeable `ReconstructionMarker`, which every framework-built context carries only after a verified reconstruction.
 
 ```java
 // Read-only use in a request handler
@@ -175,7 +175,7 @@ public final class SecurityContexts {
 
 - **`system(...)` is doubly constrained.** It throws `IllegalArgumentException` unless the actor's `PrincipalType` is `SYSTEM` *and* the identity is actor-only (no `subject`, `delegation`, or `client`). Stamping `custom("system")` onto a `SERVICE` actor would misattribute it as system-acting, so use `unauthenticated(...)` for a `SERVICE` actor instead. Both factories assemble with `AuthorizationClaims.empty()` and no origin.
 - None of these methods emit `SecurityEventObserver` events — a static method cannot invoke an injected emitter by construction, so consuming flows decide whether and how to audit.
-- The concrete types built here are package-private; callers use `SecurityContexts` and the `SecurityContext` interface, never a concrete record. `assembleReconstructed` is the only route to a non-empty `reconstruction()`.
+- The concrete types built here are package-private; callers use `SecurityContexts` and the `SecurityContext` interface, never a concrete record. No framework-built context reaches a non-empty `reconstruction()` except through `assembleReconstructed`; an application that implements the `SecurityContext` interface directly can return one without it.
 - `assemble(...)` takes `authorization()` verbatim from its `claims` argument and makes no authority decision of its own. Reconstruction exploits this by passing `AuthorizationClaims.empty()`, so a reconstructed context carries no frozen authority (FR-ID-CA-010).
 
 ---
