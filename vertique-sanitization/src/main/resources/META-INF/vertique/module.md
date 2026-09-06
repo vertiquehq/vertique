@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Sanitization Module
 
-> **Status:** Implemented
+> **Status:** Beta
 > **Package:** `dev.vertique.sanitization`
 > **Artifact:** `vertique-sanitization`
 > **Depends on:** core, input-processing

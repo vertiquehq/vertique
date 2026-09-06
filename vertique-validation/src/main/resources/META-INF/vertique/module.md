@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Validation Module
 
-> **Status:** Implemented
+> **Status:** Beta
 > **Package:** `dev.vertique.validation`
 > **Artifact:** `vertique-validation`
 > **Depends on:** core

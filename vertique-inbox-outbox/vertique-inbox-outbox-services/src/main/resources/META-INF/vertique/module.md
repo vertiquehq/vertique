@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Inbox/Outbox Services Module
 
-> **Status:** Implemented
+> **Status:** Beta
 > **Package:** `dev.vertique.inboxoutbox.services`
 > **Artifact:** `vertique-inbox-outbox-services`
 > **Depends on:** inbox-outbox-core, services

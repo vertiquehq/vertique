@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # DB Flyway Module
 
-> **Status:** Implemented
+> **Status:** Beta
 > **Package:** `dev.vertique.db.flyway`
 > **Artifact:** `db-flyway`
 > **Depends on:** db-core, core

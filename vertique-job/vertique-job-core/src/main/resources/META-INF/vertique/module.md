@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Job Core Module
 
-> **Status:** Implemented
+> **Status:** Beta
 > **Package:** `dev.vertique.job`
 > **Artifact:** `vertique-job-core`
 > **Depends on:** core

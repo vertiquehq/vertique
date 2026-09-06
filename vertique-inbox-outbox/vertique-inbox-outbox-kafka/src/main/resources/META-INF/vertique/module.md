@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Inbox/Outbox Kafka Module
 
-> **Status:** Implemented
+> **Status:** Beta
 > **Package:** `dev.vertique.inboxoutbox.kafka`
 > **Artifact:** `vertique-inbox-outbox-kafka`
 > **Depends on:** inbox-outbox-core, kafka

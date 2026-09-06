@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Inbox/Outbox Core Module
 
-> **Status:** Implemented
+> **Status:** Beta
 > **Package:** `dev.vertique.inboxoutbox`
 > **Artifact:** `vertique-inbox-outbox-core`
 > **Depends on:** core, db-core

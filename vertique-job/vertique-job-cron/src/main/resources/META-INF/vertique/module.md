@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Job Cron Module
 
-> **Status:** Implemented
+> **Status:** Beta
 > **Package:** `dev.vertique.job.cron`
 > **Artifact:** `vertique-job-cron`
 > **Depends on:** job-core, core, context, services, deploy, logging

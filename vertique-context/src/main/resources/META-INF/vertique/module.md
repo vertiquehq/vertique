@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Context Module (vertique-context)
 
-> **Status:** Implemented
+> **Status:** Beta
 > **Package:** `dev.vertique.context`
 > **Artifact:** `vertique-context`
 > **Depends on:** `dev.vertique:vertique-core`

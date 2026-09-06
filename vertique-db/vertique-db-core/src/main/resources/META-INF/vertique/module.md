@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # DB Core Module
 
-> **Status:** Implemented
+> **Status:** Beta
 > **Package:** `dev.vertique.db` (+ `.exception`, `.query`)
 > **Artifact:** `vertique-db-core`
 > **Depends on:** core

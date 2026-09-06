@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Inbox/Outbox Delayed Job Module
 
-> **Status:** Implemented
+> **Status:** Beta
 > **Package:** `dev.vertique.inboxoutbox.delayedjob`
 > **Artifact:** `vertique-inbox-outbox-delayed-job`
 > **Depends on:** inbox-outbox-core, job-delayed

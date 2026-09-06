@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Job Delayed Module
 
-> **Status:** Implemented
+> **Status:** Beta
 > **Package:** `dev.vertique.job.delayed`
 > **Artifact:** `vertique-job-delayed`
 > **Depends on:** job-core, job-postgresql, services, deploy, core, context, db-core, logging, config-core

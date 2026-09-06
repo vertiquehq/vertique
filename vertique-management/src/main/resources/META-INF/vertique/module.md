@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Management Module
 
-> **Status:** Implemented
+> **Status:** Beta
 > **Package:** `dev.vertique.management`
 > **Artifact:** `vertique-management`
 > **Depends on:** `dev.vertique:vertique-core`, `io.vertx:vertx-web`
