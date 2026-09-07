@@ -113,6 +113,9 @@ class McpProfileDependencyArchitectureTest {
                 "mcp-core -> core",
                 "codegen-mcp -> core",
                 "codegen-mcp -> mcp-core",
+                // codegen-mcp's own outgoing edges are never scanned (see class Javadoc); listed for
+                // completeness, not as proof that this direction holds.
+                "codegen-mcp -> input-processing",
                 "mcp-server -> core",
                 "mcp-server -> mcp-core",
                 "mcp-server -> json",

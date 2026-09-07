@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Alpha
 > **Package:** `dev.vertique.codegen.mcp`
 > **Artifact:** `vertique-codegen-mcp`
-> **Depends on:** `vertique-codegen-core`, `vertique-mcp-core`, `vertique-core`, `vertique-security-core`, `com.palantir.javapoet:javapoet`
+> **Depends on:** `vertique-codegen-core`, `vertique-mcp-core`, `vertique-core`, `vertique-security-core`, `vertique-input-processing`, `com.palantir.javapoet:javapoet`
 
 `vertique-codegen-mcp` is the annotation processor that turns every `@McpTool`-annotated method into
 generated Model Context Protocol dispatch source: one package-private invoker per tool and one
@@ -132,15 +132,22 @@ For every parameterized tool the processor emits:
 - `@JsonProperty(protocolName)` on each component, so the wire's declared argument name (which may be
   a Java keyword, contain hyphens, or otherwise not be a legal identifier) is preserved exactly
   without deriving a Java identifier from it;
-- each parameter's resolved final REST-effective input-policy chain as normalized base
+- each parameter's resolved final effective input-policy chain as normalized base
   `@Canonicalize`/`@Sanitize` annotations on the component (never `@Skip*`), resolved at compile time
-  by the package-private `McpInputPolicyResolver` — method over declaring type, then the parameter's
-  own override, mirroring `ParameterExtractor.resolveParamPolicies`'s precedence;
+  by the package-private `McpInputPolicyResolver` through the shared `ElementInvocationPolicies`
+  adapter — route-level chains for the tool method over its declaring type, then each parameter's own
+  override;
 - a position-stable `List<McpToolParameterMetadata>` pairing each component name with its external
   protocol name and description.
 
-`McpInputPolicyResolver` is MCP's transport-specific derivation: `vertique-input-processing` publishes
-`EffectiveInputPolicies` but no annotation→policy resolver, so each transport derives its own.
+`McpInputPolicyResolver` derives policies through the same `vertique-input-processing` adapter the
+JAX-RS codegen resolver uses, so the two transports cannot drift apart. The derivation is hierarchy-
+and composed-annotation-aware: a policy declared only on a superclass, an implemented interface, or
+reached through a meta-annotated composed annotation is honored exactly as the reflective runtime
+honors it. An inherited conflict — the merged view of an element (its own declaration, its
+superclasses, and its interfaces) declaring both an additive policy and its `@Skip*` counterpart — is
+a compile error whose message names both declaration sites; a route-level conflict is reported at the
+method, and a parameter-level conflict is reported at the parameter.
 
 ### A handler's return type is adapted onto `McpToolResult`, never coerced to a partial shape
 
@@ -246,6 +253,7 @@ application installs.
 | `vertique-mcp-core` | compile | `@McpTool` / `@McpToolParam`, and the `McpToolDescriptor`, `McpToolAccess`, `McpToolInvoker`, `McpPreparedToolCall` contracts the generated source implements |
 | `vertique-core` | compile | `@JsonProfile` and `JsonProfileId` for effective-profile resolution and normalization |
 | `vertique-security-core` | compile | `@RequiresAction` / `ActionRef`, from which the tool's access mode is derived |
+| `vertique-input-processing` | compile | `dev.vertique.input.processing.apt.ElementInvocationPolicies` and `InvocationPolicyConflictException`, the shared compile-time derivation of route and parameter policy chains; the generated invoker's `EffectiveInputPolicies.NONE` literal is still addressed by name only (a JavaPoet `ClassName`), not by import |
 | `com.palantir.javapoet:javapoet` | compile | Source emission |
 
 Test-only dependencies: `vertique-codegen-test`, `jakarta.inject-api`, `jakarta.annotation-api`.
