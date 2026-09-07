@@ -9,16 +9,23 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.input.processing.InputPolicyMetadata.FieldPolicyMetadata;
+import dev.vertique.input.processing.apt.ElementInvocationPolicies;
+import dev.vertique.input.processing.apt.ElementInvocationPolicies.ElementPolicyChains;
 import java.io.File;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.lang.reflect.Executable;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -62,7 +69,8 @@ class ApiSurfaceTest {
             "PolicyAxis",
             "InvocationPolicyResolver",
             "InvocationPolicyConflictException",
-            "ReflectiveInvocationPolicies");
+            "ReflectiveInvocationPolicies",
+            "apt.ElementInvocationPolicies");
 
     /** Types that implement the engine but are deliberately not part of the surface. */
     private static final Set<String> INTERNAL_TYPES = Set.of(
@@ -110,10 +118,15 @@ class ApiSurfaceTest {
         }
 
         /**
-         * Lists the simple names of all top-level classes compiled into this package, excluding
-         * nested/anonymous classes ({@code $}) and {@code package-info}.
+         * Lists the dotted, package-relative names of all top-level classes compiled into this
+         * package and its subpackages (e.g. {@code "apt.ElementInvocationPolicies"}), excluding
+         * nested/anonymous classes ({@code $}) and any {@code package-info}.
          *
-         * @return the simple names found in the module's compiled main-classes directory
+         * <p>Package-aware since T018 (issue #379): the {@code apt} subpackage must be inventoried
+         * too, so the scan walks the whole compiled-classes subtree under {@code
+         * dev/vertique/input/processing} rather than listing one directory.
+         *
+         * @return the dotted package-relative names found in the module's compiled main-classes tree
          */
         private Set<String> compiledTopLevelClassNames() {
             File packageDir = new File(
@@ -125,15 +138,33 @@ class ApiSurfaceTest {
                     InputObjectProcessor.class.getPackageName().replace('.', '/'));
             assertTrue(packageDir.isDirectory(), "expected compiled classes directory at " + packageDir);
 
-            File[] files = packageDir.listFiles((dir, name) -> name.endsWith(".class"));
-            assertTrue(files != null && files.length > 0, "no compiled classes found in " + packageDir);
+            Path root = packageDir.toPath();
+            Set<String> names;
+            try (Stream<Path> paths = Files.walk(root)) {
+                names = paths.filter(p -> p.toString().endsWith(".class"))
+                        .map(root::relativize)
+                        .map(Path::toString)
+                        .map(rel -> rel.substring(0, rel.length() - ".class".length()))
+                        .map(rel -> rel.replace(File.separatorChar, '.'))
+                        .filter(name -> !name.contains("$"))
+                        .filter(name -> !lastSegment(name).equals("package-info"))
+                        .collect(Collectors.toCollection(TreeSet::new));
+            } catch (IOException e) {
+                throw new UncheckedIOException("failed to walk compiled classes directory " + packageDir, e);
+            }
+            assertTrue(!names.isEmpty(), "no compiled classes found in " + packageDir);
+            return names;
+        }
 
-            return Arrays.stream(files)
-                    .map(File::getName)
-                    .map(name -> name.substring(0, name.length() - ".class".length()))
-                    .filter(name -> !name.contains("$"))
-                    .filter(name -> !name.equals("package-info"))
-                    .collect(Collectors.toCollection(TreeSet::new));
+        /**
+         * Returns the last dot-separated segment of a dotted package-relative class name.
+         *
+         * @param dottedName e.g. {@code "apt.ElementInvocationPolicies"} or {@code "ChainResolver"}
+         * @return the simple class name, e.g. {@code "ElementInvocationPolicies"}
+         */
+        private static String lastSegment(String dottedName) {
+            int idx = dottedName.lastIndexOf('.');
+            return idx < 0 ? dottedName : dottedName.substring(idx + 1);
         }
 
         private Class<?> forName(String simpleName) throws ClassNotFoundException {
@@ -389,6 +420,129 @@ class ApiSurfaceTest {
                     "resolveParameter(Method,int,EffectiveInputPolicies)");
             assertNoPublicFields(ReflectiveInvocationPolicies.class);
             assertNoPublicConstructors(ReflectiveInvocationPolicies.class);
+        }
+    }
+
+    @Nested
+    @DisplayName("apt.ElementInvocationPolicies")
+    class ElementInvocationPoliciesSurface {
+
+        @Test
+        @DisplayName("public members match the frozen ledger")
+        void elementInvocationPoliciesSurface() {
+            assertMethods(
+                    ElementInvocationPolicies.class,
+                    "resolveRoute(ExecutableElement,TypeElement)",
+                    "resolveParameter(VariableElement,int,ExecutableElement,TypeElement,ElementPolicyChains)");
+            assertNoPublicFields(ElementInvocationPolicies.class);
+            assertConstructors(ElementInvocationPolicies.class, "<init>(Elements,Types)");
+        }
+    }
+
+    @Nested
+    @DisplayName("apt.ElementInvocationPolicies.ElementPolicyChains")
+    class ElementPolicyChainsSurface {
+
+        @Test
+        @DisplayName("public members match the frozen ledger (components, NONE, record boilerplate)")
+        void elementPolicyChainsSurface() {
+            assertMethods(
+                    ElementPolicyChains.class,
+                    "canonicalizers()",
+                    "sanitizers()",
+                    "equals(Object)",
+                    "hashCode()",
+                    "toString()");
+            assertFields(ElementPolicyChains.class, "NONE");
+            assertConstructors(ElementPolicyChains.class, "<init>(List,List)");
+        }
+    }
+
+    @Nested
+    @DisplayName("apt package purity (AR-009)")
+    class AptPackagePurity {
+
+        /**
+         * No {@code src/main/java} file outside the {@code apt} subpackage may reference the {@code
+         * apt} subpackage or {@code javax.lang.model} — {@code dev.vertique.input.processing.apt} is
+         * compile-time-only and never loaded by runtime code (contract "apt package in a runtime
+         * artifact (AR-009)"; T018, issue #379).
+         */
+        @Test
+        @DisplayName("no file outside apt/ references processing.apt or javax.lang.model")
+        void noRuntimeFileReferencesTheAptPackage() throws IOException {
+            Path srcMain = mainSourceRoot();
+            try (Stream<Path> paths = Files.walk(srcMain)) {
+                List<Path> offenders = paths.filter(p -> p.toString().endsWith(".java"))
+                        .filter(p -> !isUnderAptPackage(srcMain, p))
+                        .filter(AptPackagePurity::referencesAptOrLangModel)
+                        .toList();
+                assertTrue(
+                        offenders.isEmpty(),
+                        "dev.vertique.input.processing.apt / javax.lang.model must not be referenced "
+                                + "outside the apt subpackage; found in: " + offenders);
+            }
+        }
+
+        /**
+         * Every import in {@code apt/*.java} is JDK-only ({@code java.}, {@code javax.lang.model.},
+         * {@code javax.annotation.processing.}) or references this module's own base package — the
+         * {@code apt} adapter requires only the JDK {@code java.compiler} module (contract, "apt
+         * package in a runtime artifact (AR-009)"; T018, issue #379).
+         */
+        @Test
+        @DisplayName("every import in apt/*.java is JDK-only or dev.vertique.input.processing")
+        void aptImportsAreJdkOnlyOrOwnPackage() throws IOException {
+            Path srcMain = mainSourceRoot();
+            List<String> allowedPrefixes = List.of(
+                    "java.", "javax.lang.model.", "javax.annotation.processing.", "dev.vertique.input.processing.");
+            try (Stream<Path> paths = Files.walk(srcMain)) {
+                List<String> offenders = paths.filter(p -> p.toString().endsWith(".java"))
+                        .filter(p -> isUnderAptPackage(srcMain, p))
+                        .flatMap(p -> importsOf(p).stream()
+                                .filter(imp -> allowedPrefixes.stream().noneMatch(imp::startsWith))
+                                .map(imp -> p + " imports " + imp))
+                        .toList();
+                assertTrue(
+                        offenders.isEmpty(),
+                        "apt/*.java must import only JDK types or its own base package; " + "found: " + offenders);
+            }
+        }
+
+        private Path mainSourceRoot() {
+            Path srcMain = Path.of(System.getProperty("user.dir"), "src", "main", "java");
+            assertTrue(Files.isDirectory(srcMain), "expected src/main/java to exist at " + srcMain);
+            return srcMain;
+        }
+
+        private boolean isUnderAptPackage(Path srcMain, Path file) {
+            Path relative = srcMain.relativize(file);
+            return relative.getNameCount() > 1
+                    && relative.getName(relative.getNameCount() - 2).toString().equals("apt");
+        }
+
+        private static boolean referencesAptOrLangModel(Path file) {
+            String contents = readString(file);
+            return contents.contains("processing.apt") || contents.contains("javax.lang.model");
+        }
+
+        private static List<String> importsOf(Path file) {
+            return readString(file)
+                    .lines()
+                    .map(String::strip)
+                    .filter(line -> line.startsWith("import "))
+                    .map(line -> line.substring("import ".length()))
+                    .map(line -> line.endsWith(";") ? line.substring(0, line.length() - 1) : line)
+                    .map(line -> line.startsWith("static ") ? line.substring("static ".length()) : line)
+                    .toList();
+        }
+
+        private static String readString(Path file) {
+            try {
+                return Files.readString(file);
+            } catch (IOException e) {
+                throw new UncheckedIOException("failed to read " + file, e);
+            }
         }
     }
 

@@ -83,5 +83,17 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-rest-jaxrs</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- Test: T018 (issue #379) IP-01..IP-19 matrix stubs (A/B/C/K, ComposedSanitize) published by
+             vertique-input-processing's own test-jar (dev.vertique.input.processing.testkit) — shape
+             mirrors vertique-rest-jaxrs/pom.xml:57-63 (main-artifact dependency above stays compile-scope
+             non-test-jar; this is a distinct test-jar artifact of the same module). -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-input-processing</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>

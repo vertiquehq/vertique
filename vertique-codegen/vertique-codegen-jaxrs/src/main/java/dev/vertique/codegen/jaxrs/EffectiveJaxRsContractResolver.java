@@ -7,12 +7,13 @@ import dev.vertique.codegen.AnnotationMirrors;
 import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.Diagnostics;
 import dev.vertique.codegen.JaxRsAnnotations;
+import dev.vertique.input.processing.InvocationPolicyConflictException;
+import dev.vertique.input.processing.apt.ElementInvocationPolicies;
+import dev.vertique.input.processing.apt.ElementInvocationPolicies.ElementPolicyChains;
 import java.util.ArrayList;
 import java.util.EnumSet;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.AnnotationValue;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
@@ -50,13 +51,6 @@ public final class EffectiveJaxRsContractResolver {
     private static final String OPERATION_FQN = "io.swagger.v3.oas.annotations.Operation";
     private static final String VALIDATE_WITH_FQN = "dev.vertique.core.validation.ValidateWith";
 
-    // --- Sanitization annotation FQN constants (mirrors AnnotationCollector in codegen-sanitization) ---
-
-    private static final String CANONICALIZE_FQN = "dev.vertique.core.sanitization.Canonicalize";
-    private static final String SANITIZE_FQN = "dev.vertique.core.sanitization.Sanitize";
-    private static final String SKIP_CANON_FQN = "dev.vertique.core.sanitization.SkipCanonicalization";
-    private static final String SKIP_SANIT_FQN = "dev.vertique.core.sanitization.SkipSanitization";
-
     // --- Multi-value shape policy ---
 
     /**
@@ -77,12 +71,21 @@ public final class EffectiveJaxRsContractResolver {
     private final CodegenContext ctx;
 
     /**
+     * The shared invocation-policy adapter: it owns the hierarchy-merged view of an element (the
+     * declaring site, superclasses bottom-up, then interfaces), meta-annotation recursion, and the
+     * precedence between the additive and the skip annotation of each axis, so compile-time
+     * derivation cannot drift from the reflective runtime's.
+     */
+    private final ElementInvocationPolicies policies;
+
+    /**
      * Creates a new {@code EffectiveJaxRsContractResolver} bound to the given codegen context.
      *
      * @param ctx the shared codegen context; must not be {@code null}
      */
     public EffectiveJaxRsContractResolver(CodegenContext ctx) {
         this.ctx = ctx;
+        this.policies = new ElementInvocationPolicies(ctx.elements(), ctx.types());
     }
 
     // --- Public API ---
@@ -347,15 +350,22 @@ public final class EffectiveJaxRsContractResolver {
         // @ValidateWith
         List<TypeMirror> validationGroups = resolveValidationGroups(concreteMethod, concreteClass);
 
-        // Route-level canonicalization / sanitization chains
-        List<TypeMirror> routeCanonicalizers =
-                resolveRouteChain(concreteMethod, concreteClass, CANONICALIZE_FQN, SKIP_CANON_FQN);
-        List<TypeMirror> routeSanitizers =
-                resolveRouteChain(concreteMethod, concreteClass, SANITIZE_FQN, SKIP_SANIT_FQN);
+        // Route-level canonicalization / sanitization chains, resolved over the hierarchy-merged
+        // view of the method and the resource type (interface- and superclass-declared policies
+        // included). An element that both declares and skips a policy is a configuration error:
+        // the shared resolver rejects it and the method is excluded from the resolved contract.
+        ElementPolicyChains routePolicies;
+        try {
+            routePolicies = policies.resolveRoute(concreteMethod, concreteClass);
+        } catch (InvocationPolicyConflictException e) {
+            ctx.diagnostics().error(concreteMethod, e.getMessage());
+            return null;
+        }
+        List<TypeMirror> routeCanonicalizers = routePolicies.canonicalizers();
+        List<TypeMirror> routeSanitizers = routePolicies.sanitizers();
 
         // Parameters
-        List<EffectiveParamContract> params =
-                resolveParams(concreteMethod, concreteClass, routeCanonicalizers, routeSanitizers);
+        List<EffectiveParamContract> params = resolveParams(concreteMethod, concreteClass, routePolicies);
 
         return new EffectiveMethodContract(
                 concreteMethod,
@@ -530,22 +540,18 @@ public final class EffectiveJaxRsContractResolver {
     /**
      * Resolves the effective parameter contracts for all parameters of a concrete method.
      *
-     * @param method               the concrete method
-     * @param resourceClass        the resource class
-     * @param routeCanonicalizers  route-level canonicalizer chain to use as baseline for each param
-     * @param routeSanitizers      route-level sanitizer chain to use as baseline for each param
+     * @param method        the concrete method
+     * @param resourceClass the resource class
+     * @param routePolicies the route-level chains to use as the baseline for each parameter
      * @return the list of parameter contracts; never {@code null}
      */
     private List<EffectiveParamContract> resolveParams(
-            ExecutableElement method,
-            TypeElement resourceClass,
-            List<TypeMirror> routeCanonicalizers,
-            List<TypeMirror> routeSanitizers) {
+            ExecutableElement method, TypeElement resourceClass, ElementPolicyChains routePolicies) {
         List<EffectiveParamContract> result = new ArrayList<>();
         var params = method.getParameters();
         for (int i = 0; i < params.size(); i++) {
             var param = params.get(i);
-            result.add(resolveParam(param, i, method, resourceClass, routeCanonicalizers, routeSanitizers));
+            result.add(resolveParam(param, i, method, resourceClass, routePolicies));
         }
         return List.copyOf(result);
     }
@@ -557,8 +563,7 @@ public final class EffectiveJaxRsContractResolver {
      * @param paramIndex          zero-based parameter index
      * @param method              the enclosing method
      * @param resourceClass       the resource class
-     * @param routeCanonicalizers route-level canonicalizer chain to use as baseline
-     * @param routeSanitizers     route-level sanitizer chain to use as baseline
+     * @param routePolicies       the route-level chains to use as baseline
      * @return the resolved parameter contract; never {@code null}
      */
     private EffectiveParamContract resolveParam(
@@ -566,8 +571,7 @@ public final class EffectiveJaxRsContractResolver {
             int paramIndex,
             ExecutableElement method,
             TypeElement resourceClass,
-            List<TypeMirror> routeCanonicalizers,
-            List<TypeMirror> routeSanitizers) {
+            ElementPolicyChains routePolicies) {
 
         // Classify using the concrete param (direct annotations take precedence)
         // For param source, we also look at the interface param if no direct annotation found
@@ -602,12 +606,19 @@ public final class EffectiveJaxRsContractResolver {
         // can emit a TypeReference-style token for generic bodies (e.g. List<Foo>)
         TypeMirror genericType = (source == JaxRsParamSource.BODY) ? type : null;
 
-        // Per-parameter policies: start from route-level chain, apply param-level overrides.
-        // This mirrors ParameterExtractor.resolveParamPolicies at compile time.
-        List<TypeMirror> paramCanonicalizers =
-                resolveParamChain(concreteParam, CANONICALIZE_FQN, SKIP_CANON_FQN, routeCanonicalizers);
-        List<TypeMirror> paramSanitizers =
-                resolveParamChain(concreteParam, SANITIZE_FQN, SKIP_SANIT_FQN, routeSanitizers);
+        // Per-parameter policies: start from the route-level chains, apply the parameter's own
+        // hierarchy-merged overrides (an annotation declared only on an overridden method's
+        // parameter counts). A parameter that both declares and skips a policy is a configuration
+        // error: the diagnostic names the parameter and the parameter falls back to no policies.
+        ElementPolicyChains paramPolicies;
+        try {
+            paramPolicies = policies.resolveParameter(concreteParam, paramIndex, method, resourceClass, routePolicies);
+        } catch (InvocationPolicyConflictException e) {
+            ctx.diagnostics().error(concreteParam, e.getMessage());
+            paramPolicies = ElementPolicyChains.NONE;
+        }
+        List<TypeMirror> paramCanonicalizers = paramPolicies.canonicalizers();
+        List<TypeMirror> paramSanitizers = paramPolicies.sanitizers();
 
         return new EffectiveParamContract(
                 concreteParam,
@@ -801,145 +812,6 @@ public final class EffectiveJaxRsContractResolver {
             }
         }
         return null;
-    }
-
-    // --- Route-level chain resolution helpers ---
-
-    /**
-     * Resolves the effective route-level chain (canonicalizers or sanitizers) for a method by
-     * applying the same precedence as the runtime
-     * {@code ResourceScanner.resolveRouteCanonicalizerChain} / {@code resolveRouteSanitizerChain}:
-     *
-     * <ol>
-     *   <li>Method-level {@code @Skip*} → empty chain (opt-out)</li>
-     *   <li>Method-level {@code @Canonicalize}/{@code @Sanitize} → use method value</li>
-     *   <li>Class-level {@code @Skip*} → empty chain</li>
-     *   <li>Class-level {@code @Canonicalize}/{@code @Sanitize} → use class value</li>
-     *   <li>None of the above → empty chain</li>
-     * </ol>
-     *
-     * <p>Conflict detection (both additive and skip on the same element) is not surfaced here
-     * because it is already surfaced by the sanitization APT processor at the type-level and would
-     * be a duplicate error. The runtime resolvers throw {@link IllegalStateException} on conflict;
-     * callers of the generated descriptor would hit that error at startup.
-     *
-     * @param method        the concrete method
-     * @param resourceClass the resource class (used to locate class-level annotations)
-     * @param additiveFqn   FQN of the additive annotation ({@code @Canonicalize} or {@code @Sanitize})
-     * @param skipFqn       FQN of the skip annotation ({@code @SkipCanonicalization} or {@code @SkipSanitization})
-     * @return ordered list of class type mirrors; never {@code null}, empty when no chain applies
-     */
-    private List<TypeMirror> resolveRouteChain(
-            ExecutableElement method, TypeElement resourceClass, String additiveFqn, String skipFqn) {
-
-        boolean methodSkip = findMetaAnnotationMirror(method, skipFqn) != null;
-        AnnotationMirror methodAdd = findMetaAnnotationMirror(method, additiveFqn);
-        boolean classSkip = findMetaAnnotationMirror(resourceClass, skipFqn) != null;
-        AnnotationMirror classAdd = findMetaAnnotationMirror(resourceClass, additiveFqn);
-
-        // Method-level overrides class-level
-        if (methodSkip) return List.of();
-        if (methodAdd != null) return readClassArrayAsMirrors(methodAdd);
-        if (classSkip) return List.of();
-        if (classAdd != null) return readClassArrayAsMirrors(classAdd);
-        return List.of();
-    }
-
-    /**
-     * Resolves the effective per-parameter chain by starting from the route-level chain and
-     * applying parameter-level annotation overrides — mirroring
-     * {@code ParameterExtractor.resolveParamPolicies} at compile time.
-     *
-     * <ol>
-     *   <li>Param-level {@code @Skip*} → empty chain (opt-out from route chain)</li>
-     *   <li>Param-level {@code @Canonicalize}/{@code @Sanitize} → use param value</li>
-     *   <li>Otherwise → use the route-level chain as-is</li>
-     * </ol>
-     *
-     * @param param       the parameter element
-     * @param additiveFqn FQN of the additive annotation
-     * @param skipFqn     FQN of the skip annotation
-     * @param routeChain  the route-level chain to use as baseline
-     * @return the effective chain for this parameter; never {@code null}
-     */
-    private List<TypeMirror> resolveParamChain(
-            javax.lang.model.element.VariableElement param,
-            String additiveFqn,
-            String skipFqn,
-            List<TypeMirror> routeChain) {
-
-        boolean paramSkip = findMetaAnnotationMirror(param, skipFqn) != null;
-        if (paramSkip) return List.of();
-        AnnotationMirror paramAdd = findMetaAnnotationMirror(param, additiveFqn);
-        if (paramAdd != null) return readClassArrayAsMirrors(paramAdd);
-        return routeChain;
-    }
-
-    /**
-     * Finds a meta-annotation mirror on the given element, walking annotation type hierarchies
-     * recursively to support composed annotations. Mirrors the logic in
-     * {@code AnnotationCollector.findMetaAnnotation} in the sanitization codegen module.
-     *
-     * @param element       the element to inspect
-     * @param annotationFqn the FQN of the annotation to find
-     * @return the annotation mirror, or {@code null} if not found
-     */
-    private AnnotationMirror findMetaAnnotationMirror(javax.lang.model.element.Element element, String annotationFqn) {
-        return findMetaRecursive(element, annotationFqn, new HashSet<>());
-    }
-
-    /**
-     * Recursive helper for {@link #findMetaAnnotationMirror}. Walks annotation mirrors on the
-     * element, descending into each annotation type's own annotations to find composed uses.
-     *
-     * @param element       the element or annotation type element to inspect
-     * @param annotationFqn the FQN to find
-     * @param visited       set of already-visited annotation FQNs to avoid infinite loops
-     * @return the matching annotation mirror, or {@code null}
-     */
-    private AnnotationMirror findMetaRecursive(
-            javax.lang.model.element.Element element, String annotationFqn, Set<String> visited) {
-        for (AnnotationMirror mirror : element.getAnnotationMirrors()) {
-            var annotationType = mirror.getAnnotationType().asElement();
-            String thisFqn = annotationType instanceof TypeElement te
-                    ? te.getQualifiedName().toString()
-                    : annotationType.getSimpleName().toString();
-
-            if (annotationFqn.equals(thisFqn)) {
-                return mirror;
-            }
-            // Direct match on a meta-annotation declared on this annotation type
-            var meta = AnnotationMirrors.findByFqn(annotationType, annotationFqn);
-            if (meta.isPresent()) {
-                return meta.get();
-            }
-            // Recurse into the annotation type's own annotations, guarding against cycles
-            if (visited.add(thisFqn)) {
-                AnnotationMirror deeper = findMetaRecursive(annotationType, annotationFqn, visited);
-                if (deeper != null) {
-                    return deeper;
-                }
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Reads the {@code value()} {@code Class[]} attribute of a {@code @Canonicalize} or
-     * {@code @Sanitize} annotation mirror as a list of {@link TypeMirror} instances.
-     *
-     * @param mirror the annotation mirror
-     * @return the ordered list of type mirrors; never {@code null}
-     */
-    private List<TypeMirror> readClassArrayAsMirrors(AnnotationMirror mirror) {
-        List<TypeMirror> result = new ArrayList<>();
-        for (AnnotationValue av : ctx.annotations().attributeArray(mirror, "value")) {
-            Object val = av.getValue();
-            if (val instanceof TypeMirror tm) {
-                result.add(tm);
-            }
-        }
-        return List.copyOf(result);
     }
 
     /**
