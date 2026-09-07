@@ -6,7 +6,11 @@ package dev.vertique.inboxoutbox;
 import java.util.UUID;
 
 /**
- * Delivery-time relay control values that identify the outbox entry for message-ID tracking
+ * INTERNAL framework seam — consumed by the inbox-outbox adapters and sibling framework modules; not
+ * an application contract and outside the maturity promise. Applications use {@code OutboxService},
+ * {@code InboxService}, and the extension points the module document lists.
+ *
+ * <p>Delivery-time relay control values that identify the outbox entry for message-ID tracking
  * and aggregate correlation at relay time.
  *
  * <p>These values are projected by the relay from the outbox row columns when building an

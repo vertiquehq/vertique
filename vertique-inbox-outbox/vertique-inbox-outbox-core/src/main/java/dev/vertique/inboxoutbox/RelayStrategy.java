@@ -4,7 +4,11 @@
 package dev.vertique.inboxoutbox;
 
 /**
- * Strategy used by the outbox relay to detect and claim pending entries.
+ * INTERNAL framework seam — consumed by the inbox-outbox adapters and sibling framework modules; not
+ * an application contract and outside the maturity promise. Applications use {@code OutboxService},
+ * {@code InboxService}, and the extension points the module document lists.
+ *
+ * <p>Strategy used by the outbox relay to detect and claim pending entries.
  *
  * <p>The chosen strategy affects latency, database load, and infrastructure requirements.
  * Both strategies provide at-least-once delivery with idempotency guaranteed by the relay's

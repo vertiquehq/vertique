@@ -7,7 +7,11 @@ import io.vertx.core.json.JsonObject;
 import java.util.Optional;
 
 /**
- * Delivery-time control metadata embedded inside {@link OutboxMetadata}.
+ * INTERNAL framework seam — consumed by the inbox-outbox adapters and sibling framework modules; not
+ * an application contract and outside the maturity promise. Applications use {@code OutboxService},
+ * {@code InboxService}, and the extension points the module document lists.
+ *
+ * <p>Delivery-time control metadata embedded inside {@link OutboxMetadata}.
  *
  * <p>Contains an optional {@link OutboxRelayControl} (projected at relay time from the row columns,
  * never serialized) and an optional {@link DelayedJobControl} (captured at publish and serialized
