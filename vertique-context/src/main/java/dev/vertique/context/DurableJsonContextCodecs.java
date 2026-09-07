@@ -20,7 +20,7 @@ import java.util.function.Function;
 /**
  * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
  * outside the maturity promise. Applications program against the SPIs in
- * {\ dev.vertique.core.context} and receive this runtime through the framework's Dagger wiring.
+ * {@code dev.vertique.core.context} and receive this runtime through the framework's Dagger wiring.
  *
  * Static factory methods for {@link DurableContextMetadataEncoder} and
  * {@link DurableContextMetadataDecoder} implementations that serialise and deserialise an envelope
