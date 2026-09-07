@@ -5,6 +5,7 @@ package dev.vertique.rest.jaxrs;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeast;
@@ -21,8 +22,11 @@ import dev.vertique.core.sanitization.InputValueContext;
 import dev.vertique.core.sanitization.Sanitize;
 import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.core.sanitization.SkipCanonicalization;
+import dev.vertique.core.sanitization.SkipSanitization;
 import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.input.processing.InputObjectProcessor;
+import dev.vertique.input.processing.InvocationPolicyConflictException;
+import dev.vertique.input.processing.PolicyAxis;
 import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.request.RequestValue;
 import dev.vertique.rest.jaxrs.ResourceMethodMeta.ParamMeta;
@@ -31,6 +35,9 @@ import dev.vertique.rest.jaxrs.request.BoundRequest;
 import dev.vertique.rest.jaxrs.runtime.BeanParamFieldMeta;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.ext.web.RoutingContext;
+import jakarta.ws.rs.BeanParam;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
 import jakarta.ws.rs.QueryParam;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
@@ -109,6 +116,24 @@ class BeanParamFieldPolicyParityTest {
     static class BeanNoPolicies {
         @QueryParam("page")
         public String page;
+    }
+
+    /**
+     * Bean whose single field pairs an additive {@code @Sanitize} with {@code @SkipSanitization} —
+     * the field-level shape of the IP-15 parameter conflict.
+     */
+    static class ConflictingBean {
+        @QueryParam("q")
+        @Sanitize(StubSanit.class)
+        @SkipSanitization
+        public String q;
+    }
+
+    /** Resource carrying a {@code @BeanParam} of the conflicting bean, scanned by the real scanner. */
+    @Path("/conflicting-bean")
+    static class ConflictingBeanResource {
+        @GET
+        public void search(@BeanParam ConflictingBean bean) {}
     }
 
     // --- Tests ---
@@ -245,6 +270,31 @@ class BeanParamFieldPolicyParityTest {
                     codegenCaptured.get().sanitizers(),
                     reflectiveCaptured.get().sanitizers(),
                     "Reflective and codegen paths must produce identical sanitizer chains");
+        }
+    }
+
+    @Nested
+    @DisplayName("startup rejection — a conflicting bean field fails when the route's extractor is built")
+    class BeanFieldConflict {
+
+        @Test
+        @DisplayName("@Sanitize + @SkipSanitization on a bean field — ParameterExtractor construction throws")
+        void conflictingBeanField_failsExtractorConstruction() {
+            List<ResourceMethodMeta> metas =
+                    new ResourceScanner(new SecurityPolicyBuilder()).scanResource(new ConflictingBeanResource());
+            assertEquals(1, metas.size(), "expected exactly one discovered method");
+            ResourceMethodMeta meta = metas.get(0);
+
+            InvocationPolicyConflictException ex = assertThrows(
+                    InvocationPolicyConflictException.class,
+                    () -> new ParameterExtractor(
+                            meta, List.of(), new RestContextResolution(Set.of()), newProcessorStub()),
+                    "a conflicting @BeanParam field must be rejected when the route's extractor is built, "
+                            + "not on the first request");
+            assertEquals(PolicyAxis.SANITIZE, ex.axis(), "the conflict is on the SANITIZE axis");
+            assertTrue(
+                    ex.getMessage().contains("ConflictingBean.q"),
+                    "message must name the conflicting field site: " + ex.getMessage());
         }
     }
 

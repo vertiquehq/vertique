@@ -121,10 +121,12 @@ A conflict — the additive annotation and the skip annotation both present, any
 merged view — fails immediately and names both declaration sites, for example: `Conflicting @Sanitize
 (declared on IFoo.bar) and @SkipSanitization (declared on FooImpl.bar) for method FooImpl.bar — an
 override cannot remove an inherited policy; remove one of the annotations.` A class- or method-level
-conflict fails resource scanning. A parameter-level conflict now fails at scan too, exactly like the
-class/method case, instead of silently resolving to an empty chain — declaring both `@Sanitize` and
-`@SkipSanitization` (or both `@Canonicalize` and `@SkipCanonicalization`) on one parameter is rejected
-before the route is ever registered.
+conflict fails resource scanning. A method-parameter conflict now fails at scan too, exactly like the
+class/method case, instead of silently resolving to an empty chain. A conflict on a `@BeanParam`
+field is rejected as well, a step later: it fails while the route's parameter extractor is built
+during route registration. Both are startup failures — declaring both `@Sanitize` and
+`@SkipSanitization` (or both `@Canonicalize` and `@SkipCanonicalization`) on one parameter or one bean
+field never reaches a request.
 
 **Which body shapes step 3 reaches.** A DTO body, a collection or array body, a `String` body, a
 form-urlencoded body bound to a POJO, and the schema-free `JsonObject` / `JsonArray` bodies all pass
@@ -1037,7 +1039,8 @@ Two startup failures follow, both of which previously surfaced per request:
 - A type in that set whose projection cannot be composed — two properties claiming one wire name, or
   two properties claiming one `@JsonAlias` — fails router build with `ConfigurationException` naming
   the type and the contested name, including when it is a nested DTO rather than the body type itself.
-- A reachable type declaring conflicting policy annotations fails router build with
+- A reachable type declaring conflicting policy annotations (on a method, a parameter, or a
+  bean-param field) fails router build with
   `IllegalStateException`, because preparing the owner set resolves that type's policy metadata.
 
 Composing at registration is what makes each a startup failure rather than a 500 on every request that
