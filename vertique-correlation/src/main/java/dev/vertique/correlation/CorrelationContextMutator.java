@@ -16,7 +16,11 @@ import jakarta.inject.Singleton;
 import java.util.Objects;
 
 /**
- * Framework-only write surface that enriches the holder-bound {@link CorrelationContext} after
+ * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
+ * outside the maturity promise. Applications use the surface the module document lists and the
+ * types in {@code dev.vertique.core}.
+ *
+ * <p>Framework-only write surface that enriches the holder-bound {@link CorrelationContext} after
  * the initial bind. Applications do NOT use this — read access is via the substrate
  * ({@code ContextHolder.current(CorrelationContext.class)} or
  * {@code ContextValues.current(CorrelationContext.class)}). The mutator is injected into REST

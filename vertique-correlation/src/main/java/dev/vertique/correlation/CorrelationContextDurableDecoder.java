@@ -30,7 +30,11 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Durable metadata decoder for {@link CorrelationContext} (Context contribution model level 4 —
+ * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
+ * outside the maturity promise. Applications use the surface the module document lists and the
+ * types in {@code dev.vertique.core}.
+ *
+ * <p>Durable metadata decoder for {@link CorrelationContext} (Context contribution model level 4 —
  * bespoke).
  *
  * <p>Reads the {@link CorrelationDurableKeys#CORRELATION} JSON envelope written by

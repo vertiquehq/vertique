@@ -13,7 +13,11 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Framework write-surface for creating initial {@link CorrelationContext} instances.
+ * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
+ * outside the maturity promise. Applications use the surface the module document lists and the
+ * types in {@code dev.vertique.core}.
+ *
+ * <p>Framework write-surface for creating initial {@link CorrelationContext} instances.
  *
  * <p>Used by:
  * <ul>

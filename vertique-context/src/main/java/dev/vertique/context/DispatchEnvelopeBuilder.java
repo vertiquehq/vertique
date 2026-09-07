@@ -16,7 +16,7 @@ import java.util.Objects;
 /**
  * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
  * outside the maturity promise. Applications program against the SPIs in
- * {\ dev.vertique.core.context} and receive this runtime through the framework's Dagger wiring.
+ * {@code dev.vertique.core.context} and receive this runtime through the framework's Dagger wiring.
  *
  * Shared envelope-construction helper used by all framework dispatchers.
  *

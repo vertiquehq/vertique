@@ -15,7 +15,11 @@ import jakarta.inject.Singleton;
 import java.util.Objects;
 
 /**
- * First-ingress {@link InboundContextInitializer} that ensures a {@link CorrelationContext} is
+ * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
+ * outside the maturity promise. Applications use the surface the module document lists and the
+ * types in {@code dev.vertique.core}.
+ *
+ * <p>First-ingress {@link InboundContextInitializer} that ensures a {@link CorrelationContext} is
  * bound for the current Vert.x duplicated context AND that the safe-by-default mirrored MDC
  * keys reflect that context's values (FR-COR-125 / FR-COR-162).
  *

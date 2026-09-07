@@ -21,7 +21,7 @@ import java.util.function.Supplier;
 /**
  * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
  * outside the maturity promise. Applications program against the SPIs in
- * {\ dev.vertique.core.context} and receive this runtime through the framework's Dagger wiring.
+ * {@code dev.vertique.core.context} and receive this runtime through the framework's Dagger wiring.
  *
  * Dagger {@link Singleton} lifecycle helper that orchestrates first-ingress context installation
  * by combining inbound dispatch/durable binding with registered

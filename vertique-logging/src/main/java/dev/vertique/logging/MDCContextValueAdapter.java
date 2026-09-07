@@ -10,7 +10,11 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * {@link ContextValueAdapter} for {@link MDCContext}.
+ * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
+ * outside the maturity promise. Applications use the surface the module document lists and the
+ * types in {@code dev.vertique.core}.
+ *
+ * <p>{@link ContextValueAdapter} for {@link MDCContext}.
  *
  * <p>Discovered at substrate bootstrap via Java {@link java.util.ServiceLoader}; has a public no-arg
  * constructor and no Dagger dependencies so it can be instantiated before the Dagger graph exists.
