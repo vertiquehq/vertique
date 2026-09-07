@@ -4,8 +4,10 @@
 package dev.vertique.core.context;
 
 /**
- * Boundary identifiers passed to {@link DurableContextPropagator} and
- * {@link DispatchEnvelopeBuilder} to identify the propagation site.
+ * Dispatch-boundary and invocation-origin kinds: the identifiers passed to
+ * {@link DurableContextPropagator} and {@link DispatchEnvelopeBuilder} to identify the propagation
+ * site, and the ingress kinds an entry point binds as the request's ambient invocation origin for
+ * authorization.
  *
  * <p>Centralizing the strings avoids typos and makes the set of known boundaries discoverable.
  * Boundary modules contribute their identifiers here as they integrate the substrate.
@@ -63,6 +65,12 @@ public final class DispatchBoundary {
      * and decoders can classify Camel inbound traffic correctly.
      */
     public static final String CAMEL = "camel";
+
+    /** Origin kind of a REST (OpenAPI route) invocation. */
+    public static final String REST = "rest";
+
+    /** Origin kind of a WebSocket upgrade. */
+    public static final String WEBSOCKET = "websocket";
 
     private DispatchBoundary() {}
 }

@@ -4,11 +4,13 @@
 package dev.vertique.rest.websocket;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
+import dev.vertique.core.context.DispatchBoundary;
 import dev.vertique.core.correlation.CorrelationContext;
 import dev.vertique.core.correlation.CorrelationIdentifier;
 import dev.vertique.correlation.CorrelationContextFactory;
@@ -17,12 +19,14 @@ import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.security.DefaultChannelIdentityManager;
 import dev.vertique.rest.security.DefaultSecurityClaimMapper;
 import dev.vertique.rest.security.HolderBackedSecurityRuntime;
+import dev.vertique.rest.security.IdentityPipelineFactory;
 import dev.vertique.rest.security.IdentityResolutionMiddleware;
 import dev.vertique.rest.security.RestAuthenticationEvidence;
 import dev.vertique.rest.security.SecurityPolicyEnforcer;
 import dev.vertique.rest.security.VertxAuthorizationImporter;
 import dev.vertique.security.AuthenticationEvidence;
 import dev.vertique.security.DefaultAuthMethod;
+import dev.vertique.security.IdentitySnapshotContent;
 import dev.vertique.security.PrincipalRef;
 import dev.vertique.security.PrincipalType;
 import dev.vertique.security.SecurityContext;
@@ -31,9 +35,13 @@ import dev.vertique.security.authz.AuthorityKind;
 import dev.vertique.security.authz.AuthorizationClaims;
 import dev.vertique.security.authz.AuthorizationDecision;
 import dev.vertique.security.authz.AuthorizationRequest;
+import dev.vertique.security.authz.InvocationOrigin;
 import dev.vertique.security.channel.ChannelIdentityManager;
+import dev.vertique.security.events.AuthorizationDecisionEvent;
+import dev.vertique.security.events.SecurityEventObserver;
 import dev.vertique.security.resolver.SecurityIdentityResolutionContext;
 import dev.vertique.security.resolver.SecurityIdentityResolver;
+import dev.vertique.security.runtime.IdentitySnapshotCapture;
 import dev.vertique.security.runtime.events.SecurityEventEmitter;
 import dev.vertique.security.verification.CustomVerificationSource;
 import io.vertx.core.Future;
@@ -59,6 +67,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -231,7 +240,7 @@ public class WebSocketSecurityPipelineIT {
         WebSocketEndpointRegistrar registrar = new WebSocketEndpointRegistrar(
                 new WebSocketMessageCodec(),
                 policyEnforcer,
-                identityMiddleware,
+                identityMiddleware.handlerFor(InvocationOrigin.of(DispatchBoundary.WEBSOCKET)),
                 securityRuntime,
                 Set.of(stubAuth),
                 null,
@@ -531,8 +540,8 @@ public class WebSocketSecurityPipelineIT {
     }
 
     /**
-     * Scenario 5c — retention control: a factory built via the pre-existing injected constructor
-     * (no importer parameter) with the {@code teams} provider contributed through the
+     * Scenario 5c — retention control: a factory whose identity pipeline carries no importer
+     * (empty importer optional) with the {@code teams} provider contributed through the
      * {@code authorizationProviders} set must keep today's behavior: the provider set does not feed
      * the claims pipeline, so the constrained upgrade is rejected.
      *
@@ -540,10 +549,10 @@ public class WebSocketSecurityPipelineIT {
      * @param ctx   the test context
      */
     @Test
-    @DisplayName("legacy factory constructor still compiles and behaves: provider set alone does not authorize")
-    void legacyFactoryConstructorStillCompilesAndBehaves(Vertx vertx, VertxTestContext ctx) {
+    @DisplayName("provider set alone does not authorize: no importer, no claims from providers")
+    void providerSetAloneDoesNotAuthorize(Vertx vertx, VertxTestContext ctx) {
         WebSocketMount.Factory factory =
-                legacyFactory(Set.of(grantingProvider("teams", RoleBasedAuthorization.create("team-lead"))));
+                noImporterFactory(Set.of(grantingProvider("teams", RoleBasedAuthorization.create("team-lead"))));
 
         startTeamServer(vertx, factory).onComplete(ctx.succeeding(srv -> connectWithToken(
                         srv.actualPort(), "/ws/team", TOKEN_ALICE_VIEWER)
@@ -562,58 +571,122 @@ public class WebSocketSecurityPipelineIT {
                 })));
     }
 
+    // --- TP-002 (T008): origin binding via the security-owned IdentityPipelineFactory ---
+
+    /**
+     * TP-002 — a {@link WebSocketMount.Factory} built via T008's frozen
+     * single-{@code Optional<IdentityPipelineFactory>} constructor (does not exist at this task's
+     * baseline; the whole file fails to compile until T008's production slice lands) must install
+     * the factory's WebSocket identity handler, which binds origin kind
+     * {@link DispatchBoundary#WEBSOCKET} on the emitted {@link AuthorizationDecisionEvent}, and must
+     * never invoke identity-snapshot capture (ADR-0164).
+     *
+     * <p>Expected initial result: origin kind is {@code "rest"} — the current 16/18-arg
+     * constructors thread no origin, so {@link SecurityPolicyEnforcer#currentOrigin()} always falls
+     * back to {@link IdentityResolutionMiddleware#REST_ORIGIN}.
+     *
+     * @param vertx the Vert.x instance
+     * @param ctx   the test context
+     */
+    @Test
+    @DisplayName("secured upgrade through the factory-built mount binds websocket origin and captures no snapshot")
+    void upgradeBindsWebSocketOriginWithoutSnapshotCapture(Vertx vertx, VertxTestContext ctx) {
+        List<AuthorizationDecisionEvent> events = new CopyOnWriteArrayList<>();
+        RecordingCapture capture = new RecordingCapture();
+        WebSocketMount.Factory factory = securedFactory(capture, events);
+
+        startOriginServer(vertx, factory).onComplete(ctx.succeeding(srv -> connectWithToken(
+                        srv.actualPort(), "/ws/origin", TOKEN_ALICE_NO_ROLES)
+                .onComplete(ar -> {
+                    if (ar.failed()) {
+                        srv.close()
+                                .onComplete(v -> ctx.failNow(new AssertionError(
+                                        "a secured upgrade with a valid token must succeed", ar.cause())));
+                        return;
+                    }
+                    ar.result().close().onComplete(v -> srv.close()
+                            .onComplete(v2 -> ctx.verify(() -> {
+                                assertEquals(
+                                        1, events.size(), "exactly one AuthorizationDecisionEvent must be emitted");
+                                assertEquals(
+                                        DispatchBoundary.WEBSOCKET,
+                                        events.get(0).invocationOrigin().kind(),
+                                        "the authorization decision must carry origin kind websocket");
+                                assertFalse(
+                                        capture.invoked(),
+                                        "identity-snapshot capture must never be invoked at WebSocket "
+                                                + "upgrade (ADR-0164)");
+                                ctx.completeNow();
+                            })));
+                })));
+    }
+
     // --- Factory parity helpers ---
 
     /**
-     * Builds a {@link WebSocketMount.Factory} via the import-aware constructor (the 17 injected
-     * parameters plus the trailing optional {@link VertxAuthorizationImporter}), wired with the
-     * shared stub security pipeline used by this IT's registrar-based tests.
+     * Builds a {@link WebSocketMount.Factory} through T008's frozen
+     * single-{@code Optional<IdentityPipelineFactory>} constructor, assembling an
+     * {@link IdentityPipelineFactory} that threads the given importer — wired with the shared stub
+     * security pipeline used by this IT's registrar-based tests.
      *
-     * @param importer the optional Vert.x authorization importer to thread into the factory
+     * @param importer the optional Vert.x authorization importer to thread into the pipeline
      * @return the configured factory
      */
     private static WebSocketMount.Factory importAwareFactory(Optional<VertxAuthorizationImporter> importer) {
-        return new WebSocketMount.Factory(
-                new WebSocketMessageCodec(),
-                Set.of(),
+        IdentityPipelineFactory identityPipelineFactory = new IdentityPipelineFactory(
                 Set.<SecurityIdentityResolver>of(new EvidenceBasedIdentityResolver()),
-                Optional.of(securityRuntime),
                 Optional.<dev.vertique.rest.security.SecurityClaimMapper>of(new DefaultSecurityClaimMapper()),
-                contextHolder,
                 emitter,
+                securityRuntime,
+                contextHolder,
+                Optional.empty(),
+                importer,
                 Optional.<dev.vertique.rest.security.AuthorizationDecisionPoint>of(new RoleCheckDecisionPoint()),
                 Optional.empty(),
+                Set.of(),
+                Optional.empty(),
+                Optional.empty());
+
+        return new WebSocketMount.Factory(
+                new WebSocketMessageCodec(),
+                Optional.of(identityPipelineFactory),
                 Set.<RouteAuthHandler>of(new StubBearerAuthHandler()),
                 Set.of(),
                 Optional.empty(),
                 Optional.empty(),
                 Optional.empty(),
                 Optional.empty(),
-                Optional.empty(),
-                importer,
                 Optional.empty());
     }
 
     /**
-     * Builds a {@link WebSocketMount.Factory} via the pre-existing injected constructor (exact
-     * current 16-parameter signature — no importer, no gate-config parameter; both default to
-     * {@link Optional#empty()} internally), with the given providers contributed through the
-     * {@code authorizationProviders} set.
+     * Builds a {@link WebSocketMount.Factory} through T008's frozen
+     * single-{@code Optional<IdentityPipelineFactory>} constructor (retention control — no importer),
+     * assembling an {@link IdentityPipelineFactory} with the given providers contributed through the
+     * {@code authorizationProviders} set, exactly as the pre-T008 constructor threaded them into the
+     * enforcer.
      *
      * @param providers the Vert.x authorization providers passed to the enforcer's provider set
      * @return the configured factory
      */
-    private static WebSocketMount.Factory legacyFactory(Set<AuthorizationProvider> providers) {
-        return new WebSocketMount.Factory(
-                new WebSocketMessageCodec(),
-                providers,
+    private static WebSocketMount.Factory noImporterFactory(Set<AuthorizationProvider> providers) {
+        IdentityPipelineFactory identityPipelineFactory = new IdentityPipelineFactory(
                 Set.<SecurityIdentityResolver>of(new EvidenceBasedIdentityResolver()),
-                Optional.of(securityRuntime),
                 Optional.<dev.vertique.rest.security.SecurityClaimMapper>of(new DefaultSecurityClaimMapper()),
-                contextHolder,
                 emitter,
+                securityRuntime,
+                contextHolder,
+                Optional.empty(),
+                Optional.empty(),
                 Optional.<dev.vertique.rest.security.AuthorizationDecisionPoint>of(new RoleCheckDecisionPoint()),
                 Optional.empty(),
+                providers,
+                Optional.empty(),
+                Optional.empty());
+
+        return new WebSocketMount.Factory(
+                new WebSocketMessageCodec(),
+                Optional.of(identityPipelineFactory),
                 Set.<RouteAuthHandler>of(new StubBearerAuthHandler()),
                 Set.of(),
                 Optional.empty(),
@@ -635,6 +708,104 @@ public class WebSocketSecurityPipelineIT {
      */
     private static Future<HttpServer> startTeamServer(Vertx vertx, WebSocketMount.Factory factory) {
         WebSocketMount mount = factory.create("/*", Set.<Object>of(new TeamEndpoint()));
+        return mount.createRouter(vertx).compose(wsRouter -> {
+            Router root = Router.router(vertx);
+            root.route("/*").handler(new RequestContextLifecycle());
+            root.route("/*").subRouter(wsRouter);
+            return vertx.createHttpServer().requestHandler(root).listen(0, "127.0.0.1");
+        });
+    }
+
+    // --- TP-002 helpers ---
+
+    /**
+     * Builds a {@link WebSocketMount.Factory} from an {@link IdentityPipelineFactory} through T008's
+     * frozen single-{@code Optional<IdentityPipelineFactory>} constructor — written against the
+     * contract even though the constructor does not exist yet at this task's baseline (compile red).
+     *
+     * <p>Wired with an {@link #originStoringContextHolder()} (unlike the shared {@link #contextHolder}
+     * field, whose no-op {@code bind} always yields an empty {@code current}, which would mask the
+     * origin behind {@link SecurityPolicyEnforcer#currentOrigin()}'s {@code REST_ORIGIN} fallback)
+     * and a recording {@link SecurityEventObserver} so the emitted {@link AuthorizationDecisionEvent}s
+     * are observable.
+     *
+     * @param capture the recording identity-snapshot capture wired into the pipeline
+     * @param events  the list every emitted {@link AuthorizationDecisionEvent} is recorded into
+     * @return the configured factory
+     */
+    private static WebSocketMount.Factory securedFactory(
+            RecordingCapture capture, List<AuthorizationDecisionEvent> events) {
+        IdentityPipelineFactory identityPipelineFactory = new IdentityPipelineFactory(
+                Set.<SecurityIdentityResolver>of(new EvidenceBasedIdentityResolver()),
+                Optional.<dev.vertique.rest.security.SecurityClaimMapper>of(new DefaultSecurityClaimMapper()),
+                new SecurityEventEmitter(Set.of(new RecordingObserver(events))),
+                securityRuntime,
+                originStoringContextHolder(),
+                Optional.of(capture.capture()),
+                Optional.empty(),
+                Optional.<dev.vertique.rest.security.AuthorizationDecisionPoint>of(new RoleCheckDecisionPoint()),
+                Optional.empty(),
+                Set.of(),
+                Optional.empty(),
+                Optional.empty());
+
+        return new WebSocketMount.Factory(
+                new WebSocketMessageCodec(),
+                Optional.of(identityPipelineFactory),
+                Set.<RouteAuthHandler>of(new StubBearerAuthHandler()),
+                Set.of(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty());
+    }
+
+    /**
+     * Returns a fresh {@link ContextHolder} that stores the bound {@link InvocationOrigin} and
+     * returns it from {@link ContextHolder#current}, so the origin the identity-resolution handler
+     * binds at upgrade survives to be read back by {@link SecurityPolicyEnforcer#currentOrigin()}.
+     * Every other type resolves empty, matching the shared {@link #contextHolder} stub.
+     *
+     * @return the origin-storing context holder
+     */
+    private static ContextHolder originStoringContextHolder() {
+        return new ContextHolder() {
+            private volatile InvocationOrigin boundOrigin;
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T> Optional<T> current(Class<T> type) {
+                if (type == InvocationOrigin.class && boundOrigin != null) {
+                    return (Optional<T>) Optional.of(boundOrigin);
+                }
+                return Optional.empty();
+            }
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T extends ContextValue> Scope bind(Class<T> type, T value) {
+                if (type == InvocationOrigin.class) {
+                    boundOrigin = (InvocationOrigin) value;
+                    return () -> boundOrigin = null;
+                }
+                return () -> {};
+            }
+        };
+    }
+
+    /**
+     * Creates a mount for {@link OriginEndpoint} from the given factory, mounts its sub-router behind
+     * a {@link RequestContextLifecycle}, and starts an HTTP server bound to {@code 127.0.0.1:0}.
+     *
+     * <p>The caller owns the returned server and must close it in every test exit path.
+     *
+     * @param vertx   the Vert.x instance
+     * @param factory the factory to create the WebSocket mount from
+     * @return a future completing with the started server
+     */
+    private static Future<HttpServer> startOriginServer(Vertx vertx, WebSocketMount.Factory factory) {
+        WebSocketMount mount = factory.create("/*", Set.<Object>of(new OriginEndpoint()));
         return mount.createRouter(vertx).compose(wsRouter -> {
             Router root = Router.router(vertx);
             root.route("/*").handler(new RequestContextLifecycle());
@@ -788,6 +959,22 @@ public class WebSocketSecurityPipelineIT {
         @OnOpen
         public void onOpen(WebSocketSession session) {
             // baseline: no security checks needed
+        }
+    }
+
+    /**
+     * WebSocket endpoint at {@code /ws/origin} that requires authentication only (TP-002, T008). Used
+     * by {@link #upgradeBindsWebSocketOriginWithoutSnapshotCapture} to trigger exactly one
+     * {@link AuthorizationDecisionEvent} whose {@link InvocationOrigin} the test inspects.
+     */
+    @WebSocketEndpoint("/ws/origin")
+    @dev.vertique.rest.core.security.Authorized
+    static class OriginEndpoint {
+
+        /** Invoked on connection open — no-op; the test asserts on the emitted event only. */
+        @OnOpen
+        public void onOpen(WebSocketSession session) {
+            // TP-002 asserts on the emitted AuthorizationDecisionEvent only.
         }
     }
 
@@ -1022,6 +1209,79 @@ public class WebSocketSecurityPipelineIT {
                 return Future.succeededFuture(Optional.of(identity));
             }
             return Future.succeededFuture(Optional.of(SecurityIdentity.anonymous()));
+        }
+    }
+
+    // --- TP-002 stubs (T008) ---
+
+    /**
+     * Wraps the real, {@code final} {@link IdentitySnapshotCapture} — which cannot be subclassed —
+     * with a factory function that flips {@link #invoked} whenever
+     * {@link IdentitySnapshotCapture#captureFrom(SecurityContext)} actually calls it, so
+     * {@link #upgradeBindsWebSocketOriginWithoutSnapshotCapture} can observe capture without
+     * inspecting the captured content itself. Mirrors {@code IdentityPipelineFactoryTest
+     * .RecordingCapture} (T007).
+     */
+    private static final class RecordingCapture {
+
+        /** Fixed content the wrapped capture's factory returns; never inspected by the test. */
+        private static final IdentitySnapshotContent FIXED_CONTENT = new IdentitySnapshotContent(
+                new PrincipalRef(PrincipalType.USER, "alice", Map.of()),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                "jwt",
+                Instant.parse("2026-07-01T10:15:30Z"),
+                Optional.empty(),
+                List.of(),
+                "rest:authenticated",
+                Instant.parse("2026-07-01T10:15:31Z"));
+
+        private final AtomicBoolean invoked = new AtomicBoolean();
+        private final IdentitySnapshotCapture capture;
+
+        RecordingCapture() {
+            this.capture = new IdentitySnapshotCapture(
+                    new ContextHolder() {
+                        @Override
+                        public <T> Optional<T> current(Class<T> type) {
+                            return Optional.empty();
+                        }
+
+                        @Override
+                        public <T extends ContextValue> Scope bind(Class<T> type, T value) {
+                            return () -> {};
+                        }
+                    },
+                    live -> {
+                        invoked.set(true);
+                        return FIXED_CONTENT;
+                    },
+                    true);
+        }
+
+        boolean invoked() {
+            return invoked.get();
+        }
+
+        IdentitySnapshotCapture capture() {
+            return capture;
+        }
+    }
+
+    /**
+     * {@link SecurityEventObserver} that records every emitted {@link AuthorizationDecisionEvent}
+     * into the given list, for {@link #upgradeBindsWebSocketOriginWithoutSnapshotCapture}'s origin
+     * assertion.
+     *
+     * @param events the list to append every emitted event to
+     */
+    private record RecordingObserver(List<AuthorizationDecisionEvent> events) implements SecurityEventObserver {
+
+        @Override
+        public Future<Void> onAuthorizationDecided(AuthorizationDecisionEvent event) {
+            events.add(event);
+            return Future.succeededFuture();
         }
     }
 

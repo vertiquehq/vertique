@@ -59,6 +59,22 @@ A WebSocket endpoint's route runs four handlers in a fixed order before the sock
 A rejected caller therefore never reaches step 4 and never sees a 101 response. The client observes
 an ordinary HTTP failure status on the handshake.
 
+When `AuthModule` is installed, steps 2–3 are supplied by the security-owned
+`dev.vertique.rest.security.IdentityPipelineFactory` — the single assembly point every transport
+(REST, MCP, WebSocket) reads identity resolution and authorization from. The handler this module
+installs is assembled for invocation origin `websocket` (`DispatchBoundary.WEBSOCKET`) with
+identity-snapshot capture always **off**, regardless of whether the application binds a capture —
+a channel upgrade establishes a long-lived identity, not the per-request lifecycle that capture is
+defined for. `AuthorizationDecisionEvent`s and audit attributes recorded for a WebSocket upgrade
+therefore carry origin kind `websocket`, distinguishing them from REST's `rest`.
+
+**Fail-closed registration when the pipeline is absent.** Without `AuthModule` (no
+`IdentityPipelineFactory` bound), registering an endpoint whose security policy is restrictive
+(`@DenyAll`, `@RolesAllowed`, `@Authorized`) or that declares a class-level `@RequiresAction` fails
+startup with one aggregated `IllegalStateException` naming every offending endpoint class and its
+policy — see [Startup failures](#startup-failures). Unannotated endpoints are unaffected and keep
+serving unauthenticated.
+
 ### There is no per-message authorization
 
 Authorization runs once, at upgrade. `@RequiresAction` is accepted at **class level only**; placing
@@ -556,33 +572,29 @@ connection's context scope is released directly on close.
 ## Module Dagger Bindings
 
 `WebSocketModule` (`dev.vertique.rest.websocket.dagger`) includes `RestCoreModule` and
-`SecurityEventsModule`.
+`SecurityEventsModule`. It declares exactly two `@Multibinds` and six `@BindsOptionalOf`
+declarations; identity resolution, authorization, claim mapping, and Vert.x authorization import are
+no longer separately declared here — they live entirely behind the single
+`IdentityPipelineFactory` optional binding, owned by `dev.vertique:vertique-rest-security`'s
+`AuthModule` (issue #256; a second module declaring those collaborators would re-create the duplicate
+assembly that change closed).
 
 | Binding | Purpose |
 |---|---|
 | `@Multibinds @WebSocketEndpoints Set<Object>` | Empty default; applications contribute endpoints |
+| `@Multibinds Set<RouteAuthHandler>` | Empty default so the graph resolves with no auth module present; `AuthModule` (or `dev.vertique:vertique-rest-auth-jwt`) contributes into the same set |
 | `WebSocketConfig` (`@Singleton`) | Parsed from the `websocket` config section |
 | `@ElementsIntoSet Set<RouterMount>` | Contributes one `WebSocketMount` at priority `-100`, or nothing when no endpoint is contributed |
-
-It also declares empty `Set<RouteAuthHandler>`, `Set<AuthorizationProvider>`, and
-`Set<SecurityIdentityResolver>` multibindings so the graph resolves with no security module present.
-`AuthModule` contributes into the same sets when it is installed. The `AuthorizationProvider` set is
-inert until the application also installs `VertxAuthorizationImportModule` (see the optional
-`VertxAuthorizationImporter` binding below).
 
 Optional bindings (`@BindsOptionalOf`), each absent unless the named module is in the component. All
 coalesce with the same declaration in `AuthModule` when both are present.
 
 | Optional binding | Supplied by | Absent means |
 |---|---|---|
-| `SecurityRuntime` | `SecurityModule` | No authentication, identity resolution, or authorization on any endpoint |
+| `IdentityPipelineFactory` (`dev.vertique.rest.security.IdentityPipelineFactory`) | `AuthModule` | No authentication, identity resolution, or authorization on any endpoint; a restrictive/`@RequiresAction` endpoint fails registration closed instead of registering unauthenticated (see [The upgrade is the security boundary](#the-upgrade-is-the-security-boundary)) |
 | `ChannelIdentityManager` | `AuthModule` | No channel registration; no identity refresh |
-| `SecurityClaimMapper` | application | The default claim mapper is used |
-| `AuthorizationDecisionPoint` | application | The framework default decision point is used |
-| `AuthorizationPolicy` | application | Same |
 | `Authorizer` | `SecurityAuthzModule` | Any endpoint declaring `@RequiresAction` fails startup |
 | `ActionRegistry` | `SecurityAuthzModule` | Same |
-| `VertxAuthorizationImporter` | `VertxAuthorizationImportModule` (opt-in, from `dev.vertique:vertique-rest-security`) | The upgrade-time authorization import is skipped: contributed `AuthorizationProvider`s stay inert and claims come from the claim mapper only |
 | `BeanValidator` | `ValidationModule` | Messages are not validated |
 | `InputObjectProcessor` (`dev.vertique.input.processing.InputObjectProcessor`) | `SanitizationModule` | Messages and path parameters are not sanitized — and any endpoint that *declares* a policy fails startup rather than accepting messages unprocessed |
 
@@ -609,6 +621,7 @@ All of these are raised while the router is built, so a misconfigured endpoint n
 | `@RequiresAction` naming an action absent from the `ActionRegistry` | `IllegalArgumentException` |
 | `@RequiresAction` with no authorization enforcement pipeline installed | `IllegalStateException` |
 | `@RequiresAction` with an `ActionRegistry` but no `Authorizer` | `IllegalStateException` |
+| One or more endpoints declare a restrictive policy (`@DenyAll`, `@RolesAllowed`, `@Authorized`) or class-level `@RequiresAction`, but no `IdentityPipelineFactory` is bound (no `AuthModule`) — checked for every contributed endpoint before any authentication handler is installed; the one exception aggregates every violating endpoint class and its policy | `IllegalStateException` |
 | Endpoint needs authentication but no `RouteAuthHandler` is registered | `IllegalStateException` |
 | `authScheme` names no registered `RouteAuthHandler` | `IllegalStateException` |
 | Several `RouteAuthHandler`s registered and no `authScheme` given | `IllegalStateException` |
@@ -617,7 +630,10 @@ All of these are raised while the router is built, so a misconfigured endpoint n
 | A lifecycle method declares a canonicalizer or sanitizer chain — directly or through a composed annotation — or the message type declares field-level policies, while no `InputObjectProcessor` is bound | `ConfigurationException` |
 
 Every `@RequiresAction` failure mode above is deliberately fail-closed: an action gate that cannot
-be enforced refuses to boot rather than serving traffic with the gate silently missing.
+be enforced refuses to boot rather than serving traffic with the gate silently missing. The
+restrictive-policy-without-pipeline row is the same discipline applied to role/scope policies: a
+`@DenyAll` endpoint with no `AuthModule` installed would otherwise register open, and a graph that
+binds a `RouteAuthHandler` without the pipeline would authenticate but never authorize.
 
 ### Connection-time outcomes
 
@@ -644,11 +660,13 @@ be enforced refuses to boot rather than serving traffic with the gate silently m
 - **Using a `@PathParam` type other than `String`, `int`/`Integer`, or `long`/`Long`.** This passes
   startup validation and fails per-invocation.
 - **Adding a Vert.x `AuthorizationProvider` without installing `VertxAuthorizationImportModule`.**
-  The provider multibinding is inert on its own — role and scope decisions are evaluated from the
+  A contributed provider is inert on its own — role and scope decisions are evaluated from the
   framework's `SecurityContext` claims. When the application includes the opt-in
-  `VertxAuthorizationImportModule` (from `dev.vertique:vertique-rest-security`), the mount factory
-  threads the importer into identity resolution, so contributed providers change authorization
-  outcomes at upgrade time.
+  `VertxAuthorizationImportModule` (from `dev.vertique:vertique-rest-security`), the security-owned
+  `IdentityPipelineFactory` threads the importer into the handler this module installs, so
+  contributed providers change authorization outcomes at upgrade time. `WebSocketModule` itself no
+  longer declares the provider/importer bindings — they live entirely behind `AuthModule`'s
+  `IdentityPipelineFactory`.
 
 ---
 

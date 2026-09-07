@@ -15,20 +15,14 @@ import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.rest.core.dagger.RestCoreModule;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.core.security.RouteAuthHandler;
-import dev.vertique.rest.core.security.SecurityRuntime;
-import dev.vertique.rest.security.AuthorizationDecisionPoint;
-import dev.vertique.rest.security.SecurityClaimMapper;
-import dev.vertique.rest.security.VertxAuthorizationImporter;
+import dev.vertique.rest.security.IdentityPipelineFactory;
 import dev.vertique.rest.websocket.WebSocketConfig;
 import dev.vertique.rest.websocket.WebSocketMessageCodec;
 import dev.vertique.rest.websocket.WebSocketMount;
 import dev.vertique.security.authz.ActionRegistry;
-import dev.vertique.security.authz.AuthorizationPolicy;
 import dev.vertique.security.authz.Authorizer;
 import dev.vertique.security.channel.ChannelIdentityManager;
-import dev.vertique.security.resolver.SecurityIdentityResolver;
 import dev.vertique.security.runtime.events.SecurityEventsModule;
-import io.vertx.ext.auth.authorization.AuthorizationProvider;
 import jakarta.inject.Singleton;
 import java.util.Set;
 
@@ -84,67 +78,21 @@ public abstract class WebSocketModule {
     @Multibinds
     abstract Set<RouteAuthHandler> routeAuthHandlers();
 
-    /**
-     * Declares the empty {@link AuthorizationProvider} multibinding set. This declaration
-     * allows {@link dev.vertique.rest.security.SecurityPolicyEnforcer} to be constructed with an
-     * empty provider set when the auth module is absent.
-     *
-     * @return an empty set (populated by contributions from the auth module)
-     */
-    @Multibinds
-    abstract Set<AuthorizationProvider> authorizationProviders();
-
-    /**
-     * Declares the empty {@link SecurityIdentityResolver} multibinding set. This declaration
-     * allows {@link dev.vertique.rest.security.IdentityResolutionMiddleware} to be constructed
-     * with an empty resolver set when the auth module is absent.
-     *
-     * @return an empty set (populated by contributions from the auth module)
-     */
-    @Multibinds
-    abstract Set<SecurityIdentityResolver> securityIdentityResolvers();
-
     // --- Optional security bindings ---
 
     /**
-     * Optional binding for {@link AuthorizationDecisionPoint}. Present when an application binds a
-     * custom async decision point; absent otherwise. Declared here so a WebSocket-only component
-     * (no auth module) still satisfies {@link WebSocketMount.Factory}'s injection. Coalesces with
-     * {@code AuthModule}'s declaration when both modules are present.
+     * Optional binding for the security-owned {@link IdentityPipelineFactory}. Present when
+     * {@code AuthModule} is in the Dagger component (it is the factory's only binding — see the
+     * factory's own class Javadoc); absent when running without security. Consumed by
+     * {@link WebSocketMount.Factory} to derive the security runtime, the WebSocket identity handler
+     * ({@code f.identityResolutionHandler(IdentityPipelineOptions.webSocket())}), and the policy
+     * enforcer. Legal as {@code @BindsOptionalOf} because {@link IdentityPipelineFactory} has no
+     * {@code @Inject} constructor by design.
      *
-     * @return the optional {@link AuthorizationDecisionPoint} binding declaration
+     * @return the optional {@link IdentityPipelineFactory} binding declaration
      */
     @BindsOptionalOf
-    abstract AuthorizationDecisionPoint optionalAuthorizationDecisionPoint();
-
-    /**
-     * Optional binding for {@link AuthorizationPolicy}. Present when an application binds a custom
-     * synchronous policy; absent otherwise. Declared here for WebSocket-only components; coalesces
-     * with {@code AuthModule}'s declaration when both modules are present.
-     *
-     * @return the optional {@link AuthorizationPolicy} binding declaration
-     */
-    @BindsOptionalOf
-    abstract AuthorizationPolicy optionalAuthorizationPolicy();
-
-    /**
-     * Optional binding for {@link SecurityRuntime}. Present when the security module is included
-     * in the Dagger component; absent when running without security. Used by
-     * {@link WebSocketMount.Factory} to decide whether to construct the security middleware.
-     *
-     * @return the optional {@link SecurityRuntime} binding declaration
-     */
-    @BindsOptionalOf
-    abstract SecurityRuntime optionalSecurityRuntime();
-
-    /**
-     * Optional binding for {@link SecurityClaimMapper}. Present when the application provides a
-     * custom claim mapper implementation; absent otherwise (falls back to the default mapper).
-     *
-     * @return the optional {@link SecurityClaimMapper} binding declaration
-     */
-    @BindsOptionalOf
-    abstract SecurityClaimMapper optionalSecurityClaimMapper();
+    abstract IdentityPipelineFactory identityPipelineFactory();
 
     /**
      * Optional binding for {@link BeanValidator}. Present when the {@code ValidationModule} is
@@ -203,20 +151,6 @@ public abstract class WebSocketModule {
      */
     @BindsOptionalOf
     abstract ActionRegistry optionalActionRegistry();
-
-    /**
-     * Optional binding for {@link VertxAuthorizationImporter}. Present when the application opts in
-     * by including {@link dev.vertique.rest.security.VertxAuthorizationImportModule}; absent
-     * otherwise. Threaded by {@link WebSocketMount.Factory} into the
-     * {@link dev.vertique.rest.security.IdentityResolutionMiddleware} so contributed Vert.x
-     * {@link AuthorizationProvider}s are consulted during identity resolution at upgrade time.
-     * Declared here so a WebSocket-only component (no auth module) still satisfies the factory's
-     * injection; coalesces with {@code AuthModule}'s declaration when both are present.
-     *
-     * @return the optional {@link VertxAuthorizationImporter} binding declaration
-     */
-    @BindsOptionalOf
-    abstract VertxAuthorizationImporter optionalVertxAuthorizationImporter();
 
     // --- Singleton providers ---
 

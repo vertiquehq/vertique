@@ -23,7 +23,6 @@ import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.core.security.SecurityRuntime;
-import dev.vertique.rest.security.IdentityResolutionMiddleware;
 import dev.vertique.rest.security.SecurityPolicyEnforcer;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.authz.ActionRegistry;
@@ -51,9 +50,13 @@ import lombok.extern.slf4j.Slf4j;
  * from the endpoint's {@link SecurityPolicy}, then wires the WebSocket upgrade handler and
  * lifecycle callbacks.
  *
- * <p>Security and middleware handlers are only installed when the corresponding optional
- * dependencies ({@link SecurityPolicyEnforcer}, {@link IdentityResolutionMiddleware}) are present,
- * allowing the WebSocket module to operate without the security module.
+ * <p>Security handlers are only installed when the corresponding optional dependencies
+ * ({@link SecurityPolicyEnforcer}, the identity-resolution {@link Handler}{@code <}{@link RoutingContext}{@code >}
+ * — assembled by the security-owned {@link dev.vertique.rest.security.IdentityPipelineFactory} for the
+ * {@code websocket} origin) are present, allowing the WebSocket module to operate without the security
+ * module. When the pipeline is absent, {@link #registerAll} fails startup (fail-closed) for every
+ * endpoint whose {@link SecurityPolicy} is restrictive or that declares a class-level
+ * {@code @RequiresAction}, rather than letting it register unauthenticated.
  *
  * <p><b>Context propagation.</b> On a successful upgrade this registrar:
  * <ol>
@@ -96,7 +99,7 @@ class WebSocketEndpointRegistrar {
 
     private final WebSocketMessageCodec messageCodec;
     private final @Nullable SecurityPolicyEnforcer securityPolicyEnforcer;
-    private final @Nullable IdentityResolutionMiddleware identityResolutionMiddleware;
+    private final @Nullable Handler<RoutingContext> identityResolutionHandler;
     private final @Nullable SecurityRuntime securityRuntime;
     private final Set<RouteAuthHandler> routeAuthHandlers;
     private final @Nullable BeanValidator beanValidator;
@@ -145,8 +148,9 @@ class WebSocketEndpointRegistrar {
      *
      * @param messageCodec                 codec for JSON message deserialization
      * @param securityPolicyEnforcer       optional authorization enforcer; {@code null} when security module is absent
-     * @param identityResolutionMiddleware optional identity resolution middleware; {@code null} when security module
-     *                                     is absent
+     * @param identityResolutionHandler optional identity-resolution handler assembled by
+     *                                     {@link dev.vertique.rest.security.IdentityPipelineFactory} for the
+     *                                     {@code websocket} origin; {@code null} when no identity pipeline is bound
      * @param securityRuntime              optional security runtime; {@code null} when security module is absent;
      *                                     used to resolve {@link SecurityContext}-typed lifecycle method parameters
      * @param routeAuthHandlers            set of registered authentication handlers
@@ -170,7 +174,7 @@ class WebSocketEndpointRegistrar {
     WebSocketEndpointRegistrar(
             WebSocketMessageCodec messageCodec,
             @Nullable SecurityPolicyEnforcer securityPolicyEnforcer,
-            @Nullable IdentityResolutionMiddleware identityResolutionMiddleware,
+            @Nullable Handler<RoutingContext> identityResolutionHandler,
             @Nullable SecurityRuntime securityRuntime,
             Set<RouteAuthHandler> routeAuthHandlers,
             @Nullable BeanValidator beanValidator,
@@ -180,7 +184,14 @@ class WebSocketEndpointRegistrar {
             @Nullable Authorizer authorizer) {
         this.messageCodec = messageCodec;
         this.securityPolicyEnforcer = securityPolicyEnforcer;
-        this.identityResolutionMiddleware = identityResolutionMiddleware;
+        if (identityResolutionHandler instanceof dev.vertique.rest.security.IdentityResolutionMiddleware) {
+            // The middleware's own handle(ctx) binds the REST origin and runs capture; the WebSocket
+            // identity step must be the origin-bound handler IdentityPipelineFactory assembles.
+            throw new IllegalArgumentException("identityResolutionHandler must be the handler assembled for the"
+                    + " websocket origin (IdentityPipelineFactory.identityResolutionHandler(IdentityPipelineOptions"
+                    + ".webSocket())), not the raw IdentityResolutionMiddleware");
+        }
+        this.identityResolutionHandler = identityResolutionHandler;
         this.securityRuntime = securityRuntime;
         this.routeAuthHandlers = routeAuthHandlers;
         this.beanValidator = beanValidator;
@@ -202,11 +213,55 @@ class WebSocketEndpointRegistrar {
         for (Object endpoint : endpoints) {
             metas.add(scanner.scan(endpoint));
         }
+        checkSecurityWithoutPipeline(metas);
         checkInputProcessingComposition(metas);
         warmMessageNameProjections(metas);
         for (WebSocketEndpointMeta meta : metas) {
             registerEndpoint(meta, router);
         }
+    }
+
+    /**
+     * Fails registration closed when no identity pipeline is bound ({@link #securityPolicyEnforcer}
+     * is {@code null}) and at least one endpoint declares a restrictive {@link SecurityPolicy}
+     * (deny-all, authenticated-only, constrained: {@code @DenyAll}, {@code @RolesAllowed},
+     * {@code @Authorized}) or a class-level {@code @RequiresAction} (security review, FR-010).
+     *
+     * <p>Runs before any endpoint reaches {@link #installAuthenticationHandler}, so a restrictive
+     * endpoint never registers open (the {@code @DenyAll} case, today served open) and a graph that
+     * binds a {@link RouteAuthHandler} without the pipeline never authenticates without also
+     * authorizing. Unannotated endpoints keep today's unauthenticated posture and are not reported.
+     * Mirrors the aggregated-violation-list shape of the JAX-RS registrar's
+     * {@code RouteValidator.checkSecurityWithoutAuth}.
+     *
+     * @param metas every scanned endpoint's metadata
+     * @throws IllegalStateException aggregating every violating endpoint's class and policy, when the
+     *     pipeline is absent and at least one endpoint requires it
+     */
+    private void checkSecurityWithoutPipeline(List<WebSocketEndpointMeta> metas) {
+        // Keyed on the enforcer: WebSocketMount.Factory derives the enforcer and the identity
+        // handler from one Optional<IdentityPipelineFactory>, so through Dagger they are present or
+        // absent together. A hand-constructed registrar with an enforcer but no identity handler
+        // still fails closed per request (no bound SecurityContext -> 401).
+        if (securityPolicyEnforcer != null) {
+            return;
+        }
+        List<String> offendingEndpoints = new ArrayList<>();
+        for (WebSocketEndpointMeta meta : metas) {
+            SecurityPolicy policy = meta.securityPolicy();
+            if (policy.isRestrictive() || meta.requiredAction().isPresent()) {
+                offendingEndpoints.add("  - " + meta.instance().getClass().getName() + " (policy=" + policy + ")");
+            }
+        }
+        if (offendingEndpoints.isEmpty()) {
+            return;
+        }
+        throw new IllegalStateException(offendingEndpoints.size()
+                + " WebSocket endpoint(s) declare a restrictive security policy (or @RequiresAction), but no"
+                + " identity pipeline is installed, so authentication/authorization would never be enforced:\n"
+                + String.join("\n", offendingEndpoints)
+                + "\nInclude AuthModule (and SecurityModule) in your Dagger component to enable security"
+                + " features, or remove the declared policies/annotations.");
     }
 
     /**
@@ -344,6 +399,9 @@ class WebSocketEndpointRegistrar {
      *     {@link SecurityPolicyEnforcer} or no {@link Authorizer} is installed to enforce it
      */
     private void registerEndpoint(WebSocketEndpointMeta meta, Router router) {
+        // Second line behind checkSecurityWithoutPipeline (registerAll), whose predicate already
+        // covers every endpoint when the enforcer is absent; kept so the invariant
+        // does not silently reopen if that pre-scan predicate is ever narrowed.
         if (meta.requiredAction().isPresent() && securityPolicyEnforcer == null) {
             throw new IllegalStateException("@RequiresAction('"
                     + meta.requiredAction().get().value() + "') on WebSocket endpoint "
@@ -374,8 +432,8 @@ class WebSocketEndpointRegistrar {
         installAuthenticationHandler(meta, route);
 
         // 2. Identity resolution (resolves SecurityIdentity, binds SecurityContext)
-        if (identityResolutionMiddleware != null) {
-            route.handler(identityResolutionMiddleware);
+        if (identityResolutionHandler != null) {
+            route.handler(identityResolutionHandler);
         }
 
         // 3. Authorization (reads the bound SecurityContext)

@@ -9,6 +9,7 @@ import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dagger.multibindings.Multibinds;
+import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ServiceDispatchContextDecoder;
 import dev.vertique.core.context.ServiceDispatchContextEncoder;
 import dev.vertique.rest.core.middleware.Middleware;
@@ -16,16 +17,19 @@ import dev.vertique.rest.core.router.OperationHandlerContributor;
 import dev.vertique.rest.core.security.AuthEnforcementCapability;
 import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.core.security.SecurityPolicyValidator;
+import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
 import dev.vertique.rest.security.dispatch.SecurityContextServiceDispatchDecoder;
 import dev.vertique.rest.security.dispatch.SecurityContextServiceDispatchEncoder;
 import dev.vertique.security.authz.AuthorizationPolicy;
 import dev.vertique.security.channel.ChannelIdentityManager;
 import dev.vertique.security.resolver.SecurityIdentityResolver;
+import dev.vertique.security.runtime.IdentitySnapshotCapture;
 import dev.vertique.security.runtime.events.SecurityEventEmitter;
 import dev.vertique.security.runtime.events.SecurityEventsModule;
 import io.vertx.ext.auth.authorization.AuthorizationProvider;
 import jakarta.inject.Singleton;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -199,6 +203,94 @@ public abstract class AuthModule {
      */
     @BindsOptionalOf
     abstract AuthorizationGateConfig optionalAuthorizationGateConfig();
+
+    /**
+     * Provides the {@link IdentityPipelineFactory} — the single assembly point for the identity and
+     * authorization pipeline.
+     *
+     * <p>This is the factory's only binding: it has no {@code @Inject} constructor, so a transport
+     * that must work without security can declare it as an optional dependency. Every consumer of the
+     * pipeline in this graph — the REST bindings below, and any transport that installs its own
+     * identity step — obtains its pieces from this one instance.
+     *
+     * @param identityResolvers          the identity resolver multibinding set
+     * @param claimMapper                the optional custom claim mapper
+     * @param emitter                    the security event emitter
+     * @param securityRuntime            the security runtime the pipeline binds contexts into
+     * @param contextHolder              the context holder the pipeline reads and binds ambient
+     *                                   values on
+     * @param identitySnapshotCapture    the optional ingress capture seam
+     * @param authorizationImporter      the optional Vert.x authorization importer
+     * @param authorizationDecisionPoint the optional application-provided async decision point
+     * @param authorizationPolicy        the optional application-provided sync authorization policy
+     * @param authorizationProviders     the Vert.x authorization provider multibinding set
+     * @param authorizer                 the optional action authorizer
+     * @param authorizationGateConfig    the optional operator-configured gate deadline
+     * @return the single identity-pipeline assembly point
+     */
+    @Provides
+    @Singleton
+    static IdentityPipelineFactory identityPipelineFactory(
+            Set<SecurityIdentityResolver> identityResolvers,
+            Optional<SecurityClaimMapper> claimMapper,
+            SecurityEventEmitter emitter,
+            SecurityRuntime securityRuntime,
+            ContextHolder contextHolder,
+            Optional<IdentitySnapshotCapture> identitySnapshotCapture,
+            Optional<VertxAuthorizationImporter> authorizationImporter,
+            Optional<AuthorizationDecisionPoint> authorizationDecisionPoint,
+            Optional<AuthorizationPolicy> authorizationPolicy,
+            Set<AuthorizationProvider> authorizationProviders,
+            Optional<dev.vertique.security.authz.Authorizer> authorizer,
+            Optional<AuthorizationGateConfig> authorizationGateConfig) {
+        return new IdentityPipelineFactory(
+                identityResolvers,
+                claimMapper,
+                emitter,
+                securityRuntime,
+                contextHolder,
+                identitySnapshotCapture,
+                authorizationImporter,
+                authorizationDecisionPoint,
+                authorizationPolicy,
+                authorizationProviders,
+                authorizer,
+                authorizationGateConfig);
+    }
+
+    /**
+     * Provides the REST {@link IdentityResolutionMiddleware} from the
+     * {@link IdentityPipelineFactory}.
+     *
+     * <p>The class keeps its own {@code @Inject} constructor for hand-wiring call sites, but this
+     * explicit binding takes precedence wherever both could apply, so a graph including this module
+     * resolves exactly one middleware — the factory's REST instance — no matter how many collaborators
+     * could otherwise satisfy the constructor.
+     *
+     * @param factory the identity-pipeline assembly point
+     * @return the REST identity-resolution middleware
+     */
+    @Provides
+    @Singleton
+    static IdentityResolutionMiddleware identityResolutionMiddleware(IdentityPipelineFactory factory) {
+        return factory.restIdentityResolution();
+    }
+
+    /**
+     * Provides the {@link SecurityPolicyEnforcer} from the {@link IdentityPipelineFactory}.
+     *
+     * <p>As with the middleware above, the class keeps its {@code @Inject} constructor while this
+     * binding takes precedence, so every transport in the graph enforces authorization through one
+     * enforcer assembled with the operator-configured gate deadline.
+     *
+     * @param factory the identity-pipeline assembly point
+     * @return the policy enforcer
+     */
+    @Provides
+    @Singleton
+    static SecurityPolicyEnforcer securityPolicyEnforcer(IdentityPipelineFactory factory) {
+        return factory.policyEnforcer();
+    }
 
     /**
      * Registers the authorization handler contributor.
