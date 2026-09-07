@@ -12,9 +12,12 @@ SPDX-License-Identifier: EUPL-1.2
 
 Runtime of the Vertique JSON mapper profile system: named, code-owned `ObjectMapper` configurations
 that a framework boundary selects per resource method, REST client, or Kafka binding. The zero-config
-default is the reserved `system` profile — a **copy** of Vert.x's `DatabindCodec.mapper()` carrying the
-framework's baseline recipe, so it behaves like the stock Vert.x mapper for everything that mapper
-could already handle, while adding `Optional` and `java.time` support.
+default at every managed edge is the reserved `vertique` profile — the baseline recipe plus the
+framework's opinions. The reserved `system` profile is a **copy** of Vert.x's `DatabindCodec.mapper()`
+carrying just the baseline recipe, so it behaves like the stock Vert.x mapper for everything that
+mapper could already handle, while adding `Optional` and `java.time` support; `system` is the
+zero-config default installed as the process JSON codec, and is reachable at any managed edge by
+explicit selection.
 
 > **Renamed:** the reserved raw profile was called `vertx`; it is now `system`. The id `vertx` is
 > retired — configuring it, or contributing an application profile under it, fails startup with a
@@ -70,14 +73,14 @@ Each profile's `mapper()` returns **one stable instance** — the same reference
 
 A profile is selected by the `@JsonProfile` annotation, by a per-binding configuration value, or by a
 default configuration key. Each boundary resolves the first non-blank tier and falls through to
-`system`:
+`vertique`:
 
 | Boundary | Precedence, highest first |
 |---|---|
-| JAX-RS request + response | method `@JsonProfile` → class `@JsonProfile` → `jaxrs.jsonProfile` → `json.jsonProfile` → `system` |
-| REST client | explicit `objectMapper` → `restClient.<name>.jsonProfile` → builder `jsonProfile(...)` → interface `@JsonProfile` → `restClient.defaults.jsonProfile` → `json.jsonProfile` → `system` |
-| Kafka consumer | `kafka.consumers.<n>.jsonProfile` → `@JsonProfile` on the `@KafkaListener` type / `KafkaConsumerBinding.jsonProfile(...)` → `kafka.jsonProfile` → `json.jsonProfile` → `system` |
-| Kafka producer | `kafka.producers.<n>.methods.<m>.jsonProfile` → `kafka.producers.<n>.jsonProfile` → `@JsonProfile` on the `@KafkaProducer` type → `kafka.jsonProfile` → `json.jsonProfile` → `system` |
+| JAX-RS request + response | method `@JsonProfile` → class `@JsonProfile` → `jaxrs.jsonProfile` → `json.jsonProfile` → `vertique` |
+| REST client | explicit `objectMapper` → `restClient.<name>.jsonProfile` → builder `jsonProfile(...)` → interface `@JsonProfile` → `restClient.defaults.jsonProfile` → `json.jsonProfile` → `vertique` |
+| Kafka consumer | `kafka.consumers.<n>.jsonProfile` → `@JsonProfile` on the `@KafkaListener` type / `KafkaConsumerBinding.jsonProfile(...)` → `kafka.jsonProfile` → `json.jsonProfile` → `vertique` |
+| Kafka producer | `kafka.producers.<n>.methods.<m>.jsonProfile` → `kafka.producers.<n>.jsonProfile` → `@JsonProfile` on the `@KafkaProducer` type → `kafka.jsonProfile` → `json.jsonProfile` → `vertique` |
 
 `json.jsonProfile` is the **global default tier** — the floor applied at every boundary when no
 more-specific value is configured.
@@ -88,7 +91,7 @@ more-specific value is configured.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `json.jsonProfile` | string | *(unset)* | Global default profile id for every JSON boundary. `null` or blank means the `system` profile. An id that names no registered profile — including the retired `vertx` — fails startup. |
+| `json.jsonProfile` | string | *(unset)* | Global default profile id for every JSON boundary. `null` or blank means the `vertique` profile at managed edges. An id that names no registered profile — including the retired `vertx` — fails startup. |
 | `json.systemProfile` | string | *(unset)* | Profile installed as the **process JSON codec's** mapper, read through `JsonConfig.effectiveSystemProfile()` and consumed by the `CONFIGURE`-phase install step below. `null` or blank means the reserved `system` profile. An unknown id — including the retired `vertx` — fails the boot there. |
 
 ```json
@@ -159,8 +162,9 @@ correlation envelopes, workflow state, cache entries — so treat it as a wire-f
 
 ## The `system` Profile
 
-The reserved baseline, and the zero-config default. `JacksonDefaults.applySystem(mapper)` applies its
-recipe; the `system` profile is exactly its output on `DatabindCodec.mapper().copy()`:
+The reserved baseline, and the zero-config default for the process JSON codec (managed edges default
+to `vertique` instead — see [Selecting a profile](#selecting-a-profile)). `JacksonDefaults.applySystem(mapper)`
+applies its recipe; the `system` profile is exactly its output on `DatabindCodec.mapper().copy()`:
 
 | # | Baseline behavior | Mechanism |
 |---|---|---|
@@ -195,15 +199,18 @@ seed `system` when the copied mapper carries Jackson default typing, so a classp
 activated it on the shared mapper fails the boot instead of feeding a polymorphic mapper into every
 profile role.
 
-**Where `system` binds today.** Through the registry (`registry.mapper(JsonProfileId.SYSTEM)`, the cache
+**Where `system` binds.** Through the registry (`registry.mapper(JsonProfileId.SYSTEM)`, the cache
 stores, `@JsonProfile("system")` resolved by the registry) it is the recipe above. It is also the
 zero-config **process JSON codec**: the install step above puts this profile's mapper behind every
 `Json.*` and `JsonObject` operation, so `Optional` and `java.time` work there and `java.util.Date`
-renders ISO-8601. The REST request body, rest-client, and Kafka JSON edges still short-circuit the
-reserved id to the raw Vert.x mapper without consulting the registry; those edges move onto the
-registry's `system`/`vertique` mappers in the follow-up slices that retune their defaults, and until
-then `Optional`/`java.time` do not work at those edges under `system` and `java.util.Date` renders as
-epoch millis there.
+renders ISO-8601. Every managed edge — REST request body/response, rest-client, Kafka JSON, and MCP —
+resolves its effective id, `system` included, through this same registry; none of them special-cases
+the reserved id or reads `DatabindCodec.mapper()` directly. The managed-edge zero-config floor is
+`vertique`, not `system`; reach `system` there by explicit selection at any tier. On the REST edges
+the resolved mapper collapses to "no override" (the Vert.x fast path) exactly when it is the same
+instance as the process codec's mapper — which an explicit `system` selection is, in a booted
+application under the defaults — so `Optional`/`java.time` work and `java.util.Date` renders ISO-8601
+at those edges too.
 
 ## The `vertique` Profile
 
