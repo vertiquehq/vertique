@@ -46,6 +46,22 @@ SPDX-License-Identifier: EUPL-1.2
             <version>3.27.7</version>
             <scope>test</scope>
         </dependency>
+        <!-- Binds SLF4J at test scope so InvocationPolicyResolverTest/ReflectiveInvocationPoliciesTest
+             can capture the inherited-skip WARN through a logback ListAppender (security review R2). -->
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- T018 (issue #379): compile-time-only, test-scope harness for the apt.ElementInvocationPolicies
+             probe processor (TP-001). No cycle: vertique-codegen-test depends only on
+             vertique-codegen-core, compile-testing, opentest4j and javapoet — no dev.vertique edge leads
+             back to vertique-input-processing, and test scope is not transitive (evidence T018 § L00, A1). -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-codegen-test</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

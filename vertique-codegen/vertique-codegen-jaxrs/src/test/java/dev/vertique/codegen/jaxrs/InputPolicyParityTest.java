@@ -3,6 +3,7 @@
 
 package dev.vertique.codegen.jaxrs;
 
+import dev.vertique.codegen.jaxrs.stubs.PolicyLiteralAssertions;
 import dev.vertique.codegen.jaxrs.stubs.PolicyTestStubs;
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
@@ -17,13 +18,12 @@ import org.junit.jupiter.api.Test;
  * are present on resource classes and methods.
  *
  * <p>The compile-time algorithm in {@link dev.vertique.codegen.jaxrs.EffectiveJaxRsContractResolver}
- * must produce the same chain as the runtime
- * {@code ResourceScanner.resolveRouteCanonicalizerChain} /
- * {@code resolveRouteSanitizerChain} + {@code ParameterExtractor.resolveParamPolicies}.
- * The runtime-side verification is performed by {@code InputPolicyRuntimeParityTest}
- * in the {@code vertique-rest-jaxrs} module.
+ * (via {@link dev.vertique.input.processing.apt.ElementInvocationPolicies}) must produce the same
+ * chain as the runtime resolver, {@link dev.vertique.input.processing.ReflectiveInvocationPolicies}.
+ * The runtime-side verification is performed by {@code InputPolicyRuntimeParityTest} in the
+ * {@code vertique-rest-jaxrs} module.
  *
- * <p>Scenarios (APT-side only):
+ * <p>Scenarios (APT-side only, direct annotations on a single resource class):
  * <ul>
  *   <li>No annotations — {@code POL_n} is {@code EffectiveInputPolicies.NONE}.</li>
  *   <li>Class-level {@code @Canonicalize} — {@code POL_n} contains the canonicalizer class literal.</li>
@@ -33,6 +33,13 @@ import org.junit.jupiter.api.Test;
  *   <li>Descriptor {@code CC_} constant is non-empty when class-level {@code @Canonicalize} present.</li>
  *   <li>Descriptor {@code CC_} constant is empty ({@code new String[0]}) when no {@code @Canonicalize}.</li>
  * </ul>
+ *
+ * <p>The interface-, superclass-, and conflict-shaped scenarios (hierarchy precedence,
+ * meta-annotations, additive+skip conflicts — the full IP-01..IP-19 matrix) are
+ * {@link JaxRsInvocationPolicyMatrixTest}'s responsibility; this test keeps its original five
+ * direct-annotation scenarios, asserting the {@code EffectiveInputPolicies.NONE} / class-literal
+ * snippets through the same {@link PolicyLiteralAssertions} helper {@code
+ * JaxRsInvocationPolicyMatrixTest} uses, so the literal shape is defined once, not restated per test.
  *
  * <p>Stub Canonicalizer and Sanitizer implementations live in {@link PolicyTestStubs} — a separate
  * top-level public class — so that inline source text compiled through
@@ -93,7 +100,7 @@ class InputPolicyParityTest {
 
             result.assertSuccess();
             result.assertGeneratedSourceContains(
-                    "dev.vertique.test.NoPolicyResource_search_0_ExecutionPlan", "EffectiveInputPolicies.NONE");
+                    "dev.vertique.test.NoPolicyResource_search_0_ExecutionPlan", PolicyLiteralAssertions.none());
         }
 
         @Test
@@ -158,7 +165,7 @@ class InputPolicyParityTest {
             // POL constant must include StubCanonicalizer.class, not be NONE
             result.assertGeneratedSourceContains(
                     "dev.vertique.test.ClassLevelCanonicalizerResource_search_0_ExecutionPlan",
-                    STUB_CANON_SIMPLE + ".class");
+                    PolicyLiteralAssertions.classLiteral(STUB_CANON_SIMPLE));
         }
     }
 
@@ -199,7 +206,7 @@ class InputPolicyParityTest {
             // Method-level wins — plan POL must mention StubCanonicalizer2
             result.assertGeneratedSourceContains(
                     "dev.vertique.test.MethodOverridesClassResource_search_0_ExecutionPlan",
-                    STUB_CANON2_SIMPLE + ".class");
+                    PolicyLiteralAssertions.classLiteral(STUB_CANON2_SIMPLE));
         }
     }
 
@@ -237,7 +244,7 @@ class InputPolicyParityTest {
             result.assertSuccess();
             // Route-level skip means empty chain → POL must be NONE
             result.assertGeneratedSourceContains(
-                    "dev.vertique.test.RouteSkipResource_search_0_ExecutionPlan", "EffectiveInputPolicies.NONE");
+                    "dev.vertique.test.RouteSkipResource_search_0_ExecutionPlan", PolicyLiteralAssertions.none());
         }
     }
 
@@ -274,7 +281,7 @@ class InputPolicyParityTest {
             result.assertSuccess();
             result.assertGeneratedSourceContains(
                     "dev.vertique.test.ClassLevelSanitizerResource_search_0_ExecutionPlan",
-                    STUB_SANIT_SIMPLE + ".class");
+                    PolicyLiteralAssertions.classLiteral(STUB_SANIT_SIMPLE));
         }
     }
 }

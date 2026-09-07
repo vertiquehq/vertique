@@ -13,6 +13,7 @@ import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.InputValueContext;
 import dev.vertique.core.sanitization.Sanitize;
 import dev.vertique.core.sanitization.Sanitizer;
+import dev.vertique.core.sanitization.SkipSanitization;
 import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
@@ -99,7 +100,8 @@ public class WebSocketInputProcessingIT {
                 type -> new UppercasingSanitizer());
         WebSocketEndpointRegistrar sanitizingRegistrar = new WebSocketEndpointRegistrar(
                 new WebSocketMessageCodec(), null, null, null, Set.of(), null, engine, null, null, null);
-        sanitizingRegistrar.registerAll(Set.of(new RenamedEndpoint(), new ComposedPolicyEndpoint()), router);
+        sanitizingRegistrar.registerAll(
+                Set.of(new RenamedEndpoint(), new ComposedPolicyEndpoint(), new ClassLevelEndpoint()), router);
 
         vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1").onComplete(ctx.succeeding(s -> {
             server = s;
@@ -234,6 +236,26 @@ public class WebSocketInputProcessingIT {
                 "ADA",
                 ComposedPolicyEndpoint.received.get(),
                 "a chain declared through a meta-annotated preset must run on the message payload");
+    }
+
+    @Test
+    @DisplayName("a class-level sanitizer applies to every processed value except one carrying @SkipSanitization")
+    void classLevelSanitizerAppliesExceptOnSkippedParameter() throws Exception {
+        ClassLevelEndpoint.reset();
+
+        WebSocket ws = connect("/ws/class-level/xyz");
+        try {
+            ws.writeTextMessage("abc");
+            assertTrue(ClassLevelEndpoint.messageLatch.await(10, TimeUnit.SECONDS), "@OnMessage must be invoked");
+        } finally {
+            ws.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+        }
+
+        assertEquals(
+                "abc|XYZ",
+                ClassLevelEndpoint.received.get(),
+                "the class-level @Sanitize must apply to the id path parameter (route policy) but exempt the"
+                        + " message parameter, which carries its own @SkipSanitization");
     }
 
     private Capture findCapture(String value) {
@@ -411,6 +433,39 @@ public class WebSocketInputProcessingIT {
         @SafeText
         public void onMessage(WebSocketSession session, String msg) {
             received.set(msg);
+            messageLatch.countDown();
+        }
+    }
+
+    /**
+     * Endpoint pinning AC-019.1 (T020, issue #379): a class-level {@code @Sanitize} must apply to every
+     * processed value on the route — including a {@code @PathParam} — except a parameter that opts out
+     * with its own {@code @SkipSanitization}.
+     */
+    @Sanitize(UppercasingSanitizer.class)
+    @WebSocketEndpoint("/ws/class-level/{id}")
+    static class ClassLevelEndpoint {
+
+        static final AtomicReference<String> received = new AtomicReference<>();
+        static CountDownLatch messageLatch = new CountDownLatch(1);
+
+        /** Resets the captured message and latch before a test run. */
+        static void reset() {
+            received.set(null);
+            messageLatch = new CountDownLatch(1);
+        }
+
+        /**
+         * Captures {@code message + "|" + id} so the test can observe which of the two values the
+         * class-level chain actually reached.
+         *
+         * @param session the WebSocket session
+         * @param message the received text message; exempted from the class-level chain
+         * @param id      the {@code id} path parameter; governed by the class-level chain
+         */
+        @OnMessage
+        public void onMessage(WebSocketSession session, @SkipSanitization String message, @PathParam("id") String id) {
+            received.set(message + "|" + id);
             messageLatch.countDown();
         }
     }

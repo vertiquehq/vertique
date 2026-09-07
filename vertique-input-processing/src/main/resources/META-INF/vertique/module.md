@@ -160,6 +160,86 @@ The engine constructs it from the resolver functions passed to `createDefault(..
 
 ---
 
+## Invocation-Level Policy Resolution
+
+A transport resolves the invocation-level `EffectiveInputPolicies` it passes to `processInput(...)` from its own annotated endpoints (a REST resource method, a WebSocket handler, a generated MCP tool) before the engine ever runs. This module supplies the shared resolution rules and two adapters — one reflective, one for annotation processors — so every transport applies the same precedence instead of reimplementing it.
+
+### Element definition
+
+An **element**, for policy resolution, is the hierarchy-merged view of a declaration: annotations on the declaring element first, then the same declaration in each superclass (bottom-up), then in each transitively reachable interface. For one annotation type the first occurrence wins, resolved in **two passes** over that merged view: an annotation declared *directly* anywhere in it wins over a composed (meta-annotated) one anywhere in it, and within each pass the nearest declaration wins. So an override carrying a custom `@NormalizedInput` (meta-annotated `@Sanitize(B.class)`) over an interface method carrying a direct `@Sanitize(A.class)` resolves to `[A.class]`. Meta-annotations (composed annotations such as that `@NormalizedInput`) are resolved recursively, with a visited set and without descending into JDK `java.lang.annotation.*` meta-annotations, so a cyclic annotation graph terminates. The additive annotation (`@Canonicalize` / `@Sanitize`) and the skip annotation (`@SkipCanonicalization` / `@SkipSanitization`) are each resolved first-occurrence **independently**, and *then* compared: if both are present anywhere in the same element's merged view, the element is in conflict.
+
+The consequence is directional: an override that declares `@SkipSanitization` over an inherited `@Sanitize(B.class)` is a **conflict**, not "nearest wins" — an override may *replace* an inherited policy but may never *remove* one silently. An override that declares `@Sanitize(A.class)` over an inherited `@Sanitize(B.class)` is not a conflict; it resolves to `[A.class]`, since the nearest declaration is the first occurrence for that polarity.
+
+When the skip and the chain sit on **different** elements — an interface method's `@SkipSanitization` over the implementing class's `@Sanitize(A.class)` — the precedence above still applies unchanged (method-skip beats type-additive, and nothing conflicts), but because the element in front of the reader never opted out, the resolver logs one `WARN` naming both declaration sites whenever a skip the element only *inherited* removes a non-empty chain: in the build log under annotation processing, in the application log at registration at runtime.
+
+### `InvocationPolicySource<V>`
+
+One element's view of one `PolicyAxis`: `additive()` / `additiveDeclaredAt()`, `skip()` / `skipDeclaredAt()`, and `describe()` for diagnostics. A source is a passive data carrier — it never validates itself; `InvocationPolicyResolver` owns the conflict check. `InvocationPolicySource.none()` returns the no-op source (no additive chain, no skip).
+
+### `PolicyAxis`
+
+The two framework-owned axes, each pairing an additive annotation with its skip counterpart: `CANONICALIZE` (`@Canonicalize` / `@SkipCanonicalization`) and `SANITIZE` (`@Sanitize` / `@SkipSanitization`). `additiveAnnotation()` / `skipAnnotation()` return the display names used in conflict messages.
+
+### `InvocationPolicyResolver`
+
+Transport-neutral precedence over `InvocationPolicySource` — no reflection, no annotations:
+
+```java
+static <V> List<V> resolveRouteChain(InvocationPolicySource<V> method, InvocationPolicySource<V> type, PolicyAxis axis);
+static <V> List<V> resolveParameterChain(InvocationPolicySource<V> parameter, List<V> routeChain, PolicyAxis axis);
+```
+
+- **Route chain:** method-skip &gt; method-additive &gt; type-skip &gt; type-additive &gt; none.
+- **Parameter chain:** param-skip &gt; param-additive &gt; the already-resolved route chain.
+
+Both throw `InvocationPolicyConflictException` when a source declares both an additive chain and a skip flag.
+
+### `InvocationPolicyConflictException`
+
+Thrown with the conflicting axis and both declaration sites. The message names both sites so the fix is unambiguous:
+
+> `Conflicting @Sanitize (declared on IFoo.bar) and @SkipSanitization (declared on FooImpl.bar) for method FooImpl.bar — an override cannot remove an inherited policy; remove one of the annotations.`
+
+For a same-declaration conflict (both annotations on the same element) the two sites named in the message are identical.
+
+### `ReflectiveInvocationPolicies`
+
+The reflective adapter — resolves `EffectiveInputPolicies` from real annotated `Method`/`Class` pairs through `dev.vertique.core.util.AnnotationResolver` (never `Method.getAnnotation`), so overrides, interface defaults, superclass declarations and composed annotations all resolve the same way they do everywhere else `AnnotationResolver` is used:
+
+```java
+static EffectiveInputPolicies resolveRoute(Method method, Class<?> owner);
+static EffectiveInputPolicies resolveParameter(Method method, int index, EffectiveInputPolicies route);
+```
+
+`resolveRoute` resolves both `PolicyAxis` values and combines them into one `EffectiveInputPolicies`; `resolveParameter` does the same for one parameter, falling back to the route chains it is given. This is the reference reflective adapter — a REST resource scanner or a WebSocket endpoint registrar calls it once per route (and once per parameter) at registration time, so a conflicting declaration fails at startup rather than on the first matching request.
+
+### `ElementInvocationPolicies` — the annotation-processing adapter
+
+`dev.vertique.input.processing.apt.ElementInvocationPolicies` is the compile-time counterpart of `ReflectiveInvocationPolicies`: it resolves the same chains from `javax.lang.model` elements, so a build-time processor generates exactly the policies the reflective runtime would have derived for the same declarations.
+
+```java
+ElementInvocationPolicies(Elements elements, Types types);
+ElementPolicyChains resolveRoute(ExecutableElement method, TypeElement owner);
+ElementPolicyChains resolveParameter(VariableElement parameter, int index, ExecutableElement method, TypeElement owner, ElementPolicyChains route);
+```
+
+`ElementPolicyChains` is a record of the two resolved chains as `List<TypeMirror>` (`canonicalizers()`, `sanitizers()`), with `ElementPolicyChains.NONE` for "both axes empty". A processor resolves the route once per method and then each parameter over that result, mirroring the reflective call order.
+
+The merged view is the element definition above, built from elements: the method itself, then the method it overrides in each superclass bottom-up, then in each transitively reachable interface in breadth-first order; class-level annotations are walked from the owner type through its superclasses and interfaces; a parameter's view is the matching parameter of every method in that merged view. Override matching uses `Elements.overrides`, so a genuine override of a generic supertype declaration is recognised and an unrelated same-named method is not. Composed annotations are followed recursively with a visited set — a self-referential annotation terminates the walk instead of recursing forever.
+
+Conflicts surface as the same `InvocationPolicyConflictException`, with the same message and the same declaration-site names the reflective adapter produces. A processor catches it and reports a compile error at the offending element, so the mistake is caught at build time instead of at startup.
+
+#### The `apt` package is compile-time only
+
+`dev.vertique.input.processing.apt` requires the JDK `java.compiler` module and is never loaded by runtime code — nothing outside that package references it, and the module's own tests enforce both directions. Consumers that are not annotation processors can ignore it entirely; it adds no dependency to this artifact, because it imports only JDK types and this module's own base package.
+
+
+### Scenario matrix
+
+The test-jar (`dev.vertique:vertique-input-processing:test-jar`) ships `dev.vertique.input.processing.testkit.InvocationPolicyScenarios`, the precedence and conflict matrix used to prove `InvocationPolicyResolver`, `ReflectiveInvocationPolicies`, and `ElementInvocationPolicies` against the same expectations. A transport adopting any of them can reuse `InvocationPolicyScenarios.rows()` to parity-test its own adapter against the same scenarios (route/parameter overrides, interface and superclass inheritance, composed annotations, and every additive/skip conflict shape) instead of hand-rolling an equivalent fixture set.
+
+---
+
 ## Extension Points
 
 ### `GeneratedInputProcessor<T>` — build-time-generated walkers

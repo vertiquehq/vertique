@@ -89,6 +89,13 @@ SPDX-License-Identifier: EUPL-1.2
             <scope>test</scope>
         </dependency>
         <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-input-processing</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
         </dependency>

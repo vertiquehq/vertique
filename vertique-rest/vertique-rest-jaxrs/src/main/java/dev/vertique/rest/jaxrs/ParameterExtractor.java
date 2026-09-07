@@ -16,6 +16,10 @@ import dev.vertique.core.sanitization.SkipSanitization;
 import dev.vertique.core.util.AnnotationResolver;
 import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.input.processing.InputObjectProcessor;
+import dev.vertique.input.processing.InvocationPolicyResolver;
+import dev.vertique.input.processing.InvocationPolicySource;
+import dev.vertique.input.processing.PolicyAxis;
+import dev.vertique.input.processing.ReflectiveInvocationPolicies;
 import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.convert.ConversionContext;
 import dev.vertique.rest.core.convert.ParamConversionResolver;
@@ -48,10 +52,12 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableSet;
+import java.util.Optional;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -97,16 +103,24 @@ final class ParameterExtractor {
      */
     private final ParamConversionResolver paramConversionResolver;
     /**
-     * Cached effective input policies, indexed by parameter position. Populated once at
-     * construction by meta-annotation-aware resolution of
-     * {@code @Canonicalize}/{@code @Sanitize}/{@code @Skip*} over the parameter's annotation array,
-     * sourced from each {@link ResourceMethodMeta.ParamMeta}'s composed
-     * {@link dev.vertique.core.codegen.ParameterMetadata} view (via {@code annotationsLazy()}) so the
-     * per-request extract path never re-resolves them. Resolution goes through
-     * {@link AnnotationResolver#findMetaAnnotation(List, Class)} so composed/aliased policy annotations
-     * (e.g. a custom annotation meta-annotated with {@code @Canonicalize}) are honored exactly as on the
-     * route-level path. Generated execution plans bypass this cache because they pass policies directly
-     * to the {@code GeneratedJaxRsSupport} helpers; this cache exists for the reflective fallback path.
+     * Cached effective input policies, indexed by parameter position. Populated once at construction
+     * by {@link #computeCachedParamPolicies}, which resolves each method parameter through
+     * {@link ReflectiveInvocationPolicies#resolveParameter} — the shared resolver adapter every other
+     * transport uses — over the resource method's own reflective {@link Method} and the parameter's
+     * index, so the per-request extract path never re-resolves them. That adapter reads the
+     * parameter's hierarchy-merged annotation list from
+     * {@link AnnotationResolver#resolveParameterAnnotations(Method, int)} and matches policy
+     * annotations meta-annotation-aware, so composed/aliased declarations (e.g. a custom annotation
+     * meta-annotated with {@code @Canonicalize}) are honored exactly as on the route-level path, and a
+     * parameter declaring both an additive and a skip annotation on one axis is rejected here rather
+     * than resolved to an empty chain.
+     *
+     * <p>{@code @BeanParam} <em>fields</em> are not in this array: a field has no method-parameter
+     * index to resolve against, so it goes through the {@code ParamMetaPolicySource} bridge in
+     * {@link #resolveParamMetaPolicies}, which builds the same {@code InvocationPolicySource} shape
+     * from the field's own {@code annotationsLazy()} array. Generated execution plans bypass this
+     * cache for method parameters because they pass policies directly to the
+     * {@code GeneratedJaxRsSupport} helpers; this cache exists for the reflective fallback path.
      */
     private final EffectiveInputPolicies[] cachedParamPolicies;
 
@@ -131,6 +145,10 @@ final class ParameterExtractor {
      * {@code Class<?>} is sound: the same bean type always produces the same per-field policy
      * array under the same route baseline. Without this cache, a route that materialises a
      * bean with N fields on every request would re-walk N annotation lists per request.
+     *
+     * <p>Warmed at construction by {@link #warmBeanFieldPolicies} for every {@code BEAN_PARAM}
+     * parameter this route declares, so a conflicting field declaration surfaces while the route is
+     * being registered instead of on the first request that materialises the bean.
      */
     private final Map<Class<?>, EffectiveInputPolicies[]> beanFieldPoliciesCache = new ConcurrentHashMap<>();
 
@@ -253,9 +271,13 @@ final class ParameterExtractor {
         this.paramConversionResolver = paramConversionResolver;
         this.bodyNameResolver = bodyNameResolver;
         this.cachedParamPolicies = computeCachedParamPolicies(meta);
+        warmBeanFieldPolicies();
         // Precomputed once for the FR-REST-174 missing-context diagnostic (used only on the
-        // exceptional CONTEXT-resolution-failure path). Null-safe: some test fixtures build a
-        // ResourceMethodMeta without a reflective method; such metas never carry CONTEXT params.
+        // exceptional CONTEXT-resolution-failure path). Null-safe by construction rather than by
+        // invariant: a meta that declares no parameters at all may omit the reflective method (some
+        // test fixtures do), and such a meta trivially carries no CONTEXT parameter either. A meta
+        // that DOES declare parameters always carries its method — computeCachedParamPolicies above
+        // requires it and says so.
         Method resourceMethod = meta.method();
         this.declaringClassName =
                 resourceMethod != null ? resourceMethod.getDeclaringClass().getName() : null;
@@ -266,16 +288,50 @@ final class ParameterExtractor {
      * Precomputes effective input policies for each parameter at construction time so the
      * per-request extract path never re-resolves them.
      *
+     * <p>Resolution goes through {@link ReflectiveInvocationPolicies#resolveParameter}, the same
+     * shared-resolver adapter every other transport uses, so a parameter-level conflict (an axis
+     * carrying both an additive and a skip annotation) is rejected here — at scan — instead of
+     * silently resolving to an empty chain.
+     *
+     * <p><b>Invariant: a meta that declares parameters carries its reflective method.</b> The adapter
+     * resolves a parameter from the declaring {@link Method} plus an index, so {@link
+     * ResourceMethodMeta#method()} must be present whenever {@link ResourceMethodMeta#params()} is
+     * non-empty. Every production meta satisfies this — {@code ResourceScanner} builds both from the
+     * same reflected method — so only a hand-built test fixture can violate it, and one that declares
+     * parameters must stub {@code method()}. The explicit check below turns that fixture mistake into
+     * a named failure instead of a bare {@code NullPointerException}.
+     *
+     * <p><b>Invariant: {@code meta.params()} is index-aligned with {@code method.getParameters()}.</b>
+     * Position {@code i} of the metadata list must describe position {@code i} of the reflective
+     * method's signature: the adapter reads annotations by index (via {@code
+     * AnnotationResolver.resolveParameterAnnotations(method, i)}), so a list that skips, reorders, or
+     * appends synthetic entries would silently attribute one parameter's policies to another. {@code
+     * ResourceScanner} builds the list by walking {@code method.getParameters()} in order; a fixture
+     * must do the same.
+     *
      * @param meta the resource method metadata
      * @return policies indexed by parameter position
+     * @throws IllegalStateException if the meta declares parameters but carries no reflective method
      */
     private static EffectiveInputPolicies[] computeCachedParamPolicies(ResourceMethodMeta meta) {
         List<ResourceMethodMeta.ParamMeta> params = meta.params();
         EffectiveInputPolicies[] cache = new EffectiveInputPolicies[params.size()];
-        List<Class<? extends Canonicalizer>> routeCanon = meta.routeCanonicalizerChain();
-        List<Class<? extends Sanitizer>> routeSanit = meta.routeSanitizerChain();
+        if (params.isEmpty()) {
+            return cache;
+        }
+        Method method = meta.method();
+        if (method == null) {
+            throw new IllegalStateException("ResourceMethodMeta for operation '" + meta.operationId() + "' declares "
+                    + params.size()
+                    + " parameter(s) but carries no reflective method; invocation-policy resolution needs the "
+                    + "declaring method and its parameter indexes. Production metadata always carries it — a test "
+                    + "fixture that declares parameters must stub method() with a method whose parameters are "
+                    + "index-aligned with params().");
+        }
+        EffectiveInputPolicies route =
+                new EffectiveInputPolicies(meta.routeCanonicalizerChain(), meta.routeSanitizerChain());
         for (int i = 0; i < params.size(); i++) {
-            cache[i] = resolveParamPolicies(params.get(i), routeCanon, routeSanit);
+            cache[i] = ReflectiveInvocationPolicies.resolveParameter(method, i, route);
         }
         return cache;
     }
@@ -290,8 +346,8 @@ final class ParameterExtractor {
      * a configuration error. It reuses {@link #computeCachedParamPolicies} — the very derivation the
      * request path uses — so the gate can never disagree with what would actually run.
      *
-     * <p>A route-level chain is <em>not</em> reported on its own: {@link #resolveParamPolicies} seeds
-     * every parameter with it, so a route chain that reaches no processed parameter would run nowhere
+     * <p>A route-level chain is <em>not</em> reported on its own: {@link ReflectiveInvocationPolicies#resolveParameter}
+     * seeds every parameter with it, so a route chain that reaches no processed parameter would run nowhere
      * even with the engine bound. Parameters whose source {@link #isProcessedParamSource} rejects are
      * skipped for the same reason, which keeps this half of the gate scoped exactly like the
      * type-graph half in {@link JaxRsRouteRegistrar}.
@@ -364,47 +420,90 @@ final class ParameterExtractor {
     }
 
     /**
-     * Resolves effective input policies for a single parameter from the supplied route-level
-     * baseline and the parameter's own annotations. The annotation array is sourced from the composed
-     * {@link dev.vertique.core.codegen.ParameterMetadata} view (via {@code annotationsLazy()}), but each
-     * policy annotation is resolved meta-annotation-aware through
-     * {@link AnnotationResolver#findMetaAnnotation(List, Class)} so composed/aliased policy annotations
-     * (a custom annotation itself meta-annotated with {@code @Canonicalize}/{@code @Sanitize}) are honored
-     * — preserving the parameter-level policy behavior exactly. Used at construction time to populate the
-     * per-instance cache.
+     * Resolves effective input policies for a {@link ResourceMethodMeta.ParamMeta} that carries no
+     * {@link Method}+index pair to hand to {@link ReflectiveInvocationPolicies#resolveParameter} — a
+     * {@code @BeanParam} field ({@link #materializeBean}) or the defensive parameter-identity fallback
+     * in {@link #resolveParamPolicies(ResourceMethodMeta.ParamMeta)}. Builds an
+     * {@link InvocationPolicySource} per axis from {@code pm}'s own annotation array (via
+     * {@code annotationsLazy()}, meta-annotation-aware through
+     * {@link AnnotationResolver#findMetaAnnotation(List, Class)}) and resolves each through
+     * {@link InvocationPolicyResolver#resolveParameterChain}, so a conflicting declaration on {@code pm}
+     * is rejected exactly as it is on the {@link Method}+index path.
+     *
+     * @param pm         the parameter metadata whose own annotation array is consulted
+     * @param routeCanon the route-level canonicalizer chain to fall back to
+     * @param routeSanit the route-level sanitizer chain to fall back to
+     * @param site       the single declaration site {@code pm}'s annotations collapse to (this shape
+     *                   carries no hierarchy of its own to walk for provenance)
+     * @param describe   the element description for a conflict diagnostic
+     * @return the resolved effective input policies
      */
-    private static EffectiveInputPolicies resolveParamPolicies(
+    private static EffectiveInputPolicies resolveParamMetaPolicies(
             ResourceMethodMeta.ParamMeta pm,
             List<Class<? extends Canonicalizer>> routeCanon,
-            List<Class<? extends Sanitizer>> routeSanit) {
-        List<Class<? extends Canonicalizer>> canonChain = routeCanon;
-        List<Class<? extends Sanitizer>> sanitChain = routeSanit;
+            List<Class<? extends Sanitizer>> routeSanit,
+            String site,
+            String describe) {
+        InvocationPolicySource<Class<? extends Canonicalizer>> canonSource = paramMetaSource(
+                pm, Canonicalize.class, Canonicalize::value, SkipCanonicalization.class, site, describe);
+        List<Class<? extends Canonicalizer>> canonicalizers =
+                InvocationPolicyResolver.resolveParameterChain(canonSource, routeCanon, PolicyAxis.CANONICALIZE);
 
-        // Meta-annotation-aware resolution over the parameter's annotation array. The array is sourced
-        // from the composed ParameterMetadata view (annotationsLazy() — never null; empty array when no
-        // annotations were captured); findMetaAnnotation walks composed/aliased annotations so a custom
-        // annotation meta-annotated with @Canonicalize/@Sanitize resolves the policy exactly as a direct
-        // marker would. This preserves the parameter-level policy behavior (NFR-015-06).
-        List<Annotation> annList = List.of(pm.annotationsLazy().get());
+        InvocationPolicySource<Class<? extends Sanitizer>> sanitSource =
+                paramMetaSource(pm, Sanitize.class, Sanitize::value, SkipSanitization.class, site, describe);
+        List<Class<? extends Sanitizer>> sanitizers =
+                InvocationPolicyResolver.resolveParameterChain(sanitSource, routeSanit, PolicyAxis.SANITIZE);
 
-        SkipCanonicalization skipCanon = AnnotationResolver.findMetaAnnotation(annList, SkipCanonicalization.class);
-        if (skipCanon != null) {
-            canonChain = List.of();
-        } else {
-            Canonicalize canon = AnnotationResolver.findMetaAnnotation(annList, Canonicalize.class);
-            if (canon != null) canonChain = List.of(canon.value());
-        }
-
-        SkipSanitization skipSanit = AnnotationResolver.findMetaAnnotation(annList, SkipSanitization.class);
-        if (skipSanit != null) {
-            sanitChain = List.of();
-        } else {
-            Sanitize sanit = AnnotationResolver.findMetaAnnotation(annList, Sanitize.class);
-            if (sanit != null) sanitChain = List.of(sanit.value());
-        }
-
-        return new EffectiveInputPolicies(canonChain, sanitChain);
+        return new EffectiveInputPolicies(canonicalizers, sanitizers);
     }
+
+    /**
+     * Builds an {@link InvocationPolicySource} for one axis from {@code pm}'s own annotation array.
+     * Unlike {@link ReflectiveInvocationPolicies}'s adapters, this never walks a class hierarchy for
+     * declaration-site provenance — {@code pm}'s annotation array is already the single, final view
+     * (a bean field's array is not itself a merged view across sites; {@link #computeBeanFields} has
+     * already collapsed subclass-shadowing to one declaring field) — so both the additive and skip
+     * declaration sites are simply {@code site}.
+     *
+     * @param pm           the parameter metadata whose annotation array is consulted
+     * @param additiveType the additive annotation type for this axis
+     * @param valueOf      extracts the additive annotation's declared values
+     * @param skipType     the skip annotation type for this axis
+     * @param site         the declaration site reported for both polarities
+     * @param describe     the element description for a conflict diagnostic
+     * @param <A>          the additive annotation type
+     * @param <S>          the skip annotation type
+     * @param <V>          the policy value type
+     * @return the built source
+     */
+    private static <A extends Annotation, S extends Annotation, V> InvocationPolicySource<V> paramMetaSource(
+            ResourceMethodMeta.ParamMeta pm,
+            Class<A> additiveType,
+            Function<A, V[]> valueOf,
+            Class<S> skipType,
+            String site,
+            String describe) {
+        List<Annotation> annotations = List.of(pm.annotationsLazy().get());
+        A additiveAnn = AnnotationResolver.findMetaAnnotation(annotations, additiveType);
+        S skipAnn = AnnotationResolver.findMetaAnnotation(annotations, skipType);
+
+        Optional<List<V>> additive =
+                additiveAnn == null ? Optional.empty() : Optional.of(List.of(valueOf.apply(additiveAnn)));
+        Optional<String> additiveAt = additiveAnn == null ? Optional.empty() : Optional.of(site);
+        boolean skip = skipAnn != null;
+        Optional<String> skipAt = skip ? Optional.of(site) : Optional.empty();
+
+        return new ParamMetaPolicySource<>(additive, additiveAt, skip, skipAt, describe);
+    }
+
+    /** Passive {@link InvocationPolicySource} carrier built from {@code pm}'s own annotation array. */
+    private record ParamMetaPolicySource<V>(
+            Optional<List<V>> additive,
+            Optional<String> additiveDeclaredAt,
+            boolean skip,
+            Optional<String> skipDeclaredAt,
+            String describe)
+            implements InvocationPolicySource<V> {}
 
     // --- Argument extraction entry point ---
 
@@ -1309,12 +1408,71 @@ final class ParameterExtractor {
     }
 
     /**
+     * Resolves the per-field {@link EffectiveInputPolicies} for a {@code @BeanParam} type, in field
+     * order, against the given route-level baseline.
+     *
+     * <p>The single derivation both the warming pass ({@link #warmBeanFieldPolicies}) and the request
+     * path ({@link #materializeBean}) use, so a warmed entry is by construction the value the request
+     * path would otherwise have computed. Each field goes through {@link #resolveParamMetaPolicies},
+     * which rejects a field declaring both an additive and a skip annotation on the same axis.
+     *
+     * @param beanType      the bean type the fields belong to; names the conflict site
+     * @param fields        the bean's fields in declaration order
+     * @param routePolicies the route-level baseline each field's chains fall back to
+     * @return policies indexed by field position
+     * @throws dev.vertique.input.processing.InvocationPolicyConflictException if a field declares an
+     *     additive and a skip annotation on the same axis
+     */
+    private static EffectiveInputPolicies[] resolveBeanFieldPolicies(
+            Class<?> beanType, BeanParamFieldMeta[] fields, EffectiveInputPolicies routePolicies) {
+        List<Class<? extends Canonicalizer>> routeCanon = routePolicies.canonicalizers();
+        List<Class<? extends Sanitizer>> routeSanit = routePolicies.sanitizers();
+        EffectiveInputPolicies[] resolved = new EffectiveInputPolicies[fields.length];
+        for (int i = 0; i < fields.length; i++) {
+            String site = beanType.getSimpleName() + "." + fields[i].name();
+            resolved[i] = resolveParamMetaPolicies(fields[i].meta(), routeCanon, routeSanit, site, "field " + site);
+        }
+        return resolved;
+    }
+
+    /**
+     * Resolves and caches the per-field policies of every {@code @BeanParam} parameter this route
+     * declares, at construction time.
+     *
+     * <p>A bean field can declare a conflicting pair ({@code @Sanitize} with
+     * {@code @SkipSanitization}, or {@code @Canonicalize} with {@code @SkipCanonicalization}) exactly
+     * as a method parameter can, and it is rejected the same way. Left to the first request, the
+     * rejection would arrive as a 500 on an event-loop thread instead of a startup failure — and would
+     * repeat on every following request, because {@link Map#computeIfAbsent} does not memoise a
+     * mapping function that threw. Resolving here instead means a conflicting field fails this
+     * constructor, which the route registrar runs while wiring the route: the route never starts
+     * serving. This follows the same reasoning as the registrar's body-name projection warming.
+     *
+     * <p>Warming is best-effort in scope, not in outcome: it covers the bean types reachable from
+     * {@code meta.params()}, and {@link #materializeBean} keeps its own {@code computeIfAbsent} for a
+     * bean type warming could not see (a hand-built field array in a fixture, or a meta that declares
+     * no parameters). A conflict in a warmed type always fails here.
+     */
+    private void warmBeanFieldPolicies() {
+        EffectiveInputPolicies route =
+                new EffectiveInputPolicies(meta.routeCanonicalizerChain(), meta.routeSanitizerChain());
+        for (ResourceMethodMeta.ParamMeta pm : meta.params()) {
+            if (pm.source() != ResourceMethodMeta.ParamSource.BEAN_PARAM) {
+                continue;
+            }
+            Class<?> beanType = pm.type();
+            BeanParamFieldMeta[] fields = beanParamFields(beanType).toArray(new BeanParamFieldMeta[0]);
+            beanFieldPoliciesCache.computeIfAbsent(beanType, t -> resolveBeanFieldPolicies(t, fields, route));
+        }
+    }
+
+    /**
      * Materializes a bean-param object from an explicit ordered field list, bypassing the
      * {@link #BEAN_PARAM_CACHE} reflective walk. Per-field
      * {@link EffectiveInputPolicies} are derived internally from each field's
      * {@link ResourceMethodMeta.ParamMeta#annotations()} using the supplied route-level baseline,
-     * applying the same algorithm as {@link #resolveParamPolicies(ResourceMethodMeta.ParamMeta,
-     * List, List)}. This ensures field-level input-policy annotations ({@code @Canonicalize},
+     * through the same shared resolver {@link #resolveParamMetaPolicies} drives for every {@code pm}
+     * without a {@link Method}+index pair. This ensures field-level input-policy annotations ({@code @Canonicalize},
      * {@code @Sanitize}, {@code @SkipCanonicalization}, {@code @SkipSanitization}) are honoured on
      * the generated-companion path, maintaining parity with the reflective path.
      *
@@ -1340,15 +1498,17 @@ final class ParameterExtractor {
             BoundRequest boundRequest,
             RoutingContext ctx,
             Class<?> beanType) {
-        EffectiveInputPolicies[] perFieldPolicies = beanFieldPoliciesCache.computeIfAbsent(beanType, t -> {
-            List<Class<? extends Canonicalizer>> routeCanon = routePolicies.canonicalizers();
-            List<Class<? extends Sanitizer>> routeSanit = routePolicies.sanitizers();
-            EffectiveInputPolicies[] arr = new EffectiveInputPolicies[fields.length];
-            for (int i = 0; i < fields.length; i++) {
-                arr[i] = resolveParamPolicies(fields[i].meta(), routeCanon, routeSanit);
-            }
-            return arr;
-        });
+        EffectiveInputPolicies[] perFieldPolicies = beanFieldPoliciesCache.computeIfAbsent(
+                beanType, t -> resolveBeanFieldPolicies(t, fields, routePolicies));
+        // A length match is sufficient (not just necessary) to trust index-for-index correspondence:
+        // both the cached array and fields derive from the same bean-param companion's field list, in
+        // the same declaration order.
+        if (perFieldPolicies.length != fields.length) {
+            // The warmed entry was derived from a different field list than this execution plan
+            // carries — only reachable if the bean-param model this type resolves to changed after
+            // the route was registered. Resolve for this call rather than index past the array.
+            perFieldPolicies = resolveBeanFieldPolicies(beanType, fields, routePolicies);
+        }
 
         Map<String, Object> values = new LinkedHashMap<>();
         for (int i = 0; i < fields.length; i++) {
@@ -1608,15 +1768,19 @@ final class ParameterExtractor {
     // --- Input processing helpers ---
 
     /**
-     * Returns the effective input policies for the given parameter from the precomputed cache.
-     * The cache is populated once at construction by walking each {@code ParamMeta.annotations()}
-     * exactly once, eliminating per-request {@code AnnotationResolver.findMetaAnnotation} work
+     * Returns the effective input policies for the given parameter from the precomputed cache. The
+     * cache is populated once at construction by {@link #computeCachedParamPolicies}, which resolves
+     * every method parameter through {@link ReflectiveInvocationPolicies#resolveParameter} over the
+     * declaring {@link Method} and the parameter index, eliminating per-request annotation resolution
      * on the reflective fallback path.
      *
      * <p>Lookup is by reference identity over {@link ResourceMethodMeta#params()} (the same
-     * {@link ResourceMethodMeta.ParamMeta} instance is reused for every request to a given route);
-     * for parameters not in {@code meta.params()} (defensive fallback), policies are computed on
-     * the fly from the route-level chains.
+     * {@link ResourceMethodMeta.ParamMeta} instance is reused for every request to a given route).
+     * A {@code pm} that is not one of {@code meta.params()} — a {@code @BeanParam} field reaching
+     * this method through the reflective bean path, or a defensive fallback — has no method-parameter
+     * index to resolve against, so it goes through {@link #resolveParamMetaPolicies}: the same
+     * resolver driven from {@code pm}'s own {@code annotationsLazy()} array via the
+     * {@code ParamMetaPolicySource} bridge, seeded with the route-level chains.
      *
      * @param pm the parameter metadata
      * @return the cached effective policies for this parameter
@@ -1629,8 +1793,11 @@ final class ParameterExtractor {
             }
         }
         // Defensive: ParamMeta passed in isn't one of meta.params() — should not happen in
-        // production. Fall back to on-the-fly resolution rather than throwing.
-        return resolveParamPolicies(pm, meta.routeCanonicalizerChain(), meta.routeSanitizerChain());
+        // production. Fall back to on-the-fly resolution rather than throwing. There is no method
+        // parameter index to attribute this pm to, so the site collapses to its own name.
+        String site = pm.name() != null ? pm.name() : "?";
+        return resolveParamMetaPolicies(
+                pm, meta.routeCanonicalizerChain(), meta.routeSanitizerChain(), site, "parameter " + site);
     }
 
     /**

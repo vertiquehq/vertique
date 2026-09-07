@@ -13,13 +13,11 @@ import dev.vertique.core.sanitization.Sanitize;
 import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.core.sanitization.SkipCanonicalization;
 import dev.vertique.core.sanitization.SkipSanitization;
-import dev.vertique.core.util.AnnotationResolver;
 import dev.vertique.input.processing.EffectiveInputPolicies;
 import jakarta.annotation.security.PermitAll;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.QueryParam;
-import java.lang.annotation.Annotation;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -27,10 +25,13 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Runtime-side parity test verifying that {@link EffectiveInputPolicies} derived from
- * {@link ResourceMethodMeta} by the same algorithm as
- * {@code ParameterExtractor.resolveParamPolicies} yields the expected chains for various
- * combinations of {@code @Canonicalize}, {@code @Sanitize}, {@code @SkipCanonicalization}, and
- * {@code @SkipSanitization} on resource classes and methods.
+ * {@link ResourceMethodMeta} by the production accessor
+ * {@link ParameterExtractor#invocationPolicies(ResourceMethodMeta)} yields the expected chains for
+ * various combinations of {@code @Canonicalize}, {@code @Sanitize}, {@code @SkipCanonicalization},
+ * and {@code @SkipSanitization} on resource classes and methods (ruling A6, T017, issue #379: this
+ * test keeps its six fixtures and now drives the real production derivation instead of a hand-copy
+ * of the algorithm; the matrix-wide proof, including the IP-15 parameter conflict none of these six
+ * fixtures exercises, is {@link RestInvocationPolicyMatrixTest}).
  *
  * <p>This test covers the runtime side of the parity contract. The APT side is covered by
  * {@code InputPolicyParityTest} in the {@code vertique-codegen-jaxrs} module.
@@ -169,34 +170,15 @@ class InputPolicyRuntimeParityTest {
 
     /**
      * Derives the effective {@link EffectiveInputPolicies} for the first parameter of the given
-     * method meta using the same algorithm as {@code ParameterExtractor.resolveParamPolicies}.
+     * method meta using the production accessor
+     * {@link ParameterExtractor#invocationPolicies(ResourceMethodMeta)} (ruling A6: this test no
+     * longer hand-copies the derivation algorithm).
      *
      * @param meta the method meta
      * @return the effective policies for the first parameter
      */
     private EffectiveInputPolicies deriveParamPolicies(ResourceMethodMeta meta) {
-        List<Class<? extends Canonicalizer>> canonChain = meta.routeCanonicalizerChain();
-        List<Class<? extends Sanitizer>> sanitChain = meta.routeSanitizerChain();
-
-        ResourceMethodMeta.ParamMeta pm = meta.params().get(0);
-        // Mirror production ParameterExtractor.resolveParamPolicies: source the parameter's annotation
-        // array from the composed ParameterMetadata view (annotationsLazy()), then resolve each policy
-        // meta-annotation-aware via AnnotationResolver.findMetaAnnotation so composed/aliased markers
-        // are honored exactly as direct markers.
-        List<Annotation> annList = List.of(pm.annotationsLazy().get());
-        if (AnnotationResolver.findMetaAnnotation(annList, SkipCanonicalization.class) != null) {
-            canonChain = List.of();
-        } else {
-            Canonicalize canon = AnnotationResolver.findMetaAnnotation(annList, Canonicalize.class);
-            if (canon != null) canonChain = List.of(canon.value());
-        }
-        if (AnnotationResolver.findMetaAnnotation(annList, SkipSanitization.class) != null) {
-            sanitChain = List.of();
-        } else {
-            Sanitize sanit = AnnotationResolver.findMetaAnnotation(annList, Sanitize.class);
-            if (sanit != null) sanitChain = List.of(sanit.value());
-        }
-        return new EffectiveInputPolicies(canonChain, sanitChain);
+        return ParameterExtractor.invocationPolicies(meta)[0];
     }
 
     // --- Tests ---
