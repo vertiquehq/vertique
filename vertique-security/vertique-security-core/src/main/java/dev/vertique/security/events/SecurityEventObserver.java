@@ -23,6 +23,12 @@ import io.vertx.core.Future;
  * isolates failures — one observer's failure MUST NOT prevent other observers from receiving the
  * event AND MUST NOT alter the authentication or authorization result that produced it.
  *
+ * <p><b>Failure messages are logged:</b> when an observer fails, the emitter logs the failure so the
+ * fan-out stays diagnosable. An implementation MUST NOT put credentials, tokens, personal data, or
+ * raw claim values into the exception message or type it throws, in the same way that
+ * {@code AuthorizationDecision.safeAttributes()} is audit-safe by contract rather than by
+ * enforcement.
+ *
  * <p><b>Ordering:</b> Observer invocation ordering is not guaranteed. Observers must be idempotent
  * and self-ordered if ordering within a downstream pipeline matters.
  *
