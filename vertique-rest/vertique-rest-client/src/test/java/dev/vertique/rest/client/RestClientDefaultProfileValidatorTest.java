@@ -50,7 +50,7 @@ import org.junit.jupiter.api.Test;
  *   <li>shadowing: a bad {@code restClient.defaults.jsonProfile} still fails fast even when a valid
  *       per-client {@code jsonProfile} could shadow it at runtime — the validator validates the
  *       configured default <em>independently</em>;</li>
- *   <li>a known id ({@code vertx}) passes;</li>
+ *   <li>a known id ({@code system}) passes;</li>
  *   <li>an unset {@code restClient.defaults.jsonProfile} passes (the validator no-ops on
  *       blank/absent).</li>
  * </ul>
@@ -87,13 +87,13 @@ class RestClientDefaultProfileValidatorTest {
     }
 
     @Test
-    @DisplayName("known restClient.defaults.jsonProfile (vertx) passes")
+    @DisplayName("known restClient.defaults.jsonProfile (system) passes")
     void knownDefaultsProfilePasses() {
         KnownComponent component = DaggerRestClientDefaultProfileValidatorTest_KnownComponent.create();
 
         assertDoesNotThrow(
                 component::composeValidators,
-                "a known restClient.defaults.jsonProfile id (vertx) must construct cleanly");
+                "a known restClient.defaults.jsonProfile id (system) must construct cleanly");
     }
 
     @Test
@@ -123,7 +123,7 @@ class RestClientDefaultProfileValidatorTest {
         Set<ComposeValidator> composeValidators();
     }
 
-    /** Component whose {@code restClient.defaults.jsonProfile} is the reserved {@code vertx} id. */
+    /** Component whose {@code restClient.defaults.jsonProfile} is the reserved {@code system} id. */
     @Singleton
     @Component(modules = {JsonRuntimeModule.class, KnownDefaultsModule.class})
     interface KnownComponent {
@@ -224,7 +224,7 @@ class RestClientDefaultProfileValidatorTest {
     }
 
     /**
-     * Supplies a {@link RestClientDefaults} with the reserved {@code vertx} profile id (known).
+     * Supplies a {@link RestClientDefaults} with the reserved {@code system} profile id (known).
      */
     @Module(includes = InfraModule.class)
     abstract static class KnownDefaultsModule {

@@ -87,7 +87,8 @@ class RestClientJsonProfileAnnotationTest {
     /**
      * Builds a registry resolving every profile id this test references to its distinct mapper.
      *
-     * @return a registry resolving {@code payments-v2} plus the reserved {@code vertx}
+     * @return a registry resolving {@code payments-v2} plus the reserved {@code system},
+     *     {@code vertique}, and {@code vertique-strict} profiles
      */
     private static JsonMapperProfileRegistry registry() {
         return new DefaultJsonMapperProfileRegistry(Set.of(JsonMapperProfiles.of(ID_PAYMENTS_V2, mapperPaymentsV2)));

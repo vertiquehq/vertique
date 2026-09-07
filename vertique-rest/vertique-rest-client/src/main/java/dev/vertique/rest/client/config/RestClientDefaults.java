@@ -21,7 +21,8 @@ import jakarta.annotation.Nullable;
  * @param jsonProfile the boundary-wide default profile id ({@code restClient.defaults.jsonProfile}),
  *     or {@code null} when unset — a {@code null}/blank value means no boundary default is
  *     configured and resolution falls through to the global {@code json.jsonProfile} tier or
- *     the reserved {@code vertx} profile.
+ *     the reserved {@code vertique} floor, resolved through a
+ *     {@link dev.vertique.core.json.JsonMapperProfileRegistry}.
  */
 public record RestClientDefaults(@Nullable String jsonProfile) {
 

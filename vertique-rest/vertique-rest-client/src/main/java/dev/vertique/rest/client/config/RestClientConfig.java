@@ -52,7 +52,8 @@ import java.util.Map;
  *     {@code null} when not configured
  * @param retry the retry (backoff-strategy) override, or {@code null} when not configured
  * @param jsonProfile the named JSON mapper profile id for this client, or {@code null} when not
- *     configured (falls through to the builder-level profile or the {@code vertx} default)
+ *     configured (falls through to the builder-level profile or the reserved {@code vertique}
+ *     floor, resolved through a {@link dev.vertique.core.json.JsonMapperProfileRegistry})
  */
 public record RestClientConfig(
         String name,
