@@ -362,7 +362,8 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
             final ResourceExecutionPlan plan = meta.executionPlan();
             final GeneratedJaxRsSupport support = generatedSupport;
 
-            // FR-JSON-020/024: the resolved request-body profile mapper (when a non-vertx profile applies
+            // FR-JSON-020/024: the resolved request-body profile mapper (when a profile other than the process codec's
+            // applies
             // to this method) is stashed on the RoutingContext by a per-route handler installed AHEAD of
             // the validation gate in JaxRsRouteRegistrar — not here — so the gate's own body bind (which
             // runs before this invoker under the default web-validation strategy) reads it too and the

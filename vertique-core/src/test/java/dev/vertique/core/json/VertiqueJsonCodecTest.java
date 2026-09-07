@@ -132,6 +132,10 @@ class VertiqueJsonCodecTest {
                     "{\"present\":\"x\"}",
                     JsonObject.mapFrom(new Fixture("x", null)).encode(),
                     "JsonObject.mapFrom must run on the installed mapper");
+            assertEquals(
+                    "{}",
+                    new JsonObject().putNull("k").encode(),
+                    "an explicit JsonObject null is omitted at encode() when the installed mapper is NON_NULL");
             assertThrows(
                     RuntimeException.class,
                     () -> Json.decodeValue("{\"present\":\"x\",\"extra\":1}", Fixture.class),

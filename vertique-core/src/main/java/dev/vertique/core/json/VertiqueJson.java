@@ -3,6 +3,7 @@
 
 package dev.vertique.core.json;
 
+import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.StreamReadConstraints;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.MapperFeature;
@@ -201,6 +202,21 @@ public final class VertiqueJson {
     }
 
     /**
+     * Parser features that widen what the process codec accepts as JSON text; a same-id swap that
+     * turns any of them on is reported, mirroring the CONFIGURE-time install step's own list.
+     */
+    private static final List<JsonParser.Feature> LENIENT_PARSER_FEATURES = List.of(
+            JsonParser.Feature.ALLOW_COMMENTS,
+            JsonParser.Feature.ALLOW_SINGLE_QUOTES,
+            JsonParser.Feature.ALLOW_UNQUOTED_FIELD_NAMES,
+            JsonParser.Feature.ALLOW_TRAILING_COMMA,
+            JsonParser.Feature.ALLOW_MISSING_VALUES,
+            JsonParser.Feature.ALLOW_BACKSLASH_ESCAPING_ANY_CHARACTER,
+            JsonParser.Feature.ALLOW_UNQUOTED_CONTROL_CHARS,
+            JsonParser.Feature.ALLOW_NON_NUMERIC_NUMBERS,
+            JsonParser.Feature.ALLOW_YAML_COMMENTS);
+
+    /**
      * Logs, at {@code WARN}, every read-leniency setting a same-id swap's incoming mapper widens
      * relative to the mapper it replaces.
      *
@@ -215,21 +231,6 @@ public final class VertiqueJson {
      * @param previous the mapper being replaced
      * @param incoming the mapper taking its place
      */
-    /**
-     * Parser features that widen what the process codec accepts as JSON text; a same-id swap that
-     * turns any of them on is reported, mirroring the CONFIGURE-time install step's own list.
-     */
-    private static final List<com.fasterxml.jackson.core.JsonParser.Feature> LENIENT_PARSER_FEATURES = List.of(
-            com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_COMMENTS,
-            com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_SINGLE_QUOTES,
-            com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_UNQUOTED_FIELD_NAMES,
-            com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_TRAILING_COMMA,
-            com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_MISSING_VALUES,
-            com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_BACKSLASH_ESCAPING_ANY_CHARACTER,
-            com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_UNQUOTED_CONTROL_CHARS,
-            com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_NON_NUMERIC_NUMBERS,
-            com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_YAML_COMMENTS);
-
     private static void warnAboutLeniencyWidening(
             JsonProfileId id, String caller, ObjectMapper previous, ObjectMapper incoming) {
         List<String> deltas = new ArrayList<>();
@@ -248,7 +249,7 @@ public final class VertiqueJson {
                 "ACCEPT_CASE_INSENSITIVE_PROPERTIES",
                 previous.isEnabled(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES),
                 incoming.isEnabled(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES));
-        for (com.fasterxml.jackson.core.JsonParser.Feature lenient : LENIENT_PARSER_FEATURES) {
+        for (JsonParser.Feature lenient : LENIENT_PARSER_FEATURES) {
             addWhenNowAccepted(deltas, lenient.name(), previous.isEnabled(lenient), incoming.isEnabled(lenient));
         }
         deltas.addAll(weakerReadLimits(
@@ -332,6 +333,10 @@ public final class VertiqueJson {
         }
     }
 
+    /**
+     * Records {@code limit} when the incoming read constraint is looser than the previous one: a larger
+     * bound, or the unbounded sentinel replacing a bound.
+     */
     private static void addWhenWeaker(List<String> weakened, String limit, long incoming, long previous) {
         boolean previousIsBounded = previous > 0;
         boolean incomingIsUnbounded = incoming <= 0;

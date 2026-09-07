@@ -445,7 +445,7 @@ this module never sees the processing engine.
 // The mapper that materializes the body decides the projection.
 JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(mapper);
 
-// forRoute(null) means "no profile selected": the raw Vert.x mapper, DatabindCodec.mapper().
+// forRoute(null) means "no profile selected": the process codec's mapper, VertiqueJson.mapper().
 JacksonFieldNameResolver unprofiledRoute = JacksonFieldNameResolver.forRoute(null);
 
 // Compose one owner type's projection at registration, never on the request path.

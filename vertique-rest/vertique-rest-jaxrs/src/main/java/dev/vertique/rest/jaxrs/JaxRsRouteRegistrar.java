@@ -218,7 +218,7 @@ public class JaxRsRouteRegistrar {
         Map<String, SecurityPolicy> effectivePolicies = new HashMap<>();
         List<ResourceMethodMeta> allMethods = new ArrayList<>();
         // One wire → Java name projection per body mapper for this router build, so routes sharing a
-        // mapper (every route on the reserved vertx profile, typically the whole application) share one
+        // mapper (every route on the process codec's profile, typically the whole application) share one
         // per-type projection cache instead of introspecting each body type once per route. Scoped to
         // this build and discarded with it: a static mapper-keyed cache would outlive the router.
         Map<ObjectMapper, JacksonFieldNameResolver> bodyNameResolvers = new IdentityHashMap<>();

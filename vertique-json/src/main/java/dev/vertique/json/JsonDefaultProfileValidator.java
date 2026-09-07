@@ -26,8 +26,10 @@ import jakarta.inject.Singleton;
  *
  * <p>The second key, {@code json.systemProfile}, is validated here as well (same registry rules: the
  * id must be registered and must not be the retired {@code vertx}). Its consumer — the process-codec
- * install step at the {@code CONFIGURE} phase — resolves the same id earlier once it exists; until
- * then this validator is what keeps a mis-set {@code json.systemProfile} from booting silently.
+ * install step at the {@code CONFIGURE} phase — resolves the same id earlier and fails startup on a
+ * mis-set value; this validator repeats the registry check at {@code VALIDATE} so the failure is
+ * recorded with the other compose-validation results, and re-checks the installed process mapper for
+ * default typing after installation.
  */
 @Singleton
 public final class JsonDefaultProfileValidator implements ComposeValidator {

@@ -31,8 +31,8 @@ starter or feature module. Depend on it **directly** when:
 - you are writing a Dagger module that binds `Vertx`, `@VertxConfig JsonObject`, or `EventBus`;
 - you throw or catch framework exceptions and want the semantic roots that drive HTTP mapping;
 - you parse a configuration section into a typed record through `ConfigParser`;
-- you implement a framework extension point declared here — a health check, a lifecycle step, an
-  `ObjectMapper` customizer, or a canonicalizer;
+- you implement a framework extension point declared here — a health check, a lifecycle step, a
+  `JsonMapperProfile`, or a canonicalizer;
 - you annotate an operation with `@ValidateWith`, `@Canonicalize`, `@Sanitize`, or `@JsonProfile`.
 
 Pair core with the module that implements the contract you are using: `vertique-config-core` for
