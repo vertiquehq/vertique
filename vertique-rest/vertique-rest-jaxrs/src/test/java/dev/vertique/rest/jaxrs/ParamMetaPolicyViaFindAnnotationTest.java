@@ -29,7 +29,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Regression guard for NFR-015-06: parameter-level input-policy resolution must be
- * <strong>meta-annotation-aware</strong>. {@code ParameterExtractor.resolveParamPolicies} sources the
+ * <strong>meta-annotation-aware</strong>. The bean-field bridge that feeds a {@code @BeanParam} field's
+ * {@link ResourceMethodMeta.ParamMeta} into the shared invocation-policy resolver sources that
  * parameter's annotation array from the composed
  * {@link dev.vertique.core.codegen.ParameterMetadata#annotationsLazy()} view, then resolves
  * {@code @Canonicalize}/{@code @Sanitize}/{@code @SkipCanonicalization}/{@code @SkipSanitization}
@@ -37,10 +38,10 @@ import org.junit.jupiter.api.Test;
  * itself meta-annotated with {@code @Canonicalize} (annotation aliasing on a parameter) resolves the
  * policy exactly as a direct marker would.
  *
- * <p>These tests replicate that resolution algorithm against the scanner-built
- * {@link ResourceMethodMeta.ParamMeta} (the same {@code List.of(pm.annotationsLazy().get())} →
- * {@code findMetaAnnotation(...)} path the runtime uses) to prove the migration to the composed view
- * preserved meta-aware semantics rather than silently degrading to a direct/literal-only lookup.
+ * <p>These tests replicate that lookup against the scanner-built {@link ResourceMethodMeta.ParamMeta}
+ * (the same {@code List.of(pm.annotationsLazy().get())} → {@code findMetaAnnotation(...)} path the
+ * bean-field bridge drives) to prove the composed view preserves meta-aware semantics rather than
+ * silently degrading to a direct/literal-only lookup.
  */
 class ParamMetaPolicyViaFindAnnotationTest {
 
@@ -130,7 +131,7 @@ class ParamMetaPolicyViaFindAnnotationTest {
     }
 
     /**
-     * Resolves the parameter's annotation array exactly as {@code resolveParamPolicies} does: source it
+     * Resolves the parameter's annotation array exactly as the bean-field bridge does: source it
      * from the composed view via {@code annotationsLazy()}, then look up the policy annotation
      * meta-annotation-aware.
      *

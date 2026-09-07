@@ -17,10 +17,10 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * TP-002/TP-003 (T018, issue #379): {@link EffectiveJaxRsContractResolver} (once wired to {@code
- * apt.ElementInvocationPolicies}) resolves the same IP-01..IP-19 matrix as {@code
+ * TP-002/TP-003 (T018, issue #379): {@link EffectiveJaxRsContractResolver}, wired to {@code
+ * apt.ElementInvocationPolicies}, resolves the same IP-01..IP-19 matrix as {@code
  * ElementInvocationPoliciesTest} (TP-001) and {@code ReflectiveInvocationPoliciesTest} (T016
- * TP-002) — but end-to-end through the real {@link JaxRsPipelineProcessor} pipeline, asserting the
+ * TP-002) — end-to-end through the real {@link JaxRsPipelineProcessor} pipeline, asserting the
  * generated {@code POL0}/{@code ROUTE_POL} literal content (not the adapter's return value
  * directly).
  *
@@ -36,10 +36,8 @@ import org.junit.jupiter.params.provider.MethodSource;
  * per-parameter combined chain — route baseline plus any parameter-level override — via {@link
  * PolicyLiteralAssertions#effectiveInputPolicies}). IP-16's fixture also carries a class-level
  * {@code @Sanitize(A.class)} on top of the scenario's interface method-level {@code
- * @SkipSanitization} (A4, contract L159-162): today's concrete-class-only walk resolves {@code [A]}
- * against the expected {@code []}, giving this row a distinct red signature from IP-01..08/11/13
- * (already green) — recorded in the completion evidence, not asserted here (this test always
- * asserts the correct/green expectation).
+ * @SkipSanitization} (A4, contract L159-162): the hierarchy walk resolves this row to the same
+ * {@code []} expectation as every other row in the matrix.
  *
  * <p><strong>TP-003</strong> ({@link #conflictOnMethodIsACompileErrorNamingTheMethod} IP-14, {@link
  * #conflictOnParameterIsACompileError} IP-15, {@link #overrideSkipOverInheritedAdditiveIsACompileError}
@@ -49,11 +47,6 @@ import org.junit.jupiter.params.provider.MethodSource;
  * IP-14/IP-17); IP-15/IP-19 assert {@code "Conflicting @Sanitize"} plus both real declaration sites,
  * mirroring {@code ReflectiveInvocationPoliciesTest}'s own ruling (T016 L01) that the contract does
  * not pin an exact literal for parameter-level/type-level conflicts.
- *
- * <p>Today ({@code EffectiveJaxRsContractResolver} pre-T018): IP-01..08, IP-11, IP-13, IP-18 are
- * green; IP-09 (interface method), IP-10 (superclass class-level), IP-12 (interface parameter), and
- * IP-16 (A4 trick) are red; IP-14/IP-15/IP-17/IP-19 compile successfully today (the skip-short-circuit
- * bug), so {@code assertFailed()} is red for all four.
  */
 class JaxRsInvocationPolicyMatrixTest {
 

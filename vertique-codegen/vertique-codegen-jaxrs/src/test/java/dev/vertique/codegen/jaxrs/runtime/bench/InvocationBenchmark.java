@@ -203,14 +203,15 @@ class InvocationBenchmark {
      * Simulates the per-request work in the reflective invocation path:
      * <ol>
      *   <li>Resolve {@link EffectiveInputPolicies} for each parameter by scanning its raw
-     *       annotation array (mirrors {@code ParameterExtractor.resolveParamPolicies}).</li>
+     *       annotation array (reproduces the shared resolver's per-parameter precedence locally,
+     *       see {@link #resolveParamPolicies}).</li>
      *   <li>Invoke the method via {@link Method#invoke}.</li>
      * </ol>
      *
      * @return the method result
      */
     private Object reflectivePathSimulation() {
-        // Policy resolution — mirrors ParameterExtractor.resolveParamPolicies per param
+        // Policy resolution — reproduces the shared resolver's per-parameter work locally
         resolveParamPolicies(PM_Q);
         resolveParamPolicies(PM_LIMIT);
         resolveParamPolicies(PM_OFFSET);
@@ -243,10 +244,10 @@ class InvocationBenchmark {
     // --- resolveParamPolicies simulation ---
 
     /**
-     * Simulates {@code ParameterExtractor.resolveParamPolicies}: walks the parameter's raw
-     * annotation array to find {@link Canonicalize}, {@link Sanitize},
-     * {@link SkipCanonicalization}, and {@link SkipSanitization} meta-annotations and builds an
-     * {@link EffectiveInputPolicies} from the results.
+     * Reproduces the shared resolver's per-parameter precedence locally, so this benchmark stays
+     * self-contained: walks the parameter's raw annotation array to find {@link Canonicalize},
+     * {@link Sanitize}, {@link SkipCanonicalization}, and {@link SkipSanitization} meta-annotations
+     * and builds an {@link EffectiveInputPolicies} from the results.
      *
      * <p>This is the actual per-call cost the generated path avoids. On a method with no
      * sanitization annotations (like {@link BenchResource#search}) the result is always

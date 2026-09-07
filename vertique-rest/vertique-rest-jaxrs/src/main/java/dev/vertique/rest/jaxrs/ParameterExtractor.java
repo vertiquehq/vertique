@@ -1500,6 +1500,9 @@ final class ParameterExtractor {
             Class<?> beanType) {
         EffectiveInputPolicies[] perFieldPolicies = beanFieldPoliciesCache.computeIfAbsent(
                 beanType, t -> resolveBeanFieldPolicies(t, fields, routePolicies));
+        // A length match is sufficient (not just necessary) to trust index-for-index correspondence:
+        // both the cached array and fields derive from the same bean-param companion's field list, in
+        // the same declaration order.
         if (perFieldPolicies.length != fields.length) {
             // The warmed entry was derived from a different field list than this execution plan
             // carries — only reachable if the bean-param model this type resolves to changed after

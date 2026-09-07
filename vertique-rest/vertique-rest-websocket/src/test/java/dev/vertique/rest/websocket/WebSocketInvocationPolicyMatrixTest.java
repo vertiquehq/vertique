@@ -17,6 +17,7 @@ import dev.vertique.core.sanitization.SkipSanitization;
 import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.input.processing.InvocationPolicyConflictException;
+import dev.vertique.input.processing.PolicyAxis;
 import dev.vertique.input.processing.testkit.A;
 import dev.vertique.input.processing.testkit.B;
 import dev.vertique.input.processing.testkit.C;
@@ -42,7 +43,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * TP-001 (T020, issue #379): {@code WebSocketEndpointRegistrar} resolves and caches the IP-01..IP-19
  * invocation-policy matrix ({@code contracts/invocation-policy-resolver.md}) at registration, through
  * the package-private seam {@code cachedRoutePolicies(Method)} /
- * {@code cachedParameterPolicies(Method, int)} that L03's production change must add.
+ * {@code cachedParameterPolicies(Method, int)}.
  *
  * <p>Every row is materialized as its own {@code @WebSocketEndpoint("/ws/ipNN/{id}")} nested class with
  * {@code @OnMessage void onMessage(String message, @PathParam("id") String id)} declared on the
@@ -162,10 +163,12 @@ class WebSocketInvocationPolicyMatrixTest {
                         "message must describe the conflicting parameter: " + message);
                 assertTrue(message.contains("Ip15Endpoint.onMessage"), "message must name the site: " + message);
             }
-            case "IP-17" -> {
-                assertTrue(message.contains("IFoo.onMessage"), "message must name the interface site: " + message);
-                assertTrue(message.contains("FooImpl.onMessage"), "message must name the override site: " + message);
-            }
+            case "IP-17" ->
+                assertEquals(
+                        InvocationPolicyScenarios.expectedConflictMessage(
+                                PolicyAxis.SANITIZE, "IFoo.onMessage", "FooImpl.onMessage", "method FooImpl.onMessage"),
+                        message,
+                        "message must match the shared resolver's exact conflict literal");
             case "IP-19" -> {
                 assertTrue(message.contains("Ip19Endpoint"), "message must name the subclass site: " + message);
                 assertTrue(message.contains("Ip19BaseEndpoint"), "message must name the superclass site: " + message);

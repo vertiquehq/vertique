@@ -17,10 +17,10 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * TP-001 (T019, issue #379): {@link McpInputPolicyResolver} (once wired to {@code
- * apt.ElementInvocationPolicies}) resolves the same IP-01..IP-19 matrix as {@code
+ * TP-001 (T019, issue #379): {@link McpInputPolicyResolver}, wired to {@code
+ * apt.ElementInvocationPolicies}, resolves the same IP-01..IP-19 matrix as {@code
  * ElementInvocationPoliciesTest} (T018 TP-001), {@code ReflectiveInvocationPoliciesTest} (T016
- * TP-002), and {@code JaxRsInvocationPolicyMatrixTest} (T018 TP-002/TP-003) — but end-to-end through
+ * TP-002), and {@code JaxRsInvocationPolicyMatrixTest} (T018 TP-002/TP-003) — end-to-end through
  * the real {@link McpToolProcessor} pipeline, asserting the generated {@code Input} carrier's
  * per-component {@code @Canonicalize}/{@code @Sanitize} annotations (not the adapter's return value
  * directly, and not a {@code POL0} literal: unlike the JAX-RS/REST codegen carrier, MCP's generated
@@ -50,10 +50,8 @@ import org.junit.jupiter.params.provider.MethodSource;
  * that the annotation is entirely absent (never emitted, per {@code addPolicyAnnotation}'s
  * empty-chain skip) for an empty axis. IP-16's fixture also carries a class-level
  * {@code @Sanitize(A.class)} on top of the scenario's interface method-level
- * {@code @SkipSanitization} (mirrors T018 A4, contract L159-162): today's direct-only walk resolves
- * {@code [A]} against the expected {@code []}, giving this row a distinct red signature from
- * IP-01..08/11/13/18 (already green) — recorded in the completion evidence, not asserted here (this
- * test always asserts the correct/green expectation).
+ * {@code @SkipSanitization} (mirrors T018 A4, contract L159-162): the hierarchy walk resolves this
+ * row to the same {@code []} expectation as every other row in the matrix.
  *
  * <p><strong>Conflict rows</strong> ({@link #conflictOnMethodIsACompileErrorNamingTheMethod} IP-14,
  * {@link #conflictOnParameterIsACompileError} IP-15,
@@ -64,15 +62,6 @@ import org.junit.jupiter.params.provider.MethodSource;
  * fixture class/method names); IP-15/IP-19 assert {@code "Conflicting @Sanitize"} plus the real
  * declaration sites, mirroring {@code JaxRsInvocationPolicyMatrixTest}'s own ruling that the contract
  * does not pin an exact literal for parameter-level/type-level conflicts.
- *
- * <p>Today ({@code McpInputPolicyResolver} pre-T019): IP-01..08, IP-13, IP-18 are green; IP-09
- * (interface method), IP-10 (superclass class-level), IP-11 (composed annotation), and IP-12
- * (interface parameter) are red on value (today's direct-only walk with {@code
- * AnnotationMirrors.findByFqn} misses the hierarchy/meta-annotation); IP-16 (the A4 trick) is red on
- * value for the same direct-only reason; IP-14/IP-15 already compile-error today via {@code
- * hasConflict} but with the old text and no sites, so {@code assertErrorMessage} is red for the new
- * shared message shape; IP-17/IP-19 compile successfully today (the hierarchy conflict is invisible
- * to the direct-only walk), so {@code assertFailed()} is red for both.
  */
 class McpInvocationPolicyMatrixTest {
 

@@ -18,11 +18,10 @@ import org.junit.jupiter.api.Test;
  * are present on resource classes and methods.
  *
  * <p>The compile-time algorithm in {@link dev.vertique.codegen.jaxrs.EffectiveJaxRsContractResolver}
- * must produce the same chain as the runtime
- * {@code ResourceScanner.resolveRouteCanonicalizerChain} /
- * {@code resolveRouteSanitizerChain} + {@code ParameterExtractor.resolveParamPolicies}.
- * The runtime-side verification is performed by {@code InputPolicyRuntimeParityTest}
- * in the {@code vertique-rest-jaxrs} module.
+ * (via {@link dev.vertique.input.processing.apt.ElementInvocationPolicies}) must produce the same
+ * chain as the runtime resolver, {@link dev.vertique.input.processing.ReflectiveInvocationPolicies}.
+ * The runtime-side verification is performed by {@code InputPolicyRuntimeParityTest} in the
+ * {@code vertique-rest-jaxrs} module.
  *
  * <p>Scenarios (APT-side only, direct annotations on a single resource class):
  * <ul>
@@ -35,11 +34,11 @@ import org.junit.jupiter.api.Test;
  *   <li>Descriptor {@code CC_} constant is empty ({@code new String[0]}) when no {@code @Canonicalize}.</li>
  * </ul>
  *
- * <p>Retargeted (T018, issue #379): the interface-, superclass-, and conflict-shaped scenarios this
- * test never covered (hierarchy precedence, meta-annotations, additive+skip conflicts — the full
- * IP-01..IP-19 matrix) are {@link JaxRsInvocationPolicyMatrixTest}'s responsibility; this test keeps
- * its original five direct-annotation scenarios unchanged, now asserting the {@code EffectiveInputPolicies.NONE}
- * / class-literal snippets through the same {@link PolicyLiteralAssertions} helper {@code
+ * <p>The interface-, superclass-, and conflict-shaped scenarios (hierarchy precedence,
+ * meta-annotations, additive+skip conflicts — the full IP-01..IP-19 matrix) are
+ * {@link JaxRsInvocationPolicyMatrixTest}'s responsibility; this test keeps its original five
+ * direct-annotation scenarios, asserting the {@code EffectiveInputPolicies.NONE} / class-literal
+ * snippets through the same {@link PolicyLiteralAssertions} helper {@code
  * JaxRsInvocationPolicyMatrixTest} uses, so the literal shape is defined once, not restated per test.
  *
  * <p>Stub Canonicalizer and Sanitizer implementations live in {@link PolicyTestStubs} — a separate

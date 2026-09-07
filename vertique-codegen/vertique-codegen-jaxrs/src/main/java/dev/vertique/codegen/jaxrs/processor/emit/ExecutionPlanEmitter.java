@@ -71,8 +71,10 @@ import javax.lang.model.util.Elements;
  * chains in {@link EffectiveParamContract#canonicalizers()} and
  * {@link EffectiveParamContract#sanitizers()}. Each chain already embeds the route-level baseline
  * overridden by any parameter-level {@code @Canonicalize}/{@code @Sanitize}/{@code @Skip*}
- * annotation, so the emitted constant faithfully mirrors what
- * {@code ParameterExtractor.resolveParamPolicies} would compute at runtime.
+ * annotation: these are the chains {@link dev.vertique.input.processing.apt.ElementInvocationPolicies}
+ * resolved at compile time, which are equal to what
+ * {@link dev.vertique.input.processing.ReflectiveInvocationPolicies} derives at runtime for the same
+ * declarations, so the emitted constant faithfully carries the plan's policies.
  *
  * <p>For {@code BEAN_PARAM} parameters, only the route-level {@code ROUTE_POL} constant is
  * emitted. Per-field policies are derived at materialisation time inside
