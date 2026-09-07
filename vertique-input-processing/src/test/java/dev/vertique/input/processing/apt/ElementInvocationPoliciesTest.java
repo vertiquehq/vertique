@@ -39,6 +39,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * TP-001 (T018, issue #379): {@code apt.ElementInvocationPolicies.resolveRoute}/{@code
@@ -241,6 +242,50 @@ class ElementInvocationPoliciesTest {
         assertEquals("OK", paramFields[1], label + " parameter stage must resolve without conflict");
         assertEquals("", paramFields[2], label + " parameter canonicalizers must be empty");
         assertEquals("", paramFields[3], label + " parameter sanitizers must be empty");
+    }
+
+    /**
+     * R5 (security review): {@code resolveParameter} rejects an out-of-range index with
+     * {@link IllegalArgumentException} naming the method and the index, instead of letting an
+     * {@link IndexOutOfBoundsException} escape from the parameter-site walk and abort the processor.
+     *
+     * <p>The carrier overrides an interface method on purpose: the site walk only indexes into a
+     * <em>supertype</em> declaration's parameter list, so a standalone class never reaches the bad
+     * index. Both out-of-range shapes are exercised — {@code -1} (the reported {@code indexOf}-miss
+     * shape) and an index past the parameter count.
+     */
+    @ParameterizedTest(name = "index {0}")
+    @ValueSource(ints = {-1, 7})
+    @DisplayName("an out-of-range parameter index is rejected with IllegalArgumentException")
+    void outOfRangeParameterIndexIsRejected(int index) {
+        String pkg = "dev.vertique.input.processing.apt.fixture.outofrange";
+        JavaFileObject iface = SourceFiles.inline(pkg + ".IOob", """
+                package %s;
+                public interface IOob {
+                    void bar(String p);
+                }
+                """.formatted(pkg));
+        JavaFileObject impl = SourceFiles.inline(pkg + ".Oob", """
+                package %s;
+                public class Oob implements IOob {
+                    @Override
+                    public void bar(String p) {}
+                }
+                """.formatted(pkg));
+
+        ProcessorTestHarness.Result result = ProcessorTestHarness.run(
+                new Probe(),
+                Map.of(Probe.OPTION_OWNER_FQN, pkg + ".Oob", Probe.OPTION_PARAM_INDEX, String.valueOf(index)),
+                iface,
+                impl);
+        result.assertSuccess();
+
+        String label = "out-of-range-" + index;
+        String[] paramFields = firstNote(result, "PARAM", label).split(FIELD_SEP, 4);
+        assertEquals("ILLEGAL_ARGUMENT", paramFields[1], label + " must be rejected by the precondition");
+        String message = paramFields[3];
+        assertTrue(message.contains("Oob.bar"), label + " message should name the method: " + message);
+        assertTrue(message.contains(String.valueOf(index)), label + " message should name the index: " + message);
     }
 
     /**
@@ -550,11 +595,18 @@ class ElementInvocationPoliciesTest {
     public static final class Probe extends AbstractProcessor {
 
         static final String OPTION_OWNER_FQN = "t018.ownerFqn";
+
+        /**
+         * Optional zero-based parameter index handed to {@code resolveParameter}; defaults to
+         * {@code 0}. Set to an out-of-range value to drive the R5 precondition.
+         */
+        static final String OPTION_PARAM_INDEX = "t018.paramIndex";
+
         private static final String METHOD_NAME = "bar";
 
         @Override
         public Set<String> getSupportedOptions() {
-            return Set.of(OPTION_OWNER_FQN);
+            return Set.of(OPTION_OWNER_FQN, OPTION_PARAM_INDEX);
         }
 
         @Override
@@ -597,11 +649,15 @@ class ElementInvocationPoliciesTest {
             note("ROUTE", "OK", typeNames(route.canonicalizers()), typeNames(route.sanitizers()));
 
             VariableElement param = method.getParameters().get(0);
+            int index = Integer.parseInt(processingEnv.getOptions().getOrDefault(OPTION_PARAM_INDEX, "0"));
             ElementPolicyChains paramChains;
             try {
-                paramChains = policies.resolveParameter(param, 0, method, owner, route);
+                paramChains = policies.resolveParameter(param, index, method, owner, route);
             } catch (InvocationPolicyConflictException e) {
                 note("PARAM", "CONFLICT", e.axis().name(), e.getMessage());
+                return false;
+            } catch (IllegalArgumentException e) {
+                note("PARAM", "ILLEGAL_ARGUMENT", "", e.getMessage());
                 return false;
             }
             note("PARAM", "OK", typeNames(paramChains.canonicalizers()), typeNames(paramChains.sanitizers()));

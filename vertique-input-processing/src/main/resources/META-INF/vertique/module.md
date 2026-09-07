@@ -170,6 +170,8 @@ An **element**, for policy resolution, is the hierarchy-merged view of a declara
 
 The consequence is directional: an override that declares `@SkipSanitization` over an inherited `@Sanitize(B.class)` is a **conflict**, not "nearest wins" — an override may *replace* an inherited policy but may never *remove* one silently. An override that declares `@Sanitize(A.class)` over an inherited `@Sanitize(B.class)` is not a conflict; it resolves to `[A.class]`, since the nearest declaration is the first occurrence for that polarity.
 
+When the skip and the chain sit on **different** elements — an interface method's `@SkipSanitization` over the implementing class's `@Sanitize(A.class)` — the precedence above still applies unchanged (method-skip beats type-additive, and nothing conflicts), but because the element in front of the reader never opted out, the resolver logs one `WARN` naming both declaration sites whenever a skip the element only *inherited* removes a non-empty chain: in the build log under annotation processing, in the application log at registration at runtime.
+
 ### `InvocationPolicySource<V>`
 
 One element's view of one `PolicyAxis`: `additive()` / `additiveDeclaredAt()`, `skip()` / `skipDeclaredAt()`, and `describe()` for diagnostics. A source is a passive data carrier — it never validates itself; `InvocationPolicyResolver` owns the conflict check. `InvocationPolicySource.none()` returns the no-op source (no additive chain, no skip).

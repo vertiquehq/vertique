@@ -8,17 +8,24 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.core.sanitization.Sanitize;
 import dev.vertique.core.sanitization.SkipSanitization;
 import dev.vertique.input.processing.testkit.A;
 import dev.vertique.input.processing.testkit.ComposedSanitize;
+import dev.vertique.input.processing.testkit.InvocationPolicyScenarios;
 import dev.vertique.input.processing.testkit.InvocationPolicyScenarios.Outcome;
 import dev.vertique.input.processing.testkit.InvocationPolicyScenarios.Row;
 import java.lang.reflect.Method;
+import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.slf4j.LoggerFactory;
 
 /**
  * TP-002 (T016, issue #379): {@code ReflectiveInvocationPolicies.resolveRoute}/{@code resolveParameter}
@@ -143,5 +150,56 @@ class ReflectiveInvocationPoliciesTest {
                 dev.vertique.input.processing.testkit.InvocationPolicyScenarios.expectedConflictMessage(
                         PolicyAxis.SANITIZE, "IDirect.bar", "DirectImpl.bar", "method DirectImpl.bar"),
                 ex.getMessage());
+    }
+
+    // --- R2 (security review): an inherited skip that silently removes a class-level chain ---
+
+    /** The interface method carries the skip; the implementation never mentions it. */
+    interface ISkipDeclaringIface {
+        @SkipSanitization
+        void bar(String p);
+    }
+
+    /**
+     * The implementing class declares the chain the inherited skip removes. Nothing on
+     * {@code SkipInheritedImpl.bar} says the class-level {@code @Sanitize(A)} will not run, which is
+     * exactly what the WARN exists to make visible.
+     */
+    @Sanitize(A.class)
+    static class SkipInheritedImpl implements ISkipDeclaringIface {
+        @Override
+        public void bar(String p) {}
+    }
+
+    @Test
+    @DisplayName("an interface-declared skip over a class-level chain resolves [] and warns over real carriers")
+    void inheritedSkipOverClassChainResolvesEmptyAndWarns() throws Exception {
+        Logger resolverLogger = (Logger) LoggerFactory.getLogger(InvocationPolicyResolver.class);
+        Level previousLevel = resolverLogger.getLevel();
+        resolverLogger.setLevel(Level.WARN);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        resolverLogger.addAppender(appender);
+        try {
+            Method bar = SkipInheritedImpl.class.getMethod("bar", String.class);
+
+            EffectiveInputPolicies route = ReflectiveInvocationPolicies.resolveRoute(bar, SkipInheritedImpl.class);
+
+            assertEquals(List.of(), route.sanitizers(), "the inherited skip still wins");
+            assertEquals(
+                    List.of(InvocationPolicyScenarios.expectedInheritedSkipWarning(
+                            PolicyAxis.SANITIZE,
+                            "ISkipDeclaringIface.bar",
+                            "SkipInheritedImpl",
+                            "method SkipInheritedImpl.bar")),
+                    appender.list.stream()
+                            .filter(event -> event.getLevel() == Level.WARN)
+                            .map(ILoggingEvent::getFormattedMessage)
+                            .toList());
+        } finally {
+            resolverLogger.detachAppender(appender);
+            appender.stop();
+            resolverLogger.setLevel(previousLevel);
+        }
     }
 }

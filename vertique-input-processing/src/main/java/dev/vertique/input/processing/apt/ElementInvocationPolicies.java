@@ -144,6 +144,10 @@ public final class ElementInvocationPolicies {
      * @param route     the route-level chains resolved by {@link #resolveRoute}; must not be
      *     {@code null}
      * @return the resolved parameter-level chains; never {@code null}
+     * @throws IllegalArgumentException when {@code index} is negative or not less than
+     *     {@code method}'s parameter count — a caller that derived the index from a failed lookup
+     *     (an {@code indexOf} miss yields {@code -1}) is rejected here instead of failing with an
+     *     {@link IndexOutOfBoundsException} deep inside the parameter-site walk
      * @throws InvocationPolicyConflictException when the parameter's merged view declares both the
      *     additive and the skip annotation of the same axis
      */
@@ -153,6 +157,11 @@ public final class ElementInvocationPolicies {
             ExecutableElement method,
             TypeElement owner,
             ElementPolicyChains route) {
+        int parameterCount = method.getParameters().size();
+        if (index < 0 || index >= parameterCount) {
+            throw new IllegalArgumentException("parameter index " + index + " is out of range for method "
+                    + methodSiteName(method) + ", which declares " + parameterCount + " parameter(s)");
+        }
         List<Site> parameterSites = parameterSites(parameter, index, methodSites(method));
         String describe = "parameter " + index + " of method " + methodSiteName(method);
 
@@ -436,6 +445,11 @@ public final class ElementInvocationPolicies {
      * after its declaring method, so a conflict message points at the method that declares the
      * annotation.
      *
+     * <p>An overridden declaration that does not carry a parameter at {@code index} is skipped
+     * rather than indexed into: the bound is checked on both ends, so no site walk can raise an
+     * {@link IndexOutOfBoundsException} even though {@link #resolveParameter} already rejects an
+     * out-of-range index up front.
+     *
      * @param parameter   the parameter of the most-derived method site
      * @param index       the zero-based parameter index
      * @param methodSites the merged method view, in traversal order
@@ -447,7 +461,7 @@ public final class ElementInvocationPolicies {
         for (int i = 1; i < methodSites.size(); i++) {
             Site methodSite = methodSites.get(i);
             List<? extends VariableElement> parameters = ((ExecutableElement) methodSite.element()).getParameters();
-            if (index < parameters.size()) {
+            if (index >= 0 && index < parameters.size()) {
                 sites.add(new Site(parameters.get(index), methodSite.name()));
             }
         }

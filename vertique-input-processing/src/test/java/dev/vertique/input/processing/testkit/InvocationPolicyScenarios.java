@@ -369,6 +369,37 @@ public final class InvocationPolicyScenarios {
                         elementDescription);
     }
 
+    /**
+     * Builds the exact WARN {@code InvocationPolicyResolver} is expected to log when a skip declared
+     * on a <em>supertype</em> site removes a non-empty additive chain declared one level below
+     * (security review R2): the precedence is unchanged — the skip still wins — but the removal is
+     * announced instead of being silent.
+     *
+     * <p>Both proofs (the stub-driven {@code InvocationPolicyResolverTest} and the real-carrier
+     * {@code ReflectiveInvocationPoliciesTest}) format the expectation here, so the message shape is
+     * never restated as a second literal that could silently drift.
+     *
+     * @param axis               the axis whose chain is removed
+     * @param skipDeclaredAt     the inherited skip annotation's declaration site (e.g.
+     *                           {@code "IFoo.bar"})
+     * @param additiveDeclaredAt the removed chain's declaration site (e.g. {@code "FooImpl"}), or
+     *                           {@code "the route"} when the removed chain is the already-resolved
+     *                           route chain a parameter falls back to
+     * @param elementDescription the description of the element being resolved
+     * @return the expected WARN message
+     */
+    public static String expectedInheritedSkipWarning(
+            PolicyAxis axis, String skipDeclaredAt, String additiveDeclaredAt, String elementDescription) {
+        return ("%s declared on %s removes the %s chain declared on %s for %s — the override inherits the skip; "
+                        + "declare the chain on the element or remove the inherited skip")
+                .formatted(
+                        axis.skipAnnotation(),
+                        skipDeclaredAt,
+                        axis.additiveAnnotation(),
+                        additiveDeclaredAt,
+                        elementDescription);
+    }
+
     private record StubSource<V>(
             Optional<List<V>> additive,
             Optional<String> additiveDeclaredAt,
