@@ -23,7 +23,6 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpServer;
-import io.vertx.core.json.Json;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
@@ -46,8 +45,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * serialization must become symmetric with request binding — a resource method's response should
  * serialize through the same effective profile resolved for its request (the per-method mapper the
  * request path already stashes under {@code BoundRequest.KEY_RESOLVED_BODY_MAPPER}), while a method
- * with no profile and no configured default stays byte-for-byte on the {@code vertx} mapper
- * ({@code Json.encode}).
+ * with no profile and no configured default serializes through the {@code vertique} floor — the
+ * effective default for every managed edge — whose opinions include omitting {@code null} fields.
  *
  * <p>The encoder under test is the <strong>production</strong> {@code JsonBodyEncoder}, reached through
  * {@link MountFixtures} over {@link ValidationMountComponent} (the {@code vertique-rest-test} fixture),
@@ -57,21 +56,19 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * FAILED (the opinionated profile's observable behavior never reached the wire). Slice 3.1 made the
  * encoder read the stash, turning it green.
  *
- * <p>The opinionated {@code response-profile} test profile's observable difference from
- * {@code Json.encode} is that it omits {@code null} fields (a {@code NON_NULL} mix-in scoped to the
- * response entity type). This difference survives the registry's structural round-trip probe because
- * the {@code NON_NULL} inclusion is scoped to the entity class via a mix-in — the probe serializes a
- * null-bearing {@code JsonObject}, which is unaffected. Null-omission is chosen as the observable
- * because {@code Json.encode} renders it <em>successfully</em> (a 200 response carrying
- * {@code "missing":null}), so the RED signal is a clean body-content assertion rather than a coarse
- * encode failure: a {@code java.time} value would make the bare {@code vertx} mapper throw (it lacks
- * jsr310) and the response would never reach the wire, turning the RED into a hang.
+ * <p>The opinionated {@code response-profile} test profile omits {@code null} fields (a
+ * {@code NON_NULL} mix-in scoped to the response entity type), a difference that survives the
+ * registry's structural round-trip probe because the inclusion is scoped to the entity class via a
+ * mix-in — the probe serializes a null-bearing {@code JsonObject}, which is unaffected. Null-omission
+ * was chosen as the observable because the response renders <em>successfully</em> either way (a 200
+ * carrying, or not carrying, {@code "missing":null}), so the signal is a clean body-content assertion
+ * rather than a coarse encode failure whose response never reaches the wire.
  *
  * <p><strong>Why a {@link WebClient} and not a raw {@code HttpClient}.</strong> A raw
  * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
  * under load {@code body()} can succeed with zero bytes while the status code is correct (issue #167).
  * Both assertions here are about the <em>bytes of the response body</em> — whether the null field is
- * omitted, and a byte-for-byte comparison against {@code Json.encode} — so a silently emptied body
+ * omitted, and an exact rendered body — so a silently emptied body
  * would report a profile-selection defect that did not happen. A {@link WebClient} aggregates the body
  * into its {@code HttpResponse} before completing the send, so the race is closed by construction
  * rather than by every author remembering an idiom.
@@ -111,8 +108,8 @@ public class ProfiledResponseSerializationIT {
      * {@code WRITE_DATES_AS_TIMESTAMPS} disabled (the opinionated date policy, retained for parity with
      * the framework's {@code vertique} profile), and a {@code NON_NULL} mix-in scoped to
      * {@link ProfiledEntity} (so the entity's null field is omitted while the structural probe's
-     * null-bearing {@code JsonObject} is unaffected). The null-omission is the observable difference
-     * from the {@code vertx} mapper's {@code Json.encode}.
+     * null-bearing {@code JsonObject} is unaffected). The null-omission and the date policy are the
+     * observable marks that a profile mapper — not the process codec — rendered the response.
      *
      * @return the {@code response-profile} profile
      */
@@ -134,8 +131,8 @@ public class ProfiledResponseSerializationIT {
 
     /**
      * Response entity carrying a present {@code name} and a {@code null} {@code missing} field. Under the
-     * opinionated profile (via the {@code NON_NULL} mix-in) the null field is omitted; under
-     * {@code Json.encode} the null is included.
+     * opinionated profile (via the {@code NON_NULL} mix-in) the null field is omitted; the raw Vert.x
+     * mapper would include it.
      */
     public static class ProfiledEntity {
         public String name;
@@ -144,7 +141,7 @@ public class ProfiledResponseSerializationIT {
 
     /**
      * Response entity with a present {@code name} and a {@code null} {@code missing} field. Used by the
-     * vertx-unchanged invariant test, whose body must equal {@code Json.encode(entity)}.
+     * unannotated-route test, whose body must be what the {@code vertique} floor renders.
      */
     public static class PlainEntity {
         public String name;
@@ -180,8 +177,8 @@ public class ProfiledResponseSerializationIT {
 
     /**
      * Resource with NO {@code @JsonProfile} (and no configured default), so the effective response
-     * profile is {@code vertx}. Its GET returns a {@link PlainEntity} (null field, no date); the
-     * response body must be byte-for-byte identical to today's {@code Json.encode(entity)}.
+     * profile is the {@code vertique} floor. Its GET returns a {@link PlainEntity} (null field, no
+     * date); the floor's opinions omit that null field from the response body.
      */
     @Path("/plain")
     public static class PlainResource {
@@ -208,10 +205,9 @@ public class ProfiledResponseSerializationIT {
     @DisplayName("A @JsonProfile method serializes its response via the profile (omits the null field)")
     void profiledMethod_serializesViaProfile(Vertx vertx, VertxTestContext ctx) {
         // The class-level @JsonProfile resolves the opinionated mapper, which the request path stashes
-        // under KEY_RESOLVED_BODY_MAPPER ahead of dispatch. Once JsonBodyEncoder reads that stash, the
-        // response body OMITS the null "missing" field. TODAY the encoder uses Json.encode (vertx) and
-        // ignores the stash, so the body still carries "missing":null and this assertion FAILS (the RED
-        // signal): the profile's omit-nulls behavior never reaches the wire.
+        // under KEY_RESOLVED_BODY_MAPPER ahead of dispatch. Because JsonBodyEncoder reads that stash,
+        // the response body OMITS the null "missing" field: the profile's omit-nulls behavior reaches
+        // the wire.
         get(vertx, ctx, new ProfiledResource(), "/profiled", body -> {
             assertTrue(body.contains("\"name\":\"alice\""), "the name field must be present; body was: " + body);
             assertFalse(
@@ -220,27 +216,25 @@ public class ProfiledResponseSerializationIT {
         });
     }
 
-    // --- Test: a vertx (default) method's response is byte-for-byte unchanged ---
+    // --- Test: an unannotated method's response is rendered by the vertique floor ---
 
     @Test
-    @DisplayName("A method with no @JsonProfile serializes its response byte-for-byte via Json.encode (vertx)")
-    void vertxMethod_byteForByteUnchanged(Vertx vertx, VertxTestContext ctx) {
-        // No @JsonProfile and no configured default => the effective profile is vertx => no mapper is
-        // stashed => JsonBodyEncoder must keep calling Json.encode(entity) exactly. The body must equal
-        // the test-computed Json.encode of the same entity (null field PRESENT), proving the vertx path
-        // is byte-for-byte unchanged (FR-JSON-057). This PASSES today and guards the invariant.
-        PlainEntity expected = new PlainEntity();
-        expected.name = "alice";
-        expected.missing = null;
-        String expectedBody = Json.encode(expected);
-
+    @DisplayName("A method with no @JsonProfile serializes its response through the vertique floor (null omitted)")
+    void unannotatedMethod_serializesViaTheVertiqueFloor(Vertx vertx, VertxTestContext ctx) {
+        // No @JsonProfile and no configured default => the effective profile is the vertique floor,
+        // whose mapper the route resolves and stashes => JsonBodyEncoder serializes through it. The
+        // floor's NON_NULL inclusion drops the null "missing" field, so the rendered body is exactly
+        // {"name":"alice"} where the raw Vert.x mapper would have written "missing":null. Asserting the
+        // whole body (not a substring) keeps this a statement about the bytes on the wire.
         get(
                 vertx,
                 ctx,
                 new PlainResource(),
                 "/plain",
                 body -> assertEquals(
-                        expectedBody, body, "the vertx (default) response must be byte-for-byte Json.encode output"));
+                        "{\"name\":\"alice\"}",
+                        body,
+                        "the vertique floor must render the entity without its null field"));
     }
 
     // --- Helpers ---

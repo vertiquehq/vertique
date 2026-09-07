@@ -48,14 +48,14 @@ import org.junit.jupiter.api.Test;
  * (slice 2.3, FR-JSON-024B). When an {@link InputObjectProcessor} is active, a structured JSON body
  * is intercepted, processed into an intermediate map, and then materialized to the DTO. This test
  * proves the final materialization uses the RESOLVED PROFILE MAPPER stashed on the
- * {@link RoutingContext} under {@link BoundRequest#KEY_RESOLVED_BODY_MAPPER} — not the vertx global
+ * {@link RoutingContext} under {@link BoundRequest#KEY_RESOLVED_BODY_MAPPER} — not the process codec's
  * mapper — and that a strict-profile materialization failure surfaces as a {@link ValidationException}
  * (HTTP 400 via {@code DefaultExceptionMapper}).
  *
  * <p>A full IT for the two-phase path is disproportionate (it requires a sanitization module on the
  * route), so the materialization site is covered here at the unit level as the plan permits: the
  * {@link InputObjectProcessor} is a pass-through stub, and the strict mapper DISABLES
- * {@code ALLOW_COERCION_OF_SCALARS} (which the vertx global mapper leaves enabled, verified) so a
+ * {@code ALLOW_COERCION_OF_SCALARS} (which the process codec's mapper leaves enabled, verified) so a
  * string for the primitive {@code count} is rejected only when bound by the profile mapper.
  */
 class ParameterExtractorTwoPhaseProfileTest {
@@ -139,7 +139,7 @@ class ParameterExtractorTwoPhaseProfileTest {
      * Builds a mocked {@link RoutingContext} for a JSON POST, stashing {@code profileMapper} under
      * {@link BoundRequest#KEY_RESOLVED_BODY_MAPPER} (or none when {@code profileMapper} is {@code null}).
      *
-     * @param profileMapper the resolved profile mapper to stash, or {@code null} for the vertx path
+     * @param profileMapper the resolved profile mapper to stash, or {@code null} for the process-codec path
      * @return the mocked routing context
      */
     private static RoutingContext jsonCtx(ObjectMapper profileMapper) {
@@ -152,7 +152,7 @@ class ParameterExtractorTwoPhaseProfileTest {
     }
 
     /**
-     * Builds a body whose {@code count} is the JSON string {@code "5"} — coerced by the vertx mapper,
+     * Builds a body whose {@code count} is the JSON string {@code "5"} — coerced by the process codec's mapper,
      * rejected by the no-coercion profile mapper.
      *
      * @return the body request value
@@ -179,19 +179,19 @@ class ParameterExtractorTwoPhaseProfileTest {
     }
 
     @Test
-    @DisplayName("Two-phase: the vertx path (no profile mapper) coerces the scalar and binds the DTO")
-    void twoPhaseProcessedBody_vertxPathUnchanged() throws Exception {
+    @DisplayName("Two-phase: the process-codec path (no profile mapper) coerces the scalar and binds the DTO")
+    void twoPhaseProcessedBody_processCodecPathUnchanged() throws Exception {
         ParameterExtractor extractor = twoPhaseExtractor();
         RoutingContext ctx = jsonCtx(null);
 
         Object result =
                 extractor.deserializeBody(stringCountBody(), Payload.class, null, ctx, EffectiveInputPolicies.NONE);
         assertInstanceOf(Payload.class, result);
-        assertEquals("a", ((Payload) result).name, "the vertx path must bind the DTO");
-        assertEquals(5, ((Payload) result).count, "the vertx path must coerce the string scalar to the int");
+        assertEquals("a", ((Payload) result).name, "the process-codec path must bind the DTO");
+        assertEquals(5, ((Payload) result).count, "the process-codec path must coerce the string scalar to the int");
     }
 
-    // --- Form-urlencoded bodies under a non-vertx profile ---
+    // --- Form-urlencoded bodies under a route-selected profile ---
 
     /** Sanitizer whose effect on a governed value is unmistakable in an assertion. */
     public static final class UppercasingSanitizer implements Sanitizer {
@@ -221,7 +221,7 @@ class ParameterExtractorTwoPhaseProfileTest {
     }
 
     /**
-     * Builds a mapper renaming every property to {@code snake_case}, mirroring a non-{@code vertx}
+     * Builds a mapper renaming every property to {@code snake_case}, mirroring a route-selected
      * {@code @JsonProfile} whose naming strategy the route's projection is built from.
      *
      * @return the snake-case materialization mapper

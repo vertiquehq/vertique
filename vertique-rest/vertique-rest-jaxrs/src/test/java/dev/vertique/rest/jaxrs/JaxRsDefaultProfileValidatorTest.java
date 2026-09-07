@@ -48,7 +48,7 @@ import org.junit.jupiter.api.Test;
  *   <li>shadowing: a bad {@code jaxrs.jsonProfile} still fails fast even though a per-method/class
  *       {@code @JsonProfile} could shadow it at a route — the validator validates the configured
  *       default independently;
- *   <li>a known id ({@code vertx}) constructs cleanly;
+ *   <li>a known id ({@code system}) constructs cleanly;
  *   <li>an unset {@code jaxrs.jsonProfile} constructs cleanly (the validator no-ops on blank/absent).
  * </ul>
  */
@@ -85,11 +85,12 @@ class JaxRsDefaultProfileValidatorTest {
     }
 
     @Test
-    @DisplayName("known jaxrs.jsonProfile (vertx) passes")
+    @DisplayName("known jaxrs.jsonProfile (system) passes")
     void knownJaxRsProfilePasses() {
         KnownComponent component = DaggerJaxRsDefaultProfileValidatorTest_KnownComponent.create();
 
-        assertDoesNotThrow(component::composeValidators, "a known jaxrs.jsonProfile id (vertx) must construct cleanly");
+        assertDoesNotThrow(
+                component::composeValidators, "a known jaxrs.jsonProfile id (system) must construct cleanly");
     }
 
     @Test
@@ -116,7 +117,7 @@ class JaxRsDefaultProfileValidatorTest {
         Set<ComposeValidator> composeValidators();
     }
 
-    /** Component whose {@code jaxrs.jsonProfile} is the reserved built-in {@code vertx} id. */
+    /** Component whose {@code jaxrs.jsonProfile} is the reserved built-in {@code system} id. */
     @Singleton
     @Component(modules = {JsonRuntimeModule.class, KnownConfigModule.class})
     interface KnownComponent {

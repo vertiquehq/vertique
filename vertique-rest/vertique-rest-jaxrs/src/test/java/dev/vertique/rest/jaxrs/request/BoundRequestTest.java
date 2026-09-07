@@ -533,22 +533,25 @@ class BoundRequestTest {
     }
 
     @Test
-    @DisplayName("A scalar JSON float body on the vertx (default) path still binds as Double (non-regression)")
-    void vertxPathScalarBody_floatStillReturnsDouble() {
-        // given: no profile mapper on the context (the vertx default path), scalar body "1.5".
-        // when: DefaultBoundRequest.bindBody uses the vertx path (Json.decodeValue).
-        // then: the raw bound value is a Double — proving the vertx path is byte-for-byte unchanged.
-        // This guards the non-regression: the fix must NOT affect the vertx default scalar path.
+    @DisplayName(
+            "A scalar JSON float body on the unstashed (process-codec) path still binds as Double (non-regression)")
+    void processCodecPathScalarBody_floatStillReturnsDouble() {
+        // given: no profile mapper on the context (the process-codec path), scalar body "1.5".
+        // when: DefaultBoundRequest.bindBody uses the Vert.x path (Json.decodeValue), which runs the
+        // process codec — here still its raw delegate, since this unit test boots no application.
+        // then: the raw bound value is a Double — proving the unstashed path is unchanged.
+        // This guards the non-regression: the fix must NOT affect the unstashed scalar path.
         Buffer rawBody = Buffer.buffer("1.5");
         RoutingContext ctx = bodyContext("application/json", rawBody);
 
         BoundRequest bound = assertDoesNotThrow(
                 () -> new DefaultBoundRequest(ctx, bodyOp()),
-                "a clean scalar float on the vertx path must bind without exception");
+                "a clean scalar float on the unstashed path must bind without exception");
 
         Object raw = bound.body().get();
-        assertNotNull(raw, "the scalar float body must bind as a non-null value on the vertx path");
-        assertInstanceOf(Double.class, raw, "the vertx default path must return Double for a JSON float scalar");
+        assertNotNull(raw, "the scalar float body must bind as a non-null value on the unstashed path");
+        assertInstanceOf(
+                Double.class, raw, "the unstashed process-codec path must return Double for a JSON float scalar");
     }
 
     @Test

@@ -145,8 +145,9 @@ documents each shape, what still applies, and how to stay inside the covered set
 ### JSON profiles are symmetric
 
 A resource method's request body and its response body use the same effective `ObjectMapper`. The
-profile is resolved once at router-build time and reused for both directions — see
-[Configuration](#configuration).
+profile is resolved once at router-build time and reused for both directions; with nothing configured
+that is the `vertique` floor, so a zero-config route binds `Optional` and `java.time` components and
+renders without `null` fields — see [Configuration](#configuration).
 
 ---
 
@@ -905,11 +906,45 @@ The `ObjectMapper` used for a resource method is resolved once at router-build t
 2. `@JsonProfile("id")` on the resource **class**;
 3. `jaxrs.jsonProfile` when non-blank (per-boundary default);
 4. `json.jsonProfile` when non-blank (global default);
-5. `vertx` — the built-in Vert.x codec, and the unchanged default.
+5. `vertique` — the framework's opinionated profile, and the floor every managed edge shares.
 
-An unknown profile id fails at **startup**, not on the first request.
+Every id resolved above, the reserved `system` included, is resolved to its mapper through the
+`JsonMapperProfileRegistry`. An unknown profile id fails at **startup**, not on the first request.
 `JaxRsDefaultProfileValidator` additionally resolves `jaxrs.jsonProfile` during the `VALIDATE` phase,
 so a bad boundary default fails even when no resource method would have used it.
+
+The keys this resolution reads:
+
+| Key | Floor | Meaning |
+|---|---|---|
+| `jaxrs.jsonProfile` | none (falls through when blank) | per-boundary default for every route on this mount |
+| `json.jsonProfile` | `vertique` | the global default for managed edges — REST bodies, rest-client, Kafka JSON, MCP |
+| `json.systemProfile` | `system` | the profile installed as the **process** JSON codec, which every `Json.encode`, `Json.decodeValue`, and `JsonObject` operation runs on. Not a REST key, but it decides which routes take the fast path below |
+
+**The "no override" fast path is an identity rule.** After resolving the effective id to a mapper, the
+resolver returns "no override" — leaving the route on the plain Vert.x body and `Json.encode` paths —
+**iff that mapper is the very instance the process JSON codec runs on**. It is never keyed on the
+profile id. Under the defaults (`json.jsonProfile: vertique`, `json.systemProfile: system`) that means
+a route explicitly selecting `system` takes the fast path and every other route binds and renders
+through its own profile mapper. Change `json.systemProfile` and the fast path follows it: an explicit
+`system` route under `json.systemProfile: vertique` resolves the `system` mapper, which is no longer
+the process codec's, so the route binds through `system` rather than silently through `vertique`.
+
+The comparison is captured **once per route, when the router is built** (the `EDGE` startup phase,
+after `CONFIGURE` installs the process mapper). Two consequences follow. A custom
+`JsonMapperProfileRegistry` that returns a fresh `ObjectMapper` per call never matches, so its routes
+never take the fast path — the built-in registry hands out one stable instance per profile. And
+swapping the process codec's mapper after routers are built (a second application booting in the same
+JVM with the same system profile id) does not retroactively change routes already decided: routes
+that resolved to the process codec (the `null` fast path) follow the swap at request time, while routes
+that captured a registry mapper keep binding with it — so after such a swap two routes of one mount
+can bind with different mappers.
+
+**Rollback.** Setting `json.jsonProfile: system` puts every unannotated route back on the baseline
+recipe — no `NON_NULL` omission, no `BigDecimal` floats, no enum-default leniency, and JSON comments
+accepted again (the baseline inherits Vert.x's comment tolerance) — while keeping the `Optional` and
+`java.time` support the baseline gained. It is the single-key way to undo the
+opinionated default for REST without touching resource code.
 
 ```java
 @Path("/orders")
@@ -936,14 +971,16 @@ public class OrderResource {
 { "jaxrs": { "jsonProfile": "strict" } }
 ```
 
-**Requests.** When the effective profile is not `vertx`, the resolved mapper performs the **first
+**Requests.** Unless the route took the fast path above, the resolved mapper performs the **first
 parse** of a JSON-content-type body — raw bytes to `JsonObject`, `JsonArray`, or a scalar — under that
 mapper's parser features (`STRICT_DUPLICATE_DETECTION`, `FAIL_ON_TRAILING_TOKENS`, and so on),
 uniformly for object, array, and scalar bodies. It then performs POJO/collection materialization from
-the parsed value. Non-JSON content types take the unchanged Vert.x path.
+the parsed value. A route on the fast path is parsed by the process codec, which is the same mapper
+its profile resolved to. Non-JSON content types take the Vert.x path.
 
-A body the profile mapper rejects becomes a value-free HTTP 400 with the detail
-`"Request body rejected by JSON profile"`, routed through the standard problem-detail pipeline. The
+A body the route's binding mapper rejects — on the profiled path and on the fast path alike — becomes a
+value-free HTTP 400 with the detail `"Request body rejected by JSON profile"`, routed through the
+standard problem-detail pipeline. The
 original rejection is kept as the exception `cause` for server-side diagnosis and is **never**
 serialized to the client.
 
@@ -953,9 +990,32 @@ raised before a method match — a pre-routing 404, a schema rejection — use t
 default resolved inline at router-build time.
 
 **Fail-open for error bodies.** If a profile mapper throws while serializing an error or
-`ProblemDetail` body, serialization falls back to the `vertx` mapper with the mapped status code and
-the `application/problem+json` media type preserved, and logs a WARN. A profile-mapper failure on a
+`ProblemDetail` body, serialization falls back to the process JSON codec with the mapped status code
+and the `application/problem+json` media type preserved, and logs a WARN. A profile-mapper failure on a
 **success** entity still surfaces as HTTP 500 — the fail-open is scoped to the error pipeline.
+
+### Where the request-validation gate and the body binder disagree
+
+The request-validation gate is not profile-aware: `web-validation` synthesizes schemas from the
+declared types, `openapi-contract` validates against the mount contract, and neither knows which
+profile binds the body. For each behavioral difference between the reserved profiles, the safe
+direction is "the gate is at least as strict as the binder". Observed:
+
+| Difference | Gate | `vertique` binder | Direction |
+|---|---|---|---|
+| Unknown enum string | rejected by the schema `enum` before binding | `@JsonEnumDefaultValue` when declared, else rejected | gate stricter — safe |
+| `Optional<T>` property | validated as the plain component type (optionals are flattened) | binds the component, absent stays empty | equivalent |
+| `BigDecimal` floats | format-level; the gate is agnostic | `USE_BIG_DECIMAL_FOR_FLOATS` | equivalent |
+| `java.time` and `Optional` bodies | accepted as before | now bind instead of failing | strictly a widening of what binds — never a bypass |
+| `null` omission | response-side only; no gate applies | omitted (`NON_NULL`) | not gated |
+| JSON with `/* */` or `//` comments | accepted (the gate parses through `JsonObject`) | rejected | gate lenient, binder strict — safe; both accept under an explicit `system` |
+
+**`jaxrs.validationStrategy: none` has no gate; the binder is authoritative.** Every one of the rows
+above collapses to whatever the effective profile does, including enum leniency: a route bound by
+`vertique` (or any enum-lenient profile) accepts an unknown enum string as the type's
+`@JsonEnumDefaultValue` with nothing in front of it to reject the value first. Select `system`, a
+`vertique-strict`, or a custom profile for a boundary that must reject unknown enum strings without a
+gate.
 
 ---
 
@@ -1085,7 +1145,7 @@ Beyond what `RestCoreModule` and `JsonRuntimeModule` contribute:
 | `Set<FileContentVerifier>` | `@Multibinds`, empty by default |
 | `Set<RestExceptionMapperCustomizer>` | `@Multibinds`, empty by default |
 | `Set<RouterMount>` | `@ElementsIntoSet`: the default `JaxRsRouterMount` at `jaxrs.basePath`; empty when `@JaxRsResources` is empty |
-| `ComposeValidator` (`JaxRsDefaultProfileValidator`) | `@IntoSet`; fails the `VALIDATE` phase on an unknown `jaxrs.jsonProfile` |
+| `ComposeValidator` (`JaxRsDefaultProfileValidator`) | `@IntoSet`; fails the `VALIDATE` phase on an unknown `jaxrs.jsonProfile` (`json.systemProfile` is validated earlier, by the `CONFIGURE`-phase install step) |
 | `OperationSchemaSource`, `BeanValidator`, `InputObjectProcessor` (`dev.vertique.input.processing.InputObjectProcessor`), `ActionRegistry`, `Authorizer` | `@BindsOptionalOf`; satisfied by `rest-validation`, `validation`, `sanitization`, and `rest-security` respectively |
 
 `dev.vertique.rest.jaxrs.runtime.MagicBytesVerifierModule` is a separate opt-in `@Module` that
@@ -1100,7 +1160,7 @@ contributes the built-in magic-byte `FileContentVerifier`.
 | `dev.vertique:vertique-rest-core` | every extension SPI this runtime consumes, the `http`/`jaxrs` config objects, `ProblemDetail`, `BoundRequest`'s `RequestValue`, the parameter-conversion stack, and `RestCoreModule` |
 | `dev.vertique:vertique-input-processing` | the neutral `InputObjectProcessor` / `EffectiveInputPolicies` contracts the body pipeline and the optional sanitization binding are typed against |
 | `dev.vertique:vertique-security-core` | `SecurityContext` and the authorization references the security policy resolves against |
-| `dev.vertique:vertique-json` | `JsonMapperProfileRegistry`, `JsonConfig`, and `JsonRuntimeModule` for per-method profile resolution; `JacksonFieldNameResolver` — the `dev.vertique.core.sanitization.InputFieldNameResolver` implementation supplying the body wire-name projection input processing keys its policies on |
+| `dev.vertique:vertique-json` | `JsonMapperProfileRegistry`, `JsonConfig` (its `effectiveProfile()` is the `vertique` floor), and `JsonRuntimeModule` for per-method profile resolution; `JacksonFieldNameResolver` — the `dev.vertique.core.sanitization.InputFieldNameResolver` implementation supplying the body wire-name projection input processing keys its policies on |
 | `io.swagger.core.v3:swagger-annotations-jakarta` | `@Operation` / `@ApiResponse` read at scan time for the operationId and, at build time, by the spec generator |
 | `org.projectlombok:lombok` | `provided` scope — logging and accessors; not a runtime dependency |
 

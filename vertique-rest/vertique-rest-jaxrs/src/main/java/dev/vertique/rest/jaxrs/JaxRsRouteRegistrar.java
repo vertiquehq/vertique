@@ -6,6 +6,7 @@ package dev.vertique.rest.jaxrs;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.input.processing.EffectiveInputPolicies;
@@ -46,7 +47,6 @@ import dev.vertique.security.authz.ActionRef;
 import dev.vertique.security.authz.ActionRegistry;
 import io.vertx.core.Handler;
 import io.vertx.core.http.HttpMethod;
-import io.vertx.core.json.jackson.DatabindCodec;
 import io.vertx.core.streams.ReadStream;
 import io.vertx.ext.web.FileUpload;
 import io.vertx.ext.web.Route;
@@ -359,13 +359,14 @@ public class JaxRsRouteRegistrar {
 
             // (a-2) Resolved request-body JSON profile mapper. Resolve the effective profile mapper for
             // this method ONCE at router-build time (method @JsonProfile -> class @JsonProfile ->
-            // jaxrs.jsonProfile -> json.jsonProfile -> vertx). A vertx-effective profile resolves to null, leaving
-            // today's default body path unchanged; an unknown configured/annotated id fails startup here
-            // (fail-fast, FR-JSON-008). When a non-vertx mapper applies, install a tiny per-route handler
+            // jaxrs.jsonProfile -> json.jsonProfile -> the vertique floor). A profile whose mapper IS the
+            // process codec's resolves to null, leaving the Vert.x body path in charge (it runs that same
+            // mapper); an unknown configured/annotated id fails startup here (fail-fast, FR-JSON-008).
+            // When a different mapper applies, install a tiny per-route handler
             // that stashes it on the RoutingContext BEFORE the validation gate (b) and the invoker (d):
             // under the default web-validation strategy the gate's validateBody binds (and FIRST-PARSES)
             // the body BEFORE the invoker runs, so stashing the mapper only at the invoker would let the
-            // gate first-parse with the lenient Vert.x path and silently bypass the profile's strict
+            // gate first-parse through the process codec and silently bypass the profile's strict
             // parse (FR-JSON-024). Placing the stash ahead of the gate guarantees the profile mapper owns
             // the first parse on every body path (gated or not).
             // JsonConfig is threaded as a method parameter to keep the resolver stateless/static; it is the
@@ -411,8 +412,15 @@ public class JaxRsRouteRegistrar {
             // computeValue that threw — every following request would re-introspect before failing
             // again. Warming only matters when the engine is bound; without it no projection is ever
             // consulted, and any declared policy already failed the composition gate below.
+            //
+            // The cache key is the mapper that actually materializes this route's bodies: the resolved
+            // profile mapper, or — when (a-2) returned the "no override" null — the process codec's own
+            // mapper, which is what the Vert.x body path then binds with. Reading VertiqueJson.mapper()
+            // here is an EDGE-phase capture, after CONFIGURE installed the process mapper, and the
+            // built-in registry hands out one stable instance per profile, so routes sharing a profile
+            // share one entry.
             JacksonFieldNameResolver bodyNameResolver = bodyNameResolvers.computeIfAbsent(
-                    resolvedBodyMapper != null ? resolvedBodyMapper : DatabindCodec.mapper(),
+                    resolvedBodyMapper != null ? resolvedBodyMapper : VertiqueJson.mapper(),
                     JacksonFieldNameResolver::forMapper);
             if (objectProcessor != null) {
                 warmBodyNameProjection(meta, objectProcessor, bodyNameResolver);
@@ -451,10 +459,11 @@ public class JaxRsRouteRegistrar {
             // route's build-time decision, marks the decision as taken, and ctx.next()s to the existing
             // router-level handleFailure, which then serializes the error body (chaining verified by
             // FailureHandlerChainProbeIT). The decision is exactly resolvedBodyMapper resolved at (a-2):
-            // a non-null profile mapper => stash it (the encoder writes via the profile); a null vertx
-            // decision => stash nothing (the encoder falls back to Json.encode). Either way the
+            // a non-null profile mapper => stash it (the encoder writes via the profile); a null
+            // process-codec decision => stash nothing (the encoder falls back to Json.encode, which runs
+            // that same mapper). Either way the
             // KEY_ERROR_BODY_MAPPER_DECIDED marker tells handleFailure a matched route already decided,
-            // so it must NOT overlay the boundary+global default — preserving an explicit vertx choice.
+            // so it must NOT overlay the boundary+global default — preserving a process-codec choice.
             final ObjectMapper errorBodyDecision = resolvedBodyMapper;
             route.failureHandler(ctx -> {
                 // FIRST-DECISION-WINS idempotency guard. When two operation routes pattern-match the
@@ -465,9 +474,9 @@ public class JaxRsRouteRegistrar {
                 // handler to run belongs to the matched route; once it sets the marker, subsequent
                 // overlapping routes' handlers must pass through untouched. Without this short-circuit a
                 // less-specific PROFILED route's handler would observe KEY_RESOLVED_BODY_MAPPER == null
-                // (left by a more-specific EXPLICIT-vertx route, which stashes nothing) and stash ITS
+                // (left by a more-specific PROCESS-CODEC route, which stashes nothing) and stash ITS
                 // profile mapper, serializing the error body via the wrong route's profile and breaking
-                // the explicit-vertx invariant.
+                // the process-codec route's invariant.
                 if (Boolean.TRUE.equals(ctx.get(BoundRequest.KEY_ERROR_BODY_MAPPER_DECIDED))) {
                     ctx.next();
                     return;

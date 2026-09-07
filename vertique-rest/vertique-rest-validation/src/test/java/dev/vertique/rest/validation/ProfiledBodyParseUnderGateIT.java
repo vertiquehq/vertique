@@ -48,7 +48,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>The Critical defect these guard against: under {@link WebValidationStrategy}, the gate's
  * {@code validateBody} constructs and stashes the per-request {@code BoundRequest} <em>before</em> the
  * terminal invoker runs. If the resolved profile mapper is stashed only by the invoker, the gate's
- * earlier bind has already first-parsed the body with the default Vert.x path, so the profile's strict
+ * earlier bind has already first-parsed the body through the process codec, so the profile's strict
  * parser features ({@code STRICT_DUPLICATE_DETECTION}, {@code FAIL_ON_TRAILING_TOKENS}) never run on a
  * route that carries a body schema — exactly the common POST/PUT case. The fix stashes the resolved
  * mapper ahead of the gate, so the profile mapper performs the first parse regardless of the gate.
@@ -58,7 +58,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * what activates the gate's early bind. The resource selects the strict {@code strict-test} profile via
  * a class-level {@code @JsonProfile}, so a duplicate key / trailing token / BOM-prefixed body must be
  * rejected with a {@code 400} produced by the profile mapper's first parse, not silently accepted by
- * the default Vert.x path.
+ * a lenient one.
  *
  * <p>Built through {@link MountFixtures} over {@link ValidationMountComponent} (the {@code
  * vertique-rest-test} fixture), so every deployed mount carries the full set of production middlewares
@@ -73,7 +73,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}
  * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
  * handler is attached, so under load {@code body()} can succeed with zero bytes while the status code
- * is correct (issue #167). The vertx-unchanged test pairs the status with the echoed body, so a
+ * is correct (issue #167). The unannotated-route test pairs the status with the echoed body, so a
  * silently emptied body would fail it for a reason unrelated to the parse path under test. A
  * {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the send.
  */
@@ -160,14 +160,15 @@ public class ProfiledBodyParseUnderGateIT {
 
     /**
      * Resource with NO {@code @JsonProfile} but the same schema-constrained body bean, so the
-     * {@code web-validation} gate is active but the effective profile is {@code vertx}. A normal body
-     * must dispatch to 200, proving the gate-active path is unchanged for the vertx default.
+     * {@code web-validation} gate is active but the effective profile is the {@code vertique} floor. A
+     * normal body must dispatch to 200, proving the gate-active path stays open for a route that selects
+     * no strict profile.
      */
     @Path("/plain")
     public static class PlainResource {
 
         /**
-         * Echoes the body's {@code name} for {@code POST /plain}, parsed by the default vertx path.
+         * Echoes the body's {@code name} for {@code POST /plain}, parsed by the floor profile's mapper.
          *
          * @param payload the request body bean
          * @return the echoed name
@@ -229,21 +230,21 @@ public class ProfiledBodyParseUnderGateIT {
                 status -> assertEquals(400, status, "a BOM-prefixed duplicate-key body must be rejected with 400"));
     }
 
-    // --- Test: vertx route under the gate accepts a normal body unchanged ---
+    // --- Test: an unannotated route under the gate accepts a normal body unchanged ---
 
     @Test
-    @DisplayName("The vertx (default) profile under the gate accepts a normal body unchanged (2xx)")
-    void vertxRoute_withGate_unchanged(Vertx vertx, VertxTestContext ctx) {
+    @DisplayName("The floor (unannotated) profile under the gate accepts a normal body unchanged (2xx)")
+    void unannotatedRoute_withGate_unchanged(Vertx vertx, VertxTestContext ctx) {
         // The /plain resource has the same body schema (gate active) but no @JsonProfile, so the
-        // effective profile is vertx and the body is parsed by today's default path — a normal body must
-        // dispatch to 200, proving the gate-active vertx path is unchanged.
+        // effective profile is the vertique floor, whose mapper carries no strict parser features — a
+        // normal body must dispatch to 200, proving the gate-active path stays open.
         deploy(vertx, ctx, Set.of(new PlainResource()), (port, c) -> c.post(port, "127.0.0.1", "/plain")
                 .putHeader("Content-Type", "application/json")
                 .sendBuffer(Buffer.buffer("{\"name\":\"alice\"}"))
                 .map(response -> response.statusCode() + "|" + response.bodyAsString())
                 .onComplete(ctx.succeeding(result -> {
                     ctx.verify(() -> assertEquals(
-                            "200|name=alice", result, "the gate-active vertx path must accept a normal body"));
+                            "200|name=alice", result, "the gate-active floor path must accept a normal body"));
                     ctx.completeNow();
                 })));
     }

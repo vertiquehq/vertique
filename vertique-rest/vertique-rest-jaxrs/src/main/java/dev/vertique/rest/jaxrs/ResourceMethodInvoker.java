@@ -156,12 +156,12 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
      * @param beanValidator         optional Bean Validation implementation; {@code null} skips validation
      * @param objectProcessor       optional input object processor; {@code null} skips input processing
      * @param evidenceCapturers     pre-sorted request-evidence capturers; empty list is the no-op default
-     * @param resolvedBodyMapper    effective request-body mapper (FR-JSON-020), or {@code null} for the
-     *                              {@code vertx} default
+     * @param resolvedBodyMapper    effective request-body mapper (FR-JSON-020), or {@code null} when the
+     *                              route's profile resolved to the process codec's own mapper
      * @param paramConversionResolver the framework parameter-conversion resolver; must not be {@code null}
      * @param bodyNameResolver      the wire &rarr; Java property-name projection for this route's OBJECT
      *                              bodies; must be built from {@code resolvedBodyMapper} (or
-     *                              {@code DatabindCodec.mapper()} when it is {@code null}), because that
+     *                              the process codec's mapper when it is {@code null}), because that
      *                              is the mapper whose naming decides which declared policies apply
      */
     public ResourceMethodInvoker(
@@ -185,9 +185,9 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
         this.paramConversionResolver = paramConversionResolver;
         this.interceptorChain = new OperationInterceptorChain(interceptors != null ? interceptors : List.of());
         // The body-name projection comes from the mapper that actually materializes this route's body —
-        // the resolved profile mapper, or DatabindCodec.mapper() on the reserved vertx profile. Without
-        // it the engine would look up a renamed field's metadata by its wire key and silently skip its
-        // declared @Canonicalize/@Sanitize.
+        // the resolved profile mapper, or the process codec's own mapper when the route resolved to it.
+        // Without it the engine would look up a renamed field's metadata by its wire key and silently
+        // skip its declared @Canonicalize/@Sanitize.
         this.parameterExtractor = new ParameterExtractor(
                 meta,
                 decoders != null ? decoders : List.of(),

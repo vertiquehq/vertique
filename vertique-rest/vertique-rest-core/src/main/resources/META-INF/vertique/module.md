@@ -1116,7 +1116,7 @@ When `enabled` is `false` (the default) no CORS handler is installed and every o
 | `jaxrs.validationStrategy` | `"web-validation"` | must match a registered strategy id — built-ins are `web-validation`, `none`, `openapi-contract`; an unknown id fails startup |
 | `jaxrs.validationMode` | `"aggregate"` | `aggregate` or `failFast` |
 | `jaxrs.autoEtag` | `false` | attach a weak ETag derived from the serialized body when none is set |
-| `jaxrs.jsonProfile` | *(none)* | must name a registered JSON mapper profile; resolution is method `@JsonProfile` → class `@JsonProfile` → this key → `json.jsonProfile` → the reserved `vertx` profile |
+| `jaxrs.jsonProfile` | *(none)* | must name a registered JSON mapper profile; resolution is method `@JsonProfile` → class `@JsonProfile` → this key → `json.jsonProfile` → the `vertique` floor |
 
 ### `jaxrs.defaultHeaders`
 
