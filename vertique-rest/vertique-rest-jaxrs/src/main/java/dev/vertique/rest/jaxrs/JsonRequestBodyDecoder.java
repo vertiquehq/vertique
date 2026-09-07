@@ -126,12 +126,11 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
         if (jsonBody == null) {
             return null;
         }
-        if (profileMapper != null) {
-            // Profile path: bind via the resolved profile mapper so its strict materialization features
-            // apply; a rejection becomes a 400 via the standard error pipeline (ValidationException).
-            return ProfileBodyMaterialization.convertValue(profileMapper, jsonBody.getMap(), targetType);
-        }
-        return jsonBody.mapTo(targetType);
+        // Both paths run through the same rejection translation: the resolved profile mapper when one
+        // was stashed, the process codec otherwise (the mapper JsonObject.mapTo would have used), so a
+        // body the binder rejects is the frozen value-free 400 on the fast path as well.
+        return ProfileBodyMaterialization.convertValue(
+                profileMapper != null ? profileMapper : VertiqueJson.mapper(), jsonBody.getMap(), targetType);
     }
 
     /**

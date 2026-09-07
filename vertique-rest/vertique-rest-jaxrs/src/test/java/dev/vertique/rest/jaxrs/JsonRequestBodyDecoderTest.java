@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import com.fasterxml.jackson.databind.JavaType;
+import dev.vertique.core.exception.ValidationException;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.rest.core.request.RequestValue;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
@@ -142,6 +143,24 @@ class JsonRequestBodyDecoderTest {
 
         assertInstanceOf(SamplePojo.class, result);
         assertEquals("Alice", ((SamplePojo) result).name());
+    }
+
+    @Test
+    @DisplayName("A POJO body the process codec rejects surfaces the static value-free 400 on the fast path")
+    void fastPathPojoRejectionIsValueFree() {
+        RoutingContext ctx = mock(RoutingContext.class);
+        // No profile mapper stashed: the fast path binds through the process codec. A String field
+        // fed an object fails materialization; Jackson's own message would echo the target type
+        // and the offending value, which must never reach the client.
+        JsonObject json = new JsonObject().put("name", new JsonObject().put("secret", "do-not-echo"));
+        RequestValue body = RequestValue.of(json);
+
+        ValidationException rejected =
+                assertThrows(ValidationException.class, () -> decoder.decode(ctx, body, SamplePojo.class, null));
+
+        assertEquals("Request body rejected by JSON profile", rejected.getMessage());
+        assertFalse(rejected.getMessage().contains("do-not-echo"));
+        assertNotNull(rejected.getCause(), "the original rejection is retained as the cause for server-side logs");
     }
 
     @Test

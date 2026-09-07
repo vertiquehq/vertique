@@ -1065,10 +1065,9 @@ final class ParameterExtractor {
                     if (processed instanceof Map<?, ?> processedMap) {
                         @SuppressWarnings("unchecked")
                         Map<String, Object> typedMap = (Map<String, Object>) processedMap;
-                        if (profileMapper != null) {
-                            return ProfileBodyMaterialization.convertValue(profileMapper, typedMap, targetType);
-                        }
-                        return new JsonObject(typedMap).mapTo(targetType);
+                        // Same rejection translation as the JSON path: a value-free 400 on both mappers.
+                        return ProfileBodyMaterialization.convertValue(
+                                profileMapper != null ? profileMapper : VertiqueJson.mapper(), typedMap, targetType);
                     }
                 }
                 return null;
