@@ -15,7 +15,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Jackson-serialisable DTO mirroring the correlation context for durable persistence.
+ * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
+ * outside the maturity promise. Applications use the surface the module document lists and the
+ * types in {@code dev.vertique.core}.
+ *
+ * <p>Jackson-serialisable DTO mirroring the correlation context for durable persistence.
  *
  * <p>Lives apart from {@link dev.vertique.core.correlation.CorrelationContext} because durable
  * codecs need a stable, evolvable wire shape: {@code schemaVersion} for forward compatibility,

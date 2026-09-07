@@ -7,7 +7,11 @@ import dev.vertique.core.correlation.CorrelationIdGenerator;
 import java.util.UUID;
 
 /**
- * Default {@link CorrelationIdGenerator} implementation that produces RFC 4122 UUID v4 strings.
+ * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
+ * outside the maturity promise. Applications use the surface the module document lists and the
+ * types in {@code dev.vertique.core}.
+ *
+ * <p>Default {@link CorrelationIdGenerator} implementation that produces RFC 4122 UUID v4 strings.
  *
  * <p>Used by {@code CorrelationContextFactory} when the application has not contributed an
  * override via Dagger. Apps can override by providing their own {@link CorrelationIdGenerator}

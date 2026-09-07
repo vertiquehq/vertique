@@ -17,7 +17,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Durable metadata encoder for {@link CorrelationContext} (Context contribution model level 4 —
+ * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
+ * outside the maturity promise. Applications use the surface the module document lists and the
+ * types in {@code dev.vertique.core}.
+ *
+ * <p>Durable metadata encoder for {@link CorrelationContext} (Context contribution model level 4 —
  * bespoke).
  *
  * <p>Justified as a bespoke encoder rather than the generic {@code DurableJsonContextCodecs}
