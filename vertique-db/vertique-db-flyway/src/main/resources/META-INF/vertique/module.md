@@ -5,17 +5,14 @@ SPDX-License-Identifier: EUPL-1.2
 
 # DB Flyway Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.db.flyway`
-> **Artifact:** `db-flyway`
-> **Depends on:** db-core, core
+> **Artifact:** `vertique-db-flyway`
+> **Depends on:** `dev.vertique:vertique-db-core`, `dev.vertique:vertique-core`
 
-Flyway-backed implementation of the `MigrationRunner` contract from `db-core`. Supports three operation modes: MIGRATE (apply pending migrations), VALIDATE (verify schema matches migrations), and DISABLED (no-op). Designed for CI/CD pipelines that use a privileged DDL user for migrations and a restricted user for runtime.
+Flyway-backed implementation of the `MigrationRunner` contract from `dev.vertique:vertique-db-core`. Supports three operation modes: MIGRATE (apply pending migrations), VALIDATE (verify schema matches migrations), and DISABLED (no-op). Designed for CI/CD pipelines that use a privileged DDL user for migrations and a restricted user for runtime.
 
 When used with the framework lifecycle runner (`@VertiqueApp` + `VertiqueApplicationBootstrap`), `DbFlywayModule` also contributes a `MIGRATE`-phase `ApplicationStartupStep` (`FlywayMigrationStartupStep`) that runs migrations automatically — no manual `migrationRunner().migrate(vertx)` call is needed. See [`FlywayMigrationStartupStep` and `DbFlywayModule`](#flywaymigrationstartupstep-and-dbflywaymodule) below.
-
-This adapter is Beta. The `MigrationRunner` contract it implements is owned by
-`dev.vertique:vertique-db-core`, which is Stable.
 
 ---
 
@@ -94,7 +91,7 @@ When using `@VertiqueApp` + `CoreLifecycleStepsModule` + `DbFlywayModule`, `Flyw
 reports a target version only for the migrations it applied, so callers must not read
 `targetVersion()` as "current schema version".
 
-**Exception wrapping:** Any `FlywayException` thrown during `migrate()` or `validate()` is caught and re-thrown as a `MigrationException` (from `db-core`). This prevents Flyway vendor types from leaking into calling code.
+**Exception wrapping:** Any `FlywayException` thrown during `migrate()` or `validate()` is caught and re-thrown as a `MigrationException` (from `dev.vertique:vertique-db-core`). This prevents Flyway vendor types from leaking into calling code.
 
 ### `MigrationException` (db-core)
 
@@ -259,8 +256,8 @@ Migration scripts can reference `${schema}` and `${env}` and Flyway replaces the
 
 ## Dependencies
 
-- `dev.vertique:db-core` — `MigrationRunner`, `MigrationResult`, `MigrationException`, `DbPoolConfig`
-- `dev.vertique:core` — `VertxConfig`, `VertiqueException`
+- `dev.vertique:vertique-db-core` — `MigrationRunner`, `MigrationResult`, `MigrationException`, `DbPoolConfig`
+- `dev.vertique:vertique-core` — `VertxConfig`, `VertiqueException`
 - `io.vertx:vertx-core` — `Vertx.executeBlocking()`
 - `org.flywaydb:flyway-core`
 - `org.flywaydb:flyway-database-postgresql`
