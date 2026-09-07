@@ -60,7 +60,7 @@ exception. With no application override, the packaged exception mappers render t
 all, `RateLimitExceededException` still renders `429` (with `Retry-After` threaded
 from the decision) because it extends the core `TooManyRequestsException` semantic
 root, and `RateLimitUnavailableException` still renders `503` because it extends the
-core `UnavailableException` root — both via `RestModule.defaultExceptionMapper()`'s
+core `UnavailableException` root — both via the framework's default exception mapper, wired by `RestModule`, and its
 built-in mappings. Two admission paths carry no `RateLimitDecision` at all — an
 absent `RequestOrigin` under `failureMode: CLOSED`, and a defensive internal failure
 — and always render the core `503` default directly (a fixed, redacted message, no
