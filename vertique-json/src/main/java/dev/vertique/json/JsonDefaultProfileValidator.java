@@ -54,11 +54,11 @@ public final class JsonDefaultProfileValidator implements ComposeValidator {
         // Security review: the install seam checks the mapper it is handed, but the installed
         // mapper stays a live ObjectMapper. Re-check one phase later so default typing activated
         // on it during CONFIGURE fails the boot instead of serving.
-        if (VertiqueJson.ownsProcessCodec()
-                && VertiqueJson.installedProfile().isPresent()
+        if (VertiqueJson.ownsCodec()
+                && VertiqueJson.profile().isPresent()
                 && VertiqueJson.mapper().getDeserializationConfig().getDefaultTyper(null) != null) {
             throw new JsonProfileConfigurationException("the process JSON codec's mapper (profile '"
-                    + VertiqueJson.installedProfile().get().value()
+                    + VertiqueJson.profile().get().value()
                     + "') had Jackson default typing activated after installation; default typing is not"
                     + " allowed on the process codec");
         }

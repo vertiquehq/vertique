@@ -516,8 +516,8 @@ how framework and application code reach that mapper.
 ```java
 public final class VertiqueJson {
     public static ObjectMapper mapper();                        // live read
-    public static boolean ownsProcessCodec();
-    public static Optional<JsonProfileId> installedProfile();
+    public static boolean ownsCodec();
+    public static Optional<JsonProfileId> profile();
     public static void install(JsonProfileId id, ObjectMapper mapper);
     public static void resetForTests();                         // gated, see below
 }
@@ -555,7 +555,7 @@ Vert.x initializes its `Json` class, and the framework's factory declares a low 
 application-registered factory does not displace it. A shaded or uber-jar build must **merge**
 service files (Maven Shade's `ServicesResourceTransformer`, or the equivalent for the packaging tool
 in use); dropping them silently leaves Vert.x on its own codec. A container that hides the framework
-from that classloader has the same effect. `ownsProcessCodec()` reports the outcome, and the install
+from that classloader has the same effect. `ownsCodec()` reports the outcome, and the install
 step fails the boot when it is `false`.
 
 **Outside the installed-mapper claim.** Vert.x's `DatabindCodec.createParser`/`fromParser` static

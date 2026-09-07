@@ -90,7 +90,7 @@ public final class VertiqueJson {
      *
      * @return {@code true} when {@code Json.CODEC} is the framework's codec
      */
-    public static boolean ownsProcessCodec() {
+    public static boolean ownsCodec() {
         return Json.CODEC == VertiqueJsonCodec.INSTANCE;
     }
 
@@ -99,7 +99,7 @@ public final class VertiqueJson {
      *
      * @return the installed profile id, or an empty optional before installation
      */
-    public static Optional<JsonProfileId> installedProfile() {
+    public static Optional<JsonProfileId> profile() {
         return Optional.ofNullable(installedId);
     }
 

@@ -80,7 +80,7 @@ final class JsonSystemProfileInstallStep implements ApplicationStartupStep {
 
     private final JsonConfig jsonConfig;
     private final JsonMapperProfileRegistry registry;
-    private final BooleanSupplier ownsProcessCodec;
+    private final BooleanSupplier ownsCodec;
 
     /**
      * Constructs the step with the production codec-ownership check.
@@ -90,7 +90,7 @@ final class JsonSystemProfileInstallStep implements ApplicationStartupStep {
      */
     @Inject
     JsonSystemProfileInstallStep(JsonConfig jsonConfig, JsonMapperProfileRegistry registry) {
-        this(jsonConfig, registry, VertiqueJson::ownsProcessCodec);
+        this(jsonConfig, registry, VertiqueJson::ownsCodec);
     }
 
     /**
@@ -98,13 +98,12 @@ final class JsonSystemProfileInstallStep implements ApplicationStartupStep {
      *
      * @param jsonConfig the parsed {@code json} configuration section
      * @param registry the registry resolving the configured profile id to its mapper
-     * @param ownsProcessCodec reports whether the framework owns the process JSON codec
+     * @param ownsCodec reports whether the framework owns the process JSON codec
      */
-    JsonSystemProfileInstallStep(
-            JsonConfig jsonConfig, JsonMapperProfileRegistry registry, BooleanSupplier ownsProcessCodec) {
+    JsonSystemProfileInstallStep(JsonConfig jsonConfig, JsonMapperProfileRegistry registry, BooleanSupplier ownsCodec) {
         this.jsonConfig = jsonConfig;
         this.registry = registry;
-        this.ownsProcessCodec = ownsProcessCodec;
+        this.ownsCodec = ownsCodec;
     }
 
     /**
@@ -174,7 +173,7 @@ final class JsonSystemProfileInstallStep implements ApplicationStartupStep {
      * @throws JsonProfileConfigurationException if the process codec is a foreign one
      */
     private void requireProcessCodecOwnership(JsonProfileId id) {
-        if (!ownsProcessCodec.getAsBoolean()) {
+        if (!ownsCodec.getAsBoolean()) {
             throw new JsonProfileConfigurationException("the JSON profile '" + id.value()
                     + "' configured as 'json.systemProfile' cannot be installed: the process JSON codec is "
                     + Json.CODEC.getClass().getName()

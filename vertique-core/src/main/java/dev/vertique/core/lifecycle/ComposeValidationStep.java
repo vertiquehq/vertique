@@ -82,7 +82,7 @@ public final class ComposeValidationStep implements ApplicationStartupStep {
      */
     @Override
     public Future<Void> start() {
-        if (VertiqueJson.ownsProcessCodec() && VertiqueJson.installedProfile().isEmpty()) {
+        if (VertiqueJson.ownsCodec() && VertiqueJson.profile().isEmpty()) {
             LOG.warn("No JSON profile was installed as the process JSON codec: this application's graph"
                     + " contributes no CONFIGURE-phase install step (no JSON runtime module), so"
                     + " json.systemProfile is not consumed and every Json.* and JsonObject operation runs"

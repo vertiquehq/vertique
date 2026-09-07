@@ -43,7 +43,7 @@ import org.slf4j.LoggerFactory;
  * {@link BooleanSupplier} that reports a foreign process codec, the step must fail the boot naming
  * the actual {@code Json.CODEC} class and the {@code META-INF/services} remedy, and must install
  * nothing. Its second case builds the step through the {@code @Inject} constructor and proves the
- * production supplier really is {@code VertiqueJson::ownsProcessCodec} — in this fork Vertique owns
+ * production supplier really is {@code VertiqueJson::ownsCodec} — in this fork Vertique owns
  * the codec, so the same step succeeds where the {@code () -> false} seam failed (ruling A7).
  *
  * <p>TP-005 pins the mapper-shape guards. Two of the three profiles it needs ({@code nomodule},
@@ -90,20 +90,18 @@ class JsonSystemProfileInstallStepTest {
                 message.contains("META-INF/services"),
                 "the failure must name the META-INF/services remedy; got: " + message);
         assertTrue(
-                VertiqueJson.installedProfile().isEmpty(),
+                VertiqueJson.profile().isEmpty(),
                 "a step that refused the install must leave the process codec uninstalled");
 
         // --- Case 2 (ruling A7): the @Inject constructor's supplier is the real ownership check ---
         JsonSystemProfileInstallStep injected = new JsonSystemProfileInstallStep(JsonConfig.defaults(), registry);
 
-        assertTrue(
-                VertiqueJson.ownsProcessCodec(),
-                "this fork must own the process codec, otherwise case 2 proves nothing");
+        assertTrue(VertiqueJson.ownsCodec(), "this fork must own the process codec, otherwise case 2 proves nothing");
         succeed(injected);
         assertEquals(
                 JsonProfileId.SYSTEM,
-                VertiqueJson.installedProfile().orElse(null),
-                "the injected supplier must consult VertiqueJson.ownsProcessCodec(), which is true here, "
+                VertiqueJson.profile().orElse(null),
+                "the injected supplier must consult VertiqueJson.ownsCodec(), which is true here, "
                         + "so the very same step installs the system profile");
         assertSame(
                 registry.mapper(JsonProfileId.SYSTEM),
@@ -140,7 +138,7 @@ class JsonSystemProfileInstallStepTest {
             assertTrue(
                     noModuleMessage.contains("VertxJsonSupport.module()"),
                     "the failure must name the remedy (VertxJsonSupport.module()); got: " + noModuleMessage);
-            assertTrue(VertiqueJson.installedProfile().isEmpty(), "nothing may be installed after a refusal");
+            assertTrue(VertiqueJson.profile().isEmpty(), "nothing may be installed after a refusal");
 
             // --- typed: Jackson default typing is active ---
             Throwable typedFailure = failureOf(stepFor("typed", registry));
@@ -151,7 +149,7 @@ class JsonSystemProfileInstallStepTest {
             assertTrue(
                     typedMessage.contains("default typing"),
                     "the failure must name the default-typing rule; got: " + typedMessage);
-            assertTrue(VertiqueJson.installedProfile().isEmpty(), "nothing may be installed after a refusal");
+            assertTrue(VertiqueJson.profile().isEmpty(), "nothing may be installed after a refusal");
 
             // --- vertx: the retired reserved id, rejected by the real registry ---
             Throwable renamedFailure = failureOf(stepFor("vertx", new DefaultJsonMapperProfileRegistry(Set.of())));
@@ -159,7 +157,7 @@ class JsonSystemProfileInstallStepTest {
             assertTrue(
                     renamedMessage.contains("renamed") && renamedMessage.contains("system"),
                     "a configured 'vertx' system profile must fail naming the rename; got: " + renamedMessage);
-            assertTrue(VertiqueJson.installedProfile().isEmpty(), "nothing may be installed after a refusal");
+            assertTrue(VertiqueJson.profile().isEmpty(), "nothing may be installed after a refusal");
 
             // --- lenient: installs, and the security-relevant delta is logged at WARN ---
             appender.list.clear();
@@ -167,7 +165,7 @@ class JsonSystemProfileInstallStepTest {
 
             assertEquals(
                     JsonProfileId.of("lenient"),
-                    VertiqueJson.installedProfile().orElse(null),
+                    VertiqueJson.profile().orElse(null),
                     "a lenient but structurally safe profile installs");
             assertSame(lenient, VertiqueJson.mapper(), "the installed delegate is the profile's mapper instance");
             String warning = logContaining(appender, Level.WARN, "FAIL_ON_UNKNOWN_PROPERTIES");
@@ -189,7 +187,7 @@ class JsonSystemProfileInstallStepTest {
                             + "including a same-id swap by in-process code");
             assertEquals(
                     JsonProfileId.SYSTEM,
-                    VertiqueJson.installedProfile().orElse(null),
+                    VertiqueJson.profile().orElse(null),
                     "a rejected direct install must not change the installed id");
             assertSame(installed, VertiqueJson.mapper(), "a rejected direct install must not change the delegate");
         } finally {

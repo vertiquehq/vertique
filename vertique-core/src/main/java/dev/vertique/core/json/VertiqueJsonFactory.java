@@ -16,7 +16,7 @@ import io.vertx.core.spi.json.JsonCodec;
  * initialized. Vert.x's own Jackson codec is used only when no factory is registered at all.
  *
  * <p>Two packaging consequences follow, both of which
- * {@link VertiqueJson#ownsProcessCodec()} makes observable at runtime:
+ * {@link VertiqueJson#ownsCodec()} makes observable at runtime:
  *
  * <ul>
  *   <li>The service file must survive packaging. A shaded or uber-jar build has to merge service

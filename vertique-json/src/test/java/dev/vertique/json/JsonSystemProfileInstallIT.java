@@ -69,7 +69,7 @@ import org.slf4j.LoggerFactory;
  * test helper was consulted.
  *
  * <ul>
- *   <li><b>defaults</b> — {@code installedProfile()} is {@code system}; {@code java.time} and
+ *   <li><b>defaults</b> — {@code profile()} is {@code system}; {@code java.time} and
  *       {@code Optional} encode (both throw on the raw Vert.x mapper); a null property is emitted;
  *       a JSON float parses to {@code Double}.</li>
  *   <li><b>a second defaults boot, without a reset</b> — succeeds as a same-id swap: the id is still
@@ -115,7 +115,7 @@ public class JsonSystemProfileInstallIT {
 
             assertEquals(
                     JsonProfileId.SYSTEM,
-                    VertiqueJson.installedProfile().orElse(null),
+                    VertiqueJson.profile().orElse(null),
                     "the defaults install the reserved system profile as the process codec");
             assertSame(
                     first.component.registry().mapper(JsonProfileId.SYSTEM),
@@ -142,7 +142,7 @@ public class JsonSystemProfileInstallIT {
 
             assertEquals(
                     JsonProfileId.SYSTEM,
-                    VertiqueJson.installedProfile().orElse(null),
+                    VertiqueJson.profile().orElse(null),
                     "a same-id second boot succeeds and keeps the installed id");
             ObjectMapper secondMapper = second.component.registry().mapper(JsonProfileId.SYSTEM);
             assertNotSame(firstMapper, secondMapper, "each application builds its own system mapper instance");
@@ -164,7 +164,7 @@ public class JsonSystemProfileInstallIT {
 
             assertEquals(
                     JsonProfileId.of("vertique"),
-                    VertiqueJson.installedProfile().orElse(null),
+                    VertiqueJson.profile().orElse(null),
                     "an explicit json.systemProfile selects the installed profile");
             assertEquals("\"2026-09-06\"", Json.encode(DUE), "vertique also supports java.time");
             assertEquals(
@@ -192,8 +192,7 @@ public class JsonSystemProfileInstallIT {
             assertTrue(
                     message.contains("renamed") && message.contains("system"),
                     "the boot failure must name the rename; got: " + message);
-            assertTrue(
-                    VertiqueJson.installedProfile().isEmpty(), "a failed boot must leave the process codec untouched");
+            assertTrue(VertiqueJson.profile().isEmpty(), "a failed boot must leave the process codec untouched");
             String failureLog = logContaining(appender, Level.ERROR, "CONFIGURE");
             assertNotNull(
                     failureLog,

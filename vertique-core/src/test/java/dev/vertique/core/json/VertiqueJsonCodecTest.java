@@ -93,7 +93,7 @@ class VertiqueJsonCodecTest {
                     Json.CODEC,
                     "Vert.x must have loaded VertiqueJsonFactory through META-INF/services; "
                             + "without it every delegation assertion below is vacuous");
-            assertTrue(VertiqueJson.ownsProcessCodec(), "ownsProcessCodec() must report the SPI selection");
+            assertTrue(VertiqueJson.ownsCodec(), "ownsCodec() must report the SPI selection");
             assertEquals(
                     -1000,
                     new VertiqueJsonFactory().order(),
@@ -109,7 +109,7 @@ class VertiqueJsonCodecTest {
                     DatabindCodec.mapper().writeValueAsString(sample),
                     Json.encode(sample),
                     "pre-install encoding must be byte-identical to DatabindCodec.mapper()");
-            assertTrue(VertiqueJson.installedProfile().isEmpty(), "no profile is installed before the install step");
+            assertTrue(VertiqueJson.profile().isEmpty(), "no profile is installed before the install step");
             assertEquals(
                     "{\"present\":\"x\",\"absent\":null}",
                     Json.encode(new Fixture("x", null)),
@@ -120,10 +120,7 @@ class VertiqueJsonCodecTest {
             VertiqueJson.install(PROFILE_A, a1);
 
             assertSame(a1, VertiqueJson.mapper(), "the delegate must be the installed instance");
-            assertEquals(
-                    PROFILE_A,
-                    VertiqueJson.installedProfile().orElse(null),
-                    "installedProfile() must report the installed id");
+            assertEquals(PROFILE_A, VertiqueJson.profile().orElse(null), "profile() must report the installed id");
             assertEquals(
                     "{\"present\":\"x\"}",
                     Json.encode(new Fixture("x", null)),
@@ -151,8 +148,7 @@ class VertiqueJsonCodecTest {
             VertiqueJson.install(PROFILE_A, a2);
 
             assertSame(a2, VertiqueJson.mapper(), "a same-id install must swap the delegate to the new instance");
-            assertEquals(
-                    PROFILE_A, VertiqueJson.installedProfile().orElse(null), "the installed id is unchanged by a swap");
+            assertEquals(PROFILE_A, VertiqueJson.profile().orElse(null), "the installed id is unchanged by a swap");
             assertEquals(
                     "{\"present\":\"x\"}",
                     Json.encode(new Fixture("x", null)),
@@ -202,7 +198,7 @@ class VertiqueJsonCodecTest {
             VertiqueJson.resetForTests();
 
             assertSame(DatabindCodec.mapper(), VertiqueJson.mapper(), "reset must restore the raw Vert.x mapper");
-            assertTrue(VertiqueJson.installedProfile().isEmpty(), "reset must clear the installation");
+            assertTrue(VertiqueJson.profile().isEmpty(), "reset must clear the installation");
             assertEquals(
                     "{\"present\":\"x\",\"absent\":null}",
                     Json.encode(new Fixture("x", null)),

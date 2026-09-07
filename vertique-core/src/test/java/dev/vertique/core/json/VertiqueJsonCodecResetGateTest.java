@@ -35,7 +35,7 @@ class VertiqueJsonCodecResetGateTest {
                 Boolean.getBoolean(ALLOW_RESET), "this proof only means anything in the flagless surefire execution");
 
         // Force class initialization while the flag is absent: the gate is captured here.
-        assertTrue(VertiqueJson.installedProfile().isEmpty(), "no profile is installed in this fork");
+        assertTrue(VertiqueJson.profile().isEmpty(), "no profile is installed in this fork");
 
         System.setProperty(ALLOW_RESET, "true");
         try {
