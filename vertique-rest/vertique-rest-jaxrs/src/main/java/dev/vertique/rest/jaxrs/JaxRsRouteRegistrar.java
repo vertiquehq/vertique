@@ -21,6 +21,7 @@ import dev.vertique.rest.core.interceptor.OperationInterceptor;
 import dev.vertique.rest.core.request.MediaType;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
 import dev.vertique.rest.core.response.ResponseBodyEncoder;
+import dev.vertique.rest.core.router.MountMeta;
 import dev.vertique.rest.core.router.OperationHandlerContributor;
 import dev.vertique.rest.core.router.OperationRegistrationContext;
 import dev.vertique.rest.core.routing.RouteRegistration;
@@ -128,6 +129,9 @@ public class JaxRsRouteRegistrar {
      * @param apiRouter               the plain Vert.x web router to register routes on
      * @param strategy                the selected request-validation strategy producing the per-operation
      *                                validation gate
+     * @param mount                   the metadata of the mount registering these resources; threaded to the
+     *                                mount-aware 3-arg {@link RequestValidationStrategy#gateFor(JaxRsOperationDescriptor,
+     *                                OperationSchemas, MountMeta)} call for every operation
      * @param schemaSource            optional source of per-operation validation schemas; when empty an
      *                                {@link OperationSchemas#empty()} collection is passed to the strategy
      * @param securityHandlers        the collected authentication handlers keyed by scheme name, applied
@@ -183,6 +187,7 @@ public class JaxRsRouteRegistrar {
             Set<Object> resources,
             Router apiRouter,
             RequestValidationStrategy strategy,
+            MountMeta mount,
             Optional<OperationSchemaSource> schemaSource,
             SecuritySchemeHandlerCollector securityHandlers,
             List<OperationInterceptor> operationInterceptors,
@@ -382,7 +387,7 @@ public class JaxRsRouteRegistrar {
             // (b) Validation gate: produced by the selected strategy from the operation's schemas.
             OperationSchemas schemas =
                     schemaSource.map(source -> source.schemasFor(descriptor)).orElseGet(OperationSchemas::empty);
-            Optional<Handler<RoutingContext>> gate = strategy.gateFor(descriptor, schemas);
+            Optional<Handler<RoutingContext>> gate = strategy.gateFor(descriptor, schemas, mount);
             gate.ifPresent(route::handler);
 
             // (c) Operation handler contributors (authorization, security context, etc.) in sorted

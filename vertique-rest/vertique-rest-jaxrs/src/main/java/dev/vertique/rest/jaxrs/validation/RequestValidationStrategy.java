@@ -68,12 +68,28 @@ public interface RequestValidationStrategy extends OrderedExtension {
     Optional<Handler<RoutingContext>> gateFor(JaxRsOperationDescriptor op, OperationSchemas schemas);
 
     /**
+     * Mount-aware gate construction. Called once per operation at router-build time, after
+     * {@link #bindToMount(MountMeta)} for the same mount. The default delegates to
+     * {@link #gateFor(JaxRsOperationDescriptor, OperationSchemas)}; a strategy whose validation is
+     * driven by per-mount state (the opt-in {@code openapi-contract} strategy) overrides this form.
+     * Exceptions thrown by this callback propagate and are fatal to the enclosing operation;
+     * processing does not continue.
+     *
+     * @param op      the operation descriptor whose parameters and body are validated
+     * @param schemas the synthesized parameter and body schemas for the operation
+     * @param mount   the metadata of the mount registering this operation
+     * @return the validation gate handler, or {@link Optional#empty()} when no gate is installed
+     */
+    default Optional<Handler<RoutingContext>> gateFor(
+            JaxRsOperationDescriptor op, OperationSchemas schemas, MountMeta mount) {
+        return gateFor(op, schemas);
+    }
+
+    /**
      * Notifies the strategy, at router-build time, of the mount metadata for the mount this strategy
      * instance is being used for. A mount calls this once per mount, before any {@link #gateFor} call
      * for that mount's operations, so a strategy whose validation is driven by a <em>per-mount</em>
-     * OpenAPI contract can verify that every mount it serves agrees on a single contract path — and
-     * fail-fast at startup otherwise, rather than silently validating one mount's operations against a
-     * different mount's contract.
+     * OpenAPI contract can load or validate that mount's state here.
      *
      * <p>The mount metadata carries all identifying information for the mount: its stable id, the path
      * prefix where it is mounted, the classpath location of the associated OpenAPI spec (accessible via
@@ -85,12 +101,15 @@ public interface RequestValidationStrategy extends OrderedExtension {
      * OpenAPI contract path (e.g. {@code web-validation}, {@code none}) ignore the mount metadata
      * entirely.
      *
+     * <p>{@code HttpVerticle} may be deployed with {@code instances > 1}, so a {@code @Singleton}
+     * strategy may see binds for one mount run concurrently, from several event loops, under a
+     * multi-instance deployment.
+     *
      * @param mountMeta the metadata for the mount being bound; {@link MountMeta#openapiPath()} is the
      *                  classpath location of the mount's OpenAPI spec (may be {@code null} for a
      *                  non-JAX-RS mount); strategies that ignore the contract path disregard it
      * @throws dev.vertique.rest.core.RestConfigurationException when this strategy resolves a per-mount
-     *     contract and the {@code openapiPath} carried by {@code mountMeta} diverges from the contract
-     *     path it is bound to, so that no operation is ever validated against a different mount's contract
+     *     contract and the mount declares no {@code openapiPath} and the strategy requires one
      *
      * <p>Exceptions thrown by this callback propagate and are fatal to the enclosing operation;
      * processing does not continue.
