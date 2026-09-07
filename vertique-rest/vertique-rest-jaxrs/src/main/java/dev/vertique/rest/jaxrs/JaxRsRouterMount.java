@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.extension.OrderedExtension;
 import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.util.Strings;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.input.processing.InputObjectProcessor;
@@ -324,9 +325,10 @@ public class JaxRsRouterMount implements RouterMount {
         // FR-JSON-058: resolve the no-matched-method error-body default mapper once, at router-build
         // time. The no-method failure path (pre-routing 404s, request-interceptor rejections) reaches
         // the failure handler with NO per-method KEY_RESOLVED_BODY_MAPPER stash, so the boundary+global
-        // default (jaxrs.jsonProfile -> json.jsonProfile -> vertx) is folded in here and stashed before
-        // the error body is serialized. A blank/vertx default resolves to null => no stash => Json.encode
-        // (the byte-for-byte vertx path, unchanged). An unknown configured id fails fast here at startup
+        // default (jaxrs.jsonProfile -> json.jsonProfile -> the vertique floor) is folded in here and
+        // stashed before the error body is serialized. A default that resolves to the process codec's
+        // own mapper yields null => no stash => Json.encode (which then runs that very mapper, so the
+        // bytes are the same either way). An unknown configured id fails fast here at startup
         // (registry.mapper throws), matching the request-resolution fail-fast.
         ObjectMapper noMethodDefaultMapper = resolveNoMethodDefaultMapper(
                 factory.jaxRsConfig, factory.jsonConfig, factory.jsonMapperProfileRegistry);
@@ -340,25 +342,34 @@ public class JaxRsRouterMount implements RouterMount {
 
     /**
      * Resolves the boundary+global default error-body mapper for the no-matched-method failure path
-     * (FR-JSON-058). The effective id is {@code firstNonBlank(jaxrs.jsonProfile, json.jsonProfile)}; a
-     * blank result, or the reserved {@code vertx} id, resolves to {@code null} (the byte-for-byte vertx
-     * path). Any other id is resolved against the registry, which fails fast at this router-build time
-     * when the id is unknown.
+     * (FR-JSON-058). The effective id is the non-blank {@code jaxrs.jsonProfile}, else
+     * {@link JsonConfig#effectiveProfile()} — the non-blank {@code json.jsonProfile}, else the
+     * reserved {@code vertique} floor. Every id, {@code system} included, is resolved against the
+     * registry, which fails fast at this router-build time when the id is unknown.
+     *
+     * <p>The result is {@code null} — "no override; the error body serializes through
+     * {@code Json.encode}" — <em>iff</em> the resolved mapper is the same instance as
+     * {@link VertiqueJson#mapper()}, exactly the identity rule
+     * {@code RequestBodyProfileResolver} applies per route, so a boundary default and a route default
+     * that name the same profile behave the same way. The comparison is a router-build ({@code EDGE})
+     * capture against the built-in registry's stable per-profile instances: it runs after
+     * {@code CONFIGURE} installed the process mapper, a registry handing out fresh mappers never
+     * matches, and a process-codec swap after this router was built no longer matches it.
      *
      * @param jaxRsConfig the JAX-RS routing config supplying the {@code jaxrs.jsonProfile} default
-     * @param jsonConfig the global JSON config supplying the {@code json.jsonProfile} default
-     * @param registry the profile registry used to resolve a non-{@code vertx} id to its mapper
-     * @return the resolved default mapper, or {@code null} when the effective default is {@code vertx}
-     * @throws dev.vertique.core.json.JsonProfileConfigurationException if the effective non-{@code vertx}
-     *     id is not registered
+     * @param jsonConfig the global JSON config supplying the {@code json.jsonProfile} default and the
+     *     {@code vertique} floor
+     * @param registry the profile registry every effective id is resolved through
+     * @return the resolved default mapper, or {@code null} when it is the process codec's own mapper
+     * @throws dev.vertique.core.json.JsonProfileConfigurationException if the effective id is not
+     *     registered
      */
     private static @Nullable ObjectMapper resolveNoMethodDefaultMapper(
             JaxRsConfig jaxRsConfig, JsonConfig jsonConfig, JsonMapperProfileRegistry registry) {
-        String configured = Strings.firstNonBlank(jaxRsConfig.jsonProfile(), jsonConfig.jsonProfile());
-        if (configured == null || JsonProfileId.VERTX.value().equals(configured)) {
-            return null;
-        }
-        return registry.mapper(JsonProfileId.of(configured));
+        String boundary = Strings.firstNonBlank(jaxRsConfig.jsonProfile());
+        JsonProfileId effectiveId = boundary != null ? JsonProfileId.of(boundary) : jsonConfig.effectiveProfile();
+        ObjectMapper resolved = registry.mapper(effectiveId);
+        return resolved == VertiqueJson.mapper() ? null : resolved;
     }
 
     /**
@@ -405,20 +416,22 @@ public class JaxRsRouterMount implements RouterMount {
      * non-{@code null} and not already stashed by an upstream per-method handler — is placed under
      * {@link dev.vertique.rest.jaxrs.request.BoundRequest#KEY_RESOLVED_BODY_MAPPER} so the JSON body
      * encoder serializes the error body through the boundary+global default profile. When the default
-     * is {@code null} (the {@code vertx} path) nothing is stashed and the encoder falls back to
-     * {@code Json.encode}. The boundary default is applied <em>only</em> when no matched operation route
+     * is {@code null} — the default profile's mapper <em>is</em> the process codec's mapper — nothing is
+     * stashed and the encoder falls back to {@code Json.encode}, which runs that same mapper. The
+     * boundary default is applied <em>only</em> when no matched operation route
      * already decided the error-body mapper: a matched route's per-route failure handler
      * ({@code JaxRsRouteRegistrar} step (e)) runs first and sets
      * {@link dev.vertique.rest.jaxrs.request.BoundRequest#KEY_ERROR_BODY_MAPPER_DECIDED} (FR-JSON-058A),
-     * so a route's own decision — including an explicit {@code vertx} that must serialize via
-     * {@code Json.encode} — is preserved over the boundary default. This closes the error-path profiling
-     * asymmetry for auth/415 rejections and for explicit-{@code vertx} routes under a non-{@code vertx}
-     * global default.
+     * so a route's own decision — including a route whose profile is the process codec's and must
+     * therefore serialize via {@code Json.encode} — is preserved over the boundary default. This closes
+     * the error-path profiling asymmetry for auth/415 rejections and for process-codec routes under a
+     * different global default.
      *
      * @param ctx                   the current routing context
      * @param errorPipeline         the error mapping pipeline
      * @param responsePipeline      the response sending pipeline
-     * @param noMethodDefaultMapper the boundary+global default error-body mapper, or {@code null} for vertx
+     * @param noMethodDefaultMapper the boundary+global default error-body mapper, or {@code null} when
+     *                              that default is the process codec's own mapper
      */
     private static void handleFailure(
             RoutingContext ctx,
@@ -433,13 +446,14 @@ public class JaxRsRouterMount implements RouterMount {
         // serialized, but ONLY when no matched operation route already decided the error-body mapper.
         // A matched route's per-route failure handler (JaxRsRouteRegistrar step (e)) runs first and sets
         // KEY_ERROR_BODY_MAPPER_DECIDED: it either stashed its own profile mapper under
-        // KEY_RESOLVED_BODY_MAPPER (non-vertx route) or stashed nothing (explicit-vertx route — must
-        // serialize via Json.encode, NOT the boundary default). The marker therefore distinguishes "a
-        // matched route decided (honor it, including an explicit vertx)" from "no operation route matched
-        // — a pre-routing 404 / request-interceptor rejection" (apply the boundary+global default). This
-        // closes the error-path asymmetry where an auth/415 rejection or an explicit-vertx route under a
-        // non-vertx global default was serialized with the global default mapper. A null default also
-        // leaves the stash absent => Json.encode (vertx).
+        // KEY_RESOLVED_BODY_MAPPER (a route whose profile differs from the process codec's) or stashed
+        // nothing (a route whose profile IS the process codec's — must serialize via Json.encode, NOT
+        // the boundary default). The marker therefore distinguishes "a matched route decided (honor it,
+        // including a process-codec route)" from "no operation route matched — a pre-routing 404 /
+        // request-interceptor rejection" (apply the boundary+global default). This closes the error-path
+        // asymmetry where an auth/415 rejection or a process-codec route under a different global
+        // default was serialized with the global default mapper. A null default also leaves the stash
+        // absent => Json.encode, i.e. the process codec.
         boolean matchedRouteDecided = Boolean.TRUE.equals(ctx.get(BoundRequest.KEY_ERROR_BODY_MAPPER_DECIDED));
         if (!matchedRouteDecided
                 && noMethodDefaultMapper != null

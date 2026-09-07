@@ -4,8 +4,11 @@
 package dev.vertique.kafka.json;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -21,7 +24,11 @@ import dev.vertique.kafka.DeserializationException;
 import dev.vertique.kafka.serialization.KafkaDeserializer;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.json.jackson.DatabindCodec;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
@@ -40,8 +47,8 @@ import org.junit.jupiter.api.Test;
  *       uses the strict mapper registered as "c" (rejects string→int coercion)</li>
  *   <li><em>bagIdOverGlobal</em> — bag {@code jsonProfile="b"}, {@code json.jsonProfile="c"}
  *       ⇒ uses the mapper registered as "b" (rejects string→int coercion for "b"-profile)</li>
- *   <li><em>vertxFloor</em> — bag blank, no global ⇒ uses {@code DatabindCodec.mapper()} which
- *       accepts string→int coercion (FR-JSON-057)</li>
+ *   <li><em>vertiqueFloor</em> — bag blank, no global ⇒ uses the registry's {@code vertique} mapper,
+ *       which accepts string→int coercion (FR-JSON-057)</li>
  * </ul>
  *
  * <p>Observable distinction: the strict no-coercion profile registered as "b" and "c" disables
@@ -174,21 +181,21 @@ class JsonSerdeProviderGlobalDefaultTest {
     }
 
     @Nested
-    @DisplayName("vertxFloor: bag blank + no global → permissive vertx mapper accepts coercion (FR-JSON-057)")
-    class VertxFloor {
+    @DisplayName("vertiqueFloor: bag blank + no global → permissive vertique mapper accepts coercion (FR-JSON-057)")
+    class VertiqueFloor {
 
         @Test
-        @DisplayName("bag blank + json.jsonProfile=null → vertx mapper used (accepts string->int coercion)")
-        void vertxFloor() {
+        @DisplayName("bag blank + json.jsonProfile=null → vertique mapper used (accepts string->int coercion)")
+        void vertiqueFloor() {
             DefaultJsonMapperProfileRegistry registry = strictRegistry();
             JsonSerdeProvider provider = providerWith(registry, JsonConfig.defaults()); // jsonProfile == null
 
-            // When: nothing configured — must fall back to DatabindCodec.mapper() (vertx floor).
-            // The permissive vertx mapper accepts string->int coercion, so deserialization succeeds.
-            // RED: compile error until the JsonConfig parameter is added. Once green, this passes.
+            // When: nothing configured — must fall back to registry.mapper(vertique) (the vertique floor).
+            // The permissive vertique mapper accepts string->int coercion, so deserialization succeeds.
             assertDoesNotThrow(
                     () -> deserialize(provider, emptyBag()),
-                    "bag blank + no global must use the permissive vertx mapper (accepts string->int coercion, FR-JSON-057)");
+                    "bag blank + no global must use the permissive vertique mapper (accepts string->int coercion,"
+                            + " FR-JSON-057)");
         }
     }
 
@@ -214,76 +221,161 @@ class JsonSerdeProviderGlobalDefaultTest {
         }
     }
 
+    // --- TP-001 (T013): blank bag resolves vertique; bag system resolves the registry's system copy ---
+
+    /**
+     * TP-001 (T013): a blank serde bag must resolve the registry's {@code vertique} mapper — not the
+     * raw {@link DatabindCodec#mapper()} floor — and an explicit bag {@code jsonProfile="system"} must
+     * resolve the registry's {@code system} mapper copy, never {@code DatabindCodec.mapper()} itself.
+     * Supporting structural check: {@link JsonSerdeProvider}, {@link JacksonKafkaSerializer} and
+     * {@link JacksonKafkaDeserializer} production source contains no {@code DatabindCodec} token.
+     *
+     * <p>Given: a seeded {@link DefaultJsonMapperProfileRegistry} (no application profiles — only the
+     * built-in {@code system}, {@code vertique}, {@code vertique-strict} reserved profiles) and
+     * {@link JsonConfig#defaults()} (no {@code json.jsonProfile} configured).
+     * When: {@code resolveMapper} runs once for a blank bag, then once for a bag carrying
+     * {@code jsonProfile="system"}.
+     * Then: the blank case is {@code assertSame} to {@code registry.mapper(JsonProfileId.of("vertique"))};
+     * the {@code system} bag case is {@code assertSame} to {@code registry.mapper(JsonProfileId.SYSTEM)}
+     * — the registry's trusted {@code system} copy — and {@code assertNotSame} to
+     * {@code DatabindCodec.mapper()} directly; and no production file in this package mentions
+     * {@code DatabindCodec}.
+     *
+     * <p><strong>Expected initial (RED) result:</strong> today {@link JsonSerdeProvider}'s constructor
+     * reads the raw {@code jsonConfig.jsonProfile()} (blank ⇒ {@code null} {@code globalDefaultMapper}),
+     * so a blank bag falls through to {@code DatabindCodec.mapper()} — the first {@code assertSame}
+     * fails. {@code resolveMapper} also short-circuits an explicit {@code "system"} bag id straight to
+     * {@code DatabindCodec.mapper()} (the raw singleton, not the registry's {@code system} copy) — the
+     * second {@code assertSame} fails and the {@code assertNotSame} also fails (the resolved mapper IS
+     * {@code DatabindCodec.mapper()} today). The structural check is already green (both files still
+     * reference {@code DatabindCodec} today, so it stays red for the token-removal half until L03).
+     *
+     * <p><strong>Sensitivity proof:</strong> restoring the null/raw floor makes the first assertion
+     * fail again — the test cannot pass vacuously.
+     */
+    @Test
+    @DisplayName("blankBagResolvesVertiqueAndBagSystemResolvesSystem: blank bag -> registry vertique mapper; "
+            + "bag jsonProfile=system -> registry system mapper copy, never DatabindCodec.mapper()")
+    void blankBagResolvesVertiqueAndBagSystemResolvesSystem() throws IOException {
+        DefaultJsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
+        JsonSerdeProvider provider = providerWith(registry, JsonConfig.defaults());
+
+        ObjectMapper resolvedForBlankBag = resolveMapperViaReflection(provider, emptyBag());
+        assertSame(
+                registry.mapper(JsonProfileId.of("vertique")),
+                resolvedForBlankBag,
+                "a blank bag must resolve the registry's 'vertique' mapper, not the raw DatabindCodec.mapper()"
+                        + " floor");
+
+        ObjectMapper resolvedForSystemBag = resolveMapperViaReflection(provider, bagWith("system"));
+        assertSame(
+                registry.mapper(JsonProfileId.SYSTEM),
+                resolvedForSystemBag,
+                "bag jsonProfile='system' must resolve the registry's 'system' mapper copy");
+        assertNotSame(
+                DatabindCodec.mapper(),
+                resolvedForSystemBag,
+                "bag jsonProfile='system' must resolve the registry's trusted 'system' copy, never the raw"
+                        + " DatabindCodec.mapper() singleton directly");
+
+        assertNoDatabindCodecTokenInProductionSource();
+    }
+
+    /**
+     * Structural backstop for TP-001: scans the production source of {@link JsonSerdeProvider},
+     * {@link JacksonKafkaSerializer} and {@link JacksonKafkaDeserializer} for the {@code DatabindCodec}
+     * token. A backstop, not a behavior test — the {@code assertSame}/{@code assertNotSame} assertions
+     * above are the primary proof; this guards against a straggler reference re-introducing the direct
+     * {@code DatabindCodec} coupling once the mapper-identity assertions go green.
+     *
+     * @throws IOException if a production source file cannot be read
+     */
+    private static void assertNoDatabindCodecTokenInProductionSource() throws IOException {
+        Path packageDir =
+                Path.of(System.getProperty("user.dir"), "src", "main", "java", "dev", "vertique", "kafka", "json");
+        List<String> fileNames =
+                List.of("JsonSerdeProvider.java", "JacksonKafkaSerializer.java", "JacksonKafkaDeserializer.java");
+        for (String fileName : fileNames) {
+            Path file = packageDir.resolve(fileName);
+            assertTrue(Files.isRegularFile(file), "Expected production source to exist at " + file);
+            String contents = Files.readString(file);
+            assertFalse(
+                    contents.contains("DatabindCodec"),
+                    fileName + " must not reference DatabindCodec — profiles (via the registry) are the only"
+                            + " mapper source (T013)");
+        }
+    }
+
     // --- Precedence regression guards (review findings) ---
 
     /**
-     * Regression guard: an explicit bag {@code jsonProfile="vertx"} must resolve to
-     * {@link DatabindCodec#mapper()} and STOP — it must NOT fall through to the
-     * {@code json.jsonProfile} global default, even when that global is a registered strict profile.
+     * Regression guard: an explicit bag {@code jsonProfile="system"} must resolve to the registry's
+     * {@code system} mapper and STOP — it must NOT fall through to the {@code json.jsonProfile}
+     * global default, even when that global is a registered strict profile.
      *
      * <p>Observable: the global default profile disables coercion (rejects {@code {"count":"5"}}),
-     * while {@code DatabindCodec.mapper()} permits coercion. If the explicit {@code "vertx"} bag id
-     * correctly stops at the floor, deserialization of {@code {"count":"5"}} succeeds. If it
+     * while the registry's {@code system} mapper permits coercion. If the explicit {@code "system"}
+     * bag id correctly stops at the floor, deserialization of {@code {"count":"5"}} succeeds. If it
      * erroneously falls through to the global strict mapper, it throws.
      *
      * <p>The same proof applies to the serializer and the routing deserializer: both are tested to
      * confirm all three {@code resolveMapper} call sites honour the early-return.
      */
     @Nested
-    @DisplayName("explicitVertxStopsAtFloor: bag='vertx' returns DatabindCodec.mapper() even when global is configured")
-    class ExplicitVertxStopsAtFloor {
+    @DisplayName("explicitSystemStopsAtFloor: bag='system' returns the registry's system mapper even when global is"
+            + " configured")
+    class ExplicitSystemStopsAtFloor {
 
         /**
-         * Deserializer path: bag {@code jsonProfile="vertx"} with a configured global must use
-         * {@link DatabindCodec#mapper()} (permissive, accepts coercion) and never the global's strict
-         * mapper.
+         * Deserializer path: bag {@code jsonProfile="system"} with a configured global must use the
+         * registry's {@code system} mapper (permissive, accepts coercion) and never the global's
+         * strict mapper.
          *
          * <p>Given: a {@link JsonConfig} with {@code json.jsonProfile="c"} (a registered strict
-         * no-coercion profile) AND a serde bag whose {@code jsonProfile} is {@code "vertx"}.
+         * no-coercion profile) AND a serde bag whose {@code jsonProfile} is {@code "system"}.
          * When: deserializing {@code {"count":"5"}} into a {@link Counter} (int field).
-         * Then: deserialization succeeds — proving {@code DatabindCodec.mapper()} was used, not the
-         * strict global. If the precedence bug regresses (explicit "vertx" falls through), the strict
-         * mapper would reject the coercion and throw {@link DeserializationException}.
+         * Then: deserialization succeeds — proving the registry's {@code system} mapper was used, not
+         * the strict global. If the precedence bug regresses (explicit "system" falls through), the
+         * strict mapper would reject the coercion and throw {@link DeserializationException}.
          */
         @Test
-        @DisplayName(
-                "deserializer: bag='vertx' + global='c' → DatabindCodec.mapper() used (permissive, coercion accepted)")
-        void deserializer_explicitVertxIgnoresGlobal() {
+        @DisplayName("deserializer: bag='system' + global='c' → registry's system mapper used (permissive, coercion"
+                + " accepted)")
+        void deserializer_explicitSystemIgnoresGlobal() {
             DefaultJsonMapperProfileRegistry registry = strictRegistry();
-            // global is "c" (strict, rejects coercion), but the bag explicitly selects "vertx"
+            // global is "c" (strict, rejects coercion), but the bag explicitly selects "system"
             JsonSerdeProvider provider = providerWith(registry, new JsonConfig("c"));
 
-            // DatabindCodec.mapper() is the same singleton — verify we get the permissive mapper
-            // by observing that string→int coercion succeeds (strict mapper would throw).
+            // registry.mapper(SYSTEM) is a stable, permissive mapper — verify we get it by observing
+            // that string→int coercion succeeds (strict mapper would throw).
             Counter result = assertDoesNotThrow(
-                    () -> deserialize(provider, bagWith("vertx")),
-                    "bag='vertx' must resolve DatabindCodec.mapper() and accept coercion, not fall through to the"
-                            + " strict global");
+                    () -> deserialize(provider, bagWith("system")),
+                    "bag='system' must resolve the registry's system mapper and accept coercion, not fall through"
+                            + " to the strict global");
             assertSame(
-                    DatabindCodec.mapper(),
-                    resolveMapperViaReflection(provider, bagWith("vertx")),
-                    "resolveMapper must return the DatabindCodec.mapper() singleton for an explicit 'vertx' bag id"
+                    registry.mapper(JsonProfileId.SYSTEM),
+                    resolveMapperViaReflection(provider, bagWith("system")),
+                    "resolveMapper must return the registry's system mapper for an explicit 'system' bag id"
                             + " regardless of the configured global default");
         }
 
         /**
-         * Serializer path: bag {@code jsonProfile="vertx"} with a configured global must use
-         * {@link DatabindCodec#mapper()}. The compact JSON produced by {@code DatabindCodec.mapper()}
-         * has no newlines; a strict-or-pretty profile might differ. Here we confirm the mapper
-         * instance via reflection.
+         * Serializer path: bag {@code jsonProfile="system"} with a configured global must use the
+         * registry's {@code system} mapper. Here we confirm the mapper instance via reflection.
          */
         @Test
-        @DisplayName("serializer: bag='vertx' + global='c' → DatabindCodec.mapper() used")
-        void serializer_explicitVertxIgnoresGlobal() {
+        @DisplayName("serializer: bag='system' + global='c' → registry's system mapper used")
+        void serializer_explicitSystemIgnoresGlobal() {
             DefaultJsonMapperProfileRegistry registry = strictRegistry();
             JsonSerdeProvider provider = providerWith(registry, new JsonConfig("c"));
 
-            // Confirm the mapper instance is the DatabindCodec singleton
-            ObjectMapper resolved = resolveMapperViaReflection(provider, bagWith("vertx"));
+            // Confirm the mapper instance is the registry's system mapper
+            ObjectMapper resolved = resolveMapperViaReflection(provider, bagWith("system"));
             assertSame(
-                    DatabindCodec.mapper(),
+                    registry.mapper(JsonProfileId.SYSTEM),
                     resolved,
-                    "serializer with bag='vertx' must use DatabindCodec.mapper() singleton, not fall through to global");
+                    "serializer with bag='system' must use the registry's system mapper, not fall through to"
+                            + " global");
         }
     }
 

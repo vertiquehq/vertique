@@ -3,11 +3,14 @@
 
 package dev.vertique.core.lifecycle;
 
+import dev.vertique.core.json.VertiqueJson;
 import io.vertx.core.Future;
 import jakarta.inject.Inject;
 import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
 import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * The framework's {@link LifecyclePhase#VALIDATE VALIDATE} startup step: forces construction of
@@ -19,9 +22,10 @@ import java.util.Set;
  * building the step does <em>not</em> construct any validator. The lifecycle runner materializes the
  * whole {@code Set<ApplicationStartupStep>} during the first phase (CONFIGURE); injecting the
  * materialized validator set here would force the validators to construct during CONFIGURE, before
- * {@link JacksonConfigureStep} has run, and a validator failure would then be misattributed to the
+ * that phase's own steps have run, and a validator failure would then be misattributed to the
  * CONFIGURE phase. Deferring materialization to {@code start()} keeps the fail-fast firing in the
- * VALIDATE phase, after CONFIGURE.
+ * VALIDATE phase, after CONFIGURE — which matters because a {@code CONFIGURE} step may still change
+ * what the validators observe (the process JSON codec's mapper is installed there).
  *
  * <p>When {@code start()} calls {@link Provider#get()}, Dagger materializes the multibinding, which
  * constructs every contributed validator. Each validator's {@code @Inject} constructor asserts that
@@ -38,6 +42,8 @@ import java.util.Set;
  */
 @Singleton
 public final class ComposeValidationStep implements ApplicationStartupStep {
+
+    private static final Logger LOG = LoggerFactory.getLogger(ComposeValidationStep.class);
 
     private final Provider<Set<ComposeValidator>> validatorsProvider;
 
@@ -76,6 +82,12 @@ public final class ComposeValidationStep implements ApplicationStartupStep {
      */
     @Override
     public Future<Void> start() {
+        if (VertiqueJson.ownsCodec() && VertiqueJson.profile().isEmpty()) {
+            LOG.warn("No JSON profile was installed as the process JSON codec: this application's graph"
+                    + " contributes no CONFIGURE-phase install step (no JSON runtime module), so"
+                    + " json.systemProfile is not consumed and every Json.* and JsonObject operation runs"
+                    + " Vert.x's raw JSON semantics");
+        }
         try {
             validatorsProvider.get();
             return Future.succeededFuture();

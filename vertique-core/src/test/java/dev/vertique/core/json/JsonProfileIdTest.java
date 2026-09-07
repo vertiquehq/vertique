@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for {@link JsonProfileId} construction, normalization, equality, and the reserved
- * {@code vertx} constant (FR-JSON-003A).
+ * {@code system} constant (FR-JSON-003A).
  */
 class JsonProfileIdTest {
 
@@ -41,9 +41,9 @@ class JsonProfileIdTest {
     }
 
     @Test
-    @DisplayName("VERTX constant has value 'vertx'")
-    void vertxConstant_hasValueVertx() {
-        assertEquals("vertx", JsonProfileId.VERTX.value());
+    @DisplayName("SYSTEM constant has value 'system'")
+    void systemConstant_hasValueSystem() {
+        assertEquals("system", JsonProfileId.SYSTEM.value());
     }
 
     @Test

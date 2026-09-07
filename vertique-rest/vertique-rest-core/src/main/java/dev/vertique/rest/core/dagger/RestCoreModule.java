@@ -11,7 +11,6 @@ import dev.vertique.context.ContextRuntimeModule;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.config.JsonConfigPaths;
-import dev.vertique.core.json.JsonModule;
 import dev.vertique.correlation.CorrelationContextModule;
 import dev.vertique.logging.LoggingContextModule;
 import dev.vertique.rest.core.capture.RestRequestCaptureCoordinator;
@@ -66,7 +65,6 @@ import java.util.Set;
  */
 @Module(
         includes = {
-            JsonModule.class,
             ContextRuntimeModule.class,
             LoggingContextModule.class,
             CorrelationContextModule.class,

@@ -36,9 +36,9 @@ class JsonSerdeProviderTest {
 
     record OrderEvent(String type, String id) {}
 
-    // Registry with no application profiles — only the built-in vertx profile. Every bag in this
-    // test omits jsonProfile, so resolution always lands on DatabindCodec.mapper() (the
-    // byte-for-byte-unchanged default path); the registry is never consulted.
+    // Registry with no application profiles — only the built-in system/vertique/vertique-strict
+    // profiles. Every bag in this test omits jsonProfile, so resolution always lands on the
+    // registry's vertique mapper (the pre-resolved global default; json.jsonProfile is unset).
     private final JsonSerdeProvider provider =
             new JsonSerdeProvider(new DefaultJsonMapperProfileRegistry(Set.of()), JsonConfig.defaults());
 

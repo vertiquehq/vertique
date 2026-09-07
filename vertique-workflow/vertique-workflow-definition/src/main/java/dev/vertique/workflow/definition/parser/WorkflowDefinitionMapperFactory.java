@@ -43,9 +43,8 @@ import org.yaml.snakeyaml.LoaderOptions;
  * {@link com.fasterxml.jackson.annotation.JsonProperty} on every record component.
  *
  * <p>Do NOT use or customize these mappers for application-level JSON serialization. They are
- * dedicated to definition document parsing only. Application JSON uses the shared Vert.x
- * {@link io.vertx.core.json.jackson.DatabindCodec#mapper() DatabindCodec mapper} configured by
- * {@link dev.vertique.core.json.JacksonConfigurer}.
+ * dedicated to definition document parsing only. Application JSON uses the process JSON codec's
+ * mapper ({@link dev.vertique.core.json.VertiqueJson#mapper() VertiqueJson.mapper()}).
  */
 @Singleton
 public class WorkflowDefinitionMapperFactory {

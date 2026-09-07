@@ -12,8 +12,17 @@ SPDX-License-Identifier: EUPL-1.2
 
 Runtime of the Vertique JSON mapper profile system: named, code-owned `ObjectMapper` configurations
 that a framework boundary selects per resource method, REST client, or Kafka binding. The zero-config
-default is the `vertx` profile, which exposes `DatabindCodec.mapper()` — the same shared mapper Vert.x
-uses internally — so an application that never selects a profile sees no change in behavior.
+default at every managed edge is the reserved `vertique` profile — the baseline recipe plus the
+framework's opinions. The reserved `system` profile is a **copy** of Vert.x's `DatabindCodec.mapper()`
+carrying just the baseline recipe, so it behaves like the stock Vert.x mapper for everything that
+mapper could already handle, while adding `Optional` and `java.time` support; `system` is the
+zero-config default installed as the process JSON codec, and is reachable at any managed edge by
+explicit selection.
+
+> **Renamed:** the reserved raw profile was called `vertx`; it is now `system`. The id `vertx` is
+> retired — configuring it, or contributing an application profile under it, fails startup with a
+> message naming the rename. Change `jsonProfile: vertx` to `jsonProfile: system`. This is not a pure
+> rename in effect: see [the `system` recipe](#the-system-profile) for the one wire-shape delta.
 
 The profile *contracts* (`JsonProfileId`, `JsonMapperProfile`, `JsonMapperProfileRegistry`,
 `JsonProfileConfigurationException`, `@JsonProfile`, `@KeyedBy`) live in `dev.vertique.core.json`, in
@@ -49,26 +58,29 @@ exposed exactly as supplied — never copied, wrapped, or mutated by the framewo
 
 Three profiles are always registered:
 
-| Id | Mapper | Wire posture |
+| Id | Recipe | Wire posture |
 |---|---|---|
-| `vertx` | Vert.x's shared `DatabindCodec.mapper()` | Stock Vert.x behavior; the zero-config default, never altered |
-| `vertique` | An independent mapper configured by `JacksonDefaults` | Opinionated defaults (see below); `BigDecimal` and `String` stay stock |
-| `vertique-strict` | An independent mapper: `JacksonDefaults` plus the strict overlay | `BigDecimal` on the wire as a bounded JSON string; no scalar→`String` coercion |
+| `system` | `JacksonDefaults.applySystem(DatabindCodec.mapper().copy())` | The baseline every other profile layers on. Byte-identical to the raw Vert.x mapper for every type that mapper already handled, **except `java.util.Date`/`Calendar`** (epoch millis → ISO-8601); `Optional` and `java.time` start working. Inherits Vert.x's `ALLOW_COMMENTS` and its `vertx.jackson.defaultRead*` stream-read limits. No inclusion, number, or enum opinion. The shared mapper itself is never exposed or mutated |
+| `vertique` | `JacksonDefaults.applySystem(new ObjectMapper())` then `JacksonDefaults.applyOpinionated(mapper)` — i.e. `JacksonDefaults.apply(new ObjectMapper())` | The baseline recipe plus the opinions (see below); `BigDecimal` and `String` stay stock. Seeded from a **fresh** mapper, so unlike `system` it does **not** accept JSON comments |
+| `vertique-strict` | `vertique` plus the strict overlay | `BigDecimal` on the wire as a bounded JSON string; no scalar→`String` coercion |
 
-All three ids are **reserved**: an application profile that claims one fails startup.
+All three ids are **reserved**: an application profile that claims one fails startup. So does the
+retired `vertx` id.
+
+Each profile's `mapper()` returns **one stable instance** — the same reference on every call.
 
 ### Selecting a profile
 
 A profile is selected by the `@JsonProfile` annotation, by a per-binding configuration value, or by a
 default configuration key. Each boundary resolves the first non-blank tier and falls through to
-`vertx`:
+`vertique`:
 
 | Boundary | Precedence, highest first |
 |---|---|
-| JAX-RS request + response | method `@JsonProfile` → class `@JsonProfile` → `jaxrs.jsonProfile` → `json.jsonProfile` → `vertx` |
-| REST client | explicit `objectMapper` → `restClient.<name>.jsonProfile` → builder `jsonProfile(...)` → interface `@JsonProfile` → `restClient.defaults.jsonProfile` → `json.jsonProfile` → `vertx` |
-| Kafka consumer | `kafka.consumers.<n>.jsonProfile` → `@JsonProfile` on the `@KafkaListener` type / `KafkaConsumerBinding.jsonProfile(...)` → `kafka.jsonProfile` → `json.jsonProfile` → `vertx` |
-| Kafka producer | `kafka.producers.<n>.methods.<m>.jsonProfile` → `kafka.producers.<n>.jsonProfile` → `@JsonProfile` on the `@KafkaProducer` type → `kafka.jsonProfile` → `json.jsonProfile` → `vertx` |
+| JAX-RS request + response | method `@JsonProfile` → class `@JsonProfile` → `jaxrs.jsonProfile` → `json.jsonProfile` → `vertique` |
+| REST client | explicit `objectMapper` → `restClient.<name>.jsonProfile` → builder `jsonProfile(...)` → interface `@JsonProfile` → `restClient.defaults.jsonProfile` → `json.jsonProfile` → `vertique` |
+| Kafka consumer | `kafka.consumers.<n>.jsonProfile` → `@JsonProfile` on the `@KafkaListener` type / `KafkaConsumerBinding.jsonProfile(...)` → `kafka.jsonProfile` → `json.jsonProfile` → `vertique` |
+| Kafka producer | `kafka.producers.<n>.methods.<m>.jsonProfile` → `kafka.producers.<n>.jsonProfile` → `@JsonProfile` on the `@KafkaProducer` type → `kafka.jsonProfile` → `json.jsonProfile` → `vertique` |
 
 `json.jsonProfile` is the **global default tier** — the floor applied at every boundary when no
 more-specific value is configured.
@@ -79,15 +91,21 @@ more-specific value is configured.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `json.jsonProfile` | string | *(unset)* | Global default profile id for every JSON boundary. `null` or blank means the `vertx` profile. An id that names no registered profile fails startup. |
+| `json.jsonProfile` | string | *(unset)* | Global default profile id for every JSON boundary. `null` or blank means the `vertique` profile at managed edges. An id that names no registered profile — including the retired `vertx` — fails startup. |
+| `json.systemProfile` | string | *(unset)* | Profile installed as the **process JSON codec's** mapper, read through `JsonConfig.effectiveSystemProfile()` and consumed by the `CONFIGURE`-phase install step below. `null` or blank means the reserved `system` profile. An unknown id — including the retired `vertx` — fails the boot there. |
 
 ```json
 {
   "json": {
-    "jsonProfile": "vertique"
+    "jsonProfile": "vertique",
+    "systemProfile": "system"
   }
 }
 ```
+
+`JsonConfig` carries both keys verbatim; the floors live in its accessors, which never return `null`
+and never validate: `effectiveProfile()` floors at `vertique` and `effectiveSystemProfile()` floors at
+`system`. The one-argument constructor is a convenience for `(jsonProfile, null)`.
 
 Setting `json.jsonProfile` activates that profile as the global default everywhere. Per-boundary and
 per-binding overrides remain fully operational. Any registered id is valid here — the three built-ins
@@ -100,10 +118,106 @@ bindings at all. Each boundary validates its own default key (`jaxrs.jsonProfile
 
 ---
 
+## The Process JSON Codec
+
+Vert.x routes every `Json.encode`, `Json.decodeValue`, `new JsonObject(String|Buffer)`,
+`JsonObject.encode()`, `mapTo` and `mapFrom` call through one process-wide codec. `vertique-core`
+owns that codec and exposes it as `VertiqueJson`; this module owns the startup step that decides
+which profile it runs.
+
+`JsonRuntimeModule` contributes a `CONFIGURE`-phase `ApplicationStartupStep` that resolves
+`json.systemProfile` (floor: `system`) through the registry and installs that profile's mapper with
+`VertiqueJson.install(id, mapper)`. `CONFIGURE` is the first startup phase, so every later step,
+validator and verticle already sees the installed codec. An application graph that does not include
+`JsonRuntimeModule` never installs anything and keeps Vert.x's raw JSON behavior — where
+`Json.encode(LocalDate.now())` still fails.
+
+The step fails the boot with `JsonProfileConfigurationException`, naming the profile and the remedy,
+when:
+
+| Check | Failure |
+|---|---|
+| Unknown or retired id | `json.systemProfile` names no registered profile; the retired `vertx` id names the rename to `system`. |
+| Codec ownership | Vert.x did not select the framework's codec, so installing a mapper would change nothing. The message names the actual `Json.CODEC` class and points at `META-INF/services` visibility (a shaded jar must merge service files) and competing `io.vertx.core.spi.JsonFactory` registrations. |
+| Vert.x Jackson module | The profile's mapper does not register `VertxJsonSupport.module()`, so `JsonObject`, `JsonArray` and `Buffer` values would be bean-serialized instead of round-tripping. Build the mapper from the sanctioned seed. |
+| Default typing | The profile's mapper activates Jackson default typing, which would let any payload the process decodes choose the type it instantiates. |
+
+Anything about the selected profile that accepts **more** than the baseline `system` recipe is logged
+at `WARN` before the install — `FAIL_ON_UNKNOWN_PROPERTIES` off, unknown-enum and case-insensitive-enum
+leniency, parser-leniency features `system` leaves off, and any stream-read limit weaker than Vert.x's.
+Those settings then apply to every payload the process decodes, including payloads that no
+request-validation gate has seen.
+
+Installation is keyed by profile id, so two applications booted in one JVM under the **same** effective
+system profile both start (the second install swaps to its own equivalent instance and logs the swap at
+`INFO`); a **different** id fails the second boot naming both ids.
+
+**Selecting a non-default system profile changes the whole process.** With
+`json.systemProfile: vertique`, every `Json.encode` in the process omits nulls, `JsonObject` parsing
+binds JSON floats to `BigDecimal`, `JsonObject.encode()` drops explicit nulls, and the enum leniency of
+that profile applies to every process-codec path. That reaches durable and cross-service formats —
+correlation envelopes, workflow state, cache entries — so treat it as a wire-format decision.
+
+---
+
+## The `system` Profile
+
+The reserved baseline, and the zero-config default for the process JSON codec (managed edges default
+to `vertique` instead — see [Selecting a profile](#selecting-a-profile)). `JacksonDefaults.applySystem(mapper)`
+applies its recipe; the `system` profile is exactly its output on `DatabindCodec.mapper().copy()`:
+
+| # | Baseline behavior | Mechanism |
+|---|---|---|
+| 1 | `java.time` → ISO-8601, original offset/zone preserved | Register `JavaTimeModule`; disable `WRITE_DATES_AS_TIMESTAMPS`; disable `ADJUST_DATES_TO_CONTEXT_TIME_ZONE`; re-register Vert.x's Jackson module **last** so Vert.x's `Instant` serializer stays authoritative |
+| 2 | JDK8 `Optional` / `OptionalInt` / `OptionalLong` / `OptionalDouble` → contained value, both directions | Register `Jdk8Module` **before** the Vert.x re-registration. `java.util.stream` types are **serialize-only** |
+| 3 | Operator-tuned read limits survive | Copy the raw Vert.x factory's `StreamReadConstraints` (`vertx.jackson.defaultRead*`) onto the mapper's factory |
+
+That is the whole recipe: no inclusion, number, or enum opinion is applied. Everything the raw Vert.x
+mapper already handled — `JsonObject`, `JsonArray`, `Buffer`, `byte[]`, `Instant`, plain POJOs
+including their `null`-valued properties — serializes byte-identically under `system`.
+
+**The one delta from the raw Vert.x mapper.** `java.util.Date` and `java.util.Calendar` move from
+epoch millis to ISO-8601:
+
+| Value | raw Vert.x mapper | `system` (and `vertique`) |
+|---|---|---|
+| `new Date(0L)` | `0` | `"1970-01-01T00:00:00.000+00:00"` |
+
+Disabling `WRITE_DATES_AS_TIMESTAMPS` is what makes `java.time` render ISO-8601, and it reaches the
+legacy date types too. Date support is the point of the recipe, so the delta is accepted and pinned by
+a compatibility-matrix test. A consumer that must keep reading epoch millis is unaffected on the read
+side — Jackson still accepts a numeric timestamp.
+
+**Comment leniency is inherited.** Because `system` is a `copy()` of Vert.x's mapper, it keeps
+`JsonParser.Feature.ALLOW_COMMENTS`, exactly as the raw mapper did. `vertique` is seeded from a fresh
+`ObjectMapper` instead, so it still rejects JSON comments at the body-binding boundary.
+
+**`system` is a snapshot, not the live shared mapper.** The copy is taken when the profile registry is
+first constructed, before the install step points the process codec at it. Anything registered on `DatabindCodec.mapper()` before that moment is inherited;
+anything after it is not — the shared mapper and `system` never share state. The registry refuses to
+seed `system` when the copied mapper carries Jackson default typing, so a classpath library that
+activated it on the shared mapper fails the boot instead of feeding a polymorphic mapper into every
+profile role.
+
+**Where `system` binds.** Through the registry (`registry.mapper(JsonProfileId.SYSTEM)`, the cache
+stores, `@JsonProfile("system")` resolved by the registry) it is the recipe above. It is also the
+zero-config **process JSON codec**: the install step above puts this profile's mapper behind every
+`Json.*` and `JsonObject` operation, so `Optional` and `java.time` work there and `java.util.Date`
+renders ISO-8601. Every managed edge — REST request body/response, rest-client, Kafka JSON, and MCP —
+resolves its effective id, `system` included, through this same registry; none of them special-cases
+the reserved id or reads `DatabindCodec.mapper()` directly. The managed-edge zero-config floor is
+`vertique`, not `system`; reach `system` there by explicit selection at any tier. On the REST edges
+the resolved mapper collapses to "no override" (the Vert.x fast path) exactly when it is the same
+instance as the process codec's mapper — which an explicit `system` selection is, in a booted
+application under the defaults — so `Optional`/`java.time` work and `java.util.Date` renders ISO-8601
+at those edges too.
+
 ## The `vertique` Profile
 
-Opt in by selecting `vertique` at any tier above. `JacksonDefaults.apply(mapper)` configures a mapper
-with these defaults, and the `vertique` profile is exactly its output on a fresh `ObjectMapper`:
+Opt in by selecting `vertique` at any tier above. `JacksonDefaults.apply(mapper)` is exactly
+`applySystem(mapper)` followed by `applyOpinionated(mapper)`, and the `vertique` profile is exactly its
+output on a fresh `ObjectMapper`. Rows 1–2 below come from the baseline half, rows 3–6 from the
+opinionated half:
 
 | # | Default | Mechanism |
 |---|---------|-----------|
@@ -117,10 +231,13 @@ with these defaults, and the `vertique` profile is exactly its output on a fresh
 `BigDecimal` serialization stays at Jackson's default (a JSON number) and `String` coercion is left
 stock, so both round-trip through this profile with no wire-shape change.
 
+`applyOpinionated` alone is rows 3–6; layer it on `applySystem` to get `vertique`'s configuration on a
+mapper you seeded yourself.
+
 ### Invariants & Gotchas
 
-`apply` mutates and returns the mapper it is given; the six defaults above are its only persistent
-changes. It is safe to call on a mapper that already has Vert.x's Jackson module registered — the
+`apply` mutates and returns the mapper it is given; the six defaults above plus the
+`StreamReadConstraints` copy are its only persistent changes. It is safe to call on a mapper that already has Vert.x's Jackson module registered — the
 Vert.x serializers still end up authoritative.
 
 Empty-optional **omission** is narrowed to bean and record *properties*:
@@ -175,7 +292,7 @@ output construction directions, whose fragment is
 The fragment is built from the same `BigDecimalStrictStringDeserializer` grammar constants the
 deserializer itself enforces — the bound and the pattern are never duplicated as a second literal —
 so a schema generator consuming this profile's overrides cannot drift from the wire grammar above
-(FR-JSON-089). The `vertx` and `vertique` built-in profiles declare no overrides.
+(FR-JSON-089). The `system` and `vertique` built-in profiles declare no overrides.
 
 ### Invariants & Gotchas
 
@@ -216,12 +333,28 @@ profile at all; `BigDecimal` is simply its most visible consequence.
 
 ### JacksonDefaults
 
-Applies the framework's opinionated defaults to any `ObjectMapper`. Use it as the base for an
-application-contributed profile that wants the `vertique` posture plus its own customizations.
+Configures any `ObjectMapper`, in two composable halves.
+
+| Method | What it applies |
+|---|---|
+| `applySystem(mapper)` | The **baseline** recipe: `Jdk8Module`, `JavaTimeModule`, ISO-8601 dates, Vert.x's Jackson module re-registered last, and the raw Vert.x factory's `StreamReadConstraints`. No opinions. |
+| `applyOpinionated(mapper)` | The **opinions**: `NON_NULL` inclusion, `NON_ABSENT` for the four `Optional*` types, `USE_BIG_DECIMAL_FOR_FLOATS`, `READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE`. Registers no module. |
+| `apply(mapper)` | `applySystem` then `applyOpinionated` — the definition of the `vertique` profile. |
+
+Each mutates and returns the mapper it is given.
+
+**The sanctioned seed for an application profile is `JacksonDefaults.applySystem(new ObjectMapper())`**,
+then whatever the application needs. It gives the profile the baseline type support and the operator's
+stream-read limits without inheriting any framework opinion. Do not seed a profile from
+`DatabindCodec.mapper()` directly — that bypasses the baseline.
 
 ```java
-ObjectMapper mapper = JacksonDefaults.apply(new ObjectMapper());
+// Baseline + the application's own posture.
+ObjectMapper mapper = JacksonDefaults.applySystem(new ObjectMapper());
 mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, true);
+
+// Or: the vertique posture plus customizations.
+ObjectMapper opinionated = JacksonDefaults.apply(new ObjectMapper());
 ```
 
 ### JsonMapperProfiles
@@ -312,8 +445,8 @@ this module never sees the processing engine.
 // The mapper that materializes the body decides the projection.
 JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(mapper);
 
-// forRoute(null) is the reserved `vertx` profile: DatabindCodec.mapper().
-JacksonFieldNameResolver vertxProfile = JacksonFieldNameResolver.forRoute(null);
+// forRoute(null) means "no profile selected": the process codec's mapper, VertiqueJson.mapper().
+JacksonFieldNameResolver unprofiledRoute = JacksonFieldNameResolver.forRoute(null);
 
 // Compose one owner type's projection at registration, never on the request path.
 resolver.precompute(RenamedDto.class);
@@ -368,15 +501,18 @@ abstract class PaymentsModule {
     @Provides
     @Singleton
     @IntoSet
-    static JsonMapperProfile strictPaymentsProfile(JacksonConfigurer configurer) {
-        ObjectMapper mapper = new ObjectMapper();
-        mapper.registerModule(VertxJsonSupport.module()); // Vert.x JSON type support
+    static JsonMapperProfile strictPaymentsProfile() {
+        // Sanctioned seed: the baseline recipe on a fresh mapper (this also registers Vert.x's
+        // JSON type support, so JsonObject and Buffer serialize correctly).
+        ObjectMapper mapper = JacksonDefaults.applySystem(new ObjectMapper());
         mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, true);
-        configurer.configure(mapper);                     // application-level customizations
         return JsonMapperProfiles.of(JsonProfileId.of("strict-payments"), mapper);
     }
 }
 ```
+
+The profile id must not be `system`, `vertique`, `vertique-strict`, or the retired `vertx`, and the
+mapper must not have Jackson default typing active — the registry rejects both at construction.
 
 Select it anywhere a profile id is accepted — `@JsonProfile("strict-payments")`, a per-binding config
 value, or `json.jsonProfile`.
@@ -393,7 +529,9 @@ All profile validation happens eagerly, when the registry is first constructed. 
 
 | Check | Failure |
 |---|---|
-| Reserved id | An application profile claiming `vertx`, `vertique`, or `vertique-strict` is rejected. |
+| Reserved id | An application profile claiming `system`, `vertique`, or `vertique-strict` is rejected. |
+| Retired id | An application profile claiming `vertx` is rejected with a message naming the rename to `system`; so is a configured `vertx` id at any tier. |
+| Default typing | An application profile whose mapper has `activateDefaultTyping(...)` active is rejected — every profile binds untrusted input. Annotation-driven `@JsonTypeInfo` stays allowed. |
 | Uniqueness | Two application profiles sharing an id are rejected. |
 | Round-trip probe | Each **application-contributed** mapper serializes and deserializes a representative `JsonObject`/`JsonArray` (nested object, nested array, string/number/boolean/null fields) and must preserve structure. The three built-ins are exempt. |
 | Configured default | A non-blank `json.jsonProfile` (or a per-boundary default key) that names no registered profile is rejected during the `VALIDATE` phase. |
@@ -405,13 +543,14 @@ every registered id.
 
 The registry is a Dagger `@Singleton`, so it is constructed on first access. An application with a
 REST, REST-client, or Kafka boundary gets that access during startup automatically. An application
-with **none** of those boundaries must force it, alongside the existing Jackson-configurer step:
+with **none** of those boundaries gets it from this module's `CONFIGURE`-phase install step, which
+resolves the system profile through the registry. An application that drives startup by hand, without
+the lifecycle runner, must force the access itself:
 
 ```java
 @Override
 public Future<Void> start() {
     AppComponent c = DaggerAppComponent.create();
-    c.jacksonConfigurer().configure();      // configure the shared Vert.x mapper
     c.jsonMapperProfileRegistry();          // force eager validation of profiles
     // ... deploy HttpVerticle, etc.
 }
@@ -429,8 +568,9 @@ A validation failure then propagates out of `start()` and the verticle never bec
 |---|---|
 | `Set<JsonMapperProfile>` | `@Multibinds` seed — the application-contributed profile set, possibly empty. The built-ins are not members. |
 | `JsonMapperProfileRegistry` | Bound to the validating default implementation. |
-| `JsonConfig` | Parsed from the `json` config section through the injected `ConfigParser`. |
-| `ComposeValidator` (`@IntoSet`) | The global-default-profile validator, forced during the `VALIDATE` phase. |
+| `JsonConfig` | Parsed from the `json` config section through the injected `ConfigParser` — both `jsonProfile` and `systemProfile`. |
+| `ApplicationStartupStep` (`@IntoSet`) | The `CONFIGURE`-phase step that installs the `json.systemProfile` profile's mapper as the process JSON codec's mapper. |
+| `ComposeValidator` (`@IntoSet`) | The `json.jsonProfile` validator, forced during the `VALIDATE` phase. It is a pure delegate to `JsonMapperProfileRegistry.validateConfigured(...)`, which owns every message. |
 
 ---
 
@@ -438,7 +578,7 @@ A validation failure then propagates out of `start()` and the verticle never bec
 
 | Artifact | Scope | Purpose |
 |----------|-------|---------|
-| `dev.vertique:vertique-core` | compile | `JsonProfileId`, `JsonMapperProfile`, `JsonMapperProfileRegistry`, `JsonProfileConfigurationException`, `@JsonProfile`, `@KeyedBy`, `ConfigurationException`, `ConfigParser`, `ComposeValidator`, `InputFieldNameResolver` — the codec-neutral projection contract `JacksonFieldNameResolver` implements |
+| `dev.vertique:vertique-core` | compile | `JsonProfileId`, `JsonMapperProfile`, `JsonMapperProfileRegistry`, `JsonProfileConfigurationException`, `@JsonProfile`, `@KeyedBy`, `ConfigurationException`, `ConfigParser`, `ComposeValidator`, `ApplicationStartupStep`, `LifecyclePhase`, `VertiqueJson`, `InputFieldNameResolver` — the codec-neutral projection contract `JacksonFieldNameResolver` implements |
 | `io.vertx:vertx-core` | compile | `DatabindCodec.mapper()`, the Vert.x Jackson module, `JsonObject`, `JsonArray` |
 | `com.fasterxml.jackson.core:jackson-databind` | compile | `ObjectMapper`, `Module`, `BeanDeserializerModifier`, `ContextualDeserializer` |
 | `com.fasterxml.jackson.datatype:jackson-datatype-jsr310` | compile | `JavaTimeModule` — ISO-8601 `java.time` support in the `vertique` defaults |

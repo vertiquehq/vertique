@@ -116,10 +116,11 @@ public final class DefaultBoundRequest implements BoundRequest {
         this.headers = bindMultiMap(raw.headers(), params, ParamLocation.HEADER, true, resolver);
         this.cookies = bindCookies(raw.cookies(), params, resolver);
 
-        // FR-JSON-024/024A: a non-vertx JSON profile resolved for this method (slice 2.1) is stashed
+        // FR-JSON-024/024A: a JSON profile other than the process codec's resolved for this method (slice 2.1) is
+        // stashed
         // on the routing context under KEY_RESOLVED_BODY_MAPPER. When present, that profile mapper
         // owns the FIRST PARSE of a JSON body (applying its strict parser features); when absent
-        // (the vertx default), the body path below is byte-for-byte identical to today.
+        // (the process codec), the body path below is byte-for-byte identical to today.
         ObjectMapper profileMapper = ctx.get(BoundRequest.KEY_RESOLVED_BODY_MAPPER);
         this.body = bindBody(ctx.body(), raw.getHeader("Content-Type"), profileMapper);
     }
@@ -290,7 +291,7 @@ public final class DefaultBoundRequest implements BoundRequest {
             return RequestValue.of(buffer);
         }
 
-        // No usable content type (null/blank). When a non-vertx profile applies (FR-JSON-024A), a
+        // No usable content type (null/blank). When a profile other than the process codec's applies (FR-JSON-024A), a
         // JSON-shaped body ('{'/'[' as the first non-whitespace, BOM-skipped, byte) must still be
         // FIRST-PARSED by the profile mapper — JsonRequestBodyDecoder.canDecode returns true for a null
         // content type, so this body would otherwise dispatch but with the strict first parse skipped.

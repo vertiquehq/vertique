@@ -248,17 +248,17 @@ class KafkaDefaultProfileValidatorTest {
     }
 
     /**
-     * Supplies a {@link KafkaConfig} whose {@code jsonProfile} is the reserved {@code vertx} id.
+     * Supplies a {@link KafkaConfig} whose {@code jsonProfile} is the reserved {@code system} id.
      */
     @Module
     abstract static class KnownConfigModule {
 
         /**
-         * @return a {@link KafkaConfig} with {@code jsonProfile} set to {@code vertx}
+         * @return a {@link KafkaConfig} with {@code jsonProfile} set to {@code system}
          */
         @Provides
         static KafkaConfig kafkaConfig() {
-            return kafkaConfigWithProfile("vertx");
+            return kafkaConfigWithProfile("system");
         }
 
         /**

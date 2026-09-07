@@ -24,7 +24,7 @@ class CacheOperationalLimitsTest {
     @Test
     @DisplayName("an annotation TTL above maxTtlSeconds is rejected")
     void rejectsTtlAboveMaximum() throws NoSuchMethodException {
-        var config = new CacheConfig(true, CacheMode.LOCAL, 60, 120, "vertx", 1_024, 1_048_576, 10_000, 100, Map.of());
+        var config = new CacheConfig(true, CacheMode.LOCAL, 60, 120, "system", 1_024, 1_048_576, 10_000, 100, Map.of());
         var method = Target.class.getDeclaredMethod("value");
         var metadata = CacheTestFixtures.metadata(method, "unused");
 
@@ -37,7 +37,7 @@ class CacheOperationalLimitsTest {
     @DisplayName("an annotation TTL equal to maxTtlSeconds is accepted")
     void acceptsTtlAtMaximum() throws NoSuchMethodException {
         var store = new CacheTestFixtures.RecordingStore();
-        var config = new CacheConfig(true, CacheMode.LOCAL, 60, 120, "vertx", 1_024, 1_048_576, 10_000, 100, Map.of());
+        var config = new CacheConfig(true, CacheMode.LOCAL, 60, 120, "system", 1_024, 1_048_576, 10_000, 100, Map.of());
         var method = Target.class.getDeclaredMethod("valueAtMaximum");
         var metadata = CacheTestFixtures.metadata(method, "unused");
         var targetCalls = new AtomicInteger();
@@ -61,7 +61,7 @@ class CacheOperationalLimitsTest {
                 CacheMode.LOCAL,
                 60,
                 120,
-                "vertx",
+                "system",
                 1_024,
                 1_048_576,
                 10_000,

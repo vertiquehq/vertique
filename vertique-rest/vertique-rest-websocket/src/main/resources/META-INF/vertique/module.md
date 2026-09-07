@@ -262,9 +262,16 @@ handling:
 An endpoint listens for either text or binary messages, never both — the `Buffer` parameter is what
 switches it. With no message parameter (or no `@OnMessage` at all) the endpoint receives nothing.
 
-JSON encoding and decoding — inbound typed messages and `session.send(Object)` — use the same shared
-Jackson mapper as the REST pipeline, so any `ObjectMapperCustomizer` the application registers
-applies to WebSocket payloads too.
+JSON encoding and decoding — inbound typed messages and `session.send(Object)` — use the process
+JSON codec's mapper (`VertiqueJson.mapper()`), the same mapper every other unmanaged framework path
+runs on: whatever profile `json.systemProfile` selects applies to WebSocket payloads too.
+
+WebSocket message binding has no request-validation gate in front of it, so it is
+**binder-authoritative**: under an enum-lenient system profile (the reserved `vertique` profile or
+any custom profile that enables `READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE`), an unrecognized
+enum string binds to the field's `@JsonEnumDefaultValue` instead of being rejected — the same enum
+leniency every process-codec path exposes. Process-codec paths also accept JSON comments under the
+default `system` profile, exactly as they do today; a comment-strict custom profile turns that off.
 
 A message that fails to deserialize or fails Bean Validation is **dropped**: `@OnError` is invoked
 with the exception when declared, and `@OnMessage` is not called. The connection stays open.
@@ -493,11 +500,16 @@ void onMessage(WebSocketSession session, String text) { }
 
 **Renamed message fields are covered.** A field-level policy is declared on a Java property, while an
 incoming message is keyed by whatever Jackson publishes — `@JsonProperty("user_name")`, a naming
-strategy, or a `@JsonAlias`. Messages are bound through Vert.x's shared `DatabindCodec.mapper()`, and
+strategy, or a `@JsonAlias`. Messages are bound through the process JSON codec's `VertiqueJson.mapper()`, and
 that mapper's own property introspection is what maps each wire key back onto the Java property whose
 policies apply (`JacksonFieldNameResolver`, from `dev.vertique:vertique-json`, implementing the
 `dev.vertique.core.sanitization.InputFieldNameResolver` contract). A `@Sanitize` on a
 renamed field therefore runs exactly as it would on an unrenamed one, with no extra declaration.
+The projection is computed once per endpoint set when the registrar is built (the `EDGE` startup
+phase) from the mapper installed at that moment, while each frame binds through the mapper current at
+request time. A later same-id swap of the process codec that changes property naming would leave the
+projection stale — a renamed field's policy could then silently not run — so such a swap must keep
+the replaced mapper's naming; the framework never performs one after startup.
 
 ```java
 public record ProfileMessage(

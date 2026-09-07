@@ -77,7 +77,7 @@ WARN for each mount that selects this strategy; `@FilePart` and verifier executi
 
 **Error sanitization.** Validation errors produced by the `openapi-contract` strategy are sanitized before reaching the client: submitted values, client-supplied property names, and raw validator internals are stripped from the error response. The 400 response body contains only the violation location (JSON pointer), the failed keyword, and a stable message — no echoed request data.
 
-**JSON profile first-parse.** When a non-`vertx` JSON mapper profile is resolved for a route (see `dev.vertique:vertique-rest-jaxrs` → request-body profiles), the `openapi-contract` strategy runs that profile mapper's **first parse** of the request body — applying its strict parser features and rejecting a non-conforming body with a 400 — *before* OpenAPI schema validation, consistent with the default `web-validation` strategy. No profile is stashed for the `vertx` default, in which case this is a no-op and OpenAPI validation runs unchanged.
+**JSON profile first-parse.** When a route's resolved JSON mapper is not the same instance as the process codec's mapper (see `dev.vertique:vertique-rest-jaxrs` → request-body profiles, whose resolver returns that identity sentinel), the `openapi-contract` strategy runs that profile mapper's **first parse** of the request body — applying its strict parser features and rejecting a non-conforming body with a 400 — *before* OpenAPI schema validation, consistent with the default `web-validation` strategy. No profile is stashed when the route's mapper is the process codec's own instance, in which case this is a no-op and OpenAPI validation runs unchanged.
 
 ---
 

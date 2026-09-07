@@ -106,9 +106,25 @@ SPDX-License-Identifier: EUPL-1.2
 
     <build>
         <plugins>
+            <!-- TP-001/TP-003 (WebSocketMessageCodecTest) install a mapper through VertiqueJson.install
+                 and must restore the raw Vert.x delegate in @AfterEach, so both forks of this module
+                 enable the reset seam. The flag is read once at VertiqueJson class initialization; it
+                 is a test-only argLine and never reaches a shipped runtime. Reproduces the parent
+                 argLine (JaCoCo late-replacement + Mockito premain) exactly, as vertique-json/pom.xml
+                 does. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>@{argLine} -javaagent:${project.build.directory}/mockito-agent.jar -Dvertique.json.codec.allowReset=true</argLine>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
+                <configuration>
+                    <argLine>@{argLine} -javaagent:${project.build.directory}/mockito-agent.jar -Dvertique.json.codec.allowReset=true</argLine>
+                </configuration>
             </plugin>
         </plugins>
     </build>

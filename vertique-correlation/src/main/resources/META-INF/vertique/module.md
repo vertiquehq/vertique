@@ -155,7 +155,11 @@ For cross-boundary propagation the runtime ships:
 - A bespoke `DurableContextMetadataEncoder` / `Decoder` pair that serialises the snapshot as a
   single JSON envelope under the `correlation` durable namespace (projected to the `vertique-correlation` Kafka header) (Context contribution model
   level 4 — bespoke is justified by `durableSafe` filtering, schemaVersion enforcement, and
-  header re-validation on decode).
+  header re-validation on decode). Both sides run on the process JSON codec's mapper
+  (`VertiqueJson.mapper()`), so `json.systemProfile` governs the durable format; the decoder has no
+  request-validation gate in front of it, so the installed mapper's parser leniency (comments,
+  quoting) is what it accepts — enum values, however, are parsed strictly by the decoder itself
+  (`Enum.valueOf` over the header tree), so an enum-lenient system profile does not widen them.
 - A `CorrelationContextSeeder` `InboundContextInitializer` that mints a fresh context on every
   inbound boundary (REST, service dispatch, Kafka, outbox relay, delayed-job poll, workflow
   branch / timer recovery) that arrives without one.

@@ -28,9 +28,21 @@ final class MountFixtures {
      * @return the real mount handle, wired with the {@code web-validation} strategy
      */
     static RestTestMount mount(Vertx vertx, JsonObject config, RestTestContributions contributions) {
-        return DaggerValidationMountComponent.factory()
-                .create(vertx, config, contributions)
-                .testMount();
+        return component(vertx, config, contributions).testMount();
+    }
+
+    /**
+     * Builds the whole graph and returns the component itself, for a test that needs one of its other
+     * singletons — the profile registry, say — alongside the mount handle.
+     *
+     * @param vertx         the Vert.x instance
+     * @param config        the application configuration, exactly as {@code VertxModule} would supply
+     *                      it in production
+     * @param contributions the additive test contributions
+     * @return the assembled component
+     */
+    static ValidationMountComponent component(Vertx vertx, JsonObject config, RestTestContributions contributions) {
+        return DaggerValidationMountComponent.factory().create(vertx, config, contributions);
     }
 
     /**

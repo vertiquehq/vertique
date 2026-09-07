@@ -178,8 +178,9 @@ final class TestFactories {
 
         /**
          * Sets the JSON mapper profile registry used to resolve per-method request-body profiles
-         * (defaults to a vertx-only registry). Override to register a non-{@code vertx} profile a
-         * resource selects via {@code @JsonProfile}.
+         * (defaults to a registry carrying only the reserved built-ins, so every route resolves the
+         * {@code vertique} floor). Override to register an application profile a resource selects via
+         * {@code @JsonProfile}.
          *
          * @param registry the profile registry
          * @return this builder
@@ -251,7 +252,7 @@ final class TestFactories {
                     httpConfig,
                     jaxRsConfig,
                     jsonMapperProfileRegistry, // jsonMapperProfileRegistry
-                    dev.vertique.json.JsonConfig.defaults(), // jsonConfig (global json.jsonProfile default)
+                    dev.vertique.json.JsonConfig.defaults(), // jsonConfig (json.jsonProfile unset => vertique floor)
                     Optional.empty(), // beanValidator
                     Optional.empty(), // objectProcessor
                     Set.of(), // evidenceCapturers

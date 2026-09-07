@@ -44,7 +44,7 @@ import org.junit.jupiter.api.Test;
  * (1) unknown-enum fallback enabled, (2) ISO-8601 java.time with offset preserved,
  * (3) BigDecimal for floats, (4) NON_NULL inclusion. Also verifies that BigDecimal serialization
  * stays as a JSON number (stock behavior), JsonObject round-trips correctly, and that Instant
- * output is byte-identical to the vertx profile (NFR-JSON-012).
+ * output is byte-identical to the raw Vert.x mapper (NFR-JSON-012).
  */
 class JacksonDefaultsTest {
 
@@ -268,7 +268,7 @@ class JacksonDefaultsTest {
     // --- Instant compatibility test (NFR-JSON-012) ---
 
     @Nested
-    @DisplayName("Instant serialization compatibility with vertx profile (NFR-JSON-012)")
+    @DisplayName("Instant serialization compatibility with the raw Vert.x mapper (NFR-JSON-012)")
     class InstantCompat {
 
         @Test

@@ -38,7 +38,7 @@ class McpJsonProfileIT {
     @Test
     @DisplayName("shouldGenerateDifferentSchemasForTheSameCarrierUnderDifferentDeclaredProfiles")
     void shouldGenerateDifferentSchemasForTheSameCarrierUnderDifferentDeclaredProfiles() {
-        // --- Given: a factory over the framework vertx profile plus a registered profile whose
+        // --- Given: a factory over the framework system profile plus a registered profile whose
         // BigDecimal override republishes it as a wire string ---
         McpToolRuntimeFactory factory = McpJsonProfileITFixture.factory();
         List<McpToolParameterMetadata> parameters =

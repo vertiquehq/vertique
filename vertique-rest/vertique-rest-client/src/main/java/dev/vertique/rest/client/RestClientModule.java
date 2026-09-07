@@ -62,7 +62,8 @@ import java.util.Set;
  *       will be validated after deserialization if a validator is available.</li>
  *   <li>{@code Set<dev.vertique.core.json.JsonMapperProfile>} — contributed by the application via
  *       {@code @Provides @IntoSet JsonMapperProfile} to register named mapper profiles; the empty
- *       set is the default (only the built-in {@code vertx} profile).</li>
+ *       set is the default (only the built-in {@code system}, {@code vertique}, and
+ *       {@code vertique-strict} profiles).</li>
  * </ul>
  */
 @Module(includes = {JsonRuntimeModule.class, RestCoreModule.class, ResilienceModule.class})

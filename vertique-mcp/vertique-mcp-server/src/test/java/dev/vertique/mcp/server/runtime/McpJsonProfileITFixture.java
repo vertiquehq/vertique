@@ -28,7 +28,7 @@ final class McpJsonProfileITFixture {
 
     /**
      * Builds a real {@link McpToolRuntimeFactory} over a minimal registry carrying the reserved
-     * {@code vertx} profile, the {@code vertique} profile (issue #440's default fallback, also no
+     * {@code system} profile, the {@code vertique} profile (issue #440's default fallback, also no
      * overrides), and {@link #STRING_OVERRIDE_PROFILE_ID} (a {@link BigDecimal} input-direction
      * string override).
      *
@@ -41,8 +41,8 @@ final class McpJsonProfileITFixture {
     }
 
     /**
-     * The registered profiles this fixture needs: the reserved {@code vertx} profile (kept for
-     * realism, though {@code vertique} — not {@code vertx} — is the resolver's actual fallback since
+     * The registered profiles this fixture needs: the reserved {@code system} profile (kept for
+     * realism, though {@code vertique} — not {@code system} — is the resolver's actual fallback since
      * issue #440), the {@code vertique} fallback itself, and the override.
      */
     private static final class FixtureProfileRegistry implements JsonMapperProfileRegistry {
@@ -50,7 +50,7 @@ final class McpJsonProfileITFixture {
         private final Map<JsonProfileId, JsonMapperProfile> profilesById = new LinkedHashMap<>();
 
         private FixtureProfileRegistry() {
-            profilesById.put(JsonProfileId.VERTX, new NoOverrideProfile(JsonProfileId.VERTX));
+            profilesById.put(JsonProfileId.SYSTEM, new NoOverrideProfile(JsonProfileId.SYSTEM));
             JsonProfileId vertiqueId = JsonProfileId.of("vertique");
             profilesById.put(vertiqueId, new NoOverrideProfile(vertiqueId));
             JsonProfileId overrideId = JsonProfileId.of(STRING_OVERRIDE_PROFILE_ID);

@@ -34,15 +34,18 @@ Do not use when only non-JSON payloads are needed (e.g. Avro-only), or when a fu
 
 ### ObjectMapper resolution via profile registry
 
-The backing `ObjectMapper` is resolved per endpoint with a three-tier precedence:
+The backing `ObjectMapper` is resolved per endpoint with a two-tier precedence, and profiles resolved through the registry are the only mapper source — no call site reads the shared Vert.x codec mapper directly:
 
-1. **Explicit bag selection** — a **non-blank** `jsonProfile` in the merged serde-config bag (set by the per-binding / `kafka.jsonProfile` resolution in `vertique-kafka-core`) wins outright and stops resolution. An explicit `"vertx"` selects the framework's shared `DatabindCodec.mapper()` (the mapper Vert.x uses internally) and **does not** fall through to the global default; any other id is looked up in the injected `JsonMapperProfileRegistry` from `vertique-json` (an unknown **bag** id ⇒ `JsonProfileConfigurationException` at deserializer-build time, fail-fast — distinct from the global `json.jsonProfile`, which is pre-resolved and fails fast at provider construction / startup).
-2. **Global `json.jsonProfile`** — when the bag carries no explicit selection, the global default from `JsonConfig` applies (pre-resolved once at construction to avoid a per-record allocation).
-3. **`vertx` floor** — otherwise `DatabindCodec.mapper()`.
+1. **Explicit bag selection** — a **non-blank** `jsonProfile` in the merged serde-config bag (set by the per-binding / `kafka.jsonProfile` resolution in `vertique-kafka-core`) wins outright and stops resolution. Every id, including `"system"`, is looked up in the injected `JsonMapperProfileRegistry` from `vertique-json` (an unknown **bag** id ⇒ `JsonProfileConfigurationException` at deserializer-build time, fail-fast — distinct from the global `json.jsonProfile`, which is pre-resolved and fails fast at provider construction / startup).
+2. **Global `json.jsonProfile`** — when the bag carries no explicit selection, the pre-resolved global default — `registry.mapper(jsonConfig.effectiveProfile())`, the `vertique` floor unless the application configures `json.jsonProfile` otherwise — applies.
 
 `JsonMapperProfileRegistry` and `JsonConfig` are available because `KafkaJsonModule` includes `JsonRuntimeModule`. The global-tier mapper is computed once in the `JsonSerdeProvider` constructor (an unknown `json.jsonProfile` fails fast at startup; the per-binding `kafka.jsonProfile` is additionally validated by a `ComposeValidator`).
 
-The per-binding profile (tier 1) is selected by placing `@JsonProfile("profile-id")` (`dev.vertique.core.json.JsonProfile`) on the `@KafkaListener` or `@KafkaProducer` **type**. Placing it on a method instead of the type is rejected at build time (FR-JSON-066). When the annotation is absent, resolution falls through to the global and `vertx`-floor tiers above.
+The per-binding profile (tier 1) is selected by placing `@JsonProfile("profile-id")` (`dev.vertique.core.json.JsonProfile`) on the `@KafkaListener` or `@KafkaProducer` **type**. Placing it on a method instead of the type is rejected at build time (FR-JSON-066). When the annotation is absent, resolution falls through to the global default (the `vertique` floor) above.
+
+### Trust boundary: no validation gate on JSON consumer deserialization
+
+Kafka JSON consumer deserialization has no validation gate — it is a cross-service trust boundary. The binder (`JacksonKafkaDeserializer`, and `JsonSerdeProvider`'s routing/`convertRouted` path) is authoritative; when the resolved profile is the opinionated `vertique` recipe, its enum leniency (`READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE`) is fully exposed to whatever produced the record, with no schema gate in front of it.
 
 ### Property-route routing without a second byte-parse
 
@@ -74,8 +77,9 @@ public final class JsonSerdeProvider implements KafkaSerdeProvider {
     /**
      * Creates a provider that resolves named JSON mapper profiles from the registry and applies the
      * global {@code json.jsonProfile} default (from {@link JsonConfig}) when the serde bag carries no
-     * explicit id. A blank/absent bag id falls to the global default then the {@code vertx} floor;
-     * an explicit {@code "vertx"} resolves to {@link DatabindCodec#mapper()} and stops.
+     * explicit id. A blank/absent bag id resolves the pre-resolved global default — the {@code vertique}
+     * floor unless {@code json.jsonProfile} is configured; an explicit bag id, including
+     * {@code "system"}, resolves through the registry and stops.
      */
     public JsonSerdeProvider(JsonMapperProfileRegistry registry, JsonConfig jsonConfig) { ... }
 
@@ -138,15 +142,15 @@ public final class JsonSerdeProvider implements KafkaSerdeProvider {
 
 ### `JacksonKafkaSerializer`
 
-Jackson JSON serializer used by `JsonSerdeProvider`. Delegates to `DatabindCodec.mapper()` by default; accepts a custom `ObjectMapper` for testing or specialized use.
+Jackson JSON serializer used by `JsonSerdeProvider`. The no-arg constructor does not capture a mapper: it resolves `VertiqueJson.mapper()` — the process JSON codec's mapper — lazily, on every `serialize` call, so a no-arg serde built before the process mapper is installed (e.g. at Dagger graph construction time) still observes the currently-installed mapper at use time. The two-argument constructor accepts a custom `ObjectMapper`, captured eagerly, for testing or specialized use.
 
 ```java
 public class JacksonKafkaSerializer<V> implements KafkaSerializer<V> {
 
-    /** Creates a serializer using the framework's shared {@code DatabindCodec.mapper()}. */
+    /** Creates a serializer that resolves {@code VertiqueJson.mapper()} lazily, per {@code serialize} call. */
     public JacksonKafkaSerializer() { ... }
 
-    /** Creates a serializer with a custom ObjectMapper. */
+    /** Creates a serializer with a custom ObjectMapper, captured eagerly. */
     public JacksonKafkaSerializer(ObjectMapper mapper) { ... }
 
     @Override
@@ -158,15 +162,15 @@ public class JacksonKafkaSerializer<V> implements KafkaSerializer<V> {
 
 ### `JacksonKafkaDeserializer`
 
-Jackson JSON deserializer used by `JsonSerdeProvider`. Deserializes to a caller-supplied target type using `DatabindCodec.mapper()` by default; accepts a custom `ObjectMapper`.
+Jackson JSON deserializer used by `JsonSerdeProvider`. The no-arg constructor mirrors `JacksonKafkaSerializer`: it resolves `VertiqueJson.mapper()` lazily, on every `deserialize` call, rather than capturing it at construction. The two-argument constructor accepts a caller-supplied `ObjectMapper`, captured eagerly.
 
 ```java
 public class JacksonKafkaDeserializer<V> implements KafkaDeserializer<V> {
 
-    /** Creates a deserializer for {@code type} using {@code DatabindCodec.mapper()}. */
+    /** Creates a deserializer for {@code type} that resolves {@code VertiqueJson.mapper()} lazily, per call. */
     public JacksonKafkaDeserializer(Class<V> type) { ... }
 
-    /** Creates a deserializer for {@code type} with a custom ObjectMapper. */
+    /** Creates a deserializer for {@code type} with a custom ObjectMapper, captured eagerly. */
     public JacksonKafkaDeserializer(Class<V> type, ObjectMapper mapper) { ... }
 
     @Override
@@ -252,6 +256,6 @@ The JSON provider is the reference implementation of the SPI. To implement a cus
 |----------|-------|---------|
 | `dev.vertique:vertique-kafka-core` | compile | `KafkaSerdeProvider` SPI, `KafkaSerializer`, `KafkaDeserializer`, `DeserializationException` |
 | `dev.vertique:vertique-json` | compile | `JsonRuntimeModule`, `JsonConfig` |
-| `dev.vertique:vertique-core` | compile | `JsonMapperProfileRegistry`, `JsonProfileId` (package `dev.vertique.core.json`) |
+| `dev.vertique:vertique-core` | compile | `JsonMapperProfileRegistry`, `JsonProfileId`, `VertiqueJson` (package `dev.vertique.core.json`) |
 | `com.fasterxml.jackson.core:jackson-databind` | compile | `ObjectMapper`, `JsonNode`, `treeToValue` |
-| `io.vertx:vertx-core` | compile | `DatabindCodec.mapper()` (the shared ObjectMapper) |
+| `io.vertx:vertx-core` | compile | `JsonObject` (the merged serde-config bag) |

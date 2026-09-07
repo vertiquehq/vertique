@@ -15,28 +15,24 @@ import jakarta.annotation.Nullable;
  * Resolves the effective tool-payload JSON profile once, at composition.
  *
  * <p>The precedence is method {@code @JsonProfile}, declaring type {@code @JsonProfile},
- * {@code mcp.jsonProfile}, global {@code json.jsonProfile}, then the {@code vertique} profile.
- * The annotation processor has already collapsed the method-over-type selection into
- * one nullable declared literal, so this resolver owns the configured tail. An unknown id fails
- * composition before Router mount; a blank id never reaches composition (it fails compilation).
+ * {@code mcp.jsonProfile}, then {@link JsonConfig#effectiveProfile()}. The annotation processor has
+ * already collapsed the method-over-type selection into one nullable declared literal, so this
+ * resolver owns the configured tail. An unknown id fails composition before Router mount; a blank id
+ * never reaches composition (it fails compilation).
  *
- * <p>The fallback tier is deliberately not the reserved {@code
- * vertx} profile (Vert.x's bare {@code DatabindCodec.mapper()}, which cannot serialize an {@code
- * Optional}-typed tool result), but {@code vertique} (this framework's own default profile). This is
- * deliberately <em>not</em> an MCP configuration default: a configuration default would sit ahead of
- * {@code json.jsonProfile} in {@link #configuredDefault()}'s precedence chain and would silently
- * override an application's own explicit global choice. The fallback instead applies only when
- * nothing upstream of it — the per-tool declaration, {@code mcp.jsonProfile}, and {@code
- * json.jsonProfile} — ever selected a profile at all.
+ * <p>MCP is a managed edge, so its zero-config tail is the shared effective default for managed
+ * edges — {@code vertique}, this framework's opinionated profile — not the process codec's {@code
+ * system} baseline: {@code system} is deliberately unopinionated (it is shared, as the installed
+ * process codec, by every path in the process, trusted and untrusted alike), while {@code vertique}
+ * carries the opinions (null/absent omission, enum-default leniency) this framework wants at a
+ * managed boundary by default. An application that sets the global {@code json.jsonProfile} —
+ * including to {@code system} — reaches MCP through {@link JsonConfig#effectiveProfile()}; {@code
+ * mcp.jsonProfile} still overrides that global choice for MCP alone. {@link #configuredDefault()}
+ * therefore resolves {@code mcp.jsonProfile} first and only then delegates to {@code
+ * jsonConfig.effectiveProfile()} — never the raw {@link JsonConfig#jsonProfile()} — so the global
+ * floor is applied exactly where the shared authority applies it.
  */
 final class McpJsonProfileResolver {
-
-    /**
-     * The final fallback profile: resolved only when the per-tool declaration, {@code
-     * mcp.jsonProfile}, and {@code json.jsonProfile} are all unset. Never outranks {@code
-     * json.jsonProfile} — see {@link #configuredDefault()}.
-     */
-    private static final JsonProfileId VERTIQUE_FALLBACK = JsonProfileId.of("vertique");
 
     private final JsonMapperProfileRegistry profiles;
     private final JsonConfig jsonConfig;
@@ -70,18 +66,19 @@ final class McpJsonProfileResolver {
     }
 
     /**
-     * Resolves the configured tail of the precedence: MCP boundary, then global, then {@code
-     * vertique}.
+     * Resolves the configured tail of the precedence: MCP boundary, else the shared effective
+     * profile.
      *
-     * <p>A {@code null} or blank configured id means "not set" and inherits the next tier, matching
-     * {@code JsonConfig}'s documented semantics; a non-blank unknown id is rejected by the registry.
-     * {@code json.jsonProfile} is read here, ahead of the fallback — an application that sets it
-     * always gets its own configured profile, never {@link #VERTIQUE_FALLBACK}.
+     * <p>A blank {@code mcp.jsonProfile} means "not set" and inherits {@link
+     * JsonConfig#effectiveProfile()}, matching {@code JsonConfig}'s documented semantics; a
+     * non-blank unknown id is rejected by the registry. {@link JsonConfig#effectiveProfile()} — never
+     * the raw {@link JsonConfig#jsonProfile()} — already applies the {@code vertique} floor when the
+     * global key is unset, so this method never hard-codes that floor itself.
      *
-     * @return the configured default id, or {@link #VERTIQUE_FALLBACK} when neither tier is set
+     * @return the configured default id
      */
     private JsonProfileId configuredDefault() {
-        String configured = Strings.firstNonBlank(mcpConfig.jsonProfile(), jsonConfig.jsonProfile());
-        return configured != null ? JsonProfileId.of(configured) : VERTIQUE_FALLBACK;
+        String mcpDefault = Strings.firstNonBlank(mcpConfig.jsonProfile());
+        return mcpDefault != null ? JsonProfileId.of(mcpDefault) : jsonConfig.effectiveProfile();
     }
 }

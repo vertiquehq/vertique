@@ -89,9 +89,25 @@ SPDX-License-Identifier: EUPL-1.2
 
     <build>
         <plugins>
+            <!-- The profile proofs in this module install the process JSON codec's mapper and restore
+                 the raw Vert.x delegate in @AfterEach, so both forks enable the reset seam. The flag is
+                 read once at VertiqueJson class initialization; it is a test-only argLine and never
+                 reaches a shipped runtime. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- Reproduces the parent argLine (JaCoCo late-replacement + Mockito premain)
+                         and adds the reset flag; a bare -D would drop both. -->
+                    <argLine>@{argLine} -javaagent:${project.build.directory}/mockito-agent.jar -Dvertique.json.codec.allowReset=true</argLine>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
+                <configuration>
+                    <argLine>@{argLine} -javaagent:${project.build.directory}/mockito-agent.jar -Dvertique.json.codec.allowReset=true</argLine>
+                </configuration>
             </plugin>
         </plugins>
     </build>

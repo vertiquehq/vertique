@@ -502,7 +502,7 @@ Consumers, highest first:
    `KafkaConsumerBinding.Builder#jsonProfile(...)`
 3. `kafka.jsonProfile`
 4. `json.jsonProfile`
-5. the `vertx` framework default, backed by `DatabindCodec.mapper()`
+5. the `vertique` framework default, resolved through the registry
 
 Producers, highest first:
 
@@ -511,7 +511,7 @@ Producers, highest first:
 3. `@JsonProfile("...")` at type level on the `@KafkaProducer` type
 4. `kafka.jsonProfile`
 5. `json.jsonProfile`
-6. the `vertx` framework default
+6. the `vertique` framework default
 
 A custom `KafkaDeserializer` set through `KafkaConsumerBinding.Builder#deserializer()` bypasses
 profile selection entirely — the profile applies only when the framework builds the serde from a

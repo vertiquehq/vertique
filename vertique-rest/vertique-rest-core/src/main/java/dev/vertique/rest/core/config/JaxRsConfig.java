@@ -141,11 +141,13 @@ public class JaxRsConfig {
      * resource method that does not select a profile of its own (config key {@code jaxrs.jsonProfile}).
      * The effective profile per method is resolved as method-level {@code @JsonProfile} &rarr;
      * class-level {@code @JsonProfile} &rarr; this config value &rarr; the global
-     * {@code json.jsonProfile} default &rarr; the reserved {@code vertx} profile.
+     * {@code json.jsonProfile} default &rarr; the reserved {@code vertique} floor
+     * ({@code JsonConfig.effectiveProfile()}).
      *
      * <p>A {@code null} or blank value (the default) means "no JAX-RS-level default" — resolution falls
-     * through to the global {@code json.jsonProfile} default and ultimately the reserved {@code vertx}
-     * profile (the zero-config behavior backed by Vert.x's {@code DatabindCodec.mapper()}). A non-blank
+     * through to the global {@code json.jsonProfile} default and ultimately the reserved {@code vertique}
+     * floor (the zero-config behavior; {@code json.jsonProfile: system} selects the process codec's
+     * baseline instead). A non-blank
      * value must match a profile registered in the
      * {@link dev.vertique.core.json.JsonMapperProfileRegistry}, otherwise startup fails fast.
      */

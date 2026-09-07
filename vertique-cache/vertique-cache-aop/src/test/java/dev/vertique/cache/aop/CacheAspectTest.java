@@ -88,7 +88,7 @@ class CacheAspectTest {
         var method = Target.class.getDeclaredMethod("value", String.class);
         MethodMetadata metadata = new ReflectiveMethodMetadata(method, List.of(parameterMetadata()));
         CacheConfig config =
-                new CacheConfig(false, CacheMode.LOCAL, 60, 86_400, "vertx", 1_024, 1_048_576, 10_000, 100, Map.of());
+                new CacheConfig(false, CacheMode.LOCAL, 60, 86_400, "system", 1_024, 1_048_576, 10_000, 100, Map.of());
         AtomicInteger targetCalls = new AtomicInteger();
 
         Object result = new CacheableAspect(store, config, Set.of())
@@ -134,7 +134,7 @@ class CacheAspectTest {
         var method = Target.class.getDeclaredMethod("value", String.class);
         MethodMetadata metadata = new ReflectiveMethodMetadata(method, List.of(parameterMetadata()));
         CacheConfig config =
-                new CacheConfig(true, CacheMode.LOCAL, 60, 86_400, "vertx", 1, 1_048_576, 10_000, 100, Map.of());
+                new CacheConfig(true, CacheMode.LOCAL, 60, 86_400, "system", 1, 1_048_576, 10_000, 100, Map.of());
         AtomicInteger targetCalls = new AtomicInteger();
 
         Object result = new CacheableAspect(store, config, Set.of())

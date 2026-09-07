@@ -78,7 +78,7 @@ public class RedisCacheStoreContractIT extends dev.vertique.cache.CacheStoreCont
                 4,
                 100);
         registry = new RedisClientRegistry(hostVertx, new RedisConnectionsConfig(List.of(connection)));
-        store = new RedisCacheStore(registry, REDIS_CONFIG, cacheConfig(), profiles("vertx", new ObjectMapper()));
+        store = new RedisCacheStore(registry, REDIS_CONFIG, cacheConfig(), profiles("system", new ObjectMapper()));
         commands = RedisAPI.api(registry.client("primary"));
         await(commands.ping(List.of()));
         context.completeNow();
@@ -189,7 +189,7 @@ public class RedisCacheStoreContractIT extends dev.vertique.cache.CacheStoreCont
         BarrierRedisCommandClient barrier =
                 new BarrierRedisCommandClient(VertxRedisCommandClient.from(registry, REDIS_CONFIG.connection()));
         RedisCacheStore blockedStore =
-                new RedisCacheStore(barrier, REDIS_CONFIG, cacheConfig(), profiles("vertx", new ObjectMapper()));
+                new RedisCacheStore(barrier, REDIS_CONFIG, cacheConfig(), profiles("system", new ObjectMapper()));
 
         Future<Optional<Object>> oldLookup = get(blockedStore, KEY, Profile.class);
         assertTrue(barrier.awaitEntryReadStarted(), "lookup must reach the controllable entry read");

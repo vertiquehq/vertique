@@ -118,8 +118,9 @@ never bind.
 The processor resolves the tool's `@JsonProfile` method-over-type, validates and normalizes the id
 through `JsonProfileId`, and emits the normalized id as a nullable **typed `JsonProfileId` literal**
 (`JsonProfileId.of("…")`) on the invoker — not a raw string. A blank annotation value is a compile
-error. Resolving the remaining tail of the precedence chain — the MCP boundary default, the global
-default, then the reserved `vertx` profile — and rejecting an unknown id belongs to composition in
+error. Resolving the remaining tail of the precedence chain — the MCP boundary default, then the global
+default, floored at the shared managed-edge effective profile (`json.jsonProfile`, or the reserved
+`vertique` id when unset) — and rejecting an unknown id belongs to composition in
 `vertique-mcp-server`.
 
 ### Generated parameter carriers and metadata

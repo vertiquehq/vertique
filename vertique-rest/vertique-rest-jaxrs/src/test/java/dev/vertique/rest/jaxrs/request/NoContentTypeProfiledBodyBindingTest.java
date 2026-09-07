@@ -33,7 +33,7 @@ import org.junit.jupiter.api.Test;
  * Vert.x JSON-shape probe (FR-JSON-024A).
  *
  * <p>This exercises {@code DefaultBoundRequest.bindBody}'s missing-content-type branch directly: when
- * a non-{@code vertx} profile mapper is stashed on the routing context under
+ * a resolved profile mapper is stashed on the routing context under
  * {@link BoundRequest#KEY_RESOLVED_BODY_MAPPER} and the body's first significant byte is {@code '{'}
  * or {@code '['}, {@code bindBody} deliberately pre-empts the lenient
  * {@code JsonRequestBodyDecoder}-style shape probe (whose {@code canDecode} returns {@code true} for a

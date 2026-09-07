@@ -35,7 +35,8 @@ class JsonMapperProfileRegistryValidateConfiguredTest {
 
     @BeforeEach
     void setUp() {
-        // Seed with no application profiles — built-ins (vertx, vertique) are seeded automatically.
+        // Seed with no application profiles — the built-ins (system, vertique, vertique-strict) are
+        // seeded automatically.
         registry = new DefaultJsonMapperProfileRegistry(Set.of());
     }
 
@@ -58,9 +59,10 @@ class JsonMapperProfileRegistryValidateConfiguredTest {
     }
 
     @Test
-    @DisplayName("known vertx id passes")
-    void knownVertxId_passes() {
-        assertDoesNotThrow(() -> registry.validateConfigured("vertx"), "the reserved 'vertx' id must resolve cleanly");
+    @DisplayName("known system id passes")
+    void knownSystemId_passes() {
+        assertDoesNotThrow(
+                () -> registry.validateConfigured("system"), "the reserved 'system' id must resolve cleanly");
     }
 
     @Test

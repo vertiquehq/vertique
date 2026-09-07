@@ -31,8 +31,8 @@ starter or feature module. Depend on it **directly** when:
 - you are writing a Dagger module that binds `Vertx`, `@VertxConfig JsonObject`, or `EventBus`;
 - you throw or catch framework exceptions and want the semantic roots that drive HTTP mapping;
 - you parse a configuration section into a typed record through `ConfigParser`;
-- you implement a framework extension point declared here — a health check, a lifecycle step, an
-  `ObjectMapper` customizer, or a canonicalizer;
+- you implement a framework extension point declared here — a health check, a lifecycle step, a
+  `JsonMapperProfile`, or a canonicalizer;
 - you annotate an operation with `@ValidateWith`, `@Canonicalize`, `@Sanitize`, or `@JsonProfile`.
 
 Pair core with the module that implements the contract you are using: `vertique-config-core` for
@@ -428,7 +428,7 @@ surfaces under different Jackson policies.
 
 ```java
 public record JsonProfileId(String value) {
-    public static final JsonProfileId VERTX;     // "vertx"
+    public static final JsonProfileId SYSTEM;    // "system"
     public static JsonProfileId of(String value);
 }
 
@@ -446,6 +446,10 @@ MCP tools accept both TYPE and METHOD with method-level overriding type-level, w
 interfaces and Kafka listeners/producers accept TYPE only. `JsonProfileId` trims its value and
 rejects `null` or blank. Looking up an unknown id throws `JsonProfileConfigurationException`, which
 extends `ConfigurationException`. The registry implementation ships in `dev.vertique:vertique-json`.
+
+`JsonProfileId.SYSTEM` (`"system"`) is the reserved baseline id. The id `"vertx"` is **retired**: it
+was renamed `system`, and the registry rejects it — as a configured id and as an
+application-contributed profile id — with a message naming the rename.
 
 ### JSON schema overrides on a profile
 
@@ -502,37 +506,79 @@ subclass nor the key type of `Map<BigDecimal, String>`. `INPUT` and `OUTPUT` sel
 direction; `BOTH` selects both, and conflicts with a direction-specific declaration for the same
 class. The generator that consumes these values ships in `dev.vertique:vertique-json-schema`.
 
+### The process JSON codec
+
+Vert.x routes every `Json.encode`, `Json.decodeValue`, `new JsonObject(String|Buffer)`,
+`JsonObject.encode()`, `mapTo` and `mapFrom` call through one process-wide codec. `vertique-core`
+registers its own codec for that role and points it at a swappable `ObjectMapper`; `VertiqueJson` is
+how framework and application code reach that mapper.
+
+```java
+public final class VertiqueJson {
+    public static ObjectMapper mapper();                        // live read
+    public static boolean ownsCodec();
+    public static Optional<JsonProfileId> profile();
+    public static void install(JsonProfileId id, ObjectMapper mapper);
+    public static void resetForTests();                         // gated, see below
+}
+```
+
+Before installation the codec delegates to Vert.x's own mapper, so a process that never installs
+behaves exactly like stock Vert.x. `dev.vertique:vertique-json` contributes the `CONFIGURE`-phase
+step that installs the profile named by `json.systemProfile`; from that point the whole process
+encodes and decodes through that profile's mapper. Mappers are swapped, never reconfigured — Jackson
+forbids reconfiguring a mapper after first use — and Vert.x's own mapper is never mutated.
+
+`mapper()` is a **live read**: call it at use time, or capture it only in an object constructed
+during or after `CONFIGURE`. A static initializer or a Dagger provider runs earlier and would
+capture the pre-install mapper.
+
+`install` is keyed by profile id and enforces three rules on every call, whoever the caller is — the
+rules bind the act of installing, not the installed instance's future state (a live `ObjectMapper`
+can still be reconfigured by any in-process code; the JSON runtime re-checks default typing at
+`VALIDATE`, and a graph without it logs a `WARN` there when nothing was installed):
+
+- A different id than the one already installed is refused with an `IllegalStateException` naming
+  both ids and both installing classes — one process has one JSON codec. The same id installs the
+  new, equivalent instance and logs the swap at `INFO`, so a second application booted in the same
+  JVM under the same system profile starts normally.
+- The mapper must register Vert.x's Jackson module (`VertxJsonSupport.module()` in
+  `dev.vertique:vertique-json`), otherwise `JsonObject`, `JsonArray` and `Buffer` values would be
+  bean-serialized instead of round-tripping — `IllegalArgumentException`.
+- The mapper must not activate Jackson default typing, which would let any decoded payload choose
+  the type it instantiates — `IllegalArgumentException`. Annotation-driven polymorphism with
+  `@JsonTypeInfo` stays available.
+
+**Registration is a packaging concern.** The codec reaches Vert.x through
+`META-INF/services/io.vertx.core.spi.JsonFactory`, loaded from the thread-context classloader when
+Vert.x initializes its `Json` class, and the framework's factory declares a low `order()` so an
+application-registered factory does not displace it. A shaded or uber-jar build must **merge**
+service files (Maven Shade's `ServicesResourceTransformer`, or the equivalent for the packaging tool
+in use); dropping them silently leaves Vert.x on its own codec. A container that hides the framework
+from that classloader has the same effect. `ownsCodec()` reports the outcome, and the install
+step fails the boot when it is `false`.
+
+**Outside the installed-mapper claim.** Vert.x's `DatabindCodec.createParser`/`fromParser` static
+helpers, and the `JacksonCodec.fromString(String)`/`fromBuffer(Buffer)` streaming overloads that
+return `Object`, are bound to Vert.x's own raw mapper and factory. Code that must use the installed
+mapper calls `VertiqueJson.mapper()`.
+
+**Buffer decodes copy.** To keep a buffer decode as strict as a string decode, the codec builds its
+parser from the installed mapper's factory over a byte copy of the buffer, so `JsonObject(Buffer)`
+and `Json.decodeValue(Buffer, …)` transiently hold twice the payload. Bound the input: set
+`vertx.jackson.defaultReadMaxDocumentLength` and a `BodyHandler` body limit on network edges.
+
+**`resetForTests()` is a gated test seam.** It restores the pre-install delegate, and it throws
+`IllegalStateException` unless the JVM was *started* with
+`-Dvertique.json.codec.allowReset=true`. The flag is read once when `VertiqueJson` is initialized, so
+setting the property at runtime cannot open the seam. Set it only in a build's surefire/failsafe
+configuration, never for a deployed application.
+
 ---
 
 ## Extension Points
 
 Every extension below is contributed through Dagger multibinding unless stated otherwise.
-
-### `ObjectMapperCustomizer`
-
-Customizes the Vert.x shared `ObjectMapper` at startup. Extends `OrderedExtension`, so customizers
-apply in comparator order.
-
-```java
-@FunctionalInterface
-public interface ObjectMapperCustomizer extends OrderedExtension {
-    void customize(ObjectMapper mapper);
-}
-```
-
-```java
-@Provides @IntoSet
-static ObjectMapperCustomizer javaTimeSupport() {
-    return mapper -> mapper.registerModule(new JavaTimeModule());
-}
-```
-
-A lambda takes the defaults (`APPLICATION` phase, priority `0`); implement the interface explicitly
-to override `phase()`, `priority()`, or `orderKey()`.
-
-The empty-by-default `Set<ObjectMapperCustomizer>` is declared by `JsonModule`, which
-`CoreLifecycleStepsModule` already includes. `JacksonConfigurer` applies the set exactly once; a
-second `configure()` call logs a warning and returns.
 
 ### `HealthCheck`
 
@@ -812,8 +858,11 @@ public interface JsonMapperProfile {
 ```
 
 The registry that collects profiles ships in `dev.vertique:vertique-json`; contribute a profile
-through that module's multibinding. `JsonProfileId.VERTX` (`"vertx"`) is reserved for the Vert.x
-shared mapper.
+through that module's multibinding. `JsonProfileId.SYSTEM` (`"system"`) is reserved for the baseline
+profile; `vertique` and `vertique-strict` are reserved too. `mapper()` returns **one stable instance
+per profile** — the same reference on every call — and callers never mutate it. A registry
+implementation must register all three reserved ids; no application profile may activate Jackson
+default typing or claim the retired `vertx` id.
 
 `jsonSchemaTypeOverrides()` declares the schema overrides described under
 [JSON schema overrides on a profile](#json-schema-overrides-on-a-profile). It defaults to an empty
@@ -1112,9 +1161,13 @@ runtime or annotation vocabulary.
   non-`Buffer` backings.
 - **A `VerticleDeployment` requires a verticle phase.** Constructing one with `CONFIGURE`,
   `VALIDATE`, `MIGRATE`, or `AFTER_START` is rejected at construction time.
-- **Do not call `JacksonConfigurer.configure()` yourself.** With `CoreLifecycleStepsModule` in the
-  component, `JacksonConfigureStep` already runs it during `CONFIGURE`. The configurer is
-  idempotent, so a second call logs a warning and returns without applying anything.
+- **Do not capture `VertiqueJson.mapper()` in a Dagger provider or a static initializer.** Both run
+  before the `CONFIGURE` phase installs the system profile, so the captured instance is Vert.x's raw
+  mapper. Read it at use time, or capture it in an object built at `CONFIGURE` or later.
+- **Do not configure Jackson by mutating a shared mapper.** Contribute a `JsonMapperProfile` and
+  select it through `json.systemProfile` and/or `json.jsonProfile`. Jackson forbids reconfiguring a
+  mapper after first use, and the process codec has already parsed the application's configuration
+  by the time any startup step runs.
 - **Do not implement `MethodMetadata` or `ParameterMetadata` in application code.** They are
   provided by generated code and by the framework's own scanners.
 - **Never log a secret-bearing config record without redaction.** Route the value through
@@ -1131,10 +1184,10 @@ every compile-scope dependency it declares lands on every consumer's classpath.
 | Dependency | Why |
 |---|---|
 | `io.vertx:vertx-core` | `Vertx`, `EventBus`, `Future`, `Buffer`, `JsonObject` — the substrate every contract here is expressed in |
-| `com.google.dagger:dagger` | `@Module`, `@Provides`, `@Multibinds` for `VertxModule`, `JsonModule`, `HealthCheckModule`, `CoreLifecycleStepsModule` |
+| `com.google.dagger:dagger` | `@Module`, `@Provides`, `@Multibinds` for `VertxModule`, `HealthCheckModule`, `CoreLifecycleStepsModule` |
 | `jakarta.inject:jakarta.inject-api` | `@Inject`, `@Singleton`, `@Qualifier`, `Provider` on the injectable types and qualifiers |
 | `jakarta.annotation:jakarta.annotation-api` | `@Nullable` on nullable record components, SPI parameters, and return values |
 | `jakarta.ws.rs:jakarta.ws.rs-api` | Declared at compile scope; core's own sources do not reference it, so every consumer receives the JAX-RS API on its classpath transitively |
-| `com.fasterxml.jackson.core:jackson-databind` | `ObjectMapper` on the JSON customization SPI, the profile contracts, and the serialization annotations on result records |
-| `org.slf4j:slf4j-api` | Logging in `JacksonConfigurer` and the other core collaborators |
+| `com.fasterxml.jackson.core:jackson-databind` | `ObjectMapper` on the profile contracts and the process codec, and the serialization annotations on result records |
+| `org.slf4j:slf4j-api` | Logging in `VertiqueJson` and the other core collaborators |
 | `org.projectlombok:lombok` | `provided` scope, so it never reaches runtime; core's own sources do not use it |

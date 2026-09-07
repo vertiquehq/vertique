@@ -129,7 +129,7 @@ public abstract class CacheStoreContractTest {
     }
 
     private static CacheValueDescriptor descriptor(Type type) {
-        return new CacheValueDescriptor(type, "vertx");
+        return new CacheValueDescriptor(type, "system");
     }
 
     private static Type listOf(Type elementType) {

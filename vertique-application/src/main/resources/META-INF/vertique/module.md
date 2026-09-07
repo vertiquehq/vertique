@@ -84,7 +84,7 @@ Framework modules contribute their own lifecycle work via Dagger `@IntoSet` mult
 
 | Step | Phase | Module | What it does |
 |------|-------|--------|--------------|
-| `JacksonConfigureStep` | `CONFIGURE` | `CoreLifecycleStepsModule` | Applies all `ObjectMapperCustomizer` instances to the Vert.x `DatabindCodec` mapper |
+| `JsonSystemProfileInstallStep` | `CONFIGURE` | `JsonRuntimeModule` | Installs the `json.systemProfile` profile's `ObjectMapper` as the process JSON codec's mapper |
 | `ComposeValidationStep` | `VALIDATE` | `CoreLifecycleStepsModule` | Materializes the `Set<ComposeValidator>` multibinding, forcing construction of every validator |
 | `FlywayMigrationStartupStep` | `MIGRATE` | `DbFlywayModule` | Runs `MigrationRunner.migrate(vertx)` — schema is migrated before INFRA/SERVICES/EDGE verticles deploy |
 | `ServiceDeploymentStartupStep` | `SERVICES` | `DispatchModule` | Deploys all service verticles via `ServiceDeploymentManager.deployAll()` |
@@ -191,7 +191,7 @@ VertiqueApplicationBootstrap.start(VertiqueRuntime.of(vertx, config()), factory)
 **Execution order (per phase in `LifecyclePhase` declaration order):**
 
 ```
-CONFIGURE  → JacksonConfigureStep (from CoreLifecycleStepsModule)
+CONFIGURE  → JsonSystemProfileInstallStep (from JsonRuntimeModule, when included)
 VALIDATE   → ComposeValidationStep (from CoreLifecycleStepsModule)
 MIGRATE    → FlywayMigrationStartupStep (from DbFlywayModule, when included)
 BOOTSTRAP  → deploy BOOTSTRAP-phase verticles

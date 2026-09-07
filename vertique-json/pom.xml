@@ -18,7 +18,7 @@ SPDX-License-Identifier: EUPL-1.2
 
     <artifactId>vertique-json</artifactId>
     <name>Vertique JSON</name>
-    <description>JSON mapper profile runtime: named ObjectMapper profiles, built-in vertx profile, Dagger wiring, and startup validation</description>
+    <description>JSON mapper profile runtime: named ObjectMapper profiles, built-in system profile, the process JSON codec install step, Dagger wiring, and startup validation</description>
 
     <dependencies>
         <dependency>
@@ -55,5 +55,51 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- TP-002 boots a real application through VertiqueApplicationBootstrap. Acyclic:
+             vertique-application depends on core + deploy, never on vertique-json, so a test-scope
+             json -> application edge introduces no cycle (vertique-application-test would, through
+             rest-jaxrs). -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-application</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Standard IT harness (docs/standards/testing.md): public IT class + VertxExtension. -->
+        <dependency>
+            <groupId>io.vertx</groupId>
+            <artifactId>vertx-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- ListAppender log capture for the install step's WARN/INFO lines. -->
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <!-- The install-step proofs drive the process-global Vertique JSON codec and restore the
+                 raw Vert.x delegate in @AfterEach, so both forks of this module enable the reset
+                 seam. The flag is read once at VertiqueJson class initialization; it is a test-only
+                 argLine and never reaches a shipped runtime. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- Reproduces the parent argLine (JaCoCo late-replacement + Mockito premain)
+                         and adds the reset flag; a bare -D would drop both. -->
+                    <argLine>@{argLine} -javaagent:${project.build.directory}/mockito-agent.jar -Dvertique.json.codec.allowReset=true</argLine>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <configuration>
+                    <argLine>@{argLine} -javaagent:${project.build.directory}/mockito-agent.jar -Dvertique.json.codec.allowReset=true</argLine>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>

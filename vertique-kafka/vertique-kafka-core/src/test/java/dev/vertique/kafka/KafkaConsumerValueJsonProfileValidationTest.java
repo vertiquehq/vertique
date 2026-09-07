@@ -97,12 +97,12 @@ class KafkaConsumerValueJsonProfileValidationTest {
          */
         private static void resolveProfile(JsonObject endpointConfig) {
             String id = endpointConfig != null ? endpointConfig.getString("jsonProfile") : null;
-            if (id == null || id.isBlank() || "vertx".equals(id)) {
+            if (id == null || id.isBlank() || "system".equals(id)) {
                 return;
             }
             if (UNKNOWN_PROFILE.equals(id)) {
                 throw new JsonProfileConfigurationException(
-                        "Unknown JSON profile id '" + id + "'. Known profiles: [vertx]");
+                        "Unknown JSON profile id '" + id + "'. Known profiles: [system]");
             }
         }
     }
@@ -266,14 +266,14 @@ class KafkaConsumerValueJsonProfileValidationTest {
     @Test
     @DisplayName("disabled consumer with a valid profile still passes validation and does not leak")
     void disabledConsumerWithValidProfileStillValidates() {
-        // Given: a DISABLED consumer with a valid profile (vertx).
+        // Given: a DISABLED consumer with a valid profile (system).
         // When: validateAndBuild runs the build-then-close probe.
         // Then: it passes with no violations, no escaped exception, and no registry-backed serde is
         // retained (a disabled consumer is never deployed).
         List<String> violations = new ArrayList<>();
         ConsumerEntry entry = buildBinding(
                 "off-vertx",
-                consumerConfig("off-vertx", false, "vertx"),
+                consumerConfig("off-vertx", false, "system"),
                 PlainPayload.class,
                 jsonRegistry(),
                 violations);

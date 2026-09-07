@@ -3,11 +3,12 @@
 
 package dev.vertique.examples.mcp;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.json.JacksonDefaults;
 import dev.vertique.json.JsonMapperProfiles;
-import io.vertx.core.json.jackson.DatabindCodec;
 
 /** Named JSON profile that exposes structured weather values in snake case. */
 public final class ExampleJsonProfile {
@@ -17,7 +18,7 @@ public final class ExampleJsonProfile {
 
     /** Creates the profile contribution used by the weather tool and MCP boundary. */
     public static JsonMapperProfile create() {
-        var mapper = DatabindCodec.mapper().copy();
+        var mapper = JacksonDefaults.applySystem(new ObjectMapper());
         mapper.setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
         return JsonMapperProfiles.of(JsonProfileId.of(ID), mapper);
     }

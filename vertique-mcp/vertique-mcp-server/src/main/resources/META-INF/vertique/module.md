@@ -668,11 +668,16 @@ explicitly selected profile that is not registered fails composition, before the
 The configured `mcp.jsonProfile` default is validated independently, even when MCP is disabled or
 its mount is shadowed — so an invalid deployment configuration cannot lie dormant.
 
-The final tail is the `vertique` profile, never the reserved `vertx` profile: `vertx`'s
-`DatabindCodec`-backed mapper registers no `Jdk8Module`, so it cannot correctly materialize an
-`Optional<T>` tool parameter, while `vertique` does. This tail is scoped to the fallback only — it
-never outranks `json.jsonProfile`; an application that sets `json.jsonProfile` always gets its own
-configured profile.
+The final tail is the `vertique` profile, not the `system` profile installed as the process JSON
+codec: MCP is a managed edge, and `vertique` is this framework's opinionated default for managed
+edges, while `system` is deliberately unopinionated — the baseline every application in the process
+shares as its installed codec. This tail is scoped to the fallback only — it never outranks
+`json.jsonProfile`; an application that sets `json.jsonProfile`, including to `system`, always gets
+its own configured profile.
+
+The resolved profile governs argument-object *binding* only (a `convertValue` over the already
+decoded argument tree); it never governs envelope byte-level parsing, which the MCP envelope codec
+performs with its own fixed factory, without comment leniency, regardless of the selected profile.
 
 ### JSON mapper safety is the profile's responsibility
 
@@ -683,7 +688,7 @@ attacker-chosen type is not a guarantee this framework (or any mainstream one) m
 framework-shipped profiles are safe by default, and an application that supplies its own profile for
 a remotely reachable tool owns keeping it safe.
 
-The framework profiles (`vertx`, `vertique`, `vertique-strict`) ship with none of the unsafe
+The framework profiles (`system`, `vertique`, `vertique-strict`) ship with none of the unsafe
 configurations below, so the zero-config path is safe. When you author your own profile for an MCP
 tool, do **not** enable, on its mapper, any configuration that lets the wire choose the concrete
 Java type to instantiate:

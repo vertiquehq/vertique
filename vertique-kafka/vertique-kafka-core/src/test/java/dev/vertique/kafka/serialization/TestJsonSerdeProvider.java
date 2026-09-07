@@ -23,14 +23,18 @@ import io.vertx.core.json.jackson.DatabindCodec;
  *   <li>{@link #format()} returns {@code "json"}</li>
  *   <li>{@link #autoDetects} returns {@code false}</li>
  *   <li>{@link #mayBlock()} returns {@code false}</li>
- *   <li>{@link #serializer} delegates to a Jackson {@link ObjectMapper} via
- *       {@link DatabindCodec#mapper()}</li>
  *   <li>{@link #routingDeserializer} parses the raw bytes into a {@link JsonNode} tree
  *       (one parse per record regardless of property route count)</li>
  *   <li>{@link #matchValue} reads the discriminator field from the {@link JsonNode}</li>
  *   <li>{@link #convertRouted} converts the pre-parsed tree to the route type via
  *       {@link ObjectMapper#treeToValue}, avoiding a second wire-byte parse</li>
  * </ul>
+ *
+ * <p>Not behaviourally identical: {@link #serializer} and {@link #deserializer} delegate to a
+ * Jackson {@link ObjectMapper} via {@link DatabindCodec#mapper()} directly — the real
+ * {@code JsonSerdeProvider} instead resolves the {@code vertique} floor (or a configured
+ * {@code json.jsonProfile}) through a {@code JsonMapperProfileRegistry}. This fixture keeps the
+ * simpler raw-mapper wiring; its bag-folding behaviour is otherwise unchanged.
  *
  * <p>This fixture requires {@code jackson-databind} on the test class-path (declared at
  * {@code test} scope in {@code vertique-kafka-core/pom.xml}).

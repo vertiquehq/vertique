@@ -67,8 +67,10 @@ value there, so an unusable selection never reaches startup.
 
 The full precedence is method `@JsonProfile`, then declaring type `@JsonProfile`, then the MCP
 boundary default `mcp.jsonProfile`, then the global default `json.jsonProfile`, then the reserved
-`vertx` profile. Everything after the annotations is resolved once during composition by
-`vertique-mcp-server`, which also rejects an unknown id before the router is mounted.
+`vertique` id — the same managed-edge floor every other JSON boundary falls through to; the process
+codec's `system` baseline is reached only by explicit selection at one of the tiers above. Everything
+after the annotations is resolved once during composition by `vertique-mcp-server`, which also rejects
+an unknown id before the router is mounted.
 
 Profiles apply only to tool arguments and structured results. Protocol envelopes, the JSON-RPC
 codec, and resource limits are profile-independent.
