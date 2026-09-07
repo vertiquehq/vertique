@@ -235,7 +235,9 @@ placeholder in the endpoint's path template fails startup.
 
 The `@OnMessage` message parameter is the first parameter that is not a `WebSocketSession`, a
 `Throwable`, a `SecurityContext`, or `@PathParam`-annotated. Its declared type selects the wire
-handling:
+handling. Declare exactly one such parameter: a second one receives the same decoded payload without
+its own policy chain being honored (the message parameter's policies govern the decode), so put the
+chain on the message parameter or on the method:
 
 | Declared type | Handling |
 |---|---|
@@ -408,7 +410,9 @@ application declares security the same way on both transports:
 | `@ValidateWith(groups = {...})` | `@OnMessage` method | Selects Bean Validation groups |
 
 Method-level security annotations on lifecycle methods are not consulted; the endpoint class is the
-only policy site.
+only site for the security policy above. Input canonicalization and sanitization policies are
+resolved separately, and do read method- and parameter-level declarations — see
+[Validation and Input Processing](#validation-and-input-processing).
 
 ---
 
@@ -420,7 +424,7 @@ silently — nothing fails.
 | Feature | Install | Applies to |
 |---|---|---|
 | Bean Validation | `ValidationModule` | The deserialized `@OnMessage` payload |
-| Canonicalization / sanitization | `SanitizationModule` | The `@OnMessage` payload and `@PathParam` string values |
+| Canonicalization / sanitization | `SanitizationModule` | The `@OnMessage` text payload and `@PathParam` string values; binary (`Buffer`) payloads are never processed |
 
 Canonicalizers and sanitizers see the value's provenance in their `InputValueContext`:
 `@OnMessage` values — both a raw `String` payload and the decoded intermediate of a typed
@@ -453,16 +457,40 @@ void onError(WebSocketSession session, Throwable error) {
 }
 ```
 
-**Policy resolution is method-only.** `@Canonicalize`/`@Sanitize` on the endpoint *class* are
-ignored; put them on the lifecycle method whose input they govern. `@PathParam` values are processed
-with the policies declared on the method that receives them, so `@OnOpen` and `@OnMessage` can
-normalize the same path parameter differently.
+**Policy resolution: class, then method, then parameter.** `@Canonicalize`/`@Sanitize` are resolved
+the same way here as on a JAX-RS resource. A declaration on the endpoint *class* applies to every
+lifecycle method; a declaration on a lifecycle method replaces the class-level chain for that method;
+a declaration on a single parameter replaces the method's chain for that one argument. Each level is
+read across the endpoint's whole type hierarchy — a declaration on an implemented interface's method,
+on a superclass, or behind a composed annotation counts as a declaration at that level — and the
+nearest declaration wins. Everything is resolved once per endpoint at registration, so no policy
+annotation is inspected while a message is being handled.
+
+**An override may replace but never remove an inherited policy.** `@SkipCanonicalization`/
+`@SkipSanitization` opt an element out of the chain it would otherwise inherit from the level above:
+a skip on a method exempts that method from the class-level chain, and a skip on a parameter exempts
+that argument from the method's chain. Declaring a skip and the matching `@Canonicalize`/`@Sanitize`
+on the *same* element — including one inherited from an interface or superclass and the other on the
+override — is a contradiction and fails startup (see [Startup failures](#startup-failures)). Remove
+one of the two, or declare the replacement chain instead of a skip.
+
+A parameter-level `@SkipCanonicalization`/`@SkipSanitization` now takes effect. Earlier releases
+resolved WebSocket policies from the lifecycle method alone, so a skip on a parameter was silently
+inert and the value was processed anyway; today it removes processing for that argument only.
+
+**`@PathParam` and message values each use their own parameter's policies.** A path parameter is
+processed with the chain resolved for that parameter — its own declaration, else the method's, else
+the class's — so two placeholders bound by one method can be normalized differently, and `@OnOpen`
+and `@OnMessage` can each declare their own chain for the same placeholder. The message payload is
+processed with the chain resolved for the message parameter. Binary payloads are the exception: a
+`Buffer` message parameter is delivered to `@OnMessage` exactly as it arrived, because
+canonicalization and sanitization operate on string values.
 
 **Composed policy annotations are honored.** A custom annotation meta-annotated with
 `@Canonicalize`/`@Sanitize` — the usual way to name a reusable chain — declares that chain on a
-lifecycle method exactly as the bare annotation does, matching REST. The startup gate resolves
-composed annotations the same way, so what fails the build and what runs on the message path always
-agree.
+class, a lifecycle method, or a parameter exactly as the bare annotation does, matching REST. The
+startup gate reads the very policies the message path later applies, so what fails the build and what
+runs on a message always agree.
 
 ```java
 @Target(ElementType.METHOD)
@@ -614,7 +642,8 @@ All of these are raised while the router is built, so a misconfigured endpoint n
 | Several `RouteAuthHandler`s registered and no `authScheme` given | `IllegalStateException` |
 | A wire-name projection in a message type's owner set cannot be composed — two properties claiming one wire name, or two claiming one `@JsonAlias` (checked only when an `InputObjectProcessor` is bound) | `ConfigurationException` |
 | A type in a message type's owner set declares conflicting policy annotations (checked only when an `InputObjectProcessor` is bound) | `IllegalStateException` |
-| A lifecycle method declares a canonicalizer or sanitizer chain — directly or through a composed annotation — or the message type declares field-level policies, while no `InputObjectProcessor` is bound | `ConfigurationException` |
+| An endpoint class, lifecycle method, or lifecycle-method parameter declares both a policy annotation and the matching skip annotation anywhere in its type hierarchy | `InvocationPolicyConflictException` (an `IllegalStateException`) |
+| An endpoint declares a canonicalizer or sanitizer chain — on the class, a lifecycle method, or a lifecycle-method parameter, directly or through a composed annotation — or the message type declares field-level policies, while no `InputObjectProcessor` is bound | `ConfigurationException` |
 
 Every `@RequiresAction` failure mode above is deliberately fail-closed: an action gate that cannot
 be enforced refuses to boot rather than serving traffic with the gate silently missing.
@@ -635,8 +664,16 @@ be enforced refuses to boot rather than serving traffic with the gate silently m
   fails startup for exactly this reason — it would suggest a guarantee the transport cannot make.
 - **Storing the `SecurityContext` in `session.attributes()` at `@OnOpen`.** It goes stale across an
   identity refresh. Read it per invocation instead.
-- **Declaring `@Canonicalize`/`@Sanitize` on the endpoint class.** Class-level policy is not
-  consulted for lifecycle methods.
+- **Assuming a class-level `@Canonicalize`/`@Sanitize` is inert.** It governs every lifecycle method
+  of the endpoint, including the `@PathParam` values they bind. Declare the chain on the one method —
+  or the one parameter — whose input it should govern when endpoint-wide reach is not what you want.
+  Only the bound argument is processed: `session.pathParams()` still returns the raw client values.
+- **Using a skip annotation to remove an inherited chain from the same element.** A method (or
+  parameter) carrying both `@Sanitize` and `@SkipSanitization` — one of them inherited from an
+  interface or superclass — fails startup instead of picking one. Replace the chain rather than
+  cancelling it.
+- **Expecting binary frames to be sanitized.** A `Buffer` payload reaches `@OnMessage` unprocessed;
+  validate it yourself.
 - **Assuming a failed `@OnMessage` closes the connection.** It does not; the failure is routed to
   `@OnError` and the socket stays open. Close it yourself if that is the intent.
 - **Sending from `@OnOpen` and expecting inbound frames first.** Outbound writes work immediately;

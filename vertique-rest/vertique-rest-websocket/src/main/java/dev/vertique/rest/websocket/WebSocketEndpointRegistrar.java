@@ -7,17 +7,14 @@ import dev.vertique.context.ContextSnapshot;
 import dev.vertique.context.ContextValues;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.exception.ConfigurationException;
-import dev.vertique.core.sanitization.Canonicalize;
-import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
-import dev.vertique.core.sanitization.Sanitize;
-import dev.vertique.core.sanitization.Sanitizer;
-import dev.vertique.core.util.AnnotationResolver;
 import dev.vertique.core.validation.BeanValidationException;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.input.processing.InputObjectProcessor;
+import dev.vertique.input.processing.InvocationPolicyConflictException;
+import dev.vertique.input.processing.ReflectiveInvocationPolicies;
 import dev.vertique.json.JacksonFieldNameResolver;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.RouteAuthHandler;
@@ -40,8 +37,11 @@ import jakarta.ws.rs.PathParam;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.extern.slf4j.Slf4j;
 
@@ -141,6 +141,36 @@ class WebSocketEndpointRegistrar {
             JacksonFieldNameResolver.forMapper(DatabindCodec.mapper());
 
     /**
+     * One lifecycle method's resolved invocation policies.
+     *
+     * @param route      the route-level policies: the method's own declaration merged over its
+     *                   hierarchy, falling back to the endpoint class
+     * @param parameters the per-parameter policies, indexed by parameter position. Only the
+     *                   parameters this registrar actually processes — the {@link PathParam}-annotated
+     *                   ones and the message parameter — carry their own resolution; every other
+     *                   position holds {@link EffectiveInputPolicies#NONE} because no value is ever
+     *                   processed there
+     */
+    private record MethodPolicies(EffectiveInputPolicies route, EffectiveInputPolicies[] parameters) {}
+
+    /**
+     * Every registered lifecycle method's invocation policies, resolved once at registration by
+     * {@link #resolveInvocationPolicies} and read on the message path.
+     *
+     * <p>Resolution walks the annotation hierarchy of the method, the endpoint class, and each
+     * processed parameter, which is far too much reflection to repeat per frame. Caching it also
+     * makes the startup composition gate and the message path read the same values by construction
+     * rather than by two implementations agreeing.
+     *
+     * <p>Keyed by the lifecycle {@link Method} alone although route resolution also reads the owner's
+     * class-level annotations: the scanner discovers lifecycle methods through
+     * {@code getDeclaredMethods()}, so every cached method's declaring class is the endpoint class
+     * itself and one key can never stand for two owners. Widening discovery to inherited lifecycle
+     * methods must key this cache by (method, owner).
+     */
+    private final Map<Method, MethodPolicies> policyCache = new ConcurrentHashMap<>();
+
+    /**
      * Creates a new registrar.
      *
      * @param messageCodec                 codec for JSON message deserialization
@@ -195,6 +225,8 @@ class WebSocketEndpointRegistrar {
      *
      * @param endpoints the set of endpoint instances to register
      * @param router    the Vert.x router to mount routes on
+     * @throws InvocationPolicyConflictException if an endpoint declares both an additive policy
+     *     annotation and the matching skip annotation on the same element
      */
     void registerAll(Set<Object> endpoints, Router router) {
         WebSocketEndpointScanner scanner = new WebSocketEndpointScanner(actionRegistry);
@@ -202,11 +234,148 @@ class WebSocketEndpointRegistrar {
         for (Object endpoint : endpoints) {
             metas.add(scanner.scan(endpoint));
         }
+        resolveInvocationPolicies(metas);
         checkInputProcessingComposition(metas);
         warmMessageNameProjections(metas);
         for (WebSocketEndpointMeta meta : metas) {
             registerEndpoint(meta, router);
         }
+    }
+
+    /**
+     * Resolves and caches every registered lifecycle method's canonicalization and sanitization
+     * policies, once, before anything else reads them.
+     *
+     * <p>Policies come from {@link ReflectiveInvocationPolicies}, the resolver shared with the REST
+     * transport, so a WebSocket endpoint derives them by the same rules a JAX-RS resource does: a
+     * class-level declaration applies to every lifecycle method, a method-level declaration replaces
+     * it, a parameter-level declaration replaces that for its own argument, and every declaration is
+     * read over the whole type hierarchy (superclasses, interfaces, composed annotations) rather than
+     * off the concrete declaration alone.
+     *
+     * <p>Only the parameters this registrar processes are resolved: the {@link PathParam}-annotated
+     * ones and, on the {@link OnMessage} method, the message parameter. Every other position keeps
+     * {@link EffectiveInputPolicies#NONE} — no value flows through the processor there, so a chain
+     * resolved for it could never be applied.
+     *
+     * <p>Resolution runs whether or not an {@link InputObjectProcessor} is bound, because
+     * {@link #checkInputProcessingComposition} reads this same cache to decide whether an endpoint
+     * declares processing that could not run.
+     *
+     * @param metas every scanned endpoint's metadata
+     * @throws InvocationPolicyConflictException if a method, class, or parameter declares both an
+     *     additive policy annotation and the matching skip annotation. An override may replace an
+     *     inherited policy but never remove one, so this fails startup rather than silently picking
+     *     one of the two
+     */
+    private void resolveInvocationPolicies(List<WebSocketEndpointMeta> metas) {
+        for (WebSocketEndpointMeta meta : metas) {
+            Class<?> owner = meta.instance().getClass();
+            Set<Method> distinctMethods = new LinkedHashSet<>();
+            for (Method lifecycleMethod : lifecycleMethods(meta)) {
+                if (lifecycleMethod != null) {
+                    distinctMethods.add(lifecycleMethod);
+                }
+            }
+            for (Method lifecycleMethod : distinctMethods) {
+                // One method may carry more than one lifecycle annotation; the message parameter is
+                // only meaningful when that method is the @OnMessage one.
+                int messageIndex = lifecycleMethod.equals(meta.onMessage()) ? meta.messageParameterIndex() : -1;
+                policyCache.put(lifecycleMethod, resolveLifecyclePolicies(lifecycleMethod, owner, messageIndex));
+            }
+        }
+    }
+
+    /**
+     * Resolves one lifecycle method's route policies and the policies of each parameter this
+     * registrar processes.
+     *
+     * @param method               the lifecycle method
+     * @param owner                the endpoint class the method belongs to, whose class-level
+     *                             declarations the route policies fall back to
+     * @param messageParameterIndex the index of the message parameter, or {@code -1} when the method
+     *                             takes none
+     * @return the resolved policies for this method
+     * @throws InvocationPolicyConflictException if an element declares both an additive policy
+     *     annotation and the matching skip annotation
+     */
+    private static MethodPolicies resolveLifecyclePolicies(Method method, Class<?> owner, int messageParameterIndex) {
+        EffectiveInputPolicies route = ReflectiveInvocationPolicies.resolveRoute(method, owner);
+        var params = method.getParameters();
+        EffectiveInputPolicies[] parameters = new EffectiveInputPolicies[params.length];
+        for (int i = 0; i < params.length; i++) {
+            boolean processed = i == messageParameterIndex || params[i].isAnnotationPresent(PathParam.class);
+            parameters[i] = processed
+                    ? ReflectiveInvocationPolicies.resolveParameter(method, i, route)
+                    : EffectiveInputPolicies.NONE;
+        }
+        return new MethodPolicies(route, parameters);
+    }
+
+    /**
+     * Returns the four lifecycle method slots of an endpoint, any of which may be {@code null}.
+     *
+     * @param meta the scanned endpoint metadata
+     * @return the {@link OnOpen}, {@link OnMessage}, {@link OnClose}, {@link OnError} methods
+     */
+    private static Method[] lifecycleMethods(WebSocketEndpointMeta meta) {
+        return new Method[] {meta.onOpen(), meta.onMessage(), meta.onClose(), meta.onError()};
+    }
+
+    /**
+     * Returns the cached policies of a registered lifecycle method.
+     *
+     * @param method the lifecycle method
+     * @return its resolved policies
+     * @throws IllegalStateException if the method was never registered, which would mean a value is
+     *     about to be handed to the endpoint without the processing its annotations declare
+     */
+    private MethodPolicies policiesOf(Method method) {
+        MethodPolicies policies = policyCache.get(method);
+        if (policies == null) {
+            throw new IllegalStateException("No invocation policies cached for lifecycle method "
+                    + method.getDeclaringClass().getSimpleName() + "." + method.getName()
+                    + "; policies are resolved for every lifecycle method at registration, so this value would"
+                    + " otherwise be delivered without the canonicalization or sanitization it declares");
+        }
+        return policies;
+    }
+
+    /**
+     * Returns the cached route-level policies of a registered lifecycle method. Package-private: the
+     * registrar's own tests assert the cached derivation directly.
+     *
+     * @param method the lifecycle method
+     * @return its route-level policies
+     */
+    EffectiveInputPolicies cachedRoutePolicies(Method method) {
+        return policiesOf(method).route();
+    }
+
+    /**
+     * Returns the cached policies of one parameter of a registered lifecycle method. Package-private:
+     * the registrar's own tests assert the cached derivation directly.
+     *
+     * @param method the lifecycle method
+     * @param index  the zero-based parameter index
+     * @return that parameter's policies; {@link EffectiveInputPolicies#NONE} for a parameter this
+     *     registrar does not process
+     */
+    EffectiveInputPolicies cachedParameterPolicies(Method method, int index) {
+        return policiesOf(method).parameters()[index];
+    }
+
+    /**
+     * Returns the policies governing the incoming message payload: the message parameter's own, or
+     * the route's when the {@link OnMessage} method declares no message parameter.
+     *
+     * @param meta the scanned endpoint metadata; its {@link OnMessage} method must be present
+     * @return the policies to apply to the decoded payload
+     */
+    private EffectiveInputPolicies messagePolicies(WebSocketEndpointMeta meta) {
+        MethodPolicies policies = policiesOf(meta.onMessage());
+        int index = meta.messageParameterIndex();
+        return index >= 0 ? policies.parameters()[index] : policies.route();
     }
 
     /**
@@ -256,10 +425,11 @@ class WebSocketEndpointRegistrar {
      * {@link InputObjectProcessor} is bound.
      *
      * <p>{@code WebSocketModule} declares the engine binding optional and every consumer null-guards
-     * it, so without this gate an endpoint whose {@code @OnMessage} carries {@code @Sanitize} — or
-     * whose message type declares field-level policies — would accept messages with none of that
-     * processing running. This mirrors the REST registrar's gate: every offending endpoint is
-     * collected before throwing, and there is no opt-out flag.
+     * it, so without this gate an endpoint that declares {@code @Sanitize} — on its {@code @OnMessage}
+     * method, on one of its parameters, on the endpoint class, or anywhere in its hierarchy — or whose
+     * message type declares field-level policies would accept messages with none of that processing
+     * running. This mirrors the REST registrar's gate: every offending endpoint is collected before
+     * throwing, and there is no opt-out flag.
      *
      * @param metas every scanned endpoint's metadata
      * @throws ConfigurationException if any endpoint declares processing that cannot run
@@ -291,21 +461,26 @@ class WebSocketEndpointRegistrar {
      * Returns why the given endpoint's declared input processing cannot run, or {@code null} when it
      * declares none.
      *
-     * <p>Policy annotations are resolved exactly as {@link #resolveMethodPolicies} resolves them on
-     * the message path — meta-annotation-aware. The two must agree: a gate that saw composed
-     * annotations the runtime ignored would fail startup for policies that still would not run, which
-     * is worse than not gating them at all.
+     * <p>The gate reads the policies {@link #resolveInvocationPolicies} already cached, so it sees
+     * exactly what the message path would apply — including a class-level declaration inherited by a
+     * bare lifecycle method and a chain declared on a single parameter. The two must agree: a gate
+     * deriving policies its own way would either fail startup for chains that would not have run, or
+     * — the dangerous direction — pass an endpoint whose declared processing is silently dropped.
      *
      * @param meta the scanned endpoint metadata
      * @return a human-readable reason naming the declaration, or {@code null}
      */
-    private static @Nullable String unboundPolicyReason(WebSocketEndpointMeta meta) {
-        for (Method lifecycleMethod : new Method[] {meta.onOpen(), meta.onMessage(), meta.onClose(), meta.onError()}) {
+    private @Nullable String unboundPolicyReason(WebSocketEndpointMeta meta) {
+        for (Method lifecycleMethod : lifecycleMethods(meta)) {
             if (lifecycleMethod == null) {
                 continue;
             }
-            if (AnnotationResolver.findMetaAnnotation(lifecycleMethod, Canonicalize.class) != null
-                    || AnnotationResolver.findMetaAnnotation(lifecycleMethod, Sanitize.class) != null) {
+            MethodPolicies policies = policiesOf(lifecycleMethod);
+            boolean declaresChain = !policies.route().isEmpty();
+            for (EffectiveInputPolicies parameter : policies.parameters()) {
+                declaresChain |= !parameter.isEmpty();
+            }
+            if (declaresChain) {
                 return "lifecycle method '" + lifecycleMethod.getName()
                         + "' declares a canonicalizer or sanitizer chain";
             }
@@ -1116,7 +1291,7 @@ class WebSocketEndpointRegistrar {
                 String rawValue = pathParams.get(name);
                 // Apply canonicalization/sanitization to path params if available
                 if (rawValue != null && objectProcessor != null) {
-                    EffectiveInputPolicies policies = resolveMethodPolicies(method);
+                    EffectiveInputPolicies policies = cachedParameterPolicies(method, i);
                     Object processed = objectProcessor.processInput(
                             rawValue, String.class, policies, InputLocation.PATH, InputFieldNameResolver.IDENTITY);
                     if (processed instanceof String s) {
@@ -1153,7 +1328,7 @@ class WebSocketEndpointRegistrar {
         if (meta.messageType() == String.class) {
             // For raw String messages, apply scalar processing if available
             if (objectProcessor != null && meta.onMessage() != null) {
-                EffectiveInputPolicies policies = resolveMethodPolicies(meta.onMessage());
+                EffectiveInputPolicies policies = messagePolicies(meta);
                 Object processed = objectProcessor.processInput(
                         text, String.class, policies, InputLocation.PAYLOAD, InputFieldNameResolver.IDENTITY);
                 if (processed != null) {
@@ -1167,7 +1342,7 @@ class WebSocketEndpointRegistrar {
             Object decoded;
             if (objectProcessor != null && meta.onMessage() != null) {
                 // Two-phase: intermediate → process → materialize
-                EffectiveInputPolicies policies = resolveMethodPolicies(meta.onMessage());
+                EffectiveInputPolicies policies = messagePolicies(meta);
                 Object intermediate = messageCodec.decodeToIntermediate(text);
                 Object processed = objectProcessor.processInput(
                         intermediate, meta.messageType(), policies, InputLocation.PAYLOAD, messageNameResolver);
@@ -1204,35 +1379,6 @@ class WebSocketEndpointRegistrar {
             }
             return null;
         }
-    }
-
-    /**
-     * Resolves canonicalization and sanitization policies from annotations on the given lifecycle
-     * method only. No class-level fallback — avoids cross-method policy contamination.
-     *
-     * <p>Resolution is meta-annotation-aware through {@link AnnotationResolver#findMetaAnnotation},
-     * matching REST: a custom annotation itself meta-annotated with {@code @Canonicalize} or
-     * {@code @Sanitize} is the documented way to name a reusable chain, and a bare
-     * {@code Method#getAnnotation} would silently ignore it.
-     *
-     * @param method the lifecycle method to inspect for {@code @Canonicalize} and {@code @Sanitize}
-     *               annotations, directly or through a composed annotation
-     * @return the resolved effective input policies; {@link EffectiveInputPolicies#NONE} when no
-     *         annotations are present on the method
-     */
-    private EffectiveInputPolicies resolveMethodPolicies(Method method) {
-        Canonicalize canonicalize = AnnotationResolver.findMetaAnnotation(method, Canonicalize.class);
-        Sanitize sanitize = AnnotationResolver.findMetaAnnotation(method, Sanitize.class);
-
-        if (canonicalize == null && sanitize == null) {
-            return EffectiveInputPolicies.NONE;
-        }
-
-        List<Class<? extends Canonicalizer>> canonicalizers =
-                canonicalize != null ? List.of(canonicalize.value()) : List.of();
-        List<Class<? extends Sanitizer>> sanitizers = sanitize != null ? List.of(sanitize.value()) : List.of();
-
-        return new EffectiveInputPolicies(canonicalizers, sanitizers);
     }
 
     /**

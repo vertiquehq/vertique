@@ -145,10 +145,12 @@ class WebSocketEndpointScanner {
         // --- Resolve message type from @OnMessage parameter ---
         Class<?> messageType = String.class;
         boolean binaryMessage = false;
+        int messageParameterIndex = -1;
         if (onMessage != null) {
             MessageInfo msgInfo = resolveMessageType(onMessage);
             messageType = msgInfo.type();
             binaryMessage = msgInfo.binary();
+            messageParameterIndex = msgInfo.index();
         }
 
         // --- Resolve @ValidateWith from @OnMessage method ---
@@ -198,6 +200,7 @@ class WebSocketEndpointScanner {
                 onError,
                 messageType,
                 binaryMessage,
+                messageParameterIndex,
                 pathParamMetas,
                 securityPolicy,
                 authScheme,
@@ -328,34 +331,44 @@ class WebSocketEndpointScanner {
     }
 
     /**
-     * Holds the resolved message type and whether it represents binary data.
+     * Holds the resolved message type, whether it represents binary data, and which parameter
+     * carries it.
      *
      * @param type   the message payload type
      * @param binary {@code true} if the type is {@link Buffer}
+     * @param index  the zero-based index of the message parameter, or {@code -1} when the method
+     *               declares none
      */
-    private record MessageInfo(Class<?> type, boolean binary) {}
+    private record MessageInfo(Class<?> type, boolean binary, int index) {}
 
     /**
-     * Resolves the message payload type from the {@link OnMessage} method's parameters.
-     * The message parameter is the first parameter that is not a {@link WebSocketSession},
-     * {@link PathParam}, {@link Throwable}, or {@link SecurityContext}.
+     * Resolves the message payload type and its parameter position from the {@link OnMessage}
+     * method's parameters. The message parameter is the first parameter that is not a
+     * {@link WebSocketSession}, {@link PathParam}, {@link Throwable}, or {@link SecurityContext}.
+     *
+     * <p>The index is resolved here, by the same predicate that picks the type, so the registrar
+     * never re-derives which parameter is the payload when it applies that parameter's own
+     * invocation policies.
      *
      * @param method the {@link OnMessage} method
-     * @return the resolved message info; defaults to {@code String.class} if no message param found
+     * @return the resolved message info; defaults to {@code String.class} at index {@code -1} if no
+     *     message param found
      */
     private MessageInfo resolveMessageType(Method method) {
-        for (var param : method.getParameters()) {
+        var params = method.getParameters();
+        for (int i = 0; i < params.length; i++) {
+            var param = params[i];
             if (WebSocketSession.class.isAssignableFrom(param.getType())) continue;
             if (param.isAnnotationPresent(PathParam.class)) continue;
             if (Throwable.class.isAssignableFrom(param.getType())) continue;
             if (SecurityContext.class.isAssignableFrom(param.getType())) continue;
 
             if (Buffer.class.isAssignableFrom(param.getType())) {
-                return new MessageInfo(Buffer.class, true);
+                return new MessageInfo(Buffer.class, true, i);
             }
-            return new MessageInfo(param.getType(), false);
+            return new MessageInfo(param.getType(), false, i);
         }
-        return new MessageInfo(String.class, false);
+        return new MessageInfo(String.class, false, -1);
     }
 
     /**

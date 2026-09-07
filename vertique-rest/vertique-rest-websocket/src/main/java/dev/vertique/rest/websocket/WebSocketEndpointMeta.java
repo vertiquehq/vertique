@@ -21,6 +21,14 @@ import java.util.Optional;
  * @param onError          the method annotated with {@link OnError}, or {@code null} if not declared
  * @param messageType      the resolved message payload type for deserialization
  * @param binaryMessage    {@code true} if the message type is {@link io.vertx.core.buffer.Buffer}
+ * @param messageParameterIndex the zero-based index of the {@link OnMessage} method's message
+ *                         parameter — the one carrying the payload rather than the session, a
+ *                         {@link jakarta.ws.rs.PathParam}, a {@link Throwable}, or a
+ *                         {@link dev.vertique.security.SecurityContext} — or {@code -1} when the
+ *                         endpoint declares no {@link OnMessage} method or that method takes no
+ *                         payload parameter. Resolved once by the scanner alongside
+ *                         {@code messageType} so the registrar has a single source of truth for
+ *                         which parameter the payload's own policies belong to
  * @param pathParams       metadata for all path parameter bindings across lifecycle methods
  * @param securityPolicy   the resolved security policy for the endpoint
  * @param authScheme       the preferred auth scheme name from {@link WebSocketEndpoint#authScheme()}
@@ -42,6 +50,7 @@ record WebSocketEndpointMeta(
         @Nullable Method onError,
         Class<?> messageType,
         boolean binaryMessage,
+        int messageParameterIndex,
         List<PathParamMeta> pathParams,
         SecurityPolicy securityPolicy,
         String authScheme,
