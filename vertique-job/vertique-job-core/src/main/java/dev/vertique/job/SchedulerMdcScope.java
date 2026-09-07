@@ -8,7 +8,10 @@ import java.util.Map;
 import org.slf4j.MDC;
 
 /**
- * Snapshot-and-restore scope for direct SLF4J MDC enrichment on scheduler threads.
+ * INTERNAL framework seam — the framework implementation behind a contract this module documents;
+ * not an application contract and outside the maturity promise.
+ *
+ * <p>Snapshot-and-restore scope for direct SLF4J MDC enrichment on scheduler threads.
  *
  * <p>Scheduler-side dispatch code (cron job dispatcher, delayed-job poller) cannot use the
  * framework's {@code MDCContexts} facade because the scheduler thread is not on a duplicated

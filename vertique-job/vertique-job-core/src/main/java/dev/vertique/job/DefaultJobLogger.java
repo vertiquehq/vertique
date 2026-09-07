@@ -12,7 +12,10 @@ import java.util.Deque;
 import java.util.List;
 
 /**
- * Thread-safe in-memory implementation of {@link JobLogger}.
+ * INTERNAL framework seam — the framework implementation behind a contract this module documents;
+ * not an application contract and outside the maturity promise.
+ *
+ * <p>Thread-safe in-memory implementation of {@link JobLogger}.
  *
  * <p>Entries are buffered in an {@link ArrayDeque} guarded by a private monitor. Cross-thread
  * safety is required rather than optional: the periodic flusher drains the buffer from a different

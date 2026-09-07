@@ -7,7 +7,10 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Thread-safe in-memory implementation of {@link ProgressReporter}.
+ * INTERNAL framework seam — the framework implementation behind a contract this module documents;
+ * not an application contract and outside the maturity promise.
+ *
+ * <p>Thread-safe in-memory implementation of {@link ProgressReporter}.
  *
  * <p>Uses {@link AtomicLong} for numeric counters and a {@link AtomicReference} for the
  * status message to ensure visibility across threads without explicit synchronisation.
