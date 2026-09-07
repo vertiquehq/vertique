@@ -8,7 +8,11 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Beta
 > **Package:** `dev.vertique.inboxoutbox.postgresql`
 > **Artifact:** `vertique-inbox-outbox-postgresql`
-> **Depends on:** inbox-outbox-core, db-postgresql, db-flyway
+> **Depends on:** `dev.vertique:vertique-inbox-outbox-core`, `dev.vertique:vertique-db-postgresql`,
+> `dev.vertique:vertique-core`, `dev.vertique:vertique-context`, `dev.vertique:vertique-deploy`,
+> `dev.vertique:vertique-logging`, `dev.vertique:vertique-services`, `dev.vertique:vertique-job-cron`
+> (the maintenance cron jobs). `dev.vertique:vertique-db-flyway` is test-scope here; the application
+> supplies it.
 
 PostgreSQL persistence and relay engine for Transactional Messaging. Provides `DefaultInboxService` and `DefaultOutboxService` (the only implementations of the core write APIs), `PgInboxOutboxRepository` (claim/lease queries, stale recovery), `OutboxRelay` (relay verticle with POLLING and LISTEN_NOTIFY strategies), and the Flyway migration that creates the `inbox` and `outbox` tables.
 
@@ -21,19 +25,21 @@ PostgreSQL persistence and relay engine for Transactional Messaging. Provides `D
 PostgreSQL repository that owns all DDL, claim queries, lease recovery, and LISTEN/NOTIFY integration. Extends `PgSqlRepository`.
 
 **Inbox operations:**
-- `insertIfAbsent(String messageId, String source, SqlClient tx)` — inserts the inbox row in the caller's transaction; returns `true` for new messages, `false` for duplicates
-- `cleanupInbox(Instant before)` — batch-deletes inbox rows older than the retention threshold
+- `tryInsert(String messageId, String source, SqlClient tx)` — inserts the inbox row in the caller's transaction; returns `true` for new messages, `false` when the `(messageId, source)` pair was already recorded
+- `cleanup(int retentionDays, int batchSize)` — batch-deletes inbox rows older than the retention threshold
 
-**Outbox operations:**
-- `insertOutbox(OutboxEntry entry, SqlClient tx)` — inserts the outbox row in the caller's transaction; returns the assigned id
-- `claimBatch(RelayCapabilities capabilities, int batchSize, String claimedBy)` — short transaction: selects eligible `PENDING` rows with `FOR UPDATE SKIP LOCKED` filtered by capabilities, marks them `PROCESSING`
-- `completePublish(long id, Instant publishedAt)` — transitions a row to `PUBLISHED`
-- `retryRow(long id, int attempt, Instant availableAt, String lastError, String errorType)` — transitions back to `PENDING`, applies incremented attempt count and backoff time
-- `deadLetterRow(long id, String lastError, String errorType)` — transitions to `DEAD_LETTER`
-- `returnToQueue(long id, Instant availableAt)` — returns to `PENDING` without incrementing attempt (used for `unresolvable` outcome)
-- `recoverStaleRows(Instant leaseExpiredBefore, String claimedBy)` — returns stale `PROCESSING` rows to `PENDING` without incrementing attempt; safe without table-wide locks
-- `cleanupPublished(Instant before)` — batch-deletes `PUBLISHED` rows past retention
-- `cleanupDeadLetter(Instant before)` — batch-deletes `DEAD_LETTER` rows past retention
+**Outbox operations.** Every `mark*` method carries a `claimed_by` owner guard and returns
+`Future<Boolean>`: `false` means this node no longer owns the row, so a node whose lease was reclaimed
+cannot complete a row another node now owns.
+- `insert(OutboxEntry entry, OutboxMetadata metadata, UUID carrierId, SqlClient tx)` — inserts the outbox row in the caller's transaction; returns the assigned id
+- `claimBatch(int batchSize, String claimedBy, RelayCapabilities capabilities)` — short transaction: selects eligible `PENDING` rows with `FOR UPDATE SKIP LOCKED` and marks them `PROCESSING`
+- `markPublished(long entryId, String claimedBy)` — transitions an owned row to `PUBLISHED`
+- `markRetry(long entryId, String claimedBy, int newAttempt, Instant availableAt, String lastError, String errorType)` — transitions an owned row back to `PENDING` with the incremented attempt and backoff
+- `markDeadLetter(long entryId, String claimedBy, String lastError, String errorType)` — transitions an owned row to `DEAD_LETTER`
+- `markUnresolvable(long entryId, String claimedBy, Duration delay)` — returns an owned row to `PENDING` after the delay without incrementing attempt (the `unresolvable` outcome)
+- `reclaimStale(Duration leaseTimeout)` — returns stale `PROCESSING` rows to `PENDING` without incrementing attempt; deliberately unguarded, because its job is to take rows from nodes that are gone
+- `cleanupPublished(int retentionDays, int batchSize)` — batch-deletes `PUBLISHED` rows past retention
+- `cleanupDeadLetter(int retentionDays, int batchSize)` — batch-deletes `DEAD_LETTER` rows past retention
 
 **Claim eligibility filter (applied in SQL):**
 - `state = 'PENDING'`
@@ -105,10 +111,10 @@ When `LISTEN_NOTIFY` is configured but the notification channel is unavailable o
 1. `claimBatch()` — short transaction selects and marks `PROCESSING` rows.
 2. For each claimed row, build `OutboxEnvelope` — application `headers` (app-only), durable context in `metadata.context`, and relay control projected into `metadata.delivery.outbox` from the row columns (no framework keys merged into `headers`).
 3. Call `OutboxDestinationHandler.publish(envelope)` — outside the claim transaction.
-4. On success: `completePublish()`.
-5. On retryable failure: `retryRow()` with incremented attempt and backoff-computed `availableAt`.
-6. On permanent failure or exhausted attempts: `deadLetterRow()`.
-7. On `unresolvable`: `returnToQueue()` with short delay; attempt count unchanged.
+4. On success: `markPublished()`.
+5. On retryable failure: `markRetry()` with incremented attempt and backoff-computed `availableAt`.
+6. On permanent failure or exhausted attempts: `markDeadLetter()`.
+7. On `unresolvable`: `markUnresolvable()` with short delay; attempt count unchanged.
 8. A failed future from `publish()` is treated as retryable.
 
 **`ClaimScopeException` (package-private, extends `InboxOutboxConfigurationException`):** When a `ClaimScope.Destinations` supplier misbehaves during `buildClaimEligibility`, the WHOLE claim cycle is aborted with a `ClaimScopeException`. The returned future is failed with zero rows claimed. Failure conditions:
@@ -134,7 +140,11 @@ The exception message names only the destination TYPE and reason category — ne
 
 **Shutdown:** On `stop()`, the poll timer and LISTEN connection are closed. In-flight publish calls complete independently.
 
-### `OutboxRelayConfig`
+### `OutboxRelayConfig` (owned by `dev.vertique:vertique-inbox-outbox-core`)
+
+This module provides its Dagger binding, deserialized from the `inboxOutbox.relay` section; the type
+itself belongs to the core artifact.
+
 
 Deserialized from `inboxOutbox.relay`.
 
@@ -149,7 +159,11 @@ Deserialized from `inboxOutbox.relay`.
 | `backoffMaxDelayMs` | `300000` | Maximum backoff cap in ms |
 | `instances` | `1` | Number of `OutboxRelay` verticle instances to deploy |
 
-### `InboxOutboxCleanupConfig`
+### `InboxOutboxCleanupConfig` (owned by `dev.vertique:vertique-inbox-outbox-core`)
+
+This module provides its Dagger binding, deserialized from the `inboxOutbox.cleanup` section; the type
+itself belongs to the core artifact.
+
 
 Deserialized from `inboxOutbox.cleanup`.
 
@@ -162,6 +176,15 @@ Deserialized from `inboxOutbox.cleanup`.
 
 ---
 
+### `OutboxMaintenanceService`, `OutboxMaintenanceContract`, and `OutboxMaintenanceCron`
+
+The cluster-singleton maintenance path. `OutboxMaintenanceCron` is the `@CronJob` entry point (hence
+this module's compile dependency on `dev.vertique:vertique-job-cron`); it delegates to
+`OutboxMaintenanceService`, which reclaims stale leases and applies the retention cleanups through
+`PgInboxOutboxRepository`. `OutboxMaintenanceContract` is the service contract the cron target
+resolves. Applications install the module and tune the cron through configuration; they do not call
+these types.
+
 ## Database Schema
 
 The Flyway migration creates two tables and associated indexes.
@@ -171,13 +194,15 @@ The Flyway migration creates two tables and associated indexes.
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | `BIGSERIAL PK` | Auto-assigned outbox entry id |
+| `carrier_id` | `UUID NOT NULL UNIQUE` | Framework-generated per-row durable carrier identity, allocated before insert and never derived from application input; a durable identity snapshot is signed against it |
 | `aggregate_type` | `VARCHAR(255)` | Logical aggregate type |
 | `aggregate_id` | `VARCHAR(255)` | Aggregate instance id |
 | `event_type` | `VARCHAR(255) NOT NULL` | Event type |
 | `destination` | `VARCHAR(255) NOT NULL` | Stable target id or topic |
 | `destination_type` | `VARCHAR(32) NOT NULL` | Open value type — any id matching `[A-Za-z0-9_-]{1,32}` (built-ins: `SERVICE`, `DELAYED_JOB`, `KAFKA`) |
 | `payload` | `JSONB NOT NULL` | Event payload |
-| `headers` | `JSONB` | Outbound metadata + adapter snapshot data |
+| `headers` | `JSONB` | Application and transport headers only; no framework keys are merged in |
+| `metadata` | `JSONB NOT NULL DEFAULT '{}'` | Structured document `{"context": …, "delivery": …}` — durable propagation context and relay control |
 | `scheduled_at` | `TIMESTAMPTZ` | Optional scheduled publish time |
 | `available_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | Earliest publish time |
 | `state` | `VARCHAR(32) NOT NULL DEFAULT 'PENDING'` | Relay state |
@@ -197,8 +222,8 @@ Indexes: `idx_outbox_pending` (partial, `state = 'PENDING'`, on `available_at AS
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `message_id` | `VARCHAR(255) PK` | Inbound message id |
-| `source` | `VARCHAR(255) NOT NULL` | Logical source name |
+| `message_id` | `VARCHAR(255) NOT NULL` | Inbound message id; primary key is the composite `(message_id, source)` |
+| `source` | `VARCHAR(255) NOT NULL` | Logical source name; part of the composite primary key |
 | `processed_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | When the message was first seen |
 
 Index: `idx_inbox_processed_at` (for cleanup queries).
