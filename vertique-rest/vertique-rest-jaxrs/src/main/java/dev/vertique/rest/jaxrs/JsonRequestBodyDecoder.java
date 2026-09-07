@@ -6,12 +6,12 @@ package dev.vertique.rest.jaxrs;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.type.TypeFactory;
+import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
 import dev.vertique.rest.core.request.RequestValue;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
-import io.vertx.core.json.jackson.DatabindCodec;
 import io.vertx.ext.web.RoutingContext;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
@@ -36,10 +36,11 @@ import java.util.concurrent.ConcurrentMap;
  * </ul>
  *
  * <p><b>Profile-aware materialization (FR-JSON-024B/022/023):</b> POJO and collection binding use the
- * non-{@code vertx} JSON profile mapper resolved for the method (stashed on the {@link RoutingContext}
+ * JSON profile mapper resolved for the method (stashed on the {@link RoutingContext}
  * under {@link BoundRequest#KEY_RESOLVED_BODY_MAPPER}) when present, applying the profile's strict
- * materialization features; when absent (the {@code vertx} default) binding is byte-for-byte identical
- * to today ({@code JsonObject.mapTo()} / {@code DatabindCodec.mapper().convertValue()}). A profiled
+ * materialization features; when absent — the route's profile resolved to the process codec's own
+ * mapper — binding runs that mapper through the Vert.x path
+ * ({@code JsonObject.mapTo()} / {@code VertiqueJson.mapper().convertValue()}). A profiled
  * materialization rejection surfaces as an HTTP {@code 400} via a {@code ValidationException}.
  *
  * <p>Priority: {@code 1100} (fallback, runs last among framework defaults).
@@ -53,9 +54,9 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
      * <p>{@link TypeFactory#constructType(Type)} walks the declared type's generic hierarchy to bind
      * {@code Collection<E>}, and Jackson's own type cache does not amortize a
      * {@link ParameterizedType} input, so the walk would otherwise run per request. The
-     * {@link TypeFactory} it resolves against is always {@code DatabindCodec.mapper()}'s — a
-     * {@link JavaType} is mapper-independent, so the cached value is valid whatever profile mapper
-     * binds the elements.
+     * {@link TypeFactory} it resolves against is always the process codec's ({@code
+     * VertiqueJson.mapper()}) — a {@link JavaType} is assumed mapper-independent, so the cached value
+     * is valid whatever profile mapper binds the elements.
      *
      * <p>Retention is bounded by the set of distinct declared body parameter types, which is fixed
      * at route registration; the reflective {@link ParameterizedType} implementations define
@@ -105,10 +106,11 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
             return body.getString();
         }
 
-        // FR-JSON-024B/022/023: a non-vertx JSON profile resolved for this method (slice 2.1) is
-        // stashed on the routing context under KEY_RESOLVED_BODY_MAPPER. When present, that profile
-        // mapper owns MATERIALIZATION (POJO + collection binding); when absent (the vertx default),
-        // the calls below are byte-for-byte identical to today (JsonObject.mapTo / DatabindCodec).
+        // FR-JSON-024B/022/023: a JSON profile whose mapper differs from the process codec's, resolved
+        // for this method (slice 2.1), is stashed on the routing context under
+        // KEY_RESOLVED_BODY_MAPPER. When present, that profile mapper owns MATERIALIZATION (POJO +
+        // collection binding); when absent, the calls below run the process codec (JsonObject.mapTo /
+        // VertiqueJson.mapper()), which is the mapper that route resolved to.
         ObjectMapper profileMapper = ctx.get(BoundRequest.KEY_RESOLVED_BODY_MAPPER);
 
         // JSON array → List<T>, Set<T>, or T[]
@@ -124,12 +126,11 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
         if (jsonBody == null) {
             return null;
         }
-        if (profileMapper != null) {
-            // Profile path: bind via the resolved profile mapper so its strict materialization features
-            // apply; a rejection becomes a 400 via the standard error pipeline (ValidationException).
-            return ProfileBodyMaterialization.convertValue(profileMapper, jsonBody.getMap(), targetType);
-        }
-        return jsonBody.mapTo(targetType);
+        // Both paths run through the same rejection translation: the resolved profile mapper when one
+        // was stashed, the process codec otherwise (the mapper JsonObject.mapTo would have used), so a
+        // body the binder rejects is the frozen value-free 400 on the fast path as well.
+        return ProfileBodyMaterialization.convertValue(
+                profileMapper != null ? profileMapper : VertiqueJson.mapper(), jsonBody.getMap(), targetType);
     }
 
     /**
@@ -175,22 +176,22 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
      * argument, yet its content type is correctly {@code SamplePojo}, not {@code Object}).
      *
      * <p>The {@link JavaType} is built the same way regardless of profile; the element binding then
-     * routes through {@code profileMapper} when a non-{@code vertx} profile applies (FR-JSON-022/023),
-     * or {@code DatabindCodec.mapper()} when {@code profileMapper} is {@code null} (the unchanged vertx
-     * path). A profile-mapper rejection is translated to a
+     * routes through {@code profileMapper} when the route's profile differs from the process codec's
+     * (FR-JSON-022/023), or through {@code VertiqueJson.mapper()} when {@code profileMapper} is
+     * {@code null} (the process-codec path). A profile-mapper rejection is translated to a
      * {@link dev.vertique.core.exception.ValidationException} (HTTP 400).
      *
      * @param jsonArray     the JSON array to decode
      * @param targetType    the raw target class (e.g. {@code List.class}, {@code Set.class}, or array)
      * @param genericType   the full generic type for element type resolution
-     * @param profileMapper the resolved non-{@code vertx} profile mapper for element binding, or
-     *     {@code null} to use today's {@code DatabindCodec.mapper()} vertx path
+     * @param profileMapper the resolved profile mapper for element binding, or {@code null} to use the
+     *     process codec's own mapper ({@code VertiqueJson.mapper()})
      * @return the decoded collection or array
      */
     private Object decodeArray(JsonArray jsonArray, Class<?> targetType, Type genericType, ObjectMapper profileMapper) {
-        // The JavaType is constructed from the vertx mapper's TypeFactory in both branches (a JavaType
-        // is mapper-independent); only the binding call differs (profile vs vertx).
-        TypeFactory tf = DatabindCodec.mapper().getTypeFactory();
+        // The JavaType is constructed from the process codec's TypeFactory in both branches (a JavaType
+        // is assumed mapper-independent); only the binding call differs (profile vs process codec).
+        TypeFactory tf = VertiqueJson.mapper().getTypeFactory();
 
         // T[] — array target
         if (targetType.isArray()) {
@@ -239,19 +240,18 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
     /**
      * Binds a JSON list to the resolved {@link JavaType} via the resolved mapper: the profile mapper
      * when non-{@code null} (translating a rejection to a 400
-     * {@link dev.vertique.core.exception.ValidationException}), else the byte-for-byte-unchanged
-     * {@code DatabindCodec.mapper()} vertx path.
+     * {@link dev.vertique.core.exception.ValidationException}), else the process codec's own mapper
+     * ({@code VertiqueJson.mapper()}).
      *
      * @param list          the raw element list from the JSON array
      * @param javaType      the target collection/array {@link JavaType}
-     * @param profileMapper the resolved non-{@code vertx} profile mapper, or {@code null} for vertx
+     * @param profileMapper the resolved profile mapper, or {@code null} for the process codec
      * @return the materialized collection or array
      * @throws ValidationException when {@code profileMapper} rejects the body (HTTP 400)
      */
     private static Object convertList(java.util.List<?> list, JavaType javaType, ObjectMapper profileMapper) {
-        if (profileMapper != null) {
-            return ProfileBodyMaterialization.convertValue(profileMapper, list, javaType);
-        }
-        return DatabindCodec.mapper().convertValue(list, javaType);
+        // Same rejection translation on both paths: a value-free 400 whether or not a profile was stashed.
+        return ProfileBodyMaterialization.convertValue(
+                profileMapper != null ? profileMapper : VertiqueJson.mapper(), list, javaType);
     }
 }

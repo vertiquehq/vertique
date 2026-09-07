@@ -17,7 +17,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Durable metadata encoder for {@link CorrelationContext} (Context contribution model level 4 —
+ * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
+ * outside the maturity promise. Applications use the surface the module document lists and the
+ * types in {@code dev.vertique.core}.
+ *
+ * <p>Durable metadata encoder for {@link CorrelationContext} (Context contribution model level 4 —
  * bespoke).
  *
  * <p>Justified as a bespoke encoder rather than the generic {@code DurableJsonContextCodecs}
@@ -34,9 +38,10 @@ import java.util.Map;
  * </ul>
  *
  * <p>The single key {@link CorrelationDurableKeys#CORRELATION} carries the whole envelope as a
- * JSON document. Serialisation uses {@code io.vertx.core.json.jackson.DatabindCodec.mapper()} —
- * the same mapper Vert.x uses for body codecs — so the encoder picks up project-wide Jackson
- * configuration without taking on its own {@code ObjectMapper} binding.
+ * JSON document. Serialisation goes through {@code JsonObject.mapFrom}, which runs on the process
+ * JSON codec's mapper ({@link dev.vertique.core.json.VertiqueJson#mapper()}) — so the encoder
+ * picks up the process-wide JSON configuration without taking on its own {@code ObjectMapper}
+ * binding.
  *
  * <p>Encoding goes through the boundary type {@link CorrelationContextSnapshot}: the live
  * mutable context is snapshotted first so any concurrent mutation cannot mid-serialise the JSON.
@@ -62,7 +67,7 @@ public final class CorrelationContextDurableEncoder implements DurableContextMet
         // Snapshot first so concurrent mutation on the live context cannot mid-serialise.
         CorrelationContextSnapshot snap = value.snapshot();
         CorrelationEnvelope envelope = toEnvelope(snap);
-        // JsonObject.mapFrom uses the Vert.x shared mapper, matching the prior DatabindCodec path.
+        // JsonObject.mapFrom runs on the process JSON codec's mapper (VertiqueJson.mapper()).
         return DurableMetadata.of(CorrelationDurableKeys.CORRELATION, JsonObject.mapFrom(envelope));
     }
 

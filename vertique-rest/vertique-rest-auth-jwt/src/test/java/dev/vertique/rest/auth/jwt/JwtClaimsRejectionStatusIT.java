@@ -8,33 +8,20 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
-import dev.vertique.json.JsonConfig;
-import dev.vertique.rest.core.config.HttpConfig;
-import dev.vertique.rest.core.config.JaxRsConfig;
-import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.middleware.Middleware;
 import dev.vertique.rest.core.middleware.MiddlewareScope;
-import dev.vertique.rest.core.response.BufferedBody;
-import dev.vertique.rest.core.response.ResponseBodyEncoder;
-import dev.vertique.rest.core.response.SerializedBody;
-import dev.vertique.rest.jaxrs.DefaultResponseSerializer;
-import dev.vertique.rest.jaxrs.ExceptionMapperRegistry;
-import dev.vertique.rest.jaxrs.JaxRsRouterMount;
-import dev.vertique.rest.jaxrs.RestExceptionMapper;
-import dev.vertique.rest.jaxrs.RestModule;
-import dev.vertique.rest.jaxrs.validation.NoneValidationStrategy;
 import dev.vertique.rest.security.CredentialRejectionReporter;
+import dev.vertique.rest.test.RestTestContributions;
+import dev.vertique.rest.test.RestTestMount;
+import dev.vertique.rest.test.RestTestMounts;
 import dev.vertique.security.AuthMethod;
 import dev.vertique.security.verification.VerificationSource;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServer;
-import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.auth.User;
-import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.client.WebClientOptions;
@@ -45,8 +32,6 @@ import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -71,13 +56,16 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * {@link ActionOnlyRouteClaimsValidatorIT} builds its router through the OpenAPI
  * {@code RouterBuilder} and therefore never enters {@code handleFailure} — it can prove the
  * validator <em>runs</em>, but not what the framework renders when it rejects. This test mounts the
- * real {@link JaxRsRouterMount} instead, so the rejection travels the shipped failure path.
+ * real {@code JaxRsRouterMount}, built by {@link JwtClaimsRejectionComponent} over the
+ * {@code vertique-rest-test} fixture, so the rejection travels the shipped failure path.
  *
  * <h3>Why the framework's real exception defaults are load-bearing</h3>
- * The mount is wired against {@link RestModule#defaultExceptionMapper()}. A hand-built stand-in
- * carrying one or two hand-picked mappings would let these assertions pass while staying blind to
- * what the shipped configuration does with the validator's exception type — and the shipped
- * configuration is precisely what decides the status and whether the message is published.
+ * The mount is wired against the framework's real, injected exception-mapper defaults, resolved
+ * through {@link JwtClaimsRejectionComponent}'s {@code vertique-rest-test} fixture graph. A
+ * hand-built stand-in carrying one or two hand-picked mappings would let these assertions pass
+ * while staying blind to what the shipped configuration does with the validator's exception type —
+ * and the shipped configuration is precisely what decides the status and whether the message is
+ * published.
  *
  * <h3>What is asserted</h3>
  * A claims rejection is an authentication outcome, so the client must observe {@code 401} with a
@@ -139,14 +127,9 @@ public class JwtClaimsRejectionStatusIT {
      */
     @BeforeAll
     static void setUp(Vertx vertx, VertxTestContext ctx) {
-        JaxRsRouterMount mount = buildFactory().create("/*", "openapi.json", Set.of(new SecureResource()));
+        RestTestMount mount = buildMount(vertx);
 
-        mount.createRouter(vertx)
-                .compose(apiRouter -> {
-                    Router root = Router.router(vertx);
-                    root.route("/*").subRouter(apiRouter);
-                    return vertx.createHttpServer().requestHandler(root).listen(0, "127.0.0.1");
-                })
+        RestTestMounts.startServer(vertx, mount, Set.of(new SecureResource()))
                 .onComplete(ctx.succeeding(listeningServer -> {
                     server = listeningServer;
                     // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
@@ -338,52 +321,18 @@ public class JwtClaimsRejectionStatusIT {
         }
     }
 
-    /** Minimal {@code String} response encoder so the success path has a body encoder. */
-    private static final class StringEncoder implements ResponseBodyEncoder {
-
-        @Override
-        public boolean canEncode(Class<?> entityType, String contentType) {
-            return entityType == String.class;
-        }
-
-        @Override
-        public SerializedBody encode(RoutingContext ctx, Response response, Object entity) {
-            return new BufferedBody(Buffer.buffer(String.valueOf(entity)), "text/plain", null);
-        }
-
-        @Override
-        public int priority() {
-            return 1000;
-        }
-    }
-
-    /** Minimal JSON encoder for the problem body. */
-    private static final class ProblemJsonEncoder implements ResponseBodyEncoder {
-
-        @Override
-        public boolean canEncode(Class<?> entityType, String contentType) {
-            return contentType == null || contentType.contains("json");
-        }
-
-        @Override
-        public SerializedBody encode(RoutingContext ctx, Response response, Object entity) {
-            return new BufferedBody(Buffer.buffer(Json.encode(entity)), "application/problem+json", null);
-        }
-
-        @Override
-        public int priority() {
-            return 2000;
-        }
-    }
-
     /**
-     * Builds the mount factory under test: the framework's real exception defaults
-     * ({@link RestModule#defaultExceptionMapper()}), the stub bearer authenticator, and the real
-     * {@link JwtClaimsValidatorContributor} carrying a validator that rejects the token.
+     * Builds the mount under test from {@link JwtClaimsRejectionComponent}: the framework's real
+     * exception defaults, the stub bearer authenticator contributed as a test middleware, and the
+     * real {@link JwtClaimsValidatorContributor} carrying a validator that rejects the token.
      *
-     * @return a factory producing the mount this test posts against
+     * <p>{@code jaxrs.validationStrategy} is set to {@code "none"} because this graph includes no
+     * request-validation module — see the {@code vertique-rest-test} fixture contract.
+     *
+     * @param vertx the Vert.x instance
+     * @return the mount handle this test starts a server from
      */
-    private static JaxRsRouterMount.Factory buildFactory() {
+    private static RestTestMount buildMount(Vertx vertx) {
         JwtClaimsValidator claimsValidator = claims -> {
             throw new IllegalArgumentException(REJECTION_MESSAGE);
         };
@@ -392,43 +341,13 @@ public class JwtClaimsRejectionStatusIT {
                 new RecordingRejectionReporter(),
                 JwtValidationConfig.builder().build());
 
-        ExceptionMapperRegistry registry = new ExceptionMapperRegistry(RestModule.defaultExceptionMapper(), Set.of());
-        List<ResponseBodyEncoder> encoders = List.of(new StringEncoder(), new ProblemJsonEncoder());
-        HttpConfig httpConfig = HttpConfig.builder().build();
-        JaxRsConfig jaxRsConfig = JaxRsConfig.builder()
-                .validationStrategy(NoneValidationStrategy.ID)
+        JsonObject config = new JsonObject().put("jaxrs", new JsonObject().put("validationStrategy", "none"));
+        RestTestContributions contributions = RestTestContributions.builder()
+                .addMiddleware(new StubBearerAuthMiddleware())
                 .build();
 
-        return new JaxRsRouterMount.Factory(
-                Set.of(), // routerLifecycleHooks
-                Set.of(), // operationInterceptors
-                Set.of(), // errorInterceptors
-                Set.of(new StubBearerAuthMiddleware()), // middlewares — authenticates the caller
-                Set.of(claimsContributor), // operationHandlerContributors — the rejection under test
-                Set.of(), // securitySchemeHandlers
-                Set.of(), // requestInterceptors
-                new RestExceptionMapper(),
-                registry,
-                Set.of(), // responseProducerBindings
-                new DefaultResponseSerializer(List.of(), encoders),
-                new RestContextResolution(Set.of()),
-                dev.vertique.rest.jaxrs.convert.ConversionContexts.defaultResolver(),
-                null, // securityPolicyValidator (nullable)
-                Optional.empty(), // authEnforcementCapability
-                List.of(), // sortedDecoders
-                encoders,
-                httpConfig,
-                jaxRsConfig,
-                new DefaultJsonMapperProfileRegistry(Set.of()),
-                JsonConfig.defaults(),
-                Optional.empty(), // beanValidator
-                Optional.empty(), // objectProcessor
-                Set.of(), // evidenceCapturers
-                Optional.empty(), // actionRegistry
-                Optional.empty(), // authorizer
-                Set.of(), // fileContentVerifiers
-                Set.of(new NoneValidationStrategy()),
-                Optional.empty() // operationSchemaSource
-                );
+        return DaggerJwtClaimsRejectionComponent.factory()
+                .create(vertx, config, contributions, claimsContributor)
+                .testMount();
     }
 }

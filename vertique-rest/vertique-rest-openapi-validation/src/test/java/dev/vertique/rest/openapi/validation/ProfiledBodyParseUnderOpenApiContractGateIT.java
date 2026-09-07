@@ -40,7 +40,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Proves the {@code openapi-contract} validation gate honors the JSON-profile request-body FIRST PARSE
- * contract (review finding W-A, FR-JSON-024/024A): when a non-{@code vertx} JSON profile mapper is
+ * contract (review finding W-A, FR-JSON-024/024A): when a resolved JSON profile mapper is
  * stashed on the {@link RoutingContext} under {@link BoundRequest#KEY_RESOLVED_BODY_MAPPER} (as the
  * production {@code JaxRsRouteRegistrar} does for ALL strategies ahead of the gate), the
  * {@code openapi-contract} gate must trigger the profile mapper's strict first parse <em>before</em>
@@ -127,7 +127,7 @@ public class ProfiledBodyParseUnderOpenApiContractGateIT {
         Router router = Router.router(vertx);
         router.route().handler(BodyHandler.create());
         router.post("/widgets")
-                // Mirror JaxRsRouteRegistrar: stash the resolved non-vertx profile mapper on the context
+                // Mirror JaxRsRouteRegistrar: stash the route's resolved profile mapper on the context
                 // BEFORE the validation gate, unconditionally for every strategy. The openapi-contract gate
                 // must honor it by first-parsing the body through the profile mapper.
                 .handler(rc -> {

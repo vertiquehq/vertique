@@ -4,12 +4,12 @@
 package dev.vertique.rest.websocket;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import io.vertx.core.json.jackson.DatabindCodec;
+import dev.vertique.core.json.VertiqueJson;
 
 /**
- * JSON serialization/deserialization helper for WebSocket messages. Uses the shared
- * Jackson {@link com.fasterxml.jackson.databind.ObjectMapper} from Vert.x's
- * {@link DatabindCodec} for consistency with the REST pipeline.
+ * JSON serialization/deserialization helper for WebSocket messages. Uses the process JSON codec's
+ * {@link com.fasterxml.jackson.databind.ObjectMapper} ({@link VertiqueJson#mapper()}) for
+ * consistency with the rest of the process.
  *
  * <p>Supports two-phase deserialization for pre-materialization processing by
  * {@link dev.vertique.input.processing.InputObjectProcessor}: first decode to an intermediate
@@ -27,7 +27,7 @@ public class WebSocketMessageCodec {
      * @throws JsonProcessingException if the text is not valid JSON or cannot be mapped to {@code type}
      */
     <T> T decode(String text, Class<T> type) throws JsonProcessingException {
-        return DatabindCodec.mapper().readValue(text, type);
+        return VertiqueJson.mapper().readValue(text, type);
     }
 
     /**
@@ -40,7 +40,7 @@ public class WebSocketMessageCodec {
      * @throws JsonProcessingException if the text is not valid JSON
      */
     Object decodeToIntermediate(String text) throws JsonProcessingException {
-        return DatabindCodec.mapper().readValue(text, Object.class);
+        return VertiqueJson.mapper().readValue(text, Object.class);
     }
 
     /**
@@ -54,7 +54,7 @@ public class WebSocketMessageCodec {
      * @throws IllegalArgumentException if the intermediate cannot be converted to {@code type}
      */
     <T> T convertFromIntermediate(Object intermediate, Class<T> type) {
-        return DatabindCodec.mapper().convertValue(intermediate, type);
+        return VertiqueJson.mapper().convertValue(intermediate, type);
     }
 
     /**
@@ -65,6 +65,6 @@ public class WebSocketMessageCodec {
      * @throws JsonProcessingException if the object cannot be serialized
      */
     String encode(Object message) throws JsonProcessingException {
-        return DatabindCodec.mapper().writeValueAsString(message);
+        return VertiqueJson.mapper().writeValueAsString(message);
     }
 }

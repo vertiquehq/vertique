@@ -7,7 +7,11 @@ import java.time.Instant;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * Utility class for computing outbox relay backoff delays between retry attempts.
+ * INTERNAL framework seam — consumed by the inbox-outbox adapters and sibling framework modules; not
+ * an application contract and outside the maturity promise. Applications use {@code OutboxService},
+ * {@code InboxService}, and the extension points the module document lists.
+ *
+ * <p>Utility class for computing outbox relay backoff delays between retry attempts.
  *
  * <p>Uses exponential backoff with random jitter to spread retry load across time and avoid
  * thundering herd when many entries fail simultaneously.

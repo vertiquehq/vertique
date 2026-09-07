@@ -5,12 +5,45 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Deploy Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.deploy`
 > **Artifact:** `vertique-deploy`
-> **Depends on:** core
+> **Depends on:** `dev.vertique:vertique-core`
 
 Verticle lifecycle management with phase-ordered startup/shutdown, multi-instance support, and supervised restart. Verticles are grouped into `LifecyclePhase` buckets (`BOOTSTRAP` → `INFRA` → `SERVICES` → `EDGE`) for coarse ordering, with `priority` for fine-grained ordering within each phase. A separate `VerticleSupervisor` handles crash detection, exponential-backoff restart, and availability signalling.
+
+---
+
+## When To Use It
+
+Contribute each verticle as a `VerticleDeployment` through the `Set<VerticleDeployment>`
+multibinding; an application adds its own with `@Provides @IntoSet`, and framework modules such as
+the cron, delayed-job, and transactional-messaging modules contribute theirs. `DeployerModule`
+declares the sets; the framework's core application module already includes it, so a starter-based
+application installs nothing extra. Use
+`VerticleSupervisor` when a verticle must be restarted on fatal errors with a bounded budget.
+Application startup itself is driven by `VertiqueApplicationBootstrap` in
+`dev.vertique:vertique-application`, which consumes this module's three multibinding sets; only a
+host that cannot use the runner calls `VerticleDeploymentManager` directly.
+
+---
+
+## Core Concepts
+
+**Phase, then priority.** Every deployment names one of the four verticle phases (`BOOTSTRAP`,
+`INFRA`, `SERVICES`, `EDGE`) and a priority within it. Deployment runs phase by phase in that order
+and, inside a phase, priority group by priority group in ascending order, with the verticles of one
+group deployed in parallel. Undeployment is the exact reverse. This ordering model is a value on the
+record, deliberately distinct from the `OrderedExtension` model other extension points use; the
+divergence is documented under Extension Points and is part of the module's contract.
+
+**Invocation-scoped rollback.** On failure, `deployPhase` and `deployAll` each undeploy only the
+verticles the failing call started; earlier deployments, including others in the same phase, are
+left running. A verticle deployed directly through `VerticleDeployer` is outside both.
+
+**Supervision is one-for-one.** `VerticleSupervisor` restarts each named verticle independently,
+de-duplicating concurrent reports per name, with exponential backoff inside a sliding restart budget,
+and reports availability per name.
 
 ---
 
@@ -222,16 +255,15 @@ static VerticleDeployment workerVerticle(Provider<WorkerVerticle> provider) {
 
 ### `Set<ApplicationStartupStep>` — Non-Verticle Startup Steps
 
-Contribute non-verticle startup work (e.g. configuring Jackson, running Flyway) to the multibinding declared by `DeployerModule`. Steps are ordered by `LifecycleOrdered.comparator()` (phase → priority → orderKey). `vertique-application`'s `VertiqueApplicationBootstrap` consumes this set, running the ordered steps sequentially.
+Contribute non-verticle startup work (e.g. warming a cache, running Flyway) to the multibinding declared by `DeployerModule`. Steps are ordered by `LifecycleOrdered.comparator()` (phase → priority → orderKey). `vertique-application`'s `VertiqueApplicationBootstrap` consumes this set, running the ordered steps sequentially.
 
 ```java
 @Provides @IntoSet
-static ApplicationStartupStep jacksonConfigureStep(JacksonConfigurer configurer) {
+static ApplicationStartupStep warmCachesStep(CacheWarmer warmer) {
     return new ApplicationStartupStep() {
         @Override public LifecyclePhase phase() { return LifecyclePhase.CONFIGURE; }
         @Override public Future<Void> start() {
-            configurer.configure();
-            return Future.succeededFuture();
+            return warmer.warm();
         }
     };
 }

@@ -76,7 +76,7 @@ class JsonBodyEncoderTest {
     @DisplayName("Should produce BufferedBody via Json.encode when no profile mapper is stashed")
     void shouldProduceJsonBufferedBody() {
         Map<String, String> entity = Map.of("k", "v");
-        RoutingContext ctx = mock(RoutingContext.class); // get(KEY) returns null => vertx path
+        RoutingContext ctx = mock(RoutingContext.class); // get(KEY) returns null => process-codec path
         SerializedBody body = encoder.encode(ctx, null, entity);
 
         assertInstanceOf(BufferedBody.class, body);

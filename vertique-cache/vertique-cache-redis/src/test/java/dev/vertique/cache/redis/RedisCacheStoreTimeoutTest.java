@@ -143,7 +143,7 @@ class RedisCacheStoreTimeoutTest {
     }
 
     private static RedisCacheStore store(RedisCommandClient commands) {
-        return RedisTestFixtures.store(commands, cacheConfig(), profiles("vertx", new ObjectMapper()));
+        return RedisTestFixtures.store(commands, cacheConfig(), profiles("system", new ObjectMapper()));
     }
 
     private static Future<Object> cacheableInvocation(RedisCacheStore store, CacheObserver observer, Method method) {

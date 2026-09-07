@@ -7,7 +7,6 @@ import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dagger.multibindings.Multibinds;
-import dev.vertique.core.json.JsonModule;
 import jakarta.inject.Singleton;
 import java.util.Set;
 
@@ -16,17 +15,12 @@ import java.util.Set;
  * the {@link ComposeValidator} multibinding.
  *
  * <p>An application {@code @Component} includes this module to get the framework's
- * {@link LifecyclePhase#CONFIGURE CONFIGURE} and {@link LifecyclePhase#VALIDATE VALIDATE} steps wired
- * automatically:
- * <ul>
- *   <li>{@link JacksonConfigureStep} ({@code CONFIGURE}) — runs
- *       {@link dev.vertique.core.json.JacksonConfigurer#configure()}.</li>
- *   <li>{@link ComposeValidationStep} ({@code VALIDATE}) — forces construction of every
- *       {@link ComposeValidator} for fail-fast graph-composition validation.</li>
- * </ul>
+ * {@link LifecyclePhase#VALIDATE VALIDATE} step wired automatically:
+ * {@link ComposeValidationStep} forces construction of every {@link ComposeValidator} for fail-fast
+ * graph-composition validation.
  *
- * <p>Both steps are contributed {@code @IntoSet ApplicationStartupStep}. Dagger merges multibinding
- * contributions across modules, so these entries join the {@code Set<ApplicationStartupStep>}
+ * <p>The step is contributed {@code @IntoSet ApplicationStartupStep}. Dagger merges multibinding
+ * contributions across modules, so this entry joins the {@code Set<ApplicationStartupStep>}
  * multibinding declared (empty-by-default) in {@code DeployerModule} — this module therefore takes
  * <em>no</em> dependency on {@code vertique-deploy}. The runner ({@code vertique-application})
  * consumes the merged set and drives the steps in lifecycle-phase order.
@@ -36,14 +30,10 @@ import java.util.Set;
  * contributes a validator. Modules that own a compose validator contribute it via
  * {@code @Provides @IntoSet ComposeValidator}.
  *
- * <p>This module is <em>self-contained</em>: it includes {@link JsonModule} so that
- * {@link JacksonConfigureStep}'s transitive dependencies —
- * {@link dev.vertique.core.json.JacksonConfigurer} and the empty-by-default
- * {@code Set<dev.vertique.core.json.ObjectMapperCustomizer>} multibinding {@code JsonModule}
- * declares — are satisfied by the module itself. An application {@code @Component} therefore never
- * has to co-list {@code JsonModule} to make this module's startup steps resolve.
+ * <p>This module is <em>self-contained</em>: it includes no other module, and its only step depends
+ * on nothing beyond the multibinding it declares here.
  */
-@Module(includes = JsonModule.class)
+@Module
 public abstract class CoreLifecycleStepsModule {
 
     /**
@@ -54,20 +44,6 @@ public abstract class CoreLifecycleStepsModule {
      */
     @Multibinds
     abstract Set<ComposeValidator> composeValidators();
-
-    /**
-     * Contributes the {@link JacksonConfigureStep} into the {@code Set<ApplicationStartupStep>}
-     * multibinding.
-     *
-     * @param step the Jackson configure step
-     * @return the step as an {@link ApplicationStartupStep}
-     */
-    @Provides
-    @Singleton
-    @IntoSet
-    static ApplicationStartupStep jacksonConfigureStep(JacksonConfigureStep step) {
-        return step;
-    }
 
     /**
      * Contributes the {@link ComposeValidationStep} into the {@code Set<ApplicationStartupStep>}

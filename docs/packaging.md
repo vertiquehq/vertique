@@ -177,10 +177,10 @@ Three things are required:
 1. **`@VertiqueApp`** — tells `vertique-codegen-application` to generate
    `AppComponentVertiqueComponentFactory` and write `META-INF/services/dev.vertique.core.VertiqueComponentFactory`.
    No hand-written factory or SPI file is needed.
-2. **`CoreLifecycleStepsModule`** — contributes the `CONFIGURE`-phase `JacksonConfigureStep`
-   (applies `ObjectMapperCustomizer` multibinding to the Vert.x `DatabindCodec` mapper) and the
-   `VALIDATE`-phase `ComposeValidationStep`. Omitting this module means Jackson is not configured
-   via the framework lifecycle and compose-validators do not run.
+2. **`CoreLifecycleStepsModule`** — contributes the `VALIDATE`-phase `ComposeValidationStep`.
+   Omitting this module means compose-validators do not run. (The `CONFIGURE`-phase step that
+   installs the process JSON codec's mapper comes from `JsonRuntimeModule`, which the JSON-facing
+   modules — `rest-jaxrs`, `rest-client`, `kafka-json` — already include.)
 3. **`extends VertiqueApplicationComponent`** — exposes `startupSteps()`, `shutdownSteps()`, and
    `verticleDeploymentManager()` so `VertiqueApplicationBootstrap` can drive the eight-phase
    lifecycle without knowing the concrete component type.

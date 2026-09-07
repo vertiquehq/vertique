@@ -873,8 +873,38 @@ The `ObjectMapper` used for request serialization and response deserialization i
 3. builder `jsonProfile(JsonProfileId)`;
 4. `@JsonProfile("...")` on the `@RestClient` interface **type**;
 5. external config `restClient.defaults.jsonProfile`;
-6. global `json.jsonProfile` from the `json` config section;
-7. `vertx` — `DatabindCodec.mapper()`, the zero-config default.
+6. global `json.jsonProfile` from the `json` config section, or the reserved `vertique` id when
+   neither this tier nor any higher tier selects a profile — the zero-config floor.
+
+Every id resolved above — `vertique` included — is then resolved to an `ObjectMapper` through a
+`JsonMapperProfileRegistry`: the Dagger-injected registry when one is present, or, only for a
+hand-built (standalone) builder with no injected registry, a builder-private registry the builder
+creates lazily, at most once per builder instance, seeded with no application profiles (so it
+resolves exactly the reserved `system`, `vertique`, and `vertique-strict` ids). Framework code never
+reads Vert.x's raw process-wide JSON mapper directly for this resolution.
+That builder-private registry snapshots the shared Vert.x mapper for its `system` profile at whatever moment
+the first standalone `build(Class)` call needs it — a hand-built client has no `CONFIGURE`-phase
+ordering, unlike the Dagger-wired process codec; the registry's default-typing guard still refuses a
+mapper that was mutated before that moment.
+
+**Reserved-id asymmetry (AR-013).** A standalone builder with no injected registry can still select
+`system`, `vertique`, or `vertique-strict` — its private registry resolves them without any
+application wiring. Selecting any other profile id on such a builder has no registry available to
+resolve it and fails fast with `RestClientConfigurationException` (message unchanged). This asymmetry
+is intentional: the reserved profiles are the framework floor and never require an injected registry,
+while every other profile id does.
+
+**Accepted behavior change.** A hand-built client that injects no registry and selects no profile
+anywhere used to resolve Vert.x's raw process-wide JSON mapper. It now resolves the `vertique`
+profile's mapper instead: `null` properties are omitted, `Optional` and `java.time` types work, JSON
+comments are rejected, and JSON floats decode as `BigDecimal` rather than `Double`.
+
+**Response binding has no validation gate.** Unlike REST-server body binding, rest-client response
+deserialization is never checked against an OpenAPI schema — the resolved `ObjectMapper` is
+authoritative for every response body. Under the `vertique` profile (the default for managed edges)
+this means Jackson's enum-default leniency (`@JsonEnumDefaultValue`) is fully exposed on response
+bodies: an unrecognized enum value binds to the declared default instead of failing, with no gate to
+catch it first.
 
 ```java
 @JsonProfile("strict")
@@ -946,7 +976,7 @@ client.getProduct("123")
 | Failure | Cause |
 |---|---|
 | `IllegalArgumentException` | not an interface; a method that does not return `Future<T>`; no base URL resolvable; any `@Url` placement rule violated |
-| `RestClientConfigurationException` | a parameter type with no resolvable converter; a non-`vertx` JSON profile selected on a standalone builder with no registry; a method-level `@JsonProfile` on a `@RestClient` interface; a `retry.backoffStrategy` FQCN that cannot be loaded or instantiated; a raw Vert.x duration key in the `webClient` bag |
+| `RestClientConfigurationException` | a parameter type with no resolvable converter; a JSON profile other than the reserved `system`, `vertique`, or `vertique-strict` selected on a standalone builder with no registry; a method-level `@JsonProfile` on a `@RestClient` interface; a `retry.backoffStrategy` FQCN that cannot be loaded or instantiated; a raw Vert.x duration key in the `webClient` bag |
 | `JsonProfileConfigurationException` | the selected profile id is unknown to the registry |
 | `ConfigurationException` | a blank `restClient.{name}` key, or `readTimeoutMs <= 0` |
 

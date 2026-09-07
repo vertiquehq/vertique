@@ -159,7 +159,7 @@ class CacheLifecycleIT {
     }
 
     private static CacheConfig disabledConfig() {
-        return new CacheConfig(false, CacheMode.LOCAL, 60, 86_400, "vertx", 1_024, 1_048_576, 100, 100, Map.of());
+        return new CacheConfig(false, CacheMode.LOCAL, 60, 86_400, "system", 1_024, 1_048_576, 100, 100, Map.of());
     }
 
     static final class LifecycleTarget {

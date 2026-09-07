@@ -41,7 +41,8 @@ import jakarta.annotation.Nullable;
  * @param serdeProperties the open serde property bag, or {@code null} when none
  * @param retry the retry configuration (defaults applied; never {@code null} after construction)
  * @param jsonProfile the JSON mapper profile id for value deserialization, or {@code null} to
- *     use the framework default (the {@code vertx} profile backed by {@code DatabindCodec.mapper()})
+ *     use the framework default (the {@code vertique} profile resolved through the registry,
+ *     floored by {@code json.jsonProfile})
  */
 public record KafkaConsumerConfig(
         String name,

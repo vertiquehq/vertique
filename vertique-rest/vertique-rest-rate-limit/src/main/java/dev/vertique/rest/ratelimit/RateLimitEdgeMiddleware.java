@@ -68,8 +68,8 @@ import org.slf4j.LoggerFactory;
  * unconditionally by {@code RestRateLimitModule}) renders them when installed; {@link
  * RateLimitExceededException} additionally extends the core {@code TooManyRequestsException} root
  * (T020), so a graph with no rate-limit-specific mapper still renders {@code 429} (with {@code
- * Retry-After} threaded from the decision) via {@code RestModule.defaultExceptionMapper()}'s core
- * default; {@link RateLimitUnavailableException} already extends {@code UnavailableException} and
+ * Retry-After} threaded from the decision) via the framework's default exception mapper, wired by
+ * {@code RestModule}; {@link RateLimitUnavailableException} already extends {@code UnavailableException} and
  * gets the equivalent {@code 503} default. An application that contributes its own {@code
  * ExceptionMapper<RateLimitExceededException>}/{@code ExceptionMapper<RateLimitUnavailableException>}
  * (or a common supertype) overrides the edge denial's response the same way it already overrides one

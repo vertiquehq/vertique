@@ -8,7 +8,6 @@ import dev.vertique.application.VertiqueApp;
 import dev.vertique.application.VertiqueApplicationComponent;
 import dev.vertique.config.parser.ConfigParsingModule;
 import dev.vertique.core.VertxModule;
-import dev.vertique.core.json.JsonModule;
 import dev.vertique.core.lifecycle.CoreLifecycleStepsModule;
 import dev.vertique.deploy.DeployerModule;
 import dev.vertique.examples.restclient.client.GeneratedRestClientsModule;
@@ -25,9 +24,9 @@ import jakarta.inject.Singleton;
  * {@code META-INF/services} registration) and the host-neutral lifecycle runner
  * ({@code VertiqueApplicationBootstrap}) drives startup and shutdown — there is no hand-written
  * {@code MainVerticle}. The inherited {@code startupSteps()}/{@code shutdownSteps()}/
- * {@code verticleDeploymentManager()} accessors expose the lifecycle inputs the runner consumes;
- * Jackson configuration runs as the {@code CONFIGURE}-phase step contributed by
- * {@link CoreLifecycleStepsModule}.
+ * {@code verticleDeploymentManager()} accessors expose the lifecycle inputs the runner consumes.
+ * The process JSON codec's mapper is installed in the {@code CONFIGURE} phase by the JSON runtime
+ * {@link RestClientModule} brings in.
  *
  * <p>This is a pure REST <em>client</em> application: it deploys no verticles of its own. The
  * {@link UserClient} binding's base URL is resolved from {@code restClient.userService.baseUrl} in
@@ -37,13 +36,12 @@ import jakarta.inject.Singleton;
  * <p>Includes:
  * <ul>
  *   <li>{@link VertxModule} — Vert.x instance and {@code @VertxConfig} configuration</li>
- *   <li>{@link JsonModule} — {@code ObjectMapperCustomizer} multibinding consumed by the
- *       {@code CONFIGURE}-phase Jackson configure step</li>
- *   <li>{@link RestClientModule} — REST client factory and infrastructure bindings</li>
+ *   <li>{@link RestClientModule} — REST client factory and infrastructure bindings, including the
+ *       JSON mapper profile runtime and its {@code CONFIGURE}-phase process-codec install step</li>
  *   <li>{@link DeployerModule} — verticle deployment multibinding plus the empty-by-default
  *       lifecycle-step sets the runner consumes</li>
- *   <li>{@link CoreLifecycleStepsModule} — framework {@code CONFIGURE}/{@code VALIDATE} lifecycle
- *       steps (Jackson configuration + compose-validator harness)</li>
+ *   <li>{@link CoreLifecycleStepsModule} — the framework's {@code VALIDATE} lifecycle step (the
+ *       compose-validator harness)</li>
  *   <li>{@link GeneratedRestClientsModule} — auto-generated {@code @Singleton} REST client
  *       bindings produced by {@code AutoWireProcessor} at compile time</li>
  * </ul>
@@ -54,7 +52,6 @@ import jakarta.inject.Singleton;
         modules = {
             VertxModule.class,
             ConfigParsingModule.class,
-            JsonModule.class,
             RestClientModule.class,
             DeployerModule.class,
             CoreLifecycleStepsModule.class,

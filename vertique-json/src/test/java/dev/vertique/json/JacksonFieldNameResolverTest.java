@@ -20,7 +20,7 @@ import com.fasterxml.jackson.databind.introspect.AnnotatedField;
 import com.fasterxml.jackson.databind.introspect.JacksonAnnotationIntrospector;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import dev.vertique.core.exception.ConfigurationException;
-import io.vertx.core.json.jackson.DatabindCodec;
+import dev.vertique.core.json.VertiqueJson;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -37,8 +37,8 @@ import org.junit.jupiter.api.Test;
  *       from {@code @JsonAlias};</li>
  *   <li>a primary name always claims its key and an alias fills only keys no primary claims —
  *       matching Jackson's own binding, which accepts such a collision rather than rejecting it;</li>
- *   <li>a route on the reserved {@code vertx} profile projects against {@link DatabindCodec#mapper()},
- *       the mapper that actually materializes its body, while a profiled route uses its own;</li>
+ *   <li>an unprofiled route projects against {@link VertiqueJson#mapper()}, the process codec's
+ *       mapper that actually materializes its body, while a profiled route uses its own;</li>
  *   <li>the identity short circuit is keyed on the <em>computed</em> projection, never on an
  *       inference about how the mapper is configured;</li>
  *   <li>the projection is <em>precomputed</em> at registration, so the request path neither
@@ -216,22 +216,22 @@ class JacksonFieldNameResolverTest {
     }
 
     @Test
-    @DisplayName("a vertx-profile route projects against DatabindCodec.mapper(); a profiled route against its own")
-    void shouldResolveVertxProfileRoutesAgainstDatabindCodecMapper() {
-        JacksonFieldNameResolver vertxRoute = JacksonFieldNameResolver.forRoute(null);
+    @DisplayName("an unprofiled route projects against the process codec's mapper; a profiled route against its own")
+    void shouldResolveUnprofiledRoutesAgainstTheProcessCodecMapper() {
+        JacksonFieldNameResolver processCodecRoute = JacksonFieldNameResolver.forRoute(null);
 
         assertSame(
-                DatabindCodec.mapper(),
-                vertxRoute.mapper(),
-                "a route on the reserved vertx profile must introspect the mapper that materializes its body");
+                VertiqueJson.mapper(),
+                processCodecRoute.mapper(),
+                "an unprofiled route must introspect the mapper that materializes its body — the process codec's");
         assertEquals(
                 "userName",
-                vertxRoute.logicalName(RenamedDto.class, "user_name"),
-                "the vertx-profile projection honours @JsonProperty");
+                processCodecRoute.logicalName(RenamedDto.class, "user_name"),
+                "the process-codec projection honours @JsonProperty");
         assertEquals(
                 "home_page",
-                vertxRoute.logicalName(StrategyDto.class, "home_page"),
-                "the vertx mapper declares no naming strategy, so home_page is not a known wire name");
+                processCodecRoute.logicalName(StrategyDto.class, "home_page"),
+                "the process codec's mapper declares no naming strategy, so home_page is not a known wire name");
 
         ObjectMapper profileMapper = snakeCaseMapper();
         JacksonFieldNameResolver profiledRoute = JacksonFieldNameResolver.forRoute(profileMapper);

@@ -5,7 +5,7 @@ package dev.vertique.json;
 
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 
 import dagger.Component;
 import dev.vertique.core.json.JsonMapperProfileRegistry;
@@ -32,7 +32,7 @@ class JsonRuntimeModuleTest {
     }
 
     @Test
-    @DisplayName("JsonMapperProfileRegistry binds to DefaultJsonMapperProfileRegistry and resolves vertx")
+    @DisplayName("JsonMapperProfileRegistry binds to DefaultJsonMapperProfileRegistry and resolves system")
     void registryInterface_boundToDefaultImpl() {
         JsonTestComponent component = DaggerJsonRuntimeModuleTest_JsonTestComponent.create();
 
@@ -40,6 +40,6 @@ class JsonRuntimeModuleTest {
 
         assertNotNull(registry, "registry must be resolvable");
         assertInstanceOf(DefaultJsonMapperProfileRegistry.class, registry);
-        assertSame(DatabindCodec.mapper(), registry.mapper(JsonProfileId.VERTX));
+        assertNotSame(DatabindCodec.mapper(), registry.mapper(JsonProfileId.SYSTEM));
     }
 }

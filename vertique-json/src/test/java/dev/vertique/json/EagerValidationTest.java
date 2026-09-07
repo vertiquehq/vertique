@@ -4,7 +4,7 @@
 package dev.vertique.json;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -30,7 +30,7 @@ import org.junit.jupiter.api.Test;
  * <ol>
  *   <li>A component with duplicate profile ids throws {@link JsonProfileConfigurationException} at
  *       the first accessor call (i.e. at bootstrap time, not at first request).
- *   <li>A component with a valid single profile resolves the {@code vertx} profile from its registry
+ *   <li>A component with a valid single profile resolves the {@code system} profile from its registry
  *       without throwing.
  * </ol>
  *
@@ -90,7 +90,7 @@ class EagerValidationTest {
 
     /**
      * Minimal Dagger component with one valid profile, used to prove the happy-path accessor
-     * pattern works and the registry resolves the {@code vertx} profile.
+     * pattern works and the registry resolves the {@code system} profile.
      */
     @Singleton
     @Component(modules = {JsonRuntimeModule.class, GoodProfileModule.class})
@@ -141,18 +141,18 @@ class EagerValidationTest {
     }
 
     @Test
-    @DisplayName("componentAccessor_resolvesVertx_whenProfilesValid")
-    void componentAccessor_resolvesVertx_whenProfilesValid() {
+    @DisplayName("componentAccessor_resolvesSystem_whenProfilesValid")
+    void componentAccessor_resolvesSystem_whenProfilesValid() {
         GoodProfileComponent component = DaggerEagerValidationTest_GoodProfileComponent.create();
 
-        // Happy path: accessor forces construction with valid profiles; vertx profile resolves.
+        // Happy path: accessor forces construction with valid profiles; system profile resolves.
         JsonMapperProfileRegistry registry =
                 assertDoesNotThrow(component::registry, "accessor must not throw with valid profiles");
 
-        assertSame(
+        assertNotSame(
                 DatabindCodec.mapper(),
-                registry.mapper(JsonProfileId.VERTX),
-                "vertx profile must resolve to DatabindCodec.mapper()");
+                registry.mapper(JsonProfileId.SYSTEM),
+                "system profile must resolve to a copy of DatabindCodec.mapper(), not the shared instance");
     }
 
     // --- Helpers ---

@@ -93,4 +93,51 @@ SPDX-License-Identifier: EUPL-1.2
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <!-- The process-codec proof (VertiqueJsonCodecTest) installs mappers into the
+                 process-global Vertique JSON codec and must restore the raw Vert.x delegate in
+                 @AfterEach, so this module's unit fork enables the reset seam. The flag is read
+                 ONCE at VertiqueJson class initialization, which is why the refusal half of the
+                 proof needs a fork that never saw it — the second execution below. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>default-test</id>
+                        <configuration>
+                            <!-- Reproduces the parent argLine (JaCoCo late-replacement + Mockito
+                                 premain) and adds the reset flag; a bare -D would drop both. -->
+                            <argLine>@{argLine} -javaagent:${project.build.directory}/mockito-agent.jar -Dvertique.json.codec.allowReset=true</argLine>
+                            <excludes>
+                                <!-- Runs in the flagless execution below. -->
+                                <exclude>**/VertiqueJsonCodecResetGateTest.java</exclude>
+                                <!-- Surefire's default exclude, restated because declaring
+                                     <excludes> replaces the default list. -->
+                                <exclude>**/*$*</exclude>
+                            </excludes>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <!-- Flagless fork: proves resetForTests() stays refused when the JVM did
+                             not start with -Dvertique.json.codec.allowReset=true, and that a later
+                             System.setProperty cannot open the seam. -->
+                        <id>reset-gate</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>test</goal>
+                        </goals>
+                        <configuration>
+                            <argLine>@{argLine} -javaagent:${project.build.directory}/mockito-agent.jar</argLine>
+                            <includes>
+                                <include>**/VertiqueJsonCodecResetGateTest.java</include>
+                            </includes>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>

@@ -3,11 +3,15 @@
 
 package dev.vertique.rest.client;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.config.parser.DefaultConfigMapper;
 import dev.vertique.config.parser.DefaultConfigParser;
@@ -28,9 +32,15 @@ import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.json.jackson.DatabindCodec;
 import jakarta.ws.rs.GET;
+import java.io.IOException;
 import java.lang.reflect.Proxy;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.LocalDate;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -249,35 +259,55 @@ class RestClientMapperPrecedenceTest {
         }
 
         @Test
-        @DisplayName("default_isVertx — nothing set resolves to DatabindCodec.mapper(), registry not required")
-        void default_isVertx() {
-            // No explicit mapper, no profile anywhere, no registry seeded.
+        @DisplayName("default_isVertiqueFloor — nothing set resolves through the builder-private registry, not the"
+                + " raw Vert.x mapper, registry not required")
+        void default_isVertiqueFloor() throws Exception {
+            // No explicit mapper, no profile anywhere, no registry seeded: the vertique floor applies and the
+            // builder builds its own reserved-profile registry to satisfy it.
             RestClientBuilder builder = RestClientBuilder.create(vertx);
 
             ObjectMapper resolved = builder.resolveEffectiveMapper(null, PlainClient.class, "svc");
 
-            assertSame(DatabindCodec.mapper(), resolved, "default must be the vertx DatabindCodec mapper");
+            assertNotSame(DatabindCodec.mapper(), resolved, "the floor is vertique, never the raw Vert.x mapper");
+            assertEquals(
+                    "{\"present\":\"x\"}",
+                    resolved.writeValueAsString(new java.util.LinkedHashMap<>(java.util.Map.of("present", "x")) {
+                        {
+                            put("absent", null);
+                        }
+                    }),
+                    "vertique omits null properties");
         }
     }
 
-    // --- vertx-default short-circuit and no-registry errors ---
+    // --- reserved-profile resolution without a registry and no-registry errors ---
 
     @Nested
-    @DisplayName("vertx profile and missing registry")
+    @DisplayName("reserved profile and missing registry")
     class VertxAndMissingRegistry {
 
         @Test
-        @DisplayName("explicitVertxProfile_resolvesDatabindCodec_withoutRegistry — id 'vertx' needs no registry")
-        void explicitVertxProfile_resolvesDatabindCodec_withoutRegistry() {
-            // Builder-level profile explicitly set to vertx; no registry seeded.
-            RestClientBuilder builder = RestClientBuilder.create(vertx).jsonProfile(JsonProfileId.VERTX);
+        @DisplayName("explicitSystemProfile_resolvesBuilderPrivateRegistry_withoutRegistry — id 'system' needs no"
+                + " injected registry")
+        void explicitSystemProfile_resolvesBuilderPrivateRegistry_withoutRegistry() throws Exception {
+            // Builder-level profile explicitly set to system; no registry seeded: the builder-private
+            // reserved-profile registry serves it (a guarded copy, never the raw Vert.x mapper itself).
+            RestClientBuilder builder = RestClientBuilder.create(vertx).jsonProfile(JsonProfileId.SYSTEM);
 
             ObjectMapper resolved = builder.resolveEffectiveMapper(null, PlainClient.class, "svc");
 
-            assertSame(
+            assertNotSame(
                     DatabindCodec.mapper(),
                     resolved,
-                    "explicit vertx profile must resolve to DatabindCodec.mapper() without a registry");
+                    "explicit system resolves to the registry's guarded copy, not the raw mapper");
+            assertEquals(
+                    "{\"present\":\"x\",\"absent\":null}",
+                    resolved.writeValueAsString(new java.util.LinkedHashMap<>(java.util.Map.of("present", "x")) {
+                        {
+                            put("absent", null);
+                        }
+                    }),
+                    "system keeps the raw mapper's null emission");
         }
 
         @Test
@@ -480,6 +510,153 @@ class RestClientMapperPrecedenceTest {
          */
         private ConfigParser configParser() {
             return new DefaultConfigParser(DefaultConfigMapper.lenient());
+        }
+    }
+
+    // --- TP-001: default and reserved ids resolve through a registry, with or without injection ---
+
+    /**
+     * TP-001 (T012): every id, including the reserved {@code system} id, now resolves through a
+     * {@link JsonMapperProfileRegistry} — the injected one, or a builder-private, lazily-created
+     * seeded registry for reserved ids when none is injected. A non-reserved id without a registry
+     * still fails fast.
+     *
+     * <p>Sub-cases:
+     *
+     * <ol>
+     *   <li>(a) an injected seeded registry, no profile anywhere — resolves the registry's
+     *       {@code vertique} mapper by identity;</li>
+     *   <li>(b) no registry, no profile anywhere — resolves a mapper behaving like {@code vertique}
+     *       (not the raw shared {@code DatabindCodec.mapper()});</li>
+     *   <li>(c) explicit {@code system}, no registry — resolves the builder-private registry's
+     *       {@code system} copy, built once per builder;</li>
+     *   <li>(d) explicit {@code custom}, no registry — still throws
+     *       {@link RestClientConfigurationException} (regression coverage).</li>
+     * </ol>
+     *
+     * <p>Plus the supporting structural check: {@code RestClientBuilder.java} no longer references
+     * {@code DatabindCodec}.
+     */
+    @Nested
+    @DisplayName("defaultAndReservedIdsResolveThroughARegistry")
+    class DefaultAndReservedIdsResolveThroughARegistry {
+
+        /** A record with one nullable property, used to observe null-inclusion behavior. */
+        private record NullableFieldSample(String name, String note) {}
+
+        @Test
+        @DisplayName("(a) injectedRegistry_noProfileAnywhere_resolvesReservedVertiqueIdByIdentity")
+        void injectedRegistry_noProfileAnywhere_resolvesReservedVertiqueIdByIdentity() {
+            JsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
+            RestClientBuilder builder = RestClientBuilder.create(vertx).jsonMapperProfileRegistry(registry);
+
+            ObjectMapper resolved = builder.resolveEffectiveMapper(null, PlainClient.class, "svc");
+
+            assertSame(
+                    registry.mapper(JsonProfileId.of("vertique")),
+                    resolved,
+                    "with an injected registry and no profile anywhere, the reserved 'vertique' id must resolve"
+                            + " through the registry");
+        }
+
+        @Test
+        @DisplayName("(b) noRegistry_noProfileAnywhere_resolvesVertiqueSemantics_notRawDatabindCodec")
+        void noRegistry_noProfileAnywhere_resolvesVertiqueSemantics_notRawDatabindCodec() throws Exception {
+            RestClientBuilder builder = RestClientBuilder.create(vertx);
+
+            ObjectMapper resolved = builder.resolveEffectiveMapper(null, PlainClient.class, "svc");
+
+            assertNotSame(
+                    DatabindCodec.mapper(),
+                    resolved,
+                    "a zero-config standalone builder must no longer resolve the raw shared"
+                            + " DatabindCodec.mapper()");
+            String json = resolved.writeValueAsString(new NullableFieldSample("x", null));
+            assertFalse(
+                    json.contains("note"),
+                    "the 'vertique' profile omits null properties (NON_NULL inclusion); got: " + json);
+        }
+
+        @Test
+        @DisplayName("(c) explicitSystem_noRegistry_resolvesBuilderPrivateRegistryCopy_builtOncePerBuilder")
+        void explicitSystem_noRegistry_resolvesBuilderPrivateRegistryCopy_builtOncePerBuilder() throws Exception {
+            RestClientBuilder builder = RestClientBuilder.create(vertx).jsonProfile(JsonProfileId.SYSTEM);
+
+            ObjectMapper resolvedFirst = builder.resolveEffectiveMapper(null, PlainClient.class, "svc");
+            ObjectMapper resolvedSecond = builder.resolveEffectiveMapper(null, PlainClient.class, "svc");
+
+            assertNotSame(
+                    DatabindCodec.mapper(),
+                    resolvedFirst,
+                    "explicit 'system' without a registry must resolve the builder-private registry's own"
+                            + " copy, not the shared DatabindCodec.mapper() instance itself");
+            assertSame(
+                    resolvedFirst,
+                    resolvedSecond,
+                    "the builder-private registry must be built at most once per builder — two resolutions on"
+                            + " the same builder must share the same mapper instance");
+
+            // System semantics: a null property is emitted (no NON_NULL opinion), unlike 'vertique'.
+            String json = resolvedFirst.writeValueAsString(new NullableFieldSample("x", null));
+            assertTrue(
+                    json.contains("note"),
+                    "the 'system' profile emits null properties (no NON_NULL opinion); got: " + json);
+
+            // System semantics: java.time renders ISO-8601.
+            assertEquals(
+                    "\"2026-01-02\"",
+                    resolvedFirst.writeValueAsString(LocalDate.of(2026, 1, 2)),
+                    "the 'system' profile must render LocalDate as ISO-8601");
+
+            // System semantics: Optional binds (Jdk8Module registered).
+            Optional<String> deserialized = resolvedFirst.readValue("\"hi\"", new TypeReference<Optional<String>>() {});
+            assertEquals(Optional.of("hi"), deserialized, "the 'system' profile must bind Optional<String>");
+
+            // A different builder must get its own builder-private registry instance.
+            RestClientBuilder otherBuilder = RestClientBuilder.create(vertx).jsonProfile(JsonProfileId.SYSTEM);
+            ObjectMapper resolvedFromOtherBuilder = otherBuilder.resolveEffectiveMapper(null, PlainClient.class, "svc");
+
+            assertNotSame(
+                    resolvedFirst,
+                    resolvedFromOtherBuilder,
+                    "two different builders must not share the same builder-private registry instance");
+        }
+
+        @Test
+        @DisplayName("(d) explicitCustom_noRegistry_throwsConfigurationException")
+        void explicitCustom_noRegistry_throwsConfigurationException() {
+            RestClientBuilder builder = RestClientBuilder.create(vertx).jsonProfile(JsonProfileId.of("custom"));
+
+            RestClientConfigurationException ex = assertThrows(
+                    RestClientConfigurationException.class,
+                    () -> builder.resolveEffectiveMapper(null, PlainClient.class, "svc"));
+
+            String message = ex.getMessage();
+            assertTrue(message.contains("svc"), "message should name the client: " + message);
+            assertTrue(message.contains("custom"), "message should name the profile id: " + message);
+        }
+
+        @Test
+        @DisplayName("structural: RestClientBuilder.java has no DatabindCodec token")
+        void restClientBuilderSource_hasNoDatabindCodecToken() throws IOException {
+            Path source = Path.of(
+                    System.getProperty("user.dir"),
+                    "src",
+                    "main",
+                    "java",
+                    "dev",
+                    "vertique",
+                    "rest",
+                    "client",
+                    "RestClientBuilder.java");
+            Assumptions.assumeTrue(Files.isRegularFile(source), "RestClientBuilder.java not found at " + source);
+
+            String contents = Files.readString(source);
+
+            assertFalse(
+                    contents.contains("DatabindCodec"),
+                    "RestClientBuilder.java must not reference DatabindCodec once every JSON profile resolves"
+                            + " through a registry");
         }
     }
 

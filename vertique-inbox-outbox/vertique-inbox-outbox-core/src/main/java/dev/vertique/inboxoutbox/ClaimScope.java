@@ -87,7 +87,7 @@ public sealed interface ClaimScope permits ClaimScope.All, ClaimScope.Destinatio
      * node — for example, when the node hosts only certain locally registered service operations.
      *
      * <p>The supplier is evaluated at each claim cycle; it must be fast, non-blocking, and must
-     * not return {@code null}. An empty set means this node claims nothing for the type. The relay
+     * not return {@code null}. An empty set means this node claims nothing for the type. The store adapter
      * validates supplier results before use: {@code null} returns, blank elements, and oversized
      * elements all fail the claim cycle.
      *

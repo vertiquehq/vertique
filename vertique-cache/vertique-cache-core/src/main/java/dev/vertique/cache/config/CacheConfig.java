@@ -50,8 +50,14 @@ public record CacheConfig(
         });
     }
 
-    /** Recommended defaults from the cache contract. */
+    /**
+     * Recommended defaults from the cache contract. The default {@code jsonProfile} is the reserved
+     * {@code system} profile (renamed from {@code vertx}); cache does not follow
+     * {@code json.jsonProfile}.
+     *
+     * @return the recommended default cache configuration
+     */
     public static CacheConfig defaults() {
-        return new CacheConfig(true, CacheMode.LOCAL, 60, 86_400, "vertx", 1_024, 1_048_576, 10_000, 100, Map.of());
+        return new CacheConfig(true, CacheMode.LOCAL, 60, 86_400, "system", 1_024, 1_048_576, 10_000, 100, Map.of());
     }
 }

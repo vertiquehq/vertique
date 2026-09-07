@@ -9,7 +9,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import dagger.Component;
 import dev.vertique.config.parser.ConfigParsingModule;
 import dev.vertique.core.VertxModule;
-import dev.vertique.core.json.JsonModule;
 import dev.vertique.db.DbModule;
 import dev.vertique.db.flyway.DbFlywayModule;
 import dev.vertique.db.postgresql.DbPostgresqlModule;
@@ -64,7 +63,6 @@ public class MissingServiceHandlerIT {
             modules = {
                 VertxModule.class,
                 ConfigParsingModule.class,
-                JsonModule.class,
                 DeployerModule.class,
                 ManagementModule.class,
                 DbModule.class,

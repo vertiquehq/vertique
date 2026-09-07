@@ -4,6 +4,7 @@
 package dev.vertique.rest.security;
 
 import dev.vertique.core.context.ContextHolder;
+import dev.vertique.core.context.DispatchBoundary;
 import dev.vertique.core.correlation.CorrelationContext;
 import dev.vertique.core.extension.OrderedExtension;
 import dev.vertique.rest.core.middleware.MdcKeys;
@@ -74,8 +75,8 @@ import lombok.extern.slf4j.Slf4j;
  *   <li>Construct an {@link AuthenticatedSecurityContext} and bind it via
  *       {@link SecurityRuntime#bindCurrent(dev.vertique.security.SecurityContext)}, registering
  *       the returned scope for cleanup with the per-request {@link RequestContextLifecycle}.</li>
- *   <li>Install {@link InvocationOrigin#of(String)} {@code "rest"} as the ambient invocation origin
- *       on {@link ContextHolder} (identity-002 P2.S5b-i), so downstream authorization
+ *   <li>Install {@link #REST_ORIGIN} as the ambient invocation origin
+ *       on {@link ContextHolder}, so downstream authorization
  *       ({@code SecurityPolicyEnforcer}) and identity-snapshot capture read a real REST origin
  *       instead of falling back to {@link InvocationOrigin#unspecified()}. Scoped to the request
  *       lifecycle exactly like the {@code SecurityContext} binding above.</li>
@@ -103,6 +104,13 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @Singleton
 public final class IdentityResolutionMiddleware implements Handler<RoutingContext> {
+
+    /**
+     * The invocation origin {@link #handle(RoutingContext)} binds for the request lifecycle: an
+     * {@link InvocationOrigin} of kind {@link DispatchBoundary#REST}. A non-REST transport binds its
+     * own kind through {@link #handlerFor(InvocationOrigin)}.
+     */
+    public static final InvocationOrigin REST_ORIGIN = InvocationOrigin.of(DispatchBoundary.REST);
 
     private final List<SecurityIdentityResolver> orderedResolvers;
     private final SecurityClaimMapper claimMapper;
@@ -272,7 +280,7 @@ public final class IdentityResolutionMiddleware implements Handler<RoutingContex
      */
     @Override
     public void handle(RoutingContext ctx) {
-        handle(ctx, InvocationOrigin.of("rest"));
+        handle(ctx, REST_ORIGIN);
     }
 
     /**

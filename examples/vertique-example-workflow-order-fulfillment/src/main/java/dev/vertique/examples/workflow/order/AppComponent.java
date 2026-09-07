@@ -8,7 +8,6 @@ import dev.vertique.application.VertiqueApp;
 import dev.vertique.application.VertiqueApplicationComponent;
 import dev.vertique.config.parser.ConfigParsingModule;
 import dev.vertique.core.VertxModule;
-import dev.vertique.core.json.JsonModule;
 import dev.vertique.core.lifecycle.CoreLifecycleStepsModule;
 import dev.vertique.db.DbModule;
 import dev.vertique.db.flyway.DbFlywayModule;
@@ -64,8 +63,8 @@ import jakarta.inject.Singleton;
  * {@code verticleDeploymentManager()} accessors expose the lifecycle inputs the runner consumes.
  *
  * <p>The runner reproduces the former {@code MainVerticle} choreography exactly through lifecycle
- * phases: Jackson configuration runs as the {@code CONFIGURE}-phase {@code JacksonConfigureStep}
- * contributed by {@link CoreLifecycleStepsModule}; the {@code VALIDATE}-phase
+ * phases: this graph includes no JSON runtime module, so no {@code CONFIGURE}-phase step installs a
+ * JSON profile as the process codec and JSON runs on Vert.x's raw semantics; the {@code VALIDATE}-phase
  * {@code ComposeValidationStep} forces construction of every {@code ComposeValidator} — including
  * the {@link WorkflowOutboxComposeValidator} (contributed by {@link WorkflowServicesModule}),
  * the {@link WorkflowDelayedComposeValidator} (contributed by {@link WorkflowDelayedModule}), and
@@ -84,8 +83,8 @@ import jakarta.inject.Singleton;
  *   <li>{@link DeployerModule} — verticle deployment multibinding and the
  *       {@code Set<ApplicationStartupStep>}/{@code Set<ApplicationShutdownStep>} multibindings the
  *       runner consumes.</li>
- *   <li>{@link CoreLifecycleStepsModule} — framework {@code CONFIGURE}/{@code VALIDATE} lifecycle
- *       steps (Jackson configuration + compose-validator harness).</li>
+ *   <li>{@link CoreLifecycleStepsModule} — the framework's {@code VALIDATE} lifecycle step (the
+ *       compose-validator harness).</li>
  *   <li>{@link ManagementModule} — health check endpoints on management port.</li>
  *   <li>{@link DbPostgresqlModule} — PostgreSQL connection pool.</li>
  *   <li>{@link DbFlywayModule} — Flyway migration runner and its {@code MIGRATE}-phase startup
@@ -134,7 +133,6 @@ import jakarta.inject.Singleton;
         modules = {
             VertxModule.class,
             ConfigParsingModule.class,
-            JsonModule.class,
             DeployerModule.class,
             CoreLifecycleStepsModule.class,
             ManagementModule.class,

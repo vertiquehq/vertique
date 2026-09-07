@@ -4,13 +4,13 @@
 package dev.vertique.rest.jaxrs;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.rest.core.config.SseConfig;
 import dev.vertique.rest.core.sse.SseEvent;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServerResponse;
-import io.vertx.core.json.jackson.DatabindCodec;
 import io.vertx.core.streams.ReadStream;
 import lombok.extern.slf4j.Slf4j;
 
@@ -26,7 +26,7 @@ import lombok.extern.slf4j.Slf4j;
  *   <li>{@code retry: <ms>} — if {@link SseEvent#retryMs()} is present</li>
  *   <li>{@code : <comment>} — if {@link SseEvent#comment()} is present</li>
  *   <li>{@code data: <line>} — one line per newline in the serialized data; structured objects
- *       are JSON-serialized via {@link DatabindCodec#mapper()}</li>
+ *       are JSON-serialized via the process JSON codec's mapper ({@link VertiqueJson#mapper()})</li>
  *   <li>A trailing blank line ({@code \n}) to terminate the event block</li>
  * </ul>
  *
@@ -316,7 +316,8 @@ class SseReadStream implements ReadStream<Buffer> {
 
     /**
      * Serializes the event data to a string. {@link String} values are returned as-is;
-     * structured objects are JSON-serialized via {@link DatabindCodec#mapper()}.
+     * structured objects are JSON-serialized via the process JSON codec's mapper
+     * ({@link VertiqueJson#mapper()}), read at use time — SSE has no per-route profile of its own.
      *
      * @param data the data value to serialize; must not be {@code null}
      * @return the string representation of the data
@@ -326,7 +327,7 @@ class SseReadStream implements ReadStream<Buffer> {
             return s;
         }
         try {
-            return DatabindCodec.mapper().writeValueAsString(data);
+            return VertiqueJson.mapper().writeValueAsString(data);
         } catch (JsonProcessingException e) {
             log.warn("Failed to serialize SSE event data to JSON", e);
             return data.toString();

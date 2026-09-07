@@ -159,7 +159,10 @@ public final class MDCContexts {
     // --- Caller-override factory for non-duplicated-context dispatch sites ---
 
     /**
-     * Returns the FQCN key under which the MDC holder value lives in the unified
+     * INTERNAL framework seam — used by the framework's dispatch sites (cron, delayed jobs,
+     * correlation and REST ingress); not an application contract and outside the maturity promise.
+     *
+     * <p>Returns the FQCN key under which the MDC holder value lives in the unified
      * dispatch-context map. Use this when composing a caller-override entry for
      * {@link DispatchEnvelopeBuilder#build} from a non-duplicated Vert.x context (e.g. cron or
      * delayed-job scheduler threads), where direct holder writes are not permitted.
@@ -171,7 +174,10 @@ public final class MDCContexts {
     }
 
     /**
-     * Returns a wire-format MDC value initialised from the given entries, suitable for use as a
+     * INTERNAL framework seam — used by the framework's dispatch sites (cron, delayed jobs,
+     * correlation and REST ingress); not an application contract and outside the maturity promise.
+     *
+     * <p>Returns a wire-format MDC value initialised from the given entries, suitable for use as a
      * caller-override entry in {@link DispatchEnvelopeBuilder#build}. The value is a
      * {@link DiagnosticContextSnapshot} — the same form the {@link #serviceDispatchEncoder()
      * built-in MDC service-dispatch encoder} produces from ambient MDC — so caller-supplied
@@ -238,7 +244,10 @@ public final class MDCContexts {
     }
 
     /**
-     * Snapshots the current value (or absence) of every key in {@code keys} and returns a
+     * INTERNAL framework seam — used by the framework's dispatch sites (cron, delayed jobs,
+     * correlation and REST ingress); not an application contract and outside the maturity promise.
+     *
+     * <p>Snapshots the current value (or absence) of every key in {@code keys} and returns a
      * {@link ContextHolder.Scope} whose {@link ContextHolder.Scope#close()} restores each key to
      * its snapshotted state — independent of any {@link #put}, {@link #putAll}, {@link #remove},
      * or {@link #removeAll} calls made between snapshot and close. Keys outside {@code keys} are

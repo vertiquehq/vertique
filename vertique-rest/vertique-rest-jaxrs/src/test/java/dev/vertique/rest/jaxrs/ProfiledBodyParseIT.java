@@ -44,16 +44,16 @@ import org.junit.jupiter.api.extension.ExtendWith;
 /**
  * Integration tests for profile-aware request-body first parse (FR-JSON-024/024A, slice 2.2).
  *
- * <p>When a resource method selects a non-{@code vertx} JSON profile (here via a class-level
+ * <p>When a resource method selects an explicit JSON profile (here via a class-level
  * {@code @JsonProfile("strict-test")}), {@code DefaultBoundRequest} must perform the FIRST PARSE of
  * the raw request body with that profile's {@link ObjectMapper}, applying the profile's strict
  * parser features. A body the strict profile rejects (a duplicate JSON key, or trailing tokens after
  * the value) must surface as an HTTP {@code 400}, produced through the framework's standard error
  * pipeline ({@code ValidationException} &rarr; {@code DefaultExceptionMapper} &rarr; 400).
  *
- * <p>The {@code vertx}-profile path (no {@code @JsonProfile}) must be byte-for-byte unchanged: a
- * normal JSON body is accepted and dispatched exactly as today, proving the strict-parse change is
- * scoped to profiled boundaries only.
+ * <p>The unannotated path (no {@code @JsonProfile}, so the {@code vertique} floor) keeps the lenient
+ * defaults: a normal JSON body is accepted and dispatched, proving the strict-parse change is scoped
+ * to the boundaries that actually select a strict profile.
  *
  * <p>The harness mirrors {@link ConsumesEnforcementIT}: a {@link JaxRsRouterMount} built via
  * {@link TestFactories} under the default {@code none} validation strategy, wired with a
@@ -156,11 +156,12 @@ public class ProfiledBodyParseIT {
      * are MATERIALIZATION-time features — they fire when the intermediate JSON is bound to the DTO, not
      * at the first parse (slice 2.3, FR-JSON-024B/022/023).
      *
-     * <p>The load-bearing divergence is {@code ALLOW_COERCION_OF_SCALARS}: the Vert.x global mapper
-     * leaves it ENABLED (verified), so it binds a string {@code "5"} into an {@code int} field; this
-     * profile DISABLES it, so the same body is rejected at {@code convertValue}. A 400 on a profiled
-     * route where the {@code /plain} vertx route returns 200 for the identical body therefore proves
-     * the PROFILE mapper — not vertx — performed the materialization.
+     * <p>The load-bearing divergence is {@code ALLOW_COERCION_OF_SCALARS}: the floor's {@code vertique}
+     * mapper leaves it ENABLED (a Jackson default neither reserved profile touches), so it binds a
+     * string {@code "5"} into an {@code int} field; this profile DISABLES it, so the same body is
+     * rejected at {@code convertValue}. A 400 on a {@code no-coercion} route where the unannotated
+     * {@code /plain} route returns 200 for the identical body therefore proves the SELECTED profile's
+     * mapper performed the materialization.
      *
      * @return the {@code no-coercion} profile
      */
@@ -178,7 +179,7 @@ public class ProfiledBodyParseIT {
     /**
      * Body DTO carrying a {@code name} string and a {@code count} primitive {@code int}. The primitive
      * {@code int} is what makes scalar coercion observable: a JSON string {@code "5"} for {@code count}
-     * binds under the coercion-enabled vertx mapper but is rejected by the {@code no-coercion} profile.
+     * binds under the coercion-enabled floor mapper but is rejected by the {@code no-coercion} profile.
      */
     public static class Payload {
         public String name;
@@ -210,14 +211,15 @@ public class ProfiledBodyParseIT {
     }
 
     /**
-     * Resource with NO {@code @JsonProfile} — the effective profile is {@code vertx}, so the body is
-     * parsed by today's default Vert.x path (no strict features), proving the vertx path is unchanged.
+     * Resource with NO {@code @JsonProfile} — the effective profile is the {@code vertique} floor, whose
+     * mapper carries no strict parser features, proving the strict parse is scoped to the profiles that
+     * ask for it.
      */
     @Path("/plain")
     public static class PlainResource {
 
         /**
-         * Echoes the body's {@code name} for {@code POST /plain}, parsed by the default vertx path.
+         * Echoes the body's {@code name} for {@code POST /plain}, parsed by the floor profile's mapper.
          *
          * @param payload the request body bean
          * @return the echoed name
@@ -235,7 +237,7 @@ public class ProfiledBodyParseIT {
      * Resource selecting the {@code no-coercion} profile, whose endpoints prove the MATERIALIZATION
      * sites (slice 2.3): the profile mapper — with scalar coercion DISABLED — performs the POJO and
      * collection binding. A JSON string for the primitive {@code count} is rejected by the profile
-     * (400) where the vertx route binds the same body (200).
+     * (400) where the unannotated floor route binds the same body (200).
      */
     @Path("/bind")
     @dev.vertique.core.json.JsonProfile("no-coercion")
@@ -244,7 +246,7 @@ public class ProfiledBodyParseIT {
         /**
          * Echoes the body's {@code name}; a string value for the primitive {@code count} is rejected at
          * POJO materialization by the {@code no-coercion} profile mapper (FR-JSON-024B), surfacing as a
-         * 400 before the method runs. The vertx mapper would coerce the string and return 200.
+         * 400 before the method runs. The floor's mapper would coerce the string and return 200.
          *
          * @param payload the request body bean, materialized by the {@code no-coercion} profile mapper
          * @return the echoed name
@@ -283,7 +285,7 @@ public class ProfiledBodyParseIT {
     void strictProfile_rejectsDuplicateKeys_returns400(VertxTestContext ctx) {
         // STRICT_DUPLICATE_DETECTION makes the profile mapper reject the duplicate "name" key during
         // the FIRST PARSE in DefaultBoundRequest, which must surface as a 400 — not a 200 (last-wins,
-        // as the lenient vertx path would do) and not a 500.
+        // as the lenient floor mapper would do) and not a 500.
         postStrict(
                 vertx,
                 ctx,
@@ -305,14 +307,14 @@ public class ProfiledBodyParseIT {
                 status -> assertEquals(400, status, "trailing tokens must be rejected with 400"));
     }
 
-    // --- Test 3: vertx profile accepts a normal body unchanged ---
+    // --- Test 3: the floor profile accepts a normal body unchanged ---
 
     @Test
-    @DisplayName("The vertx (default) profile accepts a normal body unchanged (2xx)")
-    void vertxProfile_acceptsBody_unchanged(VertxTestContext ctx) {
-        // The /plain resource has no @JsonProfile, so the effective profile is vertx and the body is
-        // parsed by today's default path — a normal body must dispatch to 200, proving the strict
-        // parse change does not touch the vertx path.
+    @DisplayName("The floor (unannotated) profile accepts a normal body unchanged (2xx)")
+    void floorProfile_acceptsBody_unchanged(VertxTestContext ctx) {
+        // The /plain resource has no @JsonProfile, so the effective profile is the vertique floor and
+        // the body is parsed by its lenient mapper — a normal body must dispatch to 200, proving the
+        // strict parse change does not touch an unannotated route.
         deploy(vertx, ctx, Set.of(new PlainResource()), (port, c) -> {
             c.post(port, "127.0.0.1", "/plain")
                     .putHeader("Content-Type", "application/json")
@@ -320,7 +322,7 @@ public class ProfiledBodyParseIT {
                     .map(resp -> resp.statusCode() + "|" + String.valueOf(resp.bodyAsString()))
                     .onComplete(ctx.succeeding(result -> {
                         ctx.verify(() ->
-                                assertEquals("200|name=alice", result, "the vertx path must accept a normal body"));
+                                assertEquals("200|name=alice", result, "the floor path must accept a normal body"));
                         ctx.completeNow();
                     }));
         });
@@ -333,8 +335,8 @@ public class ProfiledBodyParseIT {
     void strictProfile_rejectsCoercedScalar_returns400(VertxTestContext ctx) {
         // ALLOW_COERCION_OF_SCALARS is a MATERIALIZATION feature: the body parses fine, but binding the
         // string "5" into the primitive int `count` must throw on the no-coercion PROFILE mapper at
-        // convertValue and surface as 400. The vertx mapper (coercion enabled, verified) coerces "5" and
-        // returns 200 on the identical body (see vertxProfile_coercedScalar_acceptedAsToday), so a 400
+        // convertValue and surface as 400. The floor mapper (coercion enabled) coerces "5" and
+        // returns 200 on the identical body (see floorProfile_coercedScalar_acceptedAsToday), so a 400
         // here proves the PROFILE mapper did the bind (slice 2.3 POJO site, FR-JSON-024B).
         deploy(
                 vertx,
@@ -358,7 +360,7 @@ public class ProfiledBodyParseIT {
         // The List<Payload> body materialization must route through the profile mapper too: a string "5"
         // for an element's primitive int `count` must be rejected with 400, proving the collection/array
         // binding site (not just the POJO site) uses the profile mapper (slice 2.3 collection site,
-        // FR-JSON-022/023). The vertx path would coerce and return 200.
+        // FR-JSON-022/023). The floor path would coerce and return 200.
         deploy(
                 vertx,
                 ctx,
@@ -373,15 +375,15 @@ public class ProfiledBodyParseIT {
                                 assertEquals(400, status, "a coerced List-element scalar must be rejected with 400")));
     }
 
-    // --- Test 6: vertx profile coerces the same scalar exactly as today (2xx) ---
+    // --- Test 6: the floor profile coerces the same scalar (2xx) ---
 
     @Test
-    @DisplayName("The vertx (default) profile coerces a string scalar exactly as today (2xx)")
-    void vertxProfile_coercedScalar_acceptedAsToday(VertxTestContext ctx) {
-        // Same body on the no-profile /plain resource: the effective profile is vertx, whose global
-        // mapper coerces the string "5" into the primitive int `count` (verified default), so the body
-        // binds and dispatches to 200 — proving the materialization change is scoped to profiled
-        // boundaries only (vertx byte-for-byte unchanged).
+    @DisplayName("The floor (unannotated) profile coerces a string scalar (2xx)")
+    void floorProfile_coercedScalar_acceptedAsToday(VertxTestContext ctx) {
+        // Same body on the no-profile /plain resource: the effective profile is the vertique floor,
+        // whose mapper coerces the string "5" into the primitive int `count` (Jackson's default), so
+        // the body binds and dispatches to 200 — proving the materialization change is scoped to the
+        // routes that select a stricter profile.
         deploy(
                 vertx,
                 ctx,
@@ -392,7 +394,7 @@ public class ProfiledBodyParseIT {
                         port,
                         "/plain",
                         Buffer.buffer("{\"name\":\"alice\",\"count\":\"5\"}"),
-                        status -> assertEquals(200, status, "the vertx path must coerce the string scalar")));
+                        status -> assertEquals(200, status, "the floor path must coerce the string scalar")));
     }
 
     // --- Helpers ---

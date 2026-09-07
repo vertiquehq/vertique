@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # vertique-correlation
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.correlation`
 > **Artifact:** `vertique-correlation`
 > **Depends on:** `vertique-core`, `vertique-context`, `vertique-logging`
@@ -50,6 +50,16 @@ Mirroring is selective: `requestId`/`correlationId` are set once at REST ingress
 `CorrelationContextMutator` setter runs during enrichment. Session refs, protocol-correlation refs,
 and arbitrary attributes are never mirrored into MDC — they live only in the `CorrelationContext`
 read via the substrate.
+
+### Framework seams
+
+The factory, mutator, seeder, value adapter, durable encoder and decoder, `CorrelationEnvelope`, and
+`Uuid4CorrelationIdGenerator` are public for the framework's own ingress and propagation paths and
+carry an INTERNAL marker in their Javadoc; they are outside this module's compatibility promise.
+That promise covers `CorrelationMdcKeys`, `TraceReferenceResolver`, the `CorrelationContextModule`
+wiring, the `correlation` durable namespace with `CorrelationDurableKeys`, and the documented
+mirroring and propagation behavior. `CorrelationContext` itself is a `dev.vertique:vertique-core`
+type.
 
 ## Extension Points
 
@@ -143,9 +153,13 @@ For cross-boundary propagation the runtime ships:
   `ServiceDispatchCodecs.snapshotEncoder/Decoder`) — snapshots the live context into outgoing
   `DispatchEnvelope.metadata().dispatchContext()` and rebuilds a fresh live one on receive.
 - A bespoke `DurableContextMetadataEncoder` / `Decoder` pair that serialises the snapshot as a
-  single JSON envelope under the `vertique-correlation` durable key (Context contribution model
+  single JSON envelope under the `correlation` durable namespace (projected to the `vertique-correlation` Kafka header) (Context contribution model
   level 4 — bespoke is justified by `durableSafe` filtering, schemaVersion enforcement, and
-  header re-validation on decode).
+  header re-validation on decode). Both sides run on the process JSON codec's mapper
+  (`VertiqueJson.mapper()`), so `json.systemProfile` governs the durable format; the decoder has no
+  request-validation gate in front of it, so the installed mapper's parser leniency (comments,
+  quoting) is what it accepts — enum values, however, are parsed strictly by the decoder itself
+  (`Enum.valueOf` over the header tree), so an enum-lenient system profile does not widen them.
 - A `CorrelationContextSeeder` `InboundContextInitializer` that mints a fresh context on every
   inbound boundary (REST, service dispatch, Kafka, outbox relay, delayed-job poll, workflow
   branch / timer recovery) that arrives without one.

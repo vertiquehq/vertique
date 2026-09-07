@@ -12,7 +12,7 @@ import java.util.function.Supplier;
 /**
  * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
  * outside the maturity promise. Applications program against the SPIs in
- * {\ dev.vertique.core.context} and receive this runtime through the framework's Dagger wiring.
+ * {@code dev.vertique.core.context} and receive this runtime through the framework's Dagger wiring.
  *
  * Public static facade over {@link DefaultContextHolder} for reading and writing typed values in
  * the current Vert.x request context.

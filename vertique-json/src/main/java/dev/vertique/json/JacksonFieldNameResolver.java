@@ -9,8 +9,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyName;
 import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
 import dev.vertique.core.exception.ConfigurationException;
+import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
-import io.vertx.core.json.jackson.DatabindCodec;
 import jakarta.annotation.Nullable;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -100,16 +100,17 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
     /**
      * Creates the resolver for a boundary from its resolved body-profile mapper.
      *
-     * <p>A {@code null} argument is the reserved {@code vertx} profile — the body is materialized by
-     * {@link DatabindCodec#mapper()}, so that is the mapper whose naming decides which declared
-     * policies apply.
+     * <p>A {@code null} argument means the boundary resolved no mapper of its own — the body is
+     * materialized by the process JSON codec, so {@link VertiqueJson#mapper()} is the mapper whose
+     * naming decides which declared policies apply. It is read here, at composition time, and the
+     * caller composes boundary resolvers during or after the {@code CONFIGURE} startup phase.
      *
-     * @param resolvedBodyMapper the boundary's resolved profile mapper, or {@code null} for the
-     *                           {@code vertx} default
+     * @param resolvedBodyMapper the boundary's resolved profile mapper, or {@code null} when the
+     *                           boundary binds through the process codec
      * @return the resolver for that boundary; never {@code null}
      */
     public static JacksonFieldNameResolver forRoute(@Nullable ObjectMapper resolvedBodyMapper) {
-        return forMapper(resolvedBodyMapper != null ? resolvedBodyMapper : DatabindCodec.mapper());
+        return forMapper(resolvedBodyMapper != null ? resolvedBodyMapper : VertiqueJson.mapper());
     }
 
     /**

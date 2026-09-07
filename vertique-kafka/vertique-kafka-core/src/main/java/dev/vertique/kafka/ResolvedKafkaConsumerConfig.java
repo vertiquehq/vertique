@@ -48,7 +48,7 @@ import java.util.Map;
  *     when a JSON mapper profile is selected
  * @param jsonProfile the resolved JSON mapper profile id for value deserialization
  *     (config override, then binding/listener default), or {@code null} for the framework default
- *     (the {@code vertx} profile backed by {@code DatabindCodec.mapper()})
+ *     (the {@code vertique} profile resolved through the registry, floored by {@code json.jsonProfile})
  */
 record ResolvedKafkaConsumerConfig(
         String topic,

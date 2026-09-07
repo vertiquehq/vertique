@@ -9,7 +9,11 @@ import dev.vertique.core.correlation.CorrelationContextSnapshot;
 import java.util.Objects;
 
 /**
- * {@link ContextValueAdapter} for {@link CorrelationContext}.
+ * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
+ * outside the maturity promise. Applications use the surface the module document lists and the
+ * types in {@code dev.vertique.core}.
+ *
+ * <p>{@link ContextValueAdapter} for {@link CorrelationContext}.
  *
  * <p>Discovered at substrate bootstrap via Java {@link java.util.ServiceLoader} (registered in
  * {@code META-INF/services/dev.vertique.core.context.ContextValueAdapter}) so the substrate can

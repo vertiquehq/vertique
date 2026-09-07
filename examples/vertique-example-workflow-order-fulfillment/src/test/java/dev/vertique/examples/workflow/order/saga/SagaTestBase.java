@@ -198,7 +198,7 @@ public abstract class SagaTestBase {
         // FlywayMigrationRunner cannot express those, so flyway.mode=DISABLED keeps the MIGRATE
         // step a no-op. We therefore run only the non-verticle startup steps directly, in
         // lifecycle order, which reproduces the former choreography exactly:
-        //   • CONFIGURE → JacksonConfigureStep (Jackson configuration)
+        //   • CONFIGURE → nothing in this graph (no JSON runtime module, so no process-codec install)
         //   • VALIDATE  → ComposeValidationStep (forces construction of the three workflow
         //                 ComposeValidators: §3.11 outbox, cycle-2 timer, cycle-3 task)
         //   • MIGRATE   → FlywayMigrationStartupStep (no-op under flyway.mode=DISABLED)

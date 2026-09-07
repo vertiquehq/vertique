@@ -6,11 +6,11 @@ package dev.vertique.rest.websocket;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import dev.vertique.context.ContextSnapshot;
 import dev.vertique.core.context.ContextHolder;
+import dev.vertique.core.json.VertiqueJson;
 import io.vertx.core.Future;
 import io.vertx.core.MultiMap;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.ServerWebSocket;
-import io.vertx.core.json.jackson.DatabindCodec;
 import jakarta.annotation.Nullable;
 import java.util.HashMap;
 import java.util.Map;
@@ -155,7 +155,7 @@ class DefaultWebSocketSession implements WebSocketSession {
     @Override
     public Future<Void> send(Object message) {
         try {
-            String json = DatabindCodec.mapper().writeValueAsString(message);
+            String json = VertiqueJson.mapper().writeValueAsString(message);
             return ws.writeTextMessage(json);
         } catch (JsonProcessingException e) {
             return Future.failedFuture(e);

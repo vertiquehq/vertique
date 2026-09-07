@@ -12,20 +12,25 @@
  *       resolves named {@link dev.vertique.core.json.JsonMapperProfile} instances by
  *       {@link dev.vertique.core.json.JsonProfileId}, validates uniqueness at construction
  *       time, and runs a structural round-trip probe for each application-contributed profile.
- *   <li><strong>Built-in {@code vertx}, {@code vertique} and {@code vertique-strict}
+ *   <li><strong>Built-in {@code system}, {@code vertique} and {@code vertique-strict}
  *       profiles</strong> — all three are seeded <strong>separately</strong> from the application set
- *       and are <strong>probe-exempt</strong>; applications may contribute none of the three ids.
- *       {@code VertxJsonMapperProfile} delegates to {@code DatabindCodec.mapper()}, the shared
+ *       and are <strong>probe-exempt</strong>; applications may contribute none of the three ids, nor
+ *       the retired {@code vertx} id the {@code system} profile was renamed from.
+ *       {@code SystemJsonMapperProfile} owns a copy of {@code DatabindCodec.mapper()} carrying the
+ *       baseline recipe, so it never exposes or mutates the shared
  *       {@link com.fasterxml.jackson.databind.ObjectMapper} Vert.x uses internally.
  *       {@code VertiqueJsonMapperProfile} owns an independent mapper carrying the framework's
- *       opinionated defaults (it is probe-exempt because its {@code NON_NULL} inclusion would make
- *       the null-bearing round-trip probe falsely fail).
+ *       opinionated defaults on top of that recipe (it is probe-exempt because its {@code NON_NULL}
+ *       inclusion would make the null-bearing round-trip probe falsely fail).
  *       {@code VertiqueStrictJsonMapperProfile} owns a further independent mapper layering the
  *       strict-decimal / strict-string serdes on those defaults, with
  *       {@code USE_BIG_DECIMAL_FOR_FLOATS} disabled so untyped decimals keep the JSON-number wire
  *       shape.
- *   <li><strong>Opinionated Jackson defaults &amp; opt-in serdes</strong> — {@code JacksonDefaults}
- *       applies the broadly-safe {@code vertique} defaults to any
+ *   <li><strong>Baseline and opinionated Jackson recipes &amp; opt-in serdes</strong> —
+ *       {@code JacksonDefaults} splits its configuration into {@code applySystem} (the baseline: type
+ *       support and the Vert.x stream-read limits, no opinions) and {@code applyOpinionated} (the
+ *       framework's opinions); {@code apply} composes both and applies the broadly-safe
+ *       {@code vertique} defaults to any
  *       {@link com.fasterxml.jackson.databind.ObjectMapper} (ISO-8601 {@code java.time} with Vert.x's
  *       {@code Instant} serializer kept authoritative, unknown-enum fallback, {@code BigDecimal} for
  *       floats, {@code NON_NULL} inclusion). The opt-in serdes {@code BigDecimalAsStringSerializer},

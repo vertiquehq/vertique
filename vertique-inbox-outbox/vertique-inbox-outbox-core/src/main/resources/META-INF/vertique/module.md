@@ -5,10 +5,10 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Inbox/Outbox Core Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.inboxoutbox`
 > **Artifact:** `vertique-inbox-outbox-core`
-> **Depends on:** core, db-core
+> **Depends on:** `dev.vertique:vertique-core`, `dev.vertique:vertique-db-core`
 
 Provides the core write APIs and relay contracts for Transactional Messaging. `InboxService` deduplicates inbound messages within the same transaction as business logic. `OutboxService` records outbound side-effects atomically with business writes. The relay SPI (`OutboxDestinationHandler`) allows adapter modules to publish recorded entries to their respective destinations after commit.
 
@@ -230,7 +230,9 @@ public sealed interface ClaimScope permits ClaimScope.All, ClaimScope.Destinatio
 | `All` | Every row of the associated destination type is claimable by this node. Use for globally deliverable types (e.g., Kafka topics, cluster-wide addresses). |
 | `Destinations(Supplier<Set<String>> claimableTargets)` | Only rows whose `destination` column value is in the supplier's set are claimable. The supplier is evaluated lazily at each claim cycle so it reflects the live registration state. An empty set claims nothing. |
 
-**Supplier contract (fail-closed).** The relay validates the supplier result before use. Any of the following causes the entire claim cycle to fail closed (zero rows claimed for this cycle; the relay retries on the next tick):
+**Supplier contract (fail-closed).** The store adapter validates the supplier result before use — in
+`dev.vertique:vertique-inbox-outbox-postgresql` that is `PgInboxOutboxRepository`, which raises
+`ClaimScopeException`; the limits below are this module's contract, enforced at the store. Any of the following causes the entire claim cycle to fail closed (zero rows claimed for this cycle; the relay retries on the next tick):
 - The supplier throws
 - The supplier returns `null`
 - Any element is blank or `null`
@@ -262,6 +264,18 @@ Publish-side access to the application/transport headers for an outbound message
 | `InboxOutboxPersistenceException` | `InboxOutboxTechnicalException` | Raised when an inbox/outbox operation fails because of a persistence-layer error. Adapter modules translate the underlying data-access failure into this type at the API boundary, so callers of `InboxService`/`OutboxService` see inbox/outbox exceptions rather than raw data-access exceptions. `retryable()` reports whether re-attempting the operation has a reasonable chance of succeeding — `true` for transient infrastructure failures (deadlock, lock timeout, optimistic/pessimistic locking), `false` otherwise. |
 
 ---
+
+### Framework seams
+
+`OutboxBackoff`, `RelayStrategy`, `OutboxDeliveryMetadata`, `OutboxPermanentFailure`,
+`DelayedJobControl`, `OutboxRelayControl`, and `TransactionalMessagingModule` are public for the
+inbox-outbox adapters and sibling framework modules; their Javadoc marks them INTERNAL and they are
+outside this module's compatibility promise. Applications install the store adapter module
+(`TransactionalMessagingPostgresqlModule`), which includes the core wiring, alongside the
+destination adapters they need (`TransactionalMessagingServiceModule`,
+`TransactionalMessagingKafkaModule`, `TransactionalMessagingDelayedJobModule`), and program against `OutboxService`, `InboxService`, the
+record and result types, `ClaimScope`, `DestinationType`, `RelayCapabilities`, and the extension
+points below.
 
 ## Configuration
 

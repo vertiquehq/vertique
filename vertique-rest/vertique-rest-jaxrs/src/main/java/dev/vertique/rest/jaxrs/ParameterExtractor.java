@@ -4,6 +4,7 @@
 package dev.vertique.rest.jaxrs;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.sanitization.Canonicalize;
 import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
@@ -33,7 +34,6 @@ import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsBeanParamModel;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsBeanParamRegistry;
 import dev.vertique.rest.jaxrs.runtime.VertxFileUploadEntityPart;
 import io.vertx.core.json.JsonObject;
-import io.vertx.core.json.jackson.DatabindCodec;
 import io.vertx.ext.web.FileUpload;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.annotation.Nullable;
@@ -1044,14 +1044,15 @@ final class ParameterExtractor {
         if (objectProcessor != null && isStructuredBodyTarget(targetType)) {
 
             String lowerContentType = contentType != null ? contentType.toLowerCase() : "";
-            // FR-JSON-024B/022/023: a non-vertx JSON profile resolved for this method (slice 2.1) is
-            // stashed on the routing context under KEY_RESOLVED_BODY_MAPPER. When present it owns the
-            // two-phase MATERIALIZATION of the processed body; when absent (the vertx default) the
-            // calls below are byte-for-byte identical to today (JsonObject.mapTo / DatabindCodec).
+            // FR-JSON-024B/022/023: a JSON profile whose mapper differs from the process codec's,
+            // resolved for this method (slice 2.1), is stashed on the routing context under
+            // KEY_RESOLVED_BODY_MAPPER. When present it owns the two-phase MATERIALIZATION of the
+            // processed body; when absent the calls below run the process codec (JsonObject.mapTo /
+            // VertiqueJson.mapper()), which is exactly the mapper that route resolved to.
             // Resolved ABOVE the content-type branch: the form-urlencoded body is bound by the same
             // mapper the JSON body is, and its bodyNameResolver projection was built from that mapper —
-            // binding it through the global codec instead would make the projection and the binder
-            // disagree about property names on any non-vertx profile.
+            // binding it through the process codec instead would make the projection and the binder
+            // disagree about property names on any route with its own profile.
             ObjectMapper profileMapper = ctx.get(BoundRequest.KEY_RESOLVED_BODY_MAPPER);
 
             // JSON body — intercept intermediate map before materialization
@@ -1110,10 +1111,10 @@ final class ParameterExtractor {
                     if (processed instanceof Map<?, ?> processedMap) {
                         @SuppressWarnings("unchecked")
                         Map<String, Object> typedMap = (Map<String, Object>) processedMap;
-                        if (profileMapper != null) {
-                            return ProfileBodyMaterialization.convertValue(profileMapper, typedMap, targetType);
-                        }
-                        return new JsonObject(typedMap).mapTo(targetType);
+                        // Both paths run through the same rejection translation, so a body the binder
+                        // rejects is the frozen value-free 400 whether or not a profile was stashed.
+                        return ProfileBodyMaterialization.convertValue(
+                                profileMapper != null ? profileMapper : VertiqueJson.mapper(), typedMap, targetType);
                     }
                 }
                 // JSON array — List<T>, Set<T>, T[] — intercept before decoder chain
@@ -1125,11 +1126,11 @@ final class ParameterExtractor {
                                 jsonArray.getList(), resolvedType, policies, InputLocation.BODY, bodyNameResolver);
                         if (processed instanceof List<?> processedList) {
                             com.fasterxml.jackson.databind.JavaType javaType =
-                                    DatabindCodec.mapper().getTypeFactory().constructType(resolvedType);
+                                    VertiqueJson.mapper().getTypeFactory().constructType(resolvedType);
                             if (profileMapper != null) {
                                 return ProfileBodyMaterialization.convertValue(profileMapper, processedList, javaType);
                             }
-                            return DatabindCodec.mapper().convertValue(processedList, javaType);
+                            return VertiqueJson.mapper().convertValue(processedList, javaType);
                         }
                     }
                 }
@@ -1157,16 +1158,15 @@ final class ParameterExtractor {
                     // A form-urlencoded body materialized as a POJO is bound by Jackson exactly like a
                     // JSON object body, so its keys are wire names and carry the same projection — and
                     // therefore the same materialization pair: the route's profile mapper when one was
-                    // resolved, the global codec otherwise.
+                    // resolved, the process codec otherwise.
                     Object processed = objectProcessor.processInput(
                             json.getMap(), targetType, policies, InputLocation.BODY, bodyNameResolver);
                     if (processed instanceof Map<?, ?> processedMap) {
                         @SuppressWarnings("unchecked")
                         Map<String, Object> typedMap = (Map<String, Object>) processedMap;
-                        if (profileMapper != null) {
-                            return ProfileBodyMaterialization.convertValue(profileMapper, typedMap, targetType);
-                        }
-                        return new JsonObject(typedMap).mapTo(targetType);
+                        // Same rejection translation as the JSON path: a value-free 400 on both mappers.
+                        return ProfileBodyMaterialization.convertValue(
+                                profileMapper != null ? profileMapper : VertiqueJson.mapper(), typedMap, targetType);
                     }
                 }
                 return null;
@@ -1404,7 +1404,7 @@ final class ParameterExtractor {
             }
         }
 
-        return DatabindCodec.mapper().convertValue(values, beanType);
+        return VertiqueJson.mapper().convertValue(values, beanType);
     }
 
     /**
@@ -1538,7 +1538,7 @@ final class ParameterExtractor {
             }
         }
 
-        return DatabindCodec.mapper().convertValue(values, beanType);
+        return VertiqueJson.mapper().convertValue(values, beanType);
     }
 
     /**

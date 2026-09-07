@@ -36,7 +36,8 @@ final class RedisTestFixtures {
     private RedisTestFixtures() {}
 
     static CacheConfig cacheConfig() {
-        return new CacheConfig(true, CacheMode.CLUSTERED, 60, 86_400, "vertx", 1_024, 1_048_576, 10_000, 100, Map.of());
+        return new CacheConfig(
+                true, CacheMode.CLUSTERED, 60, 86_400, "system", 1_024, 1_048_576, 10_000, 100, Map.of());
     }
 
     static CacheConfig cacheConfig(String profile) {
@@ -56,7 +57,7 @@ final class RedisTestFixtures {
     }
 
     static CacheValueDescriptor descriptor(Class<?> type) {
-        return new CacheValueDescriptor(type, "vertx");
+        return new CacheValueDescriptor(type, "system");
     }
 
     static Future<Optional<Object>> get(RedisCacheStore store, ResolvedCacheKey key, Class<?> type) {

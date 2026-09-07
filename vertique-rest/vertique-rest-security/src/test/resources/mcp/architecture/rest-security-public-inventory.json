@@ -69,6 +69,23 @@
       "public dev.vertique.security.SecurityContext dev.vertique.rest.security.HolderBackedSecurityRuntime.current()",
       "public jakarta.ws.rs.core.SecurityContext dev.vertique.rest.security.HolderBackedSecurityRuntime.toJaxRs(dev.vertique.security.SecurityContext,boolean)"
     ],
+    "dev.vertique.rest.security.IdentityPipelineFactory": [
+      "public dev.vertique.rest.core.security.SecurityRuntime dev.vertique.rest.security.IdentityPipelineFactory.securityRuntime()",
+      "public dev.vertique.rest.security.IdentityPipelineFactory(java.util.Set<dev.vertique.security.resolver.SecurityIdentityResolver>,java.util.Optional<dev.vertique.rest.security.SecurityClaimMapper>,dev.vertique.security.runtime.events.SecurityEventEmitter,dev.vertique.rest.core.security.SecurityRuntime,dev.vertique.core.context.ContextHolder,java.util.Optional<dev.vertique.security.runtime.IdentitySnapshotCapture>,java.util.Optional<dev.vertique.rest.security.VertxAuthorizationImporter>,java.util.Optional<dev.vertique.rest.security.AuthorizationDecisionPoint>,java.util.Optional<dev.vertique.security.authz.AuthorizationPolicy>,java.util.Set<io.vertx.ext.auth.authorization.AuthorizationProvider>,java.util.Optional<dev.vertique.security.authz.Authorizer>,java.util.Optional<dev.vertique.rest.security.AuthorizationGateConfig>)",
+      "public dev.vertique.rest.security.IdentityResolutionMiddleware dev.vertique.rest.security.IdentityPipelineFactory.restIdentityResolution()",
+      "public dev.vertique.rest.security.SecurityPolicyEnforcer dev.vertique.rest.security.IdentityPipelineFactory.policyEnforcer()",
+      "public io.vertx.core.Handler<io.vertx.ext.web.RoutingContext> dev.vertique.rest.security.IdentityPipelineFactory.identityResolutionHandler(dev.vertique.rest.security.IdentityPipelineOptions)"
+    ],
+    "dev.vertique.rest.security.IdentityPipelineOptions": [
+      "public boolean dev.vertique.rest.security.IdentityPipelineOptions.identitySnapshotCapture()",
+      "public dev.vertique.rest.security.IdentityPipelineOptions(dev.vertique.security.authz.InvocationOrigin,boolean)",
+      "public dev.vertique.security.authz.InvocationOrigin dev.vertique.rest.security.IdentityPipelineOptions.origin()",
+      "public final boolean dev.vertique.rest.security.IdentityPipelineOptions.equals(java.lang.Object)",
+      "public final int dev.vertique.rest.security.IdentityPipelineOptions.hashCode()",
+      "public final java.lang.String dev.vertique.rest.security.IdentityPipelineOptions.toString()",
+      "public static dev.vertique.rest.security.IdentityPipelineOptions dev.vertique.rest.security.IdentityPipelineOptions.rest()",
+      "public static dev.vertique.rest.security.IdentityPipelineOptions dev.vertique.rest.security.IdentityPipelineOptions.webSocket()"
+    ],
     "dev.vertique.rest.security.IdentityResolutionContributor": [
       "public dev.vertique.rest.security.IdentityResolutionContributor(dev.vertique.rest.security.IdentityResolutionMiddleware)",
       "public int dev.vertique.rest.security.IdentityResolutionContributor.priority()",
@@ -80,6 +97,7 @@
       "public dev.vertique.rest.security.IdentityResolutionMiddleware(java.util.Set<dev.vertique.security.resolver.SecurityIdentityResolver>,java.util.Optional<dev.vertique.rest.security.SecurityClaimMapper>,dev.vertique.security.runtime.events.SecurityEventEmitter,dev.vertique.rest.core.security.SecurityRuntime,dev.vertique.core.context.ContextHolder,java.util.Optional<dev.vertique.security.runtime.IdentitySnapshotCapture>)",
       "public dev.vertique.rest.security.IdentityResolutionMiddleware(java.util.Set<dev.vertique.security.resolver.SecurityIdentityResolver>,java.util.Optional<dev.vertique.rest.security.SecurityClaimMapper>,dev.vertique.security.runtime.events.SecurityEventEmitter,dev.vertique.rest.core.security.SecurityRuntime,dev.vertique.core.context.ContextHolder,java.util.Optional<dev.vertique.security.runtime.IdentitySnapshotCapture>,java.util.Optional<dev.vertique.rest.security.VertxAuthorizationImporter>)",
       "public io.vertx.core.Handler<io.vertx.ext.web.RoutingContext> dev.vertique.rest.security.IdentityResolutionMiddleware.handlerFor(dev.vertique.security.authz.InvocationOrigin)",
+      "public static final dev.vertique.security.authz.InvocationOrigin dev.vertique.rest.security.IdentityResolutionMiddleware.REST_ORIGIN",
       "public void dev.vertique.rest.security.IdentityResolutionMiddleware.handle(io.vertx.ext.web.RoutingContext)"
     ],
     "dev.vertique.rest.security.JaxRsSecurityContext": [

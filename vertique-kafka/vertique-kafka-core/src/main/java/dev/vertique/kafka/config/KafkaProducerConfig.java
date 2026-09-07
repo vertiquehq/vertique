@@ -29,7 +29,8 @@ import java.util.List;
  * @param serdeProperties the open serde property bag, or {@code null} when none
  * @param methods the per-method configuration keyed by method name (default empty)
  * @param jsonProfile the JSON mapper profile id for value serialization, or {@code null} to
- *     use the framework default (the {@code vertx} profile backed by {@code DatabindCodec.mapper()})
+ *     use the framework default (the {@code vertique} profile resolved through the registry,
+ *     floored by {@code json.jsonProfile})
  */
 public record KafkaProducerConfig(
         String name,

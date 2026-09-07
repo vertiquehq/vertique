@@ -4,7 +4,11 @@
 package dev.vertique.inboxoutbox;
 
 /**
- * Delivery-time scheduling control values for outbox entries targeting the delayed-job queue.
+ * INTERNAL framework seam — consumed by the inbox-outbox adapters and sibling framework modules; not
+ * an application contract and outside the maturity promise. Applications use {@code OutboxService},
+ * {@code InboxService}, and the extension points the module document lists.
+ *
+ * <p>Delivery-time scheduling control values for outbox entries targeting the delayed-job queue.
  *
  * <p>These values capture the effective queue, priority, and attempt limit snapshotted at publish
  * time. They are persisted inside {@link OutboxDeliveryMetadata#delayedJob()} (the

@@ -233,16 +233,19 @@ public abstract class RestModule {
      * <p>Note: {@code VertiqueSecurityException} itself has no REST mapping. A bare instance
      * falls through to the {@link Throwable} (500) fallback.
      *
-     * <p>Public rather than package-private so any embedding module — an application module or a
-     * test harness in a sibling REST-surface module — that needs to assemble a real {@link
-     * JaxRsRouterMount} outside this package can wire in the framework's actual default mapping,
-     * rather than duplicating this hierarchy or falling back to an incomplete stand-in.
+     * <p>Package-private: this provider serves the module's own Dagger wiring and same-package
+     * tests only. Per ADR-0205, a test harness in a sibling REST-surface module does not call this
+     * method directly; instead it declares its own package-private {@code @Component} over {@code
+     * RestTestFixtureModule} (plus {@code RestTestNoSecurityModule} or {@code AuthModule}, the way
+     * {@code vertique-rest-test}'s module docs show {@code ValidationMountComponent} doing) and lets
+     * that graph resolve the framework's real default mapping, rather than duplicating this
+     * hierarchy or falling back to an incomplete stand-in.
      *
      * @return a {@link DefaultExceptionMapper} with built-in hierarchy-aware handlers
      */
     @Provides
     @Singleton
-    public static DefaultExceptionMapper defaultExceptionMapper() {
+    static DefaultExceptionMapper defaultExceptionMapper() {
         return new DefaultExceptionMapper()
                 .on(WebApplicationException.class, ex -> {
                     Response original = ex.getResponse();
