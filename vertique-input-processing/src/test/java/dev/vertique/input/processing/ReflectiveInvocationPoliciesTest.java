@@ -8,9 +8,15 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.vertique.core.sanitization.Sanitize;
+import dev.vertique.core.sanitization.SkipSanitization;
+import dev.vertique.input.processing.testkit.A;
+import dev.vertique.input.processing.testkit.ComposedSanitize;
 import dev.vertique.input.processing.testkit.InvocationPolicyScenarios.Outcome;
 import dev.vertique.input.processing.testkit.InvocationPolicyScenarios.Row;
+import java.lang.reflect.Method;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
@@ -105,5 +111,37 @@ class ReflectiveInvocationPoliciesTest {
             }
             default -> throw new AssertionError("unexpected conflict row " + row.id());
         }
+    }
+    /** An interface declaring the sanitizer directly; the implementation only composes one. */
+    interface IDirect {
+        @Sanitize(A.class)
+        void bar(String p);
+    }
+
+    /**
+     * The override composes {@code @Sanitize(B)} and skips: the value resolves to the interface's
+     * direct {@code [A]} (direct anywhere beats composed), so the conflict message must name the
+     * interface as the additive site, not the nearer composed declaration.
+     */
+    static class DirectImpl implements IDirect {
+        @Override
+        @ComposedSanitize
+        @SkipSanitization
+        public void bar(String p) {}
+    }
+
+    @Test
+    @DisplayName("the declaration site follows the value: a direct interface annotation beats a nearer composed one")
+    void declarationSiteFollowsTheDirectFirstValueLookup() throws Exception {
+        Method bar = DirectImpl.class.getMethod("bar", String.class);
+
+        InvocationPolicyConflictException ex = assertThrows(
+                InvocationPolicyConflictException.class,
+                () -> ReflectiveInvocationPolicies.resolveRoute(bar, DirectImpl.class));
+
+        assertEquals(
+                dev.vertique.input.processing.testkit.InvocationPolicyScenarios.expectedConflictMessage(
+                        PolicyAxis.SANITIZE, "IDirect.bar", "DirectImpl.bar", "method DirectImpl.bar"),
+                ex.getMessage());
     }
 }

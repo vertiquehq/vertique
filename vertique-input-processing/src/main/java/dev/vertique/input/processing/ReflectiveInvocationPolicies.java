@@ -12,6 +12,7 @@ import dev.vertique.core.sanitization.SkipSanitization;
 import dev.vertique.core.util.AnnotationResolver;
 import dev.vertique.core.util.TypeResolver;
 import java.lang.annotation.Annotation;
+import java.lang.reflect.AnnotatedElement;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.util.ArrayList;
@@ -203,32 +204,38 @@ public final class ReflectiveInvocationPolicies {
         return site.getDeclaringClass().getSimpleName() + "." + site.getName();
     }
 
-    private static <A extends Annotation> String methodSiteName(List<Method> sites, Class<A> type) {
-        for (Method site : sites) {
-            if (AnnotationResolver.findMetaAnnotation(site, type) != null) {
-                return methodSiteName(site);
+    /**
+     * Index of the site the value was resolved from, in the same order the value lookup uses:
+     * {@link AnnotationResolver#findMetaAnnotation(List, Class)} takes a directly declared annotation
+     * anywhere in the merged view before descending into composed annotations, so the declaration
+     * site must follow the same two passes — nearest direct declaration first, nearest composed
+     * declaration only when no site declares the annotation directly.
+     */
+    private static <A extends Annotation> int siteIndex(List<? extends AnnotatedElement> sites, Class<A> type) {
+        for (int i = 0; i < sites.size(); i++) {
+            if (sites.get(i).getAnnotation(type) != null) {
+                return i;
+            }
+        }
+        for (int i = 0; i < sites.size(); i++) {
+            if (AnnotationResolver.findMetaAnnotation(sites.get(i), type) != null) {
+                return i;
             }
         }
         throw new IllegalStateException("no declaration site found for " + type.getSimpleName());
     }
 
+    private static <A extends Annotation> String methodSiteName(List<Method> sites, Class<A> type) {
+        return methodSiteName(sites.get(siteIndex(sites, type)));
+    }
+
     private static <A extends Annotation> String typeSiteName(List<Class<?>> sites, Class<A> type) {
-        for (Class<?> site : sites) {
-            if (AnnotationResolver.findMetaAnnotation(site, type) != null) {
-                return site.getSimpleName();
-            }
-        }
-        throw new IllegalStateException("no declaration site found for " + type.getSimpleName());
+        return sites.get(siteIndex(sites, type)).getSimpleName();
     }
 
     private static <A extends Annotation> String paramSiteName(
             List<Method> methodSites, List<Parameter> paramSites, Class<A> type) {
-        for (int i = 0; i < paramSites.size(); i++) {
-            if (AnnotationResolver.findMetaAnnotation(paramSites.get(i), type) != null) {
-                return methodSiteName(methodSites.get(i));
-            }
-        }
-        throw new IllegalStateException("no declaration site found for " + type.getSimpleName());
+        return methodSiteName(methodSites.get(siteIndex(paramSites, type)));
     }
 
     /** Passive {@link InvocationPolicySource} carrier built from a resolved annotation lookup. */
