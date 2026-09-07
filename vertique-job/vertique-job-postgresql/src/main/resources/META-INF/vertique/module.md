@@ -8,7 +8,9 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Beta
 > **Package:** `dev.vertique.job.postgresql`
 > **Artifact:** `vertique-job-postgresql`
-> **Depends on:** job-core, db-postgresql, db-flyway
+> **Depends on:** `dev.vertique:vertique-job-core`, `dev.vertique:vertique-db-postgresql`,
+> `dev.vertique:vertique-core`. `dev.vertique:vertique-db-flyway` is test-scope here; the application
+> supplies the migration runner.
 
 PostgreSQL implementation of the `JobRepository` SPI defined in `job-core`. Persists job execution state, logs, cron schedule definitions, and node heartbeats. Uses `FOR UPDATE SKIP LOCKED` for concurrent-safe job claiming without external coordination. Provides a transactional `save(execution, SqlClient)` overload for outbox-pattern enqueue. Flyway migrations are bundled at `classpath:db/migration/job`.
 
@@ -45,7 +47,7 @@ public Future<UUID> save(JobExecution execution, SqlClient client)
 
 This guarantees no two callers process the same execution and attributes the work to this node.
 
-**`completeExecution()`** accepts both `PROCESSING` and `ABANDONED` as the current state (`WHERE state IN ('PROCESSING', 'ABANDONED')`), enabling late handler completions to overwrite the coordinator's ABANDONED mark. The SQL ends with `RETURNING *`; the row is mapped via `returningOptional()` to `Future<Optional<JobExecution>>`. `Optional.empty()` signals an idempotent no-op (the execution was already terminal — zero rows updated); a present value carries the persisted execution and is passed to `NotifyingJobRepository` for listener fan-out.
+**`completeExecution()`** guards on the state *pair*, not on the source state alone: from `PROCESSING` any of `SUCCEEDED`, `FAILED`, `CANCELLED`, `ABANDONED`, `DEAD_LETTER` is accepted, and from `ABANDONED` only `SUCCEEDED`, `FAILED`, `DEAD_LETTER` — so `ABANDONED` → `ABANDONED` is rejected. Accepting `ABANDONED` as a source state, enabling late handler completions to overwrite the coordinator's ABANDONED mark. The SQL ends with `RETURNING *`; the row is mapped via `returningOptional()` to `Future<Optional<JobExecution>>`. `Optional.empty()` signals an idempotent no-op (the execution was already terminal — zero rows updated); a present value carries the persisted execution and is passed to `NotifyingJobRepository` for listener fan-out.
 
 **`scheduleRetry()`** accepts `FAILED` or `ABANDONED` as the current state and resets `started_at`, `completed_at`, `locked_by` while incrementing the attempt counter. A zero-row update (execution not in `FAILED`/`ABANDONED`) now fails with `IllegalStateException` rather than silently no-oping, preventing a `PROCESSING`-state retry that would never schedule.
 
@@ -163,7 +165,8 @@ Cron schedule definitions written by `JobRepository.saveSchedule()` at startup. 
 |--------|------|-------------|
 | `job_id` | `VARCHAR(255) PK` | Unique job identifier |
 | `cron_expression` | `VARCHAR(100)` | 6-field cron expression string |
-| `handler` | `VARCHAR(255)` | Event bus address of the handler |
+| `handler` | `VARCHAR(255)` | Event bus address of the handler; nullable — a `ServiceTarget` schedule leaves it null and uses `target` |
+| `target` | `VARCHAR(512)` | Resolved cron target reference the scheduler reads and writes (ADR-0201) |
 | `execution_mode` | `VARCHAR(20)` | `EVERY_INSTANCE` or `SINGLE_INSTANCE` |
 | `timezone` | `VARCHAR(50)` | IANA zone ID |
 | `enabled` | `BOOLEAN` | Whether the schedule is active |
