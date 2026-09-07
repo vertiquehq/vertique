@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Security Runtime Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.security.runtime` (identity-snapshot durable carriage + reconstruction), `dev.vertique.security.runtime.authz`, `dev.vertique.security.runtime.events`
 > **Artifact:** `vertique-security-runtime`
 > **Depends on:** security-core, core, context, config-core
@@ -16,11 +16,13 @@ It also provides the opt-in authorization-narrowing composition and the reconstr
 
 Config-backed policy and role-resolver contributions live in `dev.vertique:vertique-security-config`.
 
-This engine is Beta. The SPIs it implements — `Authorizer`, `PolicyDefinitionSource`,
-`RolePolicyResolver`, `PrincipalAuthorityResolver`, `AuthorizationNarrower`,
-`DelegationGrantValidator`, and `IdentityReconstruction` — and the ones it wires for contributors —
-`SecurityEventObserver` and `SecurityIdentityResolver` — are owned by
-`dev.vertique:vertique-security-core`, which is Stable.
+This engine is Stable, and so are the SPIs it implements or wires for contributors, which
+`dev.vertique:vertique-security-core` owns. What is promised here is the wiring and the documented
+behavior: the Dagger modules an application installs, the in-memory contributions it may
+instantiate, the `identity.*` configuration, fail-closed authorization, event fan-out isolation,
+narrowing composition, and the snapshot signing, freshness, and carrier-binding rules. The
+decorators and default implementations behind those SPIs are internal seams — applications reach
+them through the modules, never by name.
 
 ---
 
