@@ -5,8 +5,10 @@ package dev.vertique.db.flyway;
 
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.experimental.Accessors;
@@ -38,6 +40,11 @@ import lombok.extern.jackson.Jacksonized;
  *   }
  * }
  * }</pre>
+ *
+ * <p><strong>Secret hygiene.</strong> {@code password} and {@code placeholders} are read from
+ * configuration but are {@link JsonProperty.Access#WRITE_ONLY}: Jackson never serializes them back
+ * out. {@link #toString()} renders the password redacted, the placeholder keys without values, and a
+ * {@code password=} parameter in {@code jdbcUrl} masked, on the class and on its builder.
  */
 @Getter
 @Builder
@@ -66,6 +73,7 @@ public class FlywayConfig {
      * DDL password for migrations. If {@code null}, falls back to {@link
      * dev.vertique.db.DbPoolConfig#password()}.
      */
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     private final String password;
 
     // --- Migration locations ---
@@ -100,6 +108,7 @@ public class FlywayConfig {
      * {@code ${key}} occurrences in SQL scripts with the corresponding value. Defaults to an empty
      * map (no substitutions).
      */
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     @Builder.Default
     private final Map<String, String> placeholders = Map.of();
 
@@ -141,4 +150,53 @@ public class FlywayConfig {
      */
     @Builder.Default
     private final boolean validateOnMigrate = true;
+
+    // --- Secret hygiene ---
+
+    /**
+     * Redacted rendering: the DDL {@code password} is never included, a {@code password=} parameter
+     * embedded in {@code jdbcUrl} is masked, and {@code placeholders} renders only its keys, so a log line
+     * or exception message can never reveal a credential.
+     *
+     * @return a redacted string rendering of this config
+     */
+    @Override
+    public String toString() {
+        return "FlywayConfig[mode=" + mode
+                + ", jdbcUrl=" + redactJdbcUrl(jdbcUrl)
+                + ", user=" + user
+                + ", password=" + (password != null ? "<redacted>" : "null")
+                + ", locations=" + locations
+                + ", target=" + target
+                + ", schemas=" + schemas
+                + ", placeholders=" + (placeholders == null || placeholders.isEmpty() ? "{}" : placeholders.keySet())
+                + ", outOfOrder=" + outOfOrder
+                + ", cleanDisabled=" + cleanDisabled
+                + ", baselineOnMigrate=" + baselineOnMigrate
+                + ", baselineVersion=" + baselineVersion
+                + ", validateOnMigrate=" + validateOnMigrate
+                + "]";
+    }
+
+    private static final Pattern URL_PASSWORD = Pattern.compile("([;&?]password=)[^;&]*");
+
+    /** Masks a {@code password=} query parameter so a credential embedded in the URL never renders. */
+    private static String redactJdbcUrl(String url) {
+        return url == null ? "null" : URL_PASSWORD.matcher(url).replaceAll("$1<redacted>");
+    }
+
+    /**
+     * Builder shell declared so the generated builder does not render the password: Lombok merges this
+     * class with the generated one and keeps this {@code toString()} instead of generating its own.
+     */
+    public static class FlywayConfigBuilder {
+
+        @Override
+        public String toString() {
+            return "FlywayConfig.FlywayConfigBuilder[jdbcUrl=" + redactJdbcUrl(jdbcUrl)
+                    + ", user=" + user
+                    + ", password=" + (password != null ? "<redacted>" : "null")
+                    + "]";
+        }
+    }
 }

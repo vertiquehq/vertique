@@ -71,6 +71,11 @@ Lombok `@Builder` configuration value object. Deserialized from the `"flyway"` s
 | `baselineVersion` | `String` | `"1"` | Baseline version applied when `baselineOnMigrate` is true |
 | `validateOnMigrate` | `boolean` | `true` | Validate applied migrations on each migrate run |
 
+**Secret hygiene:** `password` and `placeholders` are write-only — read from configuration but never
+serialized back out by Jackson. `toString()` renders the password as `<redacted>`, the placeholder
+keys without their values, and a `password=` parameter in `jdbcUrl` masked, on the class and on its
+builder. Prefer `user` and `password` over credentials embedded in `jdbcUrl`.
+
 **Credential fallback:** When `user` or `password` are not set in `FlywayConfig`, `FlywayMigrationRunner` falls back to the pool credentials from `DbPoolConfig`. This lets applications use the same credentials for both migrations and runtime when a separate DDL user is not needed.
 
 ### `FlywayMigrationRunner`
@@ -84,6 +89,10 @@ When using `@VertiqueApp` + `CoreLifecycleStepsModule` + `DbFlywayModule`, `Flyw
 - `MIGRATE` — calls `flyway.migrate()`, logs the number of applied migrations and target version
 - `VALIDATE` — calls `flyway.validate()`, fails the future if schema diverges
 - `DISABLED` — returns `Future.succeededFuture(new MigrationResult(0, null))` immediately without creating a Flyway instance
+
+**No-op result:** a `MIGRATE` run that finds nothing pending returns `MigrationResult(0, null)`; Flyway
+reports a target version only for the migrations it applied, so callers must not read
+`targetVersion()` as "current schema version".
 
 **Exception wrapping:** Any `FlywayException` thrown during `migrate()` or `validate()` is caught and re-thrown as a `MigrationException` (from `db-core`). This prevents Flyway vendor types from leaking into calling code.
 
