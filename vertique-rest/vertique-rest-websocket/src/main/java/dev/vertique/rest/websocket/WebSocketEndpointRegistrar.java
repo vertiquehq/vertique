@@ -7,6 +7,7 @@ import dev.vertique.context.ContextSnapshot;
 import dev.vertique.context.ContextValues;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.exception.ConfigurationException;
+import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.sanitization.Canonicalize;
 import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
@@ -31,7 +32,6 @@ import dev.vertique.security.authz.Authorizer;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.http.ServerWebSocket;
-import io.vertx.core.json.jackson.DatabindCodec;
 import io.vertx.ext.web.Route;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
@@ -125,7 +125,7 @@ class WebSocketEndpointRegistrar {
      * Wire &rarr; Java property-name projection for object message bodies.
      *
      * <p>{@link WebSocketMessageCodec} binds every message through
-     * {@link DatabindCodec#mapper()}, so that is the mapper whose naming decides which declared
+     * {@link VertiqueJson#mapper()}, so that is the mapper whose naming decides which declared
      * policies apply: a field renamed by {@code @JsonProperty}, by a naming strategy, or reached
      * through a {@code @JsonAlias} arrives in the intermediate under its wire name, while the
      * input-processing engine keys its per-field metadata on the Java property name. Without this
@@ -135,10 +135,13 @@ class WebSocketEndpointRegistrar {
      * <p>Created once per registrar, and every declared message type's projection is composed at
      * registration by {@link #warmMessageNameProjections}, so no introspection happens on the message
      * path. The bare-{@code String} call sites keep {@link InputFieldNameResolver#IDENTITY}: there is
-     * no object whose fields could be renamed.
+     * no object whose fields could be renamed. The field captures {@link VertiqueJson#mapper()} once
+     * at construction rather than reading it per call; this is permitted because the registrar is
+     * built during the {@code EDGE} startup phase, after {@code CONFIGURE} has installed the process
+     * mapper — the capture rule's exception for router/registrar construction.
      */
     private final JacksonFieldNameResolver messageNameResolver =
-            JacksonFieldNameResolver.forMapper(DatabindCodec.mapper());
+            JacksonFieldNameResolver.forMapper(VertiqueJson.mapper());
 
     /**
      * Creates a new registrar.

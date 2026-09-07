@@ -57,6 +57,13 @@ SPDX-License-Identifier: EUPL-1.2
 
         <!-- Test -->
         <dependency>
+            <!-- TP-002 (CorrelationEnvelopeTest): DefaultJsonMapperProfileRegistry + JacksonDefaults for
+                 the cross-profile decode proof. Acyclic: vertique-json depends only on vertique-core. -->
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-json</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
         </dependency>
@@ -65,9 +72,37 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertx-junit5</artifactId>
         </dependency>
         <dependency>
+            <!-- TP-002 (CorrelationEnvelopeTest): mocks the final DurableMetadata class to deliver a
+                 single-quoted document past its copy-and-materialize accessors, straight into the
+                 decoder's own readTree call (no real DurableMetadata body can otherwise carry
+                 malformed JSON syntax — see the test's Javadoc). Needs the inline mock maker, hence
+                 this module's surefire argLine below. -->
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>ch.qos.logback</groupId>
             <artifactId>logback-classic</artifactId>
             <optional>true</optional>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <!-- TP-002 (CorrelationEnvelopeTest) installs a mapper through VertiqueJson.install and
+                 must restore the raw Vert.x delegate in @AfterEach, so this module's single fork
+                 enables the reset seam. The flag is read once at VertiqueJson class initialization; it
+                 is a test-only argLine and never reaches a shipped runtime. Reproduces the parent
+                 argLine (JaCoCo late-replacement + Mockito premain) exactly, as vertique-json/pom.xml
+                 does. No failsafe override — this module has no integration tests. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>@{argLine} -javaagent:${project.build.directory}/mockito-agent.jar -Dvertique.json.codec.allowReset=true</argLine>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>
