@@ -25,6 +25,8 @@ import jakarta.annotation.Nullable;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -32,6 +34,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -209,6 +212,77 @@ class McpJsonProfileBindingTest {
         ByteArrayOutputStream destination = new ByteArrayOutputStream();
         runtime.write(value, destination);
         return destination.toString(StandardCharsets.UTF_8);
+    }
+
+    // --- TP-001 (T014): MCP default equals JsonConfig.effectiveProfile() ---
+
+    /**
+     * TP-001 — with {@code mcp.jsonProfile} unset and no per-tool declaration, the configured tail
+     * must equal {@link JsonConfig#effectiveProfile()} for the shared authority, not a
+     * resolver-private literal. Two rows isolate the floor ({@code vertique}) and a global override
+     * ({@code system}); the {@code system} row is decisive against a hard-coded {@code vertique}
+     * fallback (evidence T014.md &sect; L00).
+     */
+    @Test
+    @DisplayName("MCP default equals JsonConfig.effectiveProfile()")
+    void defaultEqualsSharedEffectiveProfile() {
+        assertDefaultEqualsSharedEffectiveProfile(JsonConfig.defaults(), "vertique");
+        assertDefaultEqualsSharedEffectiveProfile(new JsonConfig("system", null), "system");
+    }
+
+    /**
+     * One row of the TP-001 matrix: builds the resolver with {@code mcp.jsonProfile} unset and the
+     * given {@link JsonConfig}, resolves a tool with no {@code @JsonProfile}, and asserts the
+     * selected id equals both {@link JsonConfig#effectiveProfile()} and the literal expected id, so
+     * the row cannot pass vacuously against a resolver returning some other constant id.
+     *
+     * @param jsonConfig the global JSON configuration under test
+     * @param expectedId the literal expected profile id, asserted alongside {@code effectiveProfile()}
+     */
+    private static void assertDefaultEqualsSharedEffectiveProfile(JsonConfig jsonConfig, String expectedId) {
+        McpServerConfig mcpConfig =
+                McpServerConfig.builder().enabled(true).jsonProfile(null).build();
+        McpJsonProfileResolver resolver = new McpJsonProfileResolver(new StubProfileRegistry(), jsonConfig, mcpConfig);
+
+        JsonProfileId selected = resolver.resolve(null).id();
+
+        assertThat(selected)
+                .as("with mcp.jsonProfile unset, the resolved default must equal the shared authority's"
+                        + " effectiveProfile()")
+                .isEqualTo(jsonConfig.effectiveProfile());
+        assertThat(selected)
+                .as("pinning the literal expected id so this row cannot pass vacuously")
+                .isEqualTo(JsonProfileId.of(expectedId));
+    }
+
+    /**
+     * Structural check (T014): once the resolver delegates to {@link JsonConfig#effectiveProfile()},
+     * no private {@code vertique} literal or {@code VERTIQUE_FALLBACK} constant may remain in the
+     * resolver source. Expected RED at baseline (mirrors {@code
+     * RestClientMapperPrecedenceTest#restClientBuilderSource_hasNoDatabindCodecToken}).
+     */
+    @Test
+    @DisplayName("structural: McpJsonProfileResolver.java has no private vertique literal or VERTIQUE_FALLBACK")
+    void resolverSource_hasNoPrivateVertiqueFallback() throws IOException {
+        Path source = Path.of(
+                System.getProperty("user.dir"),
+                "src",
+                "main",
+                "java",
+                "dev",
+                "vertique",
+                "mcp",
+                "server",
+                "runtime",
+                "McpJsonProfileResolver.java");
+
+        String contents = Files.readString(source);
+
+        assertThat(contents)
+                .as("McpJsonProfileResolver.java must not hard-code the vertique fallback once it delegates to"
+                        + " JsonConfig.effectiveProfile()")
+                .doesNotContain("JsonProfileId.of(\"vertique\")")
+                .doesNotContain("VERTIQUE_FALLBACK");
     }
 
     // --- Fixtures ---
