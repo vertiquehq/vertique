@@ -3,14 +3,12 @@
 
 package dev.vertique.rest.jaxrs;
 
-import dev.vertique.core.sanitization.Canonicalize;
 import dev.vertique.core.sanitization.Canonicalizer;
-import dev.vertique.core.sanitization.Sanitize;
 import dev.vertique.core.sanitization.Sanitizer;
-import dev.vertique.core.sanitization.SkipCanonicalization;
-import dev.vertique.core.sanitization.SkipSanitization;
 import dev.vertique.core.util.AnnotationResolver;
 import dev.vertique.core.validation.ValidateWith;
+import dev.vertique.input.processing.EffectiveInputPolicies;
+import dev.vertique.input.processing.ReflectiveInvocationPolicies;
 import dev.vertique.rest.core.context.RestContextTypes;
 import dev.vertique.rest.core.request.RequestParams;
 import dev.vertique.rest.core.request.RequestPreconditions;
@@ -202,11 +200,13 @@ class ResourceScanner {
             ValidateWith validateWith = findAnnotation(methodAnnotations, ValidateWith.class);
             Class<?>[] validationGroups = (validateWith != null) ? validateWith.value() : null;
 
-            // Resolve route-level canonicalization/sanitization chains using already-resolved lists
-            List<Class<? extends Canonicalizer>> routeCanonicalizerChain =
-                    resolveRouteCanonicalizerChain(classAnnotations, methodAnnotations);
-            List<Class<? extends Sanitizer>> routeSanitizerChain =
-                    resolveRouteSanitizerChain(classAnnotations, methodAnnotations);
+            // Resolve route-level canonicalization/sanitization chains through the shared resolver
+            // (dev.vertique.input.processing). InvocationPolicyConflictException (an
+            // IllegalStateException) propagates uncaught when the method or class declares both an
+            // additive and a skip annotation on the same axis.
+            EffectiveInputPolicies routePolicies = ReflectiveInvocationPolicies.resolveRoute(method, clazz);
+            List<Class<? extends Canonicalizer>> routeCanonicalizerChain = routePolicies.canonicalizers();
+            List<Class<? extends Sanitizer>> routeSanitizerChain = routePolicies.sanitizers();
 
             // Make the Method invokable from ResourceMethodInvoker even when it is non-public
             // (protected, package-private, or private). Discovery via getDeclaredMethods accepts
@@ -776,80 +776,6 @@ class ResourceScanner {
             sb.append(':').append(paramType.getName());
         }
         return sb.toString();
-    }
-
-    /**
-     * Resolves the effective route-level canonicalizer chain from pre-resolved annotation lists.
-     *
-     * <p>Method-level {@code @Canonicalize} overrides class-level. {@code @SkipCanonicalization} on
-     * the method produces an empty chain (opting out entirely). Conflicting declarations
-     * ({@code @Canonicalize} and {@code @SkipCanonicalization} on the same element) fail fast.
-     * Uses {@link AnnotationResolver}-resolved lists so that annotations on superclasses and
-     * interfaces are also considered.
-     *
-     * @param classAnnotations  annotations resolved from the resource class hierarchy
-     * @param methodAnnotations annotations resolved from the resource method hierarchy
-     * @return the effective canonicalizer chain; empty list if none declared or skip is active
-     * @throws IllegalStateException if conflicting annotations are found on the same element
-     */
-    private List<Class<? extends Canonicalizer>> resolveRouteCanonicalizerChain(
-            List<Annotation> classAnnotations, List<Annotation> methodAnnotations) {
-        Canonicalize methodAnn = AnnotationResolver.findMetaAnnotation(methodAnnotations, Canonicalize.class);
-        SkipCanonicalization methodSkip =
-                AnnotationResolver.findMetaAnnotation(methodAnnotations, SkipCanonicalization.class);
-        Canonicalize classAnn = AnnotationResolver.findMetaAnnotation(classAnnotations, Canonicalize.class);
-        SkipCanonicalization classSkip =
-                AnnotationResolver.findMetaAnnotation(classAnnotations, SkipCanonicalization.class);
-
-        if (methodAnn != null && methodSkip != null) {
-            throw new IllegalStateException("Conflicting @Canonicalize and @SkipCanonicalization on the same method");
-        }
-        if (classAnn != null && classSkip != null) {
-            throw new IllegalStateException("Conflicting @Canonicalize and @SkipCanonicalization on the same class");
-        }
-
-        // Method-level overrides class-level
-        if (methodSkip != null) return List.of();
-        if (methodAnn != null) return List.of(methodAnn.value());
-        if (classSkip != null) return List.of();
-        if (classAnn != null) return List.of(classAnn.value());
-        return List.of();
-    }
-
-    /**
-     * Resolves the effective route-level sanitizer chain from pre-resolved annotation lists.
-     *
-     * <p>Method-level {@code @Sanitize} overrides class-level. {@code @SkipSanitization} on the
-     * method produces an empty chain (opting out entirely). Conflicting declarations
-     * ({@code @Sanitize} and {@code @SkipSanitization} on the same element) fail fast.
-     * Uses {@link AnnotationResolver}-resolved lists so that annotations on superclasses and
-     * interfaces are also considered.
-     *
-     * @param classAnnotations  annotations resolved from the resource class hierarchy
-     * @param methodAnnotations annotations resolved from the resource method hierarchy
-     * @return the effective sanitizer chain; empty list if none declared or skip is active
-     * @throws IllegalStateException if conflicting annotations are found on the same element
-     */
-    private List<Class<? extends Sanitizer>> resolveRouteSanitizerChain(
-            List<Annotation> classAnnotations, List<Annotation> methodAnnotations) {
-        Sanitize methodAnn = AnnotationResolver.findMetaAnnotation(methodAnnotations, Sanitize.class);
-        SkipSanitization methodSkip = AnnotationResolver.findMetaAnnotation(methodAnnotations, SkipSanitization.class);
-        Sanitize classAnn = AnnotationResolver.findMetaAnnotation(classAnnotations, Sanitize.class);
-        SkipSanitization classSkip = AnnotationResolver.findMetaAnnotation(classAnnotations, SkipSanitization.class);
-
-        if (methodAnn != null && methodSkip != null) {
-            throw new IllegalStateException("Conflicting @Sanitize and @SkipSanitization on the same method");
-        }
-        if (classAnn != null && classSkip != null) {
-            throw new IllegalStateException("Conflicting @Sanitize and @SkipSanitization on the same class");
-        }
-
-        // Method-level overrides class-level
-        if (methodSkip != null) return List.of();
-        if (methodAnn != null) return List.of(methodAnn.value());
-        if (classSkip != null) return List.of();
-        if (classAnn != null) return List.of(classAnn.value());
-        return List.of();
     }
 
     /**

@@ -104,6 +104,28 @@ covering all string values in the body plus scalar and collection-element parame
 `@SkipSanitization` opt an individual parameter out. Scalar and collection-element parameters receive
 route-level chains only.
 
+**Policy resolution precedence.** Route- and parameter-level `@Canonicalize`/`@Sanitize` chains are
+derived through one shared resolver — the same one every other transport in the framework uses, not a
+REST-only algorithm. Precedence is parameter &gt; method &gt; class: a parameter-level skip or declared
+chain overrides the route (class/method) chain; on the route itself a method-level skip or declared
+chain overrides the class-level one; with nothing declared anywhere the chain is empty.
+
+Each level's view of its own declaration is hierarchy-merged the same way annotation resolution works
+everywhere else in the framework: the declaring element first, then the same declaration on each
+superclass bottom-up, then on each interface the class transitively implements, with the first
+occurrence winning per element. An override may **replace** an inherited chain with a different one —
+the override wins — but may never **remove** it by pairing a skip annotation with an inherited
+declared chain on the other polarity; that combination is a conflict, not an opt-out.
+
+A conflict — the additive annotation and the skip annotation both present, anywhere in one element's
+merged view — fails immediately and names both declaration sites, for example: `Conflicting @Sanitize
+(declared on IFoo.bar) and @SkipSanitization (declared on FooImpl.bar) for method FooImpl.bar — an
+override cannot remove an inherited policy; remove one of the annotations.` A class- or method-level
+conflict fails resource scanning. A parameter-level conflict now fails at scan too, exactly like the
+class/method case, instead of silently resolving to an empty chain — declaring both `@Sanitize` and
+`@SkipSanitization` (or both `@Canonicalize` and `@SkipCanonicalization`) on one parameter is rejected
+before the route is ever registered.
+
 **Which body shapes step 3 reaches.** A DTO body, a collection or array body, a `String` body, a
 form-urlencoded body bound to a POJO, and the schema-free `JsonObject` / `JsonArray` bodies all pass
 through the engine — a Vert.x JSON wrapper is already the intermediate the engine walks, so a

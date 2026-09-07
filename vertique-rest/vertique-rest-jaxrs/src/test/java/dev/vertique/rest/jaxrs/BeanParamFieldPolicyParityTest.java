@@ -34,6 +34,7 @@ import io.vertx.ext.web.RoutingContext;
 import jakarta.ws.rs.QueryParam;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -389,8 +390,30 @@ class BeanParamFieldPolicyParityTest {
         when(meta.routeCanonicalizerChain()).thenReturn(routeCanon);
         when(meta.routeSanitizerChain()).thenReturn(routeSanit);
         when(meta.operationId()).thenReturn("test-op");
+        // ParameterExtractor's constructor now derives cachedParamPolicies through
+        // ReflectiveInvocationPolicies.resolveParameter(meta.method(), i, route), which
+        // dereferences the Method. A single unstubbed param leaves method() returning Mockito's
+        // default null and NPEs at construction, so stub it with a real single-parameter Method
+        // from this fixture (its own parameter carries no policy annotations, so resolution is a
+        // pure route-baseline pass-through).
+        when(meta.method()).thenReturn(policySourceMethod());
         return meta;
     }
+
+    /**
+     * A real, single-parameter {@link Method} used only to satisfy
+     * {@link ResourceMethodMeta#method()} in {@link #stubMetaWithParam}; see that method's comment.
+     */
+    private static Method policySourceMethod() {
+        try {
+            return BeanParamFieldPolicyParityTest.class.getDeclaredMethod("policySourceMethodTarget", Object.class);
+        } catch (NoSuchMethodException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    @SuppressWarnings("unused")
+    private static void policySourceMethodTarget(Object ignored) {}
 
     /**
      * Builds a {@link BoundRequest} stub exposing a single query parameter bound to a
