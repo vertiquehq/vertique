@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # DB Flyway Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.db.flyway`
 > **Artifact:** `db-flyway`
 > **Depends on:** db-core, core
@@ -13,9 +13,6 @@ SPDX-License-Identifier: EUPL-1.2
 Flyway-backed implementation of the `MigrationRunner` contract from `db-core`. Supports three operation modes: MIGRATE (apply pending migrations), VALIDATE (verify schema matches migrations), and DISABLED (no-op). Designed for CI/CD pipelines that use a privileged DDL user for migrations and a restricted user for runtime.
 
 When used with the framework lifecycle runner (`@VertiqueApp` + `VertiqueApplicationBootstrap`), `DbFlywayModule` also contributes a `MIGRATE`-phase `ApplicationStartupStep` (`FlywayMigrationStartupStep`) that runs migrations automatically — no manual `migrationRunner().migrate(vertx)` call is needed. See [`FlywayMigrationStartupStep` and `DbFlywayModule`](#flywaymigrationstartupstep-and-dbflywaymodule) below.
-
-This adapter is Beta. The `MigrationRunner` contract it implements is owned by
-`dev.vertique:vertique-db-core`, which is Stable.
 
 ---
 
