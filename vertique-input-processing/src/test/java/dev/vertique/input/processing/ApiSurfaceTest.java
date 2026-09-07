@@ -57,7 +57,12 @@ class ApiSurfaceTest {
             "ChainResolver",
             "GeneratedInputProcessor",
             "GeneratedInputProcessorDispatcher",
-            "GeneratedSupport");
+            "GeneratedSupport",
+            "InvocationPolicySource",
+            "PolicyAxis",
+            "InvocationPolicyResolver",
+            "InvocationPolicyConflictException",
+            "ReflectiveInvocationPolicies");
 
     /** Types that implement the engine but are deliberately not part of the surface. */
     private static final Set<String> INTERNAL_TYPES = Set.of(
@@ -306,6 +311,84 @@ class ApiSurfaceTest {
                             + "GeneratedInputProcessorDispatcher)");
             assertNoPublicFields(GeneratedSupport.class);
             assertNoPublicConstructors(GeneratedSupport.class);
+        }
+    }
+
+    @Nested
+    @DisplayName("InvocationPolicySource")
+    class InvocationPolicySourceSurface {
+
+        @Test
+        @DisplayName("public members match the frozen ledger")
+        void invocationPolicySourceSurface() {
+            assertMethods(
+                    InvocationPolicySource.class,
+                    "additive()",
+                    "additiveDeclaredAt()",
+                    "skip()",
+                    "skipDeclaredAt()",
+                    "describe()",
+                    "none()");
+            assertNoPublicFields(InvocationPolicySource.class);
+            assertNoPublicConstructors(InvocationPolicySource.class);
+        }
+    }
+
+    @Nested
+    @DisplayName("PolicyAxis")
+    class PolicyAxisSurface {
+
+        @Test
+        @DisplayName("public members match the frozen ledger (incl. compiler-generated values()/valueOf(String))")
+        void policyAxisSurface() {
+            assertMethods(PolicyAxis.class, "additiveAnnotation()", "skipAnnotation()", "values()", "valueOf(String)");
+            assertFields(PolicyAxis.class, "CANONICALIZE", "SANITIZE");
+            assertNoPublicConstructors(PolicyAxis.class);
+        }
+    }
+
+    @Nested
+    @DisplayName("InvocationPolicyResolver")
+    class InvocationPolicyResolverSurface {
+
+        @Test
+        @DisplayName("public members match the frozen ledger")
+        void invocationPolicyResolverSurface() {
+            assertMethods(
+                    InvocationPolicyResolver.class,
+                    "resolveRouteChain(InvocationPolicySource,InvocationPolicySource,PolicyAxis)",
+                    "resolveParameterChain(InvocationPolicySource,List,PolicyAxis)");
+            assertNoPublicFields(InvocationPolicyResolver.class);
+            assertNoPublicConstructors(InvocationPolicyResolver.class);
+        }
+    }
+
+    @Nested
+    @DisplayName("InvocationPolicyConflictException")
+    class InvocationPolicyConflictExceptionSurface {
+
+        @Test
+        @DisplayName("public members match the frozen ledger")
+        void invocationPolicyConflictExceptionSurface() {
+            assertMethods(InvocationPolicyConflictException.class, "axis()", "elementDescription()");
+            assertNoPublicFields(InvocationPolicyConflictException.class);
+            assertConstructors(InvocationPolicyConflictException.class, "<init>(PolicyAxis,String,String,String)");
+        }
+    }
+
+    @Nested
+    @DisplayName("ReflectiveInvocationPolicies")
+    class ReflectiveInvocationPoliciesSurface {
+
+        @Test
+        @DisplayName("public members match the frozen ledger")
+        void reflectiveInvocationPoliciesSurface() {
+            assertMethods(
+                    ReflectiveInvocationPolicies.class,
+                    "resolveRoute(Method,Class)",
+                    "resolveParameter(Method,int,EffectiveInputPolicies)");
+            assertNoPublicFields(ReflectiveInvocationPolicies.class);
+            assertNoPublicConstructors(ReflectiveInvocationPolicies.class);
         }
     }
 

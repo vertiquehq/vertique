@@ -1,0 +1,109 @@
+// SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+// SPDX-License-Identifier: EUPL-1.2
+
+package dev.vertique.input.processing;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import dev.vertique.input.processing.testkit.InvocationPolicyScenarios.Outcome;
+import dev.vertique.input.processing.testkit.InvocationPolicyScenarios.Row;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+
+/**
+ * TP-002 (T016, issue #379): {@code ReflectiveInvocationPolicies.resolveRoute}/{@code resolveParameter}
+ * resolve the same IP-01..IP-19 matrix as {@link InvocationPolicyResolverTest}, from real annotated
+ * carrier classes in {@link dev.vertique.input.processing.testkit.InvocationPolicyScenarios} instead of
+ * hand-built stubs.
+ *
+ * <p>Unlike {@code InvocationPolicyResolver.resolveRouteChain}/{@code resolveParameterChain},
+ * {@code ReflectiveInvocationPolicies.resolveRoute}/{@code resolveParameter} resolve both axes in a
+ * single call ({@code EffectiveInputPolicies} carries both chains). Consequently, a conflict on either
+ * axis fails the whole call — the matrix has no row where both axes conflict, so this test resolves
+ * the {@code SANITIZE}-axis outcome to decide whether the call is expected to throw, and asserts both
+ * axes' chains together when it is not.
+ *
+ * <p>Only IP-14 (same-site) and IP-17 (real {@code IFoo}/{@code FooImpl} names) have a contract-frozen
+ * exact message (L75-80); IP-15 (parameter-level) and IP-19 (type-level) assert {@code axis()} and that
+ * both real declaration sites appear in {@code getMessage()}, since the contract does not pin an exact
+ * literal for those element kinds (ruling, T016 L01 — see completion evidence).
+ *
+ * <p>Sensitivity (contract-required): resolving {@code method.getAnnotation(Sanitize.class)} directly
+ * instead of through {@code AnnotationResolver} in {@code resolveRoute} would make IP-09 and IP-11
+ * resolve {@code []} instead of {@code [B]} — {@link #resolvesRouteAndParameterFromRealClasses} would
+ * fail for those rows.
+ */
+class ReflectiveInvocationPoliciesTest {
+
+    @ParameterizedTest(name = "{0}")
+    @DisplayName("resolveRoute/resolveParameter match the matrix over real carriers")
+    @MethodSource("dev.vertique.input.processing.testkit.InvocationPolicyScenarios#rows")
+    void resolvesRouteAndParameterFromRealClasses(Row row) {
+        if (row.sanitize().route() instanceof Outcome.Conflict conflict) {
+            InvocationPolicyConflictException ex = assertThrows(
+                    InvocationPolicyConflictException.class,
+                    () -> ReflectiveInvocationPolicies.resolveRoute(row.method(), row.owner()));
+            assertConflict(row, conflict, ex);
+            return;
+        }
+
+        EffectiveInputPolicies route = ReflectiveInvocationPolicies.resolveRoute(row.method(), row.owner());
+        assertEquals(
+                ((Outcome.Chain) row.canonicalize().route()).values(),
+                route.canonicalizers(),
+                row.id() + " route canonicalizers");
+        assertEquals(
+                ((Outcome.Chain) row.sanitize().route()).values(), route.sanitizers(), row.id() + " route sanitizers");
+
+        if (row.sanitize().param() instanceof Outcome.Conflict conflict) {
+            InvocationPolicyConflictException ex = assertThrows(
+                    InvocationPolicyConflictException.class,
+                    () -> ReflectiveInvocationPolicies.resolveParameter(row.method(), row.parameterIndex(), route));
+            assertConflict(row, conflict, ex);
+            return;
+        }
+
+        EffectiveInputPolicies param =
+                ReflectiveInvocationPolicies.resolveParameter(row.method(), row.parameterIndex(), route);
+        assertEquals(
+                ((Outcome.Chain) row.canonicalize().param()).values(),
+                param.canonicalizers(),
+                row.id() + " parameter canonicalizers");
+        assertEquals(
+                ((Outcome.Chain) row.sanitize().param()).values(),
+                param.sanitizers(),
+                row.id() + " parameter sanitizers");
+    }
+
+    private void assertConflict(Row row, Outcome.Conflict expected, InvocationPolicyConflictException ex) {
+        assertEquals(PolicyAxis.SANITIZE, ex.axis());
+        switch (row.id()) {
+            case "IP-14" ->
+                assertEquals(
+                        dev.vertique.input.processing.testkit.InvocationPolicyScenarios.expectedConflictMessage(
+                                PolicyAxis.SANITIZE, "Ip14.bar", "Ip14.bar", "method Ip14.bar"),
+                        ex.getMessage());
+            case "IP-17" ->
+                assertEquals(
+                        dev.vertique.input.processing.testkit.InvocationPolicyScenarios.expectedConflictMessage(
+                                PolicyAxis.SANITIZE, "IFoo.bar", "FooImpl.bar", "method FooImpl.bar"),
+                        ex.getMessage());
+            case "IP-15" -> {
+                assertFalse(ex.elementDescription() == null
+                        || ex.elementDescription().isBlank());
+                assertTrue(ex.getMessage().contains("Ip15.bar"), "message should name Ip15.bar: " + ex.getMessage());
+            }
+            case "IP-19" -> {
+                assertFalse(ex.elementDescription() == null
+                        || ex.elementDescription().isBlank());
+                assertTrue(ex.getMessage().contains("Ip19Base"), "message should name Ip19Base: " + ex.getMessage());
+                assertTrue(ex.getMessage().contains("Ip19"), "message should name Ip19: " + ex.getMessage());
+            }
+            default -> throw new AssertionError("unexpected conflict row " + row.id());
+        }
+    }
+}
