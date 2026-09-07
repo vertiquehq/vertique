@@ -38,13 +38,13 @@ import org.junit.jupiter.api.Test;
  *
  * <p>The {@code "no-coercion"} application profile disables
  * {@link MapperFeature#ALLOW_COERCION_OF_SCALARS}, so {@code {"count":"5"}} (a string where an
- * {@code int} is expected) is rejected by that profile but accepted by the lenient {@code vertx}
- * default. That observable difference proves which mapper each <em>deserializing</em> method used.
+ * {@code int} is expected) is rejected by that profile but accepted by the lenient {@code vertique}
+ * floor. That observable difference proves which mapper each <em>deserializing</em> method used.
  *
  * <p>For the <em>serializing</em> path (slice 4.3, producer threading), the {@code "indent"}
  * application profile enables {@link SerializationFeature#INDENT_OUTPUT}, so a record serializes to
  * pretty-printed bytes (containing a newline) under the profile mapper but to compact bytes under the
- * {@code vertx} default — proving {@link JsonSerdeProvider#serializer} honors the resolved profile
+ * {@code vertique} floor — proving {@link JsonSerdeProvider#serializer} honors the resolved profile
  * mapper. {@code INDENT_OUTPUT} changes only whitespace, so the registry's structural round-trip probe
  * still passes (unlike {@code JsonInclude.Include.NON_NULL}, which would drop fields and fail it).
  *
@@ -108,7 +108,7 @@ class JsonSerdeProviderProfileTest {
     class DeserializerProfile {
 
         @Test
-        @DisplayName("deserializer_usesProfileMapper: no-coercion profile rejects string->int; vertx coerces")
+        @DisplayName("deserializer_usesProfileMapper: no-coercion profile rejects string->int; vertique coerces")
         void deserializer_usesProfileMapper() throws Exception {
             JsonSerdeProvider provider = providerWithStrictProfile();
 
@@ -129,7 +129,7 @@ class JsonSerdeProviderProfileTest {
     class SerializerProfile {
 
         @Test
-        @DisplayName("producerSerializer_usesProfileMapper: indent profile pretty-prints; vertx stays compact")
+        @DisplayName("producerSerializer_usesProfileMapper: indent profile pretty-prints; vertique stays compact")
         void producerSerializer_usesProfileMapper() {
             JsonSerdeProvider provider = providerWithIndentProfile();
 
@@ -137,10 +137,10 @@ class JsonSerdeProviderProfileTest {
             String indentJson = text(indent.serialize(new Dto("x"), "t", Map.of()));
             assertTrue(indentJson.contains("\n"), indentJson);
 
-            KafkaSerializer<Dto> vertx = provider.serializer(Dto.class, serdeConfigWith(null));
-            String vertxJson = text(vertx.serialize(new Dto("x"), "t", Map.of()));
-            assertFalse(vertxJson.contains("\n"), vertxJson);
-            assertEquals("{\"value\":\"x\"}", vertxJson);
+            KafkaSerializer<Dto> vertique = provider.serializer(Dto.class, serdeConfigWith(null));
+            String vertiqueJson = text(vertique.serialize(new Dto("x"), "t", Map.of()));
+            assertFalse(vertiqueJson.contains("\n"), vertiqueJson);
+            assertEquals("{\"value\":\"x\"}", vertiqueJson);
         }
     }
 
@@ -162,10 +162,10 @@ class JsonSerdeProviderProfileTest {
             assertThrows(
                     DeserializationException.class, () -> provider.convertRouted(strictTree, Counter.class, strictBag));
 
-            JsonObject vertxBag = serdeConfigWith(null);
-            Object vertxTree =
-                    provider.routingDeserializer(vertxBag).deserialize(bytes("{\"count\":\"5\"}"), "t", Map.of());
-            assertEquals(new Counter(5), provider.convertRouted(vertxTree, Counter.class, vertxBag));
+            JsonObject vertiqueBag = serdeConfigWith(null);
+            Object vertiqueTree =
+                    provider.routingDeserializer(vertiqueBag).deserialize(bytes("{\"count\":\"5\"}"), "t", Map.of());
+            assertEquals(new Counter(5), provider.convertRouted(vertiqueTree, Counter.class, vertiqueBag));
         }
     }
 
@@ -194,7 +194,7 @@ class JsonSerdeProviderProfileTest {
 
         @Test
         @DisplayName("resolveMapper_withValueJsonProfileKeyInBag_doesNotSelectProfile:"
-                + " the retired valueJsonProfile bag key is ignored → vertx default coerces")
+                + " the retired valueJsonProfile bag key is ignored → vertique default coerces")
         void resolveMapper_withValueJsonProfileKeyInBag_doesNotSelectProfile() throws Exception {
             JsonSerdeProvider provider = providerWithStrictProfile();
 
@@ -202,31 +202,32 @@ class JsonSerdeProviderProfileTest {
             JsonObject staleBag = new JsonObject().put("valueJsonProfile", "no-coercion");
 
             // When/then: post-rename the reader no longer reads that key, so no profile is selected and
-            // resolution falls to the permissive vertx default — string->int coercion succeeds.
+            // resolution falls to the permissive vertique default — string->int coercion succeeds.
             KafkaDeserializer<Counter> deser = provider.deserializer(Counter.class, staleBag);
             assertEquals(
                     new Counter(5),
                     deser.deserialize(bytes("{\"count\":\"5\"}"), "t", Map.of()),
-                    "the retired valueJsonProfile bag key must be ignored → vertx default (coercion) used");
+                    "the retired valueJsonProfile bag key must be ignored → vertique default (coercion) used");
         }
     }
 
-    // --- vertx default unchanged ---
+    // --- vertique floor / explicit system ---
 
     @Nested
-    @DisplayName("vertx default behaves as DatabindCodec.mapper()")
-    class VertxDefault {
+    @DisplayName("absent bag resolves the vertique floor; explicit 'system' resolves the registry's system mapper")
+    class VertiqueFloorAndExplicitSystem {
 
         @Test
-        @DisplayName("vertxDefault_unchanged: absent and explicit 'system' profile both coerce string->int")
-        void vertxDefault_unchanged() throws Exception {
+        @DisplayName("vertiqueFloorAndExplicitSystem: absent bag (vertique floor) and explicit 'system' profile"
+                + " both coerce string->int")
+        void vertiqueFloorAndExplicitSystem() throws Exception {
             JsonSerdeProvider provider = providerWithStrictProfile();
 
             KafkaDeserializer<Counter> absent = provider.deserializer(Counter.class, serdeConfigWith(null));
             assertEquals(new Counter(5), absent.deserialize(bytes("{\"count\":\"5\"}"), "t", Map.of()));
 
-            KafkaDeserializer<Counter> vertx = provider.deserializer(Counter.class, serdeConfigWith("system"));
-            assertEquals(new Counter(5), vertx.deserialize(bytes("{\"count\":\"5\"}"), "t", Map.of()));
+            KafkaDeserializer<Counter> system = provider.deserializer(Counter.class, serdeConfigWith("system"));
+            assertEquals(new Counter(5), system.deserialize(bytes("{\"count\":\"5\"}"), "t", Map.of()));
         }
     }
 

@@ -24,7 +24,7 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Mirrors the direct-construction wiring used by {@link JsonSerdeProviderProfileTest} and
  * {@link JsonSerdeProviderTest}: the provider is built from a
- * {@link DefaultJsonMapperProfileRegistry} seeded with no application profiles (the {@code vertx},
+ * {@link DefaultJsonMapperProfileRegistry} seeded with no application profiles (the {@code system},
  * {@code vertique}, and {@code vertique-strict} built-ins are always present) and
  * {@link JsonConfig#defaults()}, with the endpoint bag selecting {@code vertique-strict} via the
  * {@code jsonProfile} key.

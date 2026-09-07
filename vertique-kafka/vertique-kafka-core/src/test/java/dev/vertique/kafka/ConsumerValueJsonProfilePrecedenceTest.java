@@ -26,7 +26,7 @@ import org.junit.jupiter.api.Test;
  *   <li>{@code configOverBoundaryDefault} — per-consumer config beats the boundary default;</li>
  *   <li>{@code listenerDefaultOverBoundaryDefault} — listener default beats the boundary default;</li>
  *   <li>{@code kafkaBoundaryApplies} — boundary default applies when no per-consumer/listener default;</li>
- *   <li>{@code vertxFloor} — nothing set leaves the bag key absent (FR-JSON-057).</li>
+ *   <li>{@code vertiqueFloor} — nothing set leaves the bag key absent (FR-JSON-057).</li>
  * </ul>
  */
 @DisplayName("Consumer jsonProfile precedence")
@@ -146,15 +146,15 @@ class ConsumerValueJsonProfilePrecedenceTest {
     }
 
     @Test
-    @DisplayName("vertxFloor: nothing set leaves the bag key absent (FR-JSON-057)")
-    void vertxFloor() {
+    @DisplayName("vertiqueFloor: nothing set leaves the bag key absent (FR-JSON-057)")
+    void vertiqueFloor() {
         // Given: no kafka.jsonProfile, no per-consumer, no listener default
         ResolvedKafkaConsumerConfig config = resolve("c", null, new JsonObject());
 
-        // Then: the vertx default path (no key in bag)
+        // Then: the vertique floor path (no key in bag)
         assertNull(config.serdeConfig().getString("jsonProfile"));
         assertFalse(
                 config.serdeConfig().containsKey("jsonProfile"),
-                "the vertx floor must leave the jsonProfile bag key absent");
+                "the vertique floor must leave the jsonProfile bag key absent");
     }
 }

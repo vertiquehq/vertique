@@ -183,8 +183,8 @@ public class KafkaConsumerBinding<V> {
 
     /**
      * Returns the JSON mapper profile id for framework-managed value deserialization, or
-     * {@code null} to use the framework default (the {@code vertx} profile backed by
-     * {@code DatabindCodec.mapper()}).
+     * {@code null} to use the framework default (the {@code vertique} profile resolved through the
+     * registry, floored by {@code json.jsonProfile}).
      *
      * @return the profile id, or {@code null}
      */
@@ -354,8 +354,8 @@ public class KafkaConsumerBinding<V> {
 
         /**
          * Sets the JSON mapper profile id for framework-managed value deserialization. When
-         * {@code null} (the default), the framework uses the {@code vertx} profile backed by
-         * {@code DatabindCodec.mapper()}.
+         * {@code null} (the default), the framework uses the {@code vertique} profile resolved
+         * through the registry, floored by {@code json.jsonProfile}.
          *
          * @param jsonProfile the profile id, or {@code null} for the framework default
          * @return this builder

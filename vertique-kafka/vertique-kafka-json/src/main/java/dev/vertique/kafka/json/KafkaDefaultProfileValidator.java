@@ -36,7 +36,7 @@ public final class KafkaDefaultProfileValidator implements ComposeValidator {
      * the registry; an unregistered id throws {@link JsonProfileConfigurationException}, failing fast
      * at construction (the {@code VALIDATE} phase). A {@code null}/blank id is a no-op — resolution
      * falls through to the global {@code json.jsonProfile} default and ultimately the reserved
-     * {@code vertx} profile.
+     * {@code vertique} floor ({@code json.jsonProfile}'s effective profile).
      *
      * @param kafkaConfig the typed {@code kafka} configuration section (carries {@code jsonProfile})
      * @param registry the JSON mapper profile registry used to resolve the configured default id

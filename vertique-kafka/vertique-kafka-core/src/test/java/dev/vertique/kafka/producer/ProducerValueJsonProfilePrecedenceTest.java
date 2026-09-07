@@ -193,8 +193,8 @@ class ProducerValueJsonProfilePrecedenceTest {
     }
 
     @Test
-    @DisplayName("producerNoProfile_isVertx: nothing set leaves the bag key absent (vertx default)")
-    void producerNoProfile_isVertx() {
+    @DisplayName("producerNoProfile_isVertique: nothing set leaves the bag key absent (vertique default)")
+    void producerNoProfile_isVertique() {
         CapturingJsonProvider json = new CapturingJsonProvider();
 
         resolve(PlainProducer.class, new JsonObject(), new KafkaSerdeRegistry(Set.of(json)));
@@ -277,8 +277,8 @@ class ProducerValueJsonProfilePrecedenceTest {
     }
 
     @Test
-    @DisplayName("producerVertxFloor: nothing set leaves the bag key absent (FR-JSON-057)")
-    void producerVertxFloor() {
+    @DisplayName("producerVertiqueFloor: nothing set leaves the bag key absent (FR-JSON-057)")
+    void producerVertiqueFloor() {
         CapturingJsonProvider json = new CapturingJsonProvider();
 
         resolve(PlainProducer.class, new JsonObject(), new KafkaSerdeRegistry(Set.of(json)));
