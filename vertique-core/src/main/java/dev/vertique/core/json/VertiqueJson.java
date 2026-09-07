@@ -3,10 +3,15 @@
 
 package dev.vertique.core.json;
 
+import com.fasterxml.jackson.core.StreamReadConstraints;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.vertx.core.json.Json;
 import io.vertx.core.json.jackson.DatabindCodec;
 import io.vertx.core.json.jackson.VertxModule;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import org.slf4j.Logger;
@@ -126,6 +131,7 @@ public final class VertiqueJson {
                     + " applications in separate JVMs");
         }
 
+        ObjectMapper previous = current != null ? VertiqueJsonCodec.INSTANCE.mapper() : null;
         VertiqueJsonCodec.INSTANCE.delegateTo(mapper);
         installedId = id;
         installedBy = caller;
@@ -136,6 +142,7 @@ public final class VertiqueJson {
                     "Swapped the process JSON codec to another mapper instance of JSON profile '{}' (installed by {})",
                     id.value(),
                     caller);
+            warnAboutLeniencyWidening(id, caller, previous, mapper);
         }
     }
 
@@ -190,6 +197,147 @@ public final class VertiqueJson {
                     + "' cannot be the process JSON codec's mapper: it activates Jackson default typing, which lets"
                     + " any payload reaching the codec choose the type it deserializes into. Annotation-driven"
                     + " polymorphism is unaffected");
+        }
+    }
+
+    /**
+     * Logs, at {@code WARN}, every read-leniency setting a same-id swap's incoming mapper widens
+     * relative to the mapper it replaces.
+     *
+     * <p>A same-id swap is permitted because code running inside the process is trusted, but it is
+     * never silent: the two structural invariants ({@link #requireVertxModule},
+     * {@link #requireNoDefaultTyping}) are re-checked above regardless, and this comparison covers
+     * what those invariants do not — read leniency that widens what every payload the process codec
+     * decodes afterwards is accepted as.
+     *
+     * @param id the profile id being swapped
+     * @param caller the class performing the swap
+     * @param previous the mapper being replaced
+     * @param incoming the mapper taking its place
+     */
+    /**
+     * Parser features that widen what the process codec accepts as JSON text; a same-id swap that
+     * turns any of them on is reported, mirroring the CONFIGURE-time install step's own list.
+     */
+    private static final List<com.fasterxml.jackson.core.JsonParser.Feature> LENIENT_PARSER_FEATURES = List.of(
+            com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_COMMENTS,
+            com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_SINGLE_QUOTES,
+            com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_UNQUOTED_FIELD_NAMES,
+            com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_TRAILING_COMMA,
+            com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_MISSING_VALUES,
+            com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_BACKSLASH_ESCAPING_ANY_CHARACTER,
+            com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_UNQUOTED_CONTROL_CHARS,
+            com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_NON_NUMERIC_NUMBERS,
+            com.fasterxml.jackson.core.JsonParser.Feature.ALLOW_YAML_COMMENTS);
+
+    private static void warnAboutLeniencyWidening(
+            JsonProfileId id, String caller, ObjectMapper previous, ObjectMapper incoming) {
+        List<String> deltas = new ArrayList<>();
+        addWhenNoLongerFails(
+                deltas,
+                "FAIL_ON_UNKNOWN_PROPERTIES",
+                previous.isEnabled(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES),
+                incoming.isEnabled(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES));
+        addWhenNoLongerFails(
+                deltas,
+                "FAIL_ON_TRAILING_TOKENS",
+                previous.isEnabled(DeserializationFeature.FAIL_ON_TRAILING_TOKENS),
+                incoming.isEnabled(DeserializationFeature.FAIL_ON_TRAILING_TOKENS));
+        addWhenNowAccepted(
+                deltas,
+                "ACCEPT_CASE_INSENSITIVE_PROPERTIES",
+                previous.isEnabled(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES),
+                incoming.isEnabled(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES));
+        for (com.fasterxml.jackson.core.JsonParser.Feature lenient : LENIENT_PARSER_FEATURES) {
+            addWhenNowAccepted(deltas, lenient.name(), previous.isEnabled(lenient), incoming.isEnabled(lenient));
+        }
+        deltas.addAll(weakerReadLimits(
+                previous.getFactory().streamReadConstraints(),
+                incoming.getFactory().streamReadConstraints()));
+        if (!deltas.isEmpty()) {
+            log.warn(
+                    "The same-id swap of JSON profile '{}' by {} installs a mapper with weaker read leniency than"
+                            + " the mapper it replaces; every payload the process codec decodes is affected: {}",
+                    id.value(),
+                    caller,
+                    String.join("; ", deltas));
+        }
+    }
+
+    /**
+     * Records a delta when a feature that used to make decoding fail no longer does.
+     *
+     * @param deltas the accumulating descriptions
+     * @param feature the feature's name, for the message
+     * @param previousFails whether the replaced mapper had the feature enabled (failing)
+     * @param incomingFails whether the incoming mapper has the feature enabled (failing)
+     */
+    private static void addWhenNoLongerFails(
+            List<String> deltas, String feature, boolean previousFails, boolean incomingFails) {
+        if (previousFails && !incomingFails) {
+            deltas.add(feature + " is off (was on)");
+        }
+    }
+
+    /**
+     * Records a delta when a feature that widens what decoding accepts turns on.
+     *
+     * @param deltas the accumulating descriptions
+     * @param feature the feature's name, for the message
+     * @param previousAccepts whether the replaced mapper had the feature enabled (accepting)
+     * @param incomingAccepts whether the incoming mapper has the feature enabled (accepting)
+     */
+    private static void addWhenNowAccepted(
+            List<String> deltas, String feature, boolean previousAccepts, boolean incomingAccepts) {
+        if (!previousAccepts && incomingAccepts) {
+            deltas.add(feature + " is on (was off)");
+        }
+    }
+
+    /**
+     * Returns a description of every stream-read limit the incoming mapper's factory weakens
+     * relative to the mapper it replaces.
+     *
+     * @param previous the replaced mapper's factory limits
+     * @param incoming the incoming mapper's factory limits
+     * @return one entry per weakened limit; empty when none is weakened
+     */
+    private static List<String> weakerReadLimits(StreamReadConstraints previous, StreamReadConstraints incoming) {
+        List<String> weakened = new ArrayList<>();
+        // maxNestingDepth/maxNumberLength/maxStringLength/maxNameLength are always positive in
+        // Jackson (the builder rejects non-positive values), so only "higher" is weaker for them;
+        // maxDocumentLength and maxTokenCount treat a non-positive value as unbounded.
+        addWhenHigher(weakened, "maxNestingDepth", incoming.getMaxNestingDepth(), previous.getMaxNestingDepth());
+        addWhenHigher(weakened, "maxNumberLength", incoming.getMaxNumberLength(), previous.getMaxNumberLength());
+        addWhenHigher(weakened, "maxStringLength", incoming.getMaxStringLength(), previous.getMaxStringLength());
+        addWhenHigher(weakened, "maxNameLength", incoming.getMaxNameLength(), previous.getMaxNameLength());
+        addWhenWeaker(weakened, "maxDocumentLength", incoming.getMaxDocumentLength(), previous.getMaxDocumentLength());
+        addWhenWeaker(weakened, "maxTokenCount", incoming.getMaxTokenCount(), previous.getMaxTokenCount());
+        return weakened;
+    }
+
+    /**
+     * Records a stream-read limit that is higher than, or unbounded relative to, the mapper being
+     * replaced.
+     *
+     * @param weakened the accumulating descriptions
+     * @param limit the limit's name
+     * @param incoming the incoming mapper's value
+     * @param previous the replaced mapper's value
+     */
+    private static void addWhenHigher(List<String> weakened, String limit, long incoming, long previous) {
+        if (incoming > previous) {
+            weakened.add("the stream-read limit " + limit + " (" + incoming + ") is weaker than the previous mapper's ("
+                    + previous + ")");
+        }
+    }
+
+    private static void addWhenWeaker(List<String> weakened, String limit, long incoming, long previous) {
+        boolean previousIsBounded = previous > 0;
+        boolean incomingIsUnbounded = incoming <= 0;
+        if (previousIsBounded && (incomingIsUnbounded || incoming > previous)) {
+            weakened.add("the stream-read limit " + limit + " (" + incoming + ") is weaker than the previous mapper's ("
+                    + previous + ")");
         }
     }
 

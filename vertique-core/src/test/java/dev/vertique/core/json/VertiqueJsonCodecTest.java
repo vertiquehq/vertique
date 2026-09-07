@@ -5,6 +5,7 @@ package dev.vertique.core.json;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -15,6 +16,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.jsontype.impl.LaissezFaireSubTypeValidator;
 import io.vertx.core.json.Json;
@@ -206,6 +208,57 @@ class VertiqueJsonCodecTest {
         }
     }
 
+    @Test
+    @DisplayName(
+            "security review (T023 L07): a same-id swap to a lenient mapper logs a WARN naming the deltas; an equally"
+                    + " strict swap logs none")
+    void sameIdSwapToALenientMapperLogsTheDeltas() {
+        Logger root = (Logger) LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        root.addAppender(appender);
+        try {
+            JsonProfileId profile = JsonProfileId.of("codec-test-leniency");
+
+            // --- Given: a strict mapper installed under the profile id ---
+            ObjectMapper strict = vertxAwareMapper();
+            VertiqueJson.install(profile, strict);
+
+            // --- When: the same id swaps to an equally strict mapper ---
+            appender.list.clear();
+            ObjectMapper equallyStrict = vertxAwareMapper();
+            VertiqueJson.install(profile, equallyStrict);
+
+            assertNotNull(
+                    infoLogContaining(appender, profile.value()),
+                    "a same-id swap must still log the INFO swap line even when leniency is unchanged");
+            assertNull(
+                    warnLogContaining(appender, profile.value()),
+                    "a same-id swap to an equally strict mapper must not log a leniency WARN");
+
+            // --- When: the same id swaps to a mapper with weaker read leniency ---
+            appender.list.clear();
+            ObjectMapper lenient = vertxAwareMapper()
+                    .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                    .configure(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, true);
+            VertiqueJson.install(profile, lenient);
+
+            String warnLog = warnLogContaining(appender, profile.value());
+            assertNotNull(warnLog, "a same-id swap to a lenient mapper must log a WARN naming the deltas");
+            assertTrue(
+                    warnLog.contains(getClass().getSimpleName()),
+                    "the WARN must attribute the installing caller; got: " + warnLog);
+            assertTrue(
+                    warnLog.contains("FAIL_ON_UNKNOWN_PROPERTIES"),
+                    "the WARN must name FAIL_ON_UNKNOWN_PROPERTIES; got: " + warnLog);
+            assertTrue(
+                    warnLog.contains("ACCEPT_CASE_INSENSITIVE_PROPERTIES"),
+                    "the WARN must name ACCEPT_CASE_INSENSITIVE_PROPERTIES; got: " + warnLog);
+        } finally {
+            root.detachAppender(appender);
+        }
+    }
+
     // --- TP-003 (structural half) ---
 
     @Test
@@ -257,6 +310,22 @@ class VertiqueJsonCodecTest {
     private static String infoLogContaining(ListAppender<ILoggingEvent> appender, String needle) {
         return appender.list.stream()
                 .filter(e -> e.getLevel() == Level.INFO)
+                .map(ILoggingEvent::getFormattedMessage)
+                .filter(m -> m.contains(needle))
+                .findFirst()
+                .orElse(null);
+    }
+
+    /**
+     * Returns the first captured WARN message containing {@code needle}, or {@code null}.
+     *
+     * @param appender the attached capture appender
+     * @param needle the required substring
+     * @return the matching formatted message, or {@code null} when none matched
+     */
+    private static String warnLogContaining(ListAppender<ILoggingEvent> appender, String needle) {
+        return appender.list.stream()
+                .filter(e -> e.getLevel() == Level.WARN)
                 .map(ILoggingEvent::getFormattedMessage)
                 .filter(m -> m.contains(needle))
                 .findFirst()
