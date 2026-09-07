@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Job Core Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.job`
 > **Artifact:** `vertique-job-core`
 > **Depends on:** core
@@ -266,6 +266,13 @@ one timeout policy.
   job-completion thread, which may be an event loop, a timer, or an event-bus callback.
 
 ---
+
+### Framework seams
+
+`DefaultJobContext`, `DefaultJobLogger`, `DefaultProgressReporter`, and `SchedulerMdcScope` are the
+framework implementations behind the contracts above, and their Javadoc marks them INTERNAL. They
+are outside this module's compatibility promise: an application receives a `JobContext` (and its
+`JobLogger` and `ProgressReporter`) from the framework and never constructs one.
 
 ## Extension Points
 

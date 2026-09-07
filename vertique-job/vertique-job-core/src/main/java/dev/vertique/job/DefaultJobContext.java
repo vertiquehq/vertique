@@ -9,7 +9,10 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 /**
- * In-memory implementation of {@link JobContext}.
+ * INTERNAL framework seam — the framework implementation behind a contract this module documents;
+ * not an application contract and outside the maturity promise.
+ *
+ * <p>In-memory implementation of {@link JobContext}.
  *
  * <p>Metadata, completed steps, progress, and the cancellation flag live in memory for the duration
  * of the execution and are never persisted. Log entries are the exception: the scheduling modules

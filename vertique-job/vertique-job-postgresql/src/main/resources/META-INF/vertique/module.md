@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Job PostgreSQL Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.job.postgresql`
 > **Artifact:** `vertique-job-postgresql`
 > **Depends on:** `dev.vertique:vertique-job-core`, `dev.vertique:vertique-db-postgresql`,
@@ -99,7 +99,9 @@ public interface AppComponent { ... }
 Flyway migration:
 - `V1__create_job_tables.sql` — initial schema (`job_executions`, `job_logs`, `job_schedules`, `job_server_heartbeats`), including `metadata JSONB` on `job_executions` for durable context propagation and the `target` column on `job_schedules` for the explicit target-reference cron model
 
-The framework is pre-release: every new column or table folds back into `V1` rather than shipping as `V2`/`V3` until the first released version is cut.
+**The `V1` schema is frozen.** `vertique-job-postgresql` is Stable, so every later schema change ships
+as a new `V2+` migration file; `V1` is never edited again. A database that applied an earlier `V1`
+would fail Flyway checksum validation, which is why the fold-back practice ends here.
 
 ### `job_executions`
 

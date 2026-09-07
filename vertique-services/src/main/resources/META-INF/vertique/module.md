@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Services Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.services`
 > **Artifact:** `vertique-services`
 > **Depends on:** core, context, correlation, deploy, logging, security-core, security-runtime
@@ -417,6 +417,12 @@ degradation failures are non-recoverable; an application interceptor cannot turn
 successful dispatch.
 
 ---
+
+### Module wiring
+
+`DispatchModule` includes `SecurityEventsModule` from `dev.vertique:vertique-security-runtime`.
+Every module it pulls in is Stable, so installing it commits an application only to Stable
+wiring.
 
 ## Extension Points
 
