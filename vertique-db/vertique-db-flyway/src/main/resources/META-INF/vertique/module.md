@@ -90,6 +90,10 @@ When using `@VertiqueApp` + `CoreLifecycleStepsModule` + `DbFlywayModule`, `Flyw
 - `VALIDATE` — calls `flyway.validate()`, fails the future if schema diverges
 - `DISABLED` — returns `Future.succeededFuture(new MigrationResult(0, null))` immediately without creating a Flyway instance
 
+**No-op result:** a `MIGRATE` run that finds nothing pending returns `MigrationResult(0, null)`; Flyway
+reports a target version only for the migrations it applied, so callers must not read
+`targetVersion()` as "current schema version".
+
 **Exception wrapping:** Any `FlywayException` thrown during `migrate()` or `validate()` is caught and re-thrown as a `MigrationException` (from `db-core`). This prevents Flyway vendor types from leaking into calling code.
 
 ### `MigrationException` (db-core)
