@@ -246,4 +246,120 @@ class PromotedFieldRoutingTest {
                 ((Map<?, ?>) result).get("street"),
                 "the enclosing member's skip must survive promotion");
     }
+
+    // --- ADR-0247 Amendment 3: registration verifies a promoted key can be routed ---
+
+    /** Inner type governed at type level only, so no field of its own carries a chain. */
+    @Sanitize(TestStripControlsSanitizer.class)
+    static class Branded {
+        String value;
+    }
+
+    /** Enclosing type for {@link Branded}. */
+    static class BrandedOwner {
+        Branded branded;
+    }
+
+    /** Inner type that opts out of sanitization at type level and declares nothing to run. */
+    @SkipSanitization
+    static class Quiet {
+        String token;
+    }
+
+    @Test
+    @DisplayName(
+            "a type-level skip on the promoted type is refused under a generated processor — a skip changes what runs")
+    void typeLevelSkipUnderAGeneratedProcessorFailsRegistration() {
+        InputFieldNameResolver resolver = promoting(
+                ProjectedDto.class, Map.of("token", new PromotedField(Quiet.class, "token", List.of("quiet"))));
+
+        // Quiet declares no chain, so declaresPolicies sees nothing; routing would honor its skip
+        // where the generated default arm applies the owner's inherited chain instead.
+        ConfigurationException ex = assertThrows(
+                ConfigurationException.class,
+                () -> processor.precomputeFieldNameResolution(ProjectedDto.class, resolver));
+        assertTrue(ex.getMessage().contains("generated input processor"), ex.getMessage());
+    }
+
+    /** Owner whose member is declared as one type while the projection promotes from another. */
+    static class MismatchedOwner {
+        Plain value;
+    }
+
+    @Test
+    @DisplayName("a type-level policy on the promoted type is refused under a generated processor too")
+    void typeLevelPolicyUnderAGeneratedProcessorFailsRegistration() {
+        InputFieldNameResolver resolver = promoting(
+                ProjectedDto.class, Map.of("value", new PromotedField(Branded.class, "value", List.of("branded"))));
+
+        // Branded.value carries no chain of its own; the chain is on the type. Routing the key would
+        // apply it, the generated switch cannot, so the gate must fire on the type-level policy.
+        ConfigurationException ex = assertThrows(
+                ConfigurationException.class,
+                () -> processor.precomputeFieldNameResolution(ProjectedDto.class, resolver));
+        assertTrue(ex.getMessage().contains("generated input processor"), ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("a promoted policy whose path the reflective walker cannot descend fails registration")
+    void unreachablePathWithAPolicyFailsRegistration() {
+        InputFieldNameResolver resolver = promoting(
+                UnwrappedOwner.class, Map.of("street", new PromotedField(Address.class, "street", List.of("nowhere"))));
+
+        // UnwrappedOwner tracks no field 'nowhere', so the engine could never reach Address.street's
+        // chain through it; the request path would fall back to the owner's treatment silently.
+        ConfigurationException ex = assertThrows(
+                ConfigurationException.class,
+                () -> processor.precomputeFieldNameResolution(UnwrappedOwner.class, resolver));
+        String message = ex.getMessage();
+        assertTrue(message.contains("[nowhere]"), "names the path: " + message);
+        assertTrue(message.contains(Address.class.getName() + ".street"), "names the site: " + message);
+    }
+
+    @Test
+    @DisplayName("a promoted policy whose path lands on a different type than the projection promotes from fails")
+    void mismatchedLandingTypeFailsRegistration() {
+        InputFieldNameResolver resolver = promoting(
+                MismatchedOwner.class, Map.of("street", new PromotedField(Address.class, "street", List.of("value"))));
+
+        // The projection says the key binds into Address; descending 'value' lands this engine on
+        // Plain — the shape a generic member produces when the codec resolves its type argument and
+        // the declared field type erases. Address.street's chain would never be found.
+        ConfigurationException ex = assertThrows(
+                ConfigurationException.class,
+                () -> processor.precomputeFieldNameResolution(MismatchedOwner.class, resolver));
+        String message = ex.getMessage();
+        assertTrue(message.contains(Plain.class.getName()), "names where the engine lands: " + message);
+        assertTrue(message.contains(Address.class.getName()), "and where the projection points: " + message);
+    }
+
+    @Test
+    @DisplayName("a promoted key whose routing would apply nothing is accepted whatever its path")
+    void promotedKeyThatChangesNothingIsAccepted() {
+        // Plain declares nothing and PlainOwner.plain carries nothing, so the default treatment is
+        // already exactly what routing would produce; an unreachable path loses nothing.
+        InputFieldNameResolver resolver =
+                promoting(PlainOwner.class, Map.of("value", new PromotedField(Plain.class, "value", List.of("gone"))));
+
+        assertDoesNotThrow(() -> processor.precomputeFieldNameResolution(PlainOwner.class, resolver));
+    }
+
+    @Test
+    @DisplayName("a promoted key receives the declaring type's object-level chain even without field metadata")
+    void promotedKeyReceivesTheDeclaringTypesObjectLevelChain() {
+        // 'label' is not a field Branded tracks — the shape of an inner property the codec binds
+        // through an accessor of another name. The value is still processed AS Branded's, so the
+        // type-level chain runs, exactly as for an unknown key inside a named nested object.
+        InputFieldNameResolver resolver = promoting(
+                BrandedOwner.class, Map.of("label", new PromotedField(Branded.class, "label", List.of("branded"))));
+
+        Object result = processor.processInput(
+                Map.of("label", "a\u0000b"),
+                BrandedOwner.class,
+                EffectiveInputPolicies.NONE,
+                InputLocation.BODY,
+                resolver);
+
+        assertEquals("ab", ((Map<?, ?>) result).get("label"), "Branded's type-level sanitizer must run");
+    }
 }

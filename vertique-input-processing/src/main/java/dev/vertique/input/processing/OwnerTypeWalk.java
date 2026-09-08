@@ -16,6 +16,7 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -166,7 +167,8 @@ final class OwnerTypeWalk {
             InputPolicyMetadata metadata = metadataResolver.resolve(owner);
             if (!metadata.fields().isEmpty()) {
                 resolver.precompute(owner);
-                checkPromotedFields(owner, resolver, metadataResolver, dispatcher);
+                checkGovernedFieldsAreBound(owner, metadata, resolver);
+                checkPromotedFields(owner, metadata, resolver, metadataResolver, dispatcher);
             }
             if (!InputPolicyMetadataResolver.isDescendableObject(owner) || isPlatformType(owner)) {
                 continue;
@@ -201,47 +203,94 @@ final class OwnerTypeWalk {
     }
 
     /**
-     * Returns the owner set a generated processor declares for {@code owner}, or an empty set when
-     * the reflective contributions apply — either because no generated processor exists, or because
-     * the one that does declares no owner set.
+     * Fails startup for a field carrying a declared chain that the codec binds no wire key into.
      *
-     * <p>The two empty outcomes are deliberately reported differently. No processor at all is the
-     * ordinary reflective case and is silent; a processor that returns an empty set is a
-     * hand-written or previously-generated class predating the owner-set contract, and is logged at
-     * debug naming the class, so a stale generated processor on the classpath is diagnosable rather
-     * than silent.
+     * <p>This engine keys per-field metadata on the Java field name; a codec keys its binding on the
+     * property name it derives from the members it finds. The two agree for a field, a record
+     * component, or the accessor pair a field's name implies, and diverge for an accessor or creator
+     * parameter whose implicit name differs from the field it writes — {@code setStreet} writing
+     * {@code streetName}. Neither side can derive that mapping, so the projection would resolve the
+     * wire key to a name this metadata has no entry for, and the field's declared chain would
+     * silently never run. An ignored or transient field the codec never binds is the same shape.
+     * The projection enumerates what its codec binds; a field with a chain outside that set is
+     * refused here, naming the type, the field, and what the codec does bind.
      *
-     * @param owner      the frontier class
-     * @param dispatcher the engine's own dispatcher
-     * @return the declared owner types, or an empty set to fall back to the reflective walk
+     * <p>A resolver that cannot enumerate — {@link InputFieldNameResolver#IDENTITY}, whose keys are
+     * already Java names — returns {@code null} and is trusted. Only fields carrying a chain are
+     * checked: a skip flag on an unbound field suppresses nothing that would otherwise run.
+     *
+     * @throws ConfigurationException when a field carrying a chain is not among the names the codec
+     *                                binds into
      */
+    private static void checkGovernedFieldsAreBound(
+            Class<?> owner, InputPolicyMetadata metadata, InputFieldNameResolver resolver) {
+        Set<String> bound = resolver.boundJavaNames(owner);
+        if (bound == null) {
+            return;
+        }
+        Set<String> unroutable = resolver.unroutableWireNames(owner);
+        boolean governed = false;
+        for (FieldPolicyMetadata field : metadata.fields().values()) {
+            if (!carriesChains(field)) {
+                continue;
+            }
+            governed = true;
+            if (bound.contains(field.fieldName())) {
+                continue;
+            }
+            throw new ConfigurationException("Type " + owner.getName() + " declares input policies on the Java"
+                    + " property '" + field.fieldName() + "', but the codec binds no wire key into a property of"
+                    + " that name — it binds " + new TreeSet<>(bound) + ". The declared canonicalizers"
+                    + " and sanitizers would silently never run. Name the field after the property the codec"
+                    + " binds (an accessor setStreet binds 'street'), or declare the field so the codec binds"
+                    + " it directly.");
+        }
+        if (governed && !unroutable.isEmpty()) {
+            // A creator parameter the codec cannot tie to a field may write ANY field, including a
+            // governed one, and nothing here can tell which. Undecidable is refused, not trusted.
+            throw new ConfigurationException("Type " + owner.getName() + " binds the wire key(s) "
+                    + new TreeSet<>(unroutable) + " through a creator parameter the codec cannot tie to a Java"
+                    + " field, and declares input policies on its fields. Whether a policy governs the field the"
+                    + " parameter writes cannot be decided, so the declared canonicalizers and sanitizers could"
+                    + " silently never run. Name the parameter after the field it writes (with an explicit"
+                    + " @JsonProperty naming the field, or parameter-name support), or give the field the same"
+                    + " @JsonProperty name as the parameter so the codec links them.");
+        }
+    }
+
     /**
-     * Resolves {@code owner}'s promoted keys, warms the metadata of every type they are bound into,
-     * and fails startup for the one execution path that cannot route them.
+     * Resolves {@code owner}'s promoted keys and fails startup for any the engine cannot route
+     * where routing would change what runs.
      *
      * <p>A codec can promote a nested member's fields into the enclosing object — Jackson's
      * {@code @JsonUnwrapped} — so they arrive as keys of {@code owner} while their declared policies
-     * live on the inner type. The reflective walker routes those: it consults
-     * {@link InputTraversalContext#promotedField} whenever the owner's own metadata has no entry.
-     * A <strong>generated</strong> processor cannot. Its field-name {@code switch} is emitted from
-     * the owner's declared fields, so a promoted key falls to the {@code default} branch and receives
-     * only the inherited object-level chains — the promoted field's own chains would silently never
-     * run. Rather than let that pass, a promoted field that carries chains fails startup when the
-     * owner is served by a generated processor.
+     * live on the inner type. Routing such a key means descending each enclosing member on its
+     * {@link PromotedField#enclosingPath() path} and then applying the declaring type's policies.
+     * Whether that changes anything is decidable here: it does when the declaring type or anything
+     * reachable from it declares a chain, when the declaring type or the promoted field carries a
+     * skip, or when an enclosing member carries a chain or a skip.
+     * A promoted key for which nothing would change is accepted as is — the default treatment
+     * applies exactly the chains routing would.
+     *
+     * <p>Where routing matters, two things can make it impossible, and both fail startup rather
+     * than pass silently. A <strong>generated</strong> processor cannot route at all: its
+     * field-name {@code switch} is emitted from the owner's declared fields, so a promoted key falls
+     * to the {@code default} branch and receives only the inherited chains. And the reflective
+     * walker can route only a path it can descend: every enclosing member must be a field this
+     * metadata tracks, and the type the path lands on must be the type the projection promotes
+     * from — a generic member the projection resolved but this metadata sees erased is the shape
+     * that fails the second condition.
      *
      * <p>Resolving each declaring type here also warms its metadata, so the reflective path's
-     * promoted lookup never resolves a type for the first time on the request path. It is
-     * deliberately <em>not</em> enqueued as a walk owner: an unwrapped inner type's fields arrive on
-     * the parent, so the inner type is never itself passed to
-     * {@link InputTraversalContext#logicalFieldName}, and precomputing its projection could only
-     * reject a valid application for a lookup no execution path performs — the same reasoning this
-     * class already applies to its own frontier.
+     * promoted lookup never resolves a type for the first time on the request path.
      *
-     * @throws ConfigurationException when a promoted field carrying chains is served by a generated
-     *                                processor
+     * @throws ConfigurationException when a promoted key whose routing would apply a policy is
+     *                                served by a generated processor, or has a path the reflective
+     *                                walker cannot descend
      */
     private static void checkPromotedFields(
             Class<?> owner,
+            InputPolicyMetadata metadata,
             InputFieldNameResolver resolver,
             InputPolicyMetadataResolver metadataResolver,
             GeneratedInputProcessorDispatcher dispatcher) {
@@ -252,20 +301,60 @@ final class OwnerTypeWalk {
         boolean generated = dispatcher.resolve(owner).isPresent();
         for (Map.Entry<String, PromotedField> entry : promoted.entrySet()) {
             PromotedField field = entry.getValue();
-            FieldPolicyMetadata meta =
-                    metadataResolver.resolve(field.declaringType()).fields().get(field.fieldName());
-            if (meta == null || !carriesChains(meta)) {
+            String site = field.declaringType().getName() + "." + field.fieldName();
+            // Descend the path exactly as the request path will, collecting whether any enclosing
+            // member would contribute a chain or a skip on the way down.
+            InputPolicyMetadata level = metadata;
+            boolean pathContributes = false;
+            boolean reachable = true;
+            for (String enclosing : field.enclosingPath()) {
+                FieldPolicyMetadata enclosingMeta = level.fields().get(enclosing);
+                if (enclosingMeta == null) {
+                    reachable = false;
+                    break;
+                }
+                pathContributes |= carriesChains(enclosingMeta)
+                        || enclosingMeta.skipCanonicalization()
+                        || enclosingMeta.skipSanitization();
+                level = metadataResolver.resolve(enclosingMeta.fieldType());
+            }
+            // Skips are not policies, so declaresPolicies does not see them — but routing honors a
+            // skip on the declaring type or the promoted field where the default treatment would
+            // apply the owner's inherited chain, so a skip changes what runs just as a chain does.
+            InputPolicyMetadata declaring = metadataResolver.resolve(field.declaringType());
+            FieldPolicyMetadata own = declaring.fields().get(field.fieldName());
+            boolean declaringSkips = declaring.skipCanonicalization()
+                    || declaring.skipSanitization()
+                    || (own != null && (own.skipCanonicalization() || own.skipSanitization()));
+            boolean matters =
+                    pathContributes || declaringSkips || InputObjectProcessor.declaresPolicies(field.declaringType());
+            if (!matters) {
                 continue;
             }
             if (generated) {
-                throw new ConfigurationException("Type " + owner.getName() + " promotes the key '"
-                        + entry.getKey() + "' out of " + field.declaringType().getName() + "."
-                        + field.fieldName() + ", which declares input policies, but " + owner.getName()
-                        + " is processed by a generated input processor whose field-name switch is emitted"
-                        + " from its own declared fields. The promoted field's declared canonicalizers and"
-                        + " sanitizers would silently never run. Declare the member as a named nested"
-                        + " property instead of promoting it, or move the policies onto " + owner.getName()
-                        + ".");
+                throw new ConfigurationException("Type " + owner.getName() + " promotes the key '" + entry.getKey()
+                        + "' out of " + site + ", whose routing would apply declared input policies, but "
+                        + owner.getName() + " is processed by a generated input processor whose field-name"
+                        + " switch is emitted from its own declared fields. The policies would silently never"
+                        + " run. Declare the member as a named nested property instead of promoting it, or"
+                        + " move the policies onto " + owner.getName() + ".");
+            }
+            if (!reachable) {
+                throw new ConfigurationException("Type " + owner.getName() + " promotes the key '" + entry.getKey()
+                        + "' out of " + site + " through the members " + field.enclosingPath()
+                        + ", but this engine tracks no field on that path, so the policies routing the key"
+                        + " would apply could silently never run. Declare each member on the path as a field"
+                        + " this engine can descend, or declare the member as a named nested property instead"
+                        + " of promoting it.");
+            }
+            if (level.ownerType() != field.declaringType()) {
+                throw new ConfigurationException("Type " + owner.getName() + " promotes the key '" + entry.getKey()
+                        + "' out of " + site + ", but descending " + field.enclosingPath() + " lands this"
+                        + " engine on " + level.ownerType().getName() + " rather than "
+                        + field.declaringType().getName() + " — a generic member the codec resolved but the"
+                        + " declared field type erases. The policies declared on "
+                        + field.declaringType().getName()
+                        + " would silently never run. Declare the member with its concrete type.");
             }
         }
     }
@@ -280,6 +369,21 @@ final class OwnerTypeWalk {
         return !meta.canonicalizerChain().isEmpty() || !meta.sanitizerChain().isEmpty();
     }
 
+    /**
+     * Returns the owner set a generated processor declares for {@code owner}, or an empty set when
+     * the reflective contributions apply — either because no generated processor exists, or because
+     * the one that does declares no owner set.
+     *
+     * <p>The two empty outcomes are deliberately reported differently. No processor at all is the
+     * ordinary reflective case and is silent; a processor that returns an empty set is a
+     * hand-written or previously-generated class predating the owner-set contract, and is logged at
+     * debug naming the class, so a stale generated processor on the classpath is diagnosable rather
+     * than silent.
+     *
+     * @param owner      the frontier class
+     * @param dispatcher the engine's own dispatcher
+     * @return the declared owner types, or an empty set to fall back to the reflective walk
+     */
     private static Set<Class<?>> declaredOwnerTypes(Class<?> owner, GeneratedInputProcessorDispatcher dispatcher) {
         // A Broken lookup — a generated class that exists but cannot be instantiated — propagates
         // deliberately: that is a build defect, and failing at registration is correct.

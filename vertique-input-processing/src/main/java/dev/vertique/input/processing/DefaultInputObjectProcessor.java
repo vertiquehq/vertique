@@ -383,11 +383,19 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
                             levelCtx = levelCtx.descend(levelMeta, enclosingMeta);
                             levelMeta = metadataResolver.resolve(enclosingMeta.fieldType());
                         }
-                        FieldPolicyMetadata promotedMeta =
-                                reachable ? levelMeta.fields().get(promoted.fieldName()) : null;
-                        if (promotedMeta != null) {
-                            fieldMeta = promotedMeta;
-                            declaringType = promoted.declaringType();
+                        // Registration verified the path is descendable wherever routing this key
+                        // would apply anything (OwnerTypeWalk); an unreachable path here means
+                        // nothing would change, so the owner's treatment is already correct.
+                        if (reachable) {
+                            // The value is processed AS the declaring type's, whether or not that
+                            // type tracks the field: an inner property with no metadata of its own
+                            // still receives the inner type's object-level chains, exactly as an
+                            // unknown key inside a named nested object would.
+                            fieldMeta = levelMeta.fields().get(promoted.fieldName());
+                            // Provenance follows the metadata the chains come from: registration
+                            // verified the two agree wherever a policy is at stake.
+                            declaringType =
+                                    levelMeta.ownerType() != null ? levelMeta.ownerType() : promoted.declaringType();
                             valueMeta = levelMeta;
                             valueCtx = levelCtx;
                             logicalKey = promoted.fieldName();
