@@ -99,6 +99,7 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
      * no property at all.
      */
     private final boolean foldsCase;
+
     private final ClassValue<Projection> projections = new ClassValue<>() {
         @Override
         protected Projection computeValue(Class<?> type) {

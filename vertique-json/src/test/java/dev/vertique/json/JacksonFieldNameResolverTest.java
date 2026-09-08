@@ -416,7 +416,9 @@ class JacksonFieldNameResolverTest {
     }
 
     private static ObjectMapper caseInsensitiveMapper() {
-        return JsonMapper.builder().enable(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES).build();
+        return JsonMapper.builder()
+                .enable(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
+                .build();
     }
 
     @Test
