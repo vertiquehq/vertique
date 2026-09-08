@@ -9,7 +9,11 @@ import javax.lang.model.element.TypeElement;
 import javax.lang.model.util.ElementFilter;
 
 /**
- * Utility class for discovering {@code @Inject}-annotated constructors on a {@link TypeElement}
+ * INTERNAL framework seam — processor-authoring substrate consumed by sibling framework modules;
+ * not an application contract and outside the maturity promise. An application uses the wiring
+ * annotations this module documents and never calls this type.
+ *
+ * <p>Utility class for discovering {@code @Inject}-annotated constructors on a {@link TypeElement}
  * during annotation processing.
  *
  * <p>Recognises both {@code jakarta.inject.Inject} and {@code javax.inject.Inject} so that

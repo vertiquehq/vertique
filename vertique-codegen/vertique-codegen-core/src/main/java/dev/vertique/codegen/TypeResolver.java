@@ -18,7 +18,11 @@ import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 
 /**
- * APT-layer type resolution helper providing BFS-based supertype walking and generic type-argument
+ * INTERNAL framework seam — processor-authoring substrate consumed by sibling framework modules;
+ * not an application contract and outside the maturity promise. An application uses the wiring
+ * annotations this module documents and never calls this type.
+ *
+ * <p>APT-layer type resolution helper providing BFS-based supertype walking and generic type-argument
  * resolution over {@link javax.lang.model.type.TypeMirror} and {@link javax.lang.model.util.Types}.
  *
  * <p>This class mirrors the algorithm used by the runtime {@link dev.vertique.core.util.TypeResolver}

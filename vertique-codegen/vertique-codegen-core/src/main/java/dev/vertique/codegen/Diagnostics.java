@@ -10,7 +10,11 @@ import javax.lang.model.element.Element;
 import javax.tools.Diagnostic;
 
 /**
- * Compiler diagnostic helper that combines instance methods bound to a {@link Messager} with
+ * INTERNAL framework seam — processor-authoring substrate consumed by sibling framework modules;
+ * not an application contract and outside the maturity promise. An application uses the wiring
+ * annotations this module documents and never calls this type.
+ *
+ * <p>Compiler diagnostic helper that combines instance methods bound to a {@link Messager} with
  * static factory methods for consistent diagnostic message wording.
  *
  * <p>The static formatters ({@link #mustReturnFuture}, {@link #duplicateOperation},

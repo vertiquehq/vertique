@@ -31,7 +31,11 @@ import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 
 /**
- * Reusable JavaPoet emitter that generates a contract-correct annotation literal — a
+ * INTERNAL framework seam — processor-authoring substrate consumed by sibling framework modules;
+ * not an application contract and outside the maturity promise. An application uses the wiring
+ * annotations this module documents and never calls this type.
+ *
+ * <p>Reusable JavaPoet emitter that generates a contract-correct annotation literal — a
  * {@code final class <Ann>$<Namespace>Literal implements <Ann>} — whose member accessors return the
  * processor-read attribute values baked as compile-time constants, with no {@code getAnnotation}
  * reflection at call time.

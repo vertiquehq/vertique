@@ -13,7 +13,11 @@ import javax.lang.model.element.AnnotationValue;
 import javax.lang.model.element.Element;
 
 /**
- * Shared codegen-time helpers for reading {@code @ConditionalOnProperty} annotation mirrors and
+ * INTERNAL framework seam — processor-authoring substrate consumed by sibling framework modules;
+ * not an application contract and outside the maturity promise. An application uses the wiring
+ * annotations this module documents and never calls this type.
+ *
+ * <p>Shared codegen-time helpers for reading {@code @ConditionalOnProperty} annotation mirrors and
  * emitting {@code dev.vertique.core.config.PropertyCondition[]} array literals.
  *
  * <p>Both {@code vertique-codegen-services} and {@code vertique-codegen-jaxrs} consume

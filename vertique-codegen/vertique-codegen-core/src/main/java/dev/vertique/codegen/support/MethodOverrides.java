@@ -14,7 +14,11 @@ import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Types;
 
 /**
- * Shared APT utility for deduplicating method lists by erased signature.
+ * INTERNAL framework seam — processor-authoring substrate consumed by sibling framework modules;
+ * not an application contract and outside the maturity promise. An application uses the wiring
+ * annotations this module documents and never calls this type.
+ *
+ * <p>Shared APT utility for deduplicating method lists by erased signature.
  *
  * <p>Both {@code KafkaListenerScanner} and {@code ContractScanner} use
  * {@link javax.lang.model.util.Elements#getAllMembers(TypeElement)} to collect inherited methods.

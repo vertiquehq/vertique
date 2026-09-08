@@ -5,7 +5,39 @@ SPDX-License-Identifier: EUPL-1.2
 
 # codegen-core
 
-> **Status:** Beta
+> **Status:** Stable
+
+## When To Use It
+
+An application never depends on this artifact directly. It arrives with the annotation processor a
+starter or a codegen sibling brings in, and what an application uses from it is the wiring
+annotation set: `@RegisterAs`, `@RegisterIntoSet`, `@ConditionalOnProperty`,
+`@ConditionalOnProperties`, and `@NoAutoWire`, placed on the application's own beans.
+
+Depend on it explicitly only when writing an annotation processor that emits into the same Dagger
+graph — that is what the framework's own codegen modules do.
+
+---
+
+## Core Concepts
+
+**Registration is declarative, and resolved at build time.** `@RegisterAs` and `@RegisterIntoSet`
+mark a type for inclusion in the generated Dagger module; the processor emits the binding, so there
+is no runtime scan and no reflection at startup.
+
+**Conditions are evaluated by the compiler, not the runtime.** `@ConditionalOnProperty` decides
+whether a binding is emitted at all. A binding that a condition excluded is absent from the graph
+rather than present-and-disabled, so a wrong condition is a compile-time or wiring failure, not a
+silent no-op at request time.
+
+**Violations are compile errors.** A type that cannot be proxied, an injectable constructor that
+does not qualify, a selector path that cannot be parsed — each is reported against the offending
+element during compilation. Nothing is deferred to first use.
+
+**`@NoAutoWire` is the opt-out.** A type the scanners would otherwise register is skipped, which is
+how an application keeps a bean out of the generated graph without restructuring it.
+
+---
 
 ## Overview
 
@@ -312,6 +344,21 @@ emits `GeneratedRegistrationsModule` in the package resolved from the annotated 
 must be included explicitly by the owning Dagger component or aggregate module.
 
 ---
+
+### Framework seams
+
+Nineteen public types — `CodegenContext`, `AnnotationMirrors`, `AnnotationLiteralEmitter`,
+`Conditions`, `Constructors`, `DaggerModuleWriter`, `Diagnostics`, `Identifiers`,
+`InjectConstructorValidator`, `JaxRsAnnotations`, `JaxRsBeanScanner`, `MetadataEmitter`,
+`MethodOverrides`, `PackageResolver`, `PathPlaceholders`, `ProxyabilityValidator`,
+`SelectorPathValidator`, `TypeResolver`, and `TypeVisibility` — are the processor-authoring
+substrate. They are public because sibling framework processors in other artifacts call them across
+package boundaries, and their Javadoc marks them INTERNAL. They are outside this module's
+compatibility promise.
+
+What this module promises an application is the wiring annotations above and the Dagger graph they
+generate: the binding kind, scope, qualifier and set membership, whether a conditioned binding is
+present, where generated artifacts are named and placed, and that a violation fails the build.
 
 ## Extension Points
 
