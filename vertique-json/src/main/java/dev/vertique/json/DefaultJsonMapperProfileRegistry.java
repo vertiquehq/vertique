@@ -19,7 +19,12 @@ import java.util.TreeSet;
 import java.util.stream.Collectors;
 
 /**
- * Default {@link JsonMapperProfileRegistry} that validates the discovered profiles at construction
+ * INTERNAL framework seam — profile-runtime collaborator consumed by sibling framework modules;
+ * not an application contract and outside the maturity promise. An application uses the profile
+ * ids, the configuration keys, and the extension point this module documents, and reaches the
+ * registry through {@link dev.vertique.core.json.JsonMapperProfileRegistry}.
+ *
+ * <p>Default {@link JsonMapperProfileRegistry} that validates the discovered profiles at construction
  * time and exposes constant-time, immutable resolution thereafter.
  *
  * <p>Construction order (NFR-JSON-002A — all validation is eager, in the {@code @Inject} ctor):
