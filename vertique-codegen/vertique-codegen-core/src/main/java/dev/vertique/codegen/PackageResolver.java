@@ -9,7 +9,11 @@ import javax.lang.model.element.Element;
 import javax.lang.model.util.Elements;
 
 /**
- * Resolves the output package name for a generated artifact (Dagger module, descriptor module,
+ * INTERNAL framework seam — processor-authoring substrate consumed by sibling framework modules;
+ * not an application contract and outside the maturity promise. An application uses the wiring
+ * annotations this module documents and never calls this type.
+ *
+ * <p>Resolves the output package name for a generated artifact (Dagger module, descriptor module,
  * etc.) from a set of origin elements.
  *
  * <p>Resolution order:

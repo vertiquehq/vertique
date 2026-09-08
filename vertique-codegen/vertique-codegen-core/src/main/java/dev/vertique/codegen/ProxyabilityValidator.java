@@ -12,7 +12,13 @@ import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.util.ElementFilter;
 
-/** Validates the proxyability preconditions for methods intercepted by an annotation family. */
+/**
+ * INTERNAL framework seam — processor-authoring substrate consumed by sibling framework modules;
+ * not an application contract and outside the maturity promise. An application uses the wiring
+ * annotations this module documents and never calls this type.
+ *
+ * <p>Validates the proxyability preconditions for methods intercepted by an annotation family.
+ */
 public final class ProxyabilityValidator {
 
     private final CodegenContext context;

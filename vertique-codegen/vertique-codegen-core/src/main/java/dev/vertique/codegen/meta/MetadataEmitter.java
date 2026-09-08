@@ -34,7 +34,11 @@ import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Types;
 
 /**
- * Reusable JavaPoet emitter that, given a method element, generates a {@code MethodMetadata}
+ * INTERNAL framework seam — processor-authoring substrate consumed by sibling framework modules;
+ * not an application contract and outside the maturity promise. An application uses the wiring
+ * annotations this module documents and never calls this type.
+ *
+ * <p>Reusable JavaPoet emitter that, given a method element, generates a {@code MethodMetadata}
  * implementation whose accessors return compile-time constants and never reflect at call time.
  *
  * <p>The generated class implements {@code dev.vertique.core.codegen.MethodMetadata} and carries a

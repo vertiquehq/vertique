@@ -6,7 +6,11 @@ package dev.vertique.codegen;
 import java.util.List;
 
 /**
- * Fully-qualified names of the JAX-RS, Jakarta security, and framework annotations recognised by
+ * INTERNAL framework seam — processor-authoring substrate consumed by sibling framework modules;
+ * not an application contract and outside the maturity promise. An application uses the wiring
+ * annotations this module documents and never calls this type.
+ *
+ * <p>Fully-qualified names of the JAX-RS, Jakarta security, and framework annotations recognised by
  * the codegen modules. Centralised here so that both rest-client codegen and jaxrs APT validators
  * reference the same constants — no string literals scattered across the validator code.
  */

@@ -18,7 +18,11 @@ import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 
 /**
- * Central context object wrapping {@link ProcessingEnvironment} with convenience helpers for
+ * INTERNAL framework seam — processor-authoring substrate consumed by sibling framework modules;
+ * not an application contract and outside the maturity promise. An application uses the wiring
+ * annotations this module documents and never calls this type.
+ *
+ * <p>Central context object wrapping {@link ProcessingEnvironment} with convenience helpers for
  * annotation processing.
  *
  * <p>Provides lazy-initialized access to {@link TypeResolver}, {@link AnnotationMirrors}, and

@@ -9,7 +9,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Single source of truth for JAX-RS path-template placeholder extraction. Used by both the
+ * INTERNAL framework seam — processor-authoring substrate consumed by sibling framework modules;
+ * not an application contract and outside the maturity promise. An application uses the wiring
+ * annotations this module documents and never calls this type.
+ *
+ * <p>Single source of truth for JAX-RS path-template placeholder extraction. Used by both the
  * rest-client codegen validator and the jaxrs APT validator.
  *
  * <p>Handles regex-constrained placeholders ({@code {id:[0-9]+}}) and regex constraints that

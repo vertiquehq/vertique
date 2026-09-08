@@ -21,7 +21,11 @@ import javax.lang.model.SourceVersion;
 import javax.lang.model.element.Modifier;
 
 /**
- * Builder-style JavaPoet wrapper for the most common Dagger {@code @Module} emit patterns.
+ * INTERNAL framework seam — processor-authoring substrate consumed by sibling framework modules;
+ * not an application contract and outside the maturity promise. An application uses the wiring
+ * annotations this module documents and never calls this type.
+ *
+ * <p>Builder-style JavaPoet wrapper for the most common Dagger {@code @Module} emit patterns.
  *
  * <p>Supports the following binding types used throughout the Vertique framework:
  * <ul>

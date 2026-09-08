@@ -14,7 +14,11 @@ import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
 
 /**
- * Scans a JAX-RS composite parameter type ({@code @BeanParam} or {@code @RequestParams}) for
+ * INTERNAL framework seam — processor-authoring substrate consumed by sibling framework modules;
+ * not an application contract and outside the maturity promise. An application uses the wiring
+ * annotations this module documents and never calls this type.
+ *
+ * <p>Scans a JAX-RS composite parameter type ({@code @BeanParam} or {@code @RequestParams}) for
  * the {@code @PathParam} names contributed by its fields and record components. Single source
  * of truth for both rest-client codegen and jaxrs APT validators.
  *

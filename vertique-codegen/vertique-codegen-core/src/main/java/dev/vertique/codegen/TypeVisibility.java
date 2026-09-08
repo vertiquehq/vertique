@@ -9,7 +9,11 @@ import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
 
 /**
- * Answers whether generated source placed in one package may name a user type declared in another.
+ * INTERNAL framework seam — processor-authoring substrate consumed by sibling framework modules;
+ * not an application contract and outside the maturity promise. An application uses the wiring
+ * annotations this module documents and never calls this type.
+ *
+ * <p>Answers whether generated source placed in one package may name a user type declared in another.
  *
  * <p>Aggregate emitters — the generated clients/contributor modules — write a single {@code public}
  * type into a package derived from all their origins, then reference each origin by name. When an

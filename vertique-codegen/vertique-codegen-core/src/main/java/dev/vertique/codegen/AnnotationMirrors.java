@@ -14,7 +14,11 @@ import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
 
 /**
- * Fluent helpers for working with {@link AnnotationMirror} instances in an annotation processing
+ * INTERNAL framework seam — processor-authoring substrate consumed by sibling framework modules;
+ * not an application contract and outside the maturity promise. An application uses the wiring
+ * annotations this module documents and never calls this type.
+ *
+ * <p>Fluent helpers for working with {@link AnnotationMirror} instances in an annotation processing
  * environment.
  *
  * <p>The JDK APT API for reading annotation values is verbose and type-unsafe. This class wraps the
