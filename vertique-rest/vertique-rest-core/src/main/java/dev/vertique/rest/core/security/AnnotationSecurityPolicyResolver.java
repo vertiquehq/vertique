@@ -14,7 +14,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Default {@link SecurityPolicyResolver} that interprets Jakarta security annotations
+ * INTERNAL framework seam — HTTP-runtime collaborator consumed by sibling framework modules; not
+ * an application contract and outside the maturity promise. An application uses the extension
+ * points and configuration this module documents and never names this type.
+ *
+ * <p>Default {@link SecurityPolicyResolver} that interprets Jakarta security annotations
  * ({@code @DenyAll}, {@code @PermitAll}, {@code @RolesAllowed}) and the framework's
  * {@link Authorized} annotation to produce a {@link SecurityPolicy}.
  *

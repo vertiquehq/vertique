@@ -7,7 +7,11 @@ import jakarta.annotation.Nullable;
 import java.lang.reflect.Method;
 
 /**
- * Neutral descriptor for an HTTP operation, passed to {@link RestServerRequestEvidenceCapturer}
+ * INTERNAL framework seam — HTTP-runtime collaborator consumed by sibling framework modules; not
+ * an application contract and outside the maturity promise. An application uses the extension
+ * points and configuration this module documents and never names this type.
+ *
+ * <p>Neutral descriptor for an HTTP operation, passed to {@link RestServerRequestEvidenceCapturer}
  * once per request after the request body has been materialized.
  *
  * <p>This record is intentionally free of any dependency on {@code rest-jaxrs}-internal types.

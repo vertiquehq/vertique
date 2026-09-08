@@ -6,7 +6,11 @@ package dev.vertique.rest.core.routing;
 import java.util.List;
 
 /**
- * An <strong>AND-group</strong> of scheme requirements: a request satisfies the set only if it
+ * INTERNAL framework seam — HTTP-runtime collaborator consumed by sibling framework modules; not
+ * an application contract and outside the maturity promise. An application uses the extension
+ * points and configuration this module documents and never names this type.
+ *
+ * <p>An <strong>AND-group</strong> of scheme requirements: a request satisfies the set only if it
  * satisfies <em>every</em> scheme in it.
  *
  * <p>This is one alternative within an operation's security model. The operation's overall security

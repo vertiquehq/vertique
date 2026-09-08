@@ -21,6 +21,12 @@ package dev.vertique.rest.core.events;
  * by one listener is caught, logged at {@code WARN}, and does not prevent subsequent listeners from
  * receiving the event or affect the HTTP response.
  *
+ * <p><b>Failure messages are logged:</b> the caught exception's message reaches the application log,
+ * which is what keeps the fan-out diagnosable. An implementation MUST NOT put credentials, tokens,
+ * personal data, or raw request values into the exception message or type it throws. The obligation
+ * is audit-safe by contract rather than by enforcement, in the same way that
+ * {@code AuthorizationDecision.safeAttributes()} is.
+ *
  * <p>Invocation is fire-and-forget: the emitter does not wait for any asynchronous work a listener
  * might initiate. If a listener needs to emit to a durable sink it should do so asynchronously and
  * handle its own failure path.
@@ -35,7 +41,8 @@ public interface RestRequestCompletedListener {
      * Called once per handled request after the HTTP response has completed.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
-     * the enclosing operation.
+     * the enclosing operation. The exception message is logged, so it must carry no credentials,
+     * tokens, personal data, or raw request values.
      *
      * @param event the completed-request event; never {@code null}
      */

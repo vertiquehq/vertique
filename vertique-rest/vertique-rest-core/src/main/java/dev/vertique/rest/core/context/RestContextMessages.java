@@ -4,7 +4,11 @@
 package dev.vertique.rest.core.context;
 
 /**
- * Shared diagnostic message templates for {@code @Context} parameter violations on JAX-RS resource
+ * INTERNAL framework seam — HTTP-runtime collaborator consumed by sibling framework modules; not
+ * an application contract and outside the maturity promise. An application uses the extension
+ * points and configuration this module documents and never names this type.
+ *
+ * <p>Shared diagnostic message templates for {@code @Context} parameter violations on JAX-RS resource
  * methods.
  *
  * <p>These templates are used by both the runtime route validator

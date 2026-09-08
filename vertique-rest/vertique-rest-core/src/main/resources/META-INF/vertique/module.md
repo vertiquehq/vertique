@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # REST Core Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.rest.core` (+ 17 sub-packages)
 > **Artifact:** `vertique-rest-core`
 > **Depends on:** core, context, correlation, logging, security-core
@@ -918,6 +918,12 @@ and the `java.time` types `Instant`, `LocalDate`, `LocalTime`, `LocalDateTime`, 
 A binding for a built-in type replaces it. Two bindings for the same target type fail component
 construction with `IllegalStateException`.
 
+The native registry itself is `ParamConverterRegistry`. `ParamConverterRegistry.of(Set)` combines
+the built-ins above with the contributed bindings — an application binding wins over a built-in for
+the same target type — and `find(Class)` resolves exact class first, then synthesizes an enum
+converter, then returns `Optional.empty()`. It is context-free and thread-safe, and it is what a
+framework module calls when it needs the same conversion table outside a request.
+
 `ParamConversionResolver` tries the native registry first, then any contributed
 `jakarta.ws.rs.ext.ParamConverterProvider` (also a `@Multibinds` set), ordered by `@Priority`
 ascending. Its `ConversionContext(String paramName, ParamSource source, Class<?> rawType,
@@ -969,6 +975,13 @@ public record RestRequestCompletedEvent(
 A `RequestCompletionScope` wraps listener dispatch — scopes open in iteration order and close in
 reverse, which is how tracing modules re-establish a span around emission. A listener that throws an
 `Exception` is logged at WARN and does not stop the remaining listeners; an `Error` propagates.
+
+The logged failure carries the exception's own message, which is what keeps the fan-out diagnosable.
+An implementation must therefore keep credentials, tokens, personal data, and raw request values out
+of the exceptions it throws. The same obligation applies to `RestRequestCaptureCoordinator`. It is
+audit-safe by contract rather than by enforcement, exactly as
+`AuthorizationDecision.safeAttributes()` is — the framework does not inspect or scrub what an
+implementation throws.
 
 The `dev.vertique.rest.core.capture` SPIs (`RestServerRequestEvidenceCapturer`,
 `RestRequestCaptureCoordinator`) are the boundary-evidence hooks the audit adapter implements. If you
@@ -1043,12 +1056,35 @@ Bind `HmacCursorCodec` (or your own) as a `@Singleton` and pass it to `CursorPag
 
 ---
 
+### Framework seams
+
+Eleven public types are named nowhere above because no application uses one — `RestContextMessages`,
+`RestContextModule`, `RestContextTypes`, `HttpOperationMeta`, `OperationIdCaptureContributor`,
+`SecurityRequirementSet`, `AuthEnforcementCapability`, `SecurityPolicyViolation`,
+`RequiresActionResolver`, `DeferredCredentialRejectionAuthHandler`, and
+`AnnotationSecurityPolicyResolver`. They are public because sibling framework modules call them
+across package boundaries: the JAX-RS route registrar, the security enforcement modules, the
+WebSocket transport, the OpenTelemetry integration, and the annotation processors that emit against
+the same vocabulary.
+
+Their Javadoc marks them INTERNAL and they sit outside this module's compatibility promise. What
+this module promises an application is the extension points above, the configuration keys below, and
+the documented request and failure behavior.
+
+---
+
 ## Configuration
 
 Three top-level sections are parsed by `RestCoreModule` — `http`, `cors`, and `jaxrs` — plus
 `correlation.ingress` by `CorrelationIngressModule`. Every key is optional; omitted keys take the
 default below. Unknown keys are ignored except under `jaxrs.defaultHeaders`, where they become
 custom response headers.
+
+**The keys are the contract.** What this module freezes is the key names below, their types,
+defaults, and constraints. The record types the parser binds them to — `HttpConfig`, `SslConfig`,
+`SseConfig`, `CorsConfig`, `JaxRsConfig`, `DefaultHeadersConfig`, and `CorrelationIngressConfig` —
+are an implementation detail of that parse. An application writes configuration, not those types,
+and their shape can change while the keys stay as documented.
 
 ### `http`
 
