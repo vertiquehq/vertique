@@ -1348,7 +1348,22 @@ SPDX-License-Identifier: EUPL-1.2
                     <artifactId>flatten-maven-plugin</artifactId>
                     <version>1.7.0</version>
                     <configuration>
-                        <flattenMode>resolveCiFriendliesOnly</flattenMode>
+                        <!--
+                          ossrh (not resolveCiFriendliesOnly): Central's one-time
+                          new-component validation reads each leaf POM on its own,
+                          without walking the <parent> chain. resolveCiFriendliesOnly
+                          only resolves the ${revision} CI-friendly version and
+                          otherwise keeps the source POM as-is, so a module that
+                          inherits url/scm/developers from an ancestor pom, or
+                          leaves dependency versions to dependencyManagement,
+                          flattens into a leaf POM missing all of that — harmless
+                          for already-published artifacts (Central grandfathers
+                          them past new-component validation) but a hard failure
+                          the first time a new artifact is published. ossrh inlines
+                          the full effective model instead, so every deployed POM
+                          is self-contained.
+                        -->
+                        <flattenMode>ossrh</flattenMode>
                         <!--
                           Required for the pom-packaging artifacts. The plugin
                           writes .flattened-pom.xml for them but does not make
