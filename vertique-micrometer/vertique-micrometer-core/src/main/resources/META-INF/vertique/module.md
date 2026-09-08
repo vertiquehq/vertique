@@ -5,10 +5,10 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Micrometer Core Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.micrometer`
 > **Artifact:** `vertique-micrometer-core`
-> **Depends on:** core, bootstrap, vertx-micrometer-metrics
+> **Depends on:** core, bootstrap, security-core, aop, codegen-core, micrometer-core, vertx-micrometer-metrics
 
 Provides a backend-agnostic Micrometer metrics layer for Vertique applications. The module
 bootstraps a `CompositeMeterRegistry` before `Vertx` is built, wires it into Vert.x's metrics
@@ -244,6 +244,42 @@ key and violated rule but never any part of the value. Rules:
 - Credential-shape values: prefixes `eyJ`, `AKIA`, `ghp_`, `xoxb-`/`xoxp-`, and (case-insensitive)
   `Bearer `/`Basic ` rejected
 
+### `@Timed` and `TimedAspect`
+
+Times a method and records the sample on the application registry. `@Timed` is the annotation an
+application puts on its own beans; `TimedAspect` is the `AspectProvider<Timed>` that implements it,
+and an application binds it once in a Dagger module.
+
+```java
+@Timed                                   // vertique.greeter.greet
+String greet(String name) { ... }
+
+@Timed(value = "orders.checkout", extraTags = {"tier", "gold"})
+Future<Receipt> checkout(Cart cart) { ... }
+```
+
+```java
+@Module
+abstract class AopBindingsModule {
+
+    @Binds
+    abstract AspectProvider<Timed> bindTimedAspect(TimedAspect aspect);
+}
+```
+
+| Behavior | Contract |
+|---|---|
+| Timer name | `value()` when set; otherwise the auto-derived `vertique.<simpleClassName>.<method>`, lower-cased |
+| Always-present tags | `outcome` (`SUCCESS` or `ERROR`) and `error.type` (the failure's simple class name, or `none`) |
+| `extraTags()` | Key-value pairs added on top, validated at binding time |
+| Duration | A `System.nanoTime()` delta, taken before `proceed()` and recorded when the returned future settles. It is never negative because the clock is monotonic — nothing clamps it |
+| Asynchronous methods | The sample is recorded when the downstream future settles, not when the method returns |
+| Isolation | Fire-and-forget: any `Throwable` the registry raises, `Error` included, is caught and logged at WARN. The original result or exception reaches the caller untouched |
+| Metrics disabled | With `MetricsConfig.enabled()` false, or a disabled config present, the interceptor records nothing and still passes the call through |
+| Cardinality | `extraTags()` keys are not in `GUARDED_TAG_KEYS`, so they are bounded by the application, not by the guard. Keep their value space small |
+
+---
+
 ### MetricsBootstrapException
 
 Unchecked exception thrown by `MicrometerMetricsContributor` when metrics assembly fails. No cause
@@ -288,7 +324,7 @@ All keys live under the `metrics` section.
 | `metrics.tags.service` | string | `null` | Service name applied to all meters as a `service` common tag. Falls back to `OTEL_SERVICE_NAME` env var, then `"unknown-service"`. Validated at startup. |
 | `metrics.tags.extra` | `Map<String,String>` | `{}` | Additional common tags. Max 16 entries. Keys and values validated at startup (see Tag Policy). |
 | `metrics.cardinality.maxTagValuesPerKey` | int | `200` | Max distinct values per guarded tag key on `vertique.*` meters. |
-| `metrics.cardinality.maxMeters` | int | `0` | Global max meter count across the composite. `0` = unlimited. |
+| `metrics.cardinality.maxMeters` | int | `0` | Global max meter count across the composite. Name-agnostic: it counts every meter, `vertique.*` or not, so size it against the whole population rather than the framework's own subset. `0` = unlimited. |
 | `metrics.security.enabled` | boolean | `true` | Enable security-event metrics from `SecurityMetricsObserver`. |
 | `metrics.backends.<name>.*` | object | `{}` | Per-backend subtree passed to `MeterRegistryProvider.create()`. Each provider receives only its own subtree. |
 
@@ -365,6 +401,13 @@ only this type adaptation; configuration, registry, and optional bindings remain
 - `dev.vertique:vertique-core` — `OrderedExtension`, `ConfigurationException`, `@VertxConfig`,
   `JsonConfigPaths`
 - `dev.vertique:vertique-bootstrap` — `VertxBuilderContributor`, `BootstrapContext`
+- `dev.vertique:vertique-security-core` — the authentication and authorization events
+  `SecurityMetricsObserver` counts
+- `dev.vertique:vertique-aop` — `AspectProvider` and `Invocation`, the substrate `TimedAspect`
+  implements
+- `dev.vertique:vertique-codegen-core` — the wiring annotations this module's own components carry;
+  `dev.vertique:vertique-codegen-dagger` is `provided`, a build-time processor that is not resolved
+  by any consumer
 - `io.micrometer:micrometer-core` — `MeterRegistry`, `CompositeMeterRegistry`, `MeterFilter`,
   `JvmGcMetrics` and other binders; pinned at 1.16.6 to match `vertx-micrometer-metrics` 5.1.2
 - `io.vertx:vertx-micrometer-metrics` — `MicrometerMetricsFactory`, `MicrometerMetricsOptions`,
