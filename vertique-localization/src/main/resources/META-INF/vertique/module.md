@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Localization Module
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.localization`
 > **Artifact:** `vertique-localization`
 > **Depends on:** core
@@ -317,6 +317,12 @@ VertiqueException (core)
 `LocalizationException` is intentionally semantic-neutral. REST callers in `vertique-rest-localization` decide HTTP status via exception-mapper customizers; the localization module does not carry HTTP knowledge.
 
 ---
+
+### Framework seams
+
+`DefaultLocaleResolver` and `DefaultMessageSourceFactory` are the framework implementations
+behind `LocaleResolver` and `MessageSource`, and their Javadoc marks them INTERNAL. An application
+contributes its own resolver or message source through the documented SPIs instead.
 
 ## Extension Points
 

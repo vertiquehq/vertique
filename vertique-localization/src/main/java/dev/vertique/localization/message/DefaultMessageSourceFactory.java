@@ -9,7 +9,10 @@ import jakarta.inject.Singleton;
 import java.util.Objects;
 
 /**
- * Default implementation of {@link MessageSourceFactory} that creates immutable
+ * INTERNAL framework seam — the framework implementation behind a contract this module documents;
+ * not an application contract and outside the maturity promise.
+ *
+ * <p>Default implementation of {@link MessageSourceFactory} that creates immutable
  * {@link DefaultMessageSource} instances from the module's {@link LocalizationConfig}.
  *
  * <p>This factory is a {@link Singleton} and captures only immutable configuration; it is

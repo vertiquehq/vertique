@@ -12,7 +12,10 @@ import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
 /**
- * Default implementation of {@link LocaleResolver} backed by the localization configuration.
+ * INTERNAL framework seam — the framework implementation behind a contract this module documents;
+ * not an application contract and outside the maturity promise.
+ *
+ * <p>Default implementation of {@link LocaleResolver} backed by the localization configuration.
  *
  * <p>The supported locales and default locale are extracted from {@link LocalizationConfig} at
  * construction time — both are already validated as non-empty / non-null by the config parser.

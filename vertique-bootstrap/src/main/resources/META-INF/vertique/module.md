@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # vertique-bootstrap
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.bootstrap`
 > **Artifact:** `vertique-bootstrap`
 > **Depends on:** `vertique-core`, `io.vertx:vertx-core`, `org.slf4j:slf4j-api`
@@ -122,6 +122,13 @@ contributor throws an exception (cause is set) or returns a null builder (no cau
 always contains the contributor's fully-qualified class name.
 
 ---
+
+### Framework seams
+
+`DefaultBootstrapContext` and `ContributorRunner` are the framework implementations behind
+`BootstrapContext` and the contributor lifecycle, and their Javadoc marks them INTERNAL. They are
+outside this module's compatibility promise: an application implements `VertxBuilderContributor`
+and receives a `BootstrapContext`, never constructing either.
 
 ## Extension Points
 

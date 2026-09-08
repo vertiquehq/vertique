@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # AOP
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.aop`
 > **Artifact:** `vertique-aop`
 > **Depends on:** `vertique-core`, `vertx-core`
@@ -167,6 +167,12 @@ public static Future<Object> run(
 Synchronous throws from both the `terminal` supplier and from any interceptor's `intercept()` are captured into `Future.failedFuture(t)` rather than allowed to propagate. This upholds the chain contract — the result is always a `Future` — and ensures that a sync-throwing method surfaces as a failed future outcome that interceptors (such as `@Timed`) can observe and handle uniformly.
 
 ---
+
+### Framework seams
+
+`Invocations` is a framework helper behind the `Invocation` contract and carries an INTERNAL
+marker. An application writes `Aspect` and `MethodInterceptor` implementations and receives an
+`Invocation`; it never constructs one.
 
 ## Extension Points
 
