@@ -4,6 +4,7 @@
 package dev.vertique.input.processing;
 
 import dev.vertique.core.sanitization.InputFieldNameResolver;
+import dev.vertique.core.sanitization.InputFieldNameResolver.PromotedField;
 import dev.vertique.input.processing.InputPolicyMetadata.FieldPolicyMetadata;
 import jakarta.annotation.Nullable;
 import java.lang.reflect.Type;
@@ -11,6 +12,7 @@ import java.util.ArrayDeque;
 import java.util.Collection;
 import java.util.Deque;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.slf4j.Logger;
@@ -163,6 +165,7 @@ final class OwnerTypeWalk {
             InputPolicyMetadata metadata = metadataResolver.resolve(owner);
             if (!metadata.fields().isEmpty()) {
                 resolver.precompute(owner);
+                checkPromotedFields(owner, resolver, metadataResolver, dispatcher, pending);
             }
             if (!InputPolicyMetadataResolver.isDescendableObject(owner) || isPlatformType(owner)) {
                 continue;
@@ -211,6 +214,69 @@ final class OwnerTypeWalk {
      * @param dispatcher the engine's own dispatcher
      * @return the declared owner types, or an empty set to fall back to the reflective walk
      */
+    /**
+     * Resolves {@code owner}'s promoted keys, warms the metadata of every type they are bound into,
+     * and fails startup for the one execution path that cannot route them.
+     *
+     * <p>A codec can promote a nested member's fields into the enclosing object — Jackson's
+     * {@code @JsonUnwrapped} — so they arrive as keys of {@code owner} while their declared policies
+     * live on the inner type. The reflective walker routes those: it consults
+     * {@link InputTraversalContext#promotedField} whenever the owner's own metadata has no entry.
+     * A <strong>generated</strong> processor cannot. Its field-name {@code switch} is emitted from
+     * the owner's declared fields, so a promoted key falls to the {@code default} branch and receives
+     * only the inherited object-level chains — the promoted field's own chains would silently never
+     * run. Rather than let that pass, a promoted field that carries chains fails startup when the
+     * owner is served by a generated processor.
+     *
+     * <p>Resolving each declaring type here also warms its metadata, so the reflective path's
+     * promoted lookup never resolves a type for the first time on the request path, and enqueues it
+     * so the walk covers its graph like any other.
+     *
+     * @throws IllegalStateException when a promoted field carrying chains is served by a generated
+     *                               processor
+     */
+    private static void checkPromotedFields(
+            Class<?> owner,
+            InputFieldNameResolver resolver,
+            InputPolicyMetadataResolver metadataResolver,
+            GeneratedInputProcessorDispatcher dispatcher,
+            Deque<Class<?>> pending) {
+        Map<String, PromotedField> promoted = resolver.promotedFields(owner);
+        if (promoted.isEmpty()) {
+            return;
+        }
+        boolean generated = dispatcher.resolve(owner).isPresent();
+        for (Map.Entry<String, PromotedField> entry : promoted.entrySet()) {
+            PromotedField field = entry.getValue();
+            enqueue(pending, field.declaringType());
+            FieldPolicyMetadata meta =
+                    metadataResolver.resolve(field.declaringType()).fields().get(field.fieldName());
+            if (meta == null || !carriesChains(meta)) {
+                continue;
+            }
+            if (generated) {
+                throw new IllegalStateException("Type " + owner.getName() + " promotes the key '"
+                        + entry.getKey() + "' out of " + field.declaringType().getName() + "."
+                        + field.fieldName() + ", which declares input policies, but " + owner.getName()
+                        + " is processed by a generated input processor whose field-name switch is emitted"
+                        + " from its own declared fields. The promoted field's declared canonicalizers and"
+                        + " sanitizers would silently never run. Declare the member as a named nested"
+                        + " property instead of promoting it, or move the policies onto " + owner.getName()
+                        + ".");
+            }
+        }
+    }
+
+    /**
+     * Reports whether a field's metadata carries any declared chain of its own.
+     *
+     * @param meta the field metadata to test
+     * @return {@code true} when the field declares a canonicalizer or sanitizer chain
+     */
+    private static boolean carriesChains(FieldPolicyMetadata meta) {
+        return !meta.canonicalizerChain().isEmpty() || !meta.sanitizerChain().isEmpty();
+    }
+
     private static Set<Class<?>> declaredOwnerTypes(Class<?> owner, GeneratedInputProcessorDispatcher dispatcher) {
         // A Broken lookup — a generated class that exists but cannot be instantiated — propagates
         // deliberately: that is a build defect, and failing at registration is correct.

@@ -5,6 +5,7 @@ package dev.vertique.input.processing;
 
 import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
+import dev.vertique.core.sanitization.InputFieldNameResolver.PromotedField;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.InputValueContext;
 import dev.vertique.core.sanitization.Sanitizer;
@@ -350,30 +351,51 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
             // projection is skipped rather than run and discarded.
             FieldPolicyMetadata fieldMeta;
             String logicalName;
+            // The type whose declared policies apply to this key. Normally the owner, but a codec can
+            // PROMOTE a nested member's fields into this object (Jackson's @JsonUnwrapped), and those
+            // fields' policies are declared on the inner type, not here.
+            Class<?> declaringType = ownerType;
             if (schemaFree) {
                 fieldMeta = null;
                 logicalName = key;
             } else {
                 String logicalKey = ctx.logicalFieldName(ownerType, key);
                 fieldMeta = metadata.fields().get(logicalKey);
+                if (fieldMeta == null) {
+                    PromotedField promoted = ctx.promotedField(ownerType, logicalKey);
+                    if (promoted != null) {
+                        FieldPolicyMetadata promotedMeta = metadataResolver
+                                .resolve(promoted.declaringType())
+                                .fields()
+                                .get(promoted.fieldName());
+                        if (promotedMeta != null) {
+                            fieldMeta = promotedMeta;
+                            declaringType = promoted.declaringType();
+                        }
+                    }
+                }
                 // logicalName is the JAVA property name once a property matched, the wire name
                 // otherwise; path stays the wire path so a diagnostic points at what the caller sent.
                 logicalName = fieldMeta != null ? logicalKey : key;
             }
 
+            // declaringType is ownerType except for a promoted key, where the chains below were
+            // declared on the inner type — which is what the provenance keys on.
             if (value instanceof String s) {
                 result.put(
                         key,
-                        processStringValue(s, metadata, fieldMeta, ctx, location, fieldPath, logicalName, ownerType));
+                        processStringValue(
+                                s, metadata, fieldMeta, ctx, location, fieldPath, logicalName, declaringType));
             } else if (value instanceof Map<?, ?> nestedMap) {
                 result.put(
                         key,
                         processNestedMap(
-                                nestedMap, metadata, fieldMeta, ctx, policies, location, fieldPath, ownerType));
+                                nestedMap, metadata, fieldMeta, ctx, policies, location, fieldPath, declaringType));
             } else if (value instanceof List<?> list) {
                 result.put(
                         key,
-                        processNestedList(list, metadata, fieldMeta, ctx, policies, location, fieldPath, ownerType));
+                        processNestedList(
+                                list, metadata, fieldMeta, ctx, policies, location, fieldPath, declaringType));
             } else {
                 result.put(key, value);
             }

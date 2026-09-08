@@ -54,19 +54,26 @@ The engine resolves a build-time-generated `{DTO}_InputProcessor` for the target
 
 ## Coverage limits
 
-A declared policy runs wherever the engine can tell, from the **declared** Java types alone, which property a wire key belongs to. Five shapes defeat that, and in each one a policy you declared silently does not run. Nothing signals it at startup or at request time: the field is processed with the chains it inherits, which is indistinguishable from a working policy until the value that mattered gets through. Read this list as "do not declare a policy here and assume it applies".
+A declared policy runs wherever the engine can tell, from the **declared** Java types alone, which property a wire key belongs to. Three shapes defeat that, and in each one a policy you declared silently does not run. Nothing signals it at startup or at request time: the field is processed with the chains it inherits, which is indistinguishable from a working policy until the value that mattered gets through. Read this list as "do not declare a policy here and assume it applies".
 
 | Shape | What still happens | What does not |
 |---|---|---|
 | A `Map`-typed field (`Map<String, ?>`) | Inherited chains — invocation-level, the owner type's object-level, and the field's own — reach every string inside, at any depth | The value type's own `@Canonicalize` / `@Sanitize`, at type level or on its fields. A map has no statically known property set, so no per-property metadata is resolved for its entries |
 | An `Object`-typed field | Same — inherited chains reach every string in whatever arrives | Any policy declared on the runtime value's actual type |
 | A polymorphic subtype (`@JsonTypeInfo`) | Inherited chains, plus every policy the **declared** base type carries | Policies a concrete subtype adds. Metadata is resolved from the declared type; the engine never inspects the runtime subtype the codec selects |
-| `@JsonUnwrapped` members | Inherited chains reach the promoted keys | The unwrapped type's field-level policies. Its members arrive as keys of the *enclosing* object, where the projection matches no declared property of that enclosing type |
-| `ACCEPT_CASE_INSENSITIVE_PROPERTIES` | Inherited chains reach the key, and the codec still binds it | The field's own declared policies, whenever the incoming key differs from the declared name in case only. The projection publishes the names the mapper declares, not the case folding it applies when matching |
 
-The first three are structural: no statically known property set exists to project onto. The last two are projection gaps — the wire-name projection (`InputFieldNameResolver`) is built from a codec's declared property names, and neither an unwrapped member nor a case-folded match is one of them. None is claimed as supported, and none is detected by `InputObjectProcessor.declaresPolicies`: every one of them is reachable only through a runtime value or a codec-side name, so no walk over *declared* types can see it.
+All three are structural: no statically known property set exists to project onto. None is claimed as supported, and none is detected by `InputObjectProcessor.declaresPolicies`, because each is reachable only through a runtime value, so no walk over *declared* types can see it.
 
-Working within the limits: give a governed value a declared type with real properties rather than `Map` or `Object`; declare the policy on the concrete type actually bound rather than on a polymorphic base; and prefer an explicitly named nested property over `@JsonUnwrapped` when the nested type carries policies.
+Working within the limits: give a governed value a declared type with real properties rather than `Map` or `Object`, and declare the policy on the concrete type actually bound rather than on a polymorphic base.
+
+### Two former limits, now covered
+
+A codec that **renames or promotes** a key is no longer a gap. Two shapes that used to strand a declared policy are handled, both through the `InputFieldNameResolver` SPI rather than by teaching this engine any codec's rules:
+
+- **Members a codec promotes into the enclosing object** — Jackson's `@JsonUnwrapped`. The projection reports, per owner type, which promoted keys are bound into which declaring type, and the engine resolves that type's metadata for them, so the promoted field's own chains run. A prefix or suffix and nested promotion are handled by the projection.
+- **A key matched case-insensitively** — `ACCEPT_CASE_INSENSITIVE_PROPERTIES`. The projection folds case when the mapper does, so a differently-cased key selects the policies of the property the codec binds it to.
+
+One residue remains, and it fails startup rather than passing silently: a promoted key whose declaring field carries chains, on a type served by a **generated** input processor. A generated processor's field-name `switch` is emitted from the owner's own declared fields, so a promoted key reaches its `default` arm and would receive only the inherited chains. Registration refuses that combination, naming the owner, the key, the declaring type, and the field.
 
 ---
 
