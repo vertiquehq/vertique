@@ -164,7 +164,8 @@ field, and a concrete `@JsonTypeInfo` subtype's own fields all leave the field w
 route- and object-level chains and nothing else. Nothing fails and nothing is logged, so a stranded policy
 on one of these is invisible until the value that mattered gets through. A renamed key, a key a codec
 promoted out of an `@JsonUnwrapped` member, and a key matched case-insensitively are all covered
-now. The `vertique-input-processing` reference documents each shape, what still applies, and how to
+now, and a governed field the mapper binds under a different property name — `@Sanitize` on
+`streetName` behind `setStreet` — fails registration rather than passing silently. The `vertique-input-processing` reference documents each shape, what still applies, and how to
 stay inside the covered set.
 
 ### JSON profiles are symmetric
