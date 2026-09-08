@@ -3,6 +3,8 @@
 
 package dev.vertique.core.sanitization;
 
+import jakarta.annotation.Nullable;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -84,30 +86,59 @@ public interface InputFieldNameResolver {
      * metadata on the type that <em>declares</em> the field, so for such a key the enclosing type's
      * metadata has no entry at all and the field's declared policies would silently never run.
      *
-     * <p><strong>The map is keyed by the logical name {@link #logicalName} returns for the promoted
-     * key, not by the wire name.</strong> That keeps every wire-side concern — a prefix or suffix
-     * the codec applies, case folding, any other renaming — inside the projection, and lets the
-     * engine consult this map with the value it already computed. A projection that cannot give two
-     * promoted keys distinct logical names must fail composition rather than return a map that
-     * silently loses one.
+     * <p><strong>The map is keyed by the wire name, and a promoted key is never added to the
+     * projection.</strong> {@link #logicalName} returns such a key unchanged, as its totality
+     * contract already requires for any name it does not recognize, so the owner's metadata misses
+     * and the engine falls through to {@link #promotedField}. Keying by the Java name the promoted
+     * field carries would not work: that name is local to the inner type, so two promoted members of
+     * different types sharing a field name would collide even when a prefix already gives them
+     * distinct wire keys, and a promoted key could shadow a same-named field of the owner.
+     *
+     * <p>A resolver whose codec matches keys case-insensitively stores its keys already folded and
+     * overrides {@link #promotedField} to fold its argument, which is what keeps every wire-side
+     * concern inside the projection.
      *
      * <p>The default is an empty map, for a projection whose codec promotes nothing. Implementations
-     * compose the map in {@link #precompute} and serve it from cache: the engine may consult it on
-     * the request path.
+     * compose the map in {@link #precompute} and serve it from cache: it is read at registration to
+     * enumerate the promoted keys, and {@link #promotedField} may be consulted on the request path.
      *
      * @param ownerType the type the intermediate is keyed against; must not be {@code null}
-     * @return the promoted keys of {@code ownerType}, keyed by logical name; never {@code null}
+     * @return the promoted keys of {@code ownerType}, keyed by wire name; never {@code null}
      */
     default Map<String, PromotedField> promotedFields(Class<?> ownerType) {
         return Map.of();
     }
 
     /**
+     * Returns where a single wire key of {@code ownerType} is bound, or {@code null} when the key is
+     * not one the codec promoted.
+     *
+     * <p>The engine consults this only after the owner's own metadata has no entry for the key, so
+     * an ordinary field costs nothing. The argument is the <em>wire</em> key, not the value
+     * {@link #logicalName} returned, because resolving a promoted key is the projection's own job:
+     * an implementation that folds case, or applies any other wire-side rule, applies it here too.
+     *
+     * @param ownerType the type the intermediate is keyed against; must not be {@code null}
+     * @param wireName  the key as it appeared in the intermediate; must not be {@code null}
+     * @return where the key is bound, or {@code null} when nothing was promoted under it
+     */
+    @Nullable
+    default PromotedField promotedField(Class<?> ownerType, String wireName) {
+        return promotedFields(ownerType).get(wireName);
+    }
+
+    /**
      * A key that arrives on one type but is bound into a field declared on another.
      *
      * @param declaringType the type declaring the field the key binds into; never {@code null}
-     * @param fieldName     the Java property name of that field on {@code declaringType}; never
-     *                      {@code null}
+     * @param fieldName     the Java property name of that field on {@code declaringType}, as the
+     *                      engine's per-field metadata is keyed — {@code Field#getName()}, not a
+     *                      codec-internal name; never {@code null}
+     * @param enclosingPath the owner-side field names traversed to reach the promoted field, outermost
+     *                      first: the single unwrapped member for a one-level promotion, one entry per
+     *                      level when promotion nests. The engine descends through each so the
+     *                      enclosing members' own chains and skip flags still apply. Never
+     *                      {@code null}; never empty for a genuine promotion
      */
-    record PromotedField(Class<?> declaringType, String fieldName) {}
+    record PromotedField(Class<?> declaringType, String fieldName, List<String> enclosingPath) {}
 }

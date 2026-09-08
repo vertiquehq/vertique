@@ -351,10 +351,13 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
             // projection is skipped rather than run and discarded.
             FieldPolicyMetadata fieldMeta;
             String logicalName;
-            // The type whose declared policies apply to this key. Normally the owner, but a codec can
-            // PROMOTE a nested member's fields into this object (Jackson's @JsonUnwrapped), and those
-            // fields' policies are declared on the inner type, not here.
+            // The type whose declared policies apply to this key, the metadata they live in, and the
+            // context they compose against. All three change for a key the codec PROMOTED into this
+            // object out of a nested member (Jackson's @JsonUnwrapped): its policies are declared on
+            // the inner type, and the enclosing members' own chains and skip flags still apply.
             Class<?> declaringType = ownerType;
+            InputPolicyMetadata valueMeta = metadata;
+            InputTraversalContext valueCtx = ctx;
             if (schemaFree) {
                 fieldMeta = null;
                 logicalName = key;
@@ -362,15 +365,32 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
                 String logicalKey = ctx.logicalFieldName(ownerType, key);
                 fieldMeta = metadata.fields().get(logicalKey);
                 if (fieldMeta == null) {
-                    PromotedField promoted = ctx.promotedField(ownerType, logicalKey);
+                    // Looked up by the WIRE key, never the projected name: a promoted key is not a
+                    // name of this type, so the projection returns it unchanged and resolving it is
+                    // the projection's own job (ADR-0247 Amendment 2).
+                    PromotedField promoted = ctx.promotedField(ownerType, key);
                     if (promoted != null) {
-                        FieldPolicyMetadata promotedMeta = metadataResolver
-                                .resolve(promoted.declaringType())
-                                .fields()
-                                .get(promoted.fieldName());
+                        InputPolicyMetadata levelMeta = metadata;
+                        InputTraversalContext levelCtx = ctx;
+                        boolean reachable = true;
+                        for (String enclosing : promoted.enclosingPath()) {
+                            FieldPolicyMetadata enclosingMeta =
+                                    levelMeta.fields().get(enclosing);
+                            if (enclosingMeta == null) {
+                                reachable = false;
+                                break;
+                            }
+                            levelCtx = levelCtx.descend(levelMeta, enclosingMeta);
+                            levelMeta = metadataResolver.resolve(enclosingMeta.fieldType());
+                        }
+                        FieldPolicyMetadata promotedMeta =
+                                reachable ? levelMeta.fields().get(promoted.fieldName()) : null;
                         if (promotedMeta != null) {
                             fieldMeta = promotedMeta;
                             declaringType = promoted.declaringType();
+                            valueMeta = levelMeta;
+                            valueCtx = levelCtx;
+                            logicalKey = promoted.fieldName();
                         }
                     }
                 }
@@ -379,23 +399,28 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
                 logicalName = fieldMeta != null ? logicalKey : key;
             }
 
-            // declaringType is ownerType except for a promoted key, where the chains below were
-            // declared on the inner type — which is what the provenance keys on.
             if (value instanceof String s) {
                 result.put(
                         key,
                         processStringValue(
-                                s, metadata, fieldMeta, ctx, location, fieldPath, logicalName, declaringType));
+                                s, valueMeta, fieldMeta, valueCtx, location, fieldPath, logicalName, declaringType));
             } else if (value instanceof Map<?, ?> nestedMap) {
                 result.put(
                         key,
                         processNestedMap(
-                                nestedMap, metadata, fieldMeta, ctx, policies, location, fieldPath, declaringType));
+                                nestedMap,
+                                valueMeta,
+                                fieldMeta,
+                                valueCtx,
+                                policies,
+                                location,
+                                fieldPath,
+                                declaringType));
             } else if (value instanceof List<?> list) {
                 result.put(
                         key,
                         processNestedList(
-                                list, metadata, fieldMeta, ctx, policies, location, fieldPath, declaringType));
+                                list, valueMeta, fieldMeta, valueCtx, policies, location, fieldPath, declaringType));
             } else {
                 result.put(key, value);
             }

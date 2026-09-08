@@ -174,22 +174,22 @@ public final class InputTraversalContext {
      * Returns where a key of {@code ownerType} is bound when the codec promoted it out of a nested
      * member, or {@code null} when the key is an ordinary property of {@code ownerType}.
      *
-     * <p>Consulted only after the owner's own metadata has no entry for {@code logicalName}, so an
-     * ordinary field costs nothing. The argument is the value {@link #logicalFieldName} returned, not
-     * the wire key: every wire-side concern — a prefix the codec applies, case folding — is already
-     * resolved by the projection.
+     * <p>Consulted only after the owner's own metadata has no entry for the key, so an ordinary field
+     * costs nothing. The argument is the <em>wire</em> key, not the value {@link #logicalFieldName}
+     * returned: a promoted key is not a name of {@code ownerType}, so the projection returns it
+     * unchanged, and resolving it — including any case folding the codec applies — is the
+     * projection's own job.
      *
-     * @param ownerType   the type the fragment is keyed against; must not be {@code null}
-     * @param logicalName the name {@link #logicalFieldName} resolved for the key; must not be
-     *                    {@code null}
-     * @return where the key is bound, or {@code null} when nothing was promoted under that name
+     * @param ownerType the type the fragment is keyed against; must not be {@code null}
+     * @param wireName  the key as it appeared in the intermediate; must not be {@code null}
+     * @return where the key is bound, or {@code null} when nothing was promoted under it
      */
     @Nullable
-    PromotedField promotedField(Class<?> ownerType, String logicalName) {
+    PromotedField promotedField(Class<?> ownerType, String wireName) {
         if (nameResolver == InputFieldNameResolver.IDENTITY) {
             return null;
         }
-        return nameResolver.promotedFields(ownerType).get(logicalName);
+        return nameResolver.promotedField(ownerType, wireName);
     }
 
     /**

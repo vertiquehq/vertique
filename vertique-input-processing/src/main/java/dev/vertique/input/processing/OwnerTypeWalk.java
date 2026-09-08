@@ -3,6 +3,7 @@
 
 package dev.vertique.input.processing;
 
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputFieldNameResolver.PromotedField;
 import dev.vertique.input.processing.InputPolicyMetadata.FieldPolicyMetadata;
@@ -165,7 +166,7 @@ final class OwnerTypeWalk {
             InputPolicyMetadata metadata = metadataResolver.resolve(owner);
             if (!metadata.fields().isEmpty()) {
                 resolver.precompute(owner);
-                checkPromotedFields(owner, resolver, metadataResolver, dispatcher, pending);
+                checkPromotedFields(owner, resolver, metadataResolver, dispatcher);
             }
             if (!InputPolicyMetadataResolver.isDescendableObject(owner) || isPlatformType(owner)) {
                 continue;
@@ -229,18 +230,21 @@ final class OwnerTypeWalk {
      * owner is served by a generated processor.
      *
      * <p>Resolving each declaring type here also warms its metadata, so the reflective path's
-     * promoted lookup never resolves a type for the first time on the request path, and enqueues it
-     * so the walk covers its graph like any other.
+     * promoted lookup never resolves a type for the first time on the request path. It is
+     * deliberately <em>not</em> enqueued as a walk owner: an unwrapped inner type's fields arrive on
+     * the parent, so the inner type is never itself passed to
+     * {@link InputTraversalContext#logicalFieldName}, and precomputing its projection could only
+     * reject a valid application for a lookup no execution path performs — the same reasoning this
+     * class already applies to its own frontier.
      *
-     * @throws IllegalStateException when a promoted field carrying chains is served by a generated
-     *                               processor
+     * @throws ConfigurationException when a promoted field carrying chains is served by a generated
+     *                                processor
      */
     private static void checkPromotedFields(
             Class<?> owner,
             InputFieldNameResolver resolver,
             InputPolicyMetadataResolver metadataResolver,
-            GeneratedInputProcessorDispatcher dispatcher,
-            Deque<Class<?>> pending) {
+            GeneratedInputProcessorDispatcher dispatcher) {
         Map<String, PromotedField> promoted = resolver.promotedFields(owner);
         if (promoted.isEmpty()) {
             return;
@@ -248,14 +252,13 @@ final class OwnerTypeWalk {
         boolean generated = dispatcher.resolve(owner).isPresent();
         for (Map.Entry<String, PromotedField> entry : promoted.entrySet()) {
             PromotedField field = entry.getValue();
-            enqueue(pending, field.declaringType());
             FieldPolicyMetadata meta =
                     metadataResolver.resolve(field.declaringType()).fields().get(field.fieldName());
             if (meta == null || !carriesChains(meta)) {
                 continue;
             }
             if (generated) {
-                throw new IllegalStateException("Type " + owner.getName() + " promotes the key '"
+                throw new ConfigurationException("Type " + owner.getName() + " promotes the key '"
                         + entry.getKey() + "' out of " + field.declaringType().getName() + "."
                         + field.fieldName() + ", which declares input policies, but " + owner.getName()
                         + " is processed by a generated input processor whose field-name switch is emitted"

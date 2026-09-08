@@ -24,6 +24,7 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.sanitization.InputFieldNameResolver.PromotedField;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
@@ -488,27 +489,95 @@ class JacksonFieldNameResolverTest {
         public Contact contact;
     }
 
+    /** The shape Lombok emits: a private field reached through accessors. */
+    public static class SetterBackedDto {
+        private Address address;
+
+        @JsonUnwrapped
+        public Address getAddress() {
+            return address;
+        }
+
+        public void setAddress(Address address) {
+            this.address = address;
+        }
+    }
+
+    /** Two inner types sharing a field name, disambiguated by prefixes as Jackson requires. */
+    public static class Home {
+        public String street;
+    }
+
+    /** The other one. */
+    public static class Work {
+        public String street;
+    }
+
+    /** Two prefixed unwrapped members whose inner types share a field name. */
+    public static class TwoPrefixedDto {
+        @JsonUnwrapped(prefix = "h_")
+        public Home home;
+
+        @JsonUnwrapped(prefix = "w_")
+        public Work work;
+    }
+
+    /** An owner field whose Java name equals the promoted member's inner field name. */
+    public static class ShadowingDto {
+        @JsonProperty("owner_street")
+        public String street;
+
+        @JsonUnwrapped(prefix = "a_")
+        public Home home;
+    }
+
+    /** Inner type whose field carries an alias. */
+    public static class AliasedInner {
+        @JsonAlias("alternate")
+        public String street;
+    }
+
+    /** Parent unwrapping a type whose field carries an alias. */
+    public static class AliasedUnwrappedDto {
+        @JsonUnwrapped
+        public AliasedInner inner;
+    }
+
     @Test
-    @DisplayName("GH-376: an unwrapped member's fields are reported as promoted keys of the parent")
+    @DisplayName("GH-376: an unwrapped member's fields are reported as promoted keys, by wire name")
     void shouldReportUnwrappedMembersAsPromotedKeys() {
         JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
         resolver.precompute(UnwrappedDto.class);
 
-        // Jackson's declaration view lists `address`, never street/city — but it binds street and city
-        // as keys of THIS object, and their policies are declared on Address.
         Map<String, PromotedField> promoted = resolver.promotedFields(UnwrappedDto.class);
         assertEquals(
-                new PromotedField(Address.class, "street"),
+                new PromotedField(Address.class, "street", List.of("address")),
                 promoted.get("street"),
-                "street binds into Address.street: " + promoted);
-        assertEquals(new PromotedField(Address.class, "city"), promoted.get("city"), "city likewise");
+                "keyed by the wire name, and carrying the path back to the enclosing member: " + promoted);
+        assertEquals(new PromotedField(Address.class, "city", List.of("address")), promoted.get("city"));
         assertEquals(2, promoted.size(), "the parent's own property is not promoted: " + promoted);
 
-        // The projection resolves the flat key, so the engine can look the promotion up by logical name.
+        // A promoted key is NOT a name of this type, so the projection returns it unchanged and the
+        // engine falls through to the promoted lookup.
         assertEquals("street", resolver.logicalName(UnwrappedDto.class, "street"));
-        assertFalse(
-                resolver.isIdentityProjection(UnwrappedDto.class),
-                "a type with promoted keys must not short-circuit, or the promotion is never consulted");
+        assertEquals(
+                new PromotedField(Address.class, "street", List.of("address")),
+                resolver.promotedField(UnwrappedDto.class, "street"));
+    }
+
+    @Test
+    @DisplayName("GH-376: a setter-backed unwrapped member is promoted — the Lombok shape")
+    void shouldPromoteASetterBackedUnwrappedMember() {
+        JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
+        resolver.precompute(SetterBackedDto.class);
+
+        // On a deserialization introspection the primary member is the MUTATOR, and a setter's type
+        // is void — which introspects to no properties at all. Reading it instead of the property's
+        // own type silently promoted nothing for every DTO with a setter.
+        assertEquals(
+                new PromotedField(Address.class, "street", List.of("address")),
+                resolver.promotedField(SetterBackedDto.class, "street"),
+                "a setter-backed member promotes exactly as a field-backed one does");
     }
 
     @Test
@@ -517,24 +586,89 @@ class JacksonFieldNameResolverTest {
         JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
         resolver.precompute(PrefixedUnwrappedDto.class);
 
-        // Jackson binds addr_street here, so the projection must resolve THAT key onto Address.street.
-        assertEquals("street", resolver.logicalName(PrefixedUnwrappedDto.class, "addr_street"));
         assertEquals(
-                new PromotedField(Address.class, "street"),
-                resolver.promotedFields(PrefixedUnwrappedDto.class).get("street"));
+                new PromotedField(Address.class, "street", List.of("address")),
+                resolver.promotedField(PrefixedUnwrappedDto.class, "addr_street"),
+                "Jackson binds addr_street, so that is the key the projection must resolve");
+        assertNull(
+                resolver.promotedField(PrefixedUnwrappedDto.class, "street"),
+                "the unprefixed key is not what the codec binds");
     }
 
     @Test
-    @DisplayName("GH-376: nested unwrapping chains the transformers, as Jackson does")
+    @DisplayName("GH-376: nested unwrapping chains the transformers and records both levels")
     void shouldChainTransformersThroughNestedUnwrapping() {
         JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
         resolver.precompute(NestedUnwrappedDto.class);
 
-        // Two levels of prefix, applied outermost-first, exactly as Jackson composes them.
-        assertEquals("street", resolver.logicalName(NestedUnwrappedDto.class, "c_home_street"));
         assertEquals(
-                new PromotedField(Address.class, "street"),
-                resolver.promotedFields(NestedUnwrappedDto.class).get("street"));
+                new PromotedField(Address.class, "street", List.of("contact", "address")),
+                resolver.promotedField(NestedUnwrappedDto.class, "c_home_street"),
+                "two levels of prefix, applied outermost-first, and both enclosing members recorded");
+    }
+
+    @Test
+    @DisplayName("GH-376: two prefixed members sharing an inner field name both compose")
+    void shouldComposeTwoPrefixedMembersSharingAnInnerFieldName() {
+        JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
+
+        // Jackson binds h_street and w_street unambiguously, so refusing this would break a working
+        // application. Keying the promoted map by the inner Java name used to collide here.
+        assertDoesNotThrow(() -> resolver.precompute(TwoPrefixedDto.class));
+        assertEquals(
+                new PromotedField(Home.class, "street", List.of("home")),
+                resolver.promotedField(TwoPrefixedDto.class, "h_street"));
+        assertEquals(
+                new PromotedField(Work.class, "street", List.of("work")),
+                resolver.promotedField(TwoPrefixedDto.class, "w_street"));
+    }
+
+    @Test
+    @DisplayName("GH-376: a promoted key does not shadow a same-named field of the owner")
+    void shouldNotLetAPromotedKeyShadowAnOwnerField() {
+        JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
+        resolver.precompute(ShadowingDto.class);
+
+        // Two distinct wire keys must stay distinct. Injecting the promoted key into the projection
+        // collapsed both onto `street`, so the owner's metadata won and the inner field's policies
+        // never ran while the owner's were applied to a value never declared for them.
+        assertEquals(
+                "street",
+                resolver.logicalName(ShadowingDto.class, "owner_street"),
+                "the owner's own renamed field still projects onto its Java name");
+        assertEquals(
+                "a_street",
+                resolver.logicalName(ShadowingDto.class, "a_street"),
+                "the promoted key is returned unchanged, so the owner's metadata misses it");
+        assertEquals(
+                new PromotedField(Home.class, "street", List.of("home")),
+                resolver.promotedField(ShadowingDto.class, "a_street"));
+        assertNull(
+                resolver.promotedField(ShadowingDto.class, "owner_street"), "the owner's own key was never promoted");
+    }
+
+    @Test
+    @DisplayName("GH-376: an owner property claiming a promoted key keeps it, because that is what Jackson binds")
+    void shouldLeaveAContestedKeyToTheOwnersOwnProperty() {
+        JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
+        resolver.precompute(UnwrappedDto.class);
+
+        // `name` is the owner's own property; nothing promotes it.
+        assertNull(resolver.promotedField(UnwrappedDto.class, "name"));
+    }
+
+    @Test
+    @DisplayName("GH-376: an alias on an unwrapped member's field is promoted too")
+    void shouldPromoteAnInnerFieldsAlias() {
+        JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
+        resolver.precompute(AliasedUnwrappedDto.class);
+
+        PromotedField expected = new PromotedField(AliasedInner.class, "street", List.of("inner"));
+        assertEquals(expected, resolver.promotedField(AliasedUnwrappedDto.class, "street"));
+        assertEquals(
+                expected,
+                resolver.promotedField(AliasedUnwrappedDto.class, "alternate"),
+                "Jackson binds the alias into the same field, so it selects the same policies");
     }
 
     @Test
