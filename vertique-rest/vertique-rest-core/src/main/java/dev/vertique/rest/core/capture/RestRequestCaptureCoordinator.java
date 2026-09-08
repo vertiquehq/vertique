@@ -42,7 +42,10 @@ import io.vertx.ext.web.RoutingContext;
  *   <li>Implementations MUST NOT block the Vert.x event loop. Any I/O or heavy processing must be
  *       dispatched asynchronously.</li>
  *   <li>All uncaught exceptions are caught by the emitter, logged at {@code WARN}, and do not
- *       prevent other coordinators or the normal completion of the HTTP response.</li>
+ *       prevent other coordinators or the normal completion of the HTTP response. The exception
+ *       message reaches the application log, so an implementation MUST NOT put credentials, tokens,
+ *       personal data, or raw request or response values into the exception message or type it
+ *       throws — audit-safe by contract rather than by enforcement.</li>
  *   <li>With no registered coordinators the emitter performs a pure no-op.</li>
  * </ul>
  *
@@ -67,7 +70,8 @@ public interface RestRequestCaptureCoordinator extends OrderedExtension {
      * capture-aware audit record. Evidence retrieved here MUST NOT be exposed on {@code rc.data()}.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
-     * the enclosing operation.
+     * the enclosing operation. The exception message is logged, so it must carry no credentials,
+     * tokens, personal data, or raw request or response values.
      *
      * @param event the completed-request event, identical to what the safe listeners received;
      *              never {@code null}

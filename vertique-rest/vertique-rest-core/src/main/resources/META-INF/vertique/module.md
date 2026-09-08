@@ -970,6 +970,13 @@ A `RequestCompletionScope` wraps listener dispatch — scopes open in iteration 
 reverse, which is how tracing modules re-establish a span around emission. A listener that throws an
 `Exception` is logged at WARN and does not stop the remaining listeners; an `Error` propagates.
 
+The logged failure carries the exception's own message, which is what keeps the fan-out diagnosable.
+An implementation must therefore keep credentials, tokens, personal data, and raw request values out
+of the exceptions it throws. The same obligation applies to `RestRequestCaptureCoordinator`. It is
+audit-safe by contract rather than by enforcement, exactly as
+`AuthorizationDecision.safeAttributes()` is — the framework does not inspect or scrub what an
+implementation throws.
+
 The `dev.vertique.rest.core.capture` SPIs (`RestServerRequestEvidenceCapturer`,
 `RestRequestCaptureCoordinator`) are the boundary-evidence hooks the audit adapter implements. If you
 implement one, keep evidence in an implementation-private, identity-keyed side table — never in
