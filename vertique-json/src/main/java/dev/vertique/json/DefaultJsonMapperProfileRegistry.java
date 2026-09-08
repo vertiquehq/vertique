@@ -194,6 +194,7 @@ public final class DefaultJsonMapperProfileRegistry implements JsonMapperProfile
      * process-global mapper, so the default-typing rule is enforced on every profile role.
      */
     private static void seedBuiltIn(Map<JsonProfileId, JsonMapperProfile> byId, JsonMapperProfile builtIn) {
+        probe(builtIn.id(), builtIn.mapper());
         if (hasDefaultTypingActive(builtIn.mapper())) {
             throw new JsonProfileConfigurationException(
                     "built-in JSON profile '" + builtIn.id().value()
@@ -219,11 +220,14 @@ public final class DefaultJsonMapperProfileRegistry implements JsonMapperProfile
      * @throws JsonProfileConfigurationException if the probe round-trip throws or loses structure
      */
     private static void probe(JsonProfileId id, ObjectMapper mapper) {
+        // No explicit null field: a mapper that omits nulls is applying a serialization-inclusion
+        // policy, not corrupting structure, and NON_NULL inclusion is exactly what JacksonDefaults
+        // applies. Probing a null-bearing payload rejected every application profile seeded the way
+        // ADR-0135 and the module document both sanction (GH-240).
         JsonObject objectSample = new JsonObject()
                 .put("string", "value")
                 .put("number", 42)
                 .put("boolean", true)
-                .putNull("nullField")
                 .put("nested", new JsonObject().put("inner", "x"))
                 .put("array", new JsonArray().add(1).add("two"));
         JsonArray arraySample = new JsonArray().add("scalar").add(7).add(new JsonObject().put("k", "v"));
