@@ -25,8 +25,9 @@ import java.lang.annotation.Target;
  *       success.</li>
  * </ul>
  *
- * <p>Any {@link #extraTags()} pairs are added on top of those. The recorded duration is clamped to
- * be non-negative. When {@link MetricsConfig#enabled()} is {@code false} the interceptor is a no-op
+ * <p>Any {@link #extraTags()} pairs are added on top of those. The recorded duration is a
+ * {@link System#nanoTime()} delta, so it is never negative — the clock is monotonic, and nothing
+ * clamps it. When {@link MetricsConfig#enabled()} is {@code false} the interceptor is a no-op
  * (no timer is recorded), and the original return value or exception always passes through
  * unchanged — the aspect observes but never modifies the call's outcome.
  *

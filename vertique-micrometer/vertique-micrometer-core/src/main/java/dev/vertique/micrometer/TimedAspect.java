@@ -28,7 +28,8 @@ import lombok.extern.slf4j.Slf4j;
  * always-present {@code outcome} ({@code SUCCESS}/{@code ERROR}) and {@code error.type} (exception
  * simple name, or {@code none}) tags, plus any {@link Timed#extraTags()} pairs.
  *
- * <p>Recording is fire-and-forget and isolated: the duration is clamped non-negative, any
+ * <p>Recording is fire-and-forget and isolated: the duration is a {@link System#nanoTime()} delta
+ * and so is never negative — the clock is monotonic, and nothing clamps it. Any
  * {@link Throwable} thrown by the registry (including {@link Error} subclasses) is caught and
  * logged at warn, and the original result or exception is returned to the caller untouched. When {@link MetricsConfig#enabled()} is {@code false} (or a {@code MetricsConfig} is
  * present and disabled) the interceptor records nothing while still passing the call through.
