@@ -5,6 +5,8 @@ package dev.vertique.management;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import dev.vertique.config.parser.DefaultConfigMapper;
+import dev.vertique.config.parser.DefaultConfigParser;
 import io.vertx.core.json.JsonObject;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -102,6 +104,51 @@ class ManagementConfigTest {
             assertEquals(8080, config.port());
             assertFalse(config.enabled());
             assertEquals(10L, config.healthCheckTimeoutSeconds());
+        }
+    }
+
+    @Nested
+    @DisplayName("healthCheckTimeoutSeconds validation (#140)")
+    class TimeoutValidation {
+
+        private ManagementConfig parse(JsonObject management) {
+            return new DefaultConfigParser(DefaultConfigMapper.lenient()).parse(management, ManagementConfig.class);
+        }
+
+        @Test
+        @DisplayName("the module provider rejects a non-positive timeout instead of failing at deploy")
+        void nonPositiveTimeoutRejectedAtBinding() {
+            JsonObject config =
+                    new JsonObject().put("management", new JsonObject().put("healthCheckTimeoutSeconds", 0));
+
+            IllegalArgumentException failure = assertThrows(
+                    IllegalArgumentException.class,
+                    () -> ManagementModule.managementConfig(
+                            config, new DefaultConfigParser(DefaultConfigMapper.lenient())));
+            assertTrue(failure.getMessage().contains("healthCheckTimeoutSeconds"), failure.getMessage());
+
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () -> ManagementModule.managementConfig(
+                            new JsonObject().put("management", new JsonObject().put("healthCheckTimeoutSeconds", -1)),
+                            new DefaultConfigParser(DefaultConfigMapper.lenient())));
+        }
+
+        @Test
+        @DisplayName("a positive timeout and an absent section both pass")
+        void positiveAndAbsentAccepted() {
+            DefaultConfigParser parser = new DefaultConfigParser(DefaultConfigMapper.lenient());
+
+            assertEquals(
+                    30L,
+                    ManagementModule.managementConfig(
+                                    new JsonObject()
+                                            .put("management", new JsonObject().put("healthCheckTimeoutSeconds", 30)),
+                                    parser)
+                            .healthCheckTimeoutSeconds());
+            assertEquals(
+                    5L,
+                    ManagementModule.managementConfig(new JsonObject(), parser).healthCheckTimeoutSeconds());
         }
     }
 }
