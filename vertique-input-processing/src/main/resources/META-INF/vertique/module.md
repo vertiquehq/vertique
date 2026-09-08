@@ -64,6 +64,8 @@ A declared policy runs wherever the engine can tell, from the **declared** Java 
 
 All three are structural: no statically known property set exists to project onto. None is claimed as supported, and none is detected by `InputObjectProcessor.declaresPolicies`, because each is reachable only through a runtime value, so no walk over *declared* types can see it.
 
+A fourth limit is a codec's, not this engine's, and it is a retained residual rather than a structural one: a type the codec binds **outside its declaration view** is trusted as a whole. For Jackson that is a custom deserializer, a delegating creator, or a builder (`@JsonDeserialize(builder = …)`). The projection reports no bound names for such a type, so the registration check below does not run on it, and a field carrying a chain that the builder writes under a differently named method — `@Sanitize String streetName` set by `street(String)` — is a policy that silently never runs. Lombok's `@Builder @Jacksonized` names its methods after the fields and routes correctly; a hand-written builder with its own vocabulary does not. Name the builder methods after the fields they write.
+
 Working within the limits: give a governed value a declared type with real properties rather than `Map` or `Object`, and declare the policy on the concrete type actually bound rather than on a polymorphic base.
 
 ### Two former limits, now covered
