@@ -466,6 +466,8 @@ resolver.logicalName(RenamedDto.class, "unknown");   // -> "unknown" (the projec
 | Primary vs alias | A primary name always claims its key; an alias fills only keys no primary claims — matching what Jackson itself binds |
 | Colliding primary names | `ConfigurationException` naming the type, the wire name, and both Java properties |
 | Two properties claiming one alias | `ConfigurationException` naming the type, the alias, and both Java properties. Jackson resolves such a collision in hash order while a projection built from `findProperties()` resolves it in declaration order, so the property whose policies are applied and the property Jackson binds could differ non-deterministically. An alias colliding with another property's *primary* name is **not** this case: the primary claims the key and the alias is silently unclaimed, exactly as Jackson binds it |
+| Two Java fields Jackson merged | `ConfigurationException` naming the type, the published wire name, and both Java properties. For `class Dto { String a; @JsonProperty("a") String b; }` Jackson produces one property that publishes `a`'s implicit name while binding writes the field `b`, so only one property reaches the collision check above. Projecting the published name would apply `a`'s declared policies to a key written into `b`, and `a` is never bound at all |
+| A case-insensitive mapper | With `MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES` enabled the projection is keyed by the `Locale.ROOT` case-folded wire name and folds each lookup the same way, so `SECRET` selects the policies of the property Jackson binds it to. The identity short circuit is never taken against such a mapper. Against an exact-match mapper a differently-cased key is returned unchanged, because Jackson does not bind it either |
 | Unknown wire name | Returned unchanged — the projection is total and never throws for an unrecognized key |
 | Caching | One `ClassValue`-cached projection per `(mapper, type)`; entries are collected with the DTO's classloader |
 | When the projection is composed | `precompute(Class)` composes it for **one** owner type at registration. It is the `InputFieldNameResolver` SPI hook the input-processing engine calls — once per owner type it may pass to `logicalName` while processing a declared body or message type — from `InputObjectProcessor.precomputeFieldNameResolution(Type, InputFieldNameResolver)`. So `logicalName` neither introspects nor raises anything on the request path, and a name collision fails startup instead of failing every request that touches the type |
@@ -533,11 +535,16 @@ All profile validation happens eagerly, when the registry is first constructed. 
 | Retired id | An application profile claiming `vertx` is rejected with a message naming the rename to `system`; so is a configured `vertx` id at any tier. |
 | Default typing | An application profile whose mapper has `activateDefaultTyping(...)` active is rejected — every profile binds untrusted input. Annotation-driven `@JsonTypeInfo` stays allowed. |
 | Uniqueness | Two application profiles sharing an id are rejected. |
-| Round-trip probe | Each **application-contributed** mapper serializes and deserializes a representative `JsonObject`/`JsonArray` (nested object, nested array, string/number/boolean/null fields) and must preserve structure. The three built-ins are exempt. |
+| Round-trip probe | Every mapper — the three built-ins included — serializes and deserializes a representative `JsonObject`/`JsonArray` (nested object, nested array, string, number, boolean) and must preserve structure. The payload carries no null-valued field: omitting nulls is a serialization-inclusion policy, not structural corruption, and `NON_NULL` is exactly what `JacksonDefaults.applyOpinionated` sets. A profile seeded from `JacksonDefaults.apply` therefore passes, as this document and ADR-0135 both promise. |
 | Configured default | A non-blank `json.jsonProfile` (or a per-boundary default key) that names no registered profile is rejected during the `VALIDATE` phase. |
 
 Resolving an unknown id at runtime throws `JsonProfileConfigurationException` with a message listing
 every registered id.
+
+The wire-name projection validates separately, at boundary registration rather than at registry
+construction, and raises `ConfigurationException`. Its three rejections are in the
+`JacksonFieldNameResolver` table above: two properties claiming one primary wire name, two
+properties claiming one unclaimed alias, and two Java fields Jackson merged into a single property.
 
 ### Forcing validation without a JSON boundary
 
@@ -571,6 +578,23 @@ A validation failure then propagates out of `start()` and the verticle never bec
 | `JsonConfig` | Parsed from the `json` config section through the injected `ConfigParser` — both `jsonProfile` and `systemProfile`. |
 | `ApplicationStartupStep` (`@IntoSet`) | The `CONFIGURE`-phase step that installs the `json.systemProfile` profile's mapper as the process JSON codec's mapper. |
 | `ComposeValidator` (`@IntoSet`) | The `json.jsonProfile` validator, forced during the `VALIDATE` phase. It is a pure delegate to `JsonMapperProfileRegistry.validateConfigured(...)`, which owns every message. |
+
+---
+
+### Framework seams
+
+Two public types are named nowhere above because no application uses one:
+`DefaultJsonMapperProfileRegistry` and `JsonDefaultProfileValidator`. They are public because
+sibling framework modules reference them across package boundaries — the REST client and the two
+cache stores resolve mappers through the registry, and the JAX-RS module composes its own
+default-profile validator on top of the validator here. Their Javadoc marks them INTERNAL and they
+sit outside this module's compatibility promise.
+
+An application reaches the registry through `dev.vertique.core.json.JsonMapperProfileRegistry`,
+which `vertique-core` owns and documents. What this module promises an application is the three
+profile ids and their recipes, the two configuration keys, `JacksonDefaults` and the factories
+beside it, the opt-in serdes, the projection contract above, and the `JsonMapperProfile` extension
+point.
 
 ---
 

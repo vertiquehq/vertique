@@ -11,7 +11,12 @@ import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 
 /**
- * {@link ComposeValidator} that fails the application's {@code VALIDATE} phase when the configured
+ * INTERNAL framework seam — profile-runtime collaborator consumed by sibling framework modules;
+ * not an application contract and outside the maturity promise. An application uses the profile
+ * ids, the configuration keys, and the extension point this module documents, and reaches the
+ * registry through {@link dev.vertique.core.json.JsonMapperProfileRegistry}.
+ *
+ * <p>{@link ComposeValidator} that fails the application's {@code VALIDATE} phase when the configured
  * managed-edge default profile ({@code json.jsonProfile}) names a profile id that the
  * {@link JsonMapperProfileRegistry} does not know.
  *

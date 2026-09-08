@@ -17,14 +17,19 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.StreamReadConstraints;
+import com.fasterxml.jackson.databind.DeserializationContext;
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonDeserializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
+import com.fasterxml.jackson.databind.module.SimpleModule;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileConfigurationException;
 import dev.vertique.core.json.JsonProfileId;
+import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.json.jackson.DatabindCodec;
+import java.io.IOException;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.DisplayName;
@@ -161,34 +166,60 @@ class DefaultJsonMapperProfileRegistryTest {
     }
 
     /**
-     * Characterization: pins current probe behavior for NON_NULL app profiles — see ADR-0135
-     * contradiction, routed as follow-up issue (json-004 plan §11.1).
+     * GH-240 — an application profile built on {@link JacksonDefaults#apply(ObjectMapper)} is
+     * accepted.
      *
-     * <p>ADR-0135 suggests application profiles may build on {@link JacksonDefaults#apply(ObjectMapper)},
-     * but that helper sets {@code NON_NULL} serialization inclusion, and the round-trip probe below
-     * exercises a {@link JsonObject} sample carrying a null-valued field
-     * ({@code new JsonObject().putNull("nullField")}). {@code NON_NULL} drops that field on
-     * serialization, so the decoded structure no longer equals the original sample and the probe
-     * rejects construction — nobody had exercised this combination before this test.
+     * <p>ADR-0135 and the module document both offer that helper as a sanctioned seed for an
+     * application profile, while the probe used to round-trip a {@link JsonObject} carrying an
+     * explicit null field. {@code apply} sets {@code NON_NULL} inclusion, so the field was dropped
+     * and structural equality failed — the registry rejected exactly the seed both documents
+     * promise. The probe now carries no null field, because omitting nulls is a
+     * serialization-inclusion policy rather than structural corruption.
      */
     @Test
-    @DisplayName(
-            "application profile built on JacksonDefaults.apply() is rejected by the round-trip probe (NON_NULL drops the null field)")
-    void appProfileOnJacksonDefaults_rejectedByRoundTripProbe() {
+    @DisplayName("application profile built on JacksonDefaults.apply() is accepted by the round-trip probe")
+    void appProfileOnJacksonDefaults_acceptedByRoundTripProbe() {
         // Given: an application profile whose mapper is exactly JacksonDefaults.apply(new ObjectMapper()),
-        // as ADR-0135 suggests application profiles may build on the vertique defaults.
+        // the seed ADR-0135 and the module document both sanction.
         JsonMapperProfile app =
                 JsonMapperProfiles.of(JsonProfileId.of("app-on-defaults"), JacksonDefaults.apply(new ObjectMapper()));
 
         // When: the registry is constructed (the probe runs eagerly).
+        DefaultJsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of(app));
+
+        // Then: construction succeeds and the profile resolves.
+        assertSame(
+                app.mapper(),
+                registry.mapper(JsonProfileId.of("app-on-defaults")),
+                "a profile seeded from JacksonDefaults.apply must survive the structural round-trip probe");
+    }
+
+    /**
+     * GH-240 — a mapper that really does corrupt structure is still rejected, so dropping the null
+     * field from the payload did not disarm the probe.
+     */
+    @Test
+    @DisplayName("a mapper that loses structure is still rejected by the round-trip probe")
+    void structureLosingMapper_stillRejectedByRoundTripProbe() {
+        // Given: a mapper that cannot round-trip the probe's array sample.
+        ObjectMapper broken = new ObjectMapper();
+        SimpleModule sabotage = new SimpleModule();
+        sabotage.addDeserializer(JsonArray.class, new JsonDeserializer<>() {
+            @Override
+            public JsonArray deserialize(JsonParser parser, DeserializationContext context) throws IOException {
+                parser.skipChildren();
+                return new JsonArray();
+            }
+        });
+        broken.registerModule(sabotage);
+        JsonMapperProfile app = JsonMapperProfiles.of(JsonProfileId.of("lossy"), broken);
+
+        // When / then: the probe observes the structural mismatch and rejects construction.
         JsonProfileConfigurationException ex = assertThrows(
                 JsonProfileConfigurationException.class, () -> new DefaultJsonMapperProfileRegistry(Set.of(app)));
-
-        // Then: NON_NULL inclusion drops the probe's null-valued field, so the round-trip probe
-        // observes a structural mismatch and rejects construction.
         assertTrue(
                 ex.getMessage().contains("failed the round-trip probe"),
-                "a NON_NULL app profile must be rejected by the structural round-trip probe: " + ex.getMessage());
+                "a structure-losing profile must still be rejected: " + ex.getMessage());
     }
 
     /**
