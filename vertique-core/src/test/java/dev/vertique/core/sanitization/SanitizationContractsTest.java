@@ -217,7 +217,7 @@ class SanitizationContractsTest {
 
         @Test
         @DisplayName(
-                "public members match the frozen ledger (one abstract method, three default methods, plus IDENTITY)")
+                "public members match the frozen ledger (one abstract method, five default methods, plus IDENTITY)")
         void publicMembersMatchLedger() {
             Set<String> methods = Arrays.stream(InputFieldNameResolver.class.getDeclaredMethods())
                     .filter(method -> Modifier.isPublic(method.getModifiers()))
@@ -228,15 +228,17 @@ class SanitizationContractsTest {
                                     .collect(Collectors.joining(","))
                             + ")")
                     .collect(Collectors.toCollection(TreeSet::new));
-            // promotedFields and promotedField joined the ledger with ADR-0247, both as default
-            // methods: an implementation that ignores them is unaffected, which is what keeps the
-            // addition compatible on a Stable interface.
+            // promotedFields, promotedField, boundJavaNames and unroutableWireNames joined the
+            // ledger with ADR-0247, all as default methods: an implementation that ignores them is
+            // unaffected, which is what keeps the addition compatible on a Stable interface.
             assertEquals(
                     new TreeSet<>(Set.of(
+                            "boundJavaNames(Class)",
                             "logicalName(Class,String)",
                             "precompute(Class)",
                             "promotedField(Class,String)",
-                            "promotedFields(Class)")),
+                            "promotedFields(Class)",
+                            "unroutableWireNames(Class)")),
                     methods);
 
             Set<String> fields = Arrays.stream(InputFieldNameResolver.class.getDeclaredFields())
@@ -270,6 +272,32 @@ class SanitizationContractsTest {
         void identityPromotesNothing() {
             assertTrue(
                     InputFieldNameResolver.IDENTITY.promotedFields(Object.class).isEmpty());
+        }
+
+        @Test
+        @DisplayName("IDENTITY cannot enumerate what it binds, so the default boundJavaNames is null")
+        void identityBoundNamesAreUnknown() {
+            assertNull(InputFieldNameResolver.IDENTITY.boundJavaNames(Object.class));
+        }
+
+        @Test
+        @DisplayName("IDENTITY routes every key, so the default unroutableWireNames is empty")
+        void identityHasNoUnroutableKeys() {
+            assertTrue(InputFieldNameResolver.IDENTITY
+                    .unroutableWireNames(Object.class)
+                    .isEmpty());
+        }
+
+        @Test
+        @DisplayName("PromotedField copies its enclosing path, so a live list is never published")
+        void promotedFieldCopiesItsPath() {
+            List<String> live = new java.util.ArrayList<>(List.of("holder"));
+            InputFieldNameResolver.PromotedField field =
+                    new InputFieldNameResolver.PromotedField(String.class, "value", live);
+            live.add("mutated");
+            assertEquals(List.of("holder"), field.enclosingPath());
+            assertThrows(UnsupportedOperationException.class, () -> field.enclosingPath()
+                    .add("x"));
         }
 
         @Test
