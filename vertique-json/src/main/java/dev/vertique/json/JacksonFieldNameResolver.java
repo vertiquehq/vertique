@@ -3,17 +3,23 @@
 
 package dev.vertique.json;
 
+import com.fasterxml.jackson.databind.AnnotationIntrospector;
 import com.fasterxml.jackson.databind.BeanDescription;
 import com.fasterxml.jackson.databind.DeserializationConfig;
+import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyName;
+import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
 import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
+import com.fasterxml.jackson.databind.util.NameTransformer;
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
+import dev.vertique.core.sanitization.InputFieldNameResolver.PromotedField;
 import jakarta.annotation.Nullable;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -86,8 +92,16 @@ import java.util.Set;
  */
 public final class JacksonFieldNameResolver implements InputFieldNameResolver {
 
-    /** One type's wire &rarr; Java projection, plus whether it is the identity map. */
-    private record Projection(boolean identity, Map<String, String> names) {}
+    /**
+     * One type's wire &rarr; Java projection, whether it is the identity map, and the keys that are
+     * bound into a field of another type entirely.
+     *
+     * @param identity whether every wire name maps onto itself, letting lookups short-circuit
+     * @param names    the wire &rarr; Java projection
+     * @param promoted the {@code @JsonUnwrapped} members' keys, by the logical name {@code names}
+     *                 resolves them to
+     */
+    private record Projection(boolean identity, Map<String, String> names, Map<String, PromotedField> promoted) {}
 
     private final ObjectMapper mapper;
     private final DeserializationConfig config;
@@ -199,6 +213,21 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
     }
 
     /**
+     * {@inheritDoc}
+     *
+     * <p>Served from the same per-type projection {@link #logicalName} reads, composed at
+     * {@link #precompute}, so the request path never introspects. Empty for the overwhelmingly common
+     * type with no {@code @JsonUnwrapped} member.
+     *
+     * @param ownerType the type the intermediate is keyed against; must not be {@code null}
+     * @return the promoted keys of {@code ownerType}, keyed by logical name; never {@code null}
+     */
+    @Override
+    public Map<String, PromotedField> promotedFields(Class<?> ownerType) {
+        return projections.get(ownerType).promoted();
+    }
+
+    /**
      * Case-folds a wire name for a mapper that matches keys case-insensitively.
      *
      * @param wireName the wire name to fold
@@ -295,10 +324,94 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
             }
         }
 
+        // Pass 3 — members the codec PROMOTES into this object. Jackson's declaration view lists an
+        // @JsonUnwrapped property itself, never its expanded members, because unwrapping is applied a
+        // layer later when a codec is built from that view. So the inner type's fields arrive as keys
+        // of THIS object while their declared policies live on the inner type, and the engine — which
+        // keys metadata on the declaring type — would find nothing. findUnwrappingNameTransformer is
+        // the introspection-layer hook that reports the member and hands back the NameTransformer
+        // carrying the annotation's prefix and suffix.
+        Map<String, PromotedField> promoted = new LinkedHashMap<>();
+        collectPromoted(type, properties, NameTransformer.NOP, names, promoted, new HashSet<>());
+
         // A case-folding mapper never short-circuits: the wire key it binds may differ in case from
-        // the Java name, so the folded lookup has to run even when every name maps onto itself.
+        // the Java name, so the folded lookup has to run even when every name maps onto itself. Nor
+        // does a type with promoted keys, whose logical names must be resolvable for the engine to
+        // find their declaring type.
         boolean identity = !foldsCase
+                && promoted.isEmpty()
                 && names.entrySet().stream().allMatch(entry -> entry.getKey().equals(entry.getValue()));
-        return new Projection(identity, identity ? Map.of() : Map.copyOf(names));
+        return new Projection(identity, identity ? Map.of() : Map.copyOf(names), Map.copyOf(promoted));
+    }
+
+    /**
+     * Walks {@code type}'s unwrapped members, adding each promoted key to {@code names} and
+     * {@code promoted}. Recurses through nested unwrapping with the transformers chained, which is
+     * what Jackson itself does to the names it binds.
+     *
+     * @param type       the type being introspected at this level
+     * @param properties {@code type}'s declaration-view properties
+     * @param outer      the transformer accumulated from the levels above; {@link NameTransformer#NOP}
+     *                   at the top
+     * @param names      the projection being built, which each promoted key is added to
+     * @param promoted   the promoted-key map being built
+     * @param seen       types already descended at this level, so a cyclic unwrapping terminates
+     * @throws ConfigurationException if two promoted keys resolve to one logical name
+     */
+    private void collectPromoted(
+            Class<?> type,
+            List<BeanPropertyDefinition> properties,
+            NameTransformer outer,
+            Map<String, String> names,
+            Map<String, PromotedField> promoted,
+            Set<Class<?>> seen) {
+        if (!seen.add(type)) {
+            return;
+        }
+        AnnotationIntrospector introspector = config.getAnnotationIntrospector();
+        for (BeanPropertyDefinition property : properties) {
+            AnnotatedMember member = property.getPrimaryMember();
+            if (member == null) {
+                continue;
+            }
+            NameTransformer unwrapper = introspector.findUnwrappingNameTransformer(member);
+            if (unwrapper == null) {
+                continue;
+            }
+            NameTransformer chained =
+                    outer == NameTransformer.NOP ? unwrapper : NameTransformer.chainedTransformer(outer, unwrapper);
+            JavaType innerType = member.getType();
+            Class<?> innerClass = innerType.getRawClass();
+            BeanDescription innerDescription = config.introspect(innerType);
+            List<BeanPropertyDefinition> innerProperties = innerDescription.findProperties();
+
+            for (BeanPropertyDefinition innerProperty : innerProperties) {
+                AnnotatedMember innerMember = innerProperty.getPrimaryMember();
+                if (innerMember != null && introspector.findUnwrappingNameTransformer(innerMember) != null) {
+                    // Handled by the recursion below, which chains this level's transformer onto it.
+                    continue;
+                }
+                String wireName = key(chained.transform(innerProperty.getName()));
+                String javaName = innerProperty.getInternalName();
+                if (names.containsKey(wireName) && !promoted.containsKey(javaName)) {
+                    // This object's own property claims the key. Jackson binds that property, so the
+                    // projection must agree with it rather than steal the key for the inner type.
+                    continue;
+                }
+                PromotedField previous = promoted.putIfAbsent(javaName, new PromotedField(innerClass, javaName));
+                if (previous != null && !previous.declaringType().equals(innerClass)) {
+                    throw new ConfigurationException("Type " + type.getName() + " promotes the key '"
+                            + wireName + "' from both '"
+                            + previous.declaringType().getName() + "' and '"
+                            + innerClass.getName() + "' onto the single logical name '" + javaName
+                            + "'. The declared input policies of the two cannot be told apart, so give one"
+                            + " of the unwrapped members a @JsonUnwrapped prefix or suffix.");
+                }
+                names.putIfAbsent(wireName, javaName);
+            }
+
+            collectPromoted(innerClass, innerProperties, chained, names, promoted, seen);
+        }
+        seen.remove(type);
     }
 }

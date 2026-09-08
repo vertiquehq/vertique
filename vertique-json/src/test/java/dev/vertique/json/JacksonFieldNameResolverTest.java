@@ -13,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonUnwrapped;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyName;
@@ -22,6 +23,8 @@ import com.fasterxml.jackson.databind.introspect.JacksonAnnotationIntrospector;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.json.VertiqueJson;
+import dev.vertique.core.sanitization.InputFieldNameResolver.PromotedField;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -449,5 +452,98 @@ class JacksonFieldNameResolverTest {
         // Control: Jackson itself does not bind SECRETVALUE here, so folding it would attach the
         // field's policies to a key that never reaches the field. The projection stays total.
         assertEquals("SECRETVALUE", resolver.logicalName(CaseFoldedDto.class, "SECRETVALUE"));
+    }
+
+    // --- GH-376: keys the codec promotes out of an @JsonUnwrapped member ---
+
+    /** Inner type whose fields arrive as keys of the enclosing object. */
+    public static class Address {
+        public String street;
+        public String city;
+    }
+
+    /** Parent that unwraps {@link Address} with no prefix. */
+    public static class UnwrappedDto {
+        public String name;
+
+        @JsonUnwrapped
+        public Address address;
+    }
+
+    /** Parent that unwraps {@link Address} behind a prefix. */
+    public static class PrefixedUnwrappedDto {
+        @JsonUnwrapped(prefix = "addr_")
+        public Address address;
+    }
+
+    /** Middle level that itself unwraps, so the transformers chain. */
+    public static class Contact {
+        @JsonUnwrapped(prefix = "home_")
+        public Address address;
+    }
+
+    /** Parent whose unwrapped member unwraps again. */
+    public static class NestedUnwrappedDto {
+        @JsonUnwrapped(prefix = "c_")
+        public Contact contact;
+    }
+
+    @Test
+    @DisplayName("GH-376: an unwrapped member's fields are reported as promoted keys of the parent")
+    void shouldReportUnwrappedMembersAsPromotedKeys() {
+        JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
+        resolver.precompute(UnwrappedDto.class);
+
+        // Jackson's declaration view lists `address`, never street/city — but it binds street and city
+        // as keys of THIS object, and their policies are declared on Address.
+        Map<String, PromotedField> promoted = resolver.promotedFields(UnwrappedDto.class);
+        assertEquals(
+                new PromotedField(Address.class, "street"),
+                promoted.get("street"),
+                "street binds into Address.street: " + promoted);
+        assertEquals(new PromotedField(Address.class, "city"), promoted.get("city"), "city likewise");
+        assertEquals(2, promoted.size(), "the parent's own property is not promoted: " + promoted);
+
+        // The projection resolves the flat key, so the engine can look the promotion up by logical name.
+        assertEquals("street", resolver.logicalName(UnwrappedDto.class, "street"));
+        assertFalse(
+                resolver.isIdentityProjection(UnwrappedDto.class),
+                "a type with promoted keys must not short-circuit, or the promotion is never consulted");
+    }
+
+    @Test
+    @DisplayName("GH-376: a prefix on @JsonUnwrapped is applied to the promoted key")
+    void shouldApplyThePrefixToPromotedKeys() {
+        JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
+        resolver.precompute(PrefixedUnwrappedDto.class);
+
+        // Jackson binds addr_street here, so the projection must resolve THAT key onto Address.street.
+        assertEquals("street", resolver.logicalName(PrefixedUnwrappedDto.class, "addr_street"));
+        assertEquals(
+                new PromotedField(Address.class, "street"),
+                resolver.promotedFields(PrefixedUnwrappedDto.class).get("street"));
+    }
+
+    @Test
+    @DisplayName("GH-376: nested unwrapping chains the transformers, as Jackson does")
+    void shouldChainTransformersThroughNestedUnwrapping() {
+        JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
+        resolver.precompute(NestedUnwrappedDto.class);
+
+        // Two levels of prefix, applied outermost-first, exactly as Jackson composes them.
+        assertEquals("street", resolver.logicalName(NestedUnwrappedDto.class, "c_home_street"));
+        assertEquals(
+                new PromotedField(Address.class, "street"),
+                resolver.promotedFields(NestedUnwrappedDto.class).get("street"));
+    }
+
+    @Test
+    @DisplayName("GH-376: a type with no unwrapped member reports no promoted keys")
+    void shouldReportNoPromotedKeysForAnOrdinaryType() {
+        JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
+        resolver.precompute(PlainDto.class);
+
+        assertTrue(resolver.promotedFields(PlainDto.class).isEmpty(), "nothing is promoted here");
+        assertTrue(resolver.isIdentityProjection(PlainDto.class), "and the ordinary short circuit is unaffected");
     }
 }
