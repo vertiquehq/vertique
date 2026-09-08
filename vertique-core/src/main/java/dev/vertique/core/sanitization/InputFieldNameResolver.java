@@ -3,6 +3,8 @@
 
 package dev.vertique.core.sanitization;
 
+import java.util.Map;
+
 /**
  * Codec-neutral projection from a <strong>wire</strong> property name to the <strong>Java</strong>
  * property name that declares its input policies.
@@ -71,4 +73,41 @@ public interface InputFieldNameResolver {
      * @param ownerType the type whose projection to compose; must not be {@code null}
      */
     default void precompute(Class<?> ownerType) {}
+
+    /**
+     * Returns the keys of {@code ownerType} that are bound into a field declared on a
+     * <em>different</em> type, mapped to where that field lives.
+     *
+     * <p>Some codecs promote a nested type's fields into the enclosing object, so they arrive as
+     * keys of the enclosing object rather than inside a nested one — Jackson's
+     * {@code @JsonUnwrapped} is the case this exists for. The engine keys its per-field policy
+     * metadata on the type that <em>declares</em> the field, so for such a key the enclosing type's
+     * metadata has no entry at all and the field's declared policies would silently never run.
+     *
+     * <p><strong>The map is keyed by the logical name {@link #logicalName} returns for the promoted
+     * key, not by the wire name.</strong> That keeps every wire-side concern — a prefix or suffix
+     * the codec applies, case folding, any other renaming — inside the projection, and lets the
+     * engine consult this map with the value it already computed. A projection that cannot give two
+     * promoted keys distinct logical names must fail composition rather than return a map that
+     * silently loses one.
+     *
+     * <p>The default is an empty map, for a projection whose codec promotes nothing. Implementations
+     * compose the map in {@link #precompute} and serve it from cache: the engine may consult it on
+     * the request path.
+     *
+     * @param ownerType the type the intermediate is keyed against; must not be {@code null}
+     * @return the promoted keys of {@code ownerType}, keyed by logical name; never {@code null}
+     */
+    default Map<String, PromotedField> promotedFields(Class<?> ownerType) {
+        return Map.of();
+    }
+
+    /**
+     * A key that arrives on one type but is bound into a field declared on another.
+     *
+     * @param declaringType the type declaring the field the key binds into; never {@code null}
+     * @param fieldName     the Java property name of that field on {@code declaringType}; never
+     *                      {@code null}
+     */
+    record PromotedField(Class<?> declaringType, String fieldName) {}
 }

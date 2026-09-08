@@ -763,6 +763,14 @@ public interface InputFieldNameResolver {
 
     /** Composes one owner type's projection at registration; no-op unless overridden. */
     default void precompute(Class<?> ownerType) {}
+
+    /** Keys of ownerType that bind into a field of another type; empty unless overridden. */
+    default Map<String, PromotedField> promotedFields(Class<?> ownerType) {
+        return Map.of();
+    }
+
+    /** A key that arrives on one type but is bound into a field declared on another. */
+    record PromotedField(Class<?> declaringType, String fieldName) {}
 }
 ```
 
@@ -775,7 +783,7 @@ and `Sanitizer` — is what keeps both `vertique-input-processing` and `vertique
 any codec dependency: each codec-backed implementation lives in the module that already owns that
 codec (`JacksonFieldNameResolver` in `dev.vertique:vertique-json`).
 
-Four properties are part of the contract:
+Five properties are part of the contract:
 
 | Property | Contract |
 |---|---|
@@ -783,10 +791,16 @@ Four properties are part of the contract:
 | Totality | An unrecognized `wireName` — an undeclared extra key, a `Map`-typed field's key, or a name that is already the Java property name — is returned **unchanged**; an implementation never returns `null` and never throws |
 | Threading and cost | Stateless (or effectively immutable), reentrant, consulted once per intermediate key on the request path — it must not block and should serve every call from a precomputed projection |
 | Warm-up | `precompute(Class)` composes one owner type's projection ahead of the request path; it defaults to a no-op, so a resolver that needs no per-class state is unaffected. The input-processing engine calls it at registration for every owner type it may consult, and an implementation may fail fast there — the failure is deliberately a startup failure rather than a per-request one |
+| Promotion | `promotedFields(Class)` reports the keys of an owner type that the codec promoted out of a nested member, so they arrive flat while their policies are declared on the inner type — Jackson's `@JsonUnwrapped` is the case it exists for. **The map is keyed by the logical name `logicalName` returns**, never by the wire name, so a prefix, a suffix, and case folding all stay inside the projection. It defaults to an empty map, so a codec that promotes nothing is unaffected |
 
 Use `InputFieldNameResolver.IDENTITY` for any transport whose intermediate keys are already Java
 property names, including every call site that processes a bare `String`, where there is no object
 whose fields could be renamed.
+
+The engine consults `promotedFields` only after the owner's own metadata has no entry for a key, so
+an ordinary field costs nothing. One shape it cannot route is refused at registration instead: a
+promoted key whose declaring field carries chains, on a type served by a **generated** input
+processor, whose field-name `switch` is emitted from the owner's own declared fields.
 
 ### `CharacterPolicy`
 

@@ -214,7 +214,7 @@ class SanitizationContractsTest {
     class InputFieldNameResolverTest {
 
         @Test
-        @DisplayName("public members match the frozen ledger (one abstract method, one default method, plus IDENTITY)")
+        @DisplayName("public members match the frozen ledger (one abstract method, two default methods, plus IDENTITY)")
         void publicMembersMatchLedger() {
             Set<String> methods = Arrays.stream(InputFieldNameResolver.class.getDeclaredMethods())
                     .filter(method -> Modifier.isPublic(method.getModifiers()))
@@ -225,7 +225,11 @@ class SanitizationContractsTest {
                                     .collect(Collectors.joining(","))
                             + ")")
                     .collect(Collectors.toCollection(TreeSet::new));
-            assertEquals(new TreeSet<>(Set.of("logicalName(Class,String)", "precompute(Class)")), methods);
+            // promotedFields joined the ledger with ADR-0247, as a default method: an implementation
+            // that ignores it is unaffected, which is what keeps this addition compatible.
+            assertEquals(
+                    new TreeSet<>(Set.of("logicalName(Class,String)", "precompute(Class)", "promotedFields(Class)")),
+                    methods);
 
             Set<String> fields = Arrays.stream(InputFieldNameResolver.class.getDeclaredFields())
                     .filter(field -> Modifier.isPublic(field.getModifiers()))
@@ -251,6 +255,22 @@ class SanitizationContractsTest {
         @DisplayName("IDENTITY inherits the no-op precompute")
         void identityPrecomputeIsANoOp() {
             assertDoesNotThrow(() -> InputFieldNameResolver.IDENTITY.precompute(Object.class));
+        }
+
+        @Test
+        @DisplayName("IDENTITY inherits the empty promotedFields, so a codec that promotes nothing is unaffected")
+        void identityPromotesNothing() {
+            assertTrue(
+                    InputFieldNameResolver.IDENTITY.promotedFields(Object.class).isEmpty());
+        }
+
+        @Test
+        @DisplayName("PromotedField carries the declaring type and the field name")
+        void promotedFieldCarriesItsTwoNames() {
+            InputFieldNameResolver.PromotedField field =
+                    new InputFieldNameResolver.PromotedField(String.class, "value");
+            assertEquals(String.class, field.declaringType());
+            assertEquals("value", field.fieldName());
         }
     }
 
