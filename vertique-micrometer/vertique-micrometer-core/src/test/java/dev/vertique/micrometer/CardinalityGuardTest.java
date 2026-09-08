@@ -22,8 +22,10 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Unit tests for {@link CardinalityGuard} — verifies per-key tag-value capping,
- * one-time WARN emission (without logging overflowing values), non-vertique meter exemption,
- * independent-key counting, and the global meter cap ({@code maxMeters > 0}).
+ * one-time WARN emission (without logging overflowing values), non-vertique meters' exemption from
+ * the <em>per-key</em> filters, independent-key counting, and the global meter cap
+ * ({@code maxMeters > 0}) — including that the global cap is name-agnostic, which the class javadoc
+ * used to deny.
  *
  * <p>Tests apply the guard filters directly to a {@link SimpleMeterRegistry} (no composite
  * needed) except for the assembly-integration test which uses a full {@link MicrometerAssembly}.
@@ -281,6 +283,69 @@ class CardinalityGuardTest {
             fourth.increment();
             Counter found = registry.find("vertique.d").counter();
             assertTrue(found == null || found.count() == 0.0, "4th distinct meter must be denied (absent or no-op)");
+        }
+    }
+
+    // --- The global cap counts every meter, whatever its name (GH-56) ---
+
+    @Nested
+    class GlobalCapIsNameAgnostic {
+
+        @Test
+        @DisplayName("maxMeters caps non-vertique meters too — the global filter matches no prefix")
+        void globalCapAppliesToNonVertiqueMeters() {
+            // The per-key filters carry a "vertique." prefix; maximumAllowableMetrics carries none, and
+            // the filters are applied to the composite before backends are added, so the cap counts
+            // every meter in the composite's set. The class javadoc claimed the opposite, and nothing
+            // tested it either way.
+            MetricsConfig.CardinalityConfig config = cardinalityConfig(200, 3);
+            SimpleMeterRegistry registry = registryWithGuard(config);
+
+            registry.counter("vertx.http.a").increment();
+            registry.counter("vertx.http.b").increment();
+            registry.counter("vertx.http.c").increment();
+
+            Counter fourth = registry.counter("vertx.http.d");
+            fourth.increment();
+            Counter found = registry.find("vertx.http.d").counter();
+            assertTrue(
+                    found == null || found.count() == 0.0,
+                    "a 4th non-vertique meter must be denied by the global cap, exactly as a vertique one is");
+        }
+
+        @Test
+        @DisplayName("the global cap counts vertique and non-vertique meters against one budget")
+        void globalCapCountsOnePopulation() {
+            // Two of each fills a cap of 3 with room for one more, whichever name it carries.
+            MetricsConfig.CardinalityConfig config = cardinalityConfig(200, 3);
+            SimpleMeterRegistry registry = registryWithGuard(config);
+
+            registry.counter("vertique.a").increment();
+            registry.counter("vertx.http.b").increment();
+            registry.counter("vertique.c").increment();
+
+            registry.counter("vertx.http.d").increment();
+            Counter fourth = registry.find("vertx.http.d").counter();
+            assertTrue(
+                    fourth == null || fourth.count() == 0.0,
+                    "the budget is one population: three meters of any name exhaust maxMeters=3");
+        }
+
+        @Test
+        @DisplayName("with no global cap a non-vertique meter is still untouched by the per-key filters")
+        void withoutGlobalCapNonVertiqueStaysFree() {
+            // Control: the per-key exemption is real, and is what the prefix match provides.
+            MetricsConfig.CardinalityConfig config = cardinalityConfig(2, 0);
+            SimpleMeterRegistry registry = registryWithGuard(config);
+
+            for (int i = 1; i <= 5; i++) {
+                registry.counter("vertx.http.thing", "method", "v" + i).increment();
+            }
+            for (int i = 1; i <= 5; i++) {
+                Counter c =
+                        registry.find("vertx.http.thing").tag("method", "v" + i).counter();
+                assertNotNull(c, "per-key caps never reach a non-vertique meter: method=v" + i);
+            }
         }
     }
 

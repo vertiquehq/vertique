@@ -29,11 +29,12 @@ import org.slf4j.LoggerFactory;
  *       composite.</li>
  * </ol>
  *
- * <p>Non-{@code vertique.*} meters are unaffected by the per-key filters (the prefix match in
- * {@link MeterFilter#maximumAllowableTags} handles this) and are also exempt from the global cap
- * because the per-key filters are applied to the composite before backends are added — the
- * {@code maximumAllowableMetrics} filter guards the composite's internal meter set, which includes
- * all meters from all backends.
+ * <p>Non-{@code vertique.*} meters are unaffected by the <em>per-key</em> filters — the prefix match
+ * in {@link MeterFilter#maximumAllowableTags} handles that. They are <strong>not</strong> exempt from
+ * the global cap. {@link MeterFilter#maximumAllowableMetrics} is name-agnostic, and the filters are
+ * applied to the composite before backends are added, so the cap counts every meter in the
+ * composite's internal set — every backend's, whatever its name. Size {@code maxMeters} against the
+ * whole meter population, not against the {@code vertique.*} subset.
  *
  * <p><b>Adding a new tag key to any {@code vertique.*} meter requires extending
  * {@link #GUARDED_TAG_KEYS}.</b> This is a review-enforced constraint: the list is frozen
