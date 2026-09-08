@@ -3,6 +3,8 @@
 
 package dev.vertique.json;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.AnnotationIntrospector;
 import com.fasterxml.jackson.databind.BeanDescription;
 import com.fasterxml.jackson.databind.DeserializationConfig;
@@ -11,6 +13,7 @@ import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyName;
 import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
+import com.fasterxml.jackson.databind.introspect.AnnotatedWithParams;
 import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
 import com.fasterxml.jackson.databind.util.NameTransformer;
 import dev.vertique.core.exception.ConfigurationException;
@@ -94,15 +97,33 @@ import java.util.Set;
 public final class JacksonFieldNameResolver implements InputFieldNameResolver {
 
     /**
-     * One type's wire &rarr; Java projection, whether it is the identity map, and the keys that are
-     * bound into a field of another type entirely.
+     * One type's wire &rarr; Java projection, whether it is the identity map, the Java names the
+     * mapper binds into, and the keys that are bound into a field of another type entirely.
      *
-     * @param identity whether every wire name maps onto itself, letting lookups short-circuit
-     * @param names    the wire &rarr; Java projection
-     * @param promoted the {@code @JsonUnwrapped} members' keys, by the logical name {@code names}
-     *                 resolves them to
+     * @param identity   whether every wire name maps onto itself, letting lookups short-circuit
+     * @param names      the wire &rarr; Java projection
+     * @param javaNames  every Java property name the mapper binds a wire key of this type into, or
+     *                   {@code null} when the mapper binds this type through a custom deserializer,
+     *                   a builder or a delegating creator, whose bindings the introspection cannot
+     *                   enumerate
+     * @param unroutable the wire keys bound through a creator parameter the mapper cannot tie to a
+     *                   field; empty when {@code javaNames} is {@code null}
+     * @param promoted   the {@code @JsonUnwrapped} members' keys, by the wire name the mapper binds
+     *                   them under
      */
-    private record Projection(boolean identity, Map<String, String> names, Map<String, PromotedField> promoted) {}
+    private record Projection(
+            boolean identity,
+            Map<String, String> names,
+            @Nullable Set<String> javaNames,
+            Set<String> unroutable,
+            Map<String, PromotedField> promoted) {}
+
+    /**
+     * One promoted key while the map is being composed: where it is bound, and whether the key is
+     * the inner property's primary name or one of its aliases, which decides how a later claim on
+     * the same key is resolved.
+     */
+    private record Promotion(PromotedField field, boolean primary) {}
 
     private final ObjectMapper mapper;
     private final DeserializationConfig config;
@@ -221,11 +242,55 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
      * type with no {@code @JsonUnwrapped} member.
      *
      * @param ownerType the type the intermediate is keyed against; must not be {@code null}
-     * @return the promoted keys of {@code ownerType}, keyed by logical name; never {@code null}
+     * @return the promoted keys of {@code ownerType}, keyed by wire name; never {@code null}
      */
     @Override
     public Map<String, PromotedField> promotedFields(Class<?> ownerType) {
         return projections.get(ownerType).promoted();
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The internal names of every property the mapper's deserialization introspection reports
+     * for {@code ownerType} — the names Jackson derives from the fields, accessors and creator
+     * parameters it finds. A field the mapper binds through an accessor of a different implicit
+     * name is <em>not</em> among them, and neither is an ignored or transient field, which is what
+     * lets the engine refuse a declared policy the mapper would never reach.
+     *
+     * <p>{@code null} when the mapper binds {@code ownerType} through a custom deserializer
+     * ({@code @JsonDeserialize(using = ...)}), a builder, or a delegating creator: those bind
+     * whatever they read, the introspection cannot enumerate it, and refusing every governed field
+     * of such a type would reject applications that work today.
+     *
+     * @param ownerType the type the intermediate is keyed against; must not be {@code null}
+     * @return the Java property names the mapper binds into on {@code ownerType}, or {@code null}
+     *         when the mapper binds the type in a way the introspection cannot enumerate
+     */
+    @Override
+    @Nullable
+    public Set<String> boundJavaNames(Class<?> ownerType) {
+        return projections.get(ownerType).javaNames();
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The wire names of every property bound only through a creator parameter — no field and no
+     * setter linked to it, and no declared field of the parameter's own name. Jackson binds the key
+     * into the parameter and never learns which field the constructor assigns, so the projection
+     * cannot route it and {@link #boundJavaNames} cannot list the field it reaches. A parameter
+     * named after a declared field is routable by that name whether or not Jackson linked the two,
+     * and record components are never in this set: their creator parameters are linked to their
+     * components by name.
+     *
+     * @param ownerType the type the intermediate is keyed against; must not be {@code null}
+     * @return the wire keys bound through a creator parameter the mapper cannot tie to a field;
+     *         never {@code null}
+     */
+    @Override
+    public Set<String> unroutableWireNames(Class<?> ownerType) {
+        return projections.get(ownerType).unroutable();
     }
 
     /**
@@ -348,14 +413,112 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
         // keys metadata on the declaring type — would find nothing. These keys are recorded SEPARATELY
         // and never enter `names`: a promoted key is not a name of this type, and injecting it would
         // let it collide with a same-named field of this type (ADR-0247 Amendment 2).
-        Map<String, PromotedField> promoted = new LinkedHashMap<>();
-        collectPromoted(type, properties, NameTransformer.NOP, List.of(), names.keySet(), promoted, new HashSet<>());
+        // A key the owner ignores is one Jackson drops before any unwrapped member sees it, so it
+        // claims the key exactly as an own property does — promoting it would apply a policy to a
+        // value the codec discards.
+        Set<String> ownNames = new HashSet<>(names.keySet());
+        for (String ignored : description.getIgnoredPropertyNames()) {
+            ownNames.add(key(ignored));
+        }
+        JsonIgnoreProperties.Value ignoral =
+                config.getAnnotationIntrospector().findPropertyIgnoralByName(config, description.getClassInfo());
+        if (ignoral != null) {
+            for (String ignored : ignoral.getIgnored()) {
+                ownNames.add(key(ignored));
+            }
+        }
+        Map<String, Promotion> promoted = new LinkedHashMap<>();
+        collectPromoted(type, type, properties, NameTransformer.NOP, List.of(), ownNames, promoted, new HashSet<>());
+        Map<String, PromotedField> promotedFields = new LinkedHashMap<>();
+        promoted.forEach((wireKey, promotion) -> promotedFields.put(wireKey, promotion.field()));
+
+        // What the mapper binds INTO, for the engine's registration check. A creator parameter with
+        // no linked field or setter is bound, but into a field the mapper cannot name: for
+        // `@JsonCreator Dto(@JsonProperty("street_name") String s) { streetName = s; }` Jackson has
+        // no idea which field `s` reaches, so that key is reported as unroutable rather than as
+        // binding into some Java name. A parameter whose OWN name is a declared field's —
+        // `Dto(@JsonProperty("streetName") String streetName)`, with or without an accessor Jackson
+        // could link — is routable by that name: the engine keys the field under it, so the policy
+        // reaches the value the parameter receives. A record's parameters are linked to its
+        // components.
+        Set<String> javaNames = new HashSet<>();
+        Set<String> unroutable = new HashSet<>();
+        for (BeanPropertyDefinition property : properties) {
+            javaNames.add(property.getInternalName());
+            if (!type.isRecord()
+                    && property.hasConstructorParameter()
+                    && !property.hasField()
+                    && !property.hasSetter()
+                    && !declaresInstanceField(type, property.getInternalName())) {
+                unroutable.add(key(property.getName()));
+            }
+        }
+        boolean enumerable = bindsThroughItsProperties(description);
 
         // A case-folding mapper never short-circuits: the wire key it binds may differ in case from
         // the Java name, so the folded lookup has to run even when every name maps onto itself.
         boolean identity = !foldsCase
                 && names.entrySet().stream().allMatch(entry -> entry.getKey().equals(entry.getValue()));
-        return new Projection(identity, identity ? Map.of() : Map.copyOf(names), Map.copyOf(promoted));
+        return new Projection(
+                identity,
+                identity ? Map.of() : Map.copyOf(names),
+                enumerable ? Set.copyOf(javaNames) : null,
+                enumerable ? Set.copyOf(unroutable) : Set.of(),
+                Map.copyOf(promotedFields));
+    }
+
+    /**
+     * Reports whether {@code type} or a superclass declares a non-static field named {@code name}
+     * — the name the input-processing engine keys that field's policies under.
+     *
+     * @param type the type being introspected
+     * @param name the candidate field name
+     * @return {@code true} when such a field exists
+     */
+    private static boolean declaresInstanceField(Class<?> type, String name) {
+        for (Class<?> cls = type; cls != null && cls != Object.class; cls = cls.getSuperclass()) {
+            for (java.lang.reflect.Field field : cls.getDeclaredFields()) {
+                if (!java.lang.reflect.Modifier.isStatic(field.getModifiers())
+                        && !field.isSynthetic()
+                        && field.getName().equals(name)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Reports whether the mapper binds a type through the properties its introspection reports,
+     * which is the only case in which those properties say what the mapper binds into.
+     *
+     * <p>A custom deserializer, a builder, or a delegating creator — one declared
+     * {@link JsonCreator.Mode#DELEGATING}, or a single-parameter creator whose parameter carries no
+     * name — binds whatever it reads, and the declaration view says nothing about it.
+     *
+     * @param description the type's deserialization-side bean description
+     * @return {@code true} when the reported properties are what the mapper binds
+     */
+    private boolean bindsThroughItsProperties(BeanDescription description) {
+        AnnotationIntrospector introspector = config.getAnnotationIntrospector();
+        if (introspector.findDeserializer(description.getClassInfo()) != null
+                || description.findPOJOBuilder() != null) {
+            return false;
+        }
+        List<AnnotatedWithParams> creators = new ArrayList<>(description.getConstructors());
+        creators.addAll(description.getFactoryMethods());
+        for (AnnotatedWithParams creator : creators) {
+            JsonCreator.Mode mode = introspector.findCreatorAnnotation(config, creator);
+            if (mode == JsonCreator.Mode.DELEGATING) {
+                return false;
+            }
+            if (mode == JsonCreator.Mode.DEFAULT
+                    && creator.getParameterCount() == 1
+                    && introspector.findNameForDeserialization(creator.getParameter(0)) == null) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -363,6 +526,20 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
      * codec binds it by. Recurses through nested unwrapping with the transformers chained, which is
      * what Jackson itself does to the names it binds.
      *
+     * <p>Claims on one wire key are resolved the way Jackson binds them, level by level. A bean's own
+     * property claims a key before anything unwrapped into that bean does — Jackson consumes a known
+     * property and hands only the rest to its unwrapped members — so a shallower claim wins over a
+     * deeper one on the <em>same branch</em>, silently. Within one level a primary name claims its
+     * key before an alias, as it does on the owner itself. Two members on different branches
+     * claiming one key — siblings, or a sibling's descendant, at any depths — is the shape that
+     * fails: Jackson feeds both from the same value, so the policies of the two cannot be told apart
+     * on the wire.
+     *
+     * <p>An inner property's {@code @JsonAlias} is promoted only through a bare unwrap. Jackson does
+     * not apply a prefix or suffix to aliases, so under a transformer the alias key is one the mapper
+     * never binds, and advertising it would attach a policy to a key that binds nothing.
+     *
+     * @param root       the owner whose projection is being composed, named in a failure
      * @param type       the type being introspected at this level
      * @param properties {@code type}'s declaration-view properties
      * @param outer      the transformer accumulated from the levels above; {@link NameTransformer#NOP}
@@ -372,15 +549,16 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
      *                   of them is left to that property, because that is what the codec binds
      * @param promoted   the promoted-key map being built, keyed by wire name
      * @param seen       types already descended on this path, so a cyclic unwrapping terminates
-     * @throws ConfigurationException if two promoted members claim one wire key
+     * @throws ConfigurationException if two promoted members at one depth claim one wire key
      */
     private void collectPromoted(
+            Class<?> root,
             Class<?> type,
             List<BeanPropertyDefinition> properties,
             NameTransformer outer,
             List<String> path,
             Set<String> ownNames,
-            Map<String, PromotedField> promoted,
+            Map<String, Promotion> promoted,
             Set<Class<?>> seen) {
         if (!seen.add(type)) {
             return;
@@ -395,8 +573,7 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
             if (unwrapper == null) {
                 continue;
             }
-            NameTransformer chained =
-                    outer == NameTransformer.NOP ? unwrapper : NameTransformer.chainedTransformer(outer, unwrapper);
+            NameTransformer chained = chain(outer, unwrapper);
             // getPrimaryType(), never member.getType(): on a deserialization introspection the primary
             // member is the MUTATOR, and a setter's type is void — which introspects to no properties
             // at all, so every DTO with a setter silently promoted nothing (ADR-0247 Amendment 2).
@@ -406,54 +583,127 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
                     config.introspect(innerType).findProperties();
             List<String> innerPath = new ArrayList<>(path);
             innerPath.add(property.getInternalName());
-
+            List<BeanPropertyDefinition> promotable = new ArrayList<>();
             for (BeanPropertyDefinition innerProperty : innerProperties) {
                 AnnotatedMember innerMember = innerProperty.getPrimaryMember();
                 if (innerMember != null && introspector.findUnwrappingNameTransformer(innerMember) != null) {
                     // Handled by the recursion below, which chains this level's transformer onto it.
                     continue;
                 }
+                promotable.add(innerProperty);
+            }
+
+            // Primaries of this level first, then its aliases, then anything unwrapped deeper —
+            // the order in which Jackson lets each claim a key.
+            for (BeanPropertyDefinition innerProperty : promotable) {
                 PromotedField promotion = new PromotedField(innerClass, innerProperty.getInternalName(), innerPath);
-                record(type, chained.transform(innerProperty.getName()), promotion, ownNames, promoted);
-                for (PropertyName alias : innerProperty.findAliases()) {
-                    record(type, chained.transform(alias.getSimpleName()), promotion, ownNames, promoted);
+                record(root, chained.transform(innerProperty.getName()), promotion, true, ownNames, promoted);
+            }
+            if (chained == NameTransformer.NOP) {
+                for (BeanPropertyDefinition innerProperty : promotable) {
+                    PromotedField promotion = new PromotedField(innerClass, innerProperty.getInternalName(), innerPath);
+                    for (PropertyName alias : innerProperty.findAliases()) {
+                        record(root, alias.getSimpleName(), promotion, false, ownNames, promoted);
+                    }
                 }
             }
 
-            collectPromoted(innerClass, innerProperties, chained, innerPath, ownNames, promoted, seen);
+            collectPromoted(root, innerClass, innerProperties, chained, innerPath, ownNames, promoted, seen);
         }
         seen.remove(type);
     }
 
     /**
-     * Records one promoted key, refusing a wire key two different promoted members claim.
+     * Chains this level's transformer onto the accumulated one, keeping {@link NameTransformer#NOP}
+     * recognizable when neither level renames anything.
      *
-     * @param type      the owner type, named in a failure
+     * @param outer     the transformer accumulated from the levels above
+     * @param unwrapper this level's transformer, {@link NameTransformer#NOP} for a bare unwrap
+     * @return the composed transformer
+     */
+    private static NameTransformer chain(NameTransformer outer, NameTransformer unwrapper) {
+        if (outer == NameTransformer.NOP) {
+            return unwrapper;
+        }
+        if (unwrapper == NameTransformer.NOP) {
+            return outer;
+        }
+        return NameTransformer.chainedTransformer(outer, unwrapper);
+    }
+
+    /**
+     * Records one promoted key, resolving a contested key the way Jackson binds it.
+     *
+     * @param root      the owner whose projection is being composed, named in a failure
      * @param wireName  the key the codec binds this promoted field by, before folding
      * @param promotion where the key is bound
+     * @param primary   whether {@code wireName} is the inner property's primary name rather than an
+     *                  alias
      * @param ownNames  the wire names the owner's own properties claim
      * @param promoted  the map being built
-     * @throws ConfigurationException if a different promoted member already claimed the key
+     * @throws ConfigurationException if a different promoted member at the same depth already
+     *                                claimed the key, unless the earlier claim was a primary and this
+     *                                one an alias
      */
     private void record(
-            Class<?> type,
+            Class<?> root,
             String wireName,
             PromotedField promotion,
+            boolean primary,
             Set<String> ownNames,
-            Map<String, PromotedField> promoted) {
+            Map<String, Promotion> promoted) {
         String wireKey = key(wireName);
         if (ownNames.contains(wireKey)) {
             // The owner's own property claims this key and the codec binds THAT property, so the
             // projection agrees with it rather than stealing the key for the inner type.
             return;
         }
-        PromotedField previous = promoted.putIfAbsent(wireKey, promotion);
-        if (previous != null && !previous.equals(promotion)) {
-            throw new ConfigurationException("Type " + type.getName() + " promotes the wire key '" + wireName
-                    + "' from both '" + previous.declaringType().getName() + "." + previous.fieldName()
-                    + "' and '" + promotion.declaringType().getName() + "." + promotion.fieldName()
-                    + "'. The declared input policies of the two cannot be told apart on the wire; give one"
-                    + " of the unwrapped members a distinct @JsonUnwrapped prefix or suffix.");
+        Promotion claim = new Promotion(promotion, primary);
+        Promotion previous = promoted.get(wireKey);
+        if (previous == null) {
+            promoted.put(wireKey, claim);
+            return;
         }
+        if (previous.field().equals(promotion)) {
+            return;
+        }
+        List<String> previousPath = previous.field().enclosingPath();
+        List<String> path = promotion.enclosingPath();
+        if (isAncestor(previousPath, path)) {
+            // The shallower bean on the SAME branch consumes the key before its unwrapped member
+            // ever sees it.
+            return;
+        }
+        if (isAncestor(path, previousPath)) {
+            promoted.put(wireKey, claim);
+            return;
+        }
+        if (path.equals(previousPath) && previous.primary() && !primary) {
+            // Same level: a primary name claims its key; the alias is silently unclaimed, as on the
+            // owner itself.
+            return;
+        }
+        // Two members on different branches — siblings, or a sibling's descendant — are each fed the
+        // same value by Jackson, whatever their depths.
+        throw new ConfigurationException("Type " + root.getName() + " promotes the wire key '" + wireName
+                + "' from both '" + previous.field().declaringType().getName() + "."
+                + previous.field().fieldName() + "' and '"
+                + promotion.declaringType().getName() + "."
+                + promotion.fieldName() + "'. Jackson binds both from the same value, so the declared input"
+                + " policies of the two cannot be told apart on the wire; give one of the unwrapped members a"
+                + " distinct @JsonUnwrapped prefix or suffix"
+                + (primary && previous.primary() ? "" : ", or a distinct @JsonAlias") + ".");
+    }
+
+    /**
+     * Reports whether {@code ancestor} is a strict prefix of {@code path} — the enclosing member of
+     * one level is reached through the enclosing members of the levels above it.
+     *
+     * @param ancestor the candidate shallower path
+     * @param path     the candidate deeper path
+     * @return {@code true} when {@code path} descends through {@code ancestor}
+     */
+    private static boolean isAncestor(List<String> ancestor, List<String> path) {
+        return path.size() > ancestor.size() && path.subList(0, ancestor.size()).equals(ancestor);
     }
 }
