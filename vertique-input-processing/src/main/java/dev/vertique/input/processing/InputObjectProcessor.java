@@ -119,7 +119,11 @@ public interface InputObjectProcessor {
      * @throws IllegalStateException if a reachable type declares conflicting policy annotations —
      *                               previously surfaced on the first request, now at registration
      */
-    void precomputeFieldNameResolution(@Nullable Type declaredType, InputFieldNameResolver resolver);
+    default void precomputeFieldNameResolution(@Nullable Type declaredType, InputFieldNameResolver resolver) {
+        // No-op by default. A processor that resolves per-type field-name metadata overrides this to
+        // prepare every owner type it may later pass to logicalName; one that resolves none is
+        // correct as written.
+    }
 
     /**
      * Processes a structured input intermediate (typically a {@code Map<String, Object>}

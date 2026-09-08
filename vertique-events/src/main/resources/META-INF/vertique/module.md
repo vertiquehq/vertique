@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Events
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.events`
 > **Artifact:** `vertique-events`
 > **Depends on:** `vertique-core`, `vertx-core`, `jakarta.inject-api`

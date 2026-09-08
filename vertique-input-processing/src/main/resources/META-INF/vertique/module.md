@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Input Processing Module
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.input.processing`
 > **Artifact:** `vertique-input-processing`
 > **Depends on:** core
@@ -121,7 +121,10 @@ Composing a projection can fail, and failing here is the point: a wire-name coll
 
 Both shifts are **consumer-visible**: an application carrying either fault boots today and fails on the request that reaches it. After this change it fails at startup instead. That is the intended direction — the fault was always there, and a startup failure is the one you can act on.
 
-> **Migrating a custom `InputObjectProcessor`.** `precomputeFieldNameResolution` is abstract, so an implementation outside this repository must add it. Implement it by preparing every owner type your processor may pass to `logicalName`; if yours resolves no per-type metadata, an empty body is correct. This module is **Alpha** — the break is deliberate and is the reason the method is not a `default` that would silently leave a processor under-prepared.
+> **Implementing a custom `InputObjectProcessor`.** `precomputeFieldNameResolution` is a
+> `default` no-op. Override it when your processor resolves per-type field-name metadata, to
+> prepare every owner type you may later pass to `logicalName`; a processor that resolves none
+> needs no override.
 
 **What a policy observes in `InputValueContext`.** `path` is the **wire** path, so a diagnostic points at the key the caller actually sent. `logicalName` is the **Java** property name once the projection matched a declared property, and the wire name otherwise. List elements carry the element path in both components. Sanitizer authors who key on `logicalName` therefore see the Java name, not the wire key, for every matched property; branch on `path` when the wire form is what matters. The record itself is documented in the `vertique-core` reference.
 
@@ -239,6 +242,13 @@ Conflicts surface as the same `InvocationPolicyConflictException`, with the same
 The test-jar (`dev.vertique:vertique-input-processing:test-jar`) ships `dev.vertique.input.processing.testkit.InvocationPolicyScenarios`, the precedence and conflict matrix used to prove `InvocationPolicyResolver`, `ReflectiveInvocationPolicies`, and `ElementInvocationPolicies` against the same expectations. A transport adopting any of them can reuse `InvocationPolicyScenarios.rows()` to parity-test its own adapter against the same scenarios (route/parameter overrides, interface and superclass inheritance, composed annotations, and every additive/skip conflict shape) instead of hand-rolling an equivalent fixture set.
 
 ---
+
+### Framework seams
+
+`GeneratedInputProcessorDispatcher` is the framework implementation behind the generated
+processing path and carries an INTERNAL marker; it is outside this module's compatibility promise.
+An application declares policies through annotations and, at most, implements
+`InputObjectProcessor`.
 
 ## Extension Points
 

@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # vertique-launcher
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.launcher`
 > **Artifact:** `vertique-launcher`
 > **Depends on:** `vertique-bootstrap`, `vertique-core`, `vertique-application`, `vertique-config-core`, `io.vertx:vertx-launcher-application`, `io.vertx:vertx-core`, `org.slf4j:slf4j-api`

@@ -14,7 +14,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Discovers, orders, and drives the {@link VertxBuilderContributor} chain during application
+ * INTERNAL framework seam — the framework implementation behind a contract this module documents;
+ * not an application contract and outside the maturity promise.
+ *
+ * <p>Discovers, orders, and drives the {@link VertxBuilderContributor} chain during application
  * bootstrap and shutdown.
  *
  * <p>Use {@link #discover()} to load contributors from the classpath via {@link ServiceLoader}.

@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Management Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.management`
 > **Artifact:** `vertique-management`
 > **Depends on:** `dev.vertique:vertique-core`, `io.vertx:vertx-web`
@@ -41,6 +41,18 @@ public class AppModule {
 ```
 
 `VerticleDeployment` and the deployment manager that consumes the set come from `dev.vertique:vertique-deploy`; `LifecyclePhase` comes from `dev.vertique:vertique-core`.
+
+---
+
+## Exposure and access control
+
+**The management port is unauthenticated.** It serves liveness, readiness, and any contributed
+endpoint to anyone who can reach it, and a failing health check returns the check's raw failure text,
+which can name internal hosts, schemas, or credentials-adjacent detail from the underlying client.
+
+Bind it to an interface only the platform can reach — the default `host` of `0.0.0.0` listens on
+every interface — and never route it through a public ingress. Treat the endpoints as a private
+operational surface: an in-cluster probe, a scrape target, or an operator's port-forward.
 
 ---
 

@@ -10,7 +10,10 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 /**
- * Looks up {@link GeneratedInputProcessor} instances for participating DTO types and dispatches
+ * INTERNAL framework seam — the framework implementation behind a contract this module documents;
+ * not an application contract and outside the maturity promise.
+ *
+ * <p>Looks up {@link GeneratedInputProcessor} instances for participating DTO types and dispatches
  * nested-type traversal during structured-input processing. Generated processors are resolved
  * from the consuming type's classloader via {@link Class#forName}; on miss, traversal continues
  * reflectively through the {@link ReflectiveContinuation} supplied by

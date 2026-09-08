@@ -56,6 +56,12 @@ public abstract class ManagementModule {
     @Provides
     @Singleton
     static ManagementConfig managementConfig(@VertxConfig JsonObject config, ConfigParser parser) {
-        return parser.parse(JsonConfigPaths.navigateObject(config, "management"), ManagementConfig.class);
+        ManagementConfig managementConfig =
+                parser.parse(JsonConfigPaths.navigateObject(config, "management"), ManagementConfig.class);
+        if (managementConfig.healthCheckTimeoutSeconds() <= 0) {
+            throw new IllegalArgumentException("management.healthCheckTimeoutSeconds must be positive, got: "
+                    + managementConfig.healthCheckTimeoutSeconds());
+        }
+        return managementConfig;
     }
 }

@@ -5,10 +5,57 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Vertique Application Test
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.application.test`
 > **Artifact:** `vertique-application-test`
-> **Depends on:** application, core, deploy
+> **Depends on:** `dev.vertique:vertique-application`, `dev.vertique:vertique-core`,
+> `dev.vertique:vertique-deplo---
+
+## When To Use It
+
+Add this artifact at test scope whenever an integration test needs a fully started Vertique
+application: the Vert.x instance, the Dagger component, the deployed verticles, and the resolved
+configuration, all torn down when the class finishes. Use it instead of hand-writing the
+asynchronous bootstrap and the awaited teardown, which is where these tests usually go wrong.
+
+A unit test that exercises one collaborator does not need it. Reach for it when the thing under test
+only exists once the application is up — a route, a service handler, a startup step's effect.
+
+---
+
+## Core Concepts
+
+**One application per test class.** The extension boots in `beforeAll` and shuts down in `afterAll`,
+so every test in the class shares one running application. That makes the tests fast and makes
+cross-test state the author's responsibility: reset anything a test mutates.
+
+**Configuration is supplied, not discovered.** `withConfig` hands the application the exact
+`JsonObject` it will run on, so a test never depends on ambient files or environment.
+
+**Teardown is awaited.** The extension blocks until the application has actually stopped, so a
+following class does not race a half-released port or an undeployed verticle. `startTimeout` bounds
+the boot side of that contract.
+
+---
+
+## Key Classes
+
+### `VertiqueAppExtension`
+
+The JUnit 5 extension. Registered as a `@RegisterExtension static final` field, configured through a
+small fluent surface before the first test runs, and queried during tests for what the running
+application resolved.
+
+| Member | Purpose |
+|---|---|
+| `withConfig(JsonObject)` | The configuration the application boots on |
+| `withVertx(Vertx)` | Runs against a caller-supplied Vert.x instead of one the extension owns |
+| `startTimeout(Duration)` | Bounds the boot; the default suits an ordinary application |
+| `vertx()` | The running Vert.x instance |
+| `config()` | The resolved configuration |
+| `httpPort()` | The port the application's HTTP server actually bound, for tests that use port `0` |
+
+---
 
 ## Testing
 

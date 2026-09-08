@@ -8,7 +8,10 @@ import io.vertx.core.json.JsonObject;
 import java.util.Objects;
 
 /**
- * Default implementation of {@link BootstrapContext}.
+ * INTERNAL framework seam — the framework implementation behind a contract this module documents;
+ * not an application contract and outside the maturity promise.
+ *
+ * <p>Default implementation of {@link BootstrapContext}.
  *
  * <p>Holds the bootstrap config and the live {@link VertxOptions} instance. Each call to
  * {@link #config()} returns a defensive copy so that contributors cannot mutate each other's view

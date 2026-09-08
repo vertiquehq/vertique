@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Sanitization Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.sanitization`
 > **Artifact:** `vertique-sanitization`
 > **Depends on:** core, input-processing
@@ -13,6 +13,34 @@ SPDX-License-Identifier: EUPL-1.2
 Provides built-in canonicalization and sanitization processors, Dagger multibinding wiring, and the `ProcessorResolver` that powers the `dev.vertique.input.processing.InputObjectProcessor` for structured request body processing.
 
 The module bridges the annotation model defined in `dev.vertique.core.sanitization` (interfaces and annotations) with concrete implementations. Including `SanitizationModule` in a Dagger component activates all built-in processors and wires up `InputObjectProcessor` via `InputObjectProcessor.createDefault(...)`, satisfying the `@BindsOptionalOf InputObjectProcessor` declared by `RestModule`.
+
+---
+
+## When To Use It
+
+Install this module whenever an application declares `@Canonicalize` or `@Sanitize` on input it
+binds — a REST body or parameter, a service-dispatch payload, an MCP tool argument. It supplies the
+canonicalizer and sanitizer implementations those annotations name; `dev.vertique:vertique-input-processing`
+supplies the engine that walks the object graph and applies them.
+
+Depend on it directly only to reference a canonicalizer or sanitizer class by name. An application
+that installs a starter already has it on the classpath.
+
+---
+
+## Core Concepts
+
+**Canonicalize, then sanitize.** Canonicalizers normalize a value into one comparable form — Unicode
+NFC or NFKC, case folding, whitespace collapsing, trimming. Sanitizers then remove what must not
+survive — control characters, HTML that is not on the allow-list. The order matters: sanitizing
+before canonicalizing lets a differently-encoded form of a forbidden sequence pass.
+
+**Policies are declared, not called.** A field carries annotations; the engine resolves the chain
+once per type and applies it on every bind. Application code never invokes a sanitizer directly.
+
+**The chain is per field, and inherited.** A policy declared on a supertype's field applies to every
+subtype that inherits it, and a field-level `@SkipCanonicalization` or `@SkipSanitization` opts that
+one field out of an otherwise inherited chain.
 
 ---
 

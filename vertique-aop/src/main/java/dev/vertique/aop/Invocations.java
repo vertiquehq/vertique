@@ -8,7 +8,10 @@ import io.vertx.core.Future;
 import java.util.function.Supplier;
 
 /**
- * Continuation nester that folds an ordered {@link MethodInterceptor} array around a terminal call.
+ * INTERNAL framework seam — the framework implementation behind a contract this module documents;
+ * not an application contract and outside the maturity promise.
+ *
+ * <p>Continuation nester that folds an ordered {@link MethodInterceptor} array around a terminal call.
  *
  * <p>The generated proxy invokes {@link #run(Object, MethodMetadata, Object[], MethodInterceptor[],
  * Supplier)} from each overridden method, passing the chain resolved once in the proxy constructor
