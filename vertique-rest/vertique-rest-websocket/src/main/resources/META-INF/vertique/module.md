@@ -559,12 +559,13 @@ Two startup failures follow (see [Startup failures](#startup-failures)), both of
 surfaced per message: a type in that set whose names cannot be projected, and a reachable type whose
 policy annotations conflict — preparing the owner set resolves that type's policy metadata.
 
-**Five shapes a declared policy still does not reach.** A `Map`-typed field, an `Object`-typed field,
-a concrete `@JsonTypeInfo` subtype's own fields, `@JsonUnwrapped` members, and a key matched only by
-`ACCEPT_CASE_INSENSITIVE_PROPERTIES` all leave the field with its inherited method- and type-level
-chains and nothing else. Nothing fails and nothing is logged, so a stranded policy on one of these is
-invisible until the message that mattered gets through. The `vertique-input-processing` reference
-documents each shape, what still applies, and how to stay inside the covered set.
+**Three shapes a declared policy still does not reach.** A `Map`-typed field, an `Object`-typed
+field, and a concrete `@JsonTypeInfo` subtype's own fields all leave the field with its inherited
+method- and type-level chains and nothing else. Nothing fails and nothing is logged, so a stranded policy
+on one of these is invisible until the message that mattered gets through. A renamed key, a key a codec
+promoted out of an `@JsonUnwrapped` member, and a key matched case-insensitively are all covered
+now. The `vertique-input-processing` reference documents each shape, what still applies, and how to
+stay inside the covered set.
 
 ---
 
