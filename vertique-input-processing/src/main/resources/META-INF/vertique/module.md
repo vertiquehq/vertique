@@ -54,19 +54,42 @@ The engine resolves a build-time-generated `{DTO}_InputProcessor` for the target
 
 ## Coverage limits
 
-A declared policy runs wherever the engine can tell, from the **declared** Java types alone, which property a wire key belongs to. Five shapes defeat that, and in each one a policy you declared silently does not run. Nothing signals it at startup or at request time: the field is processed with the chains it inherits, which is indistinguishable from a working policy until the value that mattered gets through. Read this list as "do not declare a policy here and assume it applies".
+A declared policy runs wherever the engine can tell, from the **declared** Java types alone, which property a wire key belongs to. Three shapes defeat that, and in each one a policy you declared silently does not run. Nothing signals it at startup or at request time: the field is processed with the chains it inherits, which is indistinguishable from a working policy until the value that mattered gets through. Read this list as "do not declare a policy here and assume it applies".
 
 | Shape | What still happens | What does not |
 |---|---|---|
 | A `Map`-typed field (`Map<String, ?>`) | Inherited chains — invocation-level, the owner type's object-level, and the field's own — reach every string inside, at any depth | The value type's own `@Canonicalize` / `@Sanitize`, at type level or on its fields. A map has no statically known property set, so no per-property metadata is resolved for its entries |
 | An `Object`-typed field | Same — inherited chains reach every string in whatever arrives | Any policy declared on the runtime value's actual type |
 | A polymorphic subtype (`@JsonTypeInfo`) | Inherited chains, plus every policy the **declared** base type carries | Policies a concrete subtype adds. Metadata is resolved from the declared type; the engine never inspects the runtime subtype the codec selects |
-| `@JsonUnwrapped` members | Inherited chains reach the promoted keys | The unwrapped type's field-level policies. Its members arrive as keys of the *enclosing* object, where the projection matches no declared property of that enclosing type |
-| `ACCEPT_CASE_INSENSITIVE_PROPERTIES` | Inherited chains reach the key, and the codec still binds it | The field's own declared policies, whenever the incoming key differs from the declared name in case only. The projection publishes the names the mapper declares, not the case folding it applies when matching |
 
-The first three are structural: no statically known property set exists to project onto. The last two are projection gaps — the wire-name projection (`InputFieldNameResolver`) is built from a codec's declared property names, and neither an unwrapped member nor a case-folded match is one of them. None is claimed as supported, and none is detected by `InputObjectProcessor.declaresPolicies`: every one of them is reachable only through a runtime value or a codec-side name, so no walk over *declared* types can see it.
+All three are structural: no statically known property set exists to project onto. None is claimed as supported, and none is detected by `InputObjectProcessor.declaresPolicies`, because each is reachable only through a runtime value, so no walk over *declared* types can see it.
 
-Working within the limits: give a governed value a declared type with real properties rather than `Map` or `Object`; declare the policy on the concrete type actually bound rather than on a polymorphic base; and prefer an explicitly named nested property over `@JsonUnwrapped` when the nested type carries policies.
+A fourth limit is a codec's, not this engine's, and it is a retained residual rather than a structural one: a type the codec binds **outside its declaration view** is trusted as a whole. For Jackson that is a custom deserializer, a delegating creator, or a builder (`@JsonDeserialize(builder = …)`). The projection reports no bound names for such a type, so the registration check below does not run on it, and a field carrying a chain that the builder writes under a differently named method — `@Sanitize String streetName` set by `street(String)` — is a policy that silently never runs. Lombok's `@Builder @Jacksonized` names its methods after the fields and routes correctly; a hand-written builder with its own vocabulary does not. Name the builder methods after the fields they write.
+
+The mirror image is a deserializer the projection cannot see. Only a deserializer declared on the class itself (`@JsonDeserialize(using = …)`) marks a type as bound outside its declaration view; one registered through a module (`SimpleModule.addDeserializer`) or declared on the referencing field does not, so the projection enumerates the type's properties as if Jackson bound them, and the registration check runs against names Jackson does not use. The failure is the loud one, not the silent one: a governed field whose name differs from what the introspection reports is refused at startup. Declare such a deserializer on the class, or name the governed field after the property the introspection reports.
+
+Working within the limits: give a governed value a declared type with real properties rather than `Map` or `Object`, and declare the policy on the concrete type actually bound rather than on a polymorphic base.
+
+### Two former limits, now covered
+
+A codec that **renames or promotes** a key is no longer a gap. Two shapes that used to strand a declared policy are handled, both through the `InputFieldNameResolver` SPI rather than by teaching this engine any codec's rules:
+
+- **Members a codec promotes into the enclosing object** — Jackson's `@JsonUnwrapped`. The projection reports, per owner type, which promoted keys are bound into which declaring type, and the engine resolves that type's metadata for them, so the promoted field's own chains run. A prefix or suffix and nested promotion are handled by the projection.
+- **A key matched case-insensitively** — `ACCEPT_CASE_INSENSITIVE_PROPERTIES`. The projection folds case when the mapper does, so a differently-cased key selects the policies of the property the codec binds it to.
+
+Routing a promoted key means descending each enclosing member on its path and then applying the declaring type's policies. Whether that changes anything is decided at registration: it does when the declaring type or anything reachable from it declares a chain, when the declaring type or the promoted field carries a skip, or when an enclosing member carries a chain or a skip. A promoted key for which nothing would change is accepted as is. Where routing matters and the engine cannot route, registration **fails startup** rather than letting the policies pass silently, naming the owner, the key, the declaring type and the field in every case:
+
+- **A generated processor owns the type.** Its field-name `switch` is emitted from the owner's own declared fields, so a promoted key reaches its `default` arm and would receive only the inherited chains. Declare the member as a named nested property, or move the policies onto the owner.
+- **The path cannot be descended.** An enclosing member on the path is not a field this engine tracks.
+- **The path lands on another type.** Descending the path reaches a type other than the one the projection promotes from — a generic member whose type argument the codec resolved while the declared field type erases. Declare the member with its concrete type.
+
+### A governed field the codec binds under another name
+
+This engine keys per-field metadata on the Java **field** name; a codec keys its binding on the **property** name it derives from the members it finds. The two agree for a field, a record component, and the accessor pair a field's name implies — `streetName` with `setStreetName`, the shape Lombok emits. They diverge for an accessor or creator parameter whose implicit name differs from the field it writes: for `@Sanitize private String streetName` behind `setStreet(String)`, Jackson binds the wire key `street` into a property named `street` and never learns that the setter writes `streetName`. Neither side can derive that mapping, so the field's policy could never be reached from the wire. An ignored or transient field the codec never binds is the same shape.
+
+Registration refuses it. The projection enumerates the Java names its codec binds into (`InputFieldNameResolver.boundJavaNames`), and a field carrying a declared chain outside that set fails startup naming the type, the field, and what the codec does bind. Name the field after the property the codec binds, or declare it so the codec binds it directly. A projection that cannot enumerate — `IDENTITY`, whose keys are already Java names, or a Jackson type bound by a custom deserializer, a builder or a delegating creator — is trusted; a field carrying only a skip flag is never refused, because an unbound skip suppresses nothing that would otherwise run.
+
+A creator parameter is the one shape the enumeration cannot settle. For `@JsonCreator Dto(@JsonProperty("street_name") String s) { streetName = s; }` Jackson binds `street_name` into the parameter and never learns which field the constructor assigns, so the key is bound but unroutable (`InputFieldNameResolver.unroutableWireNames`). Which field it writes is undecidable, so an owner with such a key **and** a chain on any field fails registration naming the key; an owner with such a key and no chain is unaffected. Name the parameter after the field it writes — `@JsonProperty("streetName")` on the parameter, or parameter-name support — and the key is routable by that name whether or not the field has an accessor; or give the field the same `@JsonProperty` name as the parameter, so Jackson links the two and binds under the field's own name. Record components are always linked to their creator parameters.
 
 ---
 
@@ -120,6 +143,8 @@ When a generated processor exists for a type it answers for itself: its `fieldNa
 Composing a projection can fail, and failing here is the point: a wire-name collision that would otherwise throw on every request instead fails registration once. The call also resolves each reachable type's policy metadata, so conflicting annotations (`@Canonicalize` with `@SkipCanonicalization`) surface at registration as `IllegalStateException` rather than on the first request.
 
 Both shifts are **consumer-visible**: an application carrying either fault boots today and fails on the request that reaches it. After this change it fails at startup instead. That is the intended direction — the fault was always there, and a startup failure is the one you can act on.
+
+The same call refuses, as `ConfigurationException`, the two shapes under [coverage limits](#coverage-limits) where a declared chain provably could not run: a promoted key the engine cannot route where routing would apply a policy, and a field carrying a chain that the codec binds no wire key into. Both were silent before; an application carrying either now fails at startup naming the type and the field.
 
 > **Implementing a custom `InputObjectProcessor`.** `precomputeFieldNameResolution` is a
 > `default` no-op. Override it when your processor resolves per-type field-name metadata, to

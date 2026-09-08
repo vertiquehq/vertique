@@ -5,6 +5,7 @@ package dev.vertique.input.processing;
 
 import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
+import dev.vertique.core.sanitization.InputFieldNameResolver.PromotedField;
 import dev.vertique.core.sanitization.InputLocation;
 import dev.vertique.core.sanitization.InputValueContext;
 import dev.vertique.core.sanitization.Sanitizer;
@@ -350,12 +351,57 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
             // projection is skipped rather than run and discarded.
             FieldPolicyMetadata fieldMeta;
             String logicalName;
+            // The type whose declared policies apply to this key, the metadata they live in, and the
+            // context they compose against. All three change for a key the codec PROMOTED into this
+            // object out of a nested member (Jackson's @JsonUnwrapped): its policies are declared on
+            // the inner type, and the enclosing members' own chains and skip flags still apply.
+            Class<?> declaringType = ownerType;
+            InputPolicyMetadata valueMeta = metadata;
+            InputTraversalContext valueCtx = ctx;
             if (schemaFree) {
                 fieldMeta = null;
                 logicalName = key;
             } else {
                 String logicalKey = ctx.logicalFieldName(ownerType, key);
                 fieldMeta = metadata.fields().get(logicalKey);
+                if (fieldMeta == null) {
+                    // Looked up by the WIRE key, never the projected name: a promoted key is not a
+                    // name of this type, so the projection returns it unchanged and resolving it is
+                    // the projection's own job (ADR-0247 Amendment 2).
+                    PromotedField promoted = ctx.promotedField(ownerType, key);
+                    if (promoted != null) {
+                        InputPolicyMetadata levelMeta = metadata;
+                        InputTraversalContext levelCtx = ctx;
+                        boolean reachable = true;
+                        for (String enclosing : promoted.enclosingPath()) {
+                            FieldPolicyMetadata enclosingMeta =
+                                    levelMeta.fields().get(enclosing);
+                            if (enclosingMeta == null) {
+                                reachable = false;
+                                break;
+                            }
+                            levelCtx = levelCtx.descend(levelMeta, enclosingMeta);
+                            levelMeta = metadataResolver.resolve(enclosingMeta.fieldType());
+                        }
+                        // Registration verified the path is descendable wherever routing this key
+                        // would apply anything (OwnerTypeWalk); an unreachable path here means
+                        // nothing would change, so the owner's treatment is already correct.
+                        if (reachable) {
+                            // The value is processed AS the declaring type's, whether or not that
+                            // type tracks the field: an inner property with no metadata of its own
+                            // still receives the inner type's object-level chains, exactly as an
+                            // unknown key inside a named nested object would.
+                            fieldMeta = levelMeta.fields().get(promoted.fieldName());
+                            // Provenance follows the metadata the chains come from: registration
+                            // verified the two agree wherever a policy is at stake.
+                            declaringType =
+                                    levelMeta.ownerType() != null ? levelMeta.ownerType() : promoted.declaringType();
+                            valueMeta = levelMeta;
+                            valueCtx = levelCtx;
+                            logicalKey = promoted.fieldName();
+                        }
+                    }
+                }
                 // logicalName is the JAVA property name once a property matched, the wire name
                 // otherwise; path stays the wire path so a diagnostic points at what the caller sent.
                 logicalName = fieldMeta != null ? logicalKey : key;
@@ -364,16 +410,25 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
             if (value instanceof String s) {
                 result.put(
                         key,
-                        processStringValue(s, metadata, fieldMeta, ctx, location, fieldPath, logicalName, ownerType));
+                        processStringValue(
+                                s, valueMeta, fieldMeta, valueCtx, location, fieldPath, logicalName, declaringType));
             } else if (value instanceof Map<?, ?> nestedMap) {
                 result.put(
                         key,
                         processNestedMap(
-                                nestedMap, metadata, fieldMeta, ctx, policies, location, fieldPath, ownerType));
+                                nestedMap,
+                                valueMeta,
+                                fieldMeta,
+                                valueCtx,
+                                policies,
+                                location,
+                                fieldPath,
+                                declaringType));
             } else if (value instanceof List<?> list) {
                 result.put(
                         key,
-                        processNestedList(list, metadata, fieldMeta, ctx, policies, location, fieldPath, ownerType));
+                        processNestedList(
+                                list, valueMeta, fieldMeta, valueCtx, policies, location, fieldPath, declaringType));
             } else {
                 result.put(key, value);
             }

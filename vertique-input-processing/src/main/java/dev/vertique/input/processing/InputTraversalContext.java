@@ -5,6 +5,7 @@ package dev.vertique.input.processing;
 
 import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
+import dev.vertique.core.sanitization.InputFieldNameResolver.PromotedField;
 import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.input.processing.InputPolicyMetadata.FieldPolicyMetadata;
 import jakarta.annotation.Nullable;
@@ -167,6 +168,28 @@ public final class InputTraversalContext {
                             + ". The projection is total: an unrecognized wire name must be returned unchanged.");
         }
         return logicalName;
+    }
+
+    /**
+     * Returns where a key of {@code ownerType} is bound when the codec promoted it out of a nested
+     * member, or {@code null} when the key is an ordinary property of {@code ownerType}.
+     *
+     * <p>Consulted only after the owner's own metadata has no entry for the key, so an ordinary field
+     * costs nothing. The argument is the <em>wire</em> key, not the value {@link #logicalFieldName}
+     * returned: a promoted key is not a name of {@code ownerType}, so the projection returns it
+     * unchanged, and resolving it — including any case folding the codec applies — is the
+     * projection's own job.
+     *
+     * @param ownerType the type the fragment is keyed against; must not be {@code null}
+     * @param wireName  the key as it appeared in the intermediate; must not be {@code null}
+     * @return where the key is bound, or {@code null} when nothing was promoted under it
+     */
+    @Nullable
+    PromotedField promotedField(Class<?> ownerType, String wireName) {
+        if (nameResolver == InputFieldNameResolver.IDENTITY) {
+            return null;
+        }
+        return nameResolver.promotedField(ownerType, wireName);
     }
 
     /**

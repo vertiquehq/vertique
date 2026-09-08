@@ -763,6 +763,30 @@ public interface InputFieldNameResolver {
 
     /** Composes one owner type's projection at registration; no-op unless overridden. */
     default void precompute(Class<?> ownerType) {}
+
+    /** Wire keys of ownerType that bind into a field of another type; empty unless overridden. */
+    default Map<String, PromotedField> promotedFields(Class<?> ownerType) {
+        return Map.of();
+    }
+
+    /** Where one wire key is bound, or null; override to apply a wire-side rule such as folding. */
+    default PromotedField promotedField(Class<?> ownerType, String wireName) {
+        return promotedFields(ownerType).get(wireName);
+    }
+
+    /** The Java names the codec binds wire keys of ownerType into; null when not enumerable. */
+    @Nullable
+    default Set<String> boundJavaNames(Class<?> ownerType) {
+        return null;
+    }
+
+    /** Wire keys bound into a Java property the codec cannot name; empty unless overridden. */
+    default Set<String> unroutableWireNames(Class<?> ownerType) {
+        return Set.of();
+    }
+
+    /** A key that arrives on one type but is bound into a field declared on another. */
+    record PromotedField(Class<?> declaringType, String fieldName, List<String> enclosingPath) {}
 }
 ```
 
@@ -775,7 +799,7 @@ and `Sanitizer` — is what keeps both `vertique-input-processing` and `vertique
 any codec dependency: each codec-backed implementation lives in the module that already owns that
 codec (`JacksonFieldNameResolver` in `dev.vertique:vertique-json`).
 
-Four properties are part of the contract:
+Six properties are part of the contract:
 
 | Property | Contract |
 |---|---|
@@ -783,10 +807,25 @@ Four properties are part of the contract:
 | Totality | An unrecognized `wireName` — an undeclared extra key, a `Map`-typed field's key, or a name that is already the Java property name — is returned **unchanged**; an implementation never returns `null` and never throws |
 | Threading and cost | Stateless (or effectively immutable), reentrant, consulted once per intermediate key on the request path — it must not block and should serve every call from a precomputed projection |
 | Warm-up | `precompute(Class)` composes one owner type's projection ahead of the request path; it defaults to a no-op, so a resolver that needs no per-class state is unaffected. The input-processing engine calls it at registration for every owner type it may consult, and an implementation may fail fast there — the failure is deliberately a startup failure rather than a per-request one |
+| Bound names | `boundJavaNames(Class)` enumerates the Java property names the codec binds wire keys of an owner into, or returns `null` when the projection cannot enumerate them. The engine keys metadata on the Java field name and a codec on the property name it derives from accessors; the two diverge for `setStreet` writing `streetName`, and neither side can derive that mapping. The engine checks at registration that every field carrying a declared chain is among the bound names and fails startup naming the field when it is not. `IDENTITY` returns `null` and is trusted, as is a codec that binds a type outside its declaration view. `unroutableWireNames(Class)` names the keys a codec binds into a property it cannot name — a creator parameter carrying only a wire name — and the engine refuses at registration an owner with such a key that declares a chain on any field, because which field the parameter writes is undecidable |
+| Promotion | `promotedFields(Class)` reports the keys of an owner type that the codec promoted out of a nested member, so they arrive flat while their policies are declared on the inner type — Jackson's `@JsonUnwrapped` is the case it exists for. **The map is keyed by the wire name, and a promoted key is never added to the projection**: `logicalName` returns it unchanged, as its totality contract already requires, so the owner's metadata misses and the engine falls through. `promotedField(Class, String)` performs the lookup, which is what keeps case folding inside the projection. `PromotedField.enclosingPath()` names the owner-side members traversed, so the engine descends through them and their chains and skip flags still apply. Both default to promoting nothing |
 
 Use `InputFieldNameResolver.IDENTITY` for any transport whose intermediate keys are already Java
 property names, including every call site that processes a bare `String`, where there is no object
 whose fields could be renamed.
+
+The engine consults `promotedField` only after the owner's own metadata has no entry for a key, so
+an ordinary field costs nothing. Keying by the promoted field's Java name would not work: that name
+is local to the inner type, so two promoted members of different types sharing a field name would
+collide even when a prefix gives them distinct wire keys, and a promoted key could shadow a
+same-named field of the owner.
+
+`PromotedField.fieldName()` is the Java property name the codec binds the key into. Registration
+verifies through `boundJavaNames` that it equals the field name for every governed field of the
+declaring type, and verifies the enclosing path is one the engine can descend wherever routing the
+key would apply a policy; a promoted key that fails either is refused at startup rather than routed
+wrongly, as is one on a type served by a **generated** input processor, whose field-name `switch` is
+emitted from the owner's own declared fields.
 
 ### `CharacterPolicy`
 

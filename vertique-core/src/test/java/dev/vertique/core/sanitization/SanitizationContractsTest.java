@@ -12,6 +12,8 @@ import java.lang.annotation.Target;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.stream.Collectors;
@@ -214,7 +216,8 @@ class SanitizationContractsTest {
     class InputFieldNameResolverTest {
 
         @Test
-        @DisplayName("public members match the frozen ledger (one abstract method, one default method, plus IDENTITY)")
+        @DisplayName(
+                "public members match the frozen ledger (one abstract method, five default methods, plus IDENTITY)")
         void publicMembersMatchLedger() {
             Set<String> methods = Arrays.stream(InputFieldNameResolver.class.getDeclaredMethods())
                     .filter(method -> Modifier.isPublic(method.getModifiers()))
@@ -225,7 +228,18 @@ class SanitizationContractsTest {
                                     .collect(Collectors.joining(","))
                             + ")")
                     .collect(Collectors.toCollection(TreeSet::new));
-            assertEquals(new TreeSet<>(Set.of("logicalName(Class,String)", "precompute(Class)")), methods);
+            // promotedFields, promotedField, boundJavaNames and unroutableWireNames joined the
+            // ledger with ADR-0247, all as default methods: an implementation that ignores them is
+            // unaffected, which is what keeps the addition compatible on a Stable interface.
+            assertEquals(
+                    new TreeSet<>(Set.of(
+                            "boundJavaNames(Class)",
+                            "logicalName(Class,String)",
+                            "precompute(Class)",
+                            "promotedField(Class,String)",
+                            "promotedFields(Class)",
+                            "unroutableWireNames(Class)")),
+                    methods);
 
             Set<String> fields = Arrays.stream(InputFieldNameResolver.class.getDeclaredFields())
                     .filter(field -> Modifier.isPublic(field.getModifiers()))
@@ -251,6 +265,69 @@ class SanitizationContractsTest {
         @DisplayName("IDENTITY inherits the no-op precompute")
         void identityPrecomputeIsANoOp() {
             assertDoesNotThrow(() -> InputFieldNameResolver.IDENTITY.precompute(Object.class));
+        }
+
+        @Test
+        @DisplayName("IDENTITY inherits the empty promotedFields, so a codec that promotes nothing is unaffected")
+        void identityPromotesNothing() {
+            assertTrue(
+                    InputFieldNameResolver.IDENTITY.promotedFields(Object.class).isEmpty());
+        }
+
+        @Test
+        @DisplayName("IDENTITY cannot enumerate what it binds, so the default boundJavaNames is null")
+        void identityBoundNamesAreUnknown() {
+            assertNull(InputFieldNameResolver.IDENTITY.boundJavaNames(Object.class));
+        }
+
+        @Test
+        @DisplayName("IDENTITY routes every key, so the default unroutableWireNames is empty")
+        void identityHasNoUnroutableKeys() {
+            assertTrue(InputFieldNameResolver.IDENTITY
+                    .unroutableWireNames(Object.class)
+                    .isEmpty());
+        }
+
+        @Test
+        @DisplayName("PromotedField copies its enclosing path, so a live list is never published")
+        void promotedFieldCopiesItsPath() {
+            List<String> live = new java.util.ArrayList<>(List.of("holder"));
+            InputFieldNameResolver.PromotedField field =
+                    new InputFieldNameResolver.PromotedField(String.class, "value", live);
+            live.add("mutated");
+            assertEquals(List.of("holder"), field.enclosingPath());
+            assertThrows(UnsupportedOperationException.class, () -> field.enclosingPath()
+                    .add("x"));
+        }
+
+        @Test
+        @DisplayName("PromotedField carries the declaring type, the field name, and the enclosing path")
+        void promotedFieldCarriesItsThreeParts() {
+            InputFieldNameResolver.PromotedField field =
+                    new InputFieldNameResolver.PromotedField(String.class, "value", List.of("holder"));
+            assertEquals(String.class, field.declaringType());
+            assertEquals("value", field.fieldName());
+            assertEquals(List.of("holder"), field.enclosingPath());
+        }
+
+        @Test
+        @DisplayName("the default promotedField reads promotedFields, so one override serves both")
+        void defaultPromotedFieldReadsTheMap() {
+            InputFieldNameResolver.PromotedField promotion =
+                    new InputFieldNameResolver.PromotedField(String.class, "value", List.of("holder"));
+            InputFieldNameResolver resolver = new InputFieldNameResolver() {
+                @Override
+                public String logicalName(Class<?> ownerType, String wireName) {
+                    return wireName;
+                }
+
+                @Override
+                public Map<String, InputFieldNameResolver.PromotedField> promotedFields(Class<?> ownerType) {
+                    return Map.of("wire_value", promotion);
+                }
+            };
+            assertEquals(promotion, resolver.promotedField(Object.class, "wire_value"));
+            assertNull(resolver.promotedField(Object.class, "absent"));
         }
     }
 
