@@ -8,7 +8,11 @@ import io.vertx.ext.web.handler.AuthenticationHandler;
 import java.util.Objects;
 
 /**
- * Authentication-handler wrapper that arms per-request deferral of credential-rejection events for an
+ * INTERNAL framework seam — HTTP-runtime collaborator consumed by sibling framework modules; not
+ * an application contract and outside the maturity promise. An application uses the extension
+ * points and configuration this module documents and never names this type.
+ *
+ * <p>Authentication-handler wrapper that arms per-request deferral of credential-rejection events for an
  * OR route (multiple alternative {@code @SecurityRequirement}s composed as a Vert.x
  * {@code ChainAuthHandler.any()}).
  *

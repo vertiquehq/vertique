@@ -9,7 +9,11 @@ import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 
 /**
- * {@link OperationHandlerContributor} that captures the OpenAPI {@code operationId} and route
+ * INTERNAL framework seam — HTTP-runtime collaborator consumed by sibling framework modules; not
+ * an application contract and outside the maturity promise. An application uses the extension
+ * points and configuration this module documents and never names this type.
+ *
+ * <p>{@link OperationHandlerContributor} that captures the OpenAPI {@code operationId} and route
  * template for the current request into routing context data keys consumed by
  * {@link RestRequestCompletionEmitter}.
  *

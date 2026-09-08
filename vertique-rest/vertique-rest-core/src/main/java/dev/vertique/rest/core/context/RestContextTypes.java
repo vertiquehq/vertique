@@ -9,7 +9,11 @@ import jakarta.ws.rs.core.SecurityContext;
 import java.util.Set;
 
 /**
- * Shared constants and runtime predicate for {@code @Context}-injectable types in the Vertique
+ * INTERNAL framework seam — HTTP-runtime collaborator consumed by sibling framework modules; not
+ * an application contract and outside the maturity promise. An application uses the extension
+ * points and configuration this module documents and never names this type.
+ *
+ * <p>Shared constants and runtime predicate for {@code @Context}-injectable types in the Vertique
  * REST framework.
  *
  * <p>This class is the single source of truth for two concerns:

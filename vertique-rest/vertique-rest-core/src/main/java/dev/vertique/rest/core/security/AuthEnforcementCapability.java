@@ -4,7 +4,11 @@
 package dev.vertique.rest.core.security;
 
 /**
- * Typed, non-instantiable marker signalling that the authentication/authorization enforcement
+ * INTERNAL framework seam — HTTP-runtime collaborator consumed by sibling framework modules; not
+ * an application contract and outside the maturity promise. An application uses the extension
+ * points and configuration this module documents and never names this type.
+ *
+ * <p>Typed, non-instantiable marker signalling that the authentication/authorization enforcement
  * runtime is installed.
  *
  * <p>The route registrar uses the presence of this binding (via an {@code Optional}) to decide

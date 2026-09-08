@@ -4,7 +4,11 @@
 package dev.vertique.rest.core.security;
 
 /**
- * Describes a security policy inconsistency detected during startup validation.
+ * INTERNAL framework seam — HTTP-runtime collaborator consumed by sibling framework modules; not
+ * an application contract and outside the maturity promise. An application uses the extension
+ * points and configuration this module documents and never names this type.
+ *
+ * <p>Describes a security policy inconsistency detected during startup validation.
  *
  * <p>Each violation includes the operationId, the type of inconsistency,
  * and a human-readable diagnostic message.

@@ -12,7 +12,11 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * Dagger module that declares the {@link RestContextResolver} multibinding and contributes the
+ * INTERNAL framework seam — HTTP-runtime collaborator consumed by sibling framework modules; not
+ * an application contract and outside the maturity promise. An application uses the extension
+ * points and configuration this module documents and never names this type.
+ *
+ * <p>Dagger module that declares the {@link RestContextResolver} multibinding and contributes the
  * three built-in framework resolvers.
  *
  * <p>This module is an internal wiring detail of the REST framework. Application code does not

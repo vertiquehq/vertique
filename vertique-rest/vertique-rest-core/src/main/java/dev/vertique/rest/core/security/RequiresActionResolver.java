@@ -13,7 +13,11 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Resolves the {@link RequiresAction} annotation declared on a JAX-RS resource method or class into
+ * INTERNAL framework seam — HTTP-runtime collaborator consumed by sibling framework modules; not
+ * an application contract and outside the maturity promise. An application uses the extension
+ * points and configuration this module documents and never names this type.
+ *
+ * <p>Resolves the {@link RequiresAction} annotation declared on a JAX-RS resource method or class into
  * a canonical {@link ActionRef}, applying Jakarta override semantics: a method-level
  * {@code @RequiresAction} completely overrides a class-level one.
  *
