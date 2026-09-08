@@ -13,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyName;
 import com.fasterxml.jackson.databind.introspect.Annotated;
@@ -45,6 +46,10 @@ import org.junit.jupiter.api.Test;
  *       introspects nor throws;</li>
  *   <li>two properties claiming the same {@code @JsonAlias} fail composition instead of binding in
  *       an order the projection and Jackson resolve differently.</li>
+ *   <li>two Java fields Jackson merged into one property fail composition rather than projecting
+ *       onto the field Jackson never writes (GH-380);</li>
+ *   <li>a case-insensitive mapper projects a differently-cased key onto the property Jackson binds
+ *       it to, instead of resolving it to no property at all (GH-375).</li>
  * </ul>
  */
 class JacksonFieldNameResolverTest {
@@ -364,5 +369,83 @@ class JacksonFieldNameResolverTest {
                 "name",
                 resolver.logicalName(RepeatedAliasDto.class, "alt"),
                 "the repeated alias still projects onto its own property");
+    }
+
+    // --- GH-380: two Java fields Jackson merged into one property ---
+
+    /** DTO whose second field is renamed onto the first field's name; Jackson merges the two. */
+    public static class MergedFieldsDto {
+        public String first;
+
+        @JsonProperty("first")
+        public String second;
+    }
+
+    @Test
+    @DisplayName("GH-380: a property Jackson merged across two fields fails composition, naming both")
+    void shouldRejectAPropertyJacksonMergedAcrossTwoFields() {
+        JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
+
+        // Jackson publishes ONE property here: its implicit name is `first` while binding writes the
+        // field `second`, so nothing reaches the two-properties collision check and the projection
+        // would be the identity map. Left alone, `second`'s declared policies never run for the key
+        // Jackson writes into it, and `first` is never bound at all.
+        ConfigurationException ex =
+                assertThrows(ConfigurationException.class, () -> resolver.precompute(MergedFieldsDto.class));
+
+        assertTrue(ex.getMessage().contains(MergedFieldsDto.class.getName()), "names the type: " + ex.getMessage());
+        assertTrue(ex.getMessage().contains("'first'"), "names the published property: " + ex.getMessage());
+        assertTrue(ex.getMessage().contains("'second'"), "names the field written: " + ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("GH-380: an ordinary renamed field still composes — the rejection is not a blanket rename ban")
+    void shouldStillComposeAnOrdinaryRenamedField() {
+        JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
+
+        assertDoesNotThrow(
+                () -> resolver.precompute(RenamedDto.class),
+                "a field renamed onto a name no other field claims is projected, not refused");
+    }
+
+    // --- GH-375: a mapper that matches wire keys case-insensitively ---
+
+    /** DTO used against a case-insensitive mapper; its wire key may arrive in any case. */
+    public static class CaseFoldedDto {
+        public String secretValue;
+    }
+
+    private static ObjectMapper caseInsensitiveMapper() {
+        return JsonMapper.builder().enable(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES).build();
+    }
+
+    @Test
+    @DisplayName("GH-375: a case-insensitive mapper projects a differently-cased key onto its property")
+    void shouldProjectADifferentlyCasedKeyWhenTheMapperFoldsCase() {
+        JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(caseInsensitiveMapper());
+        resolver.precompute(CaseFoldedDto.class);
+
+        // Jackson binds every one of these into `secretValue`, so every one must select that field's
+        // declared policies. Before the fix the projection matched exactly, so all but the first
+        // resolved to no property and their declared @Sanitize was skipped.
+        assertEquals("secretValue", resolver.logicalName(CaseFoldedDto.class, "secretValue"));
+        assertEquals("secretValue", resolver.logicalName(CaseFoldedDto.class, "SECRETVALUE"));
+        assertEquals("secretValue", resolver.logicalName(CaseFoldedDto.class, "SecretValue"));
+
+        assertFalse(
+                resolver.isIdentityProjection(CaseFoldedDto.class),
+                "a case-folding mapper must never take the identity short circuit, or the folded"
+                        + " lookup would be skipped");
+    }
+
+    @Test
+    @DisplayName("GH-375: a differently-cased key against an exact-match mapper is still returned unchanged")
+    void shouldLeaveADifferentlyCasedKeyAloneWhenTheMapperMatchesExactly() {
+        JacksonFieldNameResolver resolver = JacksonFieldNameResolver.forMapper(vanillaMapper());
+        resolver.precompute(CaseFoldedDto.class);
+
+        // Control: Jackson itself does not bind SECRETVALUE here, so folding it would attach the
+        // field's policies to a key that never reaches the field. The projection stays total.
+        assertEquals("SECRETVALUE", resolver.logicalName(CaseFoldedDto.class, "SECRETVALUE"));
     }
 }

@@ -5,6 +5,7 @@ package dev.vertique.json;
 
 import com.fasterxml.jackson.databind.BeanDescription;
 import com.fasterxml.jackson.databind.DeserializationConfig;
+import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyName;
 import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
@@ -15,6 +16,7 @@ import jakarta.annotation.Nullable;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -49,6 +51,21 @@ import java.util.Set;
  * declaration order, so the property whose policies are applied and the property Jackson binds could
  * differ non-deterministically.
  *
+ * <p><strong>Two Java fields Jackson merged.</strong> For
+ * {@code class Dto { String a; @JsonProperty("a") String b; }} Jackson produces a single
+ * {@link BeanPropertyDefinition} that publishes the implicit name of {@code a} while binding writes
+ * the field {@code b}; only one property reaches the collision check above, so nothing there fires.
+ * Projecting the published name would select {@code a}'s declared policies for a key Jackson writes
+ * into {@code b}, and {@code a} is never bound at all. Such a type fails startup naming both Java
+ * properties.
+ *
+ * <p><strong>Case-insensitive mappers.</strong> A mapper with
+ * {@code MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES} enabled binds {@code SECRET} to a
+ * property named {@code secret}, so an exact-match projection would resolve the differently-cased
+ * key to no property and skip its declared policies. Against such a mapper the projection is keyed
+ * by the {@link java.util.Locale#ROOT} case-folded wire name and folds its lookups the same way, and
+ * the identity short circuit below is never taken.
+ *
  * <p><strong>Caching and the identity short circuit.</strong> One instance is created per body mapper
  * at route or endpoint registration and caches its per-type projection in a {@link ClassValue}, so
  * entries are collected with the classloader that owns the DTO rather than pinned in a static
@@ -74,6 +91,14 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
 
     private final ObjectMapper mapper;
     private final DeserializationConfig config;
+
+    /**
+     * Whether the body mapper matches wire keys case-insensitively. When it does, the projection is
+     * keyed by the case-folded wire name and {@link #logicalName} folds its argument before the
+     * lookup, so a differently-cased key resolves to the property Jackson binds it to rather than to
+     * no property at all.
+     */
+    private final boolean foldsCase;
     private final ClassValue<Projection> projections = new ClassValue<>() {
         @Override
         protected Projection computeValue(Class<?> type) {
@@ -84,6 +109,7 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
     private JacksonFieldNameResolver(ObjectMapper mapper) {
         this.mapper = mapper;
         this.config = mapper.getDeserializationConfig();
+        this.foldsCase = config.isEnabled(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES);
     }
 
     /**
@@ -141,8 +167,9 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
      *
      * @param ownerType the owner type to compose the projection for; must not be {@code null}
      * @throws ConfigurationException if {@code ownerType}'s projection cannot be composed — two
-     *                                properties claiming one primary wire name, or two properties
-     *                                claiming one alias
+     *                                properties claiming one primary wire name, two properties
+     *                                claiming one alias, or two Java fields Jackson merged into one
+     *                                property
      */
     @Override
     public void precompute(Class<?> ownerType) {
@@ -166,8 +193,30 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
         if (projection.identity()) {
             return wireName;
         }
-        String logicalName = projection.names().get(wireName);
+        String logicalName = projection.names().get(foldsCase ? fold(wireName) : wireName);
         return logicalName != null ? logicalName : wireName;
+    }
+
+    /**
+     * Case-folds a wire name for a mapper that matches keys case-insensitively.
+     *
+     * @param wireName the wire name to fold
+     * @return the folded name, in {@link Locale#ROOT} so the folding never varies with the default
+     *     locale
+     */
+    private static String fold(String wireName) {
+        return wireName.toLowerCase(Locale.ROOT);
+    }
+
+    /**
+     * Returns the projection key for a wire name: the name itself, or its case-folded form when the
+     * body mapper matches keys case-insensitively.
+     *
+     * @param wireName the wire name a property or alias publishes
+     * @return the key this projection stores that name under
+     */
+    private String key(String wireName) {
+        return foldsCase ? fold(wireName) : wireName;
     }
 
     /**
@@ -175,8 +224,9 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
      *
      * @param type the type to introspect
      * @return the projection for {@code type}; never {@code null}
-     * @throws ConfigurationException if two properties claim the same primary wire name, or two
-     *                                different properties claim the same unclaimed alias
+     * @throws ConfigurationException if two properties claim the same primary wire name, if two
+     *                                different properties claim the same unclaimed alias, or if
+     *                                Jackson merged two Java fields into one property
      */
     private Projection computeProjection(Class<?> type) {
         BeanDescription description = config.introspect(mapper.getTypeFactory().constructType(type));
@@ -186,12 +236,27 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
         // primary on the same key is a configuration error unless it names the same Java property.
         Map<String, String> names = new LinkedHashMap<>(Math.max(4, properties.size() * 2));
         for (BeanPropertyDefinition property : properties) {
-            String wireName = property.getName();
+            String wireName = key(property.getName());
             String javaName = property.getInternalName();
+            // A property Jackson MERGED across two Java fields publishes the implicit name of one and
+            // writes the field of the other: for `class Dto { String a; @JsonProperty("a") String b; }`
+            // the single definition reports internal name `a` while binding writes field `b`, and the
+            // collision check below never sees two properties to compare. Projecting the published
+            // name would select `a`'s declared policies for a key Jackson writes into `b`, and `a`
+            // itself is never bound at all — so the configuration is refused rather than guessed at.
+            if (property.hasField() && !property.getField().getName().equals(javaName)) {
+                throw new ConfigurationException("Type " + type.getName() + " merges the Java properties '"
+                        + javaName + "' and '" + property.getField().getName() + "' into the single wire property"
+                        + " name '" + property.getName() + "'. Jackson binds that key into '"
+                        + property.getField().getName() + "' while it publishes the name of '" + javaName
+                        + "', so the declared input policies applied to the key would not be those of the field"
+                        + " written, and '" + javaName + "' is never bound at all; give one of them a distinct"
+                        + " @JsonProperty name.");
+            }
             String previousOwner = names.putIfAbsent(wireName, javaName);
             if (previousOwner != null && !previousOwner.equals(javaName)) {
                 throw new ConfigurationException("Type " + type.getName() + " publishes the wire property name '"
-                        + wireName + "' for both Java properties '" + previousOwner + "' and '" + javaName
+                        + property.getName() + "' for both Java properties '" + previousOwner + "' and '" + javaName
                         + "'. The declared input policies of the two cannot be told apart on the wire; give one of "
                         + "them a distinct @JsonProperty name.");
             }
@@ -213,14 +278,14 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
         for (BeanPropertyDefinition property : properties) {
             String javaName = property.getInternalName();
             for (PropertyName alias : property.findAliases()) {
-                String aliasName = alias.getSimpleName();
+                String aliasName = key(alias.getSimpleName());
                 if (primaryClaimed.contains(aliasName)) {
                     continue;
                 }
                 String previousOwner = aliasOwners.putIfAbsent(aliasName, javaName);
                 if (previousOwner != null && !previousOwner.equals(javaName)) {
                     throw new ConfigurationException("Type " + type.getName() + " lets both Java properties '"
-                            + previousOwner + "' and '" + javaName + "' claim the alias '" + aliasName
+                            + previousOwner + "' and '" + javaName + "' claim the alias '" + alias.getSimpleName()
                             + "'. Jackson resolves that collision in an unspecified order, so the declared "
                             + "input policies applied to the key would not reliably be those of the property "
                             + "Jackson binds it to; give one of them a distinct @JsonAlias.");
@@ -229,8 +294,10 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
             }
         }
 
-        boolean identity =
-                names.entrySet().stream().allMatch(entry -> entry.getKey().equals(entry.getValue()));
+        // A case-folding mapper never short-circuits: the wire key it binds may differ in case from
+        // the Java name, so the folded lookup has to run even when every name maps onto itself.
+        boolean identity = !foldsCase
+                && names.entrySet().stream().allMatch(entry -> entry.getKey().equals(entry.getValue()));
         return new Projection(identity, identity ? Map.of() : Map.copyOf(names));
     }
 }
