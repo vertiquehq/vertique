@@ -233,6 +233,55 @@ class AnnotationCollectorTest {
      * three shapes the same way, so the generated and reflective paths classify them identically.
      */
     @Nested
+    @DisplayName("bare type-variable fields (#241)")
+    class BareTypeVariableFields {
+
+        /** The bound a type-variable field must classify against. */
+        private static final JavaFileObject BOUND_DTO = SourceFiles.inline("com.example.tv.TvChildDto", """
+                package com.example.tv;
+                import dev.vertique.core.sanitization.Sanitize;
+                import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+                public class TvChildDto {
+                    @Sanitize(StripControlCharsSanitizer.class)
+                    public String text;
+                }
+                """);
+
+        @Test
+        @DisplayName("a bare type-variable field classifies against its bound, matching the reflective path")
+        void bareTypeVariableFieldResolvesToItsBound() {
+            JavaFileObject dto = SourceFiles.inline("com.example.tv.TvHolder", """
+                    package com.example.tv;
+                    public class TvHolder<T extends TvChildDto> {
+                        public T item;
+                    }
+                    """);
+
+            ProcessorTestHarness.run(
+                            new SanitizationProcessor(), BOUND_DTO, dto, resourceFor("com.example.tv.TvHolder"))
+                    .assertSuccess()
+                    .assertGeneratedSourceContains("com.example.tv.TvHolder_InputProcessor", "TvChildDto.class");
+        }
+
+        @Test
+        @DisplayName("an unbounded type-variable field stays schema-free")
+        void unboundedTypeVariableFieldStaysOther() {
+            JavaFileObject dto = SourceFiles.inline("com.example.tv.TvOpenHolder", """
+                    package com.example.tv;
+                    import dev.vertique.core.sanitization.Canonicalize;
+                    import dev.vertique.sanitization.canonicalize.TrimCanonicalizer;
+                    public class TvOpenHolder<T> {
+                        @Canonicalize(TrimCanonicalizer.class)
+                        public T item;
+                    }
+                    """);
+
+            ProcessorTestHarness.run(new SanitizationProcessor(), dto, resourceFor("com.example.tv.TvOpenHolder"))
+                    .assertSuccess();
+        }
+    }
+
+    @Nested
     @DisplayName("collection element type resolution")
     class CollectionElementResolution {
 

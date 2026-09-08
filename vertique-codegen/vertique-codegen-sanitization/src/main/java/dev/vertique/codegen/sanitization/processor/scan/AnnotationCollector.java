@@ -326,6 +326,13 @@ public final class AnnotationCollector {
 
         boolean hasAnnotations = !canonChain.isEmpty() || !sanitChain.isEmpty() || skipCanon || skipSanit;
 
+        // A bare type variable or wildcard (`T item;` on `class Dto<T extends Child>`) carries no
+        // schema of its own. Normalize it to its declared bound first, so it classifies against the
+        // type Jackson actually materializes — the same rule the reflective path applies in
+        // dev.vertique.input.processing.TypeClassifier#normalize. Without this the field fell
+        // through to OTHER and its nested schema was never emitted, diverging from reflection.
+        type = normalizeToBound(type);
+
         // Optional<T> wrapper — classify by the wrapped type (see method javadoc). The type
         // argument is normalized to its upper bound first so bounded generics
         // (Optional<? extends Child>, Optional<T extends Child>) classify against Child, the
