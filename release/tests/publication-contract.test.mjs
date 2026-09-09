@@ -497,6 +497,7 @@ describe('CentralPomMetadataContractTest', () => {
     const policy = loadPolicy(POLICY_PATH);
     const inventory = deriveInventory(REPO_ROOT, policy);
     const modulesByArtifactId = reactorModulesByArtifactId();
+    const publishedArtifactIds = new Set(inventory.published.map((unit) => unit.artifactId));
 
     for (const unit of inventory.published) {
       if (unit.artifactId === 'vertique-parent' || unit.artifactId === 'vertique-app-parent') continue;
@@ -508,6 +509,13 @@ describe('CentralPomMetadataContractTest', () => {
         seen.add(current.artifactId);
         const parentArtifactId = declaredParentArtifactId(path.join(current.relPath, 'pom.xml'));
         assert.ok(parentArtifactId, `${unit.artifactId} declares no parent POM`);
+        // Central resolves a deployed POM's coordinates and inherited metadata
+        // through its parent chain, so an unpublished ancestor (a reactor-only
+        // aggregator) fails first-time component validation.
+        assert.ok(
+          publishedArtifactIds.has(parentArtifactId),
+          `${unit.artifactId} parent ${parentArtifactId} is not a published GAV; every ancestor of a published unit must itself be published`
+        );
         current = modulesByArtifactId.get(parentArtifactId);
         assert.ok(current, `${unit.artifactId} parent ${parentArtifactId} is not in the reactor`);
       }
