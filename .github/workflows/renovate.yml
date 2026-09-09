@@ -45,7 +45,3 @@ jobs:
           token: '${{ steps.app-token.outputs.token }}'
         env:
           RENOVATE_REPOSITORIES: '${{ github.repository }}'
-          # Temporary: diagnosing a platform-unknown-error from initRepo after
-          # switching to GitHub App auth. Drop this once the cause is confirmed
-          # fixed.
-          LOG_LEVEL: debug
