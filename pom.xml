@@ -1363,21 +1363,21 @@ SPDX-License-Identifier: EUPL-1.2
                     <version>1.8.0</version>
                     <configuration>
                         <!--
-                          ossrh (not resolveCiFriendliesOnly): Central's one-time
-                          new-component validation reads each leaf POM on its own,
-                          without walking the <parent> chain. resolveCiFriendliesOnly
-                          only resolves the ${revision} CI-friendly version and
-                          otherwise keeps the source POM as-is, so a module that
-                          inherits url/scm/developers from an ancestor pom, or
-                          leaves dependency versions to dependencyManagement,
-                          flattens into a leaf POM missing all of that — harmless
-                          for already-published artifacts (Central grandfathers
-                          them past new-component validation) but a hard failure
-                          the first time a new artifact is published. ossrh inlines
-                          the full effective model instead, so every deployed POM
-                          is self-contained.
+                          resolveCiFriendliesOnly, not ossrh. Deployed leaf POMs
+                          keep their <parent> and inherit url/scm/developers and
+                          dependency versions through it; Central resolves that
+                          chain as long as every ancestor is itself a published
+                          GAV (0.1.0 shipped 109 first-time modules this way).
+                          The 0.2.0 validation failure was two modules whose
+                          parent was a reactor-only aggregator — enforced now by
+                          publication-contract.test.mjs — not parent inheritance.
+
+                          ossrh must not come back: it strips dependencyManagement
+                          and build from every flattened POM, including the
+                          published vertique-parent, which downstream reactors
+                          (vertique-enterprise) inherit as their Maven parent.
                         -->
-                        <flattenMode>ossrh</flattenMode>
+                        <flattenMode>resolveCiFriendliesOnly</flattenMode>
                         <!--
                           Required for the pom-packaging artifacts. The plugin
                           writes .flattened-pom.xml for them but does not make
