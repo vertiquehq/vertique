@@ -70,11 +70,13 @@ SPDX-License-Identifier: EUPL-1.2
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
-                    <version>3.5.5</version>
+                    <version>3.6.0</version>
                 </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-failsafe-plugin</artifactId>
+                    <!-- Kept in lockstep with the framework root POM's pin below 3.6.0 (see there
+                         for the archetype skip-regression this avoids). -->
                     <version>3.5.5</version>
                 </plugin>
             </plugins>
@@ -111,7 +113,7 @@ SPDX-License-Identifier: EUPL-1.2
                 -->
                 <groupId>com.diffplug.spotless</groupId>
                 <artifactId>spotless-maven-plugin</artifactId>
-                <version>3.3.0</version>
+                <version>3.10.2</version>
                 <inherited>false</inherited>
                 <configuration>
                     <java>
@@ -123,7 +125,7 @@ SPDX-License-Identifier: EUPL-1.2
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>flatten-maven-plugin</artifactId>
-                <version>1.7.0</version>
+                <version>1.8.0</version>
                 <inherited>false</inherited>
                 <configuration>
                     <updatePomFile>true</updatePomFile>

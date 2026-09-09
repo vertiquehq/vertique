@@ -44,7 +44,7 @@ assert processorCoordinates == expectedProcessorCoordinates:
         "Public parent must expose exactly the versionless managed Dagger and facade coordinates: ${processorCoordinates}"
 
 Map<String, String> expectedManagedVersions = [
-        "com.google.dagger:dagger-compiler": "2.59.2",
+        "com.google.dagger:dagger-compiler": "2.60.1",
         "dev.vertique:vertique-codegen-all": stagedVersion
 ]
 def assertManagedVersions = { pom, String modelDescription ->
@@ -161,7 +161,7 @@ String materializedProcessorPath = javacArguments[processorPathOption + 1]
 List<String> materializedProcessors =
         materializedProcessorPath.split(java.util.regex.Pattern.quote(File.pathSeparator)).toList()
 List<String> materializedProcessorNames = materializedProcessors.collect { new File(it).name }
-assert materializedProcessorNames.count("dagger-compiler-2.59.2.jar") == 1:
+assert materializedProcessorNames.count("dagger-compiler-2.60.1.jar") == 1:
         "Materialized processor path must contain Dagger exactly once: ${materializedProcessorNames}"
 assert materializedProcessorNames.count("vertique-codegen-all-${stagedVersion}.jar") == 1:
         "Materialized processor path must contain the facade exactly once: ${materializedProcessorNames}"

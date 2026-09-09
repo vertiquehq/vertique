@@ -113,22 +113,22 @@ SPDX-License-Identifier: EUPL-1.2
         <java.version>21</java.version>
         <vertx.version>5.1.6</vertx.version>
         <lettuce.version>7.7.0.RELEASE</lettuce.version>
-        <dagger.version>2.59.2</dagger.version>
+        <dagger.version>2.60.1</dagger.version>
         <!-- Jackson 2.x line — the framework imports the Jackson 2 BOM (see dependencyManagement)
              to stay on 2.x deliberately, since Vert.x 5.1 supports both 2.x and 3.x. Keep aligned
              with the Jackson 2 line vertx-dependencies ships; the 2.x -> 3.x migration is separate. -->
-        <jackson.version>2.21.4</jackson.version>
+        <jackson.version>2.22.2</jackson.version>
         <micrometer.version>1.16.6</micrometer.version>
-        <opentelemetry.version>1.63.0</opentelemetry.version>
-        <opentelemetry-semconv.version>1.41.1</opentelemetry-semconv.version>
+        <opentelemetry.version>1.65.0</opentelemetry.version>
+        <opentelemetry-semconv.version>1.43.0</opentelemetry-semconv.version>
         <!-- io.prometheus client BOM version — align with the version micrometer-registry-prometheus pulls -->
-        <prometheus-metrics.version>1.4.3</prometheus-metrics.version>
+        <prometheus-metrics.version>1.8.0</prometheus-metrics.version>
         <lombok.version>1.18.42</lombok.version>
         <swagger-core.version>2.2.44</swagger-core.version>
         <jakarta.ws.rs.version>4.0.0</jakarta.ws.rs.version>
         <jakarta.inject.version>2.0.1</jakarta.inject.version>
         <jakarta.annotation.version>2.1.1</jakarta.annotation.version>
-        <logback.version>1.5.34</logback.version>
+        <logback.version>1.6.3</logback.version>
         <slf4j.version>2.0.17</slf4j.version>
         <caffeine.version>3.2.4</caffeine.version>
         <!-- Bucket4j is rate-limit-core's private local/cluster engine (contracts/rate-limit-runtime.md
@@ -139,11 +139,11 @@ SPDX-License-Identifier: EUPL-1.2
         <junit.jupiter.version>5.14.4</junit.jupiter.version>
         <rest-assured.version>6.0.0</rest-assured.version>
         <atlassian.swagger-validator.version>2.46.0</atlassian.swagger-validator.version>
-        <mockito.version>5.22.0</mockito.version>
+        <mockito.version>5.23.0</mockito.version>
         <flyway.version>12.0.2</flyway.version>
-        <postgresql.jdbc.version>42.7.11</postgresql.jdbc.version>
+        <postgresql.jdbc.version>42.7.13</postgresql.jdbc.version>
         <testcontainers.version>2.0.5</testcontainers.version>
-        <apicurio.version>3.2.4</apicurio.version>
+        <apicurio.version>3.3.3</apicurio.version>
         <avro.version>1.12.1</avro.version>
         <wiremock.version>3.13.2</wiremock.version>
         <jakarta.validation.version>3.1.1</jakarta.validation.version>
@@ -152,21 +152,26 @@ SPDX-License-Identifier: EUPL-1.2
         <victools.version>4.38.0</victools.version>
         <expressly.version>6.0.0</expressly.version>
         <owasp-html-sanitizer.version>20260313.1</owasp-html-sanitizer.version>
-        <cel.version>0.12.0</cel.version>
+        <cel.version>0.14.0</cel.version>
         <vault-java-driver.version>6.2.2</vault-java-driver.version>
-        <aws.sdk.version>2.48.3</aws.sdk.version>
+        <aws.sdk.version>2.54.14</aws.sdk.version>
         <azure-keyvault-secrets.version>4.11.0</azure-keyvault-secrets.version>
         <azure-identity.version>1.18.3</azure-identity.version>
         <lowkey-vault.version>7.3.0</lowkey-vault.version>
 
         <!-- Codegen -->
-        <javapoet.version>0.14.0</javapoet.version>
+        <javapoet.version>0.19.0</javapoet.version>
         <compile-testing.version>0.23.0</compile-testing.version>
 
         <!-- Plugin versions -->
         <maven.compiler.plugin.version>3.15.0</maven.compiler.plugin.version>
-        <maven.dependency.plugin.version>3.7.0</maven.dependency.plugin.version>
-        <maven.surefire.plugin.version>3.5.5</maven.surefire.plugin.version>
+        <maven.dependency.plugin.version>3.11.0</maven.dependency.plugin.version>
+        <maven.surefire.plugin.version>3.6.0</maven.surefire.plugin.version>
+        <!-- Pinned below 3.6.0: that release regresses skip-property handling for the
+             archetype modules' custom post-integration-test-bound executions (verified by
+             isolating the bump; -DskipTests then no longer suppresses the reproducibility-check
+             execution once archetype:integration-test itself is skipped, so it fails on a missing
+             generated-project directory). Revisit once upstream addresses it. -->
         <maven.failsafe.plugin.version>3.5.5</maven.failsafe.plugin.version>
         <maven.enforcer.plugin.version>3.6.3</maven.enforcer.plugin.version>
         <!-- Downstream parents may disable only this boundary rule and supply their own equivalent. -->
@@ -176,9 +181,9 @@ SPDX-License-Identifier: EUPL-1.2
         <maven.javadoc.plugin.version>3.12.0</maven.javadoc.plugin.version>
         <!-- RELEASE-001 frozen pin: staging invokes this exact deploy-file coordinate. -->
         <maven.deploy.plugin.version>3.1.4</maven.deploy.plugin.version>
-        <exec-maven-plugin.version>3.0.0</exec-maven-plugin.version>
+        <exec-maven-plugin.version>3.6.3</exec-maven-plugin.version>
         <jib-maven-plugin.version>3.5.1</jib-maven-plugin.version>
-        <spotless.version>3.3.0</spotless.version>
+        <spotless.version>3.10.2</spotless.version>
         <jacoco.version>0.8.12</jacoco.version>
         <!-- Per-module HTML/XML report at verify. CI sets this to true: the
              vertique-coverage-report aggregate XML is the only report CI
@@ -888,6 +893,15 @@ SPDX-License-Identifier: EUPL-1.2
                 <artifactId>compile-testing</artifactId>
                 <version>${compile-testing.version}</version>
             </dependency>
+            <!-- com.google.dagger:dagger-compiler ships a newer Guava than compile-testing pulls
+                 transitively; without this override Maven's mediation picks compile-testing's older
+                 one, and dagger-compiler's codegen then fails with NoSuchMethodError on a Graphs API
+                 method that version lacks. Pinned to the version dagger-compiler itself declares. -->
+            <dependency>
+                <groupId>com.google.guava</groupId>
+                <artifactId>guava</artifactId>
+                <version>33.6.0-jre</version>
+            </dependency>
             <dependency>
                 <groupId>org.opentest4j</groupId>
                 <artifactId>opentest4j</artifactId>
@@ -1346,7 +1360,7 @@ SPDX-License-Identifier: EUPL-1.2
                 <plugin>
                     <groupId>org.codehaus.mojo</groupId>
                     <artifactId>flatten-maven-plugin</artifactId>
-                    <version>1.7.0</version>
+                    <version>1.8.0</version>
                     <configuration>
                         <!--
                           ossrh (not resolveCiFriendliesOnly): Central's one-time
