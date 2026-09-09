@@ -1,0 +1,46 @@
+// SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+// SPDX-License-Identifier: EUPL-1.2
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: ['config:recommended'],
+  baseBranchPatterns: ['main'],
+  labels: ['dependencies'],
+  commitMessagePrefix: 'build(deps):',
+  prConcurrentLimit: 8,
+  // Every change still goes through a reviewed PR against branch-protected main
+  // (docs/standards/git-workflow.md) — Renovate never merges on its own here.
+  automerge: false,
+  // Major updates are left ungrouped (Renovate's default): each gets its own PR since migration
+  // risk needs individual review, unlike the routine patch/minor batch below.
+  packageRules: [
+    {
+      description: 'Group routine patch/minor Maven bumps into one PR per run to limit noise across this ~140-module reactor.',
+      matchManagers: ['maven'],
+      matchUpdateTypes: ['patch', 'minor'],
+      groupName: 'maven dependencies (non-major)',
+    },
+    {
+      description: "maven-failsafe-plugin 3.6.0 regresses skip-property handling for the archetype modules' custom post-integration-test executions — confirmed by isolating the bump (see THIRD-PARTY-NOTICES.md). Held back until fixed upstream.",
+      matchManagers: ['maven'],
+      matchPackageNames: ['org.apache.maven.plugins:maven-failsafe-plugin'],
+      allowedVersions: '<3.6.0',
+    },
+    {
+      description: 'com.google.guava:guava is deliberately pinned to the version dagger-compiler itself declares, overriding Maven mediation that would otherwise pick an older transitive Guava and break dagger-compiler codegen with a NoSuchMethodError (see THIRD-PARTY-NOTICES.md and the pom.xml comment on this dependencyManagement entry). Do not let Renovate move it independently of that pin rationale.',
+      matchManagers: ['maven'],
+      matchPackageNames: ['com.google.guava:guava'],
+      enabled: false,
+    },
+    {
+      description: 'GitHub Actions are pinned to commit SHAs with a version comment; let Renovate keep both in sync.',
+      matchManagers: ['github-actions'],
+      groupName: 'github actions',
+    },
+  ],
+  vulnerabilityAlerts: {
+    labels: ['security'],
+  },
+  // No internal `schedule` here: .github/workflows/renovate.yml's weekly cron is the single
+  // source of truth for cadence. An internal schedule would only add a second, easy-to-drift
+  // gate on top of it.
+}
