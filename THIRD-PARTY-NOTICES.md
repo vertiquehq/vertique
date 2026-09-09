@@ -42,7 +42,7 @@ finer-grained attribution is required.
 | `com.github.ben-manes.caffeine:caffeine` | 3.2.4 | Apache-2.0 | |
 | `com.bucket4j:bucket4j_jdk17-core` / `bucket4j_jdk17-vertx` | 8.19.0 | Apache-2.0 | Isolated to `vertique-rate-limit-core`/`-redis` |
 | `org.flywaydb:flyway-core` / `flyway-database-postgresql` | 12.0.2 | Apache-2.0 | Community edition; Redgate's paid-tier features are license-key gated but do not change this artifact's license |
-| `org.postgresql:postgresql` | 42.7.11 | BSD-2-Clause | See [known compliance flags](#known-compliance-flags) — a low-severity CVE is fixed in 42.7.12 |
+| `org.postgresql:postgresql` | 42.7.13 | BSD-2-Clause | |
 | `org.apache.avro:avro` | 1.12.1 | Apache-2.0 | |
 | `io.apicurio:apicurio-registry-avro-serde-kafka` | 3.3.3 | Apache-2.0 | |
 | `com.github.victools:jsonschema-generator` (+ `-module-jackson`, `-module-jakarta-validation`, `-module-swagger-2`) | 4.38.0 | Apache-2.0 | |
@@ -108,8 +108,6 @@ source tree.
   check, which then fails on the generated-project directory it expected `archetype:integration-test`
   to have produced. Confirmed by isolating the bump against a clean build. Revisit once upstream
   addresses it.
-- **`org.postgresql:postgresql` 42.7.11** — one open low-severity advisory, fixed in 42.7.12.
-  Not a blocker, but the next routine dependency bump should clear it.
 - **Classpath-exception artifacts** — `jakarta.ws.rs-api`, `jakarta.annotation-api`, and
   `expressly` carry GPL-2.0-with-classpath-exception as their secondary license option. The
   classpath exception permits linking without extending GPL terms to Vertique or applications
