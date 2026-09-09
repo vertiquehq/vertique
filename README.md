@@ -36,7 +36,7 @@ capabilities the application uses:
 <parent>
     <groupId>dev.vertique</groupId>
     <artifactId>vertique-app-parent</artifactId>
-    <version>0.2.0-SNAPSHOT</version> <!-- replace with the released Vertique version -->
+    <version>0.3.0-SNAPSHOT</version> <!-- replace with the released Vertique version -->
     <relativePath/>
 </parent>
 
