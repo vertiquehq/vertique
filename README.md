@@ -142,6 +142,7 @@ and the complete [module index](docs/modules.md).
 - [Coding conventions](docs/coding-conventions.md)
 - [Packaging](docs/packaging.md)
 - [Workflow guide](docs/workflow.md)
+- [Third-party notices](THIRD-PARTY-NOTICES.md)
 
 Each published module owns its detailed reference documentation at
 `src/main/resources/META-INF/vertique/module.md`.
