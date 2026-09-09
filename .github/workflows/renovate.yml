@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+# SPDX-License-Identifier: EUPL-1.2
+#
+# Runs Renovate on a weekly schedule via the self-hosted renovatebot/github-action,
+# reading config from renovate.json5 at the repo root. Only ever fires from a
+# schedule or a manually triggered workflow_dispatch — never from pull_request or
+# any other event that could carry untrusted code — so RENOVATE_TOKEN is never
+# reachable from a fork or an unreviewed PR.
+#
+# RENOVATE_TOKEN must be a PAT (not the default GITHUB_TOKEN): PRs opened with the
+# default token do not trigger other workflows, which would leave the required CI
+# check permanently unrun on every Renovate PR and block it behind branch
+# protection. The default token here stays read-only; all mutating calls go
+# through the PAT.
+
+name: Renovate
+
+on:
+  schedule:
+    - cron: '0 4 * * 1' # weekly, Monday 04:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  renovate:
+    name: Renovate
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: renovatebot/github-action@37beffda261423addd537c33f2d126df7f6ffbab # v46.2.6
+        with:
+          configurationFile: renovate.json5
+          token: '${{ secrets.RENOVATE_TOKEN }}'
+        env:
+          RENOVATE_REPOSITORIES: '${{ github.repository }}'

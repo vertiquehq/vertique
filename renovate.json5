@@ -40,5 +40,7 @@
   vulnerabilityAlerts: {
     labels: ['security'],
   },
-  schedule: ['before 6am on monday'],
+  // No internal `schedule` here: .github/workflows/renovate.yml's weekly cron is the single
+  // source of truth for cadence. An internal schedule would only add a second, easy-to-drift
+  // gate on top of it.
 }
