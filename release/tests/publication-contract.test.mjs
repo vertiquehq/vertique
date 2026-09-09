@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url';
 import { loadPolicy, deriveInventory, verifyInventory, readPom } from '../verify-publication.mjs';
 
 /** The development line both independently invokable public parents must declare (FR-REL-001). */
-const DEVELOPMENT_VERSION = '0.2.0-SNAPSHOT';
+const DEVELOPMENT_VERSION = '0.3.0-SNAPSHOT';
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(TEST_DIR, '..', '..');

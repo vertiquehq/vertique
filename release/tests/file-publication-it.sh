@@ -26,8 +26,8 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-FINAL_VERSION="0.2.0"
-DEV_VERSION="0.2.0-SNAPSHOT"
+FINAL_VERSION="0.3.0"
+DEV_VERSION="0.3.0-SNAPSHOT"
 
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vertique-pub-it.XXXXXX")"
 trap 'rm -rf "$WORK_DIR"' EXIT
