@@ -32,7 +32,7 @@ assert processorCoordinates == expectedProcessorCoordinates:
         "Lombok opt-in must retain exactly versionless managed Dagger, facade, and Lombok coordinates: ${processorCoordinates}"
 
 Map<String, String> expectedManagedVersions = [
-        "com.google.dagger:dagger-compiler": "2.59.2",
+        "com.google.dagger:dagger-compiler": "2.60.1",
         "dev.vertique:vertique-codegen-all": vertiqueVersion.toString(),
         "org.projectlombok:lombok": "1.18.42"
 ]
@@ -75,7 +75,7 @@ List<String> materializedProcessorNames =
         materializedProcessorPath
                 .split(java.util.regex.Pattern.quote(File.pathSeparator))
                 .collect { new File(it).name }
-assert materializedProcessorNames.count("dagger-compiler-2.59.2.jar") == 1:
+assert materializedProcessorNames.count("dagger-compiler-2.60.1.jar") == 1:
         "Materialized processor path must contain Dagger exactly once: ${materializedProcessorNames}"
 assert materializedProcessorNames.count("vertique-codegen-all-${vertiqueVersion}.jar") == 1:
         "Materialized processor path must contain the facade exactly once: ${materializedProcessorNames}"
