@@ -127,7 +127,7 @@ SPDX-License-Identifier: EUPL-1.2
         <swagger-core.version>2.2.44</swagger-core.version>
         <jakarta.ws.rs.version>4.0.0</jakarta.ws.rs.version>
         <jakarta.inject.version>2.0.1</jakarta.inject.version>
-        <jakarta.annotation.version>2.1.1</jakarta.annotation.version>
+        <jakarta.annotation.version>3.0.0</jakarta.annotation.version>
         <logback.version>1.6.3</logback.version>
         <slf4j.version>2.0.17</slf4j.version>
         <caffeine.version>3.2.4</caffeine.version>
