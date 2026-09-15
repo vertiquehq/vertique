@@ -144,11 +144,16 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToP
     headRepository: run.head_repository?.full_name,
     headBranch: run.head_branch,
     headSha: run.head_sha,
-    // Resolved from the remote, not from the local checkout: the checkout is
-    // pinned to the triggering SHA, so asking it what main is would always
-    // agree with itself and prove nothing.
+    // Not the checkout's own HEAD, which is pinned to the triggering SHA and
+    // would always agree with itself. The remote-tracking ref is what the
+    // checkout fetched from the remote (fetch-depth: 0) moments ago, while it
+    // still held a credential; an `ls-remote` here runs after the credential
+    // was discarded (persist-credentials: false), and a private repository
+    // answers it with an authentication failure — which read as "" and denied
+    // every publication while this repository was private.
     currentMainSha:
       process.env.VERTIQUE_CURRENT_MAIN_SHA ||
+      gitOutput(['rev-parse', '--verify', 'refs/remotes/origin/main']) ||
       gitOutput(['ls-remote', 'origin', 'refs/heads/main']).split(/\s+/)[0],
     version: process.env.VERTIQUE_VERSION || declaredVersion(),
     existingFinalTags: (process.env.VERTIQUE_FINAL_TAGS || gitOutput(['tag', '--list', 'v*']))
@@ -156,13 +161,22 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToP
       .filter(Boolean),
   });
 
+  const verdict = `snapshot-guard: ${decision.allowed ? 'ALLOW' : 'DENY'} — ${decision.reason}`;
+
   if (process.argv.includes('--github-output')) {
+    // stdout carries key=value only — the workflow redirects it into
+    // $GITHUB_OUTPUT, so a prose line here would corrupt output parsing.
     console.log(`allowed=${decision.allowed}`);
     console.log(`checkout_sha=${decision.checkoutSha ?? ''}`);
     console.log(`version=${decision.allowed ? (process.env.VERTIQUE_VERSION || declaredVersion()) : ''}`);
     console.log(`reason=${decision.reason}`);
+    // The verdict also goes to stderr, which is NOT redirected, so it reaches
+    // the workflow log. Without it the guard declined silently: publication
+    // was skipped on every main push with no visible reason, and an operator
+    // had to inspect step outputs to find out why.
+    console.error(verdict);
   } else {
-    console.log(`snapshot-guard: ${decision.allowed ? 'ALLOW' : 'DENY'} — ${decision.reason}`);
+    console.log(verdict);
   }
   // Exit 0 either way: a denial is a normal, expected outcome, not a workflow
   // failure. A red run here would be indistinguishable from a real fault.
