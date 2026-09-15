@@ -1373,9 +1373,9 @@ SPDX-License-Identifier: EUPL-1.2
                           publication-contract.test.mjs — not parent inheritance.
 
                           ossrh must not come back: it strips dependencyManagement
-                          and build from every flattened POM, including the
-                          published vertique-parent, which downstream reactors
-                          (vertique-enterprise) inherit as their Maven parent.
+                          and build from every flattened POM, and a published
+                          parent POM has to stay intact for anything that
+                          declares it as its Maven parent.
                         -->
                         <flattenMode>resolveCiFriendliesOnly</flattenMode>
                         <!--
