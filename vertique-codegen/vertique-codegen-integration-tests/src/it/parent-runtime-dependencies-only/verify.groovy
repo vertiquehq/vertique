@@ -114,25 +114,24 @@ assert stagedParent.properties.'project.build.sourceEncoding'.text() == "UTF-8":
 assert stagedParent.properties.'project.reporting.outputEncoding'.text() == "UTF-8":
         "Published parent must set UTF-8 reporting encoding"
 
-def stagedFlattenPlugins = stagedParent.build.plugins.plugin.findAll {
-    it.groupId.text() == "org.codehaus.mojo" && it.artifactId.text() == "flatten-maven-plugin"
+// The application parent is a third-party contract published exactly as
+// authored: a literal version and none of the framework's own build or
+// release machinery. The compiler plugin above is the only build plugin.
+List<String> stagedPluginCoordinates = stagedParent.build.plugins.plugin.collect {
+    "${it.groupId.text()}:${it.artifactId.text()}"
 }
-assert stagedFlattenPlugins.size() == 1:
-        "Published parent must retain exactly one flatten plugin configuration"
-def stagedFlattenPlugin = stagedFlattenPlugins[0]
-assert stagedFlattenPlugin.inherited.text() == "false":
-        "Published parent flatten plugin must be non-inherited"
-assert stagedFlattenPlugin.configuration.updatePomFile.text() == "true":
-        "Published parent flatten plugin must retain updatePomFile=true"
-assert stagedFlattenPlugin.executions.execution.collect { it.id.text() }.toSet() == ["flatten", "flatten-clean"].toSet():
-        "Published parent must retain flatten and flatten-clean executions"
+assert stagedPluginCoordinates == ["org.apache.maven.plugins:maven-compiler-plugin"]:
+        "Published parent must declare only the compiler plugin, found ${stagedPluginCoordinates}"
+assert stagedParent.properties.revision.isEmpty():
+        "Published parent must not declare a CI-friendly revision property"
+assert stagedParent.version.text() == stagedVersion:
+        "Published parent must carry the literal version ${stagedVersion}, found ${stagedParent.version.text()}"
 
-def inheritedFlattenPlugins = effectivePom.build.plugins.plugin.findAll {
-    it.groupId.text() == "org.codehaus.mojo" && it.artifactId.text() == "flatten-maven-plugin"
+def inheritedInternalPlugins = effectivePom.build.plugins.plugin.findAll {
+    it.artifactId.text() == "flatten-maven-plugin" || it.artifactId.text() == "spotless-maven-plugin"
 }
-assert inheritedFlattenPlugins.every {
-    it.executions.execution.isEmpty() && it.configuration.updatePomFile.isEmpty()
-}: "Consumer effective POM must not inherit flatten executions or updatePomFile configuration"
+assert inheritedInternalPlugins.isEmpty():
+        "Consumer effective POM must not inherit framework build or release plugins: ${inheritedInternalPlugins.collect { it.artifactId.text() }}"
 
 File targetDirectory = new File(basedir, "target")
 File javacDebugScript = new File(targetDirectory, "javac.sh")

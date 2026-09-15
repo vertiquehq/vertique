@@ -25,9 +25,11 @@ Formatting is enforced by **Spotless Maven Plugin** with **Palantir Java Format*
 ### Commands
 
 ```bash
-./mvnw spotless:apply              # auto-fix formatting
-./mvnw spotless:check              # check without modifying (CI use)
+./mvnw -pl '!vertique-app-parent' spotless:apply   # auto-fix formatting
+./mvnw -pl '!vertique-app-parent' spotless:check   # check without modifying (CI use)
 ```
+
+`vertique-app-parent` is excluded on purpose: it is the parent third-party applications declare, so it carries none of the framework's build tooling — not even the formatter — and Maven cannot resolve the `spotless` prefix for it.
 
 Run `spotless:apply` before committing. The formatter handles line wrapping, indentation, import ordering, and whitespace — do not fight it.
 

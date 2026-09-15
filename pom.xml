@@ -1382,9 +1382,10 @@ SPDX-License-Identifier: EUPL-1.2
                           Required for the pom-packaging artifacts. The plugin
                           writes .flattened-pom.xml for them but does not make
                           it the installed/deployed POM unless told to, so
-                          vertique-parent, vertique-app-parent and vertique-bom
-                          would publish with a literal ${revision} that no
-                          consumer can resolve.
+                          vertique-parent and vertique-bom would publish with a
+                          literal ${revision} that no consumer can resolve.
+                          (vertique-app-parent carries a literal version and no
+                          flatten plugin at all: it is a third-party contract.)
                         -->
                         <updatePomFile>true</updatePomFile>
                     </configuration>
