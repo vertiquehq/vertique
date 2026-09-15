@@ -94,12 +94,16 @@ describe('PublicSnapshotWorkflowContractTest', () => {
     assert.match(yaml, /workflows:\s*\[?\s*["']?CI["']?/, 'it must name the required CI workflow');
     assert.match(yaml, /types:\s*\[\s*completed\s*\]/, 'it must trigger on completion');
     assert.match(yaml, /branches:\s*\[?\s*main\s*\]?/, 'it must be limited to main');
-    // The checkout must pin the exact triggering SHA.
+    // The checkout must pin the exact triggering SHA, and fetch every ref: the
+    // guard reads current main from the fetched refs/remotes/origin/main, the
+    // only credentialed view of the remote the job gets once the checkout has
+    // discarded its token.
     assert.match(
       yaml,
       /ref:\s*\$\{\{\s*github\.event\.workflow_run\.head_sha/,
       'checkout must use the exact triggering head_sha, not a moving ref'
     );
+    assert.match(yaml, /fetch-depth:\s*0/, 'the checkout must fetch all refs so origin/main is available to the guard');
     // The decision itself is delegated to the versioned guard.
     assert.match(yaml, /snapshot-guard\.mjs/, 'the workflow must delegate the decision to the guard');
   });
