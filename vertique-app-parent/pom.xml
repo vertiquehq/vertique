@@ -11,7 +11,7 @@ SPDX-License-Identifier: EUPL-1.2
 
     <groupId>dev.vertique</groupId>
     <artifactId>vertique-app-parent</artifactId>
-    <version>${revision}</version>
+    <version>0.3.0-SNAPSHOT</version>
     <packaging>pom</packaging>
     <name>Vertique Application Parent</name>
     <description>Standalone Maven parent for Vertique applications</description>
@@ -46,7 +46,6 @@ SPDX-License-Identifier: EUPL-1.2
     </scm>
 
     <properties>
-        <revision>0.3.0-SNAPSHOT</revision>
         <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
@@ -57,7 +56,7 @@ SPDX-License-Identifier: EUPL-1.2
             <dependency>
                 <groupId>dev.vertique</groupId>
                 <artifactId>vertique-bom</artifactId>
-                <version>${revision}</version>
+                <version>0.3.0-SNAPSHOT</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -75,8 +74,6 @@ SPDX-License-Identifier: EUPL-1.2
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-failsafe-plugin</artifactId>
-                    <!-- Kept in lockstep with the framework root POM's pin below 3.6.0 (see there
-                         for the archetype skip-regression this avoids). -->
                     <version>3.5.5</version>
                 </plugin>
             </plugins>
@@ -100,53 +97,15 @@ SPDX-License-Identifier: EUPL-1.2
                 </configuration>
             </plugin>
             <plugin>
-                <!--
-                  Declared so the `spotless` goal prefix resolves for this module when the
-                  framework reactor is invoked from the root (`./mvnw spotless:apply`). This POM
-                  is deliberately standalone (no parent), so it inherits none of the framework's
-                  plugin declarations, and a missing prefix here fails the whole reactor.
-
-                  inherited=false: applications that use this POM as their parent are NOT
-                  subjected to the framework's own code-formatting policy.
-
-                  Keep the version in sync with `spotless.version` in the framework root POM.
-                -->
                 <groupId>com.diffplug.spotless</groupId>
                 <artifactId>spotless-maven-plugin</artifactId>
                 <version>3.10.2</version>
-                <inherited>false</inherited>
                 <configuration>
                     <java>
                         <palantirJavaFormat/>
                         <removeUnusedImports/>
                     </java>
                 </configuration>
-            </plugin>
-            <plugin>
-                <groupId>org.codehaus.mojo</groupId>
-                <artifactId>flatten-maven-plugin</artifactId>
-                <version>1.8.0</version>
-                <inherited>false</inherited>
-                <configuration>
-                    <updatePomFile>true</updatePomFile>
-                    <flattenMode>resolveCiFriendliesOnly</flattenMode>
-                </configuration>
-                <executions>
-                    <execution>
-                        <id>flatten</id>
-                        <phase>process-resources</phase>
-                        <goals>
-                            <goal>flatten</goal>
-                        </goals>
-                    </execution>
-                    <execution>
-                        <id>flatten-clean</id>
-                        <phase>clean</phase>
-                        <goals>
-                            <goal>clean</goal>
-                        </goals>
-                    </execution>
-                </executions>
             </plugin>
         </plugins>
     </build>

@@ -368,13 +368,24 @@ function declaredRevision(pomRelPath) {
   return match[1].trim();
 }
 
+/** Reads a standalone POM's own literal `<version>` (the first one after its artifactId). */
+function declaredLiteralVersion(pomRelPath, artifactId) {
+  const xml = readFileSync(path.join(REPO_ROOT, pomRelPath), 'utf8');
+  const after = xml.slice(xml.indexOf(`<artifactId>${artifactId}</artifactId>`));
+  const match = /<version>([^<]+)<\/version>/.exec(after);
+  assert.ok(match, `${pomRelPath} declares no literal <version> after its artifactId`);
+  return match[1].trim();
+}
+
 describe('PublicVersionContractTest', () => {
-  it('rootAndStandaloneApplicationParentDefaultToZeroOneSnapshot', () => {
-    // Both public parents are independently invokable, so each carries its own
-    // <revision>. main must identify the actual next intended release
-    // (FR-REL-001), not the 0.0.0-SNAPSHOT cutover placeholder.
+  it('rootRevisionAndApplicationParentLiteralVersionAgree', () => {
+    // main must identify the actual next intended release (FR-REL-001), not
+    // the 0.0.0-SNAPSHOT cutover placeholder. The root declares it as the
+    // CI-friendly <revision>; the application parent, a third-party contract
+    // published exactly as authored, declares it as a literal <version> that
+    // the post-release bump and the release build keep in step.
     assert.equal(declaredRevision('pom.xml'), DEVELOPMENT_VERSION);
-    assert.equal(declaredRevision('vertique-app-parent/pom.xml'), DEVELOPMENT_VERSION);
+    assert.equal(declaredLiteralVersion('vertique-app-parent/pom.xml', 'vertique-app-parent'), DEVELOPMENT_VERSION);
 
     // Both parents are themselves publishable, so the version they declare is
     // the version consumers resolve.
@@ -382,6 +393,31 @@ describe('PublicVersionContractTest', () => {
     const published = deriveInventory(REPO_ROOT, policy).published.map((u) => u.artifactId);
     assert.ok(published.includes('vertique-parent'));
     assert.ok(published.includes('vertique-app-parent'));
+  });
+
+  it('applicationParentCarriesNoInternalBuildOrReleaseMachinery', () => {
+    // Applications declare this POM as their parent. Nothing of the framework's
+    // own release process may leak into it: no CI-friendly placeholder, no
+    // flatten plugin, no <parent> chain. The formatter is the exception, on
+    // purpose: applications inherit a working spotless configuration.
+    const xml = readFileSync(path.join(REPO_ROOT, 'vertique-app-parent', 'pom.xml'), 'utf8');
+    assert.doesNotMatch(xml, /\$\{revision\}/, 'app-parent must not use the CI-friendly ${revision}');
+    assert.doesNotMatch(xml, /<revision>[^<]*<\/revision>/, 'app-parent must not declare a <revision> property');
+    assert.doesNotMatch(xml, /flatten-maven-plugin/, 'app-parent must not declare the flatten plugin');
+    assert.doesNotMatch(xml, /<parent>/, 'app-parent must stay standalone');
+    const spotless = /<artifactId>spotless-maven-plugin<\/artifactId>[\s\S]*?<\/plugin>/.exec(xml);
+    assert.ok(spotless, 'app-parent must give applications the formatter');
+    assert.doesNotMatch(spotless[0], /<inherited>\s*false/, 'the formatter must be inherited by applications');
+    assert.doesNotMatch(spotless[0], /<executions>/, 'the formatter must not be bound to the lifecycle');
+    assert.match(spotless[0], /<palantirJavaFormat\/>/, 'the formatter must use the framework style');
+    // ${project.version} would interpolate in the application that declares
+    // this parent, so the BOM import is a second literal, held equal to the
+    // artifact's own version.
+    const own = declaredLiteralVersion('vertique-app-parent/pom.xml', 'vertique-app-parent');
+    const bomImport = /<artifactId>vertique-bom<\/artifactId>[\s\S]*?<version>([^<]+)<\/version>/.exec(xml);
+    assert.ok(bomImport, 'app-parent must import vertique-bom');
+    assert.equal(bomImport[1].trim(), own, 'the BOM import must name the same literal version as the parent itself');
+    assert.doesNotMatch(xml, /\$\{project\.version\}/, 'app-parent must not rely on ${project.version}');
   });
 
   it('declaresReleaseShapedPayloadPolicyForEveryPublishedPackaging', () => {

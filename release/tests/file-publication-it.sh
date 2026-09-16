@@ -56,13 +56,20 @@ BASELINE_STATUS="$(git status --porcelain)"
 if [[ -z "${VERTIQUE_IT_REUSE_REPO:-}" ]]; then
   echo "file-publication-it: installing reactor at $FINAL_VERSION into isolated repository (this takes a while)..."
   # -Drevision is the whole point of FR-REL-003: the final version is supplied
-  # at build time, so the selected source commit is never edited. Both public
-  # parents declare their own <revision>, and a CLI property overrides both.
+  # at build time, so the selected source commit is never edited. The root
+  # declares <revision>, and a CLI property overrides it. vertique-app-parent
+  # is a third-party contract with a literal <version> that ${revision} cannot
+  # reach, so the release build applies the final version to that one file in
+  # its workspace — here, restored right after the install so the cleanliness
+  # check below still proves the commit itself was never edited.
   # Archetype integration tests generate a project pinned to the development
   # line and build it, so they cannot also run against a final-version staging
   # build. They are functional proof of the archetypes and belong to PUB-BUILD
   # (`clean verify` at the development version); this stage proves artifact
   # SHAPE, so it skips them rather than pinning a version that breaks one mode.
+  bash release/set-app-parent-version.sh --version "$FINAL_VERSION" \
+    || fail "could not apply $FINAL_VERSION to vertique-app-parent"
+  INSTALL_STATUS=0
   ./mvnw -ntp -q -B \
     -Dmaven.repo.local="$LOCAL_REPO" \
     -Drevision="$FINAL_VERSION" \
@@ -70,7 +77,10 @@ if [[ -z "${VERTIQUE_IT_REUSE_REPO:-}" ]]; then
     -Darchetype.test.skip=true \
     -Prelease \
     clean install \
-    || fail "isolated install failed"
+    || INSTALL_STATUS=$?
+  bash release/set-app-parent-version.sh --version "$DEV_VERSION" \
+    || fail "could not restore vertique-app-parent to $DEV_VERSION"
+  [[ "$INSTALL_STATUS" == "0" ]] || fail "isolated install failed"
 fi
 
 # --- stage the derived allowlist into a file:// repository ------------------
@@ -87,7 +97,10 @@ EXPECTED_GAVS="$(node release/verify-publication.mjs --json | node -e '
   let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
     const r=JSON.parse(s); console.log(r.published.length);
   });')"
-[[ "$EXPECTED_GAVS" == "93" ]] || fail "expected 93 publishable GAVs, derived $EXPECTED_GAVS"
+# The policy owns the expected count (publication-contract.test.mjs holds it
+# equal to the derived inventory); a literal here went stale within weeks.
+POLICY_GAVS="$(node -e 'console.log(JSON.parse(require("fs").readFileSync("release/publication-policy.json","utf8")).expectedPublishableGavCount)')"
+[[ "$EXPECTED_GAVS" == "$POLICY_GAVS" ]] || fail "expected $POLICY_GAVS publishable GAVs per publication-policy.json, derived $EXPECTED_GAVS"
 
 # deploysExactlyAllowlistedCoordinatesAndClassifiers
 node release/verify-publication.mjs \
