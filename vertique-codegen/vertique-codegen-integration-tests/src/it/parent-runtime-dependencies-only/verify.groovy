@@ -115,23 +115,29 @@ assert stagedParent.properties.'project.reporting.outputEncoding'.text() == "UTF
         "Published parent must set UTF-8 reporting encoding"
 
 // The application parent is a third-party contract published exactly as
-// authored: a literal version and none of the framework's own build or
-// release machinery. The compiler plugin above is the only build plugin.
+// authored: a literal version, the compiler wiring, a formatter for the
+// application to use, and none of the framework's release machinery.
 List<String> stagedPluginCoordinates = stagedParent.build.plugins.plugin.collect {
     "${it.groupId.text()}:${it.artifactId.text()}"
 }
-assert stagedPluginCoordinates == ["org.apache.maven.plugins:maven-compiler-plugin"]:
-        "Published parent must declare only the compiler plugin, found ${stagedPluginCoordinates}"
+assert stagedPluginCoordinates == [
+        "org.apache.maven.plugins:maven-compiler-plugin",
+        "com.diffplug.spotless:spotless-maven-plugin"
+]: "Published parent must declare exactly the compiler and formatter plugins, found ${stagedPluginCoordinates}"
 assert stagedParent.properties.revision.isEmpty():
         "Published parent must not declare a CI-friendly revision property"
 assert stagedParent.version.text() == stagedVersion:
         "Published parent must carry the literal version ${stagedVersion}, found ${stagedParent.version.text()}"
 
-def inheritedInternalPlugins = effectivePom.build.plugins.plugin.findAll {
-    it.artifactId.text() == "flatten-maven-plugin" || it.artifactId.text() == "spotless-maven-plugin"
-}
-assert inheritedInternalPlugins.isEmpty():
-        "Consumer effective POM must not inherit framework build or release plugins: ${inheritedInternalPlugins.collect { it.artifactId.text() }}"
+assert effectivePom.build.plugins.plugin.findAll { it.artifactId.text() == "flatten-maven-plugin" }.isEmpty():
+        "Consumer effective POM must not inherit the framework's flatten plugin"
+def inheritedSpotless = effectivePom.build.plugins.plugin.findAll { it.artifactId.text() == "spotless-maven-plugin" }
+assert inheritedSpotless.size() == 1:
+        "Consumer must inherit the formatter from the published parent, found ${inheritedSpotless.size()}"
+assert !inheritedSpotless[0].configuration.java.palantirJavaFormat.isEmpty():
+        "Inherited formatter must carry the framework style"
+assert inheritedSpotless[0].executions.execution.isEmpty():
+        "Inherited formatter must not be bound to the consumer's lifecycle"
 
 File targetDirectory = new File(basedir, "target")
 File javacDebugScript = new File(targetDirectory, "javac.sh")

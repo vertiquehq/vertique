@@ -124,7 +124,7 @@ jobs:
       # Formatting is a required pre-build gate: fail fast before compiling or
       # running tests when Java sources do not match the repository formatter.
       - name: Check formatting
-        run: ./mvnw -ntp -pl '!vertique-app-parent' spotless:check
+        run: ./mvnw -ntp spotless:check
 
       # Per-module HTML reports are skipped: the vertique-coverage-report
       # aggregate XML produced by this same invocation is the only coverage

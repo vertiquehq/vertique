@@ -9,17 +9,6 @@ SPDX-License-Identifier: EUPL-1.2
 
     <modelVersion>4.0.0</modelVersion>
 
-    <!--
-      Standalone parent for third-party Vertique applications. It is published
-      exactly as authored: a literal version, the BOM import, the compiler
-      wiring an application needs, and nothing of the framework's own build or
-      release machinery (no CI-friendly version placeholder, no flatten plugin,
-      no formatter).
-      The framework's release tooling applies a final version to this file in
-      its disposable release workspace; the post-release bump keeps the literal
-      in step with the root <revision>, and publication-contract.test.mjs holds
-      the two equal.
-    -->
     <groupId>dev.vertique</groupId>
     <artifactId>vertique-app-parent</artifactId>
     <version>0.3.0-SNAPSHOT</version>
@@ -67,9 +56,6 @@ SPDX-License-Identifier: EUPL-1.2
             <dependency>
                 <groupId>dev.vertique</groupId>
                 <artifactId>vertique-bom</artifactId>
-                <!-- Literal on purpose: a project-version placeholder would interpolate in
-                     the application that declares this parent, not here. Kept equal to the
-                     version above by the release tooling and the post-release bump. -->
                 <version>0.3.0-SNAPSHOT</version>
                 <type>pom</type>
                 <scope>import</scope>
@@ -88,8 +74,6 @@ SPDX-License-Identifier: EUPL-1.2
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-failsafe-plugin</artifactId>
-                    <!-- Kept in lockstep with the framework root POM's pin below 3.6.0 (see there
-                         for the archetype skip-regression this avoids). -->
                     <version>3.5.5</version>
                 </plugin>
             </plugins>
@@ -110,6 +94,17 @@ SPDX-License-Identifier: EUPL-1.2
                             <artifactId>vertique-codegen-all</artifactId>
                         </path>
                     </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>com.diffplug.spotless</groupId>
+                <artifactId>spotless-maven-plugin</artifactId>
+                <version>3.10.2</version>
+                <configuration>
+                    <java>
+                        <palantirJavaFormat/>
+                        <removeUnusedImports/>
+                    </java>
                 </configuration>
             </plugin>
         </plugins>

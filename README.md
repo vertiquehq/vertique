@@ -24,7 +24,7 @@ Run the full unit and integration-test suite:
 Check formatting without changing files:
 
 ```bash
-./mvnw -ntp -pl '!vertique-app-parent' spotless:check
+./mvnw -ntp spotless:check
 ```
 
 ## Application Maven Setup

@@ -397,14 +397,19 @@ describe('PublicVersionContractTest', () => {
 
   it('applicationParentCarriesNoInternalBuildOrReleaseMachinery', () => {
     // Applications declare this POM as their parent. Nothing of the framework's
-    // own build or release process may leak into it: no CI-friendly
-    // placeholder, no flatten plugin, no formatter, no <parent> chain.
+    // own release process may leak into it: no CI-friendly placeholder, no
+    // flatten plugin, no <parent> chain. The formatter is the exception, on
+    // purpose: applications inherit a working spotless configuration.
     const xml = readFileSync(path.join(REPO_ROOT, 'vertique-app-parent', 'pom.xml'), 'utf8');
     assert.doesNotMatch(xml, /\$\{revision\}/, 'app-parent must not use the CI-friendly ${revision}');
     assert.doesNotMatch(xml, /<revision>[^<]*<\/revision>/, 'app-parent must not declare a <revision> property');
     assert.doesNotMatch(xml, /flatten-maven-plugin/, 'app-parent must not declare the flatten plugin');
-    assert.doesNotMatch(xml, /spotless-maven-plugin/, 'app-parent must not declare the formatter');
     assert.doesNotMatch(xml, /<parent>/, 'app-parent must stay standalone');
+    const spotless = /<artifactId>spotless-maven-plugin<\/artifactId>[\s\S]*?<\/plugin>/.exec(xml);
+    assert.ok(spotless, 'app-parent must give applications the formatter');
+    assert.doesNotMatch(spotless[0], /<inherited>\s*false/, 'the formatter must be inherited by applications');
+    assert.doesNotMatch(spotless[0], /<executions>/, 'the formatter must not be bound to the lifecycle');
+    assert.match(spotless[0], /<palantirJavaFormat\/>/, 'the formatter must use the framework style');
     // ${project.version} would interpolate in the application that declares
     // this parent, so the BOM import is a second literal, held equal to the
     // artifact's own version.
