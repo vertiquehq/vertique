@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Beta
 > **Package:** `dev.vertique.rest.validation`
 > **Artifact:** `vertique-rest-validation`
-> **Depends on:** rest-jaxrs, json-schema
+> **Depends on:** rest-jaxrs, json-schema, core
 
 Default annotation-driven request-validation strategy for the REST framework. Synthesizes JSON Schemas from JAX-RS and Bean Validation annotations at startup and validates incoming requests against those schemas using `vertx-json-schema`. This is the `web-validation` strategy — the default path that carries no dependency on the preview `vertx-openapi` artifact. The opt-in `openapi-contract` strategy, which validates against the generated `openapi.json`, lives in the sibling `vertique-rest-openapi-validation` module.
 
@@ -141,12 +141,14 @@ Optional seam that produces the validation schemas for a single REST operation. 
 ```java
 public interface OperationSchemaSource {
     /**
-     * Produces the parameter and body schemas for the given operation.
+     * Produces the parameter and body schemas for the given operation under the effective JSON
+     * profile the registrar resolved for it — the profile whose mapper parses the operation's body.
      *
-     * @param op the JAX-RS operation descriptor whose parameters and body are introspected
+     * @param op      the JAX-RS operation descriptor whose parameters and body are introspected
+     * @param profile the effective, registry-resolved profile for this operation; never {@code null}
      * @return the operation's schemas; never {@code null}
      */
-    OperationSchemas schemasFor(JaxRsOperationDescriptor op);
+    OperationSchemas schemasFor(JaxRsOperationDescriptor op, JsonMapperProfile profile);
 }
 ```
 
@@ -219,9 +221,12 @@ validation assembly can bind another implementation instead:
 ```java
 @Provides
 static OperationSchemaSource openApiEnrichedSource(OpenApiSchemaStore store) {
-    return descriptor -> store.schemasFor(descriptor.operationId());
+    return (descriptor, profile) -> store.schemasFor(descriptor.operationId());
 }
 ```
+
+This example ignores the `profile` parameter. A source that ignores the profile is guaranteeing
+that its stored schemas already match that profile's wire shape; the framework cannot check this.
 
 ### FileContentVerifier (multibinding)
 
@@ -271,6 +276,7 @@ validation; unmapped declared types are accepted without I/O.
 
 - `dev.vertique:vertique-rest-jaxrs`
 - `dev.vertique:vertique-json-schema`
+- `dev.vertique:vertique-core`
 - `io.vertx:vertx-json-schema`
 - `com.google.dagger:dagger`
 - `jakarta.inject:jakarta.inject-api`

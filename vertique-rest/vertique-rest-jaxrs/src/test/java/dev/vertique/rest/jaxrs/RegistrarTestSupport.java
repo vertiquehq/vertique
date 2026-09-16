@@ -172,4 +172,60 @@ final class RegistrarTestSupport {
                 new DefaultJsonMapperProfileRegistry(Set.of()),
                 JsonConfig.defaults());
     }
+
+    /**
+     * Variant for tests that vary the schema seam and the JSON profile configuration: it exposes the
+     * three arguments the overloads above hard-code — the {@link OperationSchemaSource}, the
+     * {@link JaxRsConfig} carrying {@code jaxrs.jsonProfile}, and the {@link JsonConfig} carrying
+     * {@code json.jsonProfile} — and fills everything else with the same inert defaults they use: the
+     * {@code none} validation strategy, an empty security collector, no interceptors, contributors or
+     * evidence capturers, no security policy validator, auth disabled, no decoders or encoders,
+     * {@code "OFF"} media-type validation, no bean validator, object processor or action registry, and
+     * a profile registry holding only the built-in {@code system}, {@code vertique} and
+     * {@code vertique-strict} profiles.
+     *
+     * @param registrar    the registrar under test
+     * @param resources    the resource instances to scan
+     * @param apiRouter    the plain Vert.x router to register routes on
+     * @param mount        the mount metadata threaded to the registrar
+     * @param schemaSource the schema source the registrar calls once per operation at router build
+     * @param jaxRsConfig  the JAX-RS config supplying the {@code jaxrs.jsonProfile} tier
+     * @param jsonConfig   the global JSON config supplying the {@code json.jsonProfile} tier and the
+     *                     {@code vertique} floor
+     */
+    static void registerAll(
+            JaxRsRouteRegistrar registrar,
+            Set<Object> resources,
+            Router apiRouter,
+            MountMeta mount,
+            Optional<OperationSchemaSource> schemaSource,
+            JaxRsConfig jaxRsConfig,
+            JsonConfig jsonConfig) {
+        registrar.registerAll(
+                resources,
+                apiRouter,
+                new NoneValidationStrategy(),
+                mount,
+                schemaSource,
+                new SecuritySchemeHandlerCollector(),
+                List.of(),
+                List.of(),
+                mock(ErrorPipeline.class),
+                mock(ResponsePipeline.class),
+                new RestContextResolution(Set.of()),
+                dev.vertique.rest.jaxrs.convert.ConversionContexts.defaultResolver(),
+                null,
+                false,
+                List.of(),
+                List.of(),
+                "OFF",
+                null,
+                null,
+                List.of(),
+                null,
+                false,
+                jaxRsConfig,
+                new DefaultJsonMapperProfileRegistry(Set.of()),
+                jsonConfig);
+    }
 }

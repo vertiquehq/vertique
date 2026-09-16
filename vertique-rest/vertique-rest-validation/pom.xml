@@ -36,6 +36,12 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-rest-jaxrs</artifactId>
         </dependency>
 
+        <!-- JSON mapper profile SPI (JsonMapperProfile, the schema seam's second argument) -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-core</artifactId>
+        </dependency>
+
         <!-- GA JSON-schema validation engine (the dialect target for synthesized schemas) -->
         <dependency>
             <groupId>io.vertx</groupId>
@@ -90,6 +96,14 @@ SPDX-License-Identifier: EUPL-1.2
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-rest-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Built-in profile registry the seam proofs resolve their effective profile through
+             (DefaultJsonMapperProfileRegistry) -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-json</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

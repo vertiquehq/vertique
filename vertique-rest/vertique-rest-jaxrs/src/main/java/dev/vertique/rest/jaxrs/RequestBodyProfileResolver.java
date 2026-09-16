@@ -4,6 +4,7 @@
 package dev.vertique.rest.jaxrs;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.json.JsonProfile;
 import dev.vertique.core.json.JsonProfileId;
@@ -68,25 +69,53 @@ final class RequestBodyProfileResolver {
     private RequestBodyProfileResolver() {}
 
     /**
-     * Resolves the request-body mapper override for the given resource method.
+     * The outcome of one route's request-body profile resolution: the registry-resolved profile and
+     * the process-codec identity verdict read once, at router build.
+     *
+     * <p>The profile is what the schema seam needs — a schema source synthesizes a body schema for the
+     * very profile whose mapper parses that body. The verdict is what the request path needs, through
+     * {@link #stashMapper()}: the nullable "no override" sentinel described in the class javadoc.
+     * Splitting them means the identity read happens exactly once per route, here, and nowhere else.
+     *
+     * @param profile the registry-resolved profile for the route; never {@code null}
+     * @param processCodec whether {@code profile.mapper()} is the same instance as
+     *     {@link VertiqueJson#mapper()} — the mapper the process JSON codec runs on
+     */
+    record ResolvedRequestBodyProfile(JsonMapperProfile profile, boolean processCodec) {
+
+        /**
+         * Returns the nullable request-body mapper override every registrar consumer expects:
+         * {@code null} when the route's mapper IS the process codec's (the Vert.x fast paths already
+         * produce this profile's bytes), otherwise the profile's mapper.
+         *
+         * @return the profile's mapper, or {@code null} when it is the process codec's own mapper
+         */
+        @Nullable
+        ObjectMapper stashMapper() {
+            return processCodec ? null : profile.mapper();
+        }
+    }
+
+    /**
+     * Resolves the effective request-body profile for the given resource method and records whether
+     * its mapper is the process codec's.
      *
      * @param meta the resource-method metadata carrying the method and class annotations
      * @param config the JAX-RS routing config supplying the {@code jaxrs.jsonProfile} default
      * @param jsonConfig the global JSON config supplying the {@code json.jsonProfile} default and the
      *     {@code vertique} floor
      * @param registry the profile registry every effective id is resolved through
-     * @return the resolved {@link ObjectMapper}, or {@code null} when it is the same instance as
-     *     {@link VertiqueJson#mapper()} (no override — the process codec already binds this route)
+     * @return the resolved profile and its process-codec verdict; never {@code null}
      * @throws dev.vertique.core.json.JsonProfileConfigurationException if the effective id is not
      *     registered
      */
-    static @Nullable ObjectMapper resolveRequestBodyMapper(
+    static ResolvedRequestBodyProfile resolveRequestBodyProfile(
             ResourceMethodMeta meta, JaxRsConfig config, JsonConfig jsonConfig, JsonMapperProfileRegistry registry) {
-        ObjectMapper resolved = registry.mapper(JsonProfileId.of(resolveEffectiveId(meta, config, jsonConfig)));
+        JsonMapperProfile profile = registry.profile(JsonProfileId.of(resolveEffectiveId(meta, config, jsonConfig)));
         // Identity, not id equality: "no override" means "this route's mapper IS the process codec's
         // mapper", so the Vert.x fast paths already produce the profile's bytes. Read at use time —
         // router build runs in the EDGE phase, after CONFIGURE installed the process mapper.
-        return resolved == VertiqueJson.mapper() ? null : resolved;
+        return new ResolvedRequestBodyProfile(profile, profile.mapper() == VertiqueJson.mapper());
     }
 
     /**

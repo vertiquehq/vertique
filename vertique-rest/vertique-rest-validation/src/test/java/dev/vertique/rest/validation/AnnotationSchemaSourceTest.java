@@ -9,6 +9,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.json.DefaultJsonMapperProfileRegistry;
 import dev.vertique.json.schema.JsonSchemaGenerationException;
 import dev.vertique.rest.jaxrs.routing.BodyDescriptor;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
@@ -26,6 +29,7 @@ import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -128,6 +132,14 @@ class AnnotationSchemaSourceTest {
         return op(operationId, List.of(), Optional.of(new BodyDescriptor(rawType, genericType, List.of())));
     }
 
+    /**
+     * The reserved {@code vertique} floor profile every call site passes as the seam's effective profile.
+     * {@link AnnotationSchemaSource} ignores it at this task, so every assertion below is unchanged.
+     */
+    private static JsonMapperProfile vertiqueProfile() {
+        return new DefaultJsonMapperProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique"));
+    }
+
     /** Reflectively reads the declared field's annotations for use in a {@link ParamDescriptor}. */
     private static List<Annotation> annotationsOf(Class<?> holder, String field) {
         try {
@@ -143,7 +155,7 @@ class AnnotationSchemaSourceTest {
     @DisplayName("Body schema marks a @NotNull field as required")
     void annotationSchemaSourceSynthesizesNotNullField() {
         AnnotationSchemaSource source = new AnnotationSchemaSource();
-        JsonObject body = source.schemasFor(bodyOp("createNotNull", NotNullDto.class))
+        JsonObject body = source.schemasFor(bodyOp("createNotNull", NotNullDto.class), vertiqueProfile())
                 .bodySchema()
                 .orElseThrow();
 
@@ -172,8 +184,8 @@ class AnnotationSchemaSourceTest {
                 annotationsOf(ConstrainedDto.class, "category"));
 
         AnnotationSchemaSource source = new AnnotationSchemaSource();
-        OperationSchemas schemas =
-                source.schemasFor(op("constrained", List.of(codeParam, categoryParam), Optional.empty()));
+        OperationSchemas schemas = source.schemasFor(
+                op("constrained", List.of(codeParam, categoryParam), Optional.empty()), vertiqueProfile());
 
         JsonObject codeSchema =
                 schemas.parameterSchema(ParamLocation.QUERY, "code").orElseThrow();
@@ -188,7 +200,7 @@ class AnnotationSchemaSourceTest {
     @DisplayName("Body schema synthesizes a nested object with its own required fields")
     void annotationSchemaSourceSynthesizesNestedObject() {
         AnnotationSchemaSource source = new AnnotationSchemaSource();
-        JsonObject body = source.schemasFor(bodyOp("createNested", WithNested.class))
+        JsonObject body = source.schemasFor(bodyOp("createNested", WithNested.class), vertiqueProfile())
                 .bodySchema()
                 .orElseThrow();
 
@@ -207,7 +219,8 @@ class AnnotationSchemaSourceTest {
                 new ParamDescriptor("tags", ParamLocation.QUERY, List.class, String.class, null, null, List.of());
 
         AnnotationSchemaSource source = new AnnotationSchemaSource();
-        JsonObject tagsSchema = source.schemasFor(op("listParam", List.of(tagsParam), Optional.empty()))
+        JsonObject tagsSchema = source.schemasFor(
+                        op("listParam", List.of(tagsParam), Optional.empty()), vertiqueProfile())
                 .parameterSchema(ParamLocation.QUERY, "tags")
                 .orElseThrow();
 
@@ -225,7 +238,8 @@ class AnnotationSchemaSourceTest {
                 new ParamDescriptor("ids", ParamLocation.QUERY, Integer[].class, Integer.class, null, null, List.of());
 
         AnnotationSchemaSource source = new AnnotationSchemaSource();
-        JsonObject idsSchema = source.schemasFor(op("arrayParam", List.of(idsParam), Optional.empty()))
+        JsonObject idsSchema = source.schemasFor(
+                        op("arrayParam", List.of(idsParam), Optional.empty()), vertiqueProfile())
                 .parameterSchema(ParamLocation.QUERY, "ids")
                 .orElseThrow();
 
@@ -241,7 +255,8 @@ class AnnotationSchemaSourceTest {
                 "codes", ParamLocation.QUERY, java.util.Set.class, String.class, null, null, List.of());
 
         AnnotationSchemaSource source = new AnnotationSchemaSource();
-        JsonObject codesSchema = source.schemasFor(op("setParam", List.of(codesParam), Optional.empty()))
+        JsonObject codesSchema = source.schemasFor(
+                        op("setParam", List.of(codesParam), Optional.empty()), vertiqueProfile())
                 .parameterSchema(ParamLocation.QUERY, "codes")
                 .orElseThrow();
 
@@ -256,7 +271,8 @@ class AnnotationSchemaSourceTest {
                 "scores", ParamLocation.QUERY, java.util.SortedSet.class, Integer.class, null, null, List.of());
 
         AnnotationSchemaSource source = new AnnotationSchemaSource();
-        JsonObject scoresSchema = source.schemasFor(op("sortedSetParam", List.of(scoresParam), Optional.empty()))
+        JsonObject scoresSchema = source.schemasFor(
+                        op("sortedSetParam", List.of(scoresParam), Optional.empty()), vertiqueProfile())
                 .parameterSchema(ParamLocation.QUERY, "scores")
                 .orElseThrow();
 
@@ -268,7 +284,8 @@ class AnnotationSchemaSourceTest {
     @DisplayName("A List<ItemDto> body synthesizes an array schema whose items reflect ItemDto's fields")
     void annotationSchemaSourceSynthesizesGenericCollectionBody() {
         AnnotationSchemaSource source = new AnnotationSchemaSource();
-        JsonObject body = source.schemasFor(genericBodyOp("createItems", List.class, LIST_OF_ITEM_DTO))
+        JsonObject body = source.schemasFor(
+                        genericBodyOp("createItems", List.class, LIST_OF_ITEM_DTO), vertiqueProfile())
                 .bodySchema()
                 .orElseThrow();
 
@@ -289,7 +306,7 @@ class AnnotationSchemaSourceTest {
     @DisplayName("A non-generic ItemDto body synthesizes an object schema (contrast with the array path)")
     void annotationSchemaSourceSynthesizesNonGenericObjectBody() {
         AnnotationSchemaSource source = new AnnotationSchemaSource();
-        JsonObject body = source.schemasFor(bodyOp("createItem", ItemDto.class))
+        JsonObject body = source.schemasFor(bodyOp("createItem", ItemDto.class), vertiqueProfile())
                 .bodySchema()
                 .orElseThrow();
 
@@ -304,7 +321,7 @@ class AnnotationSchemaSourceTest {
     @DisplayName("The swagger-2 ##default sentinel is stripped from the produced schema")
     void annotationSchemaSourceStripsHashDefaultSentinel() {
         AnnotationSchemaSource source = new AnnotationSchemaSource();
-        JsonObject body = source.schemasFor(bodyOp("sentinel", SentinelDto.class))
+        JsonObject body = source.schemasFor(bodyOp("sentinel", SentinelDto.class), vertiqueProfile())
                 .bodySchema()
                 .orElseThrow();
 
@@ -332,8 +349,10 @@ class AnnotationSchemaSourceTest {
                 new ParamDescriptor("tags", ParamLocation.QUERY, List.class, String.class, null, null, List.of());
 
         AnnotationSchemaSource source = new AnnotationSchemaSource();
-        OperationSchemas first = source.schemasFor(op("sharedId", List.of(codeParam), Optional.empty()));
-        OperationSchemas second = source.schemasFor(op("sharedId", List.of(tagsParam), Optional.empty()));
+        OperationSchemas first =
+                source.schemasFor(op("sharedId", List.of(codeParam), Optional.empty()), vertiqueProfile());
+        OperationSchemas second =
+                source.schemasFor(op("sharedId", List.of(tagsParam), Optional.empty()), vertiqueProfile());
 
         // First mount has a 'code' string param; second mount has a 'tags' array param. If the cache
         // returned the first schema for the second call, the 'tags' lookup would be empty and 'code'
@@ -366,8 +385,8 @@ class AnnotationSchemaSourceTest {
         };
 
         JaxRsOperationDescriptor d = bodyOp("perCall", NotNullDto.class);
-        OperationSchemas first = source.schemasFor(d);
-        OperationSchemas second = source.schemasFor(d);
+        OperationSchemas first = source.schemasFor(d, vertiqueProfile());
+        OperationSchemas second = source.schemasFor(d, vertiqueProfile());
 
         // The registrar calls schemasFor exactly once per operationId per mount, so there is no
         // within-mount dedup to preserve; each call synthesizes its own correct schema.
@@ -385,7 +404,7 @@ class AnnotationSchemaSourceTest {
         AnnotationSchemaSource source = new AnnotationSchemaSource();
         JaxRsOperationDescriptor descriptor = genericBodyOp("unrepresentable", List.class, UNRESOLVED_TYPE_VARIABLE);
 
-        assertThrows(JsonSchemaGenerationException.class, () -> source.schemasFor(descriptor));
+        assertThrows(JsonSchemaGenerationException.class, () -> source.schemasFor(descriptor, vertiqueProfile()));
     }
 
     @Test
@@ -395,7 +414,7 @@ class AnnotationSchemaSourceTest {
         // order at both levels ($schema/type/properties/required at the root, sku before quantity
         // among the properties), so an insertion-ordered document fails this assertion.
         AnnotationSchemaSource source = new AnnotationSchemaSource();
-        JsonObject body = source.schemasFor(bodyOp("canonicalOrder", ItemDto.class))
+        JsonObject body = source.schemasFor(bodyOp("canonicalOrder", ItemDto.class), vertiqueProfile())
                 .bodySchema()
                 .orElseThrow();
 

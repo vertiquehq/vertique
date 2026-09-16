@@ -6,6 +6,7 @@ package dev.vertique.rest.validation;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.json.schema.AnnotationJsonSchemaGenerator;
 import dev.vertique.json.schema.JsonSchemaGenerationException;
 import dev.vertique.rest.jaxrs.routing.BodyDescriptor;
@@ -84,8 +85,15 @@ public class AnnotationSchemaSource implements OperationSchemaSource {
     @Inject
     public AnnotationSchemaSource() {}
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>This source synthesizes from the operation's declared Java types and annotations alone, so it
+     * ignores {@code profile}: the schemas it returns already describe the wire shape every registered
+     * profile's mapper binds for those types.
+     */
     @Override
-    public OperationSchemas schemasFor(JaxRsOperationDescriptor op) {
+    public OperationSchemas schemasFor(JaxRsOperationDescriptor op, JsonMapperProfile profile) {
         return synthesize(op);
     }
 

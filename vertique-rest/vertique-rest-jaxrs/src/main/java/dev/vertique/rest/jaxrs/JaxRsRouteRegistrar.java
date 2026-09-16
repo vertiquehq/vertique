@@ -362,11 +362,16 @@ public class JaxRsRouteRegistrar {
                 route.handler(buildConsumesCheckHandler(consumes));
             }
 
-            // (a-2) Resolved request-body JSON profile mapper. Resolve the effective profile mapper for
-            // this method ONCE at router-build time (method @JsonProfile -> class @JsonProfile ->
-            // jaxrs.jsonProfile -> json.jsonProfile -> the vertique floor). A profile whose mapper IS the
-            // process codec's resolves to null, leaving the Vert.x body path in charge (it runs that same
-            // mapper); an unknown configured/annotated id fails startup here (fail-fast, FR-JSON-008).
+            // (a-2) Resolved request-body JSON profile. Resolve the effective profile for this method
+            // ONCE at router-build time (method @JsonProfile -> class @JsonProfile -> jaxrs.jsonProfile
+            // -> json.jsonProfile -> the vertique floor); an unknown configured/annotated id fails
+            // startup here (fail-fast, FR-JSON-008). The resolution carries two things: the profile
+            // itself, which the schema source at (b) needs so a synthesized body schema describes the
+            // wire shape the profile's mapper actually parses, and the process-codec identity verdict,
+            // from which the nullable STASH MAPPER is derived once here and threaded unchanged to every
+            // request-path consumer below — (a-2)'s stash, (c-1)'s cache key, (d)'s invoker, and (e)'s
+            // error-body decision. A profile whose mapper IS the process codec's yields a null stash
+            // mapper, leaving the Vert.x body path in charge (it runs that same mapper).
             // When a different mapper applies, install a tiny per-route handler
             // that stashes it on the RoutingContext BEFORE the validation gate (b) and the invoker (d):
             // under the default web-validation strategy the gate's validateBody binds (and FIRST-PARSES)
@@ -376,8 +381,10 @@ public class JaxRsRouteRegistrar {
             // the first parse on every body path (gated or not).
             // JsonConfig is threaded as a method parameter to keep the resolver stateless/static; it is the
             // real injected global JsonConfig wired through the Factory, so the json.jsonProfile tier applies.
-            ObjectMapper resolvedBodyMapper = RequestBodyProfileResolver.resolveRequestBodyMapper(
-                    meta, jaxRsConfig, jsonConfig, jsonMapperProfileRegistry);
+            RequestBodyProfileResolver.ResolvedRequestBodyProfile resolvedProfile =
+                    RequestBodyProfileResolver.resolveRequestBodyProfile(
+                            meta, jaxRsConfig, jsonConfig, jsonMapperProfileRegistry);
+            ObjectMapper resolvedBodyMapper = resolvedProfile.stashMapper();
             if (resolvedBodyMapper != null) {
                 route.handler(ctx -> {
                     ctx.put(BoundRequest.KEY_RESOLVED_BODY_MAPPER, resolvedBodyMapper);
@@ -385,11 +392,26 @@ public class JaxRsRouteRegistrar {
                 });
             }
 
-            // (b) Validation gate: produced by the selected strategy from the operation's schemas.
-            OperationSchemas schemas =
-                    schemaSource.map(source -> source.schemasFor(descriptor)).orElseGet(OperationSchemas::empty);
+            // (b) Validation gate: produced by the selected strategy from the operation's schemas. The
+            // schema source is handed the profile resolved at (a-2) for EVERY operation, whatever
+            // validation strategy is selected; it is called once per operation at router build and never
+            // on the request path.
+            OperationSchemas schemas = schemaSource
+                    .map(source -> source.schemasFor(descriptor, resolvedProfile.profile()))
+                    .orElseGet(OperationSchemas::empty);
             Optional<Handler<RoutingContext>> gate = strategy.gateFor(descriptor, schemas, mount);
             gate.ifPresent(route::handler);
+
+            // Router-build diagnostic for the profile-aware schema seam: which profile this operation
+            // resolved to, whether that profile's mapper is the process codec's (so no stash is
+            // installed), and whether the source actually produced a body schema. Build-time only —
+            // nothing here runs per request.
+            log.debug(
+                    "Schema synthesis for operationId={} profile={} processCodec={} bodySchemaSynthesized={}",
+                    meta.operationId(),
+                    resolvedProfile.profile().id().value(),
+                    resolvedProfile.processCodec(),
+                    schemas.bodySchema().isPresent());
 
             // (c) Operation handler contributors (authorization, security context, etc.) in sorted
             // order, via the plain-Router RouteRegistration over the Vert.x Route. The contributors
