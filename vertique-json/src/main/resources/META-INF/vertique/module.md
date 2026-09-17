@@ -310,22 +310,34 @@ wrapping, which appends a rejected map key's `toString()` form to the mapping ex
 this framework that message reaches logs only; the REST response body is replaced with a fixed
 fallback.
 
-**Request-body validation must agree with the wire shape.** The default `web-validation` strategy
-synthesizes request schemas from the Java types and is profile-agnostic, so it types a `BigDecimal`
-property as a JSON **number** and rejects the strict string form with a 400 before this profile's
-deserializer runs. This applies only to **request bodies**: response serialization is unaffected, and
-a `BigDecimal` bound as a query, path, header, or cookie **parameter** is already typed as a string.
-Three ways to accept strict decimal strings in a body, in ascending order of blast radius:
+**Request-body validation follows this profile's wire shape.** The default `web-validation`
+strategy synthesizes every route's request-body schema through that route's effective JSON profile,
+so this profile's input type overrides are in the schema the gate enforces. On a route whose
+effective profile is `vertique-strict`, a `BigDecimal` property is typed as a **string** carrying
+this profile's decimal grammar and length bound: the strict string form is accepted, while a JSON
+number, an exponent form, an over-length value, and a grammar-invalid value are all rejected with a
+400 by the gate, before the resource runs and before this profile's deserializer sees them. Routes
+on a profile that declares no `BigDecimal` override keep the JSON-number shape. Selecting the
+profile is the whole configuration — no annotation, schema registry, extra binding, or change of
+validation strategy is involved. This applies to **request bodies** only: response serialization is
+unaffected, and a `BigDecimal` bound as a query, path, header, or cookie **parameter** is typed as a
+string already.
 
-| Option | Effect | Cost |
-|---|---|---|
-| `@Schema(implementation = String.class)` on the field | The runtime synthesizer types that one property as a string | The annotation misstates the Java type and carries no decimal grammar, so the deserializer remains the enforcing side. `@Schema(type = "string")` does **not** work — the runtime synthesizer reads `implementation`, not `type` |
-| The `openapi-contract` strategy (`dev.vertique:vertique-rest-openapi-validation`) with `BigDecimalModelConverter` in the spec build | Validates against the generated spec, which carries the grammar and length bound | Application-wide change of validation strategy |
-| Opt out of body validation | No schema check | No schema check |
+**Remove `@Schema(implementation = String.class)` when you adopt this profile.** That per-property
+redirect was the way to make the older, profile-agnostic gate accept a decimal string. It is now
+rejected: on a route whose effective profile declares an override for the property's declared type,
+a non-default `@Schema(implementation = ...)` fails router construction, naming the operation and
+the property, and the mount is never installed. The trigger is configuration-only —
+`json.jsonProfile: vertique-strict`, or a `@JsonProfile` selection of this profile, on an
+application whose DTOs still carry the redirect. Delete the annotation; the profile supplies the
+string form together with the grammar and length bound the annotation never carried. On a route
+whose effective profile declares no override for that type, the redirect applies exactly as before.
+Because the schema source runs for every operation whatever validation strategy is selected, this
+failure is not confined to `web-validation`.
 
-The build-time spec generator in `dev.vertique:vertique-rest-openapi-plugin` is a different generator
-with different annotation support. The runtime schema synthesizer takes no input from the active JSON
-profile at all; `BigDecimal` is simply its most visible consequence.
+The build-time spec generator in `dev.vertique:vertique-rest-openapi-plugin` is a different
+generator with different annotation support; the runtime body-schema synthesizer described here is
+the one the `web-validation` gate enforces.
 
 ---
 

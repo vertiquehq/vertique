@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.json.schema.AnnotationJsonSchemaGenerator;
 import dev.vertique.json.schema.JsonSchemaGenerationException;
+import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.jaxrs.routing.BodyDescriptor;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
 import dev.vertique.rest.jaxrs.routing.ParamDescriptor;
@@ -29,6 +30,9 @@ import java.lang.annotation.Annotation;
 import java.lang.reflect.Type;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Runtime {@link OperationSchemaSource} that synthesizes JSON schemas from JAX-RS operation
@@ -37,12 +41,14 @@ import java.util.List;
  * <p>Two synthesis paths feed the produced {@link OperationSchemas}:
  *
  * <ul>
- *   <li><strong>Body</strong> — the body type is handed to the shared transport-neutral
- *       {@link AnnotationJsonSchemaGenerator} (constructed in its
- *       {@link AnnotationJsonSchemaGenerator#withVictoolsDefaults() victools-defaults} mode), which
- *       produces a complete object schema (nested objects, required fields, constraints) with
- *       canonically ordered object keys and the swagger sentinel already removed. The canonical
- *       document is bridged to vertx-json-schema JSON via {@link JsonObject}.
+ *   <li><strong>Body</strong> — the body type is handed to the transport-neutral
+ *       {@link AnnotationJsonSchemaGenerator} built for the operation's <em>effective JSON
+ *       profile</em> with {@link AnnotationJsonSchemaGenerator#forInputProfile(JsonMapperProfile)
+ *       forInputProfile}, which produces a complete object schema (nested objects, required fields,
+ *       constraints) with canonically ordered object keys and the swagger sentinel already removed.
+ *       The canonical document is bridged to vertx-json-schema JSON via {@link JsonObject}. There is
+ *       no profile-agnostic path and no profile-selection rule in this module: the profile arrives
+ *       as an argument, already resolved by the registrar.
  *   <li><strong>Parameters</strong> — the generator introspects types and fields, not loose method
  *       parameters, so each {@link ParamDescriptor} is mapped to a small {@link JsonObject} from its
  *       declared type, optional collection component type, and its constraint annotations
@@ -53,10 +59,13 @@ import java.util.List;
  * <p>The swagger-2 module emits a {@code "default": "##default"} sentinel for unset annotation
  * defaults; that sentinel is stripped recursively from every produced schema.
  *
- * <p>Schemas are synthesized at route registration, so a body type the shared generator cannot
- * represent fails startup with {@link JsonSchemaGenerationException} — a bounded, value-free
- * diagnostic that preserves the original cause. Request-validation outcomes and error categories are
- * unaffected.
+ * <p>Schemas are synthesized at route registration, so a profile the generator cannot be built for,
+ * or a body type it cannot represent, fails router construction with a
+ * {@link RestConfigurationException} carrying the operation id and the generator's
+ * {@link JsonSchemaGenerationException} as its cause; the mount is never installed. The text this
+ * class authors names the operation only — never a schema fragment and never a pattern — while the
+ * generator's own message and its preserved third-party cause keep their own bounds.
+ * Request-validation outcomes and error categories are otherwise unaffected.
  *
  * <p><strong>No per-operation schema cache.</strong> This is a {@link Singleton} shared across every
  * route mount, but duplicate-operationId is enforced only <em>within</em> a single registration (by
@@ -64,8 +73,15 @@ import java.util.List;
  * per operation at registration, so an operationId-keyed cache would never dedup within a mount; across
  * mounts it would hand a second operation the first operation's schema — validating against the wrong
  * contract. Re-introducing a cache requires a content-aware or mount-aware key, not the operationId
- * alone. The underlying generator is built once and reused (calls on one instance are serialized by
- * the generator itself).
+ * alone. No schema is cached by operation id, Java type, or mapper identity.
+ *
+ * <p><strong>One generator per profile instance.</strong> Generators, unlike schemas, are cached:
+ * each distinct {@link JsonMapperProfile} <em>instance</em> — compared by reference, never by id,
+ * mapper, or equality — resolves to at most one {@link AnnotationJsonSchemaGenerator}, built on
+ * first use and retained for this source's lifetime. Retention is therefore bounded by the number of
+ * distinct instances the profile registry hands out; a registry that returns a fresh instance per
+ * call is a misconfiguration, named as such in this module's packaged document. Calls on one
+ * generator instance are serialized by the generator itself.
  */
 @Singleton
 public class AnnotationSchemaSource implements OperationSchemaSource {
@@ -76,25 +92,46 @@ public class AnnotationSchemaSource implements OperationSchemaSource {
     /** Reads the generator's canonical document back into a {@link JsonNode} for the protected seam. */
     private static final ObjectMapper CANONICAL_READER = new ObjectMapper();
 
-    private final AnnotationJsonSchemaGenerator generator = AnnotationJsonSchemaGenerator.withVictoolsDefaults();
+    /** The longest operation identity this class embeds in a diagnostic, in UTF-16 code units. */
+    private static final int MAX_OPERATION_IDENTITY_LENGTH = 256;
+
+    /** Marker appended in place of the elided tail of a truncated identity. */
+    private static final String ELLIPSIS = "...";
 
     /**
-     * Creates a schema source backed by the shared transport-neutral generator in its
-     * victools-defaults mode (DRAFT 2020-12, Jackson + Jakarta-validation + Swagger-2 modules).
+     * One input-direction generator per distinct profile <em>instance</em>, built on first use.
+     *
+     * <p>A {@link ConcurrentHashMap} over an identity-wrapping key rather than an
+     * {@code IdentityHashMap}: the wrapper supplies the reference-identity keying the contract
+     * requires, while the concurrent map supplies atomic compute-if-absent semantics that serialize
+     * mapping functions <em>per key</em> instead of across the whole map, so concurrent router builds
+     * for different profiles neither block one another nor construct a generator twice.
      */
+    private final Map<ProfileKey, AnnotationJsonSchemaGenerator> generatorsByProfile = new ConcurrentHashMap<>();
+
+    /**
+     * Counts generator constructions, incremented inside the cache's mapping function at the
+     * construction site. Atomic because that mapping function is serialized per key and this source
+     * may be driven by several concurrent router builds at once: a lost update would read low and
+     * mask the very duplicate construction the count exists to detect.
+     */
+    private final AtomicInteger generatorConstructions = new AtomicInteger();
+
+    /** Creates a schema source with an empty generator cache; generators are built on first use. */
     @Inject
     public AnnotationSchemaSource() {}
 
     /**
      * {@inheritDoc}
      *
-     * <p>This source synthesizes from the operation's declared Java types and annotations alone, so it
-     * ignores {@code profile}: the schemas it returns already describe the wire shape every registered
-     * profile's mapper binds for those types.
+     * <p>The body schema is generated through {@code profile}'s own input-direction generator, so it
+     * describes the wire shape that profile's mapper actually accepts. Parameter schemas are
+     * synthesized from the declared Java types and constraint annotations alone and never receive the
+     * profile.
      */
     @Override
     public OperationSchemas schemasFor(JaxRsOperationDescriptor op, JsonMapperProfile profile) {
-        return synthesize(op);
+        return synthesize(op, profile);
     }
 
     /**
@@ -103,13 +140,14 @@ public class AnnotationSchemaSource implements OperationSchemaSource {
      * distinct operation — even one sharing an operationId with an operation on another mount — gets
      * its own correct schema.
      *
-     * @param op the operation descriptor whose body and parameters are introspected
+     * @param op      the operation descriptor whose body and parameters are introspected
+     * @param profile the operation's effective JSON profile, used for the body path only
      * @return the freshly synthesized schemas
      */
-    private OperationSchemas synthesize(JaxRsOperationDescriptor op) {
+    private OperationSchemas synthesize(JaxRsOperationDescriptor op, JsonMapperProfile profile) {
         OperationSchemas.Builder schemas = OperationSchemas.builder();
 
-        op.body().ifPresent(body -> schemas.bodySchema(synthesizeBody(body)));
+        op.body().ifPresent(body -> schemas.bodySchema(synthesizeBody(op.operationId(), body, profile)));
 
         for (ParamDescriptor param : op.parameters()) {
             schemas.parameterSchema(param.location(), param.name(), synthesizeParam(param));
@@ -118,37 +156,59 @@ public class AnnotationSchemaSource implements OperationSchemaSource {
         return schemas.build();
     }
 
-    // --- Body path (shared generator) ---
+    // --- Body path (profiled generator) ---
 
     /**
-     * Generates the body schema through the shared generator and strips the swagger-2 sentinel. The
+     * Generates the body schema through the profile's generator and strips the swagger-2 sentinel. The
      * full generic type is passed when present (e.g. {@code List<MyDto>}) so the element type is
      * resolved and an array-of-{@code MyDto} schema is produced rather than a raw-{@code List}
      * schema; otherwise the raw class is used.
      *
-     * @param body the body descriptor whose type (generic when available) drives generation
+     * <p>Every failure of this path — building the profile's generator, generating, or reading the
+     * produced document — surfaces as a {@link RestConfigurationException} naming the operation, so
+     * the router build fails and the mount is never installed.
+     *
+     * @param operationId the operation whose body is being synthesized, named in a failure
+     * @param body        the body descriptor whose type (generic when available) drives generation
+     * @param profile     the operation's effective JSON profile
      * @return the body schema as vertx-json-schema JSON
-     * @throws JsonSchemaGenerationException if the body type cannot be represented or generation fails
+     * @throws RestConfigurationException if the profile's generator cannot be built, or the body type
+     *     cannot be represented, or generation fails
      */
-    private JsonObject synthesizeBody(BodyDescriptor body) {
-        JsonNode node = generateBodySchema(body.genericType() != null ? body.genericType() : body.type());
-        JsonObject schema = new JsonObject(node.toString());
-        // Idempotent for the shared generator (which already removes the sentinel); retained because a
-        // subclass may override the seam and supply a node the generator never canonicalized.
-        stripDefaultSentinel(schema);
-        return schema;
+    private JsonObject synthesizeBody(String operationId, BodyDescriptor body, JsonMapperProfile profile) {
+        Type type = body.genericType() != null ? body.genericType() : body.type();
+        try {
+            JsonNode node = generateBodySchema(type, profile);
+            JsonObject schema = new JsonObject(node.toString());
+            // Idempotent for the shared generator (which already removes the sentinel); retained because a
+            // subclass may override the seam and supply a node the generator never canonicalized.
+            stripDefaultSentinel(schema);
+            return schema;
+        } catch (RestConfigurationException alreadyNamed) {
+            throw alreadyNamed;
+        } catch (RuntimeException failed) {
+            throw synthesisFailure(operationId, failed);
+        }
     }
 
     /**
-     * Runs schema generation for the given body type. Protected and overridable so tests and
-     * subclasses can count or substitute generation invocations.
+     * Runs profiled schema generation for the given body type through the profile's own
+     * input-direction generator, which is built on first use and cached per profile instance.
+     * Protected and overridable so tests and subclasses can count or substitute generation
+     * invocations; it is the single generation path and is invoked exactly once per body synthesis.
      *
-     * @param type the body type to generate a schema for
+     * <p><strong>INTERNAL.</strong> This seam replaces the former {@code generateBodySchema(Type)} and
+     * sits outside this module's compatibility promise: it may change or disappear without notice.
+     * Applications contribute an {@link OperationSchemaSource} instead of subclassing this class.
+     *
+     * @param type    the body type to generate a schema for
+     * @param profile the operation's effective JSON profile, whose input-direction generator is used
      * @return the generated schema node, parsed from the generator's canonical document
-     * @throws JsonSchemaGenerationException if the body type cannot be represented or generation fails
+     * @throws JsonSchemaGenerationException if the profile yields no generator, the body type cannot
+     *     be represented, or generation fails
      */
-    protected JsonNode generateBodySchema(Type type) {
-        String canonical = generator.generateCanonical(type);
+    protected JsonNode generateBodySchema(Type type, JsonMapperProfile profile) {
+        String canonical = generatorFor(profile).generateCanonical(type);
         try {
             return CANONICAL_READER.readTree(canonical);
         } catch (JsonProcessingException unreadable) {
@@ -156,6 +216,115 @@ public class AnnotationSchemaSource implements OperationSchemaSource {
             // of a programming error; the message stays value-free.
             throw new IllegalStateException("the generated canonical JSON Schema document is unreadable", unreadable);
         }
+    }
+
+    // --- Per-profile generator cache ---
+
+    /**
+     * Returns the input-direction generator for {@code profile}, building it on first use. At most one
+     * generator is built per distinct profile instance, including when several router builds run
+     * concurrently: the mapping function runs once per key under the concurrent map's per-key
+     * exclusion, and the construction counter is incremented inside it.
+     *
+     * @param profile the operation's effective JSON profile
+     * @return the generator retained for this profile instance
+     * @throws JsonSchemaGenerationException if the profile's id, mapper, or override declarations are
+     *     invalid, or it declares a duplicate effective input override
+     */
+    private AnnotationJsonSchemaGenerator generatorFor(JsonMapperProfile profile) {
+        return generatorsByProfile.computeIfAbsent(new ProfileKey(profile), key -> {
+            AnnotationJsonSchemaGenerator built = AnnotationJsonSchemaGenerator.forInputProfile(key.profile());
+            generatorConstructions.incrementAndGet();
+            return built;
+        });
+    }
+
+    /**
+     * Returns how many generators this source has constructed. Package-private and internal: it exists
+     * so a proof can tell an atomic compute-if-absent from a construct-then-publish sequence that
+     * builds duplicates and retains one of them, which the retained-entry count cannot distinguish.
+     *
+     * @return the number of generators constructed since this source was created
+     */
+    int generatorConstructionCount() {
+        return generatorConstructions.get();
+    }
+
+    /**
+     * Returns how many generators this source retains. Package-private and internal.
+     *
+     * @return the number of cache entries, one per distinct profile instance seen
+     */
+    int cachedGeneratorCount() {
+        return generatorsByProfile.size();
+    }
+
+    /**
+     * Cache key giving a {@link JsonMapperProfile} reference-identity semantics.
+     *
+     * <p>The contract keys the generator cache by reference identity, while a map keyed on the profile
+     * itself would key by {@code equals}: two distinct instances that happen to be equal records would
+     * share one generator. This wrapper settles that by construction rather than by relying on a
+     * profile implementation's equality contract.
+     *
+     * @param profile the profile this key stands for, compared by reference
+     */
+    private record ProfileKey(JsonMapperProfile profile) {
+
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof ProfileKey key && key.profile == profile;
+        }
+
+        @Override
+        public int hashCode() {
+            return System.identityHashCode(profile);
+        }
+    }
+
+    // --- Failure wrapping ---
+
+    /**
+     * Wraps a synthesis failure as the module's configuration exception, with the operation id
+     * prepended and the original failure preserved as the cause.
+     *
+     * <p>This class authors only the operation identity, bounded to
+     * {@value #MAX_OPERATION_IDENTITY_LENGTH} UTF-16 code units; the quoted detail is the failing
+     * exception's own message, which the generator already bounds and whose preserved third-party
+     * cause is deliberately not sanitized here.
+     *
+     * @param operationId the operation whose body schema could not be synthesized
+     * @param failed      the generator failure
+     * @return the configuration exception to throw
+     */
+    private static RestConfigurationException synthesisFailure(String operationId, RuntimeException failed) {
+        StringBuilder message = new StringBuilder("Request body schema synthesis failed for operation '")
+                .append(boundedIdentity(operationId))
+                .append('\'');
+        String detail = failed.getMessage();
+        if (detail != null && !detail.isBlank()) {
+            message.append(": ").append(detail);
+        }
+        return new RestConfigurationException(message.toString(), failed);
+    }
+
+    /**
+     * Bounds an identity to {@link #MAX_OPERATION_IDENTITY_LENGTH} code units without ever splitting a
+     * surrogate pair.
+     *
+     * @param identity the identity to bound, possibly {@code null}
+     * @return the bounded identity; never {@code null}
+     */
+    private static String boundedIdentity(String identity) {
+        String value = String.valueOf(identity);
+        if (value.length() <= MAX_OPERATION_IDENTITY_LENGTH) {
+            return value;
+        }
+        int cut = MAX_OPERATION_IDENTITY_LENGTH - ELLIPSIS.length();
+        if (Character.isHighSurrogate(value.charAt(cut - 1))) {
+            cut--;
+        }
+        return value.substring(0, cut) + ELLIPSIS;
     }
 
     // --- Parameter path (constraint mapping) ---

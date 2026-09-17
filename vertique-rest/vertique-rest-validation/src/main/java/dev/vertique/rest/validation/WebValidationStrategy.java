@@ -26,6 +26,7 @@ import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.MultiMap;
 import io.vertx.core.http.Cookie;
+import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.FileUpload;
 import io.vertx.ext.web.RoutingContext;
@@ -45,6 +46,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 /**
  * The {@code web-validation} {@link RequestValidationStrategy}: validates each request body and
@@ -55,6 +58,15 @@ import java.util.Set;
  * <p><strong>Validators are built once, at {@code gateFor} time (startup).</strong> For NFR-002
  * efficiency the body validator and each per-parameter validator are compiled when the gate is
  * produced and closed over by the returned handler, so no schema is compiled on the request hot path.
+ *
+ * <p><strong>Regular expressions are compiled once, at the same point.</strong> Beside the body
+ * validator's compilation, {@link #gateFor(JaxRsOperationDescriptor, OperationSchemas)} walks the
+ * whole body document and compiles every string-valued member keyed {@code pattern} and every key of
+ * every object keyed {@code patternProperties}, at any depth and at any position. A pattern the regex
+ * engine rejects fails router construction with a {@link RestConfigurationException} naming the
+ * operation, the JSON pointer, and the engine's own description and index — never the pattern text
+ * itself, and never the engine's exception, which quotes that text. A schema this strategy never
+ * gates keeps its unparseable pattern: the check lives here and nowhere else.
  *
  * <p><strong>Body</strong> validation uses the shared per-request {@link BoundRequest}: the gate
  * obtains it from the routing context (binding and stashing one if absent) so the gate and downstream
@@ -113,6 +125,18 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
 
     /** The selection id for the web-validation strategy. */
     public static final String ID = "web-validation";
+
+    /** The JSON Schema keyword whose string value is a regular expression. */
+    private static final String PATTERN_KEYWORD = "pattern";
+
+    /** The JSON Schema keyword whose object keys are regular expressions. */
+    private static final String PATTERN_PROPERTIES_KEYWORD = "patternProperties";
+
+    /** FR-JSON-075's message bound, applied at this module's boundary, in UTF-16 code units. */
+    private static final int MAX_MESSAGE_LENGTH = 512;
+
+    /** Marker appended in place of the elided tail of a truncated description. */
+    private static final String ELLIPSIS = "...";
 
     private static final JsonSchemaOptions SCHEMA_OPTIONS = new JsonSchemaOptions()
             .setDraft(Draft.DRAFT202012)
@@ -248,11 +272,27 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
         return true;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Compiles the body and parameter validators, and — beside the body validator — every regular
+     * expression the body document declares, so an unparseable pattern fails the router build rather
+     * than the first request that reaches the route.
+     *
+     * @param op      the operation to gate
+     * @param schemas the operation's synthesized schemas
+     * @return the gate handler, or {@link Optional#empty()} when the operation has nothing to validate
+     * @throws RestConfigurationException if the body document declares a pattern the regex engine
+     *     rejects
+     */
     @Override
     public Optional<Handler<RoutingContext>> gateFor(JaxRsOperationDescriptor op, OperationSchemas schemas) {
         Validator bodyValidator =
                 schemas.bodySchema().map(WebValidationStrategy::compile).orElse(null);
         JsonObject bodySchema = schemas.bodySchema().orElse(null);
+        if (bodySchema != null) {
+            precompilePatterns(op.operationId(), bodySchema);
+        }
         List<FilePartDescriptor> fileParts = List.copyOf(op.fileParts());
 
         List<ParamValidator> paramValidators = new ArrayList<>();
@@ -292,6 +332,148 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
      */
     private static Validator compile(JsonObject schema) {
         return Validator.create(JsonSchema.of(schema), SCHEMA_OPTIONS);
+    }
+
+    // --- Regex precompilation (FR-008) ---
+
+    /**
+     * Compiles every regular expression the body document declares, so a pattern the engine rejects
+     * fails router construction instead of the first request routed here.
+     *
+     * @param operationId the operation whose body document is walked
+     * @param bodySchema  the synthesized body document
+     * @throws RestConfigurationException if any declared pattern is unparseable
+     */
+    private static void precompilePatterns(String operationId, JsonObject bodySchema) {
+        precompilePatterns(operationId, bodySchema, "");
+    }
+
+    /**
+     * Walks one node of the body document, compiling the regular expressions it declares and
+     * descending into every member, with no position allowlist: a {@code pattern} member is a regular
+     * expression wherever it carries a string, and a {@code patternProperties} member's keys are
+     * regular expressions wherever that object appears. A <em>property</em> named {@code pattern} is a
+     * subschema object rather than a string, so it is descended into rather than compiled.
+     *
+     * @param operationId the operation whose body document is walked
+     * @param value       the current node: an object, an array, or a scalar
+     * @param pointer     the JSON pointer of {@code value} within the body document
+     * @throws RestConfigurationException if any declared pattern is unparseable
+     */
+    private static void precompilePatterns(String operationId, Object value, String pointer) {
+        if (value instanceof JsonObject object) {
+            for (String field : object.fieldNames()) {
+                Object member = object.getValue(field);
+                String memberPointer = pointer + "/" + escapePointerSegment(field);
+                if (PATTERN_KEYWORD.equals(field) && member instanceof String regex) {
+                    compilePattern(operationId, memberPointer, regex);
+                } else if (PATTERN_PROPERTIES_KEYWORD.equals(field) && member instanceof JsonObject byPattern) {
+                    // The keys are compiled before the walk descends into their subschemas, and the
+                    // pointer deliberately stops at this object: a key IS a pattern, so naming it
+                    // would disclose the text the diagnostic must withhold.
+                    for (String key : byPattern.fieldNames()) {
+                        compilePattern(operationId, memberPointer, key);
+                    }
+                }
+                precompilePatterns(operationId, member, memberPointer);
+            }
+        } else if (value instanceof JsonArray array) {
+            for (int index = 0; index < array.size(); index++) {
+                precompilePatterns(operationId, array.getValue(index), pointer + "/" + index);
+            }
+        }
+    }
+
+    /**
+     * Escapes one JSON pointer reference token, per RFC 6901: {@code ~} becomes {@code ~0} and
+     * {@code /} becomes {@code ~1}, in that order.
+     *
+     * @param segment the member name to escape
+     * @return the escaped reference token
+     */
+    private static String escapePointerSegment(String segment) {
+        return segment.replace("~", "~0").replace("/", "~1");
+    }
+
+    /**
+     * Compiles one declared regular expression, discarding the compiled pattern: this runs for its
+     * failure, not for its result, because vertx-json-schema compiles its own.
+     *
+     * @param operationId the operation whose body document declares the pattern
+     * @param pointer     the JSON pointer of the position that declares it
+     * @param regex       the declared regular expression
+     * @throws RestConfigurationException if the regex engine rejects it
+     */
+    private static void compilePattern(String operationId, String pointer, String regex) {
+        try {
+            Pattern.compile(regex);
+        } catch (PatternSyntaxException rejected) {
+            // Neither cause nor suppressed: this exception's own message quotes the complete pattern,
+            // so only its description and index are read out of it and it is dropped here.
+            throw new RestConfigurationException(
+                    patternFailure(operationId, pointer, rejected.getDescription(), rejected.getIndex()));
+        }
+    }
+
+    /**
+     * Assembles the bounded diagnostic for an unparseable pattern.
+     *
+     * <p>The operation, the pointer, and the index precede the engine's description and always
+     * survive; only the description is elided, because the engine bounds the token it quotes by the
+     * pattern's own length alone. The assembled message is at most {@value #MAX_MESSAGE_LENGTH} UTF-16
+     * code units, and an elision never splits a surrogate pair. JSON-005's own bounding helper is
+     * package-private to {@code vertique-json-schema}, so the numeric bound is applied here instead.
+     *
+     * <p>The wording carries no parenthesis on purpose: a one-character pattern such as an unclosed
+     * group is disclosed by any parenthesis in this text, so the proof that the pattern never leaks is
+     * mechanically the absence of that character.
+     *
+     * @param operationId the operation whose body document declares the pattern
+     * @param pointer     the JSON pointer of the position that declares it
+     * @param description the engine's description of the syntax error
+     * @param index       the engine's index of the syntax error within the pattern
+     * @return the bounded, pattern-free diagnostic
+     */
+    private static String patternFailure(String operationId, String pointer, String description, int index) {
+        String identified = "Unparseable regular expression in the request body schema of operation '" + operationId
+                + "' at JSON pointer " + pointer + ", rejected at index " + index + ": ";
+        if (identified.length() >= MAX_MESSAGE_LENGTH) {
+            // Only the description is elidable, so an identity this long is reported unbounded rather
+            // than cut where the pointer or the index would be lost.
+            return identified;
+        }
+        return identified + elide(String.valueOf(description), MAX_MESSAGE_LENGTH - identified.length());
+    }
+
+    /**
+     * Bounds one fragment to {@code max} UTF-16 code units, marking an elision when there is room for
+     * the marker and never splitting a surrogate pair.
+     *
+     * @param value the fragment to bound
+     * @param max   the maximum retained length in UTF-16 code units; always positive here
+     * @return the bounded fragment, never longer than {@code max}
+     */
+    private static String elide(String value, int max) {
+        if (value.length() <= max) {
+            return value;
+        }
+        if (max < ELLIPSIS.length()) {
+            // No room to signal an elision at all, so the fragment is simply cut: the marker stays
+            // inside the bound rather than extending past it.
+            return value.substring(0, cutPoint(value, max));
+        }
+        return value.substring(0, cutPoint(value, max - ELLIPSIS.length())) + ELLIPSIS;
+    }
+
+    /**
+     * Moves a cut point back one code unit when it would land inside a surrogate pair.
+     *
+     * @param value  the fragment being cut
+     * @param length the intended cut length in UTF-16 code units
+     * @return the cut length that keeps every surrogate pair whole
+     */
+    private static int cutPoint(String value, int length) {
+        return length > 0 && Character.isHighSurrogate(value.charAt(length - 1)) ? length - 1 : length;
     }
 
     /**

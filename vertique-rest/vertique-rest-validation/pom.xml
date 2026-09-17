@@ -36,6 +36,13 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-rest-jaxrs</artifactId>
         </dependency>
 
+        <!-- Startup-misconfiguration failure type (RestConfigurationException), load-bearing for the
+             schema-synthesis and regex-precompilation failure contracts; BOM-managed, no version -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-rest-core</artifactId>
+        </dependency>
+
         <!-- JSON mapper profile SPI (JsonMapperProfile, the schema seam's second argument) -->
         <dependency>
             <groupId>dev.vertique</groupId>
