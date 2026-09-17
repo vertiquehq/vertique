@@ -160,7 +160,8 @@ A spelling is listed exactly where its property's own wire name is published, be
 that entry: a spelling of a property the document never publishes — a `@Schema(hidden = true)`
 field, an accessor pair with no same-named field, a property published under some other name — is
 listed nowhere and stays a reserved name. A spelling that is already another property's name is not
-listed either, and neither is a spelling more than one property of the type claims: the generator
+listed either — whether or not the document publishes that property, because the type still binds
+that name — and neither is a spelling more than one property of the type claims: the generator
 cannot predict which claimant Jackson binds such a key to, so publishing it would attach one
 claimant's schema to another claimant's value. A contested spelling is therefore published nowhere,
 named in no rule, and reserved where extras are described; constrain that shape with Bean
@@ -194,9 +195,11 @@ stricter than the binder rather than a description of it.
 Listing runs over the finished document, after generation, so every reference a copied schema
 carries is already resolved. The plan is carried in the document under one generator-private
 keyword, `x-vertique-alias-plan`, which that pass removes; a type publishing a property under that
-exact wire name is therefore refused at generation with a bounded diagnostic naming the type and the
-name, rather than being published stripped of its constraints. Rename such a property on the wire,
-for example with `@JsonProperty`.
+exact wire name — including one listing would publish under it, so an alias spelling equal to the
+keyword is refused exactly as a property named for it is — is therefore refused at generation with a
+bounded diagnostic naming the type and the name, rather than being published stripped of its
+constraints. Rename such a property, or such a spelling, on the wire — for example with
+`@JsonProperty` or `@JsonAlias`.
 
 ### Canonical output
 

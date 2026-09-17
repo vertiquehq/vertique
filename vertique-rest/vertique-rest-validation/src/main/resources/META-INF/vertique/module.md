@@ -257,9 +257,11 @@ naming the violated keyword as `type` and its expected value as `args`, but stru
 (`oneOf`, `anyOf`, `not`, `additionalProperties`) describe how the schema was traversed rather than a
 constraint the client can act on, so they produce no such detail. When every error a call reported is
 structural, that call instead contributes exactly one value-free detail: it names the failing
-instance location as its `path` — `#/surprise` for an undeclared property under a closed object — and
-carries no `type` and no `args`. Its message is a fixed literal, so no submitted value and no raw
-validator message reaches the response through it. The rule counts per call, so a body failure is
+instance location as its `path` and carries no `type` and no `args`. That location is cut back to the
+part the schema declares, so it names no text the client chose: an undeclared property under a closed
+object is reported at `#/<the client's own key>`, and the detail names the containing location `#`
+instead, while a failure under a declared property keeps that property's location. Its message is a
+fixed literal, so no submitted value and no raw validator message reaches the response through it. The rule counts per call, so a body failure is
 never masked by a detail produced for a parameter, and a call that already produced a concrete detail
 gains nothing extra. A body the validator reports valid still produces no detail and no rejection.
 This is what makes a schema rule published as `oneOf`, `anyOf`, or `not` branches — the strict

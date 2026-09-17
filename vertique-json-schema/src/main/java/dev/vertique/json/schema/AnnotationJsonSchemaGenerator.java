@@ -47,6 +47,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -132,9 +133,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * spelling Jackson reports for a visible input property that does not back an any-accessor is listed
  * under {@code properties} with a deep copy of the schema that property is published with, so the
  * same constraints apply under either spelling instead of the alias passing a gate undescribed. A
- * spelling that is already another property's name is not listed, and neither is a spelling more than
- * one property of the type claims — the generator cannot predict which claimant Jackson binds such a
- * key to, so it is published nowhere, named in no rule and, where extras are described, reserved.
+ * spelling that is already another property's name — the type's own name for it, whether or not the
+ * document publishes that property — is not listed, and neither is a spelling more than one property
+ * of the type claims: the generator cannot predict which claimant Jackson binds such a key to, so it
+ * is published nowhere, named in no rule and, where extras are described, reserved.
  * Listing runs over the finished document, after generation, so every reference a copied schema
  * carries is already resolved; it copies the owning property's own entry in the finished {@code
  * properties} object and does nothing when that entry is absent, so a spelling is listed exactly
@@ -156,7 +158,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>The expansion plan is carried in the document under one generator-private keyword, {@link
  * AliasExpansion#MARKER}, which expansion removes; generation is therefore refused, with a bounded
  * diagnostic naming the type and that name, for a type publishing a property whose wire name equals
- * it, in every construction mode.
+ * it — including a property expansion would publish under it for an alias spelling — in every
+ * construction mode.
  *
  * <p>A profile's declared {@code JsonSchemaTypeOverride}s narrow how the generator represents an
  * exact Java class: the override fragment defines the baseline wire contract for that class, and
@@ -468,7 +471,8 @@ public final class AnnotationJsonSchemaGenerator {
          * @param aliasesByWireName         the alias spellings of each visible input property that
          *                                  does not back an any-accessor, keyed by the property's own
          *                                  wire name, in declaration order, with every contested
-         *                                  spelling already dropped
+         *                                  spelling and every spelling that is already a property name
+         *                                  of the type already dropped
          * @param reservedInputNames        the reserved-name candidates: every name Jackson binds on
          *                                  input that no member of this type could publish, before the
          *                                  published names are subtracted against the finished
@@ -585,6 +589,13 @@ public final class AnnotationJsonSchemaGenerator {
             // rule, and — where extras are described — reserved rather than accepted as an extra.
             Set<String> contestedSpellings =
                     direction == Direction.INPUT ? contestedAliasSpellings(description) : Set.of();
+            // The type's own property names, read from this same introspection rather than from the
+            // finished document. A spelling that is already one of them is withheld whether or not the
+            // document publishes that property: a property it never publishes still binds its own name,
+            // so publishing the spelling would attach the aliasing property's schema to a member the
+            // document deliberately does not describe, and would release that name from the reserved set
+            // along with the aliasing property's other spellings.
+            Set<String> ownPropertyNames = direction == Direction.INPUT ? declaredPropertyNames(description) : Set.of();
             for (BeanPropertyDefinition property : description.findProperties()) {
                 JsonProperty.Access access = propertyAccess(property);
                 boolean visible = direction == Direction.INPUT
@@ -602,7 +613,7 @@ public final class AnnotationJsonSchemaGenerator {
                         invisibleOnInput.add(property.getName());
                     } else if (!backsAnAnyAccessor(property, anyAccessors)) {
                         inputBoundMembers.put(property.getName(), ownMembers(type, property));
-                        List<String> spellings = keptAliasSpellings(property, contestedSpellings);
+                        List<String> spellings = keptAliasSpellings(property, contestedSpellings, ownPropertyNames);
                         if (!spellings.isEmpty()) {
                             aliases.put(property.getName(), spellings);
                             aliasSpellings.addAll(spellings);
@@ -668,28 +679,60 @@ public final class AnnotationJsonSchemaGenerator {
 
         /**
          * The alias spellings a property keeps: every spelling Jackson reports for it, less the
-         * property's own wire name — which is not an alias — and less every contested spelling.
+         * property's own wire name — which is not an alias — less every spelling that is already a
+         * property name of the same type, and less every contested spelling.
+         *
+         * <p>The collision with another property's name is decided here, against the names this type
+         * declares, and never later against the finished document: a property the document does not
+         * publish still binds its own name, so a spelling naming it is withheld exactly as a spelling
+         * naming a published property is. A withheld spelling is published nowhere and named in no rule,
+         * so nothing releases the name it collides with from the reserved set.
          *
          * <p>Declaration order is preserved and a spelling declared twice on one property counts once,
          * so the published rule names each spelling exactly once in a stable order.
          *
          * @param property           the introspected property
          * @param contestedSpellings the spellings more than one property of the type claims
+         * @param ownPropertyNames   every property name the type itself declares on input
          * @return the kept spellings, possibly empty
          */
         private static List<String> keptAliasSpellings(
-                BeanPropertyDefinition property, Set<String> contestedSpellings) {
+                BeanPropertyDefinition property, Set<String> contestedSpellings, Set<String> ownPropertyNames) {
             Set<String> spellings = new LinkedHashSet<>();
             for (PropertyName alias : property.findAliases()) {
                 String simple = alias.getSimpleName();
                 if (simple != null
                         && !simple.isEmpty()
                         && !simple.equals(property.getName())
+                        && !ownPropertyNames.contains(simple)
                         && !contestedSpellings.contains(simple)) {
                     spellings.add(simple);
                 }
             }
             return List.copyOf(spellings);
+        }
+
+        /**
+         * Every property name the type itself declares, published or not.
+         *
+         * <p>Read from the type's own introspection, the same pass {@link
+         * #contestedAliasSpellings(BeanDescription)} reads, because that is the only view in which a
+         * property Jackson binds but the document never publishes is still visible. An any-accessor's
+         * storage is included: its name is a property name of the type, and a spelling of it is as
+         * unpredictable as any other collision.
+         *
+         * @param description the type's introspection
+         * @return the declared property names
+         */
+        private static Set<String> declaredPropertyNames(BeanDescription description) {
+            Set<String> names = new TreeSet<>();
+            for (BeanPropertyDefinition property : description.findProperties()) {
+                String name = property.getName();
+                if (name != null && !name.isEmpty()) {
+                    names.add(name);
+                }
+            }
+            return names;
         }
 
         /**
@@ -1004,6 +1047,8 @@ public final class AnnotationJsonSchemaGenerator {
             // AliasExpansion copies a spelling's schema from the owning property's own entry in the
             // finished properties object and does nothing when that entry is absent, so a released
             // spelling is always a published one and a spelling that stays reserved is never published.
+            // A spelling the collision rule withheld — one that is already a property name of this type —
+            // never reaches this map, so releasing the aliasing property's spellings cannot release it.
             names.aliasesByWireName().forEach((wireName, spellings) -> {
                 if (publishedNames.contains(wireName)) {
                     reservedNames.removeAll(spellings);
@@ -1238,35 +1283,91 @@ public final class AnnotationJsonSchemaGenerator {
         private AliasExpansion() {}
 
         /**
-         * Refuses a document in which some object publishes a property whose wire name is exactly
-         * {@link #MARKER}.
+         * Refuses a document in which some object would publish a property whose wire name is exactly
+         * {@link #MARKER} — whether it already publishes one, or whether expansion would publish one
+         * under that name for an alias spelling.
          *
          * <p>Expansion removes that key from every object node, including a {@code properties} object,
          * so publishing it would hand a consumer a property stripped of its constraints — precisely the
-         * shape a gate then accepts a violating value under. The plan itself is written as a direct
-         * child of a definition node and never as a key inside a {@code properties} object, so only the
-         * genuine collision is caught, in every construction mode.
+         * shape a gate then accepts a violating value under. A spelling equal to the keyword reaches the
+         * same end by a longer road: expansion publishes it and the same descent removes it again,
+         * leaving a name the document neither publishes nor reserves. Both are refused here, before
+         * expansion runs, in every construction mode. The plan itself is written as a direct child of a
+         * definition node and never as a key inside a {@code properties} object, so only the genuine
+         * collision is caught.
          *
          * @param node the document, or one of its nodes during the descent
          * @param type the type being generated, named in the diagnostic
-         * @throws JsonSchemaGenerationException if any object publishes a property under {@link #MARKER}
+         * @throws JsonSchemaGenerationException if any object publishes, or would publish by expansion,
+         *                                        a property under {@link #MARKER}
          */
         static void requireNoMarkerPropertyName(JsonNode node, Type type) {
-            if (node == null || !node.isContainerNode()) {
+            requireNoMarkerPropertyName(node, type, newVisitedSet());
+        }
+
+        /**
+         * The descent of {@link #requireNoMarkerPropertyName(JsonNode, Type)}, carrying the nodes it has
+         * already inspected.
+         *
+         * @param node    the document, or one of its nodes during the descent
+         * @param type    the type being generated, named in the diagnostic
+         * @param visited the nodes already inspected, by identity
+         */
+        private static void requireNoMarkerPropertyName(JsonNode node, Type type, Set<JsonNode> visited) {
+            if (node == null || !node.isContainerNode() || !visited.add(node)) {
                 return;
             }
             JsonNode properties = node.get("properties");
             if (properties != null && properties.isObject() && properties.has(MARKER)) {
-                throw Diagnostics.failure(
-                        "JSON Schema generation failed for " + Diagnostics.typeIdentity(type)
-                                + ": it publishes a property named \"" + MARKER
-                                + "\", which is reserved by the generator's alias expansion; rename the"
-                                + " property on the wire (for example with @JsonProperty)",
-                        null);
+                throw markerCollision(type, "rename the property on the wire (for example with @JsonProperty)");
+            }
+            if (planListsMarkerSpelling(node.get(MARKER))) {
+                throw markerCollision(
+                        type,
+                        "rename the alias spelling expansion would publish under it (for example with"
+                                + " @JsonAlias)");
             }
             for (JsonNode child : children(node)) {
-                requireNoMarkerPropertyName(child, type);
+                requireNoMarkerPropertyName(child, type, visited);
             }
+        }
+
+        /**
+         * Whether an alias plan lists {@link #MARKER} as one of a property's spellings, which expansion
+         * would publish as a property wire name.
+         *
+         * @param marker the plan carried by a definition node, or {@code null} when it carries none
+         * @return {@code true} when some property's spellings name the keyword
+         */
+        private static boolean planListsMarkerSpelling(JsonNode marker) {
+            if (marker == null || !marker.isObject()) {
+                return false;
+            }
+            for (JsonNode spellings : children(marker.path(ALIASES))) {
+                for (JsonNode spelling : spellings) {
+                    if (MARKER.equals(spelling.asText())) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        /**
+         * The refusal for a property the document publishes, or would publish by expansion, under
+         * {@link #MARKER}: one bounded diagnostic naming the type and the reserved name, differing only
+         * in the rename it suggests.
+         *
+         * @param type   the type being generated
+         * @param remedy the rename that resolves the collision
+         * @return the failure to throw
+         */
+        private static JsonSchemaGenerationException markerCollision(Type type, String remedy) {
+            return Diagnostics.failure(
+                    "JSON Schema generation failed for " + Diagnostics.typeIdentity(type)
+                            + ": it publishes a property named \"" + MARKER
+                            + "\", which is reserved by the generator's alias expansion; " + remedy,
+                    null);
         }
 
         /**
@@ -1275,17 +1376,42 @@ public final class AnnotationJsonSchemaGenerator {
          * @param node the document, or one of its nodes during the descent
          */
         static void expand(JsonNode node) {
+            expand(node, newVisitedSet());
+        }
+
+        /**
+         * The descent of {@link #expand(JsonNode)}, carrying the nodes it has already expanded.
+         *
+         * <p>A node reached twice is expanded once: the second visit would find its plan already
+         * removed, so the guard changes no document and only bounds a descent the pinned schema library
+         * cannot currently make cyclic, because it emits a reference rather than sharing a node.
+         *
+         * @param node    the document, or one of its nodes during the descent
+         * @param visited the nodes already expanded, by identity
+         */
+        private static void expand(JsonNode node, Set<JsonNode> visited) {
+            if (node == null || !node.isContainerNode() || !visited.add(node)) {
+                return;
+            }
             if (node instanceof ObjectNode object) {
                 JsonNode marker = object.remove(MARKER);
                 if (marker != null) {
                     apply(object, marker);
                 }
             }
-            if (node != null && node.isContainerNode()) {
-                for (JsonNode child : children(node)) {
-                    expand(child);
-                }
+            for (JsonNode child : children(node)) {
+                expand(child, visited);
             }
+        }
+
+        /**
+         * A fresh set of document nodes compared by identity, so two structurally equal definitions are
+         * still walked separately and only a node literally reached twice is skipped.
+         *
+         * @return the empty visited set
+         */
+        private static Set<JsonNode> newVisitedSet() {
+            return Collections.newSetFromMap(new IdentityHashMap<>());
         }
 
         /**

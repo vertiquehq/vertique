@@ -102,6 +102,8 @@ final class McpToolInputShapesITFixture {
     static final String SHARED_ALIAS_TOOL = "shapes.sharedAlias";
     static final String SETTER_ONLY_TOOL = "shapes.setterOnlyName";
     static final String HIDDEN_ALIAS_TOOL = "shapes.hiddenAliasedField";
+    static final String SPELLING_NAMES_HIDDEN_ANY_TOOL = "shapes.spellingNamesHiddenMemberAnySetter";
+    static final String SPELLING_NAMES_HIDDEN_CLOSED_TOOL = "shapes.spellingNamesHiddenMemberClosed";
 
     /** The profile T005 TP-005's strict row selects; every other tool takes the resolver's tail. */
     static final String STRICT_PROFILE = "vertique-strict";
@@ -138,6 +140,8 @@ final class McpToolInputShapesITFixture {
         register(tools, factory, SHARED_ALIAS_TOOL, SharedAliasPayload.class, null);
         register(tools, factory, SETTER_ONLY_TOOL, SetterOnlyPayload.class, null);
         register(tools, factory, HIDDEN_ALIAS_TOOL, HiddenAliasPayload.class, null);
+        register(tools, factory, SPELLING_NAMES_HIDDEN_ANY_TOOL, SpellingNamesHiddenMemberAnyPayload.class, null);
+        register(tools, factory, SPELLING_NAMES_HIDDEN_CLOSED_TOOL, SpellingNamesHiddenMemberClosedPayload.class, null);
         this.toolsByName = Map.copyOf(tools);
 
         McpToolRegistry registry = McpToolRegistry.build(Set.copyOf(tools.values()));
@@ -406,6 +410,12 @@ final class McpToolInputShapesITFixture {
     record SetterOnlyPayload(@JsonProperty("payload") SetterOnlyNameAnySetterType argument0) {}
 
     record HiddenAliasPayload(@JsonProperty("payload") HiddenAliasedFieldAnySetterType argument0) {}
+
+    record SpellingNamesHiddenMemberAnyPayload(
+            @JsonProperty("payload") SpellingNamesAHiddenPropertyOnAnySetterType argument0) {}
+
+    record SpellingNamesHiddenMemberClosedPayload(
+            @JsonProperty("payload") SpellingNamesAHiddenProperty argument0) {}
 
     // --- TP-003 shapes: the five AC-013.1 input-discovery shapes, as T004's corpus defines them ---
 
@@ -695,5 +705,47 @@ final class McpToolInputShapesITFixture {
         /** The any-setter's backing storage. */
         @JsonAnySetter
         public Map<String, String> extras = new LinkedHashMap<>();
+    }
+
+    /**
+     * T010 CO-007's measured shape: a published property whose alias spelling is already the name of a
+     * member the document never publishes, on an any-setter type.
+     *
+     * <p>The two bounds differ so a document publishing the spelling is visible as the wrong number:
+     * {@code secret} published with {@code level}'s schema admits {@code 99}, which the member's own
+     * {@code @Max(3)} forbids.
+     */
+    static final class SpellingNamesAHiddenPropertyOnAnySetterType {
+
+        /** The aliasing property, published, whose spelling is the hidden member's own name. */
+        @Max(10)
+        @JsonAlias("secret")
+        public Integer level;
+
+        /** Hidden from the document, still bound by Jackson under its own name. */
+        @Schema(hidden = true)
+        @Max(3)
+        public Integer secret;
+
+        /** The any-setter's backing storage. */
+        @JsonAnySetter
+        public Map<String, String> extras = new LinkedHashMap<>();
+    }
+
+    /**
+     * The same shape with no any-setter, whose key the hardener's closed object refused in 0.2.0: this
+     * tool is the regression row rather than a missed tightening.
+     */
+    static final class SpellingNamesAHiddenProperty {
+
+        /** The aliasing property, published, whose spelling is the hidden member's own name. */
+        @Max(10)
+        @JsonAlias("secret")
+        public Integer level;
+
+        /** Hidden from the document, still bound by Jackson under its own name. */
+        @Schema(hidden = true)
+        @Max(3)
+        public Integer secret;
     }
 }

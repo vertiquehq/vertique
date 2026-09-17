@@ -153,6 +153,13 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
      */
     private static final String VALUE_FREE_DETAIL_MESSAGE = "does not satisfy the schema";
 
+    /**
+     * The number of local {@code $ref} hops followed while deciding whether an instance-location
+     * segment names something the schema declares. A chain longer than this ends the run, so a
+     * self-referential or mutually referential document bounds the walk instead of spinning in it.
+     */
+    private static final int MAX_LOCAL_REF_HOPS = 16;
+
     private static final JsonSchemaOptions SCHEMA_OPTIONS = new JsonSchemaOptions()
             .setDraft(Draft.DRAFT202012)
             .setBaseUri("https://vertique.local/")
@@ -1272,9 +1279,9 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
          * <p>Postcondition (FR-018): a result whose validity is not {@code true} always contributes at
          * least one detail. When every error the call reported was structural, so no concrete detail was
          * produced, exactly one value-free detail is appended for this call — see
-         * {@link #valueFreeDetail(String, String, String)}. The count is per call, so a detail produced
-         * for another validation call never satisfies this one's obligation, and a body failure cannot
-         * be masked by a detail added for a parameter.
+         * {@link #valueFreeDetail(String, String, String, JsonObject)}. The count is per call, so a
+         * detail produced for another validation call never satisfies this one's obligation, and a body
+         * failure cannot be masked by a detail added for a parameter.
          *
          * @param result       the validation result
          * @param location     the location token for the error ({@code body}, {@code query}, etc.)
@@ -1310,7 +1317,7 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                             pathFor(null, fallbackPath), detail, location, keyword, args.isEmpty() ? null : args));
                 }
                 if (failures.size() == addedBefore) {
-                    failures.add(valueFreeDetail(result.getInstanceLocation(), fallbackPath, location));
+                    failures.add(valueFreeDetail(result.getInstanceLocation(), fallbackPath, location, schema));
                 }
                 return;
             }
@@ -1335,7 +1342,7 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
             if (failures.size() == addedBefore) {
                 // Every error this call reported was structural, so the loop produced no concrete
                 // detail. The first reported error names the failing instance location.
-                failures.add(valueFreeDetail(errors.get(0).getInstanceLocation(), fallbackPath, location));
+                failures.add(valueFreeDetail(errors.get(0).getInstanceLocation(), fallbackPath, location, schema));
             }
         }
 
@@ -1343,21 +1350,149 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
          * Builds the one value-free {@link ValidationErrorDetail} a not-valid result contributes when the
          * call produced no concrete detail, because every error it reported named a structural keyword.
          *
-         * <p>The detail names the instance location the reported error names, falling back to the
-         * parameter-name rule of {@link #pathFor(String, String)} for a root location. It carries no
-         * keyword and no constraint arguments, and its message is a fixed literal rather than anything
+         * <p>The detail names the instance location the reported error names, cut back by {@link
+         * #declaredLocation(String, JsonObject)} to the part the schema itself declares, and falling back
+         * to the parameter-name rule of {@link #pathFor(String, String)} for a root location. It carries
+         * no keyword and no constraint arguments, and its message is a fixed literal rather than anything
          * derived from {@link #safeDetail(String, Map, String)}, whose fallback can echo the raw
          * vertx-json-schema message and with it a submitted request value.
          *
          * @param instanceLocation the reported error's instance location, possibly {@code null}
          * @param fallbackPath     the parameter-name fallback, or {@code null} for a body error
          * @param location         the location token for the error ({@code body}, {@code query}, etc.)
+         * @param schema           the schema this call validated against, used to tell a declared name
+         *                         from a client-chosen key; may be {@code null}
          * @return the value-free detail
          */
         private static ValidationErrorDetail valueFreeDetail(
-                String instanceLocation, String fallbackPath, String location) {
+                String instanceLocation, String fallbackPath, String location, JsonObject schema) {
             return new ValidationErrorDetail(
-                    pathFor(instanceLocation, fallbackPath), VALUE_FREE_DETAIL_MESSAGE, location, null, null);
+                    pathFor(declaredLocation(instanceLocation, schema), fallbackPath),
+                    VALUE_FREE_DETAIL_MESSAGE,
+                    location,
+                    null,
+                    null);
+        }
+
+        /**
+         * Cuts a reported instance location back to its longest leading run of segments the schema
+         * itself declares, so the value-free detail names a failing location without naming any text the
+         * client chose.
+         *
+         * <p>An undeclared property under a closed object is reported at an instance location whose last
+         * segment is the client's own key, of whatever length the client sent, and the value-free detail
+         * is the one detail composed without a keyword and without the raw validator message — so the
+         * location was the last way a submitted string could reach the response through it. The rule is
+         * therefore the containing-location one of FR-018 rather than a length bound: the reported
+         * location is named where its last segment is a name the schema declares, and otherwise the
+         * containing location is named, up to the document root. What survives is spelled entirely by
+         * the schema's own declared names, so its length is fixed at router construction rather than by
+         * the request.
+         *
+         * <p>Resolution is deliberately fail-closed: a segment this method cannot show to be declared —
+         * under an unresolvable {@code $ref}, a composed subschema, or a {@code null} schema — ends the
+         * run, which names a shorter location and never a longer one.
+         *
+         * @param instanceLocation the reported instance location, possibly {@code null}
+         * @param schema           the schema the failing call validated against; may be {@code null}
+         * @return the declared leading part of the location, possibly the bare root anchor
+         */
+        private static String declaredLocation(String instanceLocation, JsonObject schema) {
+            if (instanceLocation == null || instanceLocation.isEmpty()) {
+                return instanceLocation;
+            }
+            String anchor = instanceLocation.startsWith("#") ? "#" : "";
+            String pointer = instanceLocation.substring(anchor.length());
+            if (pointer.isEmpty() || "/".equals(pointer)) {
+                return instanceLocation;
+            }
+            StringBuilder declared = new StringBuilder(anchor);
+            JsonObject node = schema;
+            for (String segment : pointer.split("/", -1)) {
+                if (segment.isEmpty()) {
+                    continue;
+                }
+                JsonObject child = declaredChild(node, segment, schema);
+                if (child == null) {
+                    break;
+                }
+                declared.append('/').append(segment);
+                node = child;
+            }
+            return declared.toString();
+        }
+
+        /**
+         * The subschema a declared segment of an instance location leads to: the {@code properties}
+         * entry of that name, or the {@code items} schema for an array index.
+         *
+         * <p>A declared segment whose subschema is a boolean rather than an object resolves to the empty
+         * object, which declares nothing further, so the run ends at the deepest segment the schema
+         * actually names.
+         *
+         * @param node    the subschema the run has reached, possibly {@code null}
+         * @param segment the next instance-location segment
+         * @param root    the root schema, against which a local {@code $ref} is resolved
+         * @return the subschema for {@code segment}, or {@code null} when the schema does not declare it
+         */
+        private static JsonObject declaredChild(JsonObject node, String segment, JsonObject root) {
+            JsonObject resolved = resolveLocalRef(node, root);
+            if (resolved == null) {
+                return null;
+            }
+            JsonObject properties = resolved.getJsonObject("properties");
+            if (properties != null && properties.containsKey(segment)) {
+                Object child = properties.getValue(segment);
+                return child instanceof JsonObject object ? object : new JsonObject();
+            }
+            if (isArrayIndex(segment)) {
+                Object items = resolved.getValue("items");
+                if (items instanceof JsonObject object) {
+                    return object;
+                }
+                if (items != null) {
+                    return new JsonObject();
+                }
+            }
+            return null;
+        }
+
+        /**
+         * Follows a local {@code $ref} chain to the subschema it names, within a fixed hop bound so a
+         * self-referential document cannot spin here.
+         *
+         * @param node the subschema, possibly carrying a {@code $ref}; may be {@code null}
+         * @param root the root schema the pointer is resolved against
+         * @return the referenced subschema, or {@code null} when the chain cannot be followed
+         */
+        private static JsonObject resolveLocalRef(JsonObject node, JsonObject root) {
+            JsonObject current = node;
+            for (int hop = 0; hop < MAX_LOCAL_REF_HOPS; hop++) {
+                if (current == null || root == null) {
+                    return current;
+                }
+                Object ref = current.getValue("$ref");
+                if (!(ref instanceof String pointer) || !pointer.startsWith("#")) {
+                    return current;
+                }
+                current = navigateSchema(root, pointer.substring(1));
+            }
+            return null;
+        }
+
+        /**
+         * Whether an instance-location segment is an array index.
+         *
+         * @param segment the segment
+         * @return {@code true} when every character is a digit
+         */
+        private static boolean isArrayIndex(String segment) {
+            for (int index = 0; index < segment.length(); index++) {
+                if (!Character.isDigit(segment.charAt(index))) {
+                    return false;
+                }
+            }
+            return !segment.isEmpty();
         }
 
         /**

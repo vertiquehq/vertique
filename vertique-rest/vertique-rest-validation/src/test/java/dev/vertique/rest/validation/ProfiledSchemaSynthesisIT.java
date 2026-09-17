@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonAnyGetter;
@@ -1005,12 +1006,16 @@ public class ProfiledSchemaSynthesisIT {
         int nonePort = start(noGateMount(), Set.of(ungated));
 
         HttpResponse<Buffer> rejected = post(gatePort, "/closed/quantity", CLOSED_UNDECLARED_BODY);
+        HttpResponse<Buffer> longKeyRejected = post(gatePort, "/closed/quantity", CLOSED_UNDECLARED_LONG_KEY_BODY);
         int invocationsAfterRejection = gated.invocations.get();
         HttpResponse<Buffer> accepted = post(gatePort, "/closed/quantity", CLOSED_DECLARED_BODY);
         HttpResponse<Buffer> withoutGate = post(nonePort, "/closed/quantity", CLOSED_UNDECLARED_BODY);
 
         String rejectionBody = rejected.bodyAsString();
         JsonArray errors = problemErrors(rejectionBody);
+        String longKeyBody = longKeyRejected.bodyAsString();
+        JsonArray longKeyErrors = problemErrors(longKeyBody);
+        String longKeyPath = detail(longKeyErrors).getString("path");
 
         assertAll(
                 () -> assertEquals(
@@ -1032,11 +1037,24 @@ public class ProfiledSchemaSynthesisIT {
                         "body",
                         detail(errors).getString("location"),
                         "the detail belongs to the body call that failed"),
-                () -> assertEquals(
-                        "#/surprise",
+                // FR-018 as round 10 corrects it: the detail still identifies a failing location, but the
+                // location it names carries no unbounded client-chosen text. Which bounded spelling it
+                // takes is the executor's recorded choice under AC-018.1 — bounding what the path may
+                // carry, or falling back to the containing location when the reported location's last
+                // segment is not a name the schema declares — so this row asserts the property both
+                // choices must have, not one of their two literals.
+                () -> assertNotNull(
                         detail(errors).getString("path"),
-                        "the value-free detail names the instance location the validator reported for the"
-                                + " failure"),
+                        "the value-free detail must still identify a failing location; detail: "
+                                + detail(errors).encode()),
+                () -> assertFalse(
+                        detail(errors).getString("path", "").isBlank(),
+                        "the value-free detail must still identify a failing location; detail: "
+                                + detail(errors).encode()),
+                () -> assertTrue(
+                        detail(errors).getString("path", "").length() <= VALUE_FREE_PATH_BOUND,
+                        "the value-free detail's path is bounded; detail: "
+                                + detail(errors).encode()),
                 () -> assertFalse(
                         detail(errors).containsKey("type"),
                         "the detail carries no keyword: additionalProperties stays structural and no concrete"
@@ -1070,7 +1088,54 @@ public class ProfiledSchemaSynthesisIT {
                         withoutGate.bodyAsString(),
                         "without the gate the undeclared property is dropped and the declared one is bound"),
                 () -> assertEquals(
-                        1, ungated.invocations.get(), "the gate-disabled body must have reached the resource"));
+                        1, ungated.invocations.get(), "the gate-disabled body must have reached the resource"),
+
+                // --- T010 TP-003: the long client-chosen key ---
+                () -> assertEquals(
+                        400,
+                        longKeyRejected.statusCode(),
+                        "the same closed object rejects an undeclared property whatever its key is named;"
+                                + " body length: " + longKeyBody.length()),
+                () -> assertNotNull(
+                        longKeyErrors,
+                        "the long-key rejection must carry an RFC 9457 problem body with an 'errors' array;"
+                                + " body length: " + longKeyBody.length()),
+                () -> assertEquals(
+                        1,
+                        longKeyErrors == null ? -1 : longKeyErrors.size(),
+                        "the long-key call reported one structural error and must contribute exactly one"
+                                + " detail; body length: " + longKeyBody.length()),
+                () -> assertFalse(
+                        longKeyBody.contains(LONG_KEY_MARKER),
+                        "DECISIVE (CO-008): no part of the client's own key may reach the response. The key"
+                                + " is the last segment of the instance location the validator reports for an"
+                                + " undeclared property under a closed object, and the value-free detail"
+                                + " passed that location through verbatim, so a client chooses the response's"
+                                + " size and content; detail path length: "
+                                + (longKeyPath == null ? -1 : longKeyPath.length())),
+                () -> assertTrue(
+                        longKeyPath != null && longKeyPath.length() <= VALUE_FREE_PATH_BOUND,
+                        "DECISIVE (CO-008): the value-free detail's path is bounded. A repair that only"
+                                + " strips the leading slash or the '#' still returns a path of the client's"
+                                + " chosen length and does not satisfy this; path length: "
+                                + (longKeyPath == null ? -1 : longKeyPath.length())),
+                () -> assertTrue(
+                        longKeyPath != null && !longKeyPath.isBlank(),
+                        "the bounded detail must still identify a failing location, so bounding it does not"
+                                + " empty it; detail: " + detail(longKeyErrors).encode()),
+                () -> assertFalse(
+                        detail(longKeyErrors).containsKey("type"),
+                        "the long-key detail carries no keyword either; detail path length: "
+                                + (longKeyPath == null ? -1 : longKeyPath.length())),
+                () -> assertFalse(
+                        detail(longKeyErrors).containsKey("args"),
+                        "the long-key detail carries no constraint arguments either; detail path length: "
+                                + (longKeyPath == null ? -1 : longKeyPath.length())),
+                () -> assertFalse(
+                        longKeyBody.contains(RAW_ADDITIONAL_PROPERTIES_MESSAGE),
+                        "the long-key detail is composed without the raw validator message too; body length: "
+                                + longKeyBody.length()),
+                () -> assertEquals(0, invocationsAfterRejection, "neither rejected body reached the resource"));
     }
 
     /**
@@ -1107,6 +1172,28 @@ public class ProfiledSchemaSynthesisIT {
 
     /** A closed-object body carrying the declared property beside one undeclared property. */
     private static final String CLOSED_UNDECLARED_BODY = "{\"quantity\":5,\"surprise\":\"" + UNDECLARED_MARKER + "\"}";
+
+    /**
+     * The undeclared property's <strong>name</strong> for the bounded-location row: a distinctive
+     * literal repeated past 4096 characters.
+     *
+     * <p>T009's existing assertions cover the submitted <em>value</em>; this marker is the key itself,
+     * which the validator reports as the last segment of the failing instance location and which the
+     * gate's value-free detail therefore carried into the response verbatim, of unbounded length
+     * (CO-008).
+     */
+    private static final String LONG_KEY_MARKER = "LONGKEY-2f9c".repeat(512);
+
+    /** The same closed-object body whose single undeclared property is named by the long marker. */
+    private static final String CLOSED_UNDECLARED_LONG_KEY_BODY = "{\"quantity\":5,\"" + LONG_KEY_MARKER + "\":1}";
+
+    /**
+     * The bound the value-free detail's path must stay inside. It is far below the marker's length and
+     * far above any location the schema's own declared names can spell, so it discriminates a path
+     * carrying a client-chosen key from either repair AC-018.1 admits — bounding what the path may
+     * carry, or falling back to the containing location — without pinning the executor's choice.
+     */
+    private static final int VALUE_FREE_PATH_BOUND = 256;
 
     /** The same body with the declared property alone, which the validator reports valid. */
     private static final String CLOSED_DECLARED_BODY = "{\"quantity\":5}";

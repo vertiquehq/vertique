@@ -15,6 +15,7 @@ import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileId;
@@ -61,6 +62,18 @@ import org.junit.jupiter.api.function.Executable;
  *       under one generator-private key and strips it afterwards, so a type publishing a property
  *       under that exact wire name is refused at generation rather than silently stripped of its
  *       constraints, and no published document carries the key.
+ * </ul>
+ *
+ * <p>T010 adds two more, for the defects the P01 phase-exit gate found inside that outcome:
+ *
+ * <ul>
+ *   <li><strong>T010 TP-001</strong> (CO-007) — the collision of TP-003's first row decided against
+ *       the type's <em>own property names</em> rather than against the finished document, so a
+ *       spelling naming a property the generator never publishes is withheld too, and stays reserved.
+ *       TP-003's colliding property is a public field, which is published, so there the two tests
+ *       agree and the defect is invisible.
+ *   <li><strong>T010 TP-004</strong> (CO-009) — the keyword refusal covers a spelling expansion would
+ *       publish, not only a wire name the type declares directly.
  * </ul>
  *
  * <p>Documents are generated through the registry's built-in profiles, so the subject is the same
@@ -113,6 +126,24 @@ class AliasDescriptionTest {
      */
     private static String inputText(Type type, String profileId) {
         return AnnotationJsonSchemaGenerator.forInputProfile(profile(profileId)).generateCanonical(type);
+    }
+
+    /**
+     * Binds a JSON body with the {@code vertique} profile's own mapper, so a proof about what a
+     * document must describe can state what the binder actually does with the same key.
+     *
+     * @param type the bound type
+     * @param body the JSON body
+     * @param <T>  the bound type
+     * @return the bound instance
+     */
+    private static <T> T bind(Class<T> type, String body) {
+        try {
+            return profile("vertique").mapper().readValue(body, type);
+        } catch (JsonProcessingException unbindable) {
+            fail("the binder must accept " + body + " for " + type.getSimpleName(), unbindable);
+            throw new AssertionError("unreachable");
+        }
     }
 
     // --- Document readers ---
@@ -773,6 +804,164 @@ class AliasDescriptionTest {
         }
     }
 
+    // --- T010 TP-001: a spelling naming an unpublished property of the same type ---
+
+    @Test
+    @DisplayName("A spelling naming an unpublished property is published nowhere and stays reserved")
+    void aSpellingNamingAnUnpublishedPropertyIsNeverPublishedAndStaysReserved() {
+        for (String profileId : List.of("vertique", "vertique-strict")) {
+            JsonNode hiddenAny = inputDocument(SpellingNamesAHiddenPropertyOnAnySetterType.class, profileId);
+            JsonNode hiddenClosed = inputDocument(SpellingNamesAHiddenProperty.class, profileId);
+            JsonNode accessorAny = inputDocument(SpellingNamesAnAccessorPairOnAnySetterType.class, profileId);
+
+            List<Executable> checks = new ArrayList<>();
+            // The collision is decided against the type's own property names, not against the finished
+            // document, so a spelling naming a property the generator never publishes is withheld here
+            // exactly as it is when the named property is a published field (TP-003 above).
+            Map<String, JsonNode> bySubject = new LinkedHashMap<>();
+            bySubject.put("SpellingNamesAHiddenPropertyOnAnySetterType", hiddenAny);
+            bySubject.put("SpellingNamesAHiddenProperty", hiddenClosed);
+            bySubject.forEach((subject, document) -> {
+                checks.add(() -> assertFalse(
+                        properties(document).has("secret"),
+                        subject + ": the spelling 'secret' is already this type's own property name, so it is"
+                                + " listed nowhere — published, it carries 'level''s schema over a member the"
+                                + " document deliberately hides, and {\"secret\":99} binds the @Max(3) field"
+                                + " through a @Max(10) description under " + profileId + "; document: " + document));
+                checks.add(() -> assertEquals(
+                        List.of(),
+                        rules(document).stream()
+                                .map(AliasDescriptionTest::branchesOf)
+                                .toList(),
+                        subject + ": a withheld spelling is named in no rule branch either under " + profileId
+                                + "; document: " + document));
+                checks.add(() -> assertEquals(
+                        "{\"maximum\":10,\"type\":\"integer\"}",
+                        properties(document).path("level").toString(),
+                        subject + ": the aliasing property keeps its own entry and its own @Max(10) — the"
+                                + " collision withholds one spelling and changes nothing else under " + profileId
+                                + "; document: " + document));
+                checks.add(() -> assertFalse(
+                        document.toString().contains("\"maximum\":3"),
+                        subject + ": no entry anywhere may carry the hidden member's @Max(3), which is the"
+                                + " schema a copy under the spelling would have to differ from; the two bounds"
+                                + " differ precisely so a misplaced schema shows as a number under " + profileId
+                                + "; document: " + document));
+            });
+            checks.add(() -> assertEquals(
+                    List.of("secret"),
+                    reservedNames(hiddenAny),
+                    "SpellingNamesAHiddenPropertyOnAnySetterType: 'secret' is bound by Jackson and published"
+                            + " nowhere, so where extras are described it must stay reserved. Publishing it"
+                            + " releases it through FR-015's first subtraction — the spelling belongs to"
+                            + " 'level', which is published — and the guard disappears entirely under "
+                            + profileId + "; document: " + hiddenAny));
+            checks.add(() -> assertEquals(
+                    List.of(),
+                    reservedNames(hiddenClosed),
+                    "SpellingNamesAHiddenProperty: no any-setter, so no extras are described and no name is"
+                            + " reserved; this shape is guarded by the closed object alone, which is why"
+                            + " publishing 'secret' on it reopens a key the MCP hardener refused in 0.2.0"
+                            + " under " + profileId + "; document: " + hiddenClosed));
+            checks.add(() -> assertFalse(
+                    properties(accessorAny).has("level"),
+                    "SpellingNamesAnAccessorPairOnAnySetterType: 'level' is this type's own property name —"
+                            + " an accessor pair over a differently named field — so the spelling on 'amount'"
+                            + " is listed nowhere under " + profileId + "; document: " + accessorAny));
+            checks.add(() -> assertEquals(
+                    List.of("level"),
+                    reservedNames(accessorAny),
+                    "SpellingNamesAnAccessorPairOnAnySetterType: the accessor pair's bound name stays"
+                            + " reserved; releasing it because 'amount' is published lets {\"level\":99} reach"
+                            + " the @Max(3) setter under " + profileId + "; document: " + accessorAny));
+            checks.add(() -> assertEquals(
+                    "{\"maximum\":10,\"type\":\"integer\"}",
+                    properties(accessorAny).path("amount").toString(),
+                    "SpellingNamesAnAccessorPairOnAnySetterType: the aliasing property is untouched under " + profileId
+                            + "; document: " + accessorAny));
+            assertAll(checks);
+        }
+    }
+
+    @Test
+    @DisplayName("Jackson binds the colliding key into the unpublished member, which is why it must stay reserved")
+    void theCollidingKeyBindsIntoTheUnpublishedMember() {
+        SpellingNamesAHiddenPropertyOnAnySetterType boundOnAnySetterType =
+                bind(SpellingNamesAHiddenPropertyOnAnySetterType.class, "{\"secret\":99}");
+        SpellingNamesAHiddenProperty boundOnClosedType = bind(SpellingNamesAHiddenProperty.class, "{\"secret\":99}");
+        SpellingNamesAnAccessorPairOnAnySetterType boundAccessorPair =
+                bind(SpellingNamesAnAccessorPairOnAnySetterType.class, "{\"level\":99}");
+
+        assertAll(
+                () -> assertEquals(
+                        99,
+                        boundOnAnySetterType.secret,
+                        "the binder routes 'secret' to the type's own hidden member, not to the aliasing"
+                                + " property and not into the extras map: that is why a document publishing"
+                                + " 'secret' with 'level''s @Max(10) schema admits a value the member's own"
+                                + " @Max(3) forbids, and why the name must stay reserved"),
+                () -> assertEquals(
+                        0,
+                        boundOnAnySetterType.level,
+                        "the aliasing property is not the key's destination, so the published schema under"
+                                + " that spelling would describe the wrong member"),
+                () -> assertTrue(
+                        boundOnAnySetterType.extras.isEmpty(),
+                        "the key is not an extra either: it reaches a real member, so the extras description"
+                                + " never applies to it; extras: " + boundOnAnySetterType.extras),
+                () -> assertEquals(
+                        99,
+                        boundOnClosedType.secret,
+                        "the same binding happens with no any-setter, where only the closed object refuses"
+                                + " the key"),
+                () -> assertEquals(
+                        99,
+                        boundAccessorPair.getLevel(),
+                        "the accessor pair's setter is the key's destination, so 'level' must be reserved"
+                                + " rather than published with 'amount''s schema"));
+    }
+
+    // --- T010 TP-004: a spelling equal to the generator's expansion keyword ---
+
+    @Test
+    @DisplayName("An alias spelling equal to the generator keyword refuses generation")
+    void anAliasSpellingEqualToTheGeneratorKeywordIsRefused() {
+        String keyword = expansionKeyword();
+
+        // A Java annotation value must be a compile-time constant, so the two fixtures below name the
+        // measured literal; pinning it against the generator's own constant here is what keeps a
+        // rename from leaving the fixtures aliasing an ordinary spelling and this proof vacuous.
+        assertEquals(
+                MEASURED_EXPANSION_KEYWORD,
+                keyword,
+                "the generator's expansion keyword must be the one the fixtures below spell in their"
+                        + " @JsonAlias, or this refusal proof tests an ordinary alias spelling");
+
+        for (String profileId : List.of("vertique", "vertique-strict")) {
+            for (Class<?> type : List.of(KeywordSpellingAlias.class, KeywordSpellingAliasOnAnySetterType.class)) {
+                JsonSchemaGenerationException refused = assertThrows(
+                        JsonSchemaGenerationException.class,
+                        () -> inputText(type, profileId),
+                        "generation must be refused for a type whose alias expansion would publish a property"
+                                + " under the expansion keyword, exactly as for a type declaring that wire name"
+                                + " directly (FR-008, FR-016): the refusal runs before expansion today, so the"
+                                + " spelling is published, stripped again by the same descent that removes the"
+                                + " plan, and left reserved nowhere, under " + profileId);
+                assertTrue(
+                        refused.getMessage().contains(type.getTypeName()),
+                        "the refusal must name the offending type; message: " + refused.getMessage());
+                assertTrue(
+                        refused.getMessage().contains(keyword),
+                        "the refusal must name the reserved wire name, so the application can rename the"
+                                + " spelling; message: " + refused.getMessage());
+                assertFalse(
+                        refused.getMessage().contains("maximum"),
+                        "the diagnostic keeps its existing bound and carries no fragment content; message: "
+                                + refused.getMessage());
+            }
+        }
+    }
+
     // --- TP-008: a property named like the expansion keyword refuses generation ---
 
     @Test
@@ -854,7 +1043,10 @@ class AliasDescriptionTest {
             ContestedSpellingConstrainedSortsLast.class,
             ContestedSpellingWithAnySetter.class,
             HiddenAliasedFieldOnAnySetterType.class,
-            AccessorPairAliasedNoFieldOnAnySetterType.class);
+            AccessorPairAliasedNoFieldOnAnySetterType.class,
+            SpellingNamesAHiddenPropertyOnAnySetterType.class,
+            SpellingNamesAHiddenProperty.class,
+            SpellingNamesAnAccessorPairOnAnySetterType.class);
 
     // --- Fixtures: one per shape, named for it ---
 
@@ -1266,6 +1458,108 @@ class AliasDescriptionTest {
         public void setLevel(int level) {
             this.lvl = level;
         }
+
+        /** The any-setter's backing storage. */
+        @JsonAnySetter
+        public Map<String, String> extras = new LinkedHashMap<>();
+    }
+
+    /**
+     * The measured critical shape (spec.md § Amendments, round 10): a published property whose alias
+     * spelling is already the name of a property the document never publishes.
+     *
+     * <p>The two bounds differ on purpose. Publishing {@code secret} with {@code level}'s schema
+     * describes a {@code @Max(10)} slot over a member declared {@code @Max(3)}, so the wrong schema
+     * is visible as a number rather than only as a presence.
+     */
+    static final class SpellingNamesAHiddenPropertyOnAnySetterType {
+
+        /** The aliasing property, published, whose spelling is the hidden member's own name. */
+        @Max(10)
+        @JsonAlias("secret")
+        public int level;
+
+        /** Hidden from the document, still bound by Jackson under its own name. */
+        @Schema(hidden = true)
+        @Max(3)
+        public int secret;
+
+        /** The any-setter's backing storage, which makes the reserved set observable. */
+        @JsonAnySetter
+        public Map<String, String> extras = new LinkedHashMap<>();
+    }
+
+    /**
+     * The same shape with no any-setter, where the closed object was the whole guard: this is the
+     * regression against the released MCP boundary rather than a missed tightening.
+     */
+    static final class SpellingNamesAHiddenProperty {
+
+        /** The aliasing property, published, whose spelling is the hidden member's own name. */
+        @Max(10)
+        @JsonAlias("secret")
+        public int level;
+
+        /** Hidden from the document, still bound by Jackson under its own name. */
+        @Schema(hidden = true)
+        @Max(3)
+        public int secret;
+    }
+
+    /**
+     * A second unpublished-but-bound member of FR-015's reserved set reached the same way: an accessor
+     * pair with no same-named field, whose name another property aliases.
+     */
+    static final class SpellingNamesAnAccessorPairOnAnySetterType {
+
+        /** The aliasing property, published, whose spelling is the accessor pair's bound name. */
+        @Max(10)
+        @JsonAlias("level")
+        public int amount;
+
+        /** The storage behind the accessor pair, under a different name. */
+        private int lvl;
+
+        /**
+         * Returns the level, carrying the bound the spelling would escape.
+         *
+         * @return the level
+         */
+        @Max(3)
+        public int getLevel() {
+            return lvl;
+        }
+
+        /**
+         * Binds the level.
+         *
+         * @param level the bound value
+         */
+        public void setLevel(int level) {
+            this.lvl = level;
+        }
+
+        /** The any-setter's backing storage. */
+        @JsonAnySetter
+        public Map<String, String> extras = new LinkedHashMap<>();
+    }
+
+    /** A published property whose alias spelling is the generator's own expansion keyword. */
+    static final class KeywordSpellingAlias {
+
+        /** The aliased property: expansion would publish its schema under the reserved keyword. */
+        @JsonAlias(MEASURED_EXPANSION_KEYWORD)
+        @Max(10)
+        public Integer plan;
+    }
+
+    /** The same shape on an any-setter type, where the spelling must also never be left unreserved. */
+    static final class KeywordSpellingAliasOnAnySetterType {
+
+        /** The aliased property: expansion would publish its schema under the reserved keyword. */
+        @JsonAlias(MEASURED_EXPANSION_KEYWORD)
+        @Max(10)
+        public Integer plan;
 
         /** The any-setter's backing storage. */
         @JsonAnySetter

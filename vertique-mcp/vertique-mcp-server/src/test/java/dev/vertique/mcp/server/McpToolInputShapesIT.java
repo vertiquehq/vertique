@@ -4,6 +4,7 @@
 package dev.vertique.mcp.server;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertAll;
 
 import dev.vertique.mcp.lifecycle.McpErrorType;
 import dev.vertique.mcp.lifecycle.McpOutcome;
@@ -342,6 +343,52 @@ class McpToolInputShapesIT {
                 .as("the contested spelling must appear in no alias rule either; the only place 'x' may "
                         + "appear is the reserved-name set")
                 .doesNotContain("\"required\":[\"x\"]");
+    }
+
+    // --- T010 TP-002: an alias spelling naming a member the document never publishes ---
+
+    @Test
+    @DisplayName("TP-002: an alias naming a hidden member is refused, with and without an any-setter")
+    void anAliasNamingAHiddenMemberIsRefused() throws Exception {
+        startServer();
+
+        // Both shapes are asserted through assertAll, so the parent's verdict is recorded for each of
+        // them rather than only for whichever fails first.
+        assertAll(
+                () -> assertHiddenMemberSpellingRefused(McpToolInputShapesITFixture.SPELLING_NAMES_HIDDEN_ANY_TOOL),
+                () -> assertHiddenMemberSpellingRefused(McpToolInputShapesITFixture.SPELLING_NAMES_HIDDEN_CLOSED_TOOL));
+    }
+
+    /**
+     * Asserts one CO-007 shape: the colliding spelling is refused whatever value it carries, and the
+     * aliasing property itself still reaches the handler.
+     *
+     * <p>The decisive value is {@code 5}. At T010's parent the document publishes {@code secret}
+     * carrying the aliasing property's own {@code {"maximum":10}}, so a larger value is refused by that
+     * misplaced copy rather than admitted through the hole; {@code 5} satisfies the published maximum
+     * and violates the hidden member's own {@code @Max(3)}, which is the member the key actually binds.
+     */
+    private void assertHiddenMemberSpellingRefused(String toolName) throws Exception {
+        assertSchemaRejection(
+                toolName,
+                new JsonObject().put("secret", 5),
+                "DECISIVE (CO-007): the spelling 'secret' is already this type's own property name, so it "
+                        + "is published nowhere and, where extras are described, stays reserved. Published "
+                        + "with the aliasing property's @Max(10) schema it admits 5 into a member declared "
+                        + "@Max(3) that the document deliberately hides, and because 'level' is published "
+                        + "the reserved set releases its spellings and the guard disappears with it. The "
+                        + "closed shape is the regression row: 0.2.0 refused this key because the hardener "
+                        + "closed a type with no declared extras");
+        assertSchemaRejection(
+                toolName,
+                new JsonObject().put("secret", 99),
+                "the same key is refused whatever value it carries, because the name is published nowhere "
+                        + "and reserved rather than described with some other member's constraint");
+        assertAccepted(
+                toolName,
+                new JsonObject().put("level", 5),
+                "the aliasing property itself is untouched by the collision rule, so a blanket refusal "
+                        + "cannot satisfy the two rows above");
     }
 
     // --- Shared actions and assertions ---
