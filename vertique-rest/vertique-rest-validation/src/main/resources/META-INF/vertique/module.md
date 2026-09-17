@@ -211,6 +211,24 @@ A property marked `@JsonIgnore` or read-only is absent from the request schema, 
 body sending it is not a schema error; a write-only property is described and validated. On a body
 whose extra keys are described, such a name is reserved and its presence *is* a schema error.
 
+**How a `@JsonAlias` spelling is validated.** Every spelling of a described body property is listed
+in the request schema with a copy of that property's own schema, so the gate applies the same
+constraints to it: `{"qty": 999}` is rejected with 400 against a `@Max(10) @JsonAlias("qty")
+quantity`, and an unknown constant under an enum property's alias is rejected where the binder would
+have bound the `@JsonEnumDefaultValue` constant. A required aliased property is satisfied by any one
+of its spellings, so `{"qty": 5}` alone is accepted, and a body carrying none of them is still
+rejected. Whether one body may carry several spellings at once follows the route's effective profile
+and nothing else: a profile whose mapper enables strict duplicate detection — `vertique-strict`
+among the built-ins — rejects `{"quantity": 5, "qty": 5}` with 400, while `system` and `vertique`
+accept it. That rule is the gate's alone; every profile's binder accepts both spellings, so a route
+on the `none` strategy is unaffected.
+
+A spelling more than one property of the body type claims is described nowhere, because the
+generator cannot predict which property Jackson binds it to; on a body whose extra keys are
+described it is reserved, and elsewhere it reaches the binder unvalidated — constrain that shape
+with Bean Validation. A spelling of a property the request schema does not publish, such as a
+`@Schema(hidden = true)` field's alias, is likewise not described and stays a reserved name.
+
 Each operation's schemas are synthesized once at registration and closed over by the per-route gate handler, so no schema is compiled on the request hot path. There is no per-operationId cache (see Core Concepts) — distinct operations sharing an operationId across mounts get distinct schemas.
 
 ### WebValidationStrategy

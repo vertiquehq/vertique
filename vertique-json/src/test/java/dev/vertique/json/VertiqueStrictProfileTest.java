@@ -3,6 +3,7 @@
 
 package dev.vertique.json;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -10,21 +11,31 @@ import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.exc.MismatchedInputException;
 import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.core.json.VertiqueJson;
+import io.vertx.core.buffer.Buffer;
+import io.vertx.core.json.DecodeException;
+import io.vertx.core.json.Json;
+import io.vertx.core.json.JsonObject;
 import io.vertx.core.json.jackson.DatabindCodec;
+import io.vertx.core.json.jackson.JacksonCodec;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
 
 /**
  * Unit tests for the built-in {@code vertique-strict} profile as seeded by
@@ -368,7 +379,195 @@ class VertiqueStrictProfileTest {
                 "the registered module count on the shared mapper must be unchanged");
     }
 
+    // --- T008 TP-005 (FR-017, AC-017.1): repeated keys, per mapper and through the process codec ---
+
+    /** A body repeating an identical key, which every JSON parser is free to accept or refuse. */
+    private static final String REPEATED_NOTE = "{\"note\":\"a\",\"note\":\"b\"}";
+
+    /** The same shape at a typed property, read with {@code readValue} rather than {@code readTree}. */
+    private static final String REPEATED_QUANTITY = "{\"quantity\":1,\"quantity\":2}";
+
+    /** An alias beside its primary spelling: two different keys, so no parser sees a duplicate. */
+    private static final String TWO_SPELLINGS = "{\"quantity\":1,\"qty\":2}";
+
+    /**
+     * T008 TP-005 (AC-017.1, the direct-read half). {@code vertique-strict}'s mapper enables
+     * {@code JsonParser.Feature.STRICT_DUPLICATE_DETECTION}, so it refuses a body repeating an
+     * identical key on both read paths, while {@code vertique} and {@code system} accept it and keep
+     * the last value.
+     *
+     * <p>Behavior-change: at T008's parent every built-in mapper accepts both bodies (design proof
+     * v4, parser run). The enabled feature is also what FR-016's strict schema rule reads, so a
+     * mapper that stopped enabling it would silently turn every {@code oneOf} alias rule back into an
+     * {@code anyOf}.
+     *
+     * @throws Exception when a lenient read fails, which would itself be the finding
+     */
+    @Test
+    @DisplayName("Only vertique-strict rejects a repeated identical key on a direct read")
+    void repeatedKeyIsRejectedOnDirectRead() {
+        ObjectMapper strict = strictMapper();
+        DefaultJsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
+
+        // assertAll, so the strict reds and the lenient characterizations are all observed in one run:
+        // the lenient rows are what makes the strict rejection a profile difference rather than a
+        // parser-wide one, and a first failure must not hide them.
+        List<Executable> checks = new ArrayList<>();
+        checks.add(() -> {
+            JsonProcessingException repeatedTree = assertThrows(
+                    JsonProcessingException.class,
+                    () -> strict.readTree(REPEATED_NOTE),
+                    "vertique-strict must refuse a repeated identical key on readTree: its mapper is the one a"
+                            + " REST route under that profile parses raw body bytes with");
+            assertTrue(
+                    repeatedTree.getMessage().contains("Duplicate field"),
+                    "the rejection must be Jackson's duplicate-field parse error, not a binding failure;" + " message: "
+                            + repeatedTree.getMessage());
+        });
+        checks.add(() -> {
+            JsonProcessingException repeatedValue = assertThrows(
+                    JsonProcessingException.class,
+                    () -> strict.readValue(REPEATED_QUANTITY, AliasedQuantity.class),
+                    "vertique-strict must refuse a repeated identical key on readValue too");
+            assertTrue(
+                    repeatedValue.getMessage().contains("Duplicate field"),
+                    "the readValue rejection must also be the duplicate-field parse error; message: "
+                            + repeatedValue.getMessage());
+        });
+        for (JsonProfileId lenientId : List.of(VertiqueJsonMapperProfile.ID, JsonProfileId.SYSTEM)) {
+            ObjectMapper lenient = registry.mapper(lenientId);
+            checks.add(() -> assertEquals(
+                    "b",
+                    lenient.readTree(REPEATED_NOTE).get("note").asText(),
+                    lenientId.value() + " must accept a repeated key and keep the last value: FR-017 changes"
+                            + " vertique-strict alone"));
+            checks.add(() -> assertEquals(
+                    2,
+                    lenient.readValue(REPEATED_QUANTITY, AliasedQuantity.class).quantity,
+                    lenientId.value() + " must bind the last repeated value on readValue too"));
+        }
+        assertAll(checks);
+    }
+
+    /**
+     * T008 TP-005 (AC-017.1, the two-spellings half). An alias sent beside its primary spelling is
+     * two different keys, so no built-in mapper refuses it — which is why the one-spelling rule under
+     * {@code vertique-strict} has to be the schema's and cannot be the parser's.
+     *
+     * <p>Behavior-preservation: green at T008's parent and after it. A mapper that started rejecting
+     * the pair would make FR-016's strict rule redundant rather than stricter, and must be
+     * re-recorded here rather than relaxed.
+     *
+     * @throws Exception when a read fails, which is the finding
+     */
+    @Test
+    @DisplayName("Two spellings of one property are not duplicates to any built-in mapper")
+    void twoSpellingsAreNotDuplicatesToAnyBuiltInMapper() throws Exception {
+        DefaultJsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
+
+        Integer strictBound =
+                registry.mapper(VERTIQUE_STRICT_ID).readValue(TWO_SPELLINGS, AliasedQuantity.class).quantity;
+        assertNotNull(
+                strictBound,
+                "vertique-strict must bind a body carrying both spellings: strict duplicate detection compares"
+                        + " key names, and 'quantity' and 'qty' are different names");
+        for (JsonProfileId lenientId : Set.of(VertiqueJsonMapperProfile.ID, JsonProfileId.SYSTEM)) {
+            assertEquals(
+                    strictBound,
+                    registry.mapper(lenientId).readValue(TWO_SPELLINGS, AliasedQuantity.class).quantity,
+                    lenientId.value() + " must bind the two spellings exactly as vertique-strict does: the binder"
+                            + " accepts several spellings under every profile, so only the schema rule differs");
+        }
+    }
+
+    /**
+     * T008 TP-005 (AC-017.1, the process-codec half). With {@code vertique-strict} installed as the
+     * process JSON codec's mapper — what {@code json.systemProfile: vertique-strict} does — the
+     * codec's <em>delegated</em> decode methods reject a repeated identical key, while the streaming
+     * {@code JacksonCodec} overloads and the static {@code DatabindCodec} parser helpers keep
+     * accepting it. That exclusion is the codec's own documented contract; it is pinned here so a
+     * claim of process-wide rejection cannot silently widen (design proof v7,
+     * {@code runs/codec-coverage-v7.txt}).
+     *
+     * <p>Behavior-change for the five delegated entry points, behavior-preservation for the three
+     * excluded ones.
+     */
+    @Test
+    @DisplayName("An installed vertique-strict codec rejects a repeated key only in its delegated decode methods")
+    void strictSystemProfileRejectsRepeatedKeyInTheCodecsDelegatedDecodeMethods() {
+        assertTrue(
+                VertiqueJson.ownsCodec(),
+                "the framework codec must be the process codec, or installing a mapper proves nothing about"
+                        + " Json.* at all");
+        Buffer repeated = Buffer.buffer(REPEATED_NOTE);
+        try {
+            VertiqueJson.install(VERTIQUE_STRICT_ID, strictMapper());
+            JacksonCodec codec = (JacksonCodec) Json.CODEC;
+
+            // assertAll, so the five delegated rejections and the three documented exclusions are all
+            // observed in one run: the exclusions are the half that keeps the claim from widening.
+            assertAll(
+                    () -> assertThrows(
+                            DecodeException.class,
+                            () -> new JsonObject(REPEATED_NOTE),
+                            "new JsonObject(String) decodes through the installed mapper and must reject the"
+                                    + " repeated key"),
+                    () -> assertThrows(
+                            DecodeException.class,
+                            () -> new JsonObject(repeated),
+                            "new JsonObject(Buffer) must reject it too"),
+                    () -> assertThrows(
+                            DecodeException.class,
+                            () -> Json.decodeValue(repeated),
+                            "Json.decodeValue(Buffer) is what RequestBody.asJsonObject() calls, and must reject"
+                                    + " it"),
+                    () -> assertThrows(
+                            DecodeException.class,
+                            () -> Json.decodeValue(REPEATED_NOTE),
+                            "Json.decodeValue(String) must reject it"),
+                    () -> assertThrows(
+                            DecodeException.class,
+                            () -> Json.decodeValue(REPEATED_NOTE, JsonObject.class),
+                            "Json.decodeValue(String, Class) must reject it"),
+                    () -> assertEquals(
+                            "b",
+                            ((JsonObject) codec.fromString(REPEATED_NOTE)).getString("note"),
+                            "the streaming fromString(String) overload parses with the codec class's own static"
+                                    + " factory, not the installed mapper, so it keeps accepting the repeated key"
+                                    + " and keeps the last value — the exclusion the codec's contract documents"),
+                    () -> assertEquals(
+                            "b",
+                            ((JsonObject) codec.fromBuffer(repeated)).getString("note"),
+                            "the streaming fromBuffer(Buffer) overload is excluded on the same grounds"),
+                    () -> assertEquals(
+                            "b",
+                            ((JsonObject) DatabindCodec.fromParser(
+                                            DatabindCodec.createParser(REPEATED_NOTE), Object.class))
+                                    .getString("note"),
+                            "the static DatabindCodec parser helpers never consult the installed mapper either"));
+        } finally {
+            VertiqueJson.resetForTests();
+        }
+    }
+
     // --- Test fixtures ---
+
+    /**
+     * Test bean carrying an aliased {@link Integer} property, used to read a repeated key at a typed
+     * position and to read an alias beside its primary spelling.
+     *
+     * <p>A plain bean rather than a record on purpose: Jackson binds a record through creator
+     * properties, and an alias on a creator property with no fallback field or setter is refused with
+     * {@code No fallback setter/field defined for creator property}. That is a Jackson limitation on
+     * the binding side, not a property of this profile, and it is out of this task's scope — the
+     * schema side of a record-component alias is proven by {@code AliasDescriptionTest}.
+     */
+    static final class AliasedQuantity {
+
+        /** The aliased quantity, bound under either spelling. */
+        @JsonAlias("qty")
+        public Integer quantity;
+    }
 
     /**
      * Test record carrying a {@link BigDecimal} property, used to prove the strict decimal

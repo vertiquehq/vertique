@@ -5,12 +5,17 @@ package dev.vertique.rest.validation;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonAnyGetter;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
+import com.fasterxml.jackson.annotation.JsonEnumDefaultValue;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import dev.vertique.core.json.JsonProfile;
+import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.rest.jaxrs.validation.NoneValidationStrategy;
 import dev.vertique.rest.test.RestTestContributions;
 import dev.vertique.rest.test.RestTestMount;
@@ -33,6 +38,9 @@ import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
@@ -55,6 +63,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.function.Executable;
 
 /**
  * End-to-end proof that the body schema a {@code web-validation} route validates against is
@@ -128,6 +137,9 @@ public class ProfiledSchemaSynthesisIT {
 
     private final List<HttpServer> servers = new ArrayList<>();
 
+    /** Whether the test that just ran installed a mapper as the process JSON codec. */
+    private boolean processCodecInstalled;
+
     /**
      * Captures the per-test Vert.x instance and creates the shared {@link WebClient}. The client is
      * bound to a field so {@link #tearDown()} can close it; an unbound client can never be closed at
@@ -157,6 +169,13 @@ public class ProfiledSchemaSynthesisIT {
             server.close().toCompletionStage().toCompletableFuture().get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         }
         servers.clear();
+        if (processCodecInstalled) {
+            // The process codec is global state: a test that installed one must restore it, or every
+            // later test in this JVM decodes through a mapper it never chose. The module's Failsafe
+            // configuration already arms the reset seam.
+            VertiqueJson.resetForTests();
+            processCodecInstalled = false;
+        }
     }
 
     // --- TP-001: the strict decimal body form ---
@@ -631,6 +650,314 @@ public class ProfiledSchemaSynthesisIT {
                         + " name inside the map the response echoes");
 
         assertEquals(5, resource.invocations.get(), "every body must have reached the resource without the gate");
+    }
+
+    // --- T008 TP-004 and TP-006: alias spellings and repeated keys, gate versus binder ---
+
+    /**
+     * One gated row: a path, a body, the status the gate must answer, and why.
+     *
+     * @param path     the request path, which selects both the profile and the body type
+     * @param body     the raw request body
+     * @param expected the expected status code
+     * @param why      the reason, for the failure message
+     */
+    private record AliasCase(String path, String body, int expected, String why) {}
+
+    /**
+     * Builds the sixteen gated rows for one profile's alias resource.
+     *
+     * @param prefix         the resource path prefix, which selects the profile
+     * @param bothSpellings  the status both spellings of one property must receive: 200 under a
+     *                       lenient profile, 400 under a strict one
+     * @return the rows, in request order
+     */
+    private static List<AliasCase> aliasCases(String prefix, int bothSpellings) {
+        String strictness = bothSpellings == 400 ? "strict" : "lenient";
+        return List.of(
+                new AliasCase(prefix + "/optional", "{\"quantity\":5}", 200, "the canonical spelling is accepted"),
+                new AliasCase(prefix + "/optional", "{\"qty\":5}", 200, "the alias alone is accepted and validated"),
+                new AliasCase(
+                        prefix + "/optional",
+                        "{\"quantity\":5,\"qty\":5}",
+                        bothSpellings,
+                        "both spellings of one optional property under a " + strictness + " profile"),
+                new AliasCase(
+                        prefix + "/optional", "{\"note\":\"n\"}", 200, "neither spelling, for an optional property"),
+                new AliasCase(
+                        prefix + "/optional",
+                        "{\"qty\":11}",
+                        400,
+                        "a constraint violation under the alias: without the alias description the gate never"
+                                + " checks the value and @Max(10) is bypassed (security round 7, N1)"),
+                new AliasCase(
+                        prefix + "/optional",
+                        "{\"qty\":5,\"note\":\"n\"}",
+                        200,
+                        "an unrelated valid field beside the alias"),
+                new AliasCase(prefix + "/required", "{\"quantity\":5}", 200, "the canonical spelling is accepted"),
+                new AliasCase(
+                        prefix + "/required",
+                        "{\"qty\":5}",
+                        200,
+                        "the alias alone satisfies a required property: the rule replaces the top-level required"
+                                + " entry, which would otherwise reject this legal body"),
+                new AliasCase(
+                        prefix + "/required",
+                        "{\"quantity\":5,\"qty\":5}",
+                        bothSpellings,
+                        "both spellings of one required property under a " + strictness + " profile"),
+                new AliasCase(
+                        prefix + "/required",
+                        "{\"note\":\"n\"}",
+                        400,
+                        "neither spelling, for a required property: the rule must still require one"),
+                new AliasCase(prefix + "/twoalias", "{\"nm\":\"abc\"}", 200, "the first of two spellings"),
+                new AliasCase(prefix + "/twoalias", "{\"nm2\":\"abc\"}", 200, "the second of two spellings"),
+                new AliasCase(
+                        prefix + "/twoalias",
+                        "{\"name\":\"abc\",\"nm\":\"abc\"}",
+                        bothSpellings,
+                        "a spelling beside the property's own name under a " + strictness + " profile"),
+                new AliasCase(
+                        prefix + "/anysetter",
+                        "{\"qty\":5,\"x\":\"1\"}",
+                        200,
+                        "valid extras beside the alias on an any-setter type: the spelling is published, so it is"
+                                + " released from the reserved set rather than rejected as a reserved name"),
+                new AliasCase(prefix + "/enum", "{\"r\":\"USER\"}", 200, "a known constant under the enum's alias"),
+                new AliasCase(
+                        prefix + "/enum",
+                        "{\"r\":\"ADMIN\"}",
+                        400,
+                        "an unknown constant under the enum's alias: under vertique and vertique-strict the"
+                                + " binder falls back to the @JsonEnumDefaultValue constant, so only the described"
+                                + " alias lets the gate's enum keyword refuse it"));
+    }
+
+    /**
+     * T008 TP-004 (AC-016.4, the gated half). Under {@code web-validation} every published alias
+     * spelling is validated against its property's own constraints, on {@code system},
+     * {@code vertique}, and {@code vertique-strict} routes.
+     *
+     * <table>
+     *   <caption>The alias decision table, per profile</caption>
+     *   <tr><th>Body</th><th>system</th><th>vertique</th><th>vertique-strict</th></tr>
+     *   <tr><td>{@code {"quantity":5}}</td><td>200</td><td>200</td><td>200</td></tr>
+     *   <tr><td>{@code {"qty":5}}</td><td>200</td><td>200</td><td>200</td></tr>
+     *   <tr><td>{@code {"quantity":5,"qty":5}}</td><td>200</td><td>200</td><td>400</td></tr>
+     *   <tr><td>{@code {"note":"n"}}, optional</td><td>200</td><td>200</td><td>200</td></tr>
+     *   <tr><td>{@code {"note":"n"}}, required</td><td>400</td><td>400</td><td>400</td></tr>
+     *   <tr><td>{@code {"qty":11}}</td><td>400</td><td>400</td><td>400</td></tr>
+     *   <tr><td>{@code {"qty":5,"note":"n"}}</td><td>200</td><td>200</td><td>200</td></tr>
+     *   <tr><td>{@code {"qty":5,"x":"1"}}, any-setter</td><td>200</td><td>200</td><td>200</td></tr>
+     *   <tr><td>{@code {"r":"ADMIN"}}</td><td>400</td><td>400</td><td>400</td></tr>
+     * </table>
+     *
+     * <p>Behavior-change at T008's parent commit, which describes no alias: {@code {"qty":11}} is
+     * accepted on the optional types, {@code {"qty":5}} is rejected on the required one as a missing
+     * {@code quantity}, and both spellings are accepted under {@code vertique-strict}. The
+     * {@code {"r":"ADMIN"}} row is split by the parser, not by the gate: {@code system} applies
+     * {@code JacksonDefaults.applySystem} only and does not enable
+     * {@code READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE}, so its binder already refuses the unknown
+     * constant and the route answers 400 without any gate; {@code vertique} and
+     * {@code vertique-strict} bind it to the {@code @JsonEnumDefaultValue} constant, so that row is
+     * green at the parent under {@code system} and red under the other two.
+     *
+     * <p>Every row is posted before any assertion runs, so one wrong status cannot hide the other
+     * forty-seven or the invocation counts.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("The gate validates every alias spelling on system, vertique and vertique-strict routes")
+    void aliasSpellingsAreValidatedUnderTheGate() throws Exception {
+        SystemAliasResource system = new SystemAliasResource();
+        VertiqueAliasResource vertique = new VertiqueAliasResource();
+        StrictAliasResource strict = new StrictAliasResource();
+        int gatePort = start(gateMount(), Set.of(system, vertique, strict));
+
+        List<AliasCase> cases = new ArrayList<>();
+        cases.addAll(aliasCases("/system-alias", 200));
+        cases.addAll(aliasCases("/vertique-alias", 200));
+        cases.addAll(aliasCases("/strict-alias", 400));
+
+        List<Integer> observed = new ArrayList<>();
+        for (AliasCase gated : cases) {
+            observed.add(post(gatePort, gated.path(), gated.body()).statusCode());
+        }
+
+        List<Executable> checks = new ArrayList<>();
+        for (int index = 0; index < cases.size(); index++) {
+            AliasCase gated = cases.get(index);
+            int status = observed.get(index);
+            checks.add(() -> assertEquals(
+                    gated.expected(), status, "POST " + gated.path() + " " + gated.body() + ": " + gated.why()));
+        }
+        // 13 of the 16 rows are accepted under a lenient profile and 10 under vertique-strict, which
+        // is the "rejected before invocation" half of every 400 above.
+        checks.add(() -> assertEquals(
+                13, system.invocations.get(), "no body the system route rejected may have reached the resource"));
+        checks.add(() -> assertEquals(
+                13, vertique.invocations.get(), "no body the vertique route rejected may have reached the resource"));
+        checks.add(() -> assertEquals(
+                10,
+                strict.invocations.get(),
+                "no body the vertique-strict route rejected may have reached the resource"));
+        assertAll(checks);
+    }
+
+    /**
+     * T008 TP-004 (AC-016.4, the gate-disabled half). On the {@code jaxrs.validationStrategy: none}
+     * mount the profile's Jackson binder is the only component that can refuse a body, and it accepts
+     * every spelling under every profile — which is what makes the strict schema rule above stricter
+     * than the binder rather than redundant with it.
+     *
+     * <table>
+     *   <caption>Binder-only decisions on the alias shapes</caption>
+     *   <tr><th>Body</th><th>Outcome</th><th>Decided by</th></tr>
+     *   <tr><td>{@code {"qty":5}}</td><td>200, {@code quantity} bound to 5</td>
+     *       <td>nobody — Jackson binds the alias into its property</td></tr>
+     *   <tr><td>{@code {"quantity":5,"qty":5}}</td><td>200 under every profile</td>
+     *       <td>nobody — two different key names are not a repeated key</td></tr>
+     *   <tr><td>{@code {"qty":11}}</td><td>200, bound past {@code @Max(10)}</td>
+     *       <td>nobody — Bean Validation does not run here</td></tr>
+     *   <tr><td>{@code {"r":"ADMIN"}}</td><td>400 under {@code system}, 200 elsewhere</td>
+     *       <td>the {@code system} mapper alone, which has no unknown-enum default</td></tr>
+     * </table>
+     *
+     * <p>A binder that started refusing several spellings fails this method and must be re-recorded,
+     * not relaxed. A 400 from the {@code web-validation} mount is never binder evidence.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("Without the gate, the binder accepts every spelling under every profile")
+    void binderAcceptsEverySpellingWithoutTheGate() throws Exception {
+        SystemAliasResource system = new SystemAliasResource();
+        VertiqueAliasResource vertique = new VertiqueAliasResource();
+        StrictAliasResource strict = new StrictAliasResource();
+        int nonePort = start(noGateMount(), Set.of(system, vertique, strict));
+
+        List<Executable> checks = new ArrayList<>();
+        for (String prefix : List.of("/system-alias", "/vertique-alias", "/strict-alias")) {
+            HttpResponse<Buffer> aliasOnly = post(nonePort, prefix + "/optional", "{\"qty\":5}");
+            HttpResponse<Buffer> bothSpellings = post(nonePort, prefix + "/optional", "{\"quantity\":5,\"qty\":5}");
+            HttpResponse<Buffer> violation = post(nonePort, prefix + "/optional", "{\"qty\":11}");
+            checks.add(() -> assertEquals(
+                    200, aliasOnly.statusCode(), prefix + ": with no gate, the binder accepts the alias alone"));
+            checks.add(() -> assertEquals(
+                    "quantity=5 note=null",
+                    aliasOnly.bodyAsString(),
+                    prefix + ": the binder must bind 'quantity' from the alias spelling 'qty'"));
+            checks.add(() -> assertEquals(
+                    200,
+                    bothSpellings.statusCode(),
+                    prefix + ": the binder accepts both spellings of one property under every profile, so the"
+                            + " one-spelling rule is the schema's alone"));
+            checks.add(() -> assertEquals(
+                    200,
+                    violation.statusCode(),
+                    prefix + ": the binder applies no Bean Validation constraint, so {\"qty\":11} is bound;"
+                            + " the gate is the only component that refuses it"));
+        }
+
+        HttpResponse<Buffer> systemEnum = post(nonePort, "/system-alias/enum", "{\"r\":\"ADMIN\"}");
+        HttpResponse<Buffer> vertiqueEnum = post(nonePort, "/vertique-alias/enum", "{\"r\":\"ADMIN\"}");
+        HttpResponse<Buffer> strictEnum = post(nonePort, "/strict-alias/enum", "{\"r\":\"ADMIN\"}");
+        checks.add(() -> assertEquals(
+                400,
+                systemEnum.statusCode(),
+                "the system mapper does not enable READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE, so its binder"
+                        + " already refuses an unknown constant with no gate at all"));
+        checks.add(() -> assertEquals(
+                "role=GUEST",
+                vertiqueEnum.bodyAsString(),
+                "vertique binds an unknown constant to the @JsonEnumDefaultValue constant, which is the bypass"
+                        + " the described alias closes at the gate"));
+        checks.add(() -> assertEquals(
+                "role=GUEST", strictEnum.bodyAsString(), "vertique-strict inherits the same unknown-enum fallback"));
+        assertAll(checks);
+    }
+
+    /**
+     * T008 TP-006 (AC-017.2, the ordinary binder route). With the process codec left at its default,
+     * a {@code vertique-strict} route rejects a body repeating an identical key before the resource
+     * runs, because the binder parses the raw body bytes with that profile's own mapper; a
+     * {@code vertique} route accepts it and binds the last value.
+     *
+     * <p>Behavior-change at T008's parent commit, where {@code vertique-strict}'s mapper does not
+     * enable {@code STRICT_DUPLICATE_DETECTION} and the strict route answers 200; the {@code
+     * vertique} row is a green characterization there.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("A vertique-strict route rejects a repeated key while vertique keeps the last value")
+    void strictRouteRejectsARepeatedKeyAndVertiqueKeepsTheLastValue() throws Exception {
+        VertiqueAliasResource vertique = new VertiqueAliasResource();
+        StrictAliasResource strict = new StrictAliasResource();
+        int gatePort = start(gateMount(), Set.of(vertique, strict));
+
+        HttpResponse<Buffer> strictResponse = post(gatePort, "/strict-alias/optional", REPEATED_KEY_BODY);
+        HttpResponse<Buffer> vertiqueResponse = post(gatePort, "/vertique-alias/optional", REPEATED_KEY_BODY);
+
+        assertAll(
+                () -> assertEquals(
+                        400,
+                        strictResponse.statusCode(),
+                        "a vertique-strict route must reject a body repeating an identical key: its mapper"
+                                + " parses the raw body bytes (DefaultBoundRequest.bindProfiledJsonBody) and the"
+                                + " binder translates the parse rejection to 400"),
+                () -> assertEquals(0, strict.invocations.get(), "the rejected body must not reach the resource"),
+                () -> assertEquals(
+                        200,
+                        vertiqueResponse.statusCode(),
+                        "vertique is unchanged by FR-017 and must keep accepting the body"),
+                () -> assertEquals(
+                        "quantity=2 note=null",
+                        vertiqueResponse.bodyAsString(),
+                        "vertique keeps the last value of the repeated key"));
+    }
+
+    /**
+     * T008 TP-006 (AC-017.2, the process-codec route). When the route's profile <em>is</em> the
+     * installed process codec, the binder swallows the codec's {@code DecodeException} and binds the
+     * raw {@code Buffer} instead; under {@code web-validation} the gate then refuses that buffer, so
+     * the client still receives a 400 before the resource runs — but the rejection is the validator
+     * refusing a value it does not support, and its detail names an internal buffer class rather than
+     * the repeated key (design proof v7, {@code runs/process-codec-v7.txt} and
+     * {@code runs/buf-validate-v7.txt}).
+     *
+     * <p>This is pinned rather than glossed over: FR-017 claims nothing for the {@code none} strategy
+     * or for a route with no body schema on that path, where the body parameter binds to null and the
+     * resource runs — a REST binder defect filed outside this package.
+     *
+     * <p>Behavior-change at T008's parent commit, where the installed mapper does not enable the
+     * feature and the route answers 200.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("A vertique-strict process-codec route still rejects a repeated key, at the gate")
+    void strictProcessCodecRouteStillRejectsARepeatedKeyAtTheGate() throws Exception {
+        StrictAliasResource strict = new StrictAliasResource();
+        int gatePort = startWithStrictProcessCodec(Set.of(strict));
+
+        HttpResponse<Buffer> response = post(gatePort, "/strict-alias/optional", REPEATED_KEY_BODY);
+
+        assertAll(
+                () -> assertEquals(
+                        400,
+                        response.statusCode(),
+                        "on the process-codec path the binder swallows the parse rejection and binds the raw"
+                                + " buffer, which the gate then refuses, so the client still sees a 400 before the"
+                                + " resource runs"),
+                () -> assertEquals(0, strict.invocations.get(), "the rejected body must not reach the resource"),
+                () -> assertFalse(
+                        response.bodyAsString().contains("Duplicate"),
+                        "the detail names no repeated key on this path: the rejection comes from the validator"
+                                + " refusing a Buffer, not from the parser; body: " + response.bodyAsString()));
     }
 
     // --- Request bodies ---
@@ -1136,6 +1463,343 @@ public class ProfiledSchemaSynthesisIT {
         }
     }
 
+    // --- T008 alias fixtures and resources ---
+
+    /** A body repeating an identical key, which only a strict-duplicate-detecting mapper refuses. */
+    private static final String REPEATED_KEY_BODY = "{\"quantity\":1,\"quantity\":2}";
+
+    /** An optional aliased, constrained property beside an unaliased one. */
+    public static class AliasedQuantity {
+
+        /** The aliased property: {@code qty} must carry its {@code maximum} at the gate. */
+        @JsonAlias("qty")
+        @Max(10)
+        public Integer quantity;
+
+        /** An unaliased property, so "neither spelling" is a body the type can still carry. */
+        public String note;
+    }
+
+    /** The same property, required, so the alias must satisfy the requirement on its own. */
+    public static class RequiredAliasedQuantity {
+
+        /** The required aliased property. */
+        @JsonAlias("qty")
+        @Max(10)
+        @NotNull
+        public Integer quantity;
+
+        /** An unaliased property. */
+        public String note;
+    }
+
+    /** One property claiming two spellings. */
+    public static class TwoAliasedName {
+
+        /** The doubly aliased property. */
+        @JsonAlias({"nm", "nm2"})
+        @Size(max = 3)
+        public String name;
+    }
+
+    /** An aliased property on an any-setter type, where the spelling must also be released. */
+    public static class AliasedQuantityWithExtras {
+
+        /** The aliased property. */
+        @JsonAlias("qty")
+        @Max(10)
+        public Integer quantity;
+
+        /** The any-setter's backing storage, typed so a valid extra is describable. */
+        @JsonAnySetter
+        public Map<String, String> extras = new LinkedHashMap<>();
+    }
+
+    /** An aliased enum property whose type carries a {@code @JsonEnumDefaultValue} constant. */
+    public static class AliasedRole {
+
+        /** The aliased enum property. */
+        @JsonAlias("r")
+        public Role role;
+    }
+
+    /** The enum behind {@link AliasedRole}: an unknown constant falls back to {@code GUEST}. */
+    public enum Role {
+
+        /** The fallback constant an unknown string binds to under {@code vertique}. */
+        @JsonEnumDefaultValue
+        GUEST,
+
+        /** An ordinary constant, so a known value is observably different from the fallback. */
+        USER
+    }
+
+    /** The five alias routes under an explicitly selected {@code system} profile. */
+    @Path("/system-alias")
+    @JsonProfile("system")
+    public static class SystemAliasResource {
+
+        /** Counts terminal invocations across all five routes. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the optional aliased property.
+         *
+         * @param body the request body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/optional")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "systemAliasOptionalEcho")
+        public String optionalEcho(AliasedQuantity body) {
+            invocations.incrementAndGet();
+            return "quantity=" + body.quantity + " note=" + body.note;
+        }
+
+        /**
+         * Echoes the required aliased property.
+         *
+         * @param body the request body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/required")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "systemAliasRequiredEcho")
+        public String requiredEcho(RequiredAliasedQuantity body) {
+            invocations.incrementAndGet();
+            return "quantity=" + body.quantity + " note=" + body.note;
+        }
+
+        /**
+         * Echoes the doubly aliased property.
+         *
+         * @param body the request body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/twoalias")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "systemAliasTwoAliasEcho")
+        public String twoAliasEcho(TwoAliasedName body) {
+            invocations.incrementAndGet();
+            return "name=" + body.name;
+        }
+
+        /**
+         * Echoes the aliased property and the extras beside it.
+         *
+         * @param body the request body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/anysetter")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "systemAliasAnySetterEcho")
+        public String anySetterEcho(AliasedQuantityWithExtras body) {
+            invocations.incrementAndGet();
+            return "quantity=" + body.quantity + " extras=" + body.extras;
+        }
+
+        /**
+         * Echoes the aliased enum constant.
+         *
+         * @param body the request body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/enum")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "systemAliasEnumEcho")
+        public String enumEcho(AliasedRole body) {
+            invocations.incrementAndGet();
+            return "role=" + body.role;
+        }
+    }
+
+    /** The same five routes on the {@code vertique} floor: no {@code @JsonProfile} at all. */
+    @Path("/vertique-alias")
+    public static class VertiqueAliasResource {
+
+        /** Counts terminal invocations across all five routes. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the optional aliased property.
+         *
+         * @param body the request body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/optional")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "vertiqueAliasOptionalEcho")
+        public String optionalEcho(AliasedQuantity body) {
+            invocations.incrementAndGet();
+            return "quantity=" + body.quantity + " note=" + body.note;
+        }
+
+        /**
+         * Echoes the required aliased property.
+         *
+         * @param body the request body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/required")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "vertiqueAliasRequiredEcho")
+        public String requiredEcho(RequiredAliasedQuantity body) {
+            invocations.incrementAndGet();
+            return "quantity=" + body.quantity + " note=" + body.note;
+        }
+
+        /**
+         * Echoes the doubly aliased property.
+         *
+         * @param body the request body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/twoalias")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "vertiqueAliasTwoAliasEcho")
+        public String twoAliasEcho(TwoAliasedName body) {
+            invocations.incrementAndGet();
+            return "name=" + body.name;
+        }
+
+        /**
+         * Echoes the aliased property and the extras beside it.
+         *
+         * @param body the request body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/anysetter")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "vertiqueAliasAnySetterEcho")
+        public String anySetterEcho(AliasedQuantityWithExtras body) {
+            invocations.incrementAndGet();
+            return "quantity=" + body.quantity + " extras=" + body.extras;
+        }
+
+        /**
+         * Echoes the aliased enum constant.
+         *
+         * @param body the request body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/enum")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "vertiqueAliasEnumEcho")
+        public String enumEcho(AliasedRole body) {
+            invocations.incrementAndGet();
+            return "role=" + body.role;
+        }
+    }
+
+    /** The same five routes under {@code vertique-strict}, the one strict built-in profile. */
+    @Path("/strict-alias")
+    @JsonProfile("vertique-strict")
+    public static class StrictAliasResource {
+
+        /** Counts terminal invocations across all five routes. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the optional aliased property.
+         *
+         * @param body the request body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/optional")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "strictAliasOptionalEcho")
+        public String optionalEcho(AliasedQuantity body) {
+            invocations.incrementAndGet();
+            return "quantity=" + body.quantity + " note=" + body.note;
+        }
+
+        /**
+         * Echoes the required aliased property.
+         *
+         * @param body the request body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/required")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "strictAliasRequiredEcho")
+        public String requiredEcho(RequiredAliasedQuantity body) {
+            invocations.incrementAndGet();
+            return "quantity=" + body.quantity + " note=" + body.note;
+        }
+
+        /**
+         * Echoes the doubly aliased property.
+         *
+         * @param body the request body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/twoalias")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "strictAliasTwoAliasEcho")
+        public String twoAliasEcho(TwoAliasedName body) {
+            invocations.incrementAndGet();
+            return "name=" + body.name;
+        }
+
+        /**
+         * Echoes the aliased property and the extras beside it.
+         *
+         * @param body the request body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/anysetter")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "strictAliasAnySetterEcho")
+        public String anySetterEcho(AliasedQuantityWithExtras body) {
+            invocations.incrementAndGet();
+            return "quantity=" + body.quantity + " extras=" + body.extras;
+        }
+
+        /**
+         * Echoes the aliased enum constant.
+         *
+         * @param body the request body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/enum")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "strictAliasEnumEcho")
+        public String enumEcho(AliasedRole body) {
+            invocations.incrementAndGet();
+            return "role=" + body.role;
+        }
+    }
+
     // --- Mounts and helpers ---
 
     /**
@@ -1173,6 +1837,28 @@ public class ProfiledSchemaSynthesisIT {
         HttpServer server = RestTestMounts.startServerBlocking(vertx, mount, resources, START_TIMEOUT);
         servers.add(server);
         return server.actualPort();
+    }
+
+    /**
+     * Starts a gated mount whose process JSON codec runs the graph's own {@code vertique-strict}
+     * mapper — what {@code json.systemProfile: vertique-strict} installs in a booted application — so
+     * a {@code vertique-strict} route's profile <em>is</em> the installed codec.
+     *
+     * <p>The install happens before the router is built: the REST body resolver captures its "no
+     * override" sentinel by identity against {@code VertiqueJson.mapper()} at router-build time, so an
+     * install afterwards would no longer match the routes already decided. The codec is restored in
+     * {@link #tearDown()}.
+     *
+     * @param resources the JAX-RS resources to mount
+     * @return the bound port
+     */
+    private int startWithStrictProcessCodec(Set<Object> resources) {
+        ValidationMountComponent component =
+                MountFixtures.component(vertx, new JsonObject(), RestTestContributions.none());
+        JsonProfileId strictId = JsonProfileId.of("vertique-strict");
+        VertiqueJson.install(strictId, component.jsonMapperProfileRegistry().mapper(strictId));
+        processCodecInstalled = true;
+        return start(component.testMount(), resources);
     }
 
     /**

@@ -128,7 +128,9 @@ separate cases:
 - a name whose access is read-only, or that is otherwise invisible on input;
 - the storage field a method `@JsonAnyGetter` returns, which Jackson fills through that getter;
 - a name bound only through a setter with no field, through an accessor pair over a differently
-  named field, through a `@Schema(hidden = true)` field, or through a `transient` field.
+  named field, through a `@Schema(hidden = true)` field, or through a `transient` field;
+- a `@JsonAlias` spelling more than one property claims, and a spelling of a property the document
+  does not publish under its own wire name — neither is published, so neither is subtracted.
 
 A field carrying both `@JsonAnyGetter` and `@JsonAnySetter` reserves no storage name, because
 Jackson stores a key named after it as an ordinary entry of the map. The published-name subtraction
@@ -138,6 +140,63 @@ be recovered — a `@JsonCreator` parameter renamed away from the field it popul
 keeps accepting the traffic it already accepted; constrain that shape with Bean Validation. An
 application-declared `propertyNames` is never displaced: the reserved set is combined with it under
 `allOf`.
+
+### How an alias spelling is described
+
+Every `@JsonAlias` spelling of a visible input property that does not back an any-accessor is listed
+under `properties` with a copy of the schema that property is published with, so the same
+constraints apply under either spelling. Without it an alias reaches a gate undescribed: `{"qty":
+999}` binds a property declared `@Max(10)`, and an unknown enum value under its alias binds the
+default constant.
+
+```json
+"properties": {
+  "quantity": {"maximum": 10, "type": "integer"},
+  "qty":      {"maximum": 10, "type": "integer"}
+}
+```
+
+A spelling is listed exactly where its property's own wire name is published, because listing copies
+that entry: a spelling of a property the document never publishes — a `@Schema(hidden = true)`
+field, an accessor pair with no same-named field, a property published under some other name — is
+listed nowhere and stays a reserved name. A spelling that is already another property's name is not
+listed either, and neither is a spelling more than one property of the type claims: the generator
+cannot predict which claimant Jackson binds such a key to, so publishing it would attach one
+claimant's schema to another claimant's value. A contested spelling is therefore published nowhere,
+named in no rule, and reserved where extras are described; constrain that shape with Bean
+Validation.
+
+A required aliased property leaves the top-level `required` list, because one rule per aliased
+property states which spellings may appear instead. Which rule depends on the selected profile's own
+mapper, and on nothing else: a profile whose mapper enables
+`JsonParser.Feature.STRICT_DUPLICATE_DETECTION` — of the built-ins, `vertique-strict` alone — gets
+the strict form.
+
+| Profile | Required property | Optional property |
+| --- | --- | --- |
+| Lenient (`system`, `vertique`) | at least one spelling: `anyOf` of `{"required": [spelling]}` | no rule |
+| Strict (`vertique-strict`) | exactly one spelling: `oneOf` of the same branches | at most one: the same branches plus `{"not": {"anyOf": [...]}}` |
+
+```json
+"oneOf": [
+  {"required": ["quantity"]},
+  {"required": ["qty"]},
+  {"not": {"anyOf": [{"required": ["quantity"]}, {"required": ["qty"]}]}}
+]
+```
+
+The rules are appended to one `allOf`, or stand alone when there is one rule and its keyword is
+free, and their branches carry only `required` or `not`, never `properties`, so a consumer that
+closes an object carrying `properties` does not close a branch. The rule is the schema's alone: a
+Jackson binder accepts several spellings of one property under every profile, so the strict form is
+stricter than the binder rather than a description of it.
+
+Listing runs over the finished document, after generation, so every reference a copied schema
+carries is already resolved. The plan is carried in the document under one generator-private
+keyword, `x-vertique-alias-plan`, which that pass removes; a type publishing a property under that
+exact wire name is therefore refused at generation with a bounded diagnostic naming the type and the
+name, rather than being published stripped of its constraints. Rename such a property on the wire,
+for example with `@JsonProperty`.
 
 ### Canonical output
 

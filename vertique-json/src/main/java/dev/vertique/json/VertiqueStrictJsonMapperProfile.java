@@ -4,6 +4,7 @@
 package dev.vertique.json;
 
 import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.DeserializationContext;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonMappingException;
@@ -71,6 +72,23 @@ import java.util.List;
  * {@code toPlainString()} without it would newly expose the egress amplification the value-side bound
  * already prevents, since {@code toString()} stays compact for a huge-scale value where
  * {@code toPlainString()} would not.
+ *
+ * <p><strong>A repeated identical key is a parse error.</strong> This profile's mapper enables
+ * {@link JsonParser.Feature#STRICT_DUPLICATE_DETECTION}; the {@code vertique} and {@code system}
+ * mappers are unchanged and keep the last value. Because a REST route parses raw body bytes with its
+ * effective profile's mapper, a route under {@code vertique-strict} answers 400 to a body repeating a
+ * key before the resource runs — except where that mapper is also the installed process codec, in
+ * which case the binder swallows the parse rejection and binds the raw buffer, and only a synthesized
+ * body schema under {@code web-validation} still produces the 400. An application selecting this
+ * profile as {@code json.systemProfile} installs the same mapper as the process JSON codec, so the
+ * codec's delegated decode methods reject a repeated key too, while its streaming overloads and the
+ * static {@code DatabindCodec} parser helpers keep accepting it, as that codec's own contract
+ * documents. The MCP envelope codec already rejects a repeated key under every profile.
+ *
+ * <p>The same feature is the signal JSON-005 reads to decide how it describes several
+ * {@code @JsonAlias} spellings of one property: under this profile they are published as mutually
+ * exclusive, so a body carrying a property under two spellings is rejected at the gate, while the
+ * binder itself accepts it under every profile. No separate flag or configuration key decides that.
  *
  * <p><strong>{@code USE_BIG_DECIMAL_FOR_FLOATS} is deliberately disabled</strong> (the
  * {@code vertique} defaults enable it; this profile turns it back off). That keeps <em>untyped</em>
@@ -155,6 +173,11 @@ final class VertiqueStrictJsonMapperProfile implements JsonMapperProfile {
         // Untyped decimals must stay JSON numbers: binding them to BigDecimal would route them
         // through BigDecimalAsStringSerializer on the way out and silently restring the wire shape.
         m.disable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
+        // A repeated identical key is a parse error under this profile, where every other built-in
+        // mapper keeps the last value. It is also the signal JSON-005 reads to decide that several
+        // @JsonAlias spellings of one property are published as mutually exclusive, so the profile's
+        // schema rule and its parser agree by construction rather than through a second flag.
+        m.enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
         SimpleModule strict = new SimpleModule("vertique-strict");
         strict.addSerializer(BigDecimal.class, new BigDecimalAsStringSerializer());
         strict.addDeserializer(BigDecimal.class, new BigDecimalStrictStringDeserializer());

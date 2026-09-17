@@ -281,6 +281,27 @@ scale (`"1.50"` re-reads with scale 2). A **negative**-scale value — including
 
 Clients of a `vertique-strict` endpoint must expect decimals as JSON **strings**, not numbers.
 
+**A repeated identical key is a parse error.** This profile's mapper enables
+`JsonParser.Feature.STRICT_DUPLICATE_DETECTION`; `system` and `vertique` are unchanged and keep the
+last value. Because a REST route parses raw body bytes with its effective profile's mapper, a route
+under `vertique-strict` answers 400 to `{"quantity":1,"quantity":2}` before the resource runs. Where
+that mapper is also the installed process codec — an application setting
+`json.systemProfile: vertique-strict` — the binder swallows the parse rejection and binds the raw
+buffer instead, and under `web-validation` with a synthesized body schema the gate then refuses that
+buffer, so the client still receives a 400 but its detail names an internal buffer class rather than
+the repeated key. Installing this profile as the process codec also makes that codec's delegated
+decode methods — `new JsonObject(String)` and `new JsonObject(Buffer)`, and `Json.decodeValue` in
+its buffer, string, and typed forms — reject a repeated key anywhere in the process, while the
+streaming `Json.CODEC.fromString(String)` and `Json.CODEC.fromBuffer(Buffer)` overloads and the
+static `DatabindCodec` parser helpers keep accepting it, exactly the exclusion that codec's own
+contract documents. The MCP envelope codec already rejects a repeated key under every profile.
+
+The same feature is the signal the schema generator reads to decide how several `@JsonAlias`
+spellings of one property are described: under this profile a body carrying a property under two
+spellings is rejected by the gate, while under `system` and `vertique` it is accepted. No separate
+flag or configuration key selects that; a mapper is strict or it is not. The binder itself accepts
+several spellings under every profile, because two different key names are not a repeated key.
+
 **Declared JSON Schema override.** `vertique-strict` declares exactly one entry from
 `JsonMapperProfile#jsonSchemaTypeOverrides()`: a `BigDecimal` override applying to both the input and
 output construction directions, whose fragment is
