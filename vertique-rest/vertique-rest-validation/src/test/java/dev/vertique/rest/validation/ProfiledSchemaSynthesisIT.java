@@ -3,6 +3,7 @@
 
 package dev.vertique.rest.validation;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import dev.vertique.core.json.JsonProfile;
@@ -11,9 +12,14 @@ import dev.vertique.rest.test.RestTestContributions;
 import dev.vertique.rest.test.RestTestMount;
 import dev.vertique.rest.test.RestTestMounts;
 import dev.vertique.rest.validation.corpus.EnumDefaultValueDto;
+import dev.vertique.rest.validation.corpus.GetterOnlyListDto;
+import dev.vertique.rest.validation.corpus.GetterOnlyMapDto;
 import dev.vertique.rest.validation.corpus.InstantPropertyDto;
 import dev.vertique.rest.validation.corpus.LocalDatePropertyDto;
+import dev.vertique.rest.validation.corpus.LombokBuilderDto;
+import dev.vertique.rest.validation.corpus.NestedPrivateDateDto;
 import dev.vertique.rest.validation.corpus.OptionalPropertyDto;
+import dev.vertique.rest.validation.corpus.PrivateDatePropertyDto;
 import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -61,6 +67,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *   <li>{@link #optionalInstantAndLocalDatePropertiesAreRejectedUnderTheGate()}</li>
  *   <li>{@link #bindersDecisionOnEachPropertyModelFixtureIsRecordedWithoutTheGate()}</li>
  * </ul>
+ *
+ * <p><strong>T004 TP-006 (FR-013) is a third half, at a third baseline.</strong>
+ * {@link #restoredShapesRejectWrongTypesUnderTheGate()} is a behavior-change proof against T004's
+ * parent commit, where four of its five rows answer 200 because the property is not described at all;
+ * {@link #binderDecidesTheRestoredShapesWithoutTheGate()} is the gate-disabled characterization,
+ * green at that commit and asserted rather than recorded, so the gated rejection cannot silently
+ * become redundant.
  *
  * <p>Bodies are the frozen corpus fixtures from {@code dev.vertique.rest.validation.corpus}, so the
  * subjects these HTTP proofs exercise are the very types the document corpus pins.
@@ -355,7 +368,118 @@ public class ProfiledSchemaSynthesisIT {
         assertEquals(1, systemResource.invocations.get(), "only the LocalDate body may have reached the resource");
     }
 
+    // --- T004 TP-006: the restored input shapes, gate versus binder ---
+
+    /**
+     * T004 TP-006 (AC-013.4, the gated half). A {@code vertique} route under {@code web-validation}
+     * rejects a value the binder would coerce at every value position FR-013 restores, and no request
+     * reaches the resource.
+     *
+     * <p>Behavior-change: at T004's parent commit the date, integer, list, and nested rows are 200,
+     * because the property is not described at all and the gate has nothing to check. The map row is
+     * a green characterization at that commit — its array is refused by the binder, not by the gate —
+     * so this method's value is the other four rows; the map property's description is proven by the
+     * corpus (TP-005) and by the unit proof (TP-001), never by this status code.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("The gate rejects a coercible value at every restored value position")
+    void restoredShapesRejectWrongTypesUnderTheGate() throws Exception {
+        RestoredShapeResource resource = new RestoredShapeResource();
+        int gatePort = start(gateMount(), Set.of(resource));
+
+        int date = post(gatePort, "/restored/date", RESTORED_DATE_NUMBER_BODY).statusCode();
+        int builder = post(gatePort, "/restored/builder", RESTORED_BUILDER_STRING_BODY)
+                .statusCode();
+        int list = post(gatePort, "/restored/list", RESTORED_LIST_NUMBERS_BODY).statusCode();
+        int nested =
+                post(gatePort, "/restored/nested", RESTORED_NESTED_NUMBER_BODY).statusCode();
+        int map = post(gatePort, "/restored/map", RESTORED_MAP_ARRAY_BODY).statusCode();
+
+        assertAll(
+                () -> assertEquals(400, date, "the gate must reject a number for the private field's LocalDate"),
+                () -> assertEquals(400, builder, "the gate must reject a numeric string for the builder's Integer"),
+                () -> assertEquals(400, list, "the gate must reject numeric items for the getter-only List<String>"),
+                () -> assertEquals(400, nested, "the gate must reject a number for the nested type's LocalDate"),
+                () -> assertEquals(400, map, "an array for the getter-only Map must be rejected"),
+                () -> assertEquals(
+                        0, resource.invocations.get(), "no rejected body may reach the resource under the gate"));
+    }
+
+    /**
+     * T004 TP-006 (AC-013.4, the gate-disabled half). On the {@code jaxrs.validationStrategy: none}
+     * mount the profile's Jackson binder is the only component that can refuse a body, and each
+     * outcome is asserted rather than merely recorded, so the gated rejection above cannot silently
+     * become redundant:
+     *
+     * <table>
+     *   <caption>Binder-only decisions on the restored shapes</caption>
+     *   <tr><th>Body</th><th>Outcome</th><th>Decided by</th></tr>
+     *   <tr><td>{@code {"due":19000}} into a private {@code LocalDate}</td>
+     *       <td>200, bound to {@code 2022-01-08}</td>
+     *       <td>nobody — the binder reads 19000 as an epoch day</td></tr>
+     *   <tr><td>{@code {"quantity":"2"}} into the builder's {@code Integer}</td><td>200, bound to {@code 2}</td>
+     *       <td>nobody — the binder coerces the numeric string</td></tr>
+     *   <tr><td>{@code {"tags":[1,2]}} into {@code List<String>}</td><td>200, bound to {@code ["1","2"]}</td>
+     *       <td>nobody — the binder coerces the numeric items</td></tr>
+     *   <tr><td>{@code {"detail":{"due":19000}}} into the nested shape</td>
+     *       <td>200, bound to {@code 2022-01-08}</td><td>nobody</td></tr>
+     *   <tr><td>{@code {"labels":["x"]}} into {@code Map<String, String>}</td><td>400</td>
+     *       <td>binder — Jackson {@code MismatchedInputException}</td></tr>
+     * </table>
+     *
+     * <p>A binder that stopped coercing fails this method and must be re-recorded, not relaxed. A 400
+     * from the {@code web-validation} mount is never binder evidence.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("Without the gate, the binder coerces every restored position and refuses only the map's array")
+    void binderDecidesTheRestoredShapesWithoutTheGate() throws Exception {
+        RestoredShapeResource resource = new RestoredShapeResource();
+        int nonePort = start(noGateMount(), Set.of(resource));
+
+        HttpResponse<Buffer> date = post(nonePort, "/restored/date", RESTORED_DATE_NUMBER_BODY);
+        assertEquals(200, date.statusCode(), "with no gate, the binder accepts a number for the private LocalDate");
+        assertEquals("due=2022-01-08", date.bodyAsString(), "the binder reads 19000 as an epoch day");
+
+        HttpResponse<Buffer> builder = post(nonePort, "/restored/builder", RESTORED_BUILDER_STRING_BODY);
+        assertEquals(200, builder.statusCode(), "with no gate, the binder accepts a numeric string for an Integer");
+        assertEquals("quantity=2", builder.bodyAsString(), "the binder coerces \"2\" to 2 through the builder");
+
+        HttpResponse<Buffer> list = post(nonePort, "/restored/list", RESTORED_LIST_NUMBERS_BODY);
+        assertEquals(200, list.statusCode(), "with no gate, the binder accepts numeric items for a List<String>");
+        assertEquals("tags=1|2", list.bodyAsString(), "the binder coerces the numeric items to strings");
+
+        HttpResponse<Buffer> nested = post(nonePort, "/restored/nested", RESTORED_NESTED_NUMBER_BODY);
+        assertEquals(200, nested.statusCode(), "with no gate, the binder accepts a number at the nested position");
+        assertEquals("detail.due=2022-01-08", nested.bodyAsString(), "the nested binder reads 19000 as an epoch day");
+
+        assertEquals(
+                400,
+                post(nonePort, "/restored/map", RESTORED_MAP_ARRAY_BODY).statusCode(),
+                "with no gate, the " + "binder itself must reject an array for a Map<String, String>");
+
+        assertEquals(4, resource.invocations.get(), "only the four coerced bodies may have reached the resource");
+    }
+
     // --- Request bodies ---
+
+    /** A JSON number where the private-field fixture declares a date string property. */
+    private static final String RESTORED_DATE_NUMBER_BODY = "{\"due\":19000}";
+
+    /** A numeric string where the Lombok builder declares an integer property. */
+    private static final String RESTORED_BUILDER_STRING_BODY = "{\"quantity\":\"2\"}";
+
+    /** Numeric items where the getter-only list declares string items. */
+    private static final String RESTORED_LIST_NUMBERS_BODY = "{\"tags\":[1,2]}";
+
+    /** A JSON number at the nested restored shape's date position. */
+    private static final String RESTORED_NESTED_NUMBER_BODY = "{\"detail\":{\"due\":19000}}";
+
+    /** A JSON array where the getter-only map declares an object property. */
+    private static final String RESTORED_MAP_ARRAY_BODY = "{\"labels\":[\"x\"]}";
 
     /** A JSON object where the {@code Optional<String>} fixture declares a string property. */
     private static final String OPTIONAL_OBJECT_BODY = "{\"note\":{\"nested\":true}}";
@@ -545,6 +669,99 @@ public class ProfiledSchemaSynthesisIT {
         public String dateEcho(LocalDatePropertyDto body) {
             invocations.incrementAndGet();
             return "due=" + body.due;
+        }
+    }
+
+    /**
+     * The restored-shape resource on the {@code vertique} floor: it carries no {@code @JsonProfile},
+     * so the effective profile is the reserved floor, the profile AC-013.4 names. Every route echoes
+     * what the binder produced, so the gate-disabled half can assert the bound value and not merely
+     * the status code.
+     */
+    @Path("/restored")
+    public static class RestoredShapeResource {
+
+        /** Counts terminal invocations across all five routes. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the bound date of a private field behind a getter.
+         *
+         * @param body the private-field fixture body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/date")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "restoredDateEcho")
+        public String dateEcho(PrivateDatePropertyDto body) {
+            invocations.incrementAndGet();
+            return "due=" + body.getDue();
+        }
+
+        /**
+         * Echoes the integer the Lombok builder bound.
+         *
+         * @param body the builder fixture body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/builder")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "restoredBuilderEcho")
+        public String builderEcho(LombokBuilderDto body) {
+            invocations.incrementAndGet();
+            return "quantity=" + body.getQuantity();
+        }
+
+        /**
+         * Echoes the bound list joined by {@code |}, so the element type is observable.
+         *
+         * @param body the getter-only list fixture body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/list")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "restoredListEcho")
+        public String listEcho(GetterOnlyListDto body) {
+            invocations.incrementAndGet();
+            return "tags=" + String.join("|", body.getTags());
+        }
+
+        /**
+         * Echoes the bound map.
+         *
+         * @param body the getter-only map fixture body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/map")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "restoredMapEcho")
+        public String mapEcho(GetterOnlyMapDto body) {
+            invocations.incrementAndGet();
+            return "labels=" + body.getLabels();
+        }
+
+        /**
+         * Echoes the bound date at the nested position.
+         *
+         * @param body the nested fixture body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/nested")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "restoredNestedEcho")
+        public String nestedEcho(NestedPrivateDateDto body) {
+            invocations.incrementAndGet();
+            return "detail.due=" + body.getDetail().getDue();
         }
     }
 

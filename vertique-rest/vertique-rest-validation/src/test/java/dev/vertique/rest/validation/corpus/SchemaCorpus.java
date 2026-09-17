@@ -24,6 +24,14 @@ import java.util.Optional;
  * a {@code LocalDate}, an enum carrying {@code @JsonEnumDefaultValue}, a property literally named
  * {@code pattern}, and the four {@code BigDecimal} positions (root, nested, array element, and map
  * key) a profile override must treat differently.
+ *
+ * <p><strong>Extension (T004, FR-013).</strong> The list was frozen at fifteen fixtures; T004 owns
+ * the one extension it has had. The five shapes appended below are the input-direction shapes the
+ * profiled generator stopped describing — a private field behind a getter, a Lombok
+ * {@code @Builder @Jacksonized @Getter} type, a field-backed getter-only list and map, and a
+ * restored shape held as a property. They are appended, never interleaved, so every pre-existing
+ * fixture keeps its position and its pinned documents stay byte-identical. Any later extension needs
+ * the same treatment and the same record here.
  */
 public final class SchemaCorpus {
 
@@ -34,7 +42,7 @@ public final class SchemaCorpus {
     /**
      * The frozen fixture set, in the frozen order. Grouped by concern: the shapes inherited from the
      * pre-existing unit proof first, then the {@code BigDecimal} positions, then the property-model
-     * and gate shapes this task adds.
+     * and gate shapes T002 added, and last the input-discovery shapes T004 appended.
      */
     public static final List<CorpusFixture> FIXTURES = List.of(
             CorpusFixture.of(RequiredPropertyDto.class),
@@ -51,7 +59,12 @@ public final class SchemaCorpus {
             CorpusFixture.of(InstantPropertyDto.class),
             CorpusFixture.of(LocalDatePropertyDto.class),
             CorpusFixture.of(EnumDefaultValueDto.class),
-            CorpusFixture.of(PatternNamedPropertyDto.class));
+            CorpusFixture.of(PatternNamedPropertyDto.class),
+            CorpusFixture.of(PrivateDatePropertyDto.class),
+            CorpusFixture.of(LombokBuilderDto.class),
+            CorpusFixture.of(GetterOnlyListDto.class),
+            CorpusFixture.of(GetterOnlyMapDto.class),
+            CorpusFixture.of(NestedPrivateDateDto.class));
 
     private SchemaCorpus() {}
 

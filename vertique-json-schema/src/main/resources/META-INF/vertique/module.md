@@ -59,6 +59,38 @@ Validation module with `NOT_NULLABLE_FIELD_IS_REQUIRED` and `INCLUDE_PATTERN_EXP
 Swagger 2 module — so only the mapper source and the selected profile overrides differ between
 modes.
 
+### Which properties the input direction describes
+
+`forInputProfile(JsonMapperProfile)` describes a walked property when Jackson reports it
+deserializable **or** it has a backing field, and its access is not `READ_ONLY`. A backing field
+counts because Jackson populates a private field through reflection wherever the mapper infers
+property mutators — Jackson's default, and the setting every built-in profile leaves alone — so the
+commonest DTO shape of all, a private field reachable only through a getter, is described with its
+type and format. So are a field-backed getter-only `List<String>` or `Map<String, String>` and a
+type holding such a shape as a property.
+
+A builder type is filled through its builder rather than through the field, so it is described only
+when its properties are also visible to introspection: a Lombok `@Builder @Jacksonized` type needs
+`@Getter`. Without it the document stays `{"type":"object"}` and nothing inside it is validated.
+
+The backing storage of a `@JsonAnySetter` or `@JsonAnyGetter` is never described as a named
+property, because the keys those accessors collect are extra keys rather than members of the
+object's property set. The storage is identified **by member alone** — a field annotated
+`@JsonAnySetter`, the record component whose field that is, a field annotated `@JsonAnyGetter`, and
+the field a method `@JsonAnyGetter` returns — so a real property is never hidden merely because its
+name matches one an accessor method implies: a constrained `attribute` property beside an any-setter
+`setAttribute(String, Object)` stays described with its constraint. For a type Jackson deserializes
+as map-like or collection-like, the any-setter is ignored, as Jackson itself ignores it.
+
+A property marked `@JsonIgnore` or read-only stays absent from the input document, and a write-only
+property is described with `writeOnly: true`. This rule applies to the input direction only:
+`forOutputProfile(JsonMapperProfile)` describes a property Jackson reports serializable whose access
+is not `WRITE_ONLY`, unchanged.
+
+This rule decides which walked properties are *described*; it does not make every key the binder
+accepts a described property. A key the schema does not describe is left to the binder and to Bean
+Validation.
+
 ### Canonical output
 
 `generateCanonical(Type)` returns a fresh, compact JSON document with every object member whose

@@ -9,7 +9,9 @@ import com.fasterxml.jackson.databind.AnnotationIntrospector;
 import com.fasterxml.jackson.databind.BeanDescription;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.introspect.AnnotatedField;
 import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
+import com.fasterxml.jackson.databind.introspect.AnnotatedMethod;
 import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.victools.jsonschema.generator.FieldScope;
@@ -29,10 +31,13 @@ import dev.vertique.core.json.JsonSchemaTypeOverride.Direction;
 import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.Member;
 import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.RecordComponent;
 import java.lang.reflect.Type;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Generates deterministic, canonical Draft 2020-12 JSON Schema documents from a resolved Java
@@ -58,6 +63,24 @@ import java.util.Objects;
  * Jakarta Validation module with {@code NOT_NULLABLE_FIELD_IS_REQUIRED} and {@code
  * INCLUDE_PATTERN_EXPRESSIONS}, and the Swagger 2 module. Only the mapper source and the selected
  * profile overrides differ between modes.
+ *
+ * <p><strong>Which properties the input direction describes.</strong>
+ * {@link #forInputProfile(JsonMapperProfile)} describes a walked property when Jackson reports it
+ * deserializable or it has a backing field, and its access is not {@code READ_ONLY}. A backing field
+ * counts because Jackson populates a private field through reflection wherever the mapper infers
+ * property mutators — its default, and the setting every built-in profile leaves alone — so a
+ * getter-only property with a field behind it is bound and is described. A builder type is filled
+ * through its builder rather than through the field, so it is described only when its properties are
+ * also visible to introspection: a Lombok {@code @Builder @Jacksonized} type needs {@code @Getter}.
+ * The backing storage of an any-setter or an any-getter is never described as a named property, and
+ * it is identified by member alone — a field annotated {@code @JsonAnySetter}, the record component
+ * whose field that is, a field annotated {@code @JsonAnyGetter}, and the field a method
+ * {@code @JsonAnyGetter} returns — so a real property is never hidden because its name matches one an
+ * accessor method implies. For a type Jackson deserializes as map-like or collection-like the
+ * any-setter is ignored, as Jackson ignores it. A property marked {@code @JsonIgnore} or read-only
+ * stays absent, and a write-only property is described with {@code writeOnly}. The output direction
+ * is unaffected by this rule: {@link #forOutputProfile(JsonMapperProfile)} describes a property
+ * Jackson reports serializable whose access is not {@code WRITE_ONLY}.
  *
  * <p>A profile's declared {@code JsonSchemaTypeOverride}s narrow how the generator represents an
  * exact Java class: the override fragment defines the baseline wire contract for that class, and
@@ -336,8 +359,20 @@ public final class AnnotationJsonSchemaGenerator {
 
         private record PropertyMetadata(String wireName, boolean visible) {}
 
+        /**
+         * @param byMember                  wire names keyed by the exact member Victools publishes
+         * @param byInternalName            the same, keyed by internal and wire name, as a fallback
+         * @param anyAccessorMembers        the any-setter and any-getter members themselves
+         * @param anyAccessorBackingMembers the members that store what those accessors collect
+         */
         private record PropertyNames(
-                Map<Member, PropertyMetadata> byMember, Map<String, PropertyMetadata> byInternalName) {}
+                Map<Member, PropertyMetadata> byMember,
+                Map<String, PropertyMetadata> byInternalName,
+                Set<Member> anyAccessorMembers,
+                Set<Member> anyAccessorBackingMembers) {}
+
+        /** The verdict for an any-accessor or its backing storage: never a named property. */
+        private static final PropertyMetadata HIDDEN_ANY_ACCESSOR_BACKING = new PropertyMetadata(null, false);
 
         private final ClassValue<PropertyNames> namesByType = new ClassValue<>() {
             @Override
@@ -366,6 +401,14 @@ public final class AnnotationJsonSchemaGenerator {
                 return null;
             }
             PropertyNames names = namesByType.get(scope.getDeclaringType().getErasedType());
+            if (names.anyAccessorMembers().contains(scope.getRawMember())
+                    || names.anyAccessorBackingMembers().contains(scope.getRawMember())) {
+                // An any-accessor and the storage it fills are never named properties: the keys they
+                // collect are extra keys, not a member of the object's property set. Matched by
+                // member and never by a name an accessor merely implies, so a real property that
+                // happens to share an accessor's implied name stays described.
+                return HIDDEN_ANY_ACCESSOR_BACKING;
+            }
             PropertyMetadata byMember = names.byMember().get(scope.getRawMember());
             return byMember != null ? byMember : names.byInternalName().get(scope.getName());
         }
@@ -377,10 +420,20 @@ public final class AnnotationJsonSchemaGenerator {
                     : mapper.getSerializationConfig().introspect(javaType);
             Map<Member, PropertyMetadata> members = new HashMap<>();
             Map<String, PropertyMetadata> internalNames = new HashMap<>();
+            Set<Member> anyAccessors = new HashSet<>();
+            Set<Member> anyBacking = new HashSet<>();
+            if (direction == Direction.INPUT) {
+                collectAnyAccessorMembers(type, javaType, description, anyAccessors, anyBacking);
+            }
             for (BeanPropertyDefinition property : description.findProperties()) {
                 JsonProperty.Access access = propertyAccess(property);
                 boolean visible = direction == Direction.INPUT
-                        ? property.couldDeserialize() && access != JsonProperty.Access.READ_ONLY
+                        // A private field with no setter is still bound: Jackson populates it through
+                        // reflection wherever the mapper infers property mutators, which is its
+                        // default and what every built-in profile leaves alone. So a backing field
+                        // makes a walked property bound, whether or not Jackson reports a mutator.
+                        ? (property.couldDeserialize() || property.hasField())
+                                && access != JsonProperty.Access.READ_ONLY
                         : property.couldSerialize() && access != JsonProperty.Access.WRITE_ONLY;
                 PropertyMetadata metadata = new PropertyMetadata(property.getName(), visible);
                 internalNames.put(property.getInternalName(), metadata);
@@ -395,7 +448,68 @@ public final class AnnotationJsonSchemaGenerator {
                     members.put(property.getSetter().getMember(), metadata);
                 }
             }
-            return new PropertyNames(Map.copyOf(members), Map.copyOf(internalNames));
+            return new PropertyNames(
+                    Map.copyOf(members), Map.copyOf(internalNames), Set.copyOf(anyAccessors), Set.copyOf(anyBacking));
+        }
+
+        /**
+         * Collects the any-setter and any-getter members of a type and the members that store what
+         * they collect, so neither is ever described as a named property.
+         *
+         * <p>Storage is identified by member and never by a name derived from an accessor: a field
+         * annotated {@code @JsonAnySetter}, the record component whose field that is, a field
+         * annotated {@code @JsonAnyGetter}, and the field Jackson links to a method
+         * {@code @JsonAnyGetter}, where the field's type can be that getter's return value. A
+         * property whose name an accessor merely implies — {@code attribute} beside an any-setter
+         * {@code setAttribute(String, Object)} — is a real property and stays described.
+         *
+         * <p>Jackson binds a map-like or collection-like type as a container and never routes input
+         * to its any-setter, so for such a type the any-setter is ignored here as Jackson ignores it.
+         *
+         * @param type        the erased type being introspected
+         * @param javaType    its resolved Jackson type
+         * @param description the type's deserialization introspection
+         * @param accessors   collects the any-accessor members themselves
+         * @param backing     collects the members storing what those accessors collect
+         */
+        private static void collectAnyAccessorMembers(
+                Class<?> type,
+                JavaType javaType,
+                BeanDescription description,
+                Set<Member> accessors,
+                Set<Member> backing) {
+            boolean boundAsContainer = javaType.isMapLikeType() || javaType.isCollectionLikeType();
+            AnnotatedMember anySetter = boundAsContainer ? null : description.findAnySetterAccessor();
+            AnnotatedMember anyGetter = description.findAnyGetter();
+            for (AnnotatedMember any : new AnnotatedMember[] {anySetter, anyGetter}) {
+                if (any != null && any.getMember() != null) {
+                    accessors.add(any.getMember());
+                }
+            }
+            if (anySetter instanceof AnnotatedField field) {
+                backing.add(field.getMember());
+                if (type.isRecord() && field.getDeclaringClass() == type) {
+                    for (RecordComponent component : type.getRecordComponents()) {
+                        if (component.getName().equals(field.getName())) {
+                            backing.add(component.getAccessor());
+                        }
+                    }
+                }
+            }
+            if (anyGetter instanceof AnnotatedField field) {
+                backing.add(field.getMember());
+            } else if (anyGetter instanceof AnnotatedMethod getter) {
+                for (BeanPropertyDefinition property : description.findProperties()) {
+                    AnnotatedMember linkedGetter = property.getGetter();
+                    AnnotatedField linkedField = property.getField();
+                    if (linkedGetter != null
+                            && linkedField != null
+                            && linkedGetter.getMember().equals(getter.getMember())
+                            && getter.getRawType().isAssignableFrom(linkedField.getRawType())) {
+                        backing.add(linkedField.getMember());
+                    }
+                }
+            }
         }
 
         private JsonProperty.Access propertyAccess(BeanPropertyDefinition property) {

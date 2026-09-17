@@ -172,6 +172,25 @@ The protected `generateBodySchema(Type, JsonMapperProfile)` seam is the only gen
 - `@Consumes` → `content-type` enforcement via the 415 gate (separate from JSON Schema)
 - `List<T>`, `Optional<T>`, primitive types, records, and nested DTOs
 
+**Which body property shapes are described, and therefore validated.** A body property is described
+when Jackson reports it deserializable **or** it has a backing field, and its access is not
+read-only. So a private field reachable only through a getter, a field-backed getter-only
+`List<String>` or `Map<String, String>`, and a DTO holding such a shape as a property are all
+described with their types, formats, and item constraints, and the gate rejects a value the binder
+would otherwise coerce at any of those positions — a number posted for a `LocalDate`, a numeric
+string for an `Integer`, numeric items for a `List<String>`. A Lombok `@Builder @Jacksonized` type
+is filled through its builder, so it is described only when it also carries `@Getter`; without one
+its schema stays `{"type":"object"}` and nothing inside it is validated.
+
+A `@JsonAnySetter` or `@JsonAnyGetter` backing store is never described as a named property, because
+the keys it collects are extra keys rather than members of the body's property set. It is excluded
+by member, never by a name an accessor implies, so a real constrained property is never hidden
+because an any-setter's name happens to imply it. Values *inside* a described `Map` property are not
+themselves described; constrain them with Bean Validation.
+
+A property marked `@JsonIgnore` or read-only is absent from the request schema, so sending it is not
+a schema error; a write-only property is described and validated.
+
 Each operation's schemas are synthesized once at registration and closed over by the per-route gate handler, so no schema is compiled on the request hot path. There is no per-operationId cache (see Core Concepts) — distinct operations sharing an operationId across mounts get distinct schemas.
 
 ### WebValidationStrategy
