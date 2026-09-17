@@ -6,12 +6,14 @@ package dev.vertique.rest.validation;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonAnyGetter;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonEnumDefaultValue;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import dev.vertique.core.json.JsonProfile;
 import dev.vertique.core.json.JsonProfileId;
@@ -30,9 +32,12 @@ import dev.vertique.rest.validation.corpus.NestedPrivateDateDto;
 import dev.vertique.rest.validation.corpus.OptionalPropertyDto;
 import dev.vertique.rest.validation.corpus.PrivateDatePropertyDto;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.Schema;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServer;
+import io.vertx.core.json.DecodeException;
+import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
@@ -960,7 +965,158 @@ public class ProfiledSchemaSynthesisIT {
                                 + " refusing a Buffer, not from the parser; body: " + response.bodyAsString()));
     }
 
+    // --- T009 TP-002: a closed object and its undeclared property ---
+
+    /**
+     * T009 TP-002 (AC-018.1, the closed-object shape). A body type whose class-level
+     * {@code @Schema(additionalProperties = FALSE)} publishes a closed object is validated under
+     * {@code web-validation}: a body carrying one undeclared property beside the declared one is
+     * rejected with 400 before the resource runs, and the rejection carries exactly one body detail
+     * that names the failing instance location, carries no keyword and no constraint arguments, and
+     * echoes neither the submitted value nor the raw validator message.
+     *
+     * <p><strong>What the validator reports for this shape</strong>, measured at T009's parent against
+     * the schema the mount itself synthesizes ({@code {"type":"object","additionalProperties":false,
+     * "properties":{"quantity":{"type":"integer"}}}}): {@code getValid()} is {@code false} and the
+     * result carries exactly one error, whose keyword location is {@code #/additionalProperties} and
+     * whose instance location is {@code #/surprise}. The root result reports no instance location of
+     * its own — vertx-json-schema's Basic output leaves it {@code null} — so the location this detail
+     * must name is the one the reported error names.
+     *
+     * <p>Behavior-change at T009's parent commit, where the single error's keyword is structural, the
+     * gate's detail list therefore stays empty, and the request succeeds with 200 although its own
+     * validator reported the body invalid. This is the second instance of the same defect as
+     * {@link #aliasSpellingsAreValidatedUnderTheGate()}, reached through a different keyword.
+     *
+     * <p>The gate-disabled row is what makes the 400 the gate's: the fixture's binder is told to ignore
+     * an undeclared property, so with no gate the same body reaches the resource. A 400 there would
+     * mean the binder, not the gate, refused the body and this proof would be measuring the wrong
+     * component — which is exactly what the first parent measurement showed for a fixture without
+     * {@code @JsonIgnoreProperties}, and why {@link ClosedQuantity} carries it.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("A closed object rejects an undeclared property at the gate, with one value-free detail")
+    void aClosedObjectRejectsAnUndeclaredPropertyAtTheGate() throws Exception {
+        ClosedObjectResource gated = new ClosedObjectResource();
+        int gatePort = start(gateMount(), Set.of(gated));
+        ClosedObjectResource ungated = new ClosedObjectResource();
+        int nonePort = start(noGateMount(), Set.of(ungated));
+
+        HttpResponse<Buffer> rejected = post(gatePort, "/closed/quantity", CLOSED_UNDECLARED_BODY);
+        int invocationsAfterRejection = gated.invocations.get();
+        HttpResponse<Buffer> accepted = post(gatePort, "/closed/quantity", CLOSED_DECLARED_BODY);
+        HttpResponse<Buffer> withoutGate = post(nonePort, "/closed/quantity", CLOSED_UNDECLARED_BODY);
+
+        String rejectionBody = rejected.bodyAsString();
+        JsonArray errors = problemErrors(rejectionBody);
+
+        assertAll(
+                () -> assertEquals(
+                        400,
+                        rejected.statusCode(),
+                        "the validator reports this body invalid on its sole additionalProperties error, so the"
+                                + " gate must reject it; body: " + rejectionBody),
+                () -> assertEquals(0, invocationsAfterRejection, "the rejected body must not reach the resource"),
+                () -> assertNotNull(
+                        errors,
+                        "the rejection must carry an RFC 9457 problem body with an 'errors' array; the response"
+                                + " body was: " + rejectionBody),
+                () -> assertEquals(
+                        1,
+                        errors == null ? -1 : errors.size(),
+                        "a call that reported one structural error must contribute exactly one detail, not none"
+                                + " and not two; body: " + rejectionBody),
+                () -> assertEquals(
+                        "body",
+                        detail(errors).getString("location"),
+                        "the detail belongs to the body call that failed"),
+                () -> assertEquals(
+                        "#/surprise",
+                        detail(errors).getString("path"),
+                        "the value-free detail names the instance location the validator reported for the"
+                                + " failure"),
+                () -> assertFalse(
+                        detail(errors).containsKey("type"),
+                        "the detail carries no keyword: additionalProperties stays structural and no concrete"
+                                + " keyword may be fabricated; detail: "
+                                + detail(errors).encode()),
+                () -> assertFalse(
+                        detail(errors).containsKey("args"),
+                        "the detail carries no constraint arguments; detail: "
+                                + detail(errors).encode()),
+                () -> assertFalse(
+                        rejectionBody.contains(UNDECLARED_MARKER),
+                        "no submitted value may reach the response; body: " + rejectionBody),
+                () -> assertFalse(
+                        rejectionBody.contains(RAW_ADDITIONAL_PROPERTIES_MESSAGE),
+                        "the detail must be composed without the raw validator message, which is the formatter"
+                                + " fallback this detail must not be routed through; body: " + rejectionBody),
+                () -> assertEquals(
+                        200,
+                        accepted.statusCode(),
+                        "a body the validator reports valid is still accepted: no detail and no rejection"),
+                () -> assertEquals(
+                        "quantity=5", accepted.bodyAsString(), "the accepted body must reach the resource bound"),
+                () -> assertEquals(1, gated.invocations.get(), "exactly the accepted body reached the resource"),
+                () -> assertEquals(
+                        200,
+                        withoutGate.statusCode(),
+                        "with no gate the binder ignores the undeclared property, so the 400 above is the"
+                                + " gate's decision and not the binder's; body: " + withoutGate.bodyAsString()),
+                () -> assertEquals(
+                        "quantity=5",
+                        withoutGate.bodyAsString(),
+                        "without the gate the undeclared property is dropped and the declared one is bound"),
+                () -> assertEquals(
+                        1, ungated.invocations.get(), "the gate-disabled body must have reached the resource"));
+    }
+
+    /**
+     * Decodes an RFC 9457 problem body and returns its {@code errors} array, or {@code null} when the
+     * response is not a JSON problem body at all — which is what a 200 from the resource looks like,
+     * so the status assertion above reports the real failure rather than a decode exception.
+     *
+     * @param responseBody the raw response body
+     * @return the {@code errors} array, or {@code null} when the body is not a JSON object carrying one
+     */
+    private static JsonArray problemErrors(String responseBody) {
+        try {
+            return new JsonObject(responseBody).getJsonArray("errors");
+        } catch (DecodeException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Returns the single detail of a rejection, for the assertions that describe its shape.
+     *
+     * @param errors the decoded {@code errors} array, possibly {@code null} or empty
+     * @return the first detail, or an empty object when there is none, so each assertion fails on what
+     *     it asserts rather than on a null dereference
+     */
+    private static JsonObject detail(JsonArray errors) {
+        return errors == null || errors.isEmpty() ? new JsonObject() : errors.getJsonObject(0);
+    }
+
     // --- Request bodies ---
+
+    /** The undeclared property's value: distinctive, so its absence from the response is provable. */
+    private static final String UNDECLARED_MARKER = "MARKER-4711-MUST-NOT-ECHO";
+
+    /** A closed-object body carrying the declared property beside one undeclared property. */
+    private static final String CLOSED_UNDECLARED_BODY = "{\"quantity\":5,\"surprise\":\"" + UNDECLARED_MARKER + "\"}";
+
+    /** The same body with the declared property alone, which the validator reports valid. */
+    private static final String CLOSED_DECLARED_BODY = "{\"quantity\":5}";
+
+    /**
+     * The distinguishing fragment of the raw vertx-json-schema message for this failure, measured at
+     * T009's parent: {@code Property "surprise" does not match additional properties schema}. The
+     * value-free detail must not be composed from it.
+     */
+    private static final String RAW_ADDITIONAL_PROPERTIES_MESSAGE = "does not match additional properties schema";
 
     /** A valid string extra beside the named property the string any-setter type publishes. */
     private static final String ANY_SETTER_VALID_STRING_BODY = "{\"name\":\"a\",\"x\":\"y\"}";
@@ -1797,6 +1953,58 @@ public class ProfiledSchemaSynthesisIT {
         public String enumEcho(AliasedRole body) {
             invocations.incrementAndGet();
             return "role=" + body.role;
+        }
+    }
+
+    // --- T009 closed-object fixture and resource ---
+
+    /**
+     * A closed object: one declared property beside a class-level rule that publishes
+     * {@code "additionalProperties": false}, so an undeclared property is a violation the schema — and
+     * only the schema — can see.
+     *
+     * <p>{@code @JsonIgnoreProperties(ignoreUnknown = true)} is what makes this fixture a proof of the
+     * <em>gate</em>. Measured at T009's parent: without it every built-in profile's binder refuses an
+     * undeclared property first, answering 400 with the profile's own {@code "Request body rejected by
+     * JSON profile"} problem body and no {@code errors} array at all, on the gate-disabled mount as
+     * well as the gated one — so the gate's verdict on this shape would never be observable. Telling
+     * the binder to ignore the key changes nothing about the published document: the synthesized body
+     * schema is byte-identical with and without the annotation
+     * ({@code {"type":"object","additionalProperties":false,"properties":{"quantity":{"type":"integer"}}}}),
+     * and the validator reports the same single {@code #/additionalProperties} error for the same body.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    @Schema(additionalProperties = Schema.AdditionalPropertiesValue.FALSE)
+    public static class ClosedQuantity {
+
+        /** The one declared property. */
+        public Integer quantity;
+    }
+
+    /**
+     * The closed-object route on the {@code vertique} floor: it carries no {@code @JsonProfile}, so the
+     * effective profile is the unannotated floor AC-018.1 names for this shape.
+     */
+    @Path("/closed")
+    public static class ClosedObjectResource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the declared property, so an accepted body is observable as more than a status code.
+         *
+         * @param body the request body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/quantity")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "closedObjectQuantityEcho")
+        public String quantityEcho(ClosedQuantity body) {
+            invocations.incrementAndGet();
+            return "quantity=" + body.quantity;
         }
     }
 

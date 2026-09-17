@@ -146,6 +146,13 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
     /** Closes the bracketed ordinal that stands in for a withheld {@code patternProperties} key. */
     private static final String REDACTED_KEY_SUFFIX = "]";
 
+    /**
+     * The fixed message of the value-free detail a not-valid validation call contributes when every
+     * error it reported named a structural keyword (FR-018). It is a literal rather than a formatted
+     * message, so no keyword argument and no submitted request value can reach the response through it.
+     */
+    private static final String VALUE_FREE_DETAIL_MESSAGE = "does not satisfy the schema";
+
     private static final JsonSchemaOptions SCHEMA_OPTIONS = new JsonSchemaOptions()
             .setDraft(Draft.DRAFT202012)
             .setBaseUri("https://vertique.local/")
@@ -1262,6 +1269,13 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
          * <p>When {@code failFast} is {@code true}, only the first non-structural error is added to
          * {@code failures} and then this method returns immediately.
          *
+         * <p>Postcondition (FR-018): a result whose validity is not {@code true} always contributes at
+         * least one detail. When every error the call reported was structural, so no concrete detail was
+         * produced, exactly one value-free detail is appended for this call — see
+         * {@link #valueFreeDetail(String, String, String)}. The count is per call, so a detail produced
+         * for another validation call never satisfies this one's obligation, and a body failure cannot
+         * be masked by a detail added for a parameter.
+         *
          * @param result       the validation result
          * @param location     the location token for the error ({@code body}, {@code query}, etc.)
          * @param fallbackPath a fallback {@code path} (the parameter name) used when the error reports a
@@ -1281,6 +1295,9 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
             if (result.getValid() != null && result.getValid()) {
                 return;
             }
+            // Counted per validation call, so a detail produced for another call — a parameter, say —
+            // can never stand in for this call's failure (FR-018).
+            int addedBefore = failures.size();
             List<OutputUnit> errors = result.getErrors();
             if (errors == null || errors.isEmpty()) {
                 // Single-error result (e.g. scalar param validated directly)
@@ -1291,6 +1308,9 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                     String detail = safeDetail(keyword, args, result.getError());
                     failures.add(new ValidationErrorDetail(
                             pathFor(null, fallbackPath), detail, location, keyword, args.isEmpty() ? null : args));
+                }
+                if (failures.size() == addedBefore) {
+                    failures.add(valueFreeDetail(result.getInstanceLocation(), fallbackPath, location));
                 }
                 return;
             }
@@ -1312,6 +1332,32 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                     return;
                 }
             }
+            if (failures.size() == addedBefore) {
+                // Every error this call reported was structural, so the loop produced no concrete
+                // detail. The first reported error names the failing instance location.
+                failures.add(valueFreeDetail(errors.get(0).getInstanceLocation(), fallbackPath, location));
+            }
+        }
+
+        /**
+         * Builds the one value-free {@link ValidationErrorDetail} a not-valid result contributes when the
+         * call produced no concrete detail, because every error it reported named a structural keyword.
+         *
+         * <p>The detail names the instance location the reported error names, falling back to the
+         * parameter-name rule of {@link #pathFor(String, String)} for a root location. It carries no
+         * keyword and no constraint arguments, and its message is a fixed literal rather than anything
+         * derived from {@link #safeDetail(String, Map, String)}, whose fallback can echo the raw
+         * vertx-json-schema message and with it a submitted request value.
+         *
+         * @param instanceLocation the reported error's instance location, possibly {@code null}
+         * @param fallbackPath     the parameter-name fallback, or {@code null} for a body error
+         * @param location         the location token for the error ({@code body}, {@code query}, etc.)
+         * @return the value-free detail
+         */
+        private static ValidationErrorDetail valueFreeDetail(
+                String instanceLocation, String fallbackPath, String location) {
+            return new ValidationErrorDetail(
+                    pathFor(instanceLocation, fallbackPath), VALUE_FREE_DETAIL_MESSAGE, location, null, null);
         }
 
         /**

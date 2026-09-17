@@ -250,6 +250,21 @@ fail-fast. Each physical `FileUpload` instance is checked and verified at most o
 than one resource parameter exposes it. Same-name duplicate uploads are distinct and use error
 paths `name`, `name[1]`, and so on.
 
+**A schema failure is always a rejection.** A validation call — the body, and each declared
+parameter independently — whose result the validator does not report valid is rejected with 400,
+whatever keywords the reported errors carry. Each reported error normally becomes one error detail
+naming the violated keyword as `type` and its expected value as `args`, but structural keywords
+(`oneOf`, `anyOf`, `not`, `additionalProperties`) describe how the schema was traversed rather than a
+constraint the client can act on, so they produce no such detail. When every error a call reported is
+structural, that call instead contributes exactly one value-free detail: it names the failing
+instance location as its `path` — `#/surprise` for an undeclared property under a closed object — and
+carries no `type` and no `args`. Its message is a fixed literal, so no submitted value and no raw
+validator message reaches the response through it. The rule counts per call, so a body failure is
+never masked by a detail produced for a parameter, and a call that already produced a concrete detail
+gains nothing extra. A body the validator reports valid still produces no detail and no rejection.
+This is what makes a schema rule published as `oneOf`, `anyOf`, or `not` branches — the strict
+one-spelling alias rule above among them — enforceable at the gate.
+
 ---
 
 ## Extension Points
