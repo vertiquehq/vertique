@@ -3,31 +3,39 @@
 
 package dev.vertique.json.schema;
 
+import com.fasterxml.classmate.ResolvedType;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.TreeNode;
 import com.fasterxml.jackson.databind.AnnotationIntrospector;
 import com.fasterxml.jackson.databind.BeanDescription;
 import com.fasterxml.jackson.databind.JavaType;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.introspect.AnnotatedField;
 import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
 import com.fasterxml.jackson.databind.introspect.AnnotatedMethod;
 import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.victools.jsonschema.generator.FieldScope;
 import com.github.victools.jsonschema.generator.MemberScope;
 import com.github.victools.jsonschema.generator.MethodScope;
 import com.github.victools.jsonschema.generator.OptionPreset;
+import com.github.victools.jsonschema.generator.SchemaGenerationContext;
 import com.github.victools.jsonschema.generator.SchemaGenerator;
 import com.github.victools.jsonschema.generator.SchemaGeneratorConfig;
 import com.github.victools.jsonschema.generator.SchemaGeneratorConfigBuilder;
 import com.github.victools.jsonschema.generator.SchemaVersion;
+import com.github.victools.jsonschema.generator.TypeScope;
 import com.github.victools.jsonschema.module.jackson.JacksonModule;
 import com.github.victools.jsonschema.module.jakarta.validation.JakartaValidationModule;
 import com.github.victools.jsonschema.module.jakarta.validation.JakartaValidationOption;
 import com.github.victools.jsonschema.module.swagger2.Swagger2Module;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonSchemaTypeOverride.Direction;
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.Member;
 import java.lang.reflect.ParameterizedType;
@@ -38,6 +46,9 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Generates deterministic, canonical Draft 2020-12 JSON Schema documents from a resolved Java
@@ -81,6 +92,34 @@ import java.util.Set;
  * stays absent, and a write-only property is described with {@code writeOnly}. The output direction
  * is unaffected by this rule: {@link #forOutputProfile(JsonMapperProfile)} describes a property
  * Jackson reports serializable whose access is not {@code WRITE_ONLY}.
+ *
+ * <p><strong>How the input direction describes an any-setter's extra keys.</strong> A type with an
+ * any-setter — other than one Jackson deserializes as map-like or collection-like, where Jackson
+ * ignores the any-setter and so does this generator — describes its extra keys through {@code
+ * additionalProperties}: the map value type of a field-level any-setter, or the second parameter of
+ * a method-level one, published as this generator's own definition of that type, so profile
+ * overrides, formats, and shared definitions apply to an extra value exactly as they do to a named
+ * property. An unconstrained value type — {@code Object}, {@code JsonNode}, {@code TreeNode}, or a
+ * wildcard or raw form resolving to one — is the empty schema, which accepts every JSON value. A
+ * class-level {@code @Schema(additionalProperties = FALSE)}, declared or inherited, keeps the object
+ * closed; a class-level {@code @Schema(additionalProperties = TRUE)} says less than the typed
+ * description, which therefore wins.
+ *
+ * <p>Where extra keys are described, {@code propertyNames: {"not": {"enum": [...]}}} carries one
+ * reserved set, computed as a difference rather than as a list of categories: every name Jackson
+ * binds on input for that type, minus every name the document publishes under {@code properties},
+ * minus every name whose Jackson property definition carries no member at all. Without it, a name
+ * the document never published — a name marked {@code @JsonIgnore} or read-only, a class-level
+ * ignoral, a method {@code @JsonAnyGetter}'s storage field, or a name bound only through a setter,
+ * an accessor pair, a {@code @Schema(hidden = true)} field, or a {@code transient} field — would be
+ * accepted as an ordinary extra key and bound straight into the member it names. The subtraction of
+ * published names is by member, never by spelling, so a property published under some other name is
+ * not reserved; the subtraction of memberless definitions fails open for the one shape whose member
+ * identity cannot be recovered, a creator parameter renamed away from its field, which therefore
+ * keeps accepting the traffic it already accepted. A field that is both {@code @JsonAnyGetter} and
+ * {@code @JsonAnySetter} reserves no storage name, because Jackson stores a key with that name as an
+ * ordinary entry of the map. An existing {@code propertyNames} is combined with the reserved set
+ * under {@code allOf} rather than replaced.
  *
  * <p>A profile's declared {@code JsonSchemaTypeOverride}s narrow how the generator represents an
  * exact Java class: the override fragment defines the baseline wire contract for that class, and
@@ -333,9 +372,20 @@ public final class AnnotationJsonSchemaGenerator {
      * {@link ObjectMapper}-level property naming strategy. Registering the mapper-derived resolver
      * after the modules makes the generated schema use the same names that the selected mapper
      * materializes or serializes.
+     *
+     * <p>The input direction's any-setter extras resolver is registered <em>before</em> the modules,
+     * because Victools takes the first non-null answer: the Swagger 2 module answers {@code true} for
+     * a class-level {@code @Schema(additionalProperties = TRUE)}, which says nothing about the extras'
+     * type and would otherwise hide the any-setter's value type. The resolver stays silent for a type
+     * carrying {@code FALSE}, so that module still publishes the application's own restriction. The
+     * reserved-name publication is a type-attribute override instead, registered after the modules so
+     * that it sees each definition's finished {@code properties} and {@code additionalProperties}.
      */
     private static SchemaGenerator build(
             SchemaGeneratorConfigBuilder builder, ProfilePropertyNameResolver propertyNames) {
+        if (propertyNames != null && propertyNames.direction == Direction.INPUT) {
+            builder.forTypesInGeneral().withAdditionalPropertiesResolver(propertyNames::anySetterExtras);
+        }
         builder.with(new JacksonModule())
                 .with(new JakartaValidationModule(
                         JakartaValidationOption.NOT_NULLABLE_FIELD_IS_REQUIRED,
@@ -348,6 +398,9 @@ public final class AnnotationJsonSchemaGenerator {
             builder.forMethods()
                     .withIgnoreCheck(propertyNames::isIgnored)
                     .withPropertyNameOverrideResolver(propertyNames::resolve);
+            if (propertyNames.direction == Direction.INPUT) {
+                builder.forTypesInGeneral().withTypeAttributeOverride(propertyNames::publishReservedNames);
+            }
         }
         return new SchemaGenerator(builder.build());
     }
@@ -364,15 +417,32 @@ public final class AnnotationJsonSchemaGenerator {
          * @param byInternalName            the same, keyed by internal and wire name, as a fallback
          * @param anyAccessorMembers        the any-setter and any-getter members themselves
          * @param anyAccessorBackingMembers the members that store what those accessors collect
+         * @param anySetterValueType        the declared value type of the type's any-setter, or
+         *                                  {@code null} when the type has none Jackson would use
+         * @param reservedInputNames        the reserved-name candidates: every name Jackson binds on
+         *                                  input that no member of this type could publish, before the
+         *                                  published names are subtracted against the finished
+         *                                  document; empty unless extras are described
+         * @param inputBoundMembers         the members behind each name Jackson binds on input, so a
+         *                                  candidate is matched against what was published by member
+         *                                  rather than by spelling; an empty member set is a property
+         *                                  Jackson binds through a creator parameter alone
          */
         private record PropertyNames(
                 Map<Member, PropertyMetadata> byMember,
                 Map<String, PropertyMetadata> byInternalName,
                 Set<Member> anyAccessorMembers,
-                Set<Member> anyAccessorBackingMembers) {}
+                Set<Member> anyAccessorBackingMembers,
+                Type anySetterValueType,
+                Set<String> reservedInputNames,
+                Map<String, Set<Member>> inputBoundMembers) {}
 
         /** The verdict for an any-accessor or its backing storage: never a named property. */
         private static final PropertyMetadata HIDDEN_ANY_ACCESSOR_BACKING = new PropertyMetadata(null, false);
+
+        /** Value types that accept every JSON value, and are therefore published as the empty schema. */
+        private static final Set<Class<?>> UNCONSTRAINED_VALUE_TYPES =
+                Set.of(Object.class, JsonNode.class, TreeNode.class);
 
         private final ClassValue<PropertyNames> namesByType = new ClassValue<>() {
             @Override
@@ -381,6 +451,18 @@ public final class AnnotationJsonSchemaGenerator {
             }
         };
 
+        /**
+         * The members Victools carried into a definition, per declaring type, with the wire name each
+         * was carried under.
+         *
+         * <p>Recorded from {@link #resolve(MemberScope)} because that is consulted for exactly the
+         * members Victools is about to publish, and consulted before the type-attribute override that
+         * reads the finished {@code properties} object. Which of the recorded members actually reached
+         * the document is then decided against that object, so a member a later module drops — a
+         * {@code @Schema(hidden = true)} field, say — is not mistaken for a published one.
+         */
+        private final Map<Class<?>, Map<Member, String>> resolvedMembersByType = new ConcurrentHashMap<>();
+
         private ProfilePropertyNameResolver(ObjectMapper mapper, Direction direction) {
             this.mapper = mapper;
             this.direction = direction;
@@ -388,7 +470,19 @@ public final class AnnotationJsonSchemaGenerator {
 
         private String resolve(MemberScope<?, ?> scope) {
             PropertyMetadata property = metadata(scope);
-            return property == null ? null : property.wireName();
+            String wireName = property == null ? null : property.wireName();
+            if (direction == Direction.INPUT && !scope.isFakeContainerItemScope()) {
+                Member raw = scope.getRawMember();
+                // A null wire name here means "no override": Victools then publishes the member under
+                // its own name, which is what the reserved-name subtraction must match against.
+                String published = wireName != null ? wireName : scope.getName();
+                if (raw != null && published != null) {
+                    resolvedMembersByType
+                            .computeIfAbsent(scope.getDeclaringType().getErasedType(), key -> new ConcurrentHashMap<>())
+                            .put(raw, published);
+                }
+            }
+            return wireName;
         }
 
         private boolean isIgnored(MemberScope<?, ?> scope) {
@@ -420,11 +514,13 @@ public final class AnnotationJsonSchemaGenerator {
                     : mapper.getSerializationConfig().introspect(javaType);
             Map<Member, PropertyMetadata> members = new HashMap<>();
             Map<String, PropertyMetadata> internalNames = new HashMap<>();
-            Set<Member> anyAccessors = new HashSet<>();
-            Set<Member> anyBacking = new HashSet<>();
-            if (direction == Direction.INPUT) {
-                collectAnyAccessorMembers(type, javaType, description, anyAccessors, anyBacking);
-            }
+            AnyAccessors anyAccessors =
+                    direction == Direction.INPUT ? collectAnyAccessors(type, javaType, description) : AnyAccessors.NONE;
+            // The names Jackson binds on input that no member of this type could ever publish, and the
+            // names it binds through a member, with the members behind each. Both feed the reserved-name
+            // difference, which is completed against the finished document.
+            Set<String> invisibleOnInput = new TreeSet<>();
+            Map<String, Set<Member>> inputBoundMembers = new TreeMap<>();
             for (BeanPropertyDefinition property : description.findProperties()) {
                 JsonProperty.Access access = propertyAccess(property);
                 boolean visible = direction == Direction.INPUT
@@ -435,6 +531,15 @@ public final class AnnotationJsonSchemaGenerator {
                         ? (property.couldDeserialize() || property.hasField())
                                 && access != JsonProperty.Access.READ_ONLY
                         : property.couldSerialize() && access != JsonProperty.Access.WRITE_ONLY;
+                if (direction == Direction.INPUT) {
+                    if (!visible) {
+                        // Bound to no member on input — ignored, or read-only — so nothing can publish
+                        // it and nothing can subtract it later.
+                        invisibleOnInput.add(property.getName());
+                    } else if (!backsAnAnyAccessor(property, anyAccessors)) {
+                        inputBoundMembers.put(property.getName(), ownMembers(type, property));
+                    }
+                }
                 PropertyMetadata metadata = new PropertyMetadata(property.getName(), visible);
                 internalNames.put(property.getInternalName(), metadata);
                 internalNames.put(property.getName(), metadata);
@@ -448,13 +553,107 @@ public final class AnnotationJsonSchemaGenerator {
                     members.put(property.getSetter().getMember(), metadata);
                 }
             }
+            Set<String> reserved = new TreeSet<>();
+            if (anyAccessors.anySetterValueType() != null) {
+                // Only a type whose extras are described reserves anything: on every other type the
+                // object is closed or has no extras to tell a reserved name apart from.
+                reserved.addAll(description.getIgnoredPropertyNames());
+                reserved.addAll(mapper.getDeserializationConfig()
+                        .getDefaultPropertyIgnorals(type, description.getClassInfo())
+                        .findIgnoredForDeserialization());
+                reserved.addAll(invisibleOnInput);
+                // Jackson fills a method any-getter's storage through the getter, under the storage
+                // field's own name, so that name is bound on input and is never an extra.
+                reserved.addAll(anyAccessors.getterStorageNames());
+                // Every name Jackson binds as a named property is a candidate; publishReservedNames
+                // subtracts the ones the document actually published, leaving exactly the names Jackson
+                // binds that no published property carries.
+                reserved.addAll(inputBoundMembers.keySet());
+            }
             return new PropertyNames(
-                    Map.copyOf(members), Map.copyOf(internalNames), Set.copyOf(anyAccessors), Set.copyOf(anyBacking));
+                    Map.copyOf(members),
+                    Map.copyOf(internalNames),
+                    anyAccessors.members(),
+                    anyAccessors.backingMembers(),
+                    anyAccessors.anySetterValueType(),
+                    Set.copyOf(reserved),
+                    Map.copyOf(inputBoundMembers));
         }
 
         /**
-         * Collects the any-setter and any-getter members of a type and the members that store what
-         * they collect, so neither is ever described as a named property.
+         * Whether any member of a property is an any-accessor or the storage one fills, in which case
+         * the property is not a named input property at all and reserves no name.
+         *
+         * @param property     the introspected property
+         * @param anyAccessors the type's any-accessor members
+         * @return {@code true} when the property backs an any-accessor
+         */
+        private static boolean backsAnAnyAccessor(BeanPropertyDefinition property, AnyAccessors anyAccessors) {
+            for (AnnotatedMember member :
+                    new AnnotatedMember[] {property.getField(), property.getGetter(), property.getSetter()}) {
+                if (member != null
+                        && (anyAccessors.members().contains(member.getMember())
+                                || anyAccessors.backingMembers().contains(member.getMember()))) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /**
+         * The members a property is identified by: its field, getter, and setter, plus the record
+         * component when the declaring type is a record.
+         *
+         * <p>An empty result is the creator-parameter-only shape — Jackson binds the name but links no
+         * field, setter, getter, or record component to it — for which member identity is not
+         * recoverable and the reserved-name rule fails open.
+         *
+         * @param type     the erased type being introspected
+         * @param property the introspected property
+         * @return the property's own members, possibly empty
+         */
+        private static Set<Member> ownMembers(Class<?> type, BeanPropertyDefinition property) {
+            Set<Member> own = new HashSet<>();
+            for (AnnotatedMember member :
+                    new AnnotatedMember[] {property.getField(), property.getGetter(), property.getSetter()}) {
+                if (member != null && member.getMember() != null) {
+                    own.add(member.getMember());
+                }
+            }
+            if (type.isRecord()) {
+                for (RecordComponent component : type.getRecordComponents()) {
+                    if (component.getName().equals(property.getInternalName())) {
+                        own.add(component.getAccessor());
+                    }
+                }
+            }
+            return Set.copyOf(own);
+        }
+
+        /**
+         * The any-accessor facts of one type.
+         *
+         * @param members            the any-setter and any-getter members themselves
+         * @param backingMembers     the members that store what those accessors collect
+         * @param getterStorageNames the names Jackson binds straight into a method any-getter's
+         *                           storage, through that getter
+         * @param anySetterValueType the declared value type of the any-setter Jackson would use, or
+         *                           {@code null} when the type has none
+         */
+        private record AnyAccessors(
+                Set<Member> members,
+                Set<Member> backingMembers,
+                Set<String> getterStorageNames,
+                Type anySetterValueType) {
+
+            /** The verdict for a type with no any-accessor, and for the output direction. */
+            static final AnyAccessors NONE = new AnyAccessors(Set.of(), Set.of(), Set.of(), null);
+        }
+
+        /**
+         * Collects the any-setter and any-getter members of a type, the members that store what they
+         * collect — so neither is ever described as a named property — and the any-setter's declared
+         * value type, which is how its extra keys are described.
          *
          * <p>Storage is identified by member and never by a name derived from an accessor: a field
          * annotated {@code @JsonAnySetter}, the record component whose field that is, a field
@@ -464,20 +663,19 @@ public final class AnnotationJsonSchemaGenerator {
          * {@code setAttribute(String, Object)} — is a real property and stays described.
          *
          * <p>Jackson binds a map-like or collection-like type as a container and never routes input
-         * to its any-setter, so for such a type the any-setter is ignored here as Jackson ignores it.
+         * to its any-setter, so for such a type the any-setter is ignored here as Jackson ignores it:
+         * it yields no value type either, and such a type is therefore described exactly as if it
+         * declared no any-setter at all.
          *
          * @param type        the erased type being introspected
          * @param javaType    its resolved Jackson type
          * @param description the type's deserialization introspection
-         * @param accessors   collects the any-accessor members themselves
-         * @param backing     collects the members storing what those accessors collect
+         * @return the type's any-accessor facts
          */
-        private static void collectAnyAccessorMembers(
-                Class<?> type,
-                JavaType javaType,
-                BeanDescription description,
-                Set<Member> accessors,
-                Set<Member> backing) {
+        private static AnyAccessors collectAnyAccessors(Class<?> type, JavaType javaType, BeanDescription description) {
+            Set<Member> accessors = new HashSet<>();
+            Set<Member> backing = new HashSet<>();
+            Set<String> getterStorageNames = new TreeSet<>();
             boolean boundAsContainer = javaType.isMapLikeType() || javaType.isCollectionLikeType();
             AnnotatedMember anySetter = boundAsContainer ? null : description.findAnySetterAccessor();
             AnnotatedMember anyGetter = description.findAnyGetter();
@@ -507,8 +705,155 @@ public final class AnnotationJsonSchemaGenerator {
                             && linkedGetter.getMember().equals(getter.getMember())
                             && getter.getRawType().isAssignableFrom(linkedField.getRawType())) {
                         backing.add(linkedField.getMember());
+                        // Jackson binds this name straight into the any-getter's storage, through the
+                        // getter, so the name is bound on input even though nothing publishes it.
+                        getterStorageNames.add(property.getName());
                     }
                 }
+            }
+            return new AnyAccessors(
+                    Set.copyOf(accessors),
+                    Set.copyOf(backing),
+                    Set.copyOf(getterStorageNames),
+                    anySetter == null ? null : anySetterValueType(anySetter));
+        }
+
+        /**
+         * The Java value type an any-setter accepts: the map value type of a field-level any-setter,
+         * or the second parameter of a method-level one.
+         *
+         * <p>An any-setter field that is not map-like — an {@code ObjectNode} or {@code JsonNode}
+         * field — accepts every JSON value, which {@code Object} stands for here. A value type the
+         * generator's own type grammar cannot resolve — a type variable or a wildcard — falls back to
+         * the erased type Jackson resolved it to, so a raw or wildcard declaration still yields a
+         * describable type rather than failing generation.
+         *
+         * @param anySetter the any-setter member
+         * @return the declared value type, never {@code null}
+         */
+        private static Type anySetterValueType(AnnotatedMember anySetter) {
+            Type declared;
+            Class<?> fallback;
+            if (anySetter instanceof AnnotatedMethod method) {
+                declared = method.getAnnotated().getGenericParameterTypes()[1];
+                fallback = method.getParameterType(1).getRawClass();
+            } else if (anySetter instanceof AnnotatedField field) {
+                JavaType fieldType = field.getType();
+                if (!fieldType.isMapLikeType()) {
+                    return Object.class;
+                }
+                Type generic = field.getAnnotated().getGenericType();
+                declared = generic instanceof ParameterizedType parameterized
+                        ? parameterized.getActualTypeArguments()[1]
+                        : Object.class;
+                fallback = fieldType.getContentType().getRawClass();
+            } else {
+                return Object.class;
+            }
+            return declared instanceof Class<?> || declared instanceof ParameterizedType ? declared : fallback;
+        }
+
+        /**
+         * The {@code additionalProperties} resolver for the input direction: the any-setter's value
+         * schema, the empty schema for an unconstrained value type, or {@code null} for "no opinion".
+         *
+         * <p>"No opinion" covers a type with no any-setter, a primitive or array, and a class carrying
+         * {@code @Schema(additionalProperties = FALSE)} — declared or inherited — whose restriction the
+         * Swagger 2 module then publishes as {@code false} unopposed.
+         *
+         * @param scope   the type being described
+         * @param context the generation context, which owns the definition of the value type
+         * @return the extras schema, or {@code null} to leave the decision to the later resolvers
+         */
+        private JsonNode anySetterExtras(TypeScope scope, SchemaGenerationContext context) {
+            Class<?> erased = scope.getType().getErasedType();
+            if (erased.isPrimitive() || erased.isArray()) {
+                return null;
+            }
+            Type valueType = namesByType.get(erased).anySetterValueType();
+            if (valueType == null) {
+                return null;
+            }
+            Schema schema = erased.getAnnotation(Schema.class);
+            if (schema != null && schema.additionalProperties() == Schema.AdditionalPropertiesValue.FALSE) {
+                return null;
+            }
+            ResolvedType resolved = context.getTypeContext().resolve(valueType);
+            if (UNCONSTRAINED_VALUE_TYPES.contains(resolved.getErasedType())) {
+                return context.getGeneratorConfig().createObjectNode();
+            }
+            // The context's own definition reference, not a hand-built fragment: a profile override, a
+            // format, and a shared definition then apply to an extra value exactly as to a property.
+            return context.createDefinitionReference(resolved);
+        }
+
+        /**
+         * The type-attribute override for the input direction: publishes, beside described extras, the
+         * names Jackson binds on input that the finished definition does not publish.
+         *
+         * <p>Registered after the annotation modules, so {@code properties} and {@code
+         * additionalProperties} are final by the time this runs. The subtraction is by member and never
+         * by spelling, mirroring the any-accessor exclusion: if any member of an input-bound property
+         * was carried into the document, that property is published — under whatever name — and its
+         * Jackson name is not an extra to reserve. A property with no member at all is the
+         * creator-parameter-only shape, whose identity cannot be recovered; the rule fails open for it
+         * rather than refusing the valid traffic that binds to it.
+         *
+         * @param definition the finished definition of the type
+         * @param scope      the type being described
+         * @param context    the generation context, unused
+         */
+        private void publishReservedNames(ObjectNode definition, TypeScope scope, SchemaGenerationContext context) {
+            Class<?> erased = scope.getType().getErasedType();
+            if (erased.isPrimitive() || erased.isArray()) {
+                return;
+            }
+            PropertyNames names = namesByType.get(erased);
+            if (names.reservedInputNames().isEmpty()) {
+                return;
+            }
+            JsonNode additional = definition.get("additionalProperties");
+            boolean extrasDescribed = additional != null && !(additional.isBoolean() && !additional.booleanValue());
+            if (!extrasDescribed) {
+                // The object is closed — by a class-level @Schema(additionalProperties = FALSE), or by
+                // a consumer-side hardener later — so every unpublished name is already refused.
+                return;
+            }
+            Set<String> publishedNames = new TreeSet<>();
+            JsonNode properties = definition.get("properties");
+            if (properties != null && properties.isObject()) {
+                properties.fieldNames().forEachRemaining(publishedNames::add);
+            }
+            Set<String> reservedNames = new TreeSet<>(names.reservedInputNames());
+            reservedNames.removeAll(publishedNames);
+            Map<Member, String> resolvedMembers = resolvedMembersByType.getOrDefault(erased, Map.of());
+            names.inputBoundMembers().forEach((name, members) -> {
+                if (members.isEmpty()) {
+                    reservedNames.remove(name);
+                    return;
+                }
+                for (Member member : members) {
+                    String carriedAs = resolvedMembers.get(member);
+                    if (carriedAs != null && publishedNames.contains(carriedAs)) {
+                        reservedNames.remove(name);
+                        return;
+                    }
+                }
+            });
+            if (reservedNames.isEmpty()) {
+                return;
+            }
+            ObjectNode reserved = JsonNodeFactory.instance.objectNode();
+            ArrayNode values = reserved.putObject("not").putArray("enum");
+            reservedNames.forEach(values::add);
+            JsonNode existing = definition.get("propertyNames");
+            if (existing == null) {
+                definition.set("propertyNames", reserved);
+            } else {
+                // Never displace a declared propertyNames: both constraints must hold.
+                ObjectNode combined = JsonNodeFactory.instance.objectNode();
+                combined.putArray("allOf").add(existing).add(reserved);
+                definition.set("propertyNames", combined);
             }
         }
 

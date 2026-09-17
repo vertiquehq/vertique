@@ -188,8 +188,28 @@ by member, never by a name an accessor implies, so a real constrained property i
 because an any-setter's name happens to imply it. Values *inside* a described `Map` property are not
 themselves described; constrain them with Bean Validation.
 
-A property marked `@JsonIgnore` or read-only is absent from the request schema, so sending it is not
-a schema error; a write-only property is described and validated.
+**How a `@JsonAnySetter` body is validated.** The extra keys such a body accepts *are* described, by
+the any-setter's value type, so the gate validates them: a body posting `{"x": 5}` to a
+`Map<String, String>` any-setter is rejected with 400 where the binder would have stored the string
+`"5"`, and `19000` posted to a `Map<String, LocalDate>` any-setter is rejected where the binder would
+have bound `2022-01-08`. Valid extras still reach the resource unchanged. An unconstrained value type
+(`Object`, `JsonNode`) accepts every JSON value, and a body type carrying a class-level
+`@Schema(additionalProperties = FALSE)` stays closed.
+
+Beside those extras the schema also reserves every name Jackson binds on input that the request
+schema does not publish, so such a name is rejected rather than routed into the member it names.
+Without it, posting `{"role": "admin"}` or `{"id": "forged"}` to an any-setter body would reach the
+binder — the read-only and ignored properties are absent from the schema, so nothing else refuses
+them — and `{"extras": {"role": "admin"}}` would fill a method `@JsonAnyGetter`'s storage map through
+its getter. The reserved set covers ignored and read-only names, a class-level ignoral, a method
+any-getter's storage field, and a name bound only through a setter, an accessor pair, a
+`@Schema(hidden = true)` field, or a `transient` field. A `@JsonCreator` parameter renamed away from
+its field is the documented exception: it carries no member to identify it by, so it is not reserved
+and keeps binding as before — constrain it with Bean Validation.
+
+A property marked `@JsonIgnore` or read-only is absent from the request schema, so on an ordinary
+body sending it is not a schema error; a write-only property is described and validated. On a body
+whose extra keys are described, such a name is reserved and its presence *is* a schema error.
 
 Each operation's schemas are synthesized once at registration and closed over by the per-route gate handler, so no schema is compiled on the request hot path. There is no per-operationId cache (see Core Concepts) — distinct operations sharing an operationId across mounts get distinct schemas.
 

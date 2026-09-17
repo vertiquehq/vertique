@@ -91,6 +91,54 @@ This rule decides which walked properties are *described*; it does not make ever
 accepts a described property. A key the schema does not describe is left to the binder and to Bean
 Validation.
 
+### How an any-setter's extra keys are described
+
+A type with a `@JsonAnySetter` describes its extra keys through `additionalProperties`, typed by the
+any-setter's value type: the map value type of a field-level any-setter, or the second parameter of
+a method-level one. The value type is published as the generator's own definition of that type, so a
+profile override, a format, and a shared definition apply to an extra value exactly as they do to a
+named property — a `Map<String, LocalDate>` any-setter's extras carry `format: date`, and under
+`vertique-strict` a `Map<String, BigDecimal>` any-setter's extras carry that profile's decimal
+fragment.
+
+An unconstrained value type — `Object`, `JsonNode`, `TreeNode`, or a wildcard or raw form resolving
+to one — is described as the empty schema `{}`, which accepts every JSON value. A class-level
+`@Schema(additionalProperties = FALSE)`, declared or inherited, keeps the object closed and is never
+overridden. A class-level `@Schema(additionalProperties = TRUE)` says only that extras are allowed,
+which the typed description already says more precisely, so the description wins. A type Jackson
+deserializes as map-like or collection-like is described exactly as if it declared no any-setter:
+Jackson never routes a key to that any-setter, so describing it would reject legal map entries.
+
+### Reserved names beside described extras
+
+Where extra keys are described, the document also carries
+
+```json
+"propertyNames": {"not": {"enum": ["id", "role"]}}
+```
+
+which lists one reserved set, computed as a difference rather than as a list of categories: every
+name Jackson binds on input for the type, minus every name the document publishes under
+`properties`, minus every name whose Jackson property definition carries no member at all. Without
+it, a name the document never published would be accepted as an ordinary extra key and bound
+straight into the member it names. Its members are therefore a consequence of the rule rather than
+separate cases:
+
+- a name marked `@JsonIgnore`, and a name a class-level `@JsonIgnoreProperties` ignores;
+- a name whose access is read-only, or that is otherwise invisible on input;
+- the storage field a method `@JsonAnyGetter` returns, which Jackson fills through that getter;
+- a name bound only through a setter with no field, through an accessor pair over a differently
+  named field, through a `@Schema(hidden = true)` field, or through a `transient` field.
+
+A field carrying both `@JsonAnyGetter` and `@JsonAnySetter` reserves no storage name, because
+Jackson stores a key named after it as an ordinary entry of the map. The published-name subtraction
+is by member and never by spelling, so a property the document publishes under some other name is
+not reserved. The memberless subtraction fails open for the one shape whose member identity cannot
+be recovered — a `@JsonCreator` parameter renamed away from the field it populates — which therefore
+keeps accepting the traffic it already accepted; constrain that shape with Bean Validation. An
+application-declared `propertyNames` is never displaced: the reserved set is combined with it under
+`allOf`.
+
 ### Canonical output
 
 `generateCanonical(Type)` returns a fresh, compact JSON document with every object member whose

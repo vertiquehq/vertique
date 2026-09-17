@@ -6,6 +6,10 @@ package dev.vertique.rest.validation;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import com.fasterxml.jackson.annotation.JsonAnyGetter;
+import com.fasterxml.jackson.annotation.JsonAnySetter;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import dev.vertique.core.json.JsonProfile;
 import dev.vertique.rest.jaxrs.validation.NoneValidationStrategy;
 import dev.vertique.rest.test.RestTestContributions;
@@ -36,11 +40,15 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import java.math.BigDecimal;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -75,8 +83,16 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * green at that commit and asserted rather than recorded, so the gated rejection cannot silently
  * become redundant.
  *
- * <p>Bodies are the frozen corpus fixtures from {@code dev.vertique.rest.validation.corpus}, so the
- * subjects these HTTP proofs exercise are the very types the document corpus pins.
+ * <p><strong>T007 TP-006 (FR-015) is a fourth half, at a fourth baseline.</strong>
+ * {@link #anySetterExtrasAreTypedUnderTheGate()} is a behavior-change proof against T007's parent
+ * commit, where every wrong-typed extra and every reserved name answers 200 because the any-setter
+ * type's object is open; {@link #binderDecidesAnySetterBodiesWithoutTheGate()} is the gate-disabled
+ * characterization, green at that commit and asserted rather than recorded. Its fixtures are declared
+ * in this class rather than in the corpus package: no corpus fixture has an any-setter, and the pinned
+ * corpus documents must not change.
+ *
+ * <p>Bodies are otherwise the frozen corpus fixtures from {@code dev.vertique.rest.validation.corpus},
+ * so the subjects these HTTP proofs exercise are the very types the document corpus pins.
  *
  * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}
  * deliberately: a raw {@code HttpClientResponse} discards body buffers that arrive before a body
@@ -464,7 +480,181 @@ public class ProfiledSchemaSynthesisIT {
         assertEquals(4, resource.invocations.get(), "only the four coerced bodies may have reached the resource");
     }
 
+    // --- T007 TP-006: any-setter extras and reserved names, gate versus binder ---
+
+    /**
+     * T007 TP-006 (AC-015.6, the gated half). A {@code vertique} route under {@code web-validation}
+     * types an any-setter's extra keys and refuses every name the type binds but never publishes, and
+     * no rejected body reaches the resource.
+     *
+     * <p>Three shapes carry the distinct risk at the gate: a {@code String} any-setter beside a named
+     * property, a {@code LocalDate} any-setter whose extra a number would silently become a date, and
+     * the reserved-name type with a read-only {@code role}, an ignored {@code id}, and a method
+     * {@code @JsonAnyGetter} over the storage field {@code extras}. The class-level
+     * {@code additionalProperties = FALSE} type and the map subclass are proven at document level by
+     * {@code AnySetterDescriptionTest}, which is where their risk lies.
+     *
+     * <p>Behavior-change: at T007's parent commit every row but the two valid ones answers 200,
+     * because the object is open — an extra key is never checked at all, and a name the document does
+     * not publish is indistinguishable from an extra key. The two valid rows are green
+     * characterizations at that commit: describing extras must not start rejecting legal traffic.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("The gate types an any-setter's extras and rejects every reserved name")
+    void anySetterExtrasAreTypedUnderTheGate() throws Exception {
+        AnySetterResource resource = new AnySetterResource();
+        int gatePort = start(gateMount(), Set.of(resource));
+
+        HttpResponse<Buffer> validString = post(gatePort, "/anysetter/string", ANY_SETTER_VALID_STRING_BODY);
+        HttpResponse<Buffer> validDate = post(gatePort, "/anysetter/date", ANY_SETTER_VALID_DATE_BODY);
+        int wrongTypedExtra = post(gatePort, "/anysetter/string", ANY_SETTER_NUMBER_EXTRA_BODY)
+                .statusCode();
+        int wrongTypedDateExtra =
+                post(gatePort, "/anysetter/date", ANY_SETTER_NUMBER_DATE_BODY).statusCode();
+        int readOnlyName =
+                post(gatePort, "/anysetter/reserved", ANY_SETTER_ROLE_BODY).statusCode();
+        int ignoredName =
+                post(gatePort, "/anysetter/reserved", ANY_SETTER_ID_BODY).statusCode();
+        int storageName =
+                post(gatePort, "/anysetter/reserved", ANY_SETTER_STORAGE_BODY).statusCode();
+
+        assertAll(
+                () -> assertEquals(200, validString.statusCode(), "a valid string extra must still be accepted"),
+                () -> assertEquals(
+                        "name=a extras=x=y:String",
+                        validString.bodyAsString(),
+                        "the accepted extra must reach the resource intact, under its own key"),
+                () -> assertEquals(200, validDate.statusCode(), "a valid date extra must still be accepted"),
+                () -> assertEquals(
+                        "extras=x=2022-01-08:LocalDate",
+                        validDate.bodyAsString(),
+                        "the accepted date extra must reach the resource intact"),
+                () -> assertEquals(
+                        400,
+                        wrongTypedExtra,
+                        "the gate must reject a number where the any-setter declares String values: the binder"
+                                + " would coerce it to the string \"5\""),
+                () -> assertEquals(
+                        400,
+                        wrongTypedDateExtra,
+                        "the gate must reject a bare number for a LocalDate extra: the binder would read it as"
+                                + " an epoch day"),
+                () -> assertEquals(
+                        400,
+                        readOnlyName,
+                        "the gate must reject the read-only name 'role': it is bound on input, never published,"
+                                + " and lands in the extras map"),
+                () -> assertEquals(400, ignoredName, "the gate must reject the ignored name 'id' for the same reason"),
+                () -> assertEquals(
+                        400,
+                        storageName,
+                        "the gate must reject the any-getter's storage name 'extras': Jackson fills that map"
+                                + " through its getter, so {\"extras\":{\"role\":\"admin\"}} sets a read-only"
+                                + " name (design proof v4, SG1)"),
+                () -> assertEquals(
+                        2, resource.invocations.get(), "only the two valid bodies may have reached the resource"));
+    }
+
+    /**
+     * T007 TP-006 (AC-015.6, the gate-disabled half). On the {@code jaxrs.validationStrategy: none}
+     * mount the profile's Jackson binder is the only component that can refuse a body. Every outcome
+     * is asserted rather than merely recorded, so the gated rejections above cannot silently become
+     * redundant:
+     *
+     * <table>
+     *   <caption>Binder-only decisions on the any-setter shapes</caption>
+     *   <tr><th>Body</th><th>Outcome</th><th>Decided by</th></tr>
+     *   <tr><td>{@code {"x":5}} into a {@code String} any-setter</td>
+     *       <td>200, stored as the string {@code "5"}</td>
+     *       <td>nobody — the binder coerces the number</td></tr>
+     *   <tr><td>{@code {"x":19000}} into a {@code LocalDate} any-setter</td>
+     *       <td>200, bound to {@code 2022-01-08}</td>
+     *       <td>nobody — the binder reads 19000 as an epoch day</td></tr>
+     *   <tr><td>{@code {"role":"admin"}} on the reserved-name type</td>
+     *       <td>200, stored in the extras map</td>
+     *       <td>nobody — a read-only name is routed to the any-setter</td></tr>
+     *   <tr><td>{@code {"id":"forged"}} on the reserved-name type</td>
+     *       <td>200, stored in the extras map</td>
+     *       <td>nobody — an ignored name is routed to the any-setter</td></tr>
+     *   <tr><td>{@code {"extras":{"role":"admin"}}} on the reserved-name type</td>
+     *       <td>200, the any-getter's storage filled through its getter</td>
+     *       <td>nobody — the key names a real member, not an extra</td></tr>
+     * </table>
+     *
+     * <p>A binder that stopped coercing or routing fails this method and must be re-recorded, not
+     * relaxed. A 400 from the {@code web-validation} mount is never binder evidence.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("Without the gate, the binder coerces every any-setter extra and routes every reserved name")
+    void binderDecidesAnySetterBodiesWithoutTheGate() throws Exception {
+        AnySetterResource resource = new AnySetterResource();
+        int nonePort = start(noGateMount(), Set.of(resource));
+
+        HttpResponse<Buffer> numberExtra = post(nonePort, "/anysetter/string", ANY_SETTER_NUMBER_EXTRA_BODY);
+        assertEquals(200, numberExtra.statusCode(), "with no gate, the binder accepts a number for a String extra");
+        assertEquals(
+                "name=null extras=x=5:String",
+                numberExtra.bodyAsString(),
+                "the binder stores 5 as the string \"5\": the extras map is the any-setter's declared value type");
+
+        HttpResponse<Buffer> dateExtra = post(nonePort, "/anysetter/date", ANY_SETTER_NUMBER_DATE_BODY);
+        assertEquals(200, dateExtra.statusCode(), "with no gate, the binder accepts a number for a LocalDate extra");
+        assertEquals(
+                "extras=x=2022-01-08:LocalDate",
+                dateExtra.bodyAsString(),
+                "the binder reads 19000 as an epoch day at the extras position too");
+
+        HttpResponse<Buffer> readOnlyName = post(nonePort, "/anysetter/reserved", ANY_SETTER_ROLE_BODY);
+        assertEquals(200, readOnlyName.statusCode(), "with no gate, the binder accepts the read-only name 'role'");
+        assertEquals(
+                "extras={role=admin}",
+                readOnlyName.bodyAsString(),
+                "a read-only name is not rejected by the binder: it lands in the extras map");
+
+        HttpResponse<Buffer> ignoredName = post(nonePort, "/anysetter/reserved", ANY_SETTER_ID_BODY);
+        assertEquals(200, ignoredName.statusCode(), "with no gate, the binder accepts the ignored name 'id'");
+        assertEquals(
+                "extras={id=forged}",
+                ignoredName.bodyAsString(),
+                "an ignored name is not rejected by the binder either: it lands in the extras map");
+
+        HttpResponse<Buffer> storageName = post(nonePort, "/anysetter/reserved", ANY_SETTER_STORAGE_BODY);
+        assertEquals(200, storageName.statusCode(), "with no gate, the binder accepts the any-getter's storage name");
+        assertEquals(
+                "extras={role=admin}",
+                storageName.bodyAsString(),
+                "the binder fills the any-getter's storage through its getter, so the body sets a read-only"
+                        + " name inside the map the response echoes");
+
+        assertEquals(5, resource.invocations.get(), "every body must have reached the resource without the gate");
+    }
+
     // --- Request bodies ---
+
+    /** A valid string extra beside the named property the string any-setter type publishes. */
+    private static final String ANY_SETTER_VALID_STRING_BODY = "{\"name\":\"a\",\"x\":\"y\"}";
+
+    /** A JSON number where the string any-setter declares {@code String} extras values. */
+    private static final String ANY_SETTER_NUMBER_EXTRA_BODY = "{\"x\":5}";
+
+    /** A valid date extra for the {@code LocalDate} any-setter. */
+    private static final String ANY_SETTER_VALID_DATE_BODY = "{\"x\":\"2022-01-08\"}";
+
+    /** A bare number where the {@code LocalDate} any-setter declares date extras values. */
+    private static final String ANY_SETTER_NUMBER_DATE_BODY = "{\"x\":19000}";
+
+    /** The read-only name the reserved-name type binds on input but never publishes. */
+    private static final String ANY_SETTER_ROLE_BODY = "{\"role\":\"admin\"}";
+
+    /** The ignored name the reserved-name type binds on input but never publishes. */
+    private static final String ANY_SETTER_ID_BODY = "{\"id\":\"forged\"}";
+
+    /** The any-getter's storage name, which Jackson fills through its getter (SG1). */
+    private static final String ANY_SETTER_STORAGE_BODY = "{\"extras\":{\"role\":\"admin\"}}";
 
     /** A JSON number where the private-field fixture declares a date string property. */
     private static final String RESTORED_DATE_NUMBER_BODY = "{\"due\":19000}";
@@ -762,6 +952,187 @@ public class ProfiledSchemaSynthesisIT {
         public String nestedEcho(NestedPrivateDateDto body) {
             invocations.incrementAndGet();
             return "detail.due=" + body.getDetail().getDue();
+        }
+    }
+
+    // --- T007 TP-006 fixtures: the three any-setter shapes AC-015.6 names ---
+
+    /**
+     * Renders an extras map as {@code key=value:SimpleClassName} pairs, so a proof can assert what the
+     * binder <em>stored</em> and not merely that something arrived: a number coerced into a
+     * {@code String} extra and a number read as a {@code LocalDate} are both invisible in a plain
+     * rendering.
+     *
+     * @param extras the bound extras map
+     * @return the rendered pairs, comma-separated in insertion order
+     */
+    private static String renderTypedExtras(Map<String, ?> extras) {
+        return extras.entrySet().stream()
+                .map(entry -> entry.getKey() + "=" + entry.getValue() + ":"
+                        + entry.getValue().getClass().getSimpleName())
+                .collect(Collectors.joining(","));
+    }
+
+    /** A named property beside a {@code String} any-setter: the commonest open-extras shape. */
+    public static class StringExtrasDto {
+
+        /** An ordinary property the document publishes. */
+        public String name;
+
+        /** The collected extras, whose declared value type the gate must enforce. */
+        private final Map<String, String> extras = new LinkedHashMap<>();
+
+        /**
+         * Collects an extra key.
+         *
+         * @param key   the extra key
+         * @param value the extra value
+         */
+        @JsonAnySetter
+        public void putExtra(String key, String value) {
+            extras.put(key, value);
+        }
+
+        /**
+         * Returns the collected extras. Deliberately not a {@code get}-prefixed method: it is test
+         * instrumentation, not a property of the body type.
+         *
+         * @return the collected extras
+         */
+        public Map<String, String> collectedExtras() {
+            return extras;
+        }
+    }
+
+    /** An any-setter over {@code LocalDate} values, where a bare number binds as an epoch day. */
+    public static class LocalDateExtrasDto {
+
+        /** The collected extras. */
+        private final Map<String, LocalDate> extras = new LinkedHashMap<>();
+
+        /**
+         * Collects an extra key.
+         *
+         * @param key   the extra key
+         * @param value the extra value
+         */
+        @JsonAnySetter
+        public void putExtra(String key, LocalDate value) {
+            extras.put(key, value);
+        }
+
+        /**
+         * Returns the collected extras.
+         *
+         * @return the collected extras
+         */
+        public Map<String, LocalDate> collectedExtras() {
+            return extras;
+        }
+    }
+
+    /**
+     * The reserved-name shape: a read-only {@code role}, an ignored {@code id}, and a method
+     * {@code @JsonAnyGetter} over the storage field {@code extras}. All three names are bound on input
+     * and published by no document, so each reaches a real member through the open object.
+     */
+    public static class ReservedNameExtrasDto {
+
+        /** An ordinary property the document publishes. */
+        public String name;
+
+        /** Server-assigned: never accepted on input, never published, routed into the extras map. */
+        @JsonProperty(access = JsonProperty.Access.READ_ONLY)
+        public String role;
+
+        /** Never bound by name, never published, routed into the extras map. */
+        @JsonIgnore
+        public String id;
+
+        /** The storage the any-getter returns and Jackson fills through it. */
+        private final Map<String, Object> extras = new LinkedHashMap<>();
+
+        /**
+         * Collects an extra key.
+         *
+         * @param key   the extra key
+         * @param value the extra value
+         */
+        @JsonAnySetter
+        public void putExtra(String key, Object value) {
+            extras.put(key, value);
+        }
+
+        /**
+         * Returns the collected extras, and is the member Jackson fills for a body whose key is the
+         * storage name itself.
+         *
+         * @return the collected extras
+         */
+        @JsonAnyGetter
+        public Map<String, Object> getExtras() {
+            return extras;
+        }
+    }
+
+    /**
+     * The any-setter resource on the {@code vertique} floor: it carries no {@code @JsonProfile}, so
+     * the effective profile is the reserved floor, the profile AC-015.6 names. Every route echoes what
+     * the binder produced, so the gate-disabled half asserts the stored value and not merely a status
+     * code.
+     */
+    @Path("/anysetter")
+    public static class AnySetterResource {
+
+        /** Counts terminal invocations across all three routes. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the named property and every stored extra with its Java type.
+         *
+         * @param body the string any-setter body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/string")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "anySetterStringEcho")
+        public String stringEcho(StringExtrasDto body) {
+            invocations.incrementAndGet();
+            return "name=" + body.name + " extras=" + renderTypedExtras(body.collectedExtras());
+        }
+
+        /**
+         * Echoes every stored extra with its Java type, so an epoch-day reading is observable.
+         *
+         * @param body the LocalDate any-setter body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/date")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "anySetterDateEcho")
+        public String dateEcho(LocalDateExtrasDto body) {
+            invocations.incrementAndGet();
+            return "extras=" + renderTypedExtras(body.collectedExtras());
+        }
+
+        /**
+         * Echoes the extras map itself, so a reserved name that reached a real member is visible.
+         *
+         * @param body the reserved-name body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/reserved")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "anySetterReservedEcho")
+        public String reservedEcho(ReservedNameExtrasDto body) {
+            invocations.incrementAndGet();
+            return "extras=" + body.getExtras();
         }
     }
 
