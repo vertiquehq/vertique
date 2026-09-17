@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import java.util.List;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -125,6 +126,85 @@ class McpSchemaHardeningTest {
         assertThat(reparsed.at("/properties/pet/anyOf"))
                 .as("hardening must not add, remove, or reorder anyOf branches")
                 .hasSize(2);
+    }
+
+    // --- T005 TP-001: a declared additionalProperties is kept, and the walk descends into it ---
+
+    /**
+     * Given a non-root object declaring {@code properties} beside a typed {@code additionalProperties}
+     * schema (FR-015's any-setter description), hardening leaves that declaration untouched and closes
+     * the root carrier alone.
+     */
+    @Test
+    @DisplayName("T005 TP-001: a declared additionalProperties schema is never overwritten")
+    void shouldKeepADeclaredAdditionalPropertiesSchema() {
+        String hardened = harden(McpSchemaHardeningTestFixture.DECLARED_EXTRAS_SCHEMA_DOCUMENT, List.of());
+
+        assertThat(hardened)
+                .as("a declared additionalProperties schema must survive hardening, so the typed extras "
+                        + "description reaches the client; only the root carrier is closed")
+                .isEqualTo(McpSchemaHardeningTestFixture.DECLARED_EXTRAS_SCHEMA_HARDENED);
+    }
+
+    /**
+     * Given a non-root object declaring {@code additionalProperties: true} — what an
+     * application-authored profile override fragment declares — hardening keeps it open.
+     */
+    @Test
+    @DisplayName("T005 TP-001: a declared additionalProperties true is never overwritten")
+    void shouldKeepADeclaredAdditionalPropertiesTrue() {
+        String hardened = harden(McpSchemaHardeningTestFixture.DECLARED_EXTRAS_TRUE_DOCUMENT, List.of());
+
+        assertThat(hardened)
+                .as("an application fragment's declared additionalProperties:true must stay true")
+                .isEqualTo(McpSchemaHardeningTestFixture.DECLARED_EXTRAS_TRUE_HARDENED);
+    }
+
+    /**
+     * Given a non-root object declaring {@code additionalProperties: false} — what a class-level
+     * {@code @Schema(additionalProperties = FALSE)} declares — hardening keeps it closed. This row
+     * characterizes the pre-change hardener too, which reached the same document by overwriting.
+     */
+    @Test
+    @DisplayName("T005 TP-001: a declared additionalProperties false is kept")
+    void shouldKeepADeclaredAdditionalPropertiesFalse() {
+        String hardened = harden(McpSchemaHardeningTestFixture.DECLARED_EXTRAS_FALSE_DOCUMENT, List.of());
+
+        assertThat(hardened)
+                .as("a declared additionalProperties:false must stay false")
+                .isEqualTo(McpSchemaHardeningTestFixture.DECLARED_EXTRAS_FALSE_HARDENED);
+    }
+
+    /**
+     * Given a non-root object whose declared {@code additionalProperties} is a plain DTO schema with
+     * {@code properties} of its own (design proof v2, V07), hardening keeps the declaration and closes
+     * the DTO inside it, exactly as it closes an {@code items} subschema.
+     */
+    @Test
+    @DisplayName("T005 TP-001: the walk descends into a declared additionalProperties")
+    void shouldCloseAPlainTypeUsedAsAnAdditionalPropertiesValue() {
+        String hardened = harden(McpSchemaHardeningTestFixture.DTO_VALUED_EXTRAS_DOCUMENT, List.of());
+
+        assertThat(hardened)
+                .as("a plain DTO used as an any-setter's value type must itself be closed, so an unknown "
+                        + "nested key is rejected at the schema stage (design proof v2, V07)")
+                .isEqualTo(McpSchemaHardeningTestFixture.DTO_VALUED_EXTRAS_HARDENED);
+    }
+
+    /**
+     * Given a non-root object carrying FR-015's {@code propertyNames} reservation and FR-016's alias
+     * rule — an {@code allOf} of a {@code oneOf} whose branches hold only {@code required} or
+     * {@code not} — hardening closes the object and leaves both constructs byte-identical.
+     */
+    @Test
+    @DisplayName("T005 TP-001: propertyNames and required-only rule branches are untouched")
+    void shouldLeavePropertyNamesAndRequiredOnlyBranchesUntouched() {
+        String hardened = harden(McpSchemaHardeningTestFixture.PROPERTY_NAMES_AND_BRANCHES_DOCUMENT, List.of());
+
+        assertThat(hardened)
+                .as("propertyNames and every required-only or not-only rule branch must be byte-preserved, "
+                        + "while the object declaring properties is closed")
+                .isEqualTo(McpSchemaHardeningTestFixture.PROPERTY_NAMES_AND_BRANCHES_HARDENED);
     }
 
     // --- Shared action: harden + canonicalize, exactly once ---

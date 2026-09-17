@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","additionalProperties":false,"properties":{"shape":{"additionalProperties":false,"properties":{"kind":{"const":"circle"},"radius":{"type":"integer"}},"required":["kind"],"type":"object"}},"type":"object"}

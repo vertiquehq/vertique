@@ -724,13 +724,18 @@ and never type-graph-driven:
 - the root carrier object is closed unconditionally — including a zero-argument carrier — with
   `additionalProperties: false`, so a zero-arg tool rejects arbitrary arguments;
 - a non-root object schema is closed the same way exactly when it declares a non-empty `properties`
-  member and no sibling `$ref`; a property-less non-root object — a resolved `Map<K,V>` included —
-  stays open and schema-unconstrained for values;
+  member, no sibling `$ref`, and no `additionalProperties` member of its own; a property-less non-root
+  object — a resolved `Map<K,V>` included — stays open and schema-unconstrained for values;
+- an `additionalProperties` the generated document already declares — a value schema, `true`, or
+  `false` — is never overwritten, so a type whose extra keys the document publishes (a
+  `@JsonAnySetter` type, or a type an application profile fragment describes) keeps accepting those
+  keys at the protocol boundary, constrained to the declared value type;
 - `additionalProperties` is never placed beside a `$ref`, and a `$ref` is never dereferenced during
   hardening;
-- the walk descends a fixed grammar — `properties`, `items`, `prefixItems`, `anyOf`, `oneOf`, `allOf`,
-  `$defs` — so a closed polymorphic base is hardened by closing each `anyOf`/`oneOf` branch
-  individually;
+- the walk descends a fixed grammar — `properties`, `items`, `additionalProperties`, `prefixItems`,
+  `anyOf`, `oneOf`, `allOf`, `$defs` — so a closed polymorphic base is hardened by closing each
+  `anyOf`/`oneOf` branch individually, and a declared extras value type is closed like any other
+  subschema, so an unknown key inside an extra's object value is rejected at the boundary too;
 - each declared parameter's description is attached to its matching root-carrier property only, as a
   separate pass.
 
