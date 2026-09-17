@@ -65,8 +65,10 @@ import java.util.regex.PatternSyntaxException;
  * every object keyed {@code patternProperties}, at any depth and at any position. A pattern the regex
  * engine rejects fails router construction with a {@link RestConfigurationException} naming the
  * operation, the JSON pointer, and the engine's own description and index — never the pattern text
- * itself, and never the engine's exception, which quotes that text. A schema this strategy never
- * gates keeps its unparseable pattern: the check lives here and nowhere else.
+ * itself, and never the engine's exception, which quotes that text. The pointer withholds a
+ * {@code patternProperties} key whether or not that key is the failing one, naming its ordinal
+ * instead, because a key is a regular expression however well it compiles. A schema this strategy
+ * never gates keeps its unparseable pattern: the check lives here and nowhere else.
  *
  * <p><strong>Body</strong> validation uses the shared per-request {@link BoundRequest}: the gate
  * obtains it from the routing context (binding and stashing one if absent) so the gate and downstream
@@ -137,6 +139,12 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
 
     /** Marker appended in place of the elided tail of a truncated description. */
     private static final String ELLIPSIS = "...";
+
+    /** Opens the bracketed ordinal that stands in for a withheld {@code patternProperties} key. */
+    private static final String REDACTED_KEY_PREFIX = "[key-";
+
+    /** Closes the bracketed ordinal that stands in for a withheld {@code patternProperties} key. */
+    private static final String REDACTED_KEY_SUFFIX = "]";
 
     private static final JsonSchemaOptions SCHEMA_OPTIONS = new JsonSchemaOptions()
             .setDraft(Draft.DRAFT202012)
@@ -345,7 +353,7 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
      * @throws RestConfigurationException if any declared pattern is unparseable
      */
     private static void precompilePatterns(String operationId, JsonObject bodySchema) {
-        precompilePatterns(operationId, bodySchema, "");
+        precompilePatterns(operationId, bodySchema, "", false);
     }
 
     /**
@@ -355,19 +363,34 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
      * regular expressions wherever that object appears. A <em>property</em> named {@code pattern} is a
      * subschema object rather than a string, so it is descended into rather than compiled.
      *
-     * @param operationId the operation whose body document is walked
-     * @param value       the current node: an object, an array, or a scalar
-     * @param pointer     the JSON pointer of {@code value} within the body document
+     * <p>Every member name this object contributes to the pointer is a schema keyword or a property
+     * name — except inside a {@code patternProperties} object, whose member names are themselves
+     * regular expressions. {@code membersArePatterns} marks that case, and the member name is then
+     * replaced by {@link #redactedKeySegment(int) its ordinal}: a failure <em>beneath</em> a key that
+     * happens to compile must disclose the key no more than a failure <em>in</em> one that does not
+     * (FR-008, AC-008.2).
+     *
+     * @param operationId        the operation whose body document is walked
+     * @param value              the current node: an object, an array, or a scalar
+     * @param pointer            the JSON pointer of {@code value} within the body document
+     * @param membersArePatterns whether {@code value}'s member names are regular expressions, so that
+     *     naming one in a pointer would disclose pattern text
      * @throws RestConfigurationException if any declared pattern is unparseable
      */
-    private static void precompilePatterns(String operationId, Object value, String pointer) {
+    private static void precompilePatterns(
+            String operationId, Object value, String pointer, boolean membersArePatterns) {
         if (value instanceof JsonObject object) {
+            int ordinal = 0;
             for (String field : object.fieldNames()) {
                 Object member = object.getValue(field);
-                String memberPointer = pointer + "/" + escapePointerSegment(field);
+                String memberPointer = membersArePatterns
+                        ? pointer + "/" + redactedKeySegment(ordinal)
+                        : pointer + "/" + escapePointerSegment(field);
+                ordinal++;
+                boolean patternProperties = PATTERN_PROPERTIES_KEYWORD.equals(field) && member instanceof JsonObject;
                 if (PATTERN_KEYWORD.equals(field) && member instanceof String regex) {
                     compilePattern(operationId, memberPointer, regex);
-                } else if (PATTERN_PROPERTIES_KEYWORD.equals(field) && member instanceof JsonObject byPattern) {
+                } else if (patternProperties && member instanceof JsonObject byPattern) {
                     // The keys are compiled before the walk descends into their subschemas, and the
                     // pointer deliberately stops at this object: a key IS a pattern, so naming it
                     // would disclose the text the diagnostic must withhold.
@@ -375,13 +398,29 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                         compilePattern(operationId, memberPointer, key);
                     }
                 }
-                precompilePatterns(operationId, member, memberPointer);
+                precompilePatterns(operationId, member, memberPointer, patternProperties);
             }
         } else if (value instanceof JsonArray array) {
             for (int index = 0; index < array.size(); index++) {
-                precompilePatterns(operationId, array.getValue(index), pointer + "/" + index);
+                precompilePatterns(operationId, array.getValue(index), pointer + "/" + index, false);
             }
         }
+    }
+
+    /**
+     * Builds the pointer segment that stands in for one withheld {@code patternProperties} key: the
+     * key's zero-based ordinal in document order, bracketed.
+     *
+     * <p>The ordinal identifies the failing position unambiguously within the document the diagnostic
+     * already names, while disclosing none of the key. The brackets keep it distinguishable from a
+     * member name and from an array index, and the segment carries no parenthesis, so the proof that
+     * a one-character pattern such as an unclosed group never leaks stays mechanical.
+     *
+     * @param ordinal the key's zero-based position among the object's members
+     * @return the redacted reference token
+     */
+    private static String redactedKeySegment(int ordinal) {
+        return REDACTED_KEY_PREFIX + ordinal + REDACTED_KEY_SUFFIX;
     }
 
     /**

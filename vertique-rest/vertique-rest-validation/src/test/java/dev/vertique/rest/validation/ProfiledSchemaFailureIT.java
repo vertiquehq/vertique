@@ -65,7 +65,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * and never binds a server: "the mount fails before any server binds" is therefore structural here
  * rather than a timing observation, and no request is ever evaluated.
  *
- * <p>Six mounts, four of which must fail and two of which must build:
+ * <p>Seven mounts, five of which must fail and two of which must build:
  *
  * <ul>
  *   <li>a profile declaring two {@code BigDecimal} {@code INPUT} overrides — a generator construction
@@ -76,6 +76,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *       ({@link #unparseablePatternFailsTheMountAtRouterConstruction()});</li>
  *   <li>a profile whose fragment carries an unparseable {@code patternProperties} key
  *       ({@link #unparseablePatternPropertiesKeyFailsTheMountAtRouterConstruction()});</li>
+ *   <li>a profile whose fragment carries a <em>valid</em> {@code patternProperties} key whose
+ *       subschema declares an unparseable {@code pattern}, where the diagnostic must not disclose the
+ *       valid key either ({@link #failureBeneathAValidPatternPropertiesKeyDoesNotDiscloseTheKey()});</li>
  *   <li>a DTO with a property literally named {@code pattern}, mounted beside a strict route whose
  *       fragment carries a genuinely compilable pattern, which must build
  *       ({@link #propertyNamedPatternStillMounts()});</li>
@@ -106,6 +109,19 @@ public class ProfiledSchemaFailureIT {
 
     /** An unparseable pattern: an unclosed group. */
     private static final String UNPARSEABLE_PATTERN = "(";
+
+    /**
+     * A perfectly valid {@code patternProperties} key, chosen as a distinctive marker so that its
+     * disclosure can be asserted against literally (CO-001, FR-008, AC-008.2). It compiles, so it is
+     * never itself the failing pattern: it is only the member name the walk descends through.
+     */
+    private static final String VALID_PATTERN_PROPERTIES_KEY = "^SECRET-[a-z]{4}$";
+
+    /**
+     * The distinctive core of {@link #VALID_PATTERN_PROPERTIES_KEY}. Forbidding it as well as the whole
+     * key means a redaction that merely shortens the key rather than removing it still fails.
+     */
+    private static final String VALID_KEY_MARKER = "SECRET-";
 
     /**
      * A pattern whose only defect is an unknown character-property name longer than the message bound,
@@ -253,6 +269,52 @@ public class ProfiledSchemaFailureIT {
                         "/properties/amount/patternProperties",
                         unclosedGroup.getDescription()),
                 List.of(UNPARSEABLE_PATTERN));
+        assertContainsIndex(failure.getMessage(), unclosedGroup.getIndex());
+        assertNoPatternSyntaxExceptionInChain(failure);
+    }
+
+    /**
+     * TP-001 (CO-001, FR-008, AC-008.2). A failure <em>beneath</em> a {@code patternProperties} key
+     * discloses neither the failing pattern nor the key it sits under.
+     *
+     * <p>The sibling above covers the branch where the key itself is unparseable, which the walk
+     * already redacts. This covers the other branch: the key {@link #VALID_PATTERN_PROPERTIES_KEY}
+     * compiles cleanly, so the walk descends through it and only then meets an unparseable
+     * {@code pattern} in its subschema. A key is a regular expression whatever else is true of it, so
+     * a pointer naming it discloses pattern text just as surely as reporting the key directly would.
+     *
+     * <p>The pointer assertion is deliberately a prefix, {@code /properties/amount/patternProperties}:
+     * the contract leaves how the descending segment is redacted to the implementation, and requires
+     * only that the pointer still identify the failing position. Every redaction that satisfies the
+     * contract keeps that prefix; none keeps the key.
+     *
+     * @throws Exception when the router build neither succeeds nor fails within the budget
+     */
+    @Test
+    @DisplayName("A failure beneath a valid patternProperties key does not disclose the key")
+    void failureBeneathAValidPatternPropertiesKeyDoesNotDiscloseTheKey() throws Exception {
+        assertNotNull(
+                Pattern.compile(VALID_PATTERN_PROPERTIES_KEY),
+                "the marker key must itself be a valid regular expression, or this proof exercises the "
+                        + "branch the sibling case already covers");
+        PatternSyntaxException unclosedGroup = syntaxErrorOf(UNPARSEABLE_PATTERN);
+        JsonMapperProfile nestedBadPattern = profile("nested-pattern-properties", bigDecimalOverride(node -> {
+            node.put("type", "object");
+            node.putObject("patternProperties")
+                    .putObject(VALID_PATTERN_PROPERTIES_KEY)
+                    .put("type", "string")
+                    .put("pattern", UNPARSEABLE_PATTERN);
+        }));
+
+        Throwable failure = assertMountFails(
+                mount(new JsonObject(), contributions(nestedBadPattern)),
+                Set.of(new NestedPatternPropertiesResource()),
+                RestConfigurationException.class,
+                List.of(
+                        "nestedPatternPropertiesAmountEcho",
+                        "/properties/amount/patternProperties",
+                        unclosedGroup.getDescription()),
+                List.of(UNPARSEABLE_PATTERN, VALID_PATTERN_PROPERTIES_KEY, VALID_KEY_MARKER));
         assertContainsIndex(failure.getMessage(), unclosedGroup.getIndex());
         assertNoPatternSyntaxExceptionInChain(failure);
     }
@@ -419,6 +481,27 @@ public class ProfiledSchemaFailureIT {
         @Consumes(MediaType.APPLICATION_JSON)
         @Produces(MediaType.TEXT_PLAIN)
         @Operation(operationId = "patternPropertiesAmountEcho")
+        public String echo(Amount body) {
+            return "amount=" + body.amount;
+        }
+    }
+
+    /** Resource selecting the profile whose <em>valid</em> {@code patternProperties} key hides a bad pattern. */
+    @Path("/nested-pattern-properties")
+    @JsonProfile("nested-pattern-properties")
+    public static class NestedPatternPropertiesResource {
+
+        /**
+         * Never runs: the mount that carries it must fail at router construction.
+         *
+         * @param body the request body bean
+         * @return the echoed amount
+         */
+        @POST
+        @Path("/amount")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "nestedPatternPropertiesAmountEcho")
         public String echo(Amount body) {
             return "amount=" + body.amount;
         }

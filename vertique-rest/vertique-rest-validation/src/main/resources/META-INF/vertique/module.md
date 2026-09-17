@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Beta
 > **Package:** `dev.vertique.rest.validation`
 > **Artifact:** `vertique-rest-validation`
-> **Depends on:** rest-jaxrs, json-schema, core
+> **Depends on:** rest-jaxrs, rest-core, json-schema, core
 
 Default annotation-driven request-validation strategy for the REST framework. Synthesizes JSON Schemas from JAX-RS and Bean Validation annotations at startup and validates incoming requests against those schemas using `vertx-json-schema`. This is the `web-validation` strategy — the default path that carries no dependency on the preview `vertx-openapi` artifact. The opt-in `openapi-contract` strategy, which validates against the generated `openapi.json`, lives in the sibling `vertique-rest-openapi-validation` module.
 
@@ -42,7 +42,7 @@ infrastructure error. The built-in magic-byte verifier is opt-in through
 
 **Schema synthesis** happens at router construction: `AnnotationSchemaSource` reads JAX-RS (`@PathParam`, `@QueryParam`, `@NotNull`, `@Pattern`, `@Size`, etc.) and Bean Validation annotations from each resource method and emits JSON Schema fragments. Body-type generation is **always profiled**: every route's body schema is produced by `dev.vertique:vertique-json-schema`'s `AnnotationJsonSchemaGenerator.forInputProfile(profile)` for the effective JSON profile the registrar resolved for that operation, so the synthesized document describes the wire shape that profile's mapper actually parses and the profile's input type overrides land in the schema the gate enforces. There is no profile-agnostic generation path and no fallback to a default generator. This module holds **no profile-selection rule**: the effective profile arrives as the `schemasFor(op, profile)` argument, and nothing here reads a profile id, a mapper identity, or configuration to choose one. Loose-parameter schema assembly remains owned by this module: the generator introspects types and fields, not individual method parameters, and loose parameters are not profiled. A body the profile's generator cannot represent fails router construction with a `RestConfigurationException` naming the operation id and carrying the generator's failure as cause — the mount is never installed and none of its routes serve traffic; request-validation outcomes and error categories for bodies that do generate are unaffected. Each operation's schemas are synthesized once at registration — no per-request reflection. There is deliberately no per-operationId schema cache: duplicate-operationId is enforced only within a single mount, so two mounts may legitimately reuse an operationId for different operations, and an operationId-keyed cache would hand the second mount the first mount's schema.
 
-Under `web-validation` the body document's regular expressions are compiled at router construction too: `WebValidationStrategy.gateFor` walks the operation's body document once, beside its existing validator compilation, and compiles every string-valued member keyed `pattern` and every key of every object keyed `patternProperties`, at any depth and with no position allowlist. An uncompilable expression therefore fails the mount instead of failing per request: the failure is a `RestConfigurationException` naming the operation id, the JSON pointer, and the regex engine's description and index, with the complete pattern text and the `PatternSyntaxException` itself absent from the message, cause, and suppressed chains; the assembled message is bounded to 512 UTF-16 code units, eliding only the engine's description and never splitting a surrogate pair. A property literally named `pattern` is an object under `properties` and is never compiled. A non-regex string that happens to be keyed `pattern` — a `const` value, say — is a spurious startup failure, reported with its JSON pointer. Only `web-validation` performs this walk; loose-parameter patterns keep their pre-existing per-request behavior.
+Under `web-validation` the body document's regular expressions are compiled at router construction too: `WebValidationStrategy.gateFor` walks the operation's body document once, beside its existing validator compilation, and compiles every string-valued member keyed `pattern` and every key of every object keyed `patternProperties`, at any depth and with no position allowlist. An uncompilable expression therefore fails the mount instead of failing per request: the failure is a `RestConfigurationException` naming the operation id, the JSON pointer, and the regex engine's description and index, with the complete pattern text and the `PatternSyntaxException` itself absent from the message, cause, and suppressed chains. A `patternProperties` key is pattern text however well it compiles, so the pointer never names one: a position inside such an object is reported as the key's bracketed ordinal in document order, `…/patternProperties/[key-0]/pattern`, whether the failing expression is the key itself or something beneath it. The assembled message is bounded to 512 UTF-16 code units by eliding the engine's description alone, never splitting a surrogate pair; when the identifying part — operation id, pointer, and index — reaches that bound by itself, it is reported in full and the description is dropped entirely, because cutting the identity would lose the failing position. A property literally named `pattern` is an object under `properties` and is never compiled. A non-regex string that happens to be keyed `pattern` — a `const` value, say — is a spurious startup failure, reported with its JSON pointer. Only `web-validation` performs this walk; loose-parameter patterns keep their pre-existing per-request behavior.
 
 **Strict boolean coercion.** The `web-validation` gate enforces that boolean parameters accept only the literal strings `"true"` or `"false"`. Values such as `"1"`, `"yes"`, `"on"`, or `""` are rejected with a 400 type-violation error. This prevents silent coercion ambiguity for boolean query/path/header parameters.
 
@@ -138,7 +138,7 @@ Built-in strategy IDs:
 
 ### OperationSchemaSource
 
-Optional seam that produces the validation schemas for a single REST operation. The `WebValidationStrategy` calls the registered `OperationSchemaSource` once per operation at mount time and closes over the returned schemas in the per-route gate handler — no operationId cache is involved (two mounts may legitimately reuse an operationId for different operations, so an operationId-keyed cache would hand the second mount the first mount's schema).
+Optional seam that produces the validation schemas for a single REST operation. `JaxRsRouteRegistrar` — not the strategy — calls the registered `OperationSchemaSource` once per operation at router build, for **every** operation whatever `jaxrs.validationStrategy` selects, and passes the result to the selected strategy's `gateFor`. `web-validation` then closes over those schemas in its per-route gate handler; a strategy that ignores them, `none` among them, does not stop them being synthesized, so wherever a source is bound a synthesis failure fails the mount under any strategy. No operationId cache is involved (two mounts may legitimately reuse an operationId for different operations, so an operationId-keyed cache would hand the second mount the first mount's schema).
 
 ```java
 public interface OperationSchemaSource {
@@ -154,7 +154,7 @@ public interface OperationSchemaSource {
 }
 ```
 
-Contribute a custom schema source via `@Provides @IntoSet OperationSchemaSource`.
+`RestModule` declares this seam with `@BindsOptionalOf OperationSchemaSource`: it is a single optional binding, **not** a multibinding. Contribute a custom source with a plain `@Provides` or `@Binds` of `OperationSchemaSource` — never `@IntoSet`, which satisfies nothing here — and do not include `RestValidationModule` in the same component, whose `@Binds` of `AnnotationSchemaSource` would then be a duplicate binding and fail the Dagger build. See [OperationSchemaSource (binding)](#operationschemasource-binding) below.
 
 ### AnnotationSchemaSource
 
@@ -221,8 +221,11 @@ Set `jaxrs.validationStrategy = "my-custom"` in `config/application.json` to act
 
 ### OperationSchemaSource (binding)
 
-`RestValidationModule` binds `AnnotationSchemaSource` as the operation schema source. A custom
-validation assembly can bind another implementation instead:
+`RestModule` declares `@BindsOptionalOf OperationSchemaSource`, so the component holds **at most one**
+schema source. This is not a `Set` multibinding: `@IntoSet` contributes to nothing the framework
+reads. `RestValidationModule` supplies the one binding, `AnnotationSchemaSource`. A custom validation
+assembly therefore replaces it — bind your own implementation and leave `RestValidationModule` out of
+the component, because two bindings of the same type fail the Dagger build:
 
 ```java
 @Provides
@@ -233,6 +236,18 @@ static OperationSchemaSource openApiEnrichedSource(OpenApiSchemaStore store) {
 
 This example ignores the `profile` parameter. A source that ignores the profile is guaranteeing
 that its stored schemas already match that profile's wire shape; the framework cannot check this.
+
+Dropping `RestValidationModule` also drops its `web-validation` strategy contribution, so the
+default `jaxrs.validationStrategy` would match no registered strategy and `RequestValidationStrategySelector`
+would fail the mount. Either select a strategy you contribute yourself, or re-contribute the
+built-in one alongside your source:
+
+```java
+@Provides @IntoSet
+static RequestValidationStrategy webValidation(WebValidationStrategy strategy) {
+    return strategy;
+}
+```
 
 ### FileContentVerifier (multibinding)
 
@@ -281,8 +296,12 @@ validation; unmapped declared types are accepted without I/O.
 ## Dependencies
 
 - `dev.vertique:vertique-rest-jaxrs`
+- `dev.vertique:vertique-rest-core` — the `RestConfigurationException` the schema-synthesis and regex-precompilation failures are reported as
 - `dev.vertique:vertique-json-schema`
 - `dev.vertique:vertique-core`
 - `io.vertx:vertx-json-schema`
 - `com.google.dagger:dagger`
 - `jakarta.inject:jakarta.inject-api`
+- `com.fasterxml.jackson.core:jackson-databind`
+- `jakarta.validation:jakarta.validation-api`
+- `io.swagger.core.v3:swagger-annotations-jakarta`

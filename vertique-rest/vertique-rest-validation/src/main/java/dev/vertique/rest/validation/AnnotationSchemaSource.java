@@ -64,7 +64,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  * {@link RestConfigurationException} carrying the operation id and the generator's
  * {@link JsonSchemaGenerationException} as its cause; the mount is never installed. The text this
  * class authors names the operation only — never a schema fragment and never a pattern — while the
- * generator's own message and its preserved third-party cause keep their own bounds.
+ * generator's own message and its preserved third-party cause keep their own bounds. That quoting
+ * and that cause are the generator's exception alone: any other runtime exception the synthesis
+ * catch admits contributes only its class's simple name, is attached neither as a cause nor as a
+ * suppressed exception, and leaves the whole message within FR-JSON-075's bound.
  * Request-validation outcomes and error categories are otherwise unaffected.
  *
  * <p><strong>No per-operation schema cache.</strong> This is a {@link Singleton} shared across every
@@ -94,6 +97,12 @@ public class AnnotationSchemaSource implements OperationSchemaSource {
 
     /** The longest operation identity this class embeds in a diagnostic, in UTF-16 code units. */
     private static final int MAX_OPERATION_IDENTITY_LENGTH = 256;
+
+    /**
+     * FR-JSON-075's message bound, in UTF-16 code units. Applied to the whole diagnostic only when
+     * this class authors all of it; see {@link #synthesisFailure(String, RuntimeException)}.
+     */
+    private static final int MAX_MESSAGE_LENGTH = 512;
 
     /** Marker appended in place of the elided tail of a truncated identity. */
     private static final String ELLIPSIS = "...";
@@ -286,26 +295,43 @@ public class AnnotationSchemaSource implements OperationSchemaSource {
 
     /**
      * Wraps a synthesis failure as the module's configuration exception, with the operation id
-     * prepended and the original failure preserved as the cause.
+     * prepended.
+     *
+     * <p>Two failures reach this point and they are not treated alike. The generator's own
+     * {@link JsonSchemaGenerationException} is the single bounded exception type FR-JSON-076 defines:
+     * its message is quoted and it is preserved as the cause, which is exactly the raw-cause allowance
+     * FR-008 grants. <strong>Any other</strong> runtime exception is third-party text of unknown
+     * shape and unknown length — a decode failure's message embeds the document it choked on — so it
+     * contributes only its class's simple name and is not attached as a cause or as a suppressed
+     * exception. Nothing it carries can then reach the message or the cause chain whatever its
+     * length.
      *
      * <p>This class authors only the operation identity, bounded to
-     * {@value #MAX_OPERATION_IDENTITY_LENGTH} UTF-16 code units; the quoted detail is the failing
-     * exception's own message, which the generator already bounds and whose preserved third-party
+     * {@value #MAX_OPERATION_IDENTITY_LENGTH} UTF-16 code units. In the non-generator case, where
+     * every part of the message is authored here, the whole message is additionally bounded to
+     * {@value #MAX_MESSAGE_LENGTH} UTF-16 code units. In the generator case the quoted detail is the
+     * generator's own message, which the generator already bounds and whose preserved third-party
      * cause is deliberately not sanitized here.
      *
      * @param operationId the operation whose body schema could not be synthesized
-     * @param failed      the generator failure
+     * @param failed      the synthesis failure
      * @return the configuration exception to throw
      */
     private static RestConfigurationException synthesisFailure(String operationId, RuntimeException failed) {
         StringBuilder message = new StringBuilder("Request body schema synthesis failed for operation '")
                 .append(boundedIdentity(operationId))
                 .append('\'');
-        String detail = failed.getMessage();
-        if (detail != null && !detail.isBlank()) {
-            message.append(": ").append(detail);
+        if (failed instanceof JsonSchemaGenerationException generatorFailure) {
+            String detail = generatorFailure.getMessage();
+            if (detail != null && !detail.isBlank()) {
+                message.append(": ").append(detail);
+            }
+            return new RestConfigurationException(message.toString(), generatorFailure);
         }
-        return new RestConfigurationException(message.toString(), failed);
+        // The simple name only, and no cause: the class of the failure is all the diagnostic that can
+        // be given without disclosing text this module neither authored nor bounded.
+        message.append(": ").append(failed.getClass().getSimpleName());
+        return new RestConfigurationException(bounded(message.toString(), MAX_MESSAGE_LENGTH));
     }
 
     /**
@@ -316,11 +342,23 @@ public class AnnotationSchemaSource implements OperationSchemaSource {
      * @return the bounded identity; never {@code null}
      */
     private static String boundedIdentity(String identity) {
-        String value = String.valueOf(identity);
-        if (value.length() <= MAX_OPERATION_IDENTITY_LENGTH) {
+        return bounded(String.valueOf(identity), MAX_OPERATION_IDENTITY_LENGTH);
+    }
+
+    /**
+     * Bounds a fragment to {@code max} code units, marking the elision and never splitting a
+     * surrogate pair.
+     *
+     * @param value the fragment to bound; never {@code null}
+     * @param max   the maximum retained length in UTF-16 code units; always larger than
+     *     {@link #ELLIPSIS} here
+     * @return the bounded fragment, never longer than {@code max}
+     */
+    private static String bounded(String value, int max) {
+        if (value.length() <= max) {
             return value;
         }
-        int cut = MAX_OPERATION_IDENTITY_LENGTH - ELLIPSIS.length();
+        int cut = max - ELLIPSIS.length();
         if (Character.isHighSurrogate(value.charAt(cut - 1))) {
             cut--;
         }

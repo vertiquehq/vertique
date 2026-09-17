@@ -3,6 +3,7 @@
 
 package dev.vertique.rest.validation;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -31,6 +32,7 @@ import dev.vertique.rest.validation.corpus.RootDecimalDto;
 import dev.vertique.rest.validation.corpus.SchemaCorpus;
 import dev.vertique.rest.validation.corpus.SchemaCorpusGenerator;
 import io.swagger.v3.oas.annotations.media.Schema;
+import io.vertx.core.json.DecodeException;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import jakarta.validation.constraints.NotBlank;
@@ -43,7 +45,9 @@ import java.lang.annotation.Annotation;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -476,6 +480,166 @@ class AnnotationSchemaSourceTest {
         assertFalse(
                 authored.contains("pattern"),
                 "the REST-authored text must not disclose pattern text; authored text was: " + authored);
+    }
+
+    @Test
+    @DisplayName("A non-generator failure discloses neither its text nor its cause")
+    void nonGeneratorFailureDisclosesNoTextAndNoCause() {
+        // CO-002 / FR-008. FR-008's raw-cause allowance covers the generator's own bounded exception
+        // only. Any OTHER runtime exception reaching the synthesis catch is third-party text: a decode
+        // failure's message embeds the document it choked on. So such an exception contributes only its
+        // class's simple name, is never attached as a cause, and can never push the assembled message
+        // past FR-JSON-075's bound.
+        RuntimeException decodeFailure = new DecodeException(
+                "Failed to decode: " + LEAKED_DOCUMENT, new IllegalStateException("underlying " + LEAK_MARKER));
+        AnnotationSchemaSource source = new LeakyDecodeFailureSource(decodeFailure);
+
+        RestConfigurationException failure = assertThrows(
+                RestConfigurationException.class,
+                () -> source.schemasFor(bodyOp("leakyDecode", NotNullDto.class), vertiqueProfile()));
+
+        String message = String.valueOf(failure.getMessage());
+        List<Throwable> chain = disclosureChainOf(failure);
+
+        // The second subclass: the same kind of failure, with a message no elision of the operation
+        // identity could have saved. Its tail is nothing but surrogate pairs, so a cut that ignored
+        // them lands inside one roughly half the time rather than by luck. Provoked here rather than
+        // after the first case's assertions so that one grouped report covers both.
+        RuntimeException oversized = new DecodeException(LEAK_MARKER + SURROGATE_TAIL);
+        AnnotationSchemaSource oversizedSource = new OversizedMessageFailureSource(oversized);
+
+        RestConfigurationException oversizedFailure = assertThrows(
+                RestConfigurationException.class,
+                () -> oversizedSource.schemasFor(bodyOp("oversizedDetail", NotNullDto.class), vertiqueProfile()));
+
+        String oversizedMessage = String.valueOf(oversizedFailure.getMessage());
+
+        // Grouped, because these are independent facts about one diagnostic contract: a fail-fast
+        // sequence would report whichever happened to be checked first and hide the rest.
+        assertAll(
+                "the diagnostic for a non-generator synthesis failure",
+                () -> assertTrue(
+                        message.contains("leakyDecode"),
+                        "the configuration exception must still name the failing operation; message was: " + message),
+                () -> assertNoDisclosure(chain, LEAK_MARKER, LEAKED_DOCUMENT),
+                () -> assertTrue(
+                        chain.stream().noneMatch(link -> link == decodeFailure),
+                        "a non-generator exception must not be attached as a cause or a suppressed exception, "
+                                + "which leaks its text however short the message is; chain was: " + chain),
+                () -> assertTrue(
+                        message.contains(DecodeException.class.getSimpleName()),
+                        "a non-generator failure must contribute its class's simple name, which is all the "
+                                + "diagnostic a reader gets; message was: " + message),
+                () -> assertNoDisclosure(disclosureChainOf(oversizedFailure), LEAK_MARKER),
+                () -> assertTrue(
+                        oversizedMessage.length() <= MAX_MESSAGE_CODE_UNITS,
+                        "the whole message must stay within " + MAX_MESSAGE_CODE_UNITS + " UTF-16 code units; it was "
+                                + oversizedMessage.length()),
+                () -> assertFalse(
+                        endsInsideSurrogatePair(oversizedMessage),
+                        "bounding the message must never split a surrogate pair"));
+    }
+
+    /**
+     * Asserts that no message anywhere in a disclosure chain carries any forbidden text.
+     *
+     * @param chain     the throwable and everything reachable through its cause and suppressed edges
+     * @param forbidden text no message in the chain may carry
+     */
+    private static void assertNoDisclosure(List<Throwable> chain, String... forbidden) {
+        for (Throwable link : chain) {
+            String linkMessage = String.valueOf(link.getMessage());
+            for (String text : forbidden) {
+                assertFalse(
+                        linkMessage.contains(text),
+                        "no message in the failure chain may disclose '" + text + "'; "
+                                + link.getClass().getName() + " said: " + linkMessage);
+            }
+        }
+    }
+
+    /** The bound FR-JSON-075 sets on the whole assembled message, in UTF-16 code units. */
+    private static final int MAX_MESSAGE_CODE_UNITS = 512;
+
+    /** A distinctive literal, asserted absent from the message and from the whole disclosure chain. */
+    private static final String LEAK_MARKER = "LEAK-MARKER-7f3a";
+
+    /** A small document of the kind a decode failure quotes verbatim into its own message. */
+    private static final String LEAKED_DOCUMENT = "{\"amount\":\"" + LEAK_MARKER + "\"}";
+
+    /**
+     * A tail of nothing but surrogate pairs, long enough that the whole message exceeds
+     * {@link #MAX_MESSAGE_CODE_UNITS} and ends in a pair.
+     */
+    private static final String SURROGATE_TAIL = "🚀".repeat(400);
+
+    /** Raises a supplied non-generator runtime exception from the generation seam. */
+    private static final class LeakyDecodeFailureSource extends AnnotationSchemaSource {
+
+        private final RuntimeException failure;
+
+        private LeakyDecodeFailureSource(RuntimeException failure) {
+            this.failure = failure;
+        }
+
+        @Override
+        protected JsonNode generateBodySchema(Type type, JsonMapperProfile profile) {
+            throw failure;
+        }
+    }
+
+    /** Raises a non-generator runtime exception whose message alone exceeds the whole message bound. */
+    private static final class OversizedMessageFailureSource extends AnnotationSchemaSource {
+
+        private final RuntimeException failure;
+
+        private OversizedMessageFailureSource(RuntimeException failure) {
+            this.failure = failure;
+        }
+
+        @Override
+        protected JsonNode generateBodySchema(Type type, JsonMapperProfile profile) {
+            throw failure;
+        }
+    }
+
+    /**
+     * Collects a throwable and every throwable reachable through its cause <em>and</em> suppressed
+     * chains. Disclosure follows both edges, so a proof that walked causes alone would miss an
+     * exception attached as suppressed.
+     *
+     * @param root the failure to walk
+     * @return every throwable in the chain, root first
+     */
+    private static List<Throwable> disclosureChainOf(Throwable root) {
+        List<Throwable> chain = new ArrayList<>();
+        Deque<Throwable> pending = new ArrayDeque<>();
+        pending.add(root);
+        while (!pending.isEmpty()) {
+            Throwable current = pending.removeFirst();
+            if (current == null || chain.contains(current)) {
+                continue;
+            }
+            chain.add(current);
+            if (current.getCause() != null) {
+                pending.add(current.getCause());
+            }
+            for (Throwable suppressed : current.getSuppressed()) {
+                pending.add(suppressed);
+            }
+        }
+        return chain;
+    }
+
+    /**
+     * Reports whether a string ends inside a surrogate pair, which a naive cut to a code-unit bound
+     * would produce.
+     *
+     * @param message the diagnostic
+     * @return {@code true} when the last code unit is an unpaired high surrogate
+     */
+    private static boolean endsInsideSurrogatePair(String message) {
+        return !message.isEmpty() && Character.isHighSurrogate(message.charAt(message.length() - 1));
     }
 
     /**
