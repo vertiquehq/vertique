@@ -38,8 +38,10 @@ import com.github.victools.jsonschema.module.swagger2.Swagger2Module;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonSchemaTypeOverride.Direction;
 import io.swagger.v3.oas.annotations.media.Schema;
+import java.lang.reflect.Field;
 import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.Member;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.RecordComponent;
 import java.lang.reflect.Type;
@@ -481,6 +483,9 @@ public final class AnnotationJsonSchemaGenerator {
          *                                  candidate is matched against what was published by member
          *                                  rather than by spelling; an empty member set is a property
          *                                  Jackson binds through a creator parameter alone
+         * @param walkedFieldsByWireName    the fields the schema library walks, keyed by the wire name
+         *                                  of the property each is described as when walked under its
+         *                                  own name
          */
         private record PropertyNames(
                 Map<Member, PropertyMetadata> byMember,
@@ -490,7 +495,8 @@ public final class AnnotationJsonSchemaGenerator {
                 Type anySetterValueType,
                 Map<String, List<String>> aliasesByWireName,
                 Set<String> reservedInputNames,
-                Map<String, Set<Member>> inputBoundMembers) {}
+                Map<String, Set<Member>> inputBoundMembers,
+                Map<String, Set<Member>> walkedFieldsByWireName) {}
 
         /** The verdict for an any-accessor or its backing storage: never a named property. */
         private static final PropertyMetadata HIDDEN_ANY_ACCESSOR_BACKING = new PropertyMetadata(null, false);
@@ -566,23 +572,49 @@ public final class AnnotationJsonSchemaGenerator {
                 return byMember;
             }
             PropertyMetadata byName = names.byInternalName().get(scope.getName());
-            if (byName != null && !scope.getName().equals(scope.getDeclaredName())) {
-                // Victools applies property-name overrides before this lookup, so the name may be a
-                // rename — a @Schema(name = ...), say — rather than the member's own. When the rename
-                // lands on a property the member's own name does not reach, that property is backed by
-                // a different member, and answering with its visibility and wire name would silently
-                // describe this member as that one. Two properties sharing a name is the developer's
-                // error to resolve, so generation fails instead.
-                PropertyMetadata own = names.byInternalName().get(scope.getDeclaredName());
-                if (!byName.equals(own)) {
-                    throw renameCollision(scope, byName);
-                }
+            if (publishesTwoMembersUnderOneName(names, scope, byName)) {
+                throw renameCollision(scope, byName);
             }
             return byName;
         }
 
         /**
-         * The refusal for a member renamed onto the name of a property backed by a different member:
+         * Whether answering a renamed member with the property its rename lands on would publish two
+         * walked members under one name.
+         *
+         * <p>Victools applies property-name overrides before the fallback lookup, so the name may be a
+         * rename — a {@code @Schema(name = ...)}, say — rather than the member's own. A rename that
+         * lands on a property backed by another field the schema library walks would describe this
+         * member with that field's visibility and wire name, and publish both under one name: that is
+         * the developer's error to resolve. A landed-on property that no other walked field backs — the
+         * accessor pair behind a Lombok-style {@code boolean isActive} or an {@code mName} field — is
+         * described by this member alone, because getters are not walked, so the answer is correct.
+         *
+         * @param names    the declaring type's introspected properties
+         * @param scope    the member that missed the lookup by identity
+         * @param landedOn the property found under the member's possibly renamed name, or {@code null}
+         * @return {@code true} when the member must be refused
+         */
+        private static boolean publishesTwoMembersUnderOneName(
+                PropertyNames names, MemberScope<?, ?> scope, PropertyMetadata landedOn) {
+            if (landedOn == null || scope.getName().equals(scope.getDeclaredName())) {
+                return false;
+            }
+            // Comparing declared names assumes only fields are walked: a getter's declared name would
+            // be getFoo, never the name of the property it reads.
+            if (landedOn.equals(names.byInternalName().get(scope.getDeclaredName()))) {
+                return false;
+            }
+            for (Member field : names.walkedFieldsByWireName().getOrDefault(landedOn.wireName(), Set.of())) {
+                if (!field.equals(scope.getRawMember())) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /**
+         * The refusal for a member renamed onto the name of a property backed by another walked field:
          * one bounded diagnostic naming the declaring type, the member, and the property it collides
          * with, and carrying no schema fragment.
          *
@@ -599,7 +631,7 @@ public final class AnnotationJsonSchemaGenerator {
                             + Diagnostics.truncate(scope.getDeclaredName(), Diagnostics.MAX_SHORT_IDENTITY_LENGTH)
                             + "\" is renamed to \""
                             + Diagnostics.truncate(scope.getName(), Diagnostics.MAX_SHORT_IDENTITY_LENGTH)
-                            + "\", which another property already carries (published as \""
+                            + "\", which another property already carries (whose wire name is \""
                             + Diagnostics.truncate(occupant.wireName(), Diagnostics.MAX_SHORT_IDENTITY_LENGTH)
                             + "\"); rename one of the two properties, or name them apart on the wire with"
                             + " @JsonProperty",
@@ -674,6 +706,7 @@ public final class AnnotationJsonSchemaGenerator {
                     members.put(property.getSetter().getMember(), metadata);
                 }
             }
+            Map<String, Set<Member>> walkedFields = walkedFieldsByWireName(type, members, internalNames);
             Set<String> reserved = new TreeSet<>();
             if (anyAccessors.anySetterValueType() != null) {
                 // Only a type whose extras are described reserves anything: on every other type the
@@ -715,7 +748,44 @@ public final class AnnotationJsonSchemaGenerator {
                     // is never mutated after it returns.
                     Collections.unmodifiableMap(aliases),
                     Set.copyOf(reserved),
-                    Map.copyOf(inputBoundMembers));
+                    Map.copyOf(inputBoundMembers),
+                    walkedFields);
+        }
+
+        /**
+         * The fields the schema library walks for a type — every non-static, non-synthetic field of the
+         * type and its superclasses — grouped by the wire name of the property each is described as
+         * when walked under its own name: the property Jackson attaches it to, or else the property its
+         * declared name reaches, which is the same fallback {@link #metadata(MemberScope)} takes.
+         *
+         * @param type          the introspected type
+         * @param members       the type's properties keyed by the members Jackson attaches to them
+         * @param internalNames the same, keyed by internal and wire name
+         * @return the walked fields per wire name; a field that describes no property is absent
+         */
+        private static Map<String, Set<Member>> walkedFieldsByWireName(
+                Class<?> type, Map<Member, PropertyMetadata> members, Map<String, PropertyMetadata> internalNames) {
+            Map<String, Set<Member>> fields = new HashMap<>();
+            for (Class<?> current = type;
+                    current != null && current != Object.class;
+                    current = current.getSuperclass()) {
+                for (Field field : current.getDeclaredFields()) {
+                    if (Modifier.isStatic(field.getModifiers()) || field.isSynthetic()) {
+                        continue;
+                    }
+                    PropertyMetadata property = members.get(field);
+                    if (property == null) {
+                        property = internalNames.get(field.getName());
+                    }
+                    if (property != null && property.wireName() != null) {
+                        fields.computeIfAbsent(property.wireName(), key -> new HashSet<>())
+                                .add(field);
+                    }
+                }
+            }
+            Map<String, Set<Member>> copy = new HashMap<>();
+            fields.forEach((wireName, backing) -> copy.put(wireName, Set.copyOf(backing)));
+            return Map.copyOf(copy);
         }
 
         /**

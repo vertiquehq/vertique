@@ -314,14 +314,18 @@ misdescribes the wire:
   followed only when its target is itself a schema position (see below): `#/$defs/Money` and
   `#/properties/amount` are conjoined, while a pointer at data such as `#/default`, or at the
   container object under `#/$defs/Money/properties`, contributes nothing.
-- **A `@Schema(name = ...)` rename onto another property's name.** In the profile-aware modes, a
-  member Jackson does not attach to any property of its own — a private field with no accessor, say
-  — that is renamed to a name another Jackson property of the same type already carries would be
-  described with that other property's input or output visibility and wire name. Generation instead
-  fails with a bounded `JsonSchemaGenerationException` naming the type, the renamed member, and the
-  property it collides with. Rename one of the two properties, or name them apart on the wire with
-  `@JsonProperty`. A rename to the member's own property name, or to a name no property carries, is
-  unaffected.
+- **A `@Schema(name = ...)` rename that publishes two members under one name.** In the
+  profile-aware modes, a walked field that Jackson does not attach to any property of its own, and
+  that is renamed onto a property backed by another field the schema library walks, would publish
+  both fields under one name, the renamed one with the other's input or output visibility and wire
+  name. Generation instead fails with a bounded `JsonSchemaGenerationException` naming the type, the
+  renamed member, and the wire name of the property it collides with. Rename one of the two
+  properties, or name them apart on the wire with `@JsonProperty`. A rename onto a property no other
+  walked field backs is unaffected and keeps its schema: the Lombok-style `@Schema(name = "active")
+  boolean isActive` behind `isActive()` and `setActive(...)`, or an `mName` field behind
+  `getName()` and `setName(...)`, publishes `active` or `name` as before. So is a rename to the
+  member's own property name, or to a name no property carries. Where a field name and its accessor
+  property differ, `@JsonProperty("active")` on the field joins the two for Jackson as well.
 
 `@Schema(type = ...)` has no effect in this module; `implementation` is the supported way for a
 property to contribute a type shape.
