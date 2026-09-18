@@ -264,8 +264,15 @@ instead, while a failure under a declared property keeps that property's locatio
 fixed literal, so no submitted value and no raw validator message reaches the response through it.
 A concrete detail's `path` is cut back by the same rule: a wrong-typed value under an undeclared key
 — an extra an any-setter type describes, say — is reported at `#/<the client's own key>`, and its
-detail names the containing location instead, so the key never reaches the response. A location the
-schema declares is named unchanged. The rule counts per call, so a body failure is
+detail names the containing location instead, so the key never reaches the response. The location
+is kept segment by segment, up to the first segment the schema does not declare: a segment is kept
+when it is a name a `properties` entry spells, or an array index a `prefixItems` position or an
+`items` schema covers, at that point or in any `allOf`, `anyOf`, or `oneOf` branch there, following
+local `$ref`s. A field inside a nullable nested object, published as `anyOf: [null, $ref]`, is
+therefore named, and so is a tuple index. A declared name is kept in the spelling the validator
+reports, RFC 6901-escaped and percent-encoded (`a b` as `a%20b`, `a/b` as `a~1b`). A key only
+`additionalProperties` or `patternProperties` admits is never kept, and neither is anything under a
+reference or composition that cannot be resolved within a fixed bound. The rule counts per call, so a body failure is
 never masked by a detail produced for a parameter, and a call that already produced a concrete detail
 gains nothing extra. A body the validator reports valid still produces no detail and no rejection.
 This is what makes a schema rule published as `oneOf`, `anyOf`, or `not` branches — the strict

@@ -38,6 +38,11 @@ import io.vertx.json.schema.OutputUnit;
 import io.vertx.json.schema.Validator;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
+import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -174,6 +179,17 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
      * self-referential or mutually referential document bounds the walk instead of spinning in it.
      */
     private static final int MAX_LOCAL_REF_HOPS = 16;
+
+    /**
+     * The number of subschemas — each reached one's {@code $ref} target and its {@code allOf},
+     * {@code anyOf} and {@code oneOf} branches, transitively — examined while deciding whether one
+     * instance-location segment is declared. A composition wider or deeper than this ends the run, so
+     * a self-referential composition bounds the walk instead of spinning in it.
+     */
+    private static final int MAX_COMPOSED_SUBSCHEMAS = 64;
+
+    /** The applicators whose branches may each declare a name at the same instance location. */
+    private static final List<String> COMPOSITION_KEYWORDS = List.of("allOf", "anyOf", "oneOf");
 
     private static final JsonSchemaOptions SCHEMA_OPTIONS = new JsonSchemaOptions()
             .setDraft(Draft.DRAFT202012)
@@ -1421,9 +1437,17 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
          * the schema's own declared names, so its length is fixed at router construction rather than by
          * the request.
          *
+         * <p>A segment is declared when a {@code properties} entry, a {@code prefixItems} position or an
+         * {@code items} schema at that point names it — at the subschema reached so far or in any
+         * {@code allOf}, {@code anyOf} or {@code oneOf} branch of it, so a nullable nested object
+         * published as {@code anyOf: [null, $ref]} keeps its field names. The validator reports each
+         * segment RFC 6901-escaped and percent-encoded, so a segment is decoded before it is looked up;
+         * the reported, encoded spelling is what the path names (vertique-dev#598).
+         *
          * <p>Resolution is deliberately fail-closed: a segment this method cannot show to be declared —
-         * under an unresolvable {@code $ref}, a composed subschema, or a {@code null} schema — ends the
-         * run, which names a shorter location and never a longer one.
+         * under an unresolvable {@code $ref}, a composition past the subschema bound, a malformed
+         * encoding, or a {@code null} schema — ends the run, which names a shorter location and never a
+         * longer one.
          *
          * @param instanceLocation the reported instance location, possibly {@code null}
          * @param schema           the schema the failing call validated against; may be {@code null}
@@ -1439,54 +1463,175 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                 return instanceLocation;
             }
             StringBuilder declared = new StringBuilder(anchor);
-            JsonObject node = schema;
+            List<JsonObject> nodes = schema == null ? List.of() : List.of(schema);
             for (String segment : pointer.split("/", -1)) {
                 if (segment.isEmpty()) {
                     continue;
                 }
-                JsonObject child = declaredChild(node, segment, schema);
-                if (child == null) {
+                String name = decodeSegment(segment);
+                if (name == null) {
+                    break;
+                }
+                List<JsonObject> children = declaredChildren(nodes, segment, name, schema);
+                if (children.isEmpty()) {
                     break;
                 }
                 declared.append('/').append(segment);
-                node = child;
+                nodes = children;
             }
             return declared.toString();
         }
 
         /**
-         * The subschema a declared segment of an instance location leads to: the {@code properties}
-         * entry of that name, or the {@code items} schema for an array index.
+         * The subschemas a declared segment of an instance location leads to: every {@code properties}
+         * entry of that name, and for an array index every {@code prefixItems} position or {@code items}
+         * schema it falls under, gathered across the subschemas reached so far and each of their
+         * {@code allOf}, {@code anyOf} and {@code oneOf} branches.
          *
-         * <p>A declared segment whose subschema is a boolean rather than an object resolves to the empty
-         * object, which declares nothing further, so the run ends at the deepest segment the schema
-         * actually names.
+         * <p>Only a name the schema spells itself matches — never {@code additionalProperties} or
+         * {@code patternProperties}, which admit keys the client chose. A declared segment whose
+         * subschema is a boolean rather than an object resolves to the empty object, which declares
+         * nothing further, so the run ends at the deepest segment the schema actually names.
          *
-         * @param node    the subschema the run has reached, possibly {@code null}
-         * @param segment the next instance-location segment
+         * @param nodes   the subschemas the run has reached
+         * @param segment the next instance-location segment, as reported
+         * @param name    the same segment, decoded
          * @param root    the root schema, against which a local {@code $ref} is resolved
-         * @return the subschema for {@code segment}, or {@code null} when the schema does not declare it
+         * @return the subschemas for {@code segment}; empty when the schema does not declare it
          */
-        private static JsonObject declaredChild(JsonObject node, String segment, JsonObject root) {
-            JsonObject resolved = resolveLocalRef(node, root);
-            if (resolved == null) {
+        private static List<JsonObject> declaredChildren(
+                List<JsonObject> nodes, String segment, String name, JsonObject root) {
+            List<JsonObject> children = new ArrayList<>();
+            for (JsonObject node : composedSubschemas(nodes, root)) {
+                JsonObject properties = node.getJsonObject("properties");
+                if (properties != null && properties.containsKey(name)) {
+                    children.add(asSubschema(properties.getValue(name)));
+                    continue;
+                }
+                if (!isArrayIndex(segment)) {
+                    continue;
+                }
+                Object prefixItems = node.getValue("prefixItems");
+                int prefixSize = prefixItems instanceof JsonArray tuple ? tuple.size() : 0;
+                // A segment too long to be an int lies past any tuple the schema could declare.
+                int index = segment.length() <= 9 ? Integer.parseInt(segment) : Integer.MAX_VALUE;
+                if (index < prefixSize) {
+                    children.add(asSubschema(((JsonArray) prefixItems).getValue(index)));
+                } else if (node.getValue("items") != null) {
+                    children.add(asSubschema(node.getValue("items")));
+                }
+            }
+            return children;
+        }
+
+        /**
+         * Expands the subschemas the run has reached into each one's local {@code $ref} target and,
+         * transitively, every {@code allOf}, {@code anyOf} and {@code oneOf} branch, bounded by {@link
+         * #MAX_COMPOSED_SUBSCHEMAS} so a self-referential composition cannot spin here.
+         *
+         * <p>A branch whose reference cannot be followed contributes nothing. Past the bound the whole
+         * expansion is abandoned and the run ends, which names a shorter location, never a longer one.
+         *
+         * @param nodes the subschemas the run has reached
+         * @param root  the root schema, against which a local {@code $ref} is resolved
+         * @return the resolved subschemas and their composition branches; empty past the bound
+         */
+        private static List<JsonObject> composedSubschemas(List<JsonObject> nodes, JsonObject root) {
+            List<JsonObject> expanded = new ArrayList<>();
+            Set<Map<String, Object>> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+            ArrayDeque<JsonObject> pending = new ArrayDeque<>(nodes);
+            while (!pending.isEmpty()) {
+                JsonObject resolved = resolveLocalRef(pending.poll(), root);
+                if (resolved == null || !seen.add(resolved.getMap())) {
+                    continue;
+                }
+                if (expanded.size() == MAX_COMPOSED_SUBSCHEMAS) {
+                    return List.of();
+                }
+                expanded.add(resolved);
+                for (String keyword : COMPOSITION_KEYWORDS) {
+                    if (resolved.getValue(keyword) instanceof JsonArray branches) {
+                        for (Object branch : branches) {
+                            if (branch instanceof JsonObject object) {
+                                pending.add(object);
+                            }
+                        }
+                    }
+                }
+            }
+            return expanded;
+        }
+
+        /**
+         * A declared subschema as an object: a boolean subschema becomes the empty object, which declares
+         * nothing further.
+         *
+         * @param subschema the declared subschema
+         * @return the subschema, or the empty object when it is not an object
+         */
+        private static JsonObject asSubschema(Object subschema) {
+            return subschema instanceof JsonObject object ? object : new JsonObject();
+        }
+
+        /**
+         * Decodes one instance-location segment as the validator reports it — percent-encoded UTF-8 over
+         * an RFC 6901-escaped name — back to the property name the schema would declare.
+         *
+         * @param segment the reported segment
+         * @return the decoded name, or {@code null} when the segment is not a well-formed encoding
+         */
+        private static String decodeSegment(String segment) {
+            if (segment.indexOf('%') < 0 && segment.indexOf('~') < 0) {
+                return segment;
+            }
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream(segment.length());
+            for (int index = 0; index < segment.length(); index++) {
+                char c = segment.charAt(index);
+                if (c == '%') {
+                    if (index + 2 >= segment.length()) {
+                        return null;
+                    }
+                    int high = Character.digit(segment.charAt(index + 1), 16);
+                    int low = Character.digit(segment.charAt(index + 2), 16);
+                    if (high < 0 || low < 0) {
+                        return null;
+                    }
+                    bytes.write(high * 16 + low);
+                    index += 2;
+                } else if (c < 0x80) {
+                    bytes.write(c);
+                } else {
+                    byte[] encoded = String.valueOf(c).getBytes(StandardCharsets.UTF_8);
+                    bytes.write(encoded, 0, encoded.length);
+                }
+            }
+            String escaped;
+            try {
+                escaped = StandardCharsets.UTF_8
+                        .newDecoder()
+                        .decode(ByteBuffer.wrap(bytes.toByteArray()))
+                        .toString();
+            } catch (CharacterCodingException e) {
                 return null;
             }
-            JsonObject properties = resolved.getJsonObject("properties");
-            if (properties != null && properties.containsKey(segment)) {
-                Object child = properties.getValue(segment);
-                return child instanceof JsonObject object ? object : new JsonObject();
-            }
-            if (isArrayIndex(segment)) {
-                Object items = resolved.getValue("items");
-                if (items instanceof JsonObject object) {
-                    return object;
+            StringBuilder name = new StringBuilder(escaped.length());
+            for (int index = 0; index < escaped.length(); index++) {
+                char c = escaped.charAt(index);
+                if (c != '~') {
+                    name.append(c);
+                    continue;
                 }
-                if (items != null) {
-                    return new JsonObject();
+                char next = index + 1 < escaped.length() ? escaped.charAt(index + 1) : 0;
+                if (next == '0') {
+                    name.append('~');
+                } else if (next == '1') {
+                    name.append('/');
+                } else {
+                    return null;
                 }
+                index++;
             }
-            return null;
+            return name.toString();
         }
 
         /**

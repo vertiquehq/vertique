@@ -613,6 +613,84 @@ public class ProfiledSchemaSynthesisIT {
     }
 
     /**
+     * vertiquehq/vertique-dev#598, the precision half. The schema library publishes a nullable nested
+     * object as {@code anyOf: [{"type":"null"}, {"$ref": ...}]}, so a violation inside it is reported
+     * at an instance location whose field segment the schema declares only inside a composition
+     * branch. The concrete detail must name that field, exactly as it names a field of a plain nested
+     * object, while an undeclared client key under the same nullable object is still cut back to the
+     * object and never reaches the response.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("A concrete detail inside a nullable nested object names the declared field")
+    void aConcreteDetailInsideANullableNestedObjectNamesTheField() throws Exception {
+        NestedPathResource resource = new NestedPathResource();
+        int gatePort = start(gateMount(), Set.of(resource));
+
+        HttpResponse<Buffer> nullable = post(gatePort, "/nested-path", NULLABLE_NESTED_LONG_NAME_BODY);
+        HttpResponse<Buffer> plain = post(gatePort, "/nested-path", PLAIN_NESTED_LONG_NAME_BODY);
+        HttpResponse<Buffer> clientKey = post(gatePort, "/nested-path", NULLABLE_NESTED_CLIENT_KEY_BODY);
+        HttpResponse<Buffer> plainClientKey = post(gatePort, "/nested-path", PLAIN_NESTED_CLIENT_KEY_BODY);
+        String nullableBody = nullable.bodyAsString();
+        String plainBody = plain.bodyAsString();
+        String clientKeyBody = clientKey.bodyAsString();
+        String plainClientKeyBody = plainClientKey.bodyAsString();
+
+        assertAll(
+                () -> assertEquals(400, nullable.statusCode(), "body: " + nullableBody),
+                () -> assertEquals(
+                        List.of("#/pet/name"),
+                        paths(problemErrors(nullableBody), "maxLength"),
+                        "a violation inside the nullable nested object must name the declared field; body: "
+                                + nullableBody),
+                () -> assertEquals(400, plain.statusCode(), "body: " + plainBody),
+                () -> assertEquals(
+                        List.of("#/plain/name"),
+                        paths(problemErrors(plainBody), "maxLength"),
+                        "a declared plain nested location is named unchanged; body: " + plainBody),
+                () -> assertEquals(400, clientKey.statusCode(), "body: " + clientKeyBody),
+                () -> assertEquals(
+                        List.of("#/pet", "#/pet"),
+                        paths(problemErrors(clientKeyBody), "type"),
+                        "the null branch's type failure and the extra's, under an undeclared client key, both"
+                                + " name the nullable object: the key is cut back; body: " + clientKeyBody),
+                () -> assertFalse(
+                        clientKeyBody.contains(NESTED_CLIENT_KEY),
+                        "the client's undeclared key must not be echoed in the response; body: " + clientKeyBody),
+                () -> assertEquals(400, plainClientKey.statusCode(), "body: " + plainClientKeyBody),
+                () -> assertEquals(
+                        List.of("#/plain"),
+                        paths(problemErrors(plainClientKeyBody), "type"),
+                        "an undeclared client key under the plain nested object is cut back to it; body: "
+                                + plainClientKeyBody),
+                () -> assertFalse(
+                        plainClientKeyBody.contains(NESTED_CLIENT_KEY),
+                        "the client's undeclared key must not be echoed in the response; body: " + plainClientKeyBody),
+                () -> assertEquals(0, resource.invocations.get(), "no rejected body may reach the resource"));
+    }
+
+    /**
+     * Returns the {@code path} of every detail carrying {@code keyword} as its {@code type}.
+     *
+     * @param errors  the decoded {@code errors} array, possibly {@code null}
+     * @param keyword the failed keyword
+     * @return the paths, in response order; empty when there is no such detail
+     */
+    private static List<String> paths(JsonArray errors, String keyword) {
+        List<String> paths = new ArrayList<>();
+        if (errors != null) {
+            for (int index = 0; index < errors.size(); index++) {
+                JsonObject error = errors.getJsonObject(index);
+                if (keyword.equals(error.getString("type"))) {
+                    paths.add(error.getString("path"));
+                }
+            }
+        }
+        return paths;
+    }
+
+    /**
      * T007 TP-006 (AC-015.6, the gate-disabled half). On the {@code jaxrs.validationStrategy: none}
      * mount the profile's Jackson binder is the only component that can refuse a body. Every outcome
      * is asserted rather than merely recorded, so the gated rejections above cannot silently become
@@ -1247,6 +1325,23 @@ public class ProfiledSchemaSynthesisIT {
     /** A JSON number under the long undeclared key, where the string any-setter declares strings. */
     private static final String ANY_SETTER_LONG_KEY_NUMBER_BODY = "{\"name\":\"a\",\"" + ANY_SETTER_LONG_KEY + "\":5}";
 
+    /** A very long, distinctive undeclared key under a nested object. */
+    private static final String NESTED_CLIENT_KEY = "CLIENT-KEY-598-NESTED-" + "n".repeat(500);
+
+    /** A too-long declared name inside the nullable nested object. */
+    private static final String NULLABLE_NESTED_LONG_NAME_BODY = "{\"pet\":{\"name\":\"toolong\"}}";
+
+    /** A too-long declared name inside the plain nested object. */
+    private static final String PLAIN_NESTED_LONG_NAME_BODY = "{\"plain\":{\"name\":\"toolong\"}}";
+
+    /** A number under an undeclared key inside the nullable nested object, whose extras are strings. */
+    private static final String NULLABLE_NESTED_CLIENT_KEY_BODY =
+            "{\"pet\":{\"name\":\"a\",\"" + NESTED_CLIENT_KEY + "\":5}}";
+
+    /** A number under an undeclared key inside the plain nested object, whose extras are strings. */
+    private static final String PLAIN_NESTED_CLIENT_KEY_BODY =
+            "{\"plain\":{\"name\":\"a\",\"" + NESTED_CLIENT_KEY + "\":5}}";
+
     /** A valid date extra for the {@code LocalDate} any-setter. */
     private static final String ANY_SETTER_VALID_DATE_BODY = "{\"x\":\"2022-01-08\"}";
 
@@ -1739,6 +1834,64 @@ public class ProfiledSchemaSynthesisIT {
         public String reservedEcho(ReservedNameExtrasDto body) {
             invocations.incrementAndGet();
             return "extras=" + body.getExtras();
+        }
+    }
+
+    // --- vertique-dev#598 nested-path fixtures ---
+
+    /** A nested object with one constrained name and string extras. */
+    public static class NestedPet {
+
+        /** The declared, constrained name. */
+        @Size(max = 3)
+        public String name;
+
+        /** The collected extras. */
+        private final Map<String, String> extras = new LinkedHashMap<>();
+
+        /**
+         * Collects an extra key.
+         *
+         * @param key   the extra key
+         * @param value the extra value
+         */
+        @JsonAnySetter
+        public void putExtra(String key, String value) {
+            extras.put(key, value);
+        }
+    }
+
+    /** One nullable and one plain nested object of the same type. */
+    public static class NestedPathDto {
+
+        /** Published as {@code anyOf: [null, $ref]}. */
+        @Schema(nullable = true)
+        public NestedPet pet;
+
+        /** Published as a plain {@code $ref}. */
+        public NestedPet plain;
+    }
+
+    /** The nested-path resource on the {@code vertique} floor. */
+    @Path("/nested-path")
+    public static class NestedPathResource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Accepts a nested-path body.
+         *
+         * @param body the body
+         * @return a fixed marker
+         */
+        @POST
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "nestedPathEcho")
+        public String echo(NestedPathDto body) {
+            invocations.incrementAndGet();
+            return "ok";
         }
     }
 
