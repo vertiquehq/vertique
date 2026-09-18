@@ -583,6 +583,36 @@ public class ProfiledSchemaSynthesisIT {
     }
 
     /**
+     * vertiquehq/vertique-dev#598. A wrong-typed value under an undeclared key of a type whose
+     * any-setter extras are described is reported at a non-structural keyword, so it takes the
+     * concrete-detail path, and the instance location that path names ends in the client's own key.
+     * The concrete detail's path must be cut back to the location the schema declares exactly as the
+     * value-free detail's is, so the key — of whatever length the client sent — never reaches the 400
+     * body, while the rejection still carries a detail.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("A concrete detail under an undeclared any-setter key never echoes the key")
+    void aConcreteDetailUnderAnUndeclaredKeyNeverEchoesTheKey() throws Exception {
+        AnySetterResource resource = new AnySetterResource();
+        int gatePort = start(gateMount(), Set.of(resource));
+
+        HttpResponse<Buffer> rejected = post(gatePort, "/anysetter/string", ANY_SETTER_LONG_KEY_NUMBER_BODY);
+        String body = rejected.bodyAsString();
+        JsonArray errors = problemErrors(body);
+
+        assertAll(
+                () -> assertEquals(400, rejected.statusCode(), "the wrong-typed extra must be rejected; body: " + body),
+                () -> assertEquals(0, resource.invocations.get(), "the rejected body must not reach the resource"),
+                () -> assertTrue(
+                        errors != null && !errors.isEmpty(), "the rejection must still carry a detail; body: " + body),
+                () -> assertFalse(
+                        body.contains(ANY_SETTER_LONG_KEY),
+                        "the client's undeclared key must not be echoed in the response; body: " + body));
+    }
+
+    /**
      * T007 TP-006 (AC-015.6, the gate-disabled half). On the {@code jaxrs.validationStrategy: none}
      * mount the profile's Jackson binder is the only component that can refuse a body. Every outcome
      * is asserted rather than merely recorded, so the gated rejections above cannot silently become
@@ -1210,6 +1240,12 @@ public class ProfiledSchemaSynthesisIT {
 
     /** A JSON number where the string any-setter declares {@code String} extras values. */
     private static final String ANY_SETTER_NUMBER_EXTRA_BODY = "{\"x\":5}";
+
+    /** A very long, distinctive undeclared key: its absence from the response is provable. */
+    private static final String ANY_SETTER_LONG_KEY = "CLIENT-KEY-598-MUST-NOT-ECHO-" + "k".repeat(2000);
+
+    /** A JSON number under the long undeclared key, where the string any-setter declares strings. */
+    private static final String ANY_SETTER_LONG_KEY_NUMBER_BODY = "{\"name\":\"a\",\"" + ANY_SETTER_LONG_KEY + "\":5}";
 
     /** A valid date extra for the {@code LocalDate} any-setter. */
     private static final String ANY_SETTER_VALID_DATE_BODY = "{\"x\":\"2022-01-08\"}";

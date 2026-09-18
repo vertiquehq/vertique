@@ -261,7 +261,11 @@ instance location as its `path` and carries no `type` and no `args`. That locati
 part the schema declares, so it names no text the client chose: an undeclared property under a closed
 object is reported at `#/<the client's own key>`, and the detail names the containing location `#`
 instead, while a failure under a declared property keeps that property's location. Its message is a
-fixed literal, so no submitted value and no raw validator message reaches the response through it. The rule counts per call, so a body failure is
+fixed literal, so no submitted value and no raw validator message reaches the response through it.
+A concrete detail's `path` is cut back by the same rule: a wrong-typed value under an undeclared key
+— an extra an any-setter type describes, say — is reported at `#/<the client's own key>`, and its
+detail names the containing location instead, so the key never reaches the response. A location the
+schema declares is named unchanged. The rule counts per call, so a body failure is
 never masked by a detail produced for a parameter, and a call that already produced a concrete detail
 gains nothing extra. A body the validator reports valid still produces no detail and no rejection.
 This is what makes a schema rule published as `oneOf`, `anyOf`, or `not` branches — the strict

@@ -1357,8 +1357,12 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                 }
                 Map<String, Object> args = resolveConstraintArgs(keyword, error.getKeywordLocation(), schema);
                 String detail = safeDetail(keyword, args, error.getError());
+                // Cut back exactly as the value-free detail is: a value violation under an undeclared key
+                // — an any-setter's described extra, say — is reported at a location ending in the
+                // client's own key, which must never reach the response (vertique-dev#598). A location
+                // the schema declares is unchanged.
                 failures.add(new ValidationErrorDetail(
-                        pathFor(error.getInstanceLocation(), fallbackPath),
+                        pathFor(declaredLocation(error.getInstanceLocation(), schema), fallbackPath),
                         detail,
                         location,
                         keyword,
@@ -1404,8 +1408,8 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
 
         /**
          * Cuts a reported instance location back to its longest leading run of segments the schema
-         * itself declares, so the value-free detail names a failing location without naming any text the
-         * client chose.
+         * itself declares, so a detail — value-free or concrete — names a failing location without
+         * naming any text the client chose.
          *
          * <p>An undeclared property under a closed object is reported at an instance location whose last
          * segment is the client's own key, of whatever length the client sent, and the value-free detail
