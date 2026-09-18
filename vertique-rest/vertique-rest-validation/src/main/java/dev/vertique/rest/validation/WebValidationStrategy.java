@@ -53,6 +53,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
+import java.util.stream.Collectors;
 
 /**
  * The {@code web-validation} {@link RequestValidationStrategy}: validates each request body and
@@ -207,7 +208,8 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
     /**
      * Common JSON Schema keywords whose constraint value is a simple scalar (number or string) that
      * can be extracted from the schema {@link JsonObject} by navigating the path preceding the last
-     * segment of the keyword location. Keywords not in this set fall back to {@code {keyword: true}}.
+     * segment of the keyword location. Keywords not in this set, other than {@link #TYPE_KEYWORD},
+     * fall back to {@code {keyword: true}}.
      */
     private static final Set<String> SCALAR_CONSTRAINT_KEYWORDS = Set.of(
             "minLength",
@@ -222,6 +224,12 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
             "minProperties",
             "maxProperties",
             "multipleOf");
+
+    /**
+     * The {@code type} keyword, whose declared value is a type name or a list of type names rather than
+     * a scalar, and is looked up alongside {@link #SCALAR_CONSTRAINT_KEYWORDS}.
+     */
+    private static final String TYPE_KEYWORD = "type";
 
     /** The {@code aggregate} validation-mode literal: collect all violations before failing. */
     private static final String MODE_AGGREGATE = "aggregate";
@@ -660,7 +668,9 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
      * Resolves the constraint value for the given failed keyword by navigating the schema
      * {@link JsonObject} along the keyword location path. For common scalar-valued keywords
      * (e.g. {@code minLength}, {@code maximum}, {@code pattern}), the value is the schema node
-     * at that path. For keywords whose value cannot be resolved, returns {@code {keyword: true}}.
+     * at that path; for {@code type} it is the declared type name, or the declared list of type names
+     * as a {@code List<String>}. For keywords whose value cannot be resolved, returns
+     * {@code {keyword: true}}.
      *
      * <p>The keyword location from vertx-json-schema Basic output uses a {@code #/} prefix, e.g.
      * {@code #/properties/code/minLength}. This method strips the {@code #} anchor, navigates to
@@ -683,7 +693,8 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
         if (schema == null || keywordLocation == null || keyword == null) {
             return keyword != null ? Map.of(keyword, Boolean.TRUE) : Map.of();
         }
-        if (!SCALAR_CONSTRAINT_KEYWORDS.contains(keyword)) {
+        boolean isType = TYPE_KEYWORD.equals(keyword);
+        if (!isType && !SCALAR_CONSTRAINT_KEYWORDS.contains(keyword)) {
             return Map.of(keyword, Boolean.TRUE);
         }
         // Strip the JSON Schema anchor prefix '#' from the keyword location before navigating.
@@ -702,10 +713,39 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
             return Map.of(keyword, Boolean.TRUE);
         }
         Object value = node.getValue(keyword);
+        if (isType) {
+            value = declaredType(value);
+        }
         if (value == null) {
             return Map.of(keyword, Boolean.TRUE);
         }
         return Map.of(keyword, value);
+    }
+
+    /**
+     * Normalizes a declared {@code type} value: a single type name stays a string, and a non-empty list
+     * of type names becomes an immutable {@code List<String>} so it serializes as a JSON array. Any
+     * other shape — an empty list, or a list holding a non-string — is not a type the schema can
+     * declare, and yields {@code null} so the caller falls back to the placeholder.
+     *
+     * @param value the raw {@code type} value read from the schema, or {@code null}
+     * @return the declared type name, the declared list of type names, or {@code null}
+     */
+    private static Object declaredType(Object value) {
+        if (value instanceof String name) {
+            return name;
+        }
+        if (value instanceof JsonArray array && !array.isEmpty()) {
+            List<String> names = new ArrayList<>(array.size());
+            for (Object element : array) {
+                if (!(element instanceof String name)) {
+                    return null;
+                }
+                names.add(name);
+            }
+            return List.copyOf(names);
+        }
+        return null;
     }
 
     /**
@@ -1769,7 +1809,7 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                     case "multipleOf" -> "must be a multiple of " + constraintValue;
                     case "pattern" -> "must match pattern: " + constraintValue;
                     case "required" -> rawMessage != null ? rawMessage : "is missing a required field";
-                    case "type" -> "must be of type: " + constraintValue;
+                    case "type" -> typeDetail(constraintValue);
                     default -> rawMessage != null ? rawMessage : keyword + " constraint violated";
                 };
             }
@@ -1777,6 +1817,30 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
             return rawMessage != null
                     ? rawMessage
                     : (keyword != null ? keyword + " constraint violated" : "is invalid");
+        }
+
+        /**
+         * Renders a {@code type} detail from the declared type: {@code "must be of type: string"} for one
+         * type, and {@code "must be of type: string or null"} or {@code "must be of type: string,
+         * integer or null"} for a list. When the declared type could not be resolved — the value is the
+         * {@code true} placeholder, as behind a remote {@code $ref} — the message names no type rather
+         * than the placeholder.
+         *
+         * @param constraintValue the resolved {@code type} arg: a type name, a list of names, or the
+         *     placeholder
+         * @return the detail message
+         */
+        private static String typeDetail(Object constraintValue) {
+            if (constraintValue instanceof String name) {
+                return "must be of type: " + name;
+            }
+            if (constraintValue instanceof List<?> names && !names.isEmpty()) {
+                int last = names.size() - 1;
+                String head =
+                        names.subList(0, last).stream().map(String::valueOf).collect(Collectors.joining(", "));
+                return "must be of type: " + (last == 0 ? names.get(0) : head + " or " + names.get(last));
+            }
+            return "must be of the required type";
         }
 
         /**

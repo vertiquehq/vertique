@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -328,9 +329,117 @@ class ValidationDetailPathTest {
                 () -> assertFalse(outcome.json.contains("of true"), outcome.json));
     }
 
+    @Test
+    @DisplayName("A type detail names the declared type, or the declared list of types, at every position")
+    void typeDetailNamesTheDeclaredType() throws Exception {
+        JsonObject pet = new JsonObject()
+                .put("type", "object")
+                .put("properties", new JsonObject().put("age", new JsonObject().put("type", "integer")));
+        JsonObject schema = object(new JsonObject()
+                        .put("plain", new JsonObject().put("type", "string"))
+                        .put(
+                                "either",
+                                new JsonObject()
+                                        .put(
+                                                "type",
+                                                new JsonArray().add("string").add("null")))
+                        .put(
+                                "pet",
+                                new JsonObject()
+                                        .put(
+                                                "anyOf",
+                                                new JsonArray()
+                                                        .add(new JsonObject().put("type", "null"))
+                                                        .add(new JsonObject().put("$ref", "#/$defs/Pet"))))
+                        .put(
+                                "owner",
+                                new JsonObject()
+                                        .put(
+                                                "type",
+                                                new JsonArray().add("object").add("null"))
+                                        .put(
+                                                "properties",
+                                                new JsonObject()
+                                                        .put("active", new JsonObject().put("type", "boolean"))))
+                        .put(
+                                "p",
+                                new JsonObject()
+                                        .put(
+                                                "oneOf",
+                                                new JsonArray()
+                                                        .add(new JsonObject().put("type", "integer"))
+                                                        .add(maxLength(3))))
+                        .put(
+                                "t",
+                                new JsonObject()
+                                        .put("type", "array")
+                                        .put(
+                                                "prefixItems",
+                                                new JsonArray()
+                                                        .add(new JsonObject().put("type", "string"))
+                                                        .add(new JsonObject().put("type", "integer")))))
+                .put("$defs", new JsonObject().put("Pet", pet));
+
+        Outcome outcome = validate(
+                schema,
+                new JsonObject()
+                        .put("plain", 7)
+                        .put("either", 5)
+                        .put("pet", new JsonObject().put("age", "old"))
+                        .put("owner", new JsonObject().put("active", "yes"))
+                        .put("p", true)
+                        .put("t", new JsonArray().add(1).add("x")));
+
+        assertAll(
+                () -> outcome.assertAnyConstraint("#/plain", "type", "string", "must be of type: string"),
+                () -> outcome.assertAnyConstraint(
+                        "#/either", "type", List.of("string", "null"), "must be of type: string or null"),
+                () -> outcome.assertAnyConstraint("#/pet/age", "type", "integer", "must be of type: integer"),
+                () -> outcome.assertAnyConstraint("#/owner/active", "type", "boolean", "must be of type: boolean"),
+                () -> outcome.assertAnyConstraint("#/p", "type", "integer", "must be of type: integer"),
+                () -> outcome.assertAnyConstraint("#/p", "type", "string", "must be of type: string"),
+                () -> outcome.assertAnyConstraint("#/t/0", "type", "string", "must be of type: string"),
+                () -> outcome.assertAnyConstraint("#/t/1", "type", "integer", "must be of type: integer"),
+                () -> assertTrue(outcome.json.contains("\"args\":{\"type\":[\"string\",\"null\"]}"), outcome.json),
+                () -> assertFalse(outcome.json.contains("of type: true"), outcome.json),
+                () -> assertFalse(outcome.json.contains("\"type\":true"), outcome.json));
+    }
+
+    @Test
+    @DisplayName("A type detail renders three or more declared types as a list ending in 'or'")
+    void typeDetailRendersALongerList() throws Exception {
+        JsonObject schema = object(new JsonObject()
+                .put(
+                        "v",
+                        new JsonObject()
+                                .put(
+                                        "type",
+                                        new JsonArray()
+                                                .add("string")
+                                                .add("integer")
+                                                .add("null"))));
+
+        Outcome outcome = validate(schema, new JsonObject().put("v", true));
+
+        outcome.assertAnyConstraint(
+                "#/v", "type", List.of("string", "integer", "null"), "must be of type: string, integer or null");
+    }
+
     // --- Harness ---
 
     private record Outcome(List<ValidationErrorDetail> errors, String json) {
+
+        /** Asserts that some detail of {@code keyword} at {@code path} carries the given value and message. */
+        void assertAnyConstraint(String path, String keyword, Object value, String message) {
+            List<ValidationErrorDetail> atPath = errors.stream()
+                    .filter(error -> keyword.equals(error.type()) && path.equals(error.path()))
+                    .toList();
+            assertTrue(
+                    atPath.stream()
+                            .anyMatch(detail ->
+                                    Map.of(keyword, value).equals(detail.args()) && message.equals(detail.detail())),
+                    "no " + keyword + " detail at " + path + " with " + value + " and '" + message + "': " + json);
+        }
 
         void assertConstraint(String path, String keyword, Object value, String message) {
             ValidationErrorDetail detail = errors.stream()

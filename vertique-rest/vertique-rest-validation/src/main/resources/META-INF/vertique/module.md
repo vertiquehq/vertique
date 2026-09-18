@@ -256,9 +256,13 @@ whatever keywords the reported errors carry. Each reported error normally become
 naming the violated keyword as `type` and its expected value as `args` — the declared number or
 pattern, also when the keyword sits inside an `allOf`, `anyOf`, or `oneOf` branch, a `prefixItems`
 position, behind a local `$ref`, or under an escaped property name, so a `maxLength` there reads
-`{"maxLength": 3}` and "must have a maximum length of 3" — but structural keywords
-(`oneOf`, `anyOf`, `not`, `additionalProperties`) describe how the schema was traversed rather than a
-constraint the client can act on, so they produce no such detail. When every error a call reported is
+`{"maxLength": 3}` and "must have a maximum length of 3". A `type` detail names the declared type the
+same way: `{"type": "string"}` and "must be of type: string", or for a declared list such as
+`["string", "null"]` the JSON array `{"type": ["string", "null"]}` and "must be of type: string or
+null". A declared value that cannot be reached — behind a remote `$ref` or a `$dynamicRef` — is
+reported as `{"<keyword>": true}`; for `type` the message then reads "must be of the required
+type". Structural keywords (`oneOf`, `anyOf`, `not`, `additionalProperties`) describe how the
+schema was traversed rather than a constraint the client can act on, so they produce no such detail. When every error a call reported is
 structural, that call instead contributes exactly one value-free detail: it names the failing
 instance location as its `path` and carries no `type` and no `args`. That location is cut back to the
 part the schema declares, so it names no text the client chose: an undeclared property under a closed
