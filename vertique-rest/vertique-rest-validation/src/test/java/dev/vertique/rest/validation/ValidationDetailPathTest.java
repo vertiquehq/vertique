@@ -42,7 +42,9 @@ import org.mockito.ArgumentCaptor;
  * schema declares every segment of it — through {@code allOf}/{@code anyOf}/{@code oneOf} branches,
  * {@code prefixItems} tuple positions and property names the validator reports RFC 6901-escaped and
  * percent-encoded — and the containing location, cut at the first segment the schema does not
- * declare, wherever the client chose the key (vertiquehq/vertique-dev#598).
+ * declare, wherever the client chose the key (vertiquehq/vertique-dev#598). It also pins the
+ * declared constraint value a concrete detail names in its {@code args} and message at those same
+ * composed, referenced, tuple and escaped positions.
  *
  * <p>Each path asserted is the instance location vertx-json-schema 5.1.6 reports for the failing
  * keyword, spelled exactly as the validator spells it.
@@ -264,9 +266,80 @@ class ValidationDetailPathTest {
         assertEquals(Set.of("#/m"), outcome.pathsFor("maxLength"), outcome.json);
     }
 
+    @Test
+    @DisplayName("A detail inside a composed, referenced, tuple or escaped position names the declared value")
+    void constraintValueIsNamedInsideComposedAndTuplePositions() throws Exception {
+        JsonObject schema = object(new JsonObject()
+                        .put(
+                                "p",
+                                new JsonObject()
+                                        .put(
+                                                "oneOf",
+                                                new JsonArray()
+                                                        .add(new JsonObject().put("type", "integer"))
+                                                        .add(maxLength(3))))
+                        .put(
+                                "pet",
+                                new JsonObject()
+                                        .put(
+                                                "anyOf",
+                                                new JsonArray()
+                                                        .add(new JsonObject().put("type", "null"))
+                                                        .add(new JsonObject().put("$ref", "#/$defs/Inner"))))
+                        .put(
+                                "t",
+                                new JsonObject()
+                                        .put("type", "array")
+                                        .put(
+                                                "prefixItems",
+                                                new JsonArray()
+                                                        .add(maxLength(2))
+                                                        .add(new JsonObject()
+                                                                .put("type", "integer")
+                                                                .put("minimum", 5))))
+                        .put(
+                                "code",
+                                new JsonObject()
+                                        .put(
+                                                "allOf",
+                                                new JsonArray()
+                                                        .add(new JsonObject()
+                                                                .put("type", "string")
+                                                                .put("pattern", "^[a-z]+$"))))
+                        .put("a/b", maxLength(1)))
+                .put("$defs", new JsonObject().put("Inner", inner()));
+
+        Outcome outcome = validate(
+                schema,
+                new JsonObject()
+                        .put("p", "toolong")
+                        .put("pet", new JsonObject().put("name", "toolong"))
+                        .put("t", new JsonArray().add("long").add(1))
+                        .put("code", "ABC")
+                        .put("a/b", "xx"));
+
+        assertAll(
+                () -> outcome.assertConstraint("#/p", "maxLength", 3, "must have a maximum length of 3"),
+                () -> outcome.assertConstraint("#/pet/name", "maxLength", 3, "must have a maximum length of 3"),
+                () -> outcome.assertConstraint("#/t/0", "maxLength", 2, "must have a maximum length of 2"),
+                () -> outcome.assertConstraint("#/t/1", "minimum", 5, "must be at least 5"),
+                () -> outcome.assertConstraint("#/code", "pattern", "^[a-z]+$", "must match pattern: ^[a-z]+$"),
+                () -> outcome.assertConstraint("#/a~1b", "maxLength", 1, "must have a maximum length of 1"),
+                () -> assertFalse(outcome.json.contains("of true"), outcome.json));
+    }
+
     // --- Harness ---
 
     private record Outcome(List<ValidationErrorDetail> errors, String json) {
+
+        void assertConstraint(String path, String keyword, Object value, String message) {
+            ValidationErrorDetail detail = errors.stream()
+                    .filter(error -> keyword.equals(error.type()) && path.equals(error.path()))
+                    .findFirst()
+                    .orElseThrow(() -> new AssertionError("no " + keyword + " detail at " + path + ": " + json));
+            assertEquals(Map.of(keyword, value), detail.args(), json);
+            assertEquals(message, detail.detail(), json);
+        }
 
         Set<String> pathsFor(String keyword) {
             return errors.stream()

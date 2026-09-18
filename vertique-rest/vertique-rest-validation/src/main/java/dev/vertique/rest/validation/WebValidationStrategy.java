@@ -664,7 +664,9 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
      *
      * <p>The keyword location from vertx-json-schema Basic output uses a {@code #/} prefix, e.g.
      * {@code #/properties/code/minLength}. This method strips the {@code #} anchor, navigates to
-     * {@code /properties/code}, and reads the {@code minLength} field from the schema sub-object.
+     * {@code /properties/code}, and reads the {@code minLength} field from the schema sub-object. The
+     * navigation follows composition and tuple indexes, local {@code $ref}s and escaped names, as
+     * {@link #navigateKeywordLocation(JsonObject, String)} describes.
      *
      * <p>The returned map <strong>never</strong> includes the submitted request value — only the
      * schema constraint is included.
@@ -695,7 +697,7 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
         if (parentPath.endsWith("/")) {
             parentPath = parentPath.substring(0, parentPath.length() - 1);
         }
-        JsonObject node = navigateSchema(schema, parentPath);
+        JsonObject node = navigateKeywordLocation(schema, parentPath);
         if (node == null) {
             return Map.of(keyword, Boolean.TRUE);
         }
@@ -704,6 +706,46 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
             return Map.of(keyword, Boolean.TRUE);
         }
         return Map.of(keyword, value);
+    }
+
+    /**
+     * Navigates a schema along a keyword location the validator reported, returning the subschema
+     * that carries the failing keyword, or {@code null} when it cannot be reached.
+     *
+     * <p>A keyword location is not a plain pointer into the document: it indexes the arrays of
+     * {@code allOf}, {@code anyOf}, {@code oneOf} and {@code prefixItems}, it passes through a
+     * {@code $ref} as the segment {@code $ref} and continues inside the referenced subschema, and it
+     * spells each property name RFC 6901-escaped and percent-encoded. Each of those is followed here,
+     * so a constraint inside a composed, referenced or tuple position resolves to its declared value.
+     * A {@code $ref} is followed only when it is local; anything else ends the navigation.
+     *
+     * @param root the root schema, against which a local {@code $ref} is resolved
+     * @param path the keyword location of the keyword's parent, without the {@code #} anchor
+     * @return the subschema at {@code path}, or {@code null} if unreachable
+     */
+    private static JsonObject navigateKeywordLocation(JsonObject root, String path) {
+        Object current = root;
+        for (String segment : path.split("/", -1)) {
+            if (segment.isEmpty()) {
+                continue;
+            }
+            Object next = null;
+            if (current instanceof JsonArray array) {
+                long index = GateHandler.arrayIndex(segment);
+                next = index >= 0 && index < array.size() ? array.getValue((int) index) : null;
+            } else if (current instanceof JsonObject object) {
+                String name = GateHandler.decodeSegment(segment);
+                next = name == null ? null : object.getValue(name);
+                if ("$ref".equals(name) && next instanceof String ref) {
+                    next = ref.startsWith("#") ? navigateSchema(root, ref.substring(1)) : null;
+                }
+            }
+            if (next == null) {
+                return null;
+            }
+            current = next;
+        }
+        return current instanceof JsonObject object ? object : null;
     }
 
     /**

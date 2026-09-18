@@ -253,7 +253,10 @@ paths `name`, `name[1]`, and so on.
 **A schema failure is always a rejection.** A validation call — the body, and each declared
 parameter independently — whose result the validator does not report valid is rejected with 400,
 whatever keywords the reported errors carry. Each reported error normally becomes one error detail
-naming the violated keyword as `type` and its expected value as `args`, but structural keywords
+naming the violated keyword as `type` and its expected value as `args` — the declared number or
+pattern, also when the keyword sits inside an `allOf`, `anyOf`, or `oneOf` branch, a `prefixItems`
+position, behind a local `$ref`, or under an escaped property name, so a `maxLength` there reads
+`{"maxLength": 3}` and "must have a maximum length of 3" — but structural keywords
 (`oneOf`, `anyOf`, `not`, `additionalProperties`) describe how the schema was traversed rather than a
 constraint the client can act on, so they produce no such detail. When every error a call reported is
 structural, that call instead contributes exactly one value-free detail: it names the failing
