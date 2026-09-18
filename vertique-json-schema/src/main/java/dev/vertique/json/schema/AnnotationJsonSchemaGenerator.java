@@ -562,7 +562,48 @@ public final class AnnotationJsonSchemaGenerator {
                 return HIDDEN_ANY_ACCESSOR_BACKING;
             }
             PropertyMetadata byMember = names.byMember().get(scope.getRawMember());
-            return byMember != null ? byMember : names.byInternalName().get(scope.getName());
+            if (byMember != null) {
+                return byMember;
+            }
+            PropertyMetadata byName = names.byInternalName().get(scope.getName());
+            if (byName != null && !scope.getName().equals(scope.getDeclaredName())) {
+                // Victools applies property-name overrides before this lookup, so the name may be a
+                // rename — a @Schema(name = ...), say — rather than the member's own. When the rename
+                // lands on a property the member's own name does not reach, that property is backed by
+                // a different member, and answering with its visibility and wire name would silently
+                // describe this member as that one. Two properties sharing a name is the developer's
+                // error to resolve, so generation fails instead.
+                PropertyMetadata own = names.byInternalName().get(scope.getDeclaredName());
+                if (!byName.equals(own)) {
+                    throw renameCollision(scope, byName);
+                }
+            }
+            return byName;
+        }
+
+        /**
+         * The refusal for a member renamed onto the name of a property backed by a different member:
+         * one bounded diagnostic naming the declaring type, the member, and the property it collides
+         * with, and carrying no schema fragment.
+         *
+         * @param scope    the renamed member
+         * @param occupant the property already carrying the rename
+         * @return the failure to throw
+         */
+        private static JsonSchemaGenerationException renameCollision(
+                MemberScope<?, ?> scope, PropertyMetadata occupant) {
+            return Diagnostics.failure(
+                    "JSON Schema generation failed for "
+                            + Diagnostics.typeIdentity(scope.getDeclaringType().getErasedType())
+                            + ": member \""
+                            + Diagnostics.truncate(scope.getDeclaredName(), Diagnostics.MAX_SHORT_IDENTITY_LENGTH)
+                            + "\" is renamed to \""
+                            + Diagnostics.truncate(scope.getName(), Diagnostics.MAX_SHORT_IDENTITY_LENGTH)
+                            + "\", which another property already carries (published as \""
+                            + Diagnostics.truncate(occupant.wireName(), Diagnostics.MAX_SHORT_IDENTITY_LENGTH)
+                            + "\"); rename one of the two properties, or name them apart on the wire with"
+                            + " @JsonProperty",
+                    null);
         }
 
         private PropertyNames introspect(Class<?> type) {

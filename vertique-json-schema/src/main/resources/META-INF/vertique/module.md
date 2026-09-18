@@ -270,7 +270,7 @@ type.
 
 ### Constraints and common mistakes
 
-Two annotation combinations fail generation rather than producing a schema that quietly
+Three annotation combinations fail generation rather than producing a schema that quietly
 misdescribes the wire:
 
 - **An `implementation = ...` redirect on a property whose declared type graph carries a profile
@@ -314,6 +314,14 @@ misdescribes the wire:
   followed only when its target is itself a schema position (see below): `#/$defs/Money` and
   `#/properties/amount` are conjoined, while a pointer at data such as `#/default`, or at the
   container object under `#/$defs/Money/properties`, contributes nothing.
+- **A `@Schema(name = ...)` rename onto another property's name.** In the profile-aware modes, a
+  member Jackson does not attach to any property of its own — a private field with no accessor, say
+  — that is renamed to a name another Jackson property of the same type already carries would be
+  described with that other property's input or output visibility and wire name. Generation instead
+  fails with a bounded `JsonSchemaGenerationException` naming the type, the renamed member, and the
+  property it collides with. Rename one of the two properties, or name them apart on the wire with
+  `@JsonProperty`. A rename to the member's own property name, or to a name no property carries, is
+  unaffected.
 
 `@Schema(type = ...)` has no effect in this module; `implementation` is the supported way for a
 property to contribute a type shape.
