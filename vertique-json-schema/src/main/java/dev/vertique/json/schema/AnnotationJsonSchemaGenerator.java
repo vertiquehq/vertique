@@ -4,6 +4,7 @@
 package dev.vertique.json.schema;
 
 import com.fasterxml.classmate.ResolvedType;
+import com.fasterxml.classmate.TypeResolver;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -502,6 +503,9 @@ public final class AnnotationJsonSchemaGenerator {
         private static final PropertyMetadata HIDDEN_ANY_ACCESSOR_BACKING = new PropertyMetadata(null, false);
 
         /** Value types that accept every JSON value, and are therefore published as the empty schema. */
+        /** Resolves a Jackson-resolved any-setter value type into the schema library's type model. */
+        private static final TypeResolver VALUE_TYPE_RESOLVER = new TypeResolver();
+
         private static final Set<Class<?>> UNCONSTRAINED_VALUE_TYPES =
                 Set.of(Object.class, JsonNode.class, TreeNode.class);
 
@@ -1020,35 +1024,55 @@ public final class AnnotationJsonSchemaGenerator {
          * The Java value type an any-setter accepts: the map value type of a field-level any-setter,
          * or the second parameter of a method-level one.
          *
+         * <p>A field any-setter's value type is the map content type Jackson resolves for the field,
+         * never a type argument written on the field's declared type: a map subclass such as {@code
+         * StringKeys<V> extends LinkedHashMap<String, V>} or a non-generic {@code IntMap extends
+         * LinkedHashMap<String, Integer>} writes arguments that are not the map's key and value, or none
+         * at all. The resolved type keeps its own type arguments, so a {@code List<Integer>} value stays
+         * a list of integers.
+         *
          * <p>An any-setter field that is not map-like — an {@code ObjectNode} or {@code JsonNode}
          * field — accepts every JSON value, which {@code Object} stands for here. A value type the
          * generator's own type grammar cannot resolve — a type variable or a wildcard — falls back to
          * the erased type Jackson resolved it to, so a raw or wildcard declaration still yields a
-         * describable type rather than failing generation.
+         * describable type rather than failing generation. Jackson introspects the erased class, so a
+         * field value declared as a class type variable resolves to that variable's bound, as before.
          *
          * @param anySetter the any-setter member
          * @return the declared value type, never {@code null}
          */
         private static Type anySetterValueType(AnnotatedMember anySetter) {
-            Type declared;
-            Class<?> fallback;
             if (anySetter instanceof AnnotatedMethod method) {
-                declared = method.getAnnotated().getGenericParameterTypes()[1];
-                fallback = method.getParameterType(1).getRawClass();
-            } else if (anySetter instanceof AnnotatedField field) {
-                JavaType fieldType = field.getType();
-                if (!fieldType.isMapLikeType()) {
-                    return Object.class;
-                }
-                Type generic = field.getAnnotated().getGenericType();
-                declared = generic instanceof ParameterizedType parameterized
-                        ? parameterized.getActualTypeArguments()[1]
-                        : Object.class;
-                fallback = fieldType.getContentType().getRawClass();
-            } else {
-                return Object.class;
+                Type declared = method.getAnnotated().getGenericParameterTypes()[1];
+                return declared instanceof Class<?> || declared instanceof ParameterizedType
+                        ? declared
+                        : method.getParameterType(1).getRawClass();
             }
-            return declared instanceof Class<?> || declared instanceof ParameterizedType ? declared : fallback;
+            if (anySetter instanceof AnnotatedField field) {
+                JavaType fieldType = field.getType();
+                return fieldType.isMapLikeType() ? reflectType(fieldType.getContentType()) : Object.class;
+            }
+            return Object.class;
+        }
+
+        /**
+         * Carries a Jackson-resolved type over to the {@code java.lang.reflect.Type} the schema
+         * library consumes, with every type argument Jackson bound: a classmate {@link ResolvedType}
+         * is itself a {@code Type}, and the library's type context takes one as already resolved.
+         *
+         * @param type the Jackson-resolved type
+         * @return the same type, arguments included
+         */
+        private static Type reflectType(JavaType type) {
+            if (type.isArrayType()) {
+                return VALUE_TYPE_RESOLVER.arrayType(reflectType(type.getContentType()));
+            }
+            List<JavaType> bound = type.getBindings().getTypeParameters();
+            Type[] arguments = new Type[bound.size()];
+            for (int i = 0; i < arguments.length; i++) {
+                arguments[i] = reflectType(bound.get(i));
+            }
+            return VALUE_TYPE_RESOLVER.resolve(type.getRawClass(), arguments);
         }
 
         /**

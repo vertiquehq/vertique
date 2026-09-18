@@ -95,7 +95,11 @@ Validation.
 
 A type with a `@JsonAnySetter` describes its extra keys through `additionalProperties`, typed by the
 any-setter's value type: the map value type of a field-level any-setter, or the second parameter of
-a method-level one. The value type is published as the generator's own definition of that type, so a
+a method-level one. A field's map value type is the content type Jackson resolves for the field, so a
+map subclass declares it correctly however its own type parameters are written — a
+`StringKeys<Integer>` over `LinkedHashMap<String, V>`, a `Reversed<Integer, String>` over
+`LinkedHashMap<K, V>`, and a non-generic `IntMap extends LinkedHashMap<String, Integer>` all describe
+integer extras — and a generic value type such as `List<Integer>` keeps its arguments. The value type is published as the generator's own definition of that type, so a
 profile override, a format, and a shared definition apply to an extra value exactly as they do to a
 named property — a `Map<String, LocalDate>` any-setter's extras carry `format: date`, and under
 `vertique-strict` a `Map<String, BigDecimal>` any-setter's extras carry that profile's decimal
