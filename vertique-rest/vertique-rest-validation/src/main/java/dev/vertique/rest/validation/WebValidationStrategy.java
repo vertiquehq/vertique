@@ -188,6 +188,12 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
      */
     private static final int MAX_COMPOSED_SUBSCHEMAS = 64;
 
+    /**
+     * The most digits an instance-location segment may have and still be named as an array index: ten
+     * covers every index a Java array or list can hold.
+     */
+    private static final int MAX_INDEX_DIGITS = 10;
+
     /** The applicators whose branches may each declare a name at the same instance location. */
     private static final List<String> COMPOSITION_KEYWORDS = List.of("allOf", "anyOf", "oneOf");
 
@@ -1442,7 +1448,9 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
          * {@code allOf}, {@code anyOf} or {@code oneOf} branch of it, so a nullable nested object
          * published as {@code anyOf: [null, $ref]} keeps its field names. The validator reports each
          * segment RFC 6901-escaped and percent-encoded, so a segment is decoded before it is looked up;
-         * the reported, encoded spelling is what the path names (vertique-dev#598).
+         * the reported, encoded spelling is what the path names (vertique-dev#598). A segment counts as
+         * an array index only when it is a plausible one — see {@link #arrayIndex(String)} — and lies
+         * within the tuple or under an {@code items} schema other than {@code false}.
          *
          * <p>Resolution is deliberately fail-closed: a segment this method cannot show to be declared —
          * under an unresolvable {@code $ref}, a composition past the subschema bound, a malformed
@@ -1484,8 +1492,8 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
 
         /**
          * The subschemas a declared segment of an instance location leads to: every {@code properties}
-         * entry of that name, and for an array index every {@code prefixItems} position or {@code items}
-         * schema it falls under, gathered across the subschemas reached so far and each of their
+         * entry of that name, and for a plausible array index every {@code prefixItems} position or
+         * {@code items} schema other than {@code false} it falls under, gathered across the subschemas reached so far and each of their
          * {@code allOf}, {@code anyOf} and {@code oneOf} branches.
          *
          * <p>Only a name the schema spells itself matches — never {@code additionalProperties} or
@@ -1508,17 +1516,18 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                     children.add(asSubschema(properties.getValue(name)));
                     continue;
                 }
-                if (!isArrayIndex(segment)) {
+                long index = arrayIndex(segment);
+                if (index < 0) {
                     continue;
                 }
                 Object prefixItems = node.getValue("prefixItems");
                 int prefixSize = prefixItems instanceof JsonArray tuple ? tuple.size() : 0;
-                // A segment too long to be an int lies past any tuple the schema could declare.
-                int index = segment.length() <= 9 ? Integer.parseInt(segment) : Integer.MAX_VALUE;
+                Object items = node.getValue("items");
                 if (index < prefixSize) {
-                    children.add(asSubschema(((JsonArray) prefixItems).getValue(index)));
-                } else if (node.getValue("items") != null) {
-                    children.add(asSubschema(node.getValue("items")));
+                    children.add(asSubschema(((JsonArray) prefixItems).getValue((int) index)));
+                } else if (items != null && !Boolean.FALSE.equals(items)) {
+                    // `items: false` closes the tuple: no index past it is declared.
+                    children.add(asSubschema(items));
                 }
             }
             return children;
@@ -1658,18 +1667,29 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
         }
 
         /**
-         * Whether an instance-location segment is an array index.
+         * Reads an instance-location segment as a plausible array index.
          *
-         * @param segment the segment
-         * @return {@code true} when every character is a digit
+         * <p>Under a composition that mixes an array branch with an open-object branch, a key the client
+         * chose for the object can be spelled entirely of digits, so a digit run alone does not make an
+         * index. A plausible index is the canonical spelling of a non-negative integer — no leading zero
+         * except {@code 0} itself — of at most {@value #MAX_INDEX_DIGITS} digits, which bounds what an
+         * all-digit client key can contribute to a path whatever its length (vertique-dev#598).
+         *
+         * @param segment the segment, as reported
+         * @return the index, or {@code -1} when the segment is not a plausible index
          */
-        private static boolean isArrayIndex(String segment) {
-            for (int index = 0; index < segment.length(); index++) {
-                if (!Character.isDigit(segment.charAt(index))) {
-                    return false;
+        private static long arrayIndex(String segment) {
+            int length = segment.length();
+            if (length == 0 || length > MAX_INDEX_DIGITS || (length > 1 && segment.charAt(0) == '0')) {
+                return -1;
+            }
+            for (int index = 0; index < length; index++) {
+                char c = segment.charAt(index);
+                if (c < '0' || c > '9') {
+                    return -1;
                 }
             }
-            return !segment.isEmpty();
+            return Long.parseLong(segment);
         }
 
         /**

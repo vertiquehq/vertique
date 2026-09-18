@@ -200,6 +200,70 @@ class ValidationDetailPathTest {
                 () -> assertFalse(outcome.json.contains("na%"), "the client key must not be echoed: " + outcome.json));
     }
 
+    @Test
+    @DisplayName("An all-digit client key under a map-or-list composition is cut back; a real index is kept")
+    void allDigitClientKeyUnderMapOrListCompositionIsCut() throws Exception {
+        // An application-authored oneOf of a map and a list: the list branch offers `items`, so an
+        // all-digit key the client chose for the map branch looks like an index.
+        String digitKey = "9".repeat(400);
+        JsonObject someMap = new JsonObject().put("type", "object").put("additionalProperties", maxLength(1));
+        JsonObject someList = new JsonObject().put("type", "array").put("items", maxLength(1));
+        JsonObject schema = object(new JsonObject()
+                .put(
+                        "m",
+                        new JsonObject()
+                                .put("oneOf", new JsonArray().add(someMap).add(someList))));
+
+        Outcome mapOutcome = validate(
+                schema,
+                new JsonObject()
+                        .put(
+                                "m",
+                                new JsonObject()
+                                        .put(digitKey, "xx")
+                                        .put("0123", "xx")
+                                        .put("12345678901", "xx")));
+        JsonArray list = new JsonArray();
+        for (int index = 0; index < 12; index++) {
+            list.add("x");
+        }
+        list.add("xx");
+        Outcome listOutcome = validate(schema, new JsonObject().put("m", list));
+
+        assertAll(
+                () -> assertFalse(
+                        mapOutcome.json.contains(digitKey), "the client key must not be echoed: " + mapOutcome.json),
+                () -> assertFalse(mapOutcome.json.contains("0123"), "a zero-led key is no index: " + mapOutcome.json),
+                () -> assertFalse(
+                        mapOutcome.json.contains("12345678901"), "an 11-digit key is no index: " + mapOutcome.json),
+                () -> assertEquals(Set.of("#/m"), mapOutcome.pathsFor("maxLength"), mapOutcome.json),
+                () -> assertEquals(Set.of("#/m/12"), listOutcome.pathsFor("maxLength"), listOutcome.json));
+    }
+
+    @Test
+    @DisplayName("An index past a closed prefixItems tuple is not named")
+    void indexPastClosedTupleIsCut() throws Exception {
+        JsonObject tuple = new JsonObject()
+                .put("type", "array")
+                .put("prefixItems", new JsonArray().add(maxLength(1)))
+                .put("items", false);
+        JsonObject schema = object(new JsonObject()
+                .put(
+                        "m",
+                        new JsonObject()
+                                .put(
+                                        "anyOf",
+                                        new JsonArray()
+                                                .add(tuple)
+                                                .add(new JsonObject()
+                                                        .put("type", "object")
+                                                        .put("additionalProperties", maxLength(1))))));
+
+        Outcome outcome = validate(schema, new JsonObject().put("m", new JsonObject().put("7", "xx")));
+
+        assertEquals(Set.of("#/m"), outcome.pathsFor("maxLength"), outcome.json);
+    }
+
     // --- Harness ---
 
     private record Outcome(List<ValidationErrorDetail> errors, String json) {
