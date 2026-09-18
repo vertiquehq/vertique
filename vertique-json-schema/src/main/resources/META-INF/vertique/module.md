@@ -205,6 +205,14 @@ bounded diagnostic naming the type and the name, rather than being published str
 constraints. Rename such a property, or such a spelling, on the wire — for example with
 `@JsonProperty` or `@JsonAlias`.
 
+A profile override fragment that carries the keyword as a member of a schema object, at any depth,
+is refused when the generator is constructed for a direction the fragment applies to: expansion would
+otherwise strip it without a trace, or execute it as a plan against the enclosing schema. Literal
+data is exempt. The listing pass and the refusal never enter the value of `const`, `enum`,
+`default`, `examples`, or `example`, so a fragment `{"const": {"x-vertique-alias-plan": "mandatory",
+"value": "ok"}}` is published exactly as written and still accepts only that object. A property whose
+own name is one of those keywords is a schema like any other and is still expanded.
+
 ### Canonical output
 
 `generateCanonical(Type)` returns a fresh, compact JSON document with every object member whose

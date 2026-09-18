@@ -134,6 +134,21 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
     /** The JSON Schema keyword whose object keys are regular expressions. */
     private static final String PATTERN_PROPERTIES_KEYWORD = "patternProperties";
 
+    /**
+     * The keywords whose value is JSON data rather than schema. The regex walk never descends into
+     * one, so a {@code pattern} member inside a {@code const} or {@code enum} value is not compiled.
+     * An exclusion rather than an allowlist of subschema keywords, so the walk still reaches every
+     * schema position, including an annotation keyword a profile fragment carries.
+     */
+    private static final Set<String> LITERAL_KEYWORDS = Set.of("const", "enum", "default", "examples", "example");
+
+    /**
+     * The keywords whose value is an object keyed by names rather than by keywords: each member is a
+     * schema whatever it is called, so a property named {@code const} is still walked.
+     */
+    private static final Set<String> NAMED_MEMBER_KEYWORDS =
+            Set.of("properties", PATTERN_PROPERTIES_KEYWORD, "$defs", "dependentSchemas");
+
     /** FR-JSON-075's message bound, applied at this module's boundary, in UTF-16 code units. */
     private static final int MAX_MESSAGE_LENGTH = 512;
 
@@ -367,15 +382,21 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
      * @throws RestConfigurationException if any declared pattern is unparseable
      */
     private static void precompilePatterns(String operationId, JsonObject bodySchema) {
-        precompilePatterns(operationId, bodySchema, "", false);
+        precompilePatterns(operationId, bodySchema, "", false, false);
     }
 
     /**
      * Walks one node of the body document, compiling the regular expressions it declares and
-     * descending into every member, with no position allowlist: a {@code pattern} member is a regular
-     * expression wherever it carries a string, and a {@code patternProperties} member's keys are
-     * regular expressions wherever that object appears. A <em>property</em> named {@code pattern} is a
-     * subschema object rather than a string, so it is descended into rather than compiled.
+     * descending into every member except literal data, with no position allowlist: a {@code pattern}
+     * member is a regular expression wherever it carries a string, and a {@code patternProperties}
+     * member's keys are regular expressions wherever that object appears. A <em>property</em> named
+     * {@code pattern} is a subschema object rather than a string, so it is descended into rather than
+     * compiled.
+     *
+     * <p>The value of a {@link #LITERAL_KEYWORDS} member is JSON data, so it is never entered: a
+     * {@code pattern} inside a {@code const} or {@code enum} value is not a regular expression. A
+     * member of a {@link #NAMED_MEMBER_KEYWORDS} object is a schema whatever its name, so {@code
+     * membersAreNames} keeps a property named {@code const} walked.
      *
      * <p>Every member name this object contributes to the pointer is a schema keyword or a property
      * name — except inside a {@code patternProperties} object, whose member names are themselves
@@ -389,10 +410,12 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
      * @param pointer            the JSON pointer of {@code value} within the body document
      * @param membersArePatterns whether {@code value}'s member names are regular expressions, so that
      *     naming one in a pointer would disclose pattern text
+     * @param membersAreNames    whether {@code value}'s member names are names rather than keywords, so
+     *     that a member named like a literal keyword is still a schema
      * @throws RestConfigurationException if any declared pattern is unparseable
      */
     private static void precompilePatterns(
-            String operationId, Object value, String pointer, boolean membersArePatterns) {
+            String operationId, Object value, String pointer, boolean membersArePatterns, boolean membersAreNames) {
         if (value instanceof JsonObject object) {
             int ordinal = 0;
             for (String field : object.fieldNames()) {
@@ -401,6 +424,9 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                         ? pointer + "/" + redactedKeySegment(ordinal)
                         : pointer + "/" + escapePointerSegment(field);
                 ordinal++;
+                if (!membersAreNames && LITERAL_KEYWORDS.contains(field)) {
+                    continue;
+                }
                 boolean patternProperties = PATTERN_PROPERTIES_KEYWORD.equals(field) && member instanceof JsonObject;
                 if (PATTERN_KEYWORD.equals(field) && member instanceof String regex) {
                     compilePattern(operationId, memberPointer, regex);
@@ -412,11 +438,13 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                         compilePattern(operationId, memberPointer, key);
                     }
                 }
-                precompilePatterns(operationId, member, memberPointer, patternProperties);
+                boolean namedMembers =
+                        !membersAreNames && NAMED_MEMBER_KEYWORDS.contains(field) && member instanceof JsonObject;
+                precompilePatterns(operationId, member, memberPointer, patternProperties, namedMembers);
             }
         } else if (value instanceof JsonArray array) {
             for (int index = 0; index < array.size(); index++) {
-                precompilePatterns(operationId, array.getValue(index), pointer + "/" + index, false);
+                precompilePatterns(operationId, array.getValue(index), pointer + "/" + index, false, false);
             }
         }
     }

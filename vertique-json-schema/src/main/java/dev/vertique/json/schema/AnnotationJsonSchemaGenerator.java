@@ -60,6 +60,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 
 /**
  * Generates deterministic, canonical Draft 2020-12 JSON Schema documents from a resolved Java
@@ -336,9 +337,11 @@ public final class AnnotationJsonSchemaGenerator {
      * @return a generator configured for the profile's input direction
      * @throws NullPointerException         if {@code profile} is {@code null}
      * @throws JsonSchemaGenerationException if the profile's id, mapper, override list, or an
-     *                                        override declaration is invalid, or if the profile
-     *                                        declares a duplicate effective override mapping for
-     *                                        this direction
+     *                                        override declaration is invalid, if a fragment applying
+     *                                        in this direction carries the generator's reserved
+     *                                        alias-expansion keyword on a schema object, or if the
+     *                                        profile declares a duplicate effective override mapping
+     *                                        for this direction
      */
     public static AnnotationJsonSchemaGenerator forInputProfile(JsonMapperProfile profile) {
         return forProfile(profile, Direction.INPUT);
@@ -354,9 +357,11 @@ public final class AnnotationJsonSchemaGenerator {
      * @return a generator configured for the profile's output direction
      * @throws NullPointerException         if {@code profile} is {@code null}
      * @throws JsonSchemaGenerationException if the profile's id, mapper, override list, or an
-     *                                        override declaration is invalid, or if the profile
-     *                                        declares a duplicate effective override mapping for
-     *                                        this direction
+     *                                        override declaration is invalid, if a fragment applying
+     *                                        in this direction carries the generator's reserved
+     *                                        alias-expansion keyword on a schema object, or if the
+     *                                        profile declares a duplicate effective override mapping
+     *                                        for this direction
      */
     public static AnnotationJsonSchemaGenerator forOutputProfile(JsonMapperProfile profile) {
         return forProfile(profile, Direction.OUTPUT);
@@ -1403,9 +1408,12 @@ public final class AnnotationJsonSchemaGenerator {
          * the marker must live in the document.
          *
          * <p>The marker is therefore made safe rather than invisible: a document publishing a property
-         * under this exact wire name is refused by {@link #requireNoMarkerPropertyName}, because
-         * expansion strips this key from every object node and would otherwise hand a consumer that
-         * property stripped of its constraints.
+         * under this exact wire name is refused by {@link #requireNoMarkerPropertyName}, and a profile
+         * override fragment carrying it on a schema object is refused when the profile is validated
+         * (see {@link #fragmentCarriesMarker}), so the only occurrences expansion strips at a schema
+         * position are the plans the generator wrote. Literal data — the value of a {@code const},
+         * {@code enum}, {@code default}, {@code examples} or {@code example} member — is never
+         * inspected, stripped, or executed.
          */
         static final String MARKER = "x-vertique-alias-plan";
 
@@ -1415,6 +1423,24 @@ public final class AnnotationJsonSchemaGenerator {
         /** The plan member carrying each aliased property's spellings, keyed by its own wire name. */
         private static final String ALIASES = "aliases";
 
+        /**
+         * The keywords whose value is JSON data rather than schema: none of the walks descends into
+         * one, so a data object carrying {@link #MARKER} is neither stripped, executed as a plan, nor
+         * read as a published property.
+         *
+         * <p>An exclusion rather than an allowlist of subschema keywords, deliberately: expansion must
+         * reach every position the generator places a plan at, and an allowlist that missed one would
+         * leave that plan unexpanded and its aliases undescribed.
+         */
+        private static final Set<String> LITERAL_KEYWORDS = Set.of("const", "enum", "default", "examples", "example");
+
+        /**
+         * The keywords whose value is an object keyed by names rather than by keywords: its members are
+         * schemas whatever they are called, so a property named {@code const} is still descended.
+         */
+        private static final Set<String> NAMED_MEMBER_KEYWORDS =
+                Set.of("properties", "patternProperties", "$defs", "dependentSchemas");
+
         private AliasExpansion() {}
 
         /**
@@ -1422,14 +1448,13 @@ public final class AnnotationJsonSchemaGenerator {
          * {@link #MARKER} — whether it already publishes one, or whether expansion would publish one
          * under that name for an alias spelling.
          *
-         * <p>Expansion removes that key from every object node, including a {@code properties} object,
-         * so publishing it would hand a consumer a property stripped of its constraints — precisely the
-         * shape a gate then accepts a violating value under. A spelling equal to the keyword reaches the
-         * same end by a longer road: expansion publishes it and the same descent removes it again,
-         * leaving a name the document neither publishes nor reserves. Both are refused here, before
-         * expansion runs, in every construction mode. The plan itself is written as a direct child of a
-         * definition node and never as a key inside a {@code properties} object, so only the genuine
-         * collision is caught.
+         * <p>The keyword is reserved to the plan, so a property published under it would share its name
+         * with the generator's own bookkeeping, and a spelling equal to it would be published by the
+         * very expansion that reads the plan naming it. Both are refused here, before expansion runs,
+         * in every construction mode. The plan itself is written as a direct child of a definition
+         * node and never as a key inside a {@code properties} object, so only the genuine collision is
+         * caught. The descent visits schema positions only: a {@code properties} object or a plan
+         * inside literal data is data and is never refused.
          *
          * @param node the document, or one of its nodes during the descent
          * @param type the type being generated, named in the diagnostic
@@ -1449,21 +1474,75 @@ public final class AnnotationJsonSchemaGenerator {
          * @param visited the nodes already inspected, by identity
          */
         private static void requireNoMarkerPropertyName(JsonNode node, Type type, Set<JsonNode> visited) {
+            walkSchemaPositions(node, false, visited, schema -> {
+                JsonNode properties = schema.get("properties");
+                if (properties != null && properties.isObject() && properties.has(MARKER)) {
+                    throw markerCollision(type, "rename the property on the wire (for example with @JsonProperty)");
+                }
+                if (planListsMarkerSpelling(schema.get(MARKER))) {
+                    throw markerCollision(
+                            type,
+                            "rename the alias spelling expansion would publish under it (for example with"
+                                    + " @JsonAlias)");
+                }
+            });
+        }
+
+        /**
+         * Whether a profile override fragment carries {@link #MARKER} as a member of a schema object at
+         * any depth. Such a member is not a plan the generator wrote: expansion would silently strip
+         * it, or execute it as a plan against the enclosing schema, so the fragment is refused when the
+         * profile is validated. Literal data is not inspected, so a {@code const} or {@code enum} value
+         * may carry the keyword as an ordinary member.
+         *
+         * @param fragment the parsed fragment
+         * @return {@code true} when some schema object in the fragment carries the keyword
+         */
+        static boolean fragmentCarriesMarker(JsonNode fragment) {
+            boolean[] found = {false};
+            walkSchemaPositions(fragment, false, newVisitedSet(), schema -> found[0] |= schema.has(MARKER));
+            return found[0];
+        }
+
+        /**
+         * Visits every object at a schema position of a document, parent before children, and never
+         * enters literal data.
+         *
+         * <p>A member of a schema object is descended unless its keyword is one of {@link
+         * #LITERAL_KEYWORDS}; a member of a {@link #NAMED_MEMBER_KEYWORDS} object is a schema whatever
+         * its name, so it is always descended and the object itself, which is not a schema, is not
+         * visited. An array's elements are descended, because an array reached here is a list of
+         * subschemas. Children are read after the visitor runs, so a member the visitor adds is walked
+         * and a member it removes is not.
+         *
+         * @param node         the node to walk
+         * @param namedMembers whether {@code node} is an object keyed by names rather than keywords
+         * @param visited      the nodes already walked, by identity
+         * @param visitor      the action applied to each schema object
+         */
+        private static void walkSchemaPositions(
+                JsonNode node, boolean namedMembers, Set<JsonNode> visited, Consumer<ObjectNode> visitor) {
             if (node == null || !node.isContainerNode() || !visited.add(node)) {
                 return;
             }
-            JsonNode properties = node.get("properties");
-            if (properties != null && properties.isObject() && properties.has(MARKER)) {
-                throw markerCollision(type, "rename the property on the wire (for example with @JsonProperty)");
+            if (!(node instanceof ObjectNode object)) {
+                for (JsonNode element : children(node)) {
+                    walkSchemaPositions(element, false, visited, visitor);
+                }
+                return;
             }
-            if (planListsMarkerSpelling(node.get(MARKER))) {
-                throw markerCollision(
-                        type,
-                        "rename the alias spelling expansion would publish under it (for example with"
-                                + " @JsonAlias)");
+            if (!namedMembers) {
+                visitor.accept(object);
             }
-            for (JsonNode child : children(node)) {
-                requireNoMarkerPropertyName(child, type, visited);
+            for (Map.Entry<String, JsonNode> member : new ArrayList<>(object.properties())) {
+                String keyword = member.getKey();
+                JsonNode value = member.getValue();
+                if (namedMembers) {
+                    walkSchemaPositions(value, false, visited, visitor);
+                } else if (!LITERAL_KEYWORDS.contains(keyword)) {
+                    walkSchemaPositions(
+                            value, NAMED_MEMBER_KEYWORDS.contains(keyword) && value.isObject(), visited, visitor);
+                }
             }
         }
 
@@ -1506,7 +1585,8 @@ public final class AnnotationJsonSchemaGenerator {
         }
 
         /**
-         * Applies and removes every alias plan the document carries, at any depth.
+         * Applies and removes every alias plan the document carries, at any schema position and any
+         * depth. Literal data — the value of a {@link #LITERAL_KEYWORDS} member — is never entered.
          *
          * @param node the document, or one of its nodes during the descent
          */
@@ -1525,18 +1605,12 @@ public final class AnnotationJsonSchemaGenerator {
          * @param visited the nodes already expanded, by identity
          */
         private static void expand(JsonNode node, Set<JsonNode> visited) {
-            if (node == null || !node.isContainerNode() || !visited.add(node)) {
-                return;
-            }
-            if (node instanceof ObjectNode object) {
-                JsonNode marker = object.remove(MARKER);
+            walkSchemaPositions(node, false, visited, schema -> {
+                JsonNode marker = schema.remove(MARKER);
                 if (marker != null) {
-                    apply(object, marker);
+                    apply(schema, marker);
                 }
-            }
-            for (JsonNode child : children(node)) {
-                expand(child, visited);
-            }
+            });
         }
 
         /**
