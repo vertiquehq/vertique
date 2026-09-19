@@ -154,13 +154,14 @@ class SchemaRenameCollisionTest {
     private static final String SCHEMA = "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",";
 
     @Test
-    void shouldRefuseARenameOntoAnotherVisiblePropertysNameInBothDirections() {
+    void shouldRefuseARenameOntoAnotherVisiblePropertysNameOnOutputAndIgnoreItOnInput() {
         assertAll(
-                refused(
-                        () -> AnnotationJsonSchemaGenerator.forInputProfile(PROFILE)
-                                .generateCanonical(RenamedOntoVisibleProperty.class),
-                        RenamedOntoVisibleProperty.class,
-                        "wire"),
+                // The input direction publishes the names the binder reads: a Swagger rename is not one
+                // of them, and 'note' has no accessor the binder uses, so nothing collides.
+                () -> assertEquals(
+                        SCHEMA + "\"properties\":{\"wire\":{\"type\":\"string\"}},\"type\":\"object\"}",
+                        AnnotationJsonSchemaGenerator.forInputProfile(PROFILE)
+                                .generateCanonical(RenamedOntoVisibleProperty.class)),
                 refused(
                         () -> AnnotationJsonSchemaGenerator.forOutputProfile(PROFILE)
                                 .generateCanonical(RenamedOntoVisibleProperty.class),
@@ -169,13 +170,13 @@ class SchemaRenameCollisionTest {
     }
 
     @Test
-    void shouldRefuseARenameOntoAPropertyInvisibleInTheDirection() throws Throwable {
-        refused(
-                        () -> AnnotationJsonSchemaGenerator.forInputProfile(PROFILE)
-                                .generateCanonical(RenamedOntoReadOnlyProperty.class),
-                        RenamedOntoReadOnlyProperty.class,
-                        "x")
-                .execute();
+    void shouldDescribeNothingWhenTheBinderReadsNothing() {
+        // 'x' is read-only and 'note' has no accessor the binder uses: the input document is the bare
+        // object, and the Swagger rename that used to collide with 'x' plays no part in it.
+        assertEquals(
+                SCHEMA + "\"type\":\"object\"}",
+                AnnotationJsonSchemaGenerator.forInputProfile(PROFILE)
+                        .generateCanonical(RenamedOntoReadOnlyProperty.class));
     }
 
     @Test
@@ -187,9 +188,10 @@ class SchemaRenameCollisionTest {
                                 + "\"properties\":{\"x\":{\"type\":\"string\"}},\"type\":\"object\"}",
                         AnnotationJsonSchemaGenerator.forInputProfile(PROFILE)
                                 .generateCanonical(RenamedOntoItself.class)),
+                // On input the field behind 'getNote' is bound under Jackson's name, never Swagger's.
                 () -> assertEquals(
                         "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\","
-                                + "\"properties\":{\"x\":{\"type\":\"string\"},\"y\":{\"type\":\"integer\"}},"
+                                + "\"properties\":{\"note\":{\"type\":\"integer\"},\"x\":{\"type\":\"string\"}},"
                                 + "\"type\":\"object\"}",
                         AnnotationJsonSchemaGenerator.forInputProfile(PROFILE)
                                 .generateCanonical(FallbackToOwnPropertyAndRenameWithoutCollision.class)),
@@ -232,8 +234,9 @@ class SchemaRenameCollisionTest {
                         SCHEMA + "\"properties\":{\"first_name\":{\"type\":\"string\"}},\"type\":\"object\"}",
                         AnnotationJsonSchemaGenerator.forInputProfile(SNAKE_CASE_PROFILE)
                                 .generateCanonical(ComponentRenamedToItsOwnSnakeCaseName.class)),
+                // The creator parameter is the bound member, and it is bound under Jackson's name.
                 () -> assertEquals(
-                        SCHEMA + "\"properties\":{\"label\":{\"type\":\"string\"}},\"type\":\"object\"}",
+                        SCHEMA + "\"properties\":{\"note\":{\"type\":\"string\"}},\"type\":\"object\"}",
                         AnnotationJsonSchemaGenerator.forInputProfile(NO_FINAL_FIELD_MUTATORS_PROFILE)
                                 .generateCanonical(CreatorBoundFieldRenamedToAFreshName.class)));
     }

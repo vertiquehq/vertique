@@ -465,17 +465,41 @@ class AnySetterDescriptionTest {
     }
 
     @Test
-    @DisplayName("A name bound only through accessors, a hidden field, or a transient field is reserved")
-    void namesBoundOnlyThroughAccessorsAreReserved() {
-        // Each of the four shapes is reported on its own: they are four distinct ways for Jackson to
-        // bind a name the document never publishes, and one failing must not hide the other three.
+    @DisplayName("A name bound only through a setter, an accessor pair, or a transient field's accessors is described")
+    void namesBoundOnlyThroughAccessorsAreDescribed() {
+        // Each of the three shapes is a distinct way for Jackson to bind a name no field carries; each
+        // is read from the deserializer and described with the constraint its accessor carries, so a
+        // key by that name is validated before it reaches the member instead of being refused outright.
+        JsonNode setterOnly = inputDocument(SetterOnlyName.class);
+        JsonNode accessorPair = inputDocument(AccessorPairOverADifferentField.class);
+        JsonNode transientField = inputDocument(TransientFieldWithAccessors.class);
         assertAll(
-                () -> assertReserves(SetterOnlyName.class, "SetterOnlyName", List.of("admin")),
-                () -> assertReserves(
-                        AccessorPairOverADifferentField.class, "AccessorPairOverADifferentField", List.of("level")),
-                () -> assertReserves(SchemaHiddenField.class, "SchemaHiddenField", List.of("admin")),
-                () -> assertReserves(
-                        TransientFieldWithAccessors.class, "TransientFieldWithAccessors", List.of("level")));
+                () -> assertEquals(
+                        "{\"type\":\"boolean\"}",
+                        properties(setterOnly).path("admin").toString(),
+                        "a setter-only name is described with the setter's parameter type; document: " + setterOnly),
+                () -> assertFalse(
+                        setterOnly.has("propertyNames"), "nothing is left to reserve; document: " + setterOnly),
+                () -> assertEquals(
+                        "{\"maximum\":10,\"type\":\"integer\"}",
+                        properties(accessorPair).path("level").toString(),
+                        "an accessor pair over a differently named field is described with the getter's"
+                                + " constraint; document: " + accessorPair),
+                () -> assertFalse(
+                        accessorPair.has("propertyNames"), "nothing is left to reserve; document: " + accessorPair),
+                () -> assertEquals(
+                        "{\"type\":\"string\"}",
+                        properties(transientField).path("level").toString(),
+                        "a transient field's accessors bind its name, so it is described; document: " + transientField),
+                () -> assertFalse(
+                        transientField.has("propertyNames"),
+                        "nothing is left to reserve; document: " + transientField));
+    }
+
+    @Test
+    @DisplayName("A hidden field Jackson still binds is reserved")
+    void aHiddenFieldIsReserved() {
+        assertReserves(SchemaHiddenField.class, "SchemaHiddenField", List.of("admin"));
     }
 
     @Test
