@@ -3,21 +3,15 @@
 
 package dev.vertique.json.schema;
 
-import com.fasterxml.classmate.ResolvedType;
-import com.fasterxml.classmate.TypeResolver;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.TreeNode;
 import com.fasterxml.jackson.databind.AnnotationIntrospector;
 import com.fasterxml.jackson.databind.BeanDescription;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.PropertyName;
-import com.fasterxml.jackson.databind.introspect.AnnotatedField;
 import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
-import com.fasterxml.jackson.databind.introspect.AnnotatedMethod;
 import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
@@ -26,25 +20,21 @@ import com.github.victools.jsonschema.generator.FieldScope;
 import com.github.victools.jsonschema.generator.MemberScope;
 import com.github.victools.jsonschema.generator.MethodScope;
 import com.github.victools.jsonschema.generator.OptionPreset;
-import com.github.victools.jsonschema.generator.SchemaGenerationContext;
 import com.github.victools.jsonschema.generator.SchemaGenerator;
 import com.github.victools.jsonschema.generator.SchemaGeneratorConfig;
 import com.github.victools.jsonschema.generator.SchemaGeneratorConfigBuilder;
 import com.github.victools.jsonschema.generator.SchemaVersion;
-import com.github.victools.jsonschema.generator.TypeScope;
 import com.github.victools.jsonschema.module.jackson.JacksonModule;
 import com.github.victools.jsonschema.module.jakarta.validation.JakartaValidationModule;
 import com.github.victools.jsonschema.module.jakarta.validation.JakartaValidationOption;
 import com.github.victools.jsonschema.module.swagger2.Swagger2Module;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonSchemaTypeOverride.Direction;
-import io.swagger.v3.oas.annotations.media.Schema;
 import java.lang.reflect.Field;
 import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.Member;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.ParameterizedType;
-import java.lang.reflect.RecordComponent;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -52,14 +42,10 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.Iterator;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.TreeMap;
-import java.util.TreeSet;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 /**
@@ -222,6 +208,9 @@ public final class AnnotationJsonSchemaGenerator {
     /** The configured Victools generator; its configuration is fixed at construction. */
     private final SchemaGenerator generator;
 
+    /** The input direction's property source, or {@code null} in the other construction modes. */
+    private final InputPropertyDescriber describer;
+
     /**
      * Whether {@link NumericDomainKeywordFilter} runs on every generated document from this instance.
      *
@@ -259,7 +248,7 @@ public final class AnnotationJsonSchemaGenerator {
      *                                        than {@code DRAFT_2020_12}
      */
     AnnotationJsonSchemaGenerator(SchemaGenerator generator) {
-        this(generator, false);
+        this(generator, false, null);
     }
 
     /**
@@ -279,8 +268,14 @@ public final class AnnotationJsonSchemaGenerator {
      *                                        than {@code DRAFT_2020_12}
      */
     AnnotationJsonSchemaGenerator(SchemaGenerator generator, boolean suppressInapplicableNumericKeywords) {
+        this(generator, suppressInapplicableNumericKeywords, null);
+    }
+
+    private AnnotationJsonSchemaGenerator(
+            SchemaGenerator generator, boolean suppressInapplicableNumericKeywords, InputPropertyDescriber describer) {
         this.generator = requirePinnedDialect(generator);
         this.suppressInapplicableNumericKeywords = suppressInapplicableNumericKeywords;
+        this.describer = describer;
     }
 
     /**
@@ -392,8 +387,17 @@ public final class AnnotationJsonSchemaGenerator {
             builder.forFields().withCustomDefinitionProvider(new SchemaImplementationGuard<FieldScope>(validated));
             builder.forMethods().withCustomDefinitionProvider(new SchemaImplementationGuard<MethodScope>(validated));
         }
-        return new AnnotationJsonSchemaGenerator(
-                build(builder, new ProfilePropertyNameResolver(validated.mapper(), direction)), hasOverrides);
+        InputPropertyDescriber describer = null;
+        OutputPropertyNameResolver outputNames = null;
+        if (direction == Direction.INPUT) {
+            // Read once, from the profile's own mapper instance: the same one that parses a body at the
+            // REST gate, so the published rule and the binder's parse decision cannot disagree.
+            boolean strict = validated.mapper().getFactory().isEnabled(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
+            describer = new InputPropertyDescriber(validated.mapper(), strict);
+        } else {
+            outputNames = new OutputPropertyNameResolver(validated.mapper());
+        }
+        return new AnnotationJsonSchemaGenerator(build(builder, describer, outputNames), hasOverrides, describer);
     }
 
     /**
@@ -409,110 +413,59 @@ public final class AnnotationJsonSchemaGenerator {
      * @return the configured Victools generator
      */
     private static SchemaGenerator build(SchemaGeneratorConfigBuilder builder) {
-        return build(builder, null);
+        return build(builder, null, null);
     }
 
     /**
-     * Installs the shared annotation modules and, for profile-aware generation, the selected mapper's
-     * actual input- or output-direction property names.
+     * Installs the shared annotation modules and, for profile-aware generation, the direction's
+     * property source.
      *
-     * <p>Victools' Jackson module reads Jackson annotations but does not project an
-     * {@link ObjectMapper}-level property naming strategy. Registering the mapper-derived resolver
-     * after the modules makes the generated schema use the same names that the selected mapper
-     * materializes or serializes.
-     *
-     * <p>The input direction's any-setter extras resolver is registered <em>before</em> the modules,
-     * because Victools takes the first non-null answer: the Swagger 2 module answers {@code true} for
-     * a class-level {@code @Schema(additionalProperties = TRUE)}, which says nothing about the extras'
-     * type and would otherwise hide the any-setter's value type. The resolver stays silent for a type
-     * carrying {@code FALSE}, so that module still publishes the application's own restriction. The
-     * alias marking and the reserved-name publication are a type-attribute override instead, registered
-     * after the modules so that they see each definition's finished {@code properties} and {@code
-     * additionalProperties}.
+     * <p>The input direction describes an object from the profile mapper's resolved deserializer
+     * through {@link InputPropertyDescriber}, registered as a type definition provider <em>after</em>
+     * the modules: the Jackson module's subtype resolver keeps precedence for a polymorphic root and
+     * consults the describer for each concrete subtype, and the profile override provider, registered
+     * before the modules, keeps precedence for an overridden class. The output direction keeps the
+     * schema library's own walk and only projects the mapper's serialization names and visibility onto
+     * it through {@link OutputPropertyNameResolver}, because Victools' Jackson module reads annotations
+     * but not an {@link ObjectMapper}-level naming strategy.
      */
     private static SchemaGenerator build(
-            SchemaGeneratorConfigBuilder builder, ProfilePropertyNameResolver propertyNames) {
-        if (propertyNames != null && propertyNames.direction == Direction.INPUT) {
-            builder.forTypesInGeneral().withAdditionalPropertiesResolver(propertyNames::anySetterExtras);
-        }
+            SchemaGeneratorConfigBuilder builder,
+            InputPropertyDescriber describer,
+            OutputPropertyNameResolver outputNames) {
         builder.with(new JacksonModule())
                 .with(new JakartaValidationModule(
                         JakartaValidationOption.NOT_NULLABLE_FIELD_IS_REQUIRED,
                         JakartaValidationOption.INCLUDE_PATTERN_EXPRESSIONS))
                 .with(new Swagger2Module());
-        if (propertyNames != null) {
+        if (describer != null) {
+            builder.forTypesInGeneral().withCustomDefinitionProvider(describer);
+        }
+        if (outputNames != null) {
             builder.forFields()
-                    .withIgnoreCheck(propertyNames::isIgnored)
-                    .withPropertyNameOverrideResolver(propertyNames::resolve);
+                    .withIgnoreCheck(outputNames::isIgnored)
+                    .withPropertyNameOverrideResolver(outputNames::resolve);
             builder.forMethods()
-                    .withIgnoreCheck(propertyNames::isIgnored)
-                    .withPropertyNameOverrideResolver(propertyNames::resolve);
-            if (propertyNames.direction == Direction.INPUT) {
-                builder.forTypesInGeneral().withTypeAttributeOverride(propertyNames::markAliasesAndReservedNames);
-            }
+                    .withIgnoreCheck(outputNames::isIgnored)
+                    .withPropertyNameOverrideResolver(outputNames::resolve);
         }
         return new SchemaGenerator(builder.build());
     }
 
-    /** Mapper-introspected wire names keyed by the exact member Victools is publishing. */
-    private static final class ProfilePropertyNameResolver {
+    /**
+     * The output direction's view of a type: the serialization names the profile's mapper materializes
+     * and the members it serializes, keyed by the exact member Victools is publishing, with the
+     * property's internal and wire name as the fallback for a member the introspection does not link.
+     */
+    private static final class OutputPropertyNameResolver {
         private final ObjectMapper mapper;
-        private final Direction direction;
-
-        /**
-         * Whether the selected profile forbids several spellings of one property in one object, read
-         * from the profile's own mapper — the instance the binder parses a body with — and from
-         * nothing else: a mapper enabling {@code JsonParser.Feature.STRICT_DUPLICATE_DETECTION} rejects
-         * a repeated key, and the alias rules published for it are the exclusive form.
-         */
-        private final boolean strictSpellings;
 
         private record PropertyMetadata(String wireName, boolean visible) {}
 
-        /**
-         * @param byMember                  wire names keyed by the exact member Victools publishes
-         * @param byInternalName            the same, keyed by internal and wire name, as a fallback
-         * @param anyAccessorMembers        the any-setter and any-getter members themselves
-         * @param anyAccessorBackingMembers the members that store what those accessors collect
-         * @param anySetterValueType        the declared value type of the type's any-setter, or
-         *                                  {@code null} when the type has none Jackson would use
-         * @param aliasesByWireName         the alias spellings of each visible input property that
-         *                                  does not back an any-accessor, keyed by the property's own
-         *                                  wire name, in declaration order, with every contested
-         *                                  spelling and every spelling that is already a property name
-         *                                  of the type already dropped
-         * @param reservedInputNames        the reserved-name candidates: every name Jackson binds on
-         *                                  input that no member of this type could publish, before the
-         *                                  published names are subtracted against the finished
-         *                                  document; empty unless extras are described
-         * @param inputBoundMembers         the members behind each name Jackson binds on input, so a
-         *                                  candidate is matched against what was published by member
-         *                                  rather than by spelling; an empty member set is a property
-         *                                  Jackson binds through a creator parameter alone
-         * @param walkedFieldsByWireName    the fields the schema library walks, keyed by the wire name
-         *                                  of the property each is described as when walked under its
-         *                                  own name
-         */
         private record PropertyNames(
                 Map<Member, PropertyMetadata> byMember,
                 Map<String, PropertyMetadata> byInternalName,
-                Set<Member> anyAccessorMembers,
-                Set<Member> anyAccessorBackingMembers,
-                Type anySetterValueType,
-                Map<String, List<String>> aliasesByWireName,
-                Set<String> reservedInputNames,
-                Map<String, Set<Member>> inputBoundMembers,
                 Map<String, Set<Member>> walkedFieldsByWireName) {}
-
-        /** The verdict for an any-accessor or its backing storage: never a named property. */
-        private static final PropertyMetadata HIDDEN_ANY_ACCESSOR_BACKING = new PropertyMetadata(null, false);
-
-        /** Value types that accept every JSON value, and are therefore published as the empty schema. */
-        /** Resolves a Jackson-resolved any-setter value type into the schema library's type model. */
-        private static final TypeResolver VALUE_TYPE_RESOLVER = new TypeResolver();
-
-        private static final Set<Class<?>> UNCONSTRAINED_VALUE_TYPES =
-                Set.of(Object.class, JsonNode.class, TreeNode.class);
 
         private final ClassValue<PropertyNames> namesByType = new ClassValue<>() {
             @Override
@@ -521,41 +474,13 @@ public final class AnnotationJsonSchemaGenerator {
             }
         };
 
-        /**
-         * The members Victools carried into a definition, per declaring type, with the wire name each
-         * was carried under.
-         *
-         * <p>Recorded from {@link #resolve(MemberScope)} because that is consulted for exactly the
-         * members Victools is about to publish, and consulted before the type-attribute override that
-         * reads the finished {@code properties} object. Which of the recorded members actually reached
-         * the document is then decided against that object, so a member a later module drops — a
-         * {@code @Schema(hidden = true)} field, say — is not mistaken for a published one.
-         */
-        private final Map<Class<?>, Map<Member, String>> resolvedMembersByType = new ConcurrentHashMap<>();
-
-        private ProfilePropertyNameResolver(ObjectMapper mapper, Direction direction) {
+        private OutputPropertyNameResolver(ObjectMapper mapper) {
             this.mapper = mapper;
-            this.direction = direction;
-            // Read once, from the profile's own mapper instance: the same one that parses a body at the
-            // REST gate, so the published rule and the binder's parse decision cannot disagree.
-            this.strictSpellings = mapper.getFactory().isEnabled(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
         }
 
         private String resolve(MemberScope<?, ?> scope) {
             PropertyMetadata property = metadata(scope);
-            String wireName = property == null ? null : property.wireName();
-            if (direction == Direction.INPUT && !scope.isFakeContainerItemScope()) {
-                Member raw = scope.getRawMember();
-                // A null wire name here means "no override": Victools then publishes the member under
-                // its own name, which is what the reserved-name subtraction must match against.
-                String published = wireName != null ? wireName : scope.getName();
-                if (raw != null && published != null) {
-                    resolvedMembersByType
-                            .computeIfAbsent(scope.getDeclaringType().getErasedType(), key -> new ConcurrentHashMap<>())
-                            .put(raw, published);
-                }
-            }
-            return wireName;
+            return property == null ? null : property.wireName();
         }
 
         private boolean isIgnored(MemberScope<?, ?> scope) {
@@ -568,14 +493,6 @@ public final class AnnotationJsonSchemaGenerator {
                 return null;
             }
             PropertyNames names = namesByType.get(scope.getDeclaringType().getErasedType());
-            if (names.anyAccessorMembers().contains(scope.getRawMember())
-                    || names.anyAccessorBackingMembers().contains(scope.getRawMember())) {
-                // An any-accessor and the storage it fills are never named properties: the keys they
-                // collect are extra keys, not a member of the object's property set. Matched by
-                // member and never by a name an accessor merely implies, so a real property that
-                // happens to share an accessor's implied name stays described.
-                return HIDDEN_ANY_ACCESSOR_BACKING;
-            }
             PropertyMetadata byMember = names.byMember().get(scope.getRawMember());
             if (byMember != null) {
                 return byMember;
@@ -589,28 +506,16 @@ public final class AnnotationJsonSchemaGenerator {
 
         /**
          * Whether answering a renamed member with the property its rename lands on would publish two
-         * walked members under one name.
-         *
-         * <p>Victools applies property-name overrides before the fallback lookup, so the name may be a
-         * rename — a {@code @Schema(name = ...)}, say — rather than the member's own. A rename that
-         * lands on a property backed by another field the schema library walks would describe this
-         * member with that field's visibility and wire name, and publish both under one name: that is
-         * the developer's error to resolve. A landed-on property that no other walked field backs — the
-         * accessor pair behind a Lombok-style {@code boolean isActive} or an {@code mName} field — is
-         * described by this member alone, because getters are not walked, so the answer is correct.
-         *
-         * @param names    the declaring type's introspected properties
-         * @param scope    the member that missed the lookup by identity
-         * @param landedOn the property found under the member's possibly renamed name, or {@code null}
-         * @return {@code true} when the member must be refused
+         * walked members under one name: a {@code @Schema(name = ...)} landing on a property backed by
+         * another field the schema library walks is the developer's error to resolve, while a
+         * landed-on property no other walked field backs — the accessor pair behind a Lombok-style
+         * {@code boolean isActive} — is described by this member alone.
          */
         private static boolean publishesTwoMembersUnderOneName(
                 PropertyNames names, MemberScope<?, ?> scope, PropertyMetadata landedOn) {
             if (landedOn == null || scope.getName().equals(scope.getDeclaredName())) {
                 return false;
             }
-            // Comparing declared names assumes only fields are walked: a getter's declared name would
-            // be getFoo, never the name of the property it reads.
             if (landedOn.equals(names.byInternalName().get(scope.getDeclaredName()))) {
                 return false;
             }
@@ -622,15 +527,6 @@ public final class AnnotationJsonSchemaGenerator {
             return false;
         }
 
-        /**
-         * The refusal for a member renamed onto the name of a property backed by another walked field:
-         * one bounded diagnostic naming the declaring type, the member, and the property it collides
-         * with, and carrying no schema fragment.
-         *
-         * @param scope    the renamed member
-         * @param occupant the property already carrying the rename
-         * @return the failure to throw
-         */
         private static JsonSchemaGenerationException renameCollision(
                 MemberScope<?, ?> scope, PropertyMetadata occupant) {
             return Diagnostics.failure(
@@ -647,131 +543,7 @@ public final class AnnotationJsonSchemaGenerator {
                     null);
         }
 
-        private PropertyNames introspect(Class<?> type) {
-            JavaType javaType = mapper.getTypeFactory().constructType(type);
-            BeanDescription description = direction == Direction.INPUT
-                    ? mapper.getDeserializationConfig().introspect(javaType)
-                    : mapper.getSerializationConfig().introspect(javaType);
-            Map<Member, PropertyMetadata> members = new HashMap<>();
-            Map<String, PropertyMetadata> internalNames = new HashMap<>();
-            AnyAccessors anyAccessors =
-                    direction == Direction.INPUT ? collectAnyAccessors(type, javaType, description) : AnyAccessors.NONE;
-            // The names Jackson binds on input that no member of this type could ever publish, and the
-            // names it binds through a member, with the members behind each. Both feed the reserved-name
-            // difference, which is completed against the finished document.
-            Set<String> invisibleOnInput = new TreeSet<>();
-            Map<String, Set<Member>> inputBoundMembers = new TreeMap<>();
-            // The alias spellings of each property that keeps them, and every spelling any property
-            // claims, which is reserved by default and released only where its property is published.
-            Map<String, List<String>> aliases = new TreeMap<>();
-            Set<String> aliasSpellings = new TreeSet<>();
-            // A spelling more than one property of this type claims binds to whichever claimant Jackson
-            // resolves it to, which this generator cannot predict: publishing it would attach one
-            // claimant's schema to another claimant's value, so it is published nowhere, named in no
-            // rule, and — where extras are described — reserved rather than accepted as an extra.
-            Set<String> contestedSpellings =
-                    direction == Direction.INPUT ? contestedAliasSpellings(description) : Set.of();
-            // The type's own property names, read from this same introspection rather than from the
-            // finished document. A spelling that is already one of them is withheld whether or not the
-            // document publishes that property: a property it never publishes still binds its own name,
-            // so publishing the spelling would attach the aliasing property's schema to a member the
-            // document deliberately does not describe, and would release that name from the reserved set
-            // along with the aliasing property's other spellings.
-            Set<String> ownPropertyNames = direction == Direction.INPUT ? declaredPropertyNames(description) : Set.of();
-            for (BeanPropertyDefinition property : description.findProperties()) {
-                JsonProperty.Access access = propertyAccess(property);
-                boolean visible = direction == Direction.INPUT
-                        // A private field with no setter is still bound: Jackson populates it through
-                        // reflection wherever the mapper infers property mutators, which is its
-                        // default and what every built-in profile leaves alone. So a backing field
-                        // makes a walked property bound, whether or not Jackson reports a mutator.
-                        ? (property.couldDeserialize() || property.hasField())
-                                && access != JsonProperty.Access.READ_ONLY
-                        : property.couldSerialize() && access != JsonProperty.Access.WRITE_ONLY;
-                if (direction == Direction.INPUT) {
-                    if (!visible) {
-                        // Bound to no member on input — ignored, or read-only — so nothing can publish
-                        // it and nothing can subtract it later.
-                        invisibleOnInput.add(property.getName());
-                    } else if (!backsAnAnyAccessor(property, anyAccessors)) {
-                        inputBoundMembers.put(property.getName(), ownMembers(type, property));
-                        List<String> spellings = keptAliasSpellings(property, contestedSpellings, ownPropertyNames);
-                        if (!spellings.isEmpty()) {
-                            aliases.put(property.getName(), spellings);
-                            aliasSpellings.addAll(spellings);
-                        }
-                    }
-                }
-                PropertyMetadata metadata = new PropertyMetadata(property.getName(), visible);
-                internalNames.put(property.getInternalName(), metadata);
-                internalNames.put(property.getName(), metadata);
-                if (property.getField() != null) {
-                    members.put(property.getField().getMember(), metadata);
-                }
-                if (property.getGetter() != null) {
-                    members.put(property.getGetter().getMember(), metadata);
-                }
-                if (property.getSetter() != null) {
-                    members.put(property.getSetter().getMember(), metadata);
-                }
-            }
-            Map<String, Set<Member>> walkedFields = walkedFieldsByWireName(type, members, internalNames);
-            Set<String> reserved = new TreeSet<>();
-            if (anyAccessors.anySetterValueType() != null) {
-                // Only a type whose extras are described reserves anything: on every other type the
-                // object is closed or has no extras to tell a reserved name apart from.
-                reserved.addAll(description.getIgnoredPropertyNames());
-                reserved.addAll(mapper.getDeserializationConfig()
-                        .getDefaultPropertyIgnorals(type, description.getClassInfo())
-                        .findIgnoredForDeserialization());
-                reserved.addAll(invisibleOnInput);
-                // Jackson fills a method any-getter's storage through the getter, under the storage
-                // field's own name, so that name is bound on input and is never an extra.
-                reserved.addAll(anyAccessors.getterStorageNames());
-                // Every name Jackson binds as a named property is a candidate; publishReservedNames
-                // subtracts the ones the document actually published, leaving exactly the names Jackson
-                // binds that no published property carries.
-                reserved.addAll(inputBoundMembers.keySet());
-                // A contested spelling binds to one of its claimants, so it is not an extra either —
-                // and unlike a kept spelling it is never published, so nothing releases it.
-                reserved.addAll(contestedSpellings);
-                // A spelling Jackson binds is reserved by default and released only where its
-                // publication is known. Whether expansion publishes one depends on whether the owning
-                // property's own wire name reached the finished properties object, which is not knowable
-                // here: markAliasesAndReservedNames releases exactly the spellings of a property that
-                // was published and leaves every other spelling reserved. Releasing them unconditionally
-                // here would leave the spelling of a bound-but-unpublished property — a
-                // @Schema(hidden = true) field, an accessor pair with no same-named field — neither
-                // published nor reserved, so it would be accepted as an ordinary extra and bound into
-                // the very member this type's own property name already refuses.
-                reserved.addAll(aliasSpellings);
-            }
-            return new PropertyNames(
-                    Map.copyOf(members),
-                    Map.copyOf(internalNames),
-                    anyAccessors.members(),
-                    anyAccessors.backingMembers(),
-                    anyAccessors.anySetterValueType(),
-                    // Not Map.copyOf: the published rule order follows this map's iteration order, and
-                    // an immutable copy's order is unspecified. The TreeMap is local to this call and
-                    // is never mutated after it returns.
-                    Collections.unmodifiableMap(aliases),
-                    Set.copyOf(reserved),
-                    Map.copyOf(inputBoundMembers),
-                    walkedFields);
-        }
-
-        /**
-         * The fields the schema library walks for a type — every non-static, non-synthetic field of the
-         * type and its superclasses — grouped by the wire name of the property each is described as
-         * when walked under its own name: the property Jackson attaches it to, or else the property its
-         * declared name reaches, which is the same fallback {@link #metadata(MemberScope)} takes.
-         *
-         * @param type          the introspected type
-         * @param members       the type's properties keyed by the members Jackson attaches to them
-         * @param internalNames the same, keyed by internal and wire name
-         * @return the walked fields per wire name; a field that describes no property is absent
-         */
+        /** The fields the schema library walks, grouped by the wire name each is described under. */
         private static Map<String, Set<Member>> walkedFieldsByWireName(
                 Class<?> type, Map<Member, PropertyMetadata> members, Map<String, PropertyMetadata> internalNames) {
             Map<String, Set<Member>> fields = new HashMap<>();
@@ -797,424 +569,34 @@ public final class AnnotationJsonSchemaGenerator {
             return Map.copyOf(copy);
         }
 
-        /**
-         * The alias spellings a property keeps: every spelling Jackson reports for it, less the
-         * property's own wire name — which is not an alias — less every spelling that is already a
-         * property name of the same type, and less every contested spelling.
-         *
-         * <p>The collision with another property's name is decided here, against the names this type
-         * declares, and never later against the finished document: a property the document does not
-         * publish still binds its own name, so a spelling naming it is withheld exactly as a spelling
-         * naming a published property is. A withheld spelling is published nowhere and named in no rule,
-         * so nothing releases the name it collides with from the reserved set.
-         *
-         * <p>Declaration order is preserved and a spelling declared twice on one property counts once,
-         * so the published rule names each spelling exactly once in a stable order.
-         *
-         * @param property           the introspected property
-         * @param contestedSpellings the spellings more than one property of the type claims
-         * @param ownPropertyNames   every property name the type itself declares on input
-         * @return the kept spellings, possibly empty
-         */
-        private static List<String> keptAliasSpellings(
-                BeanPropertyDefinition property, Set<String> contestedSpellings, Set<String> ownPropertyNames) {
-            Set<String> spellings = new LinkedHashSet<>();
-            for (PropertyName alias : property.findAliases()) {
-                String simple = alias.getSimpleName();
-                if (simple != null
-                        && !simple.isEmpty()
-                        && !simple.equals(property.getName())
-                        && !ownPropertyNames.contains(simple)
-                        && !contestedSpellings.contains(simple)) {
-                    spellings.add(simple);
-                }
-            }
-            return List.copyOf(spellings);
-        }
-
-        /**
-         * Every property name the type itself declares, published or not.
-         *
-         * <p>Read from the type's own introspection, the same pass {@link
-         * #contestedAliasSpellings(BeanDescription)} reads, because that is the only view in which a
-         * property Jackson binds but the document never publishes is still visible. An any-accessor's
-         * storage is included: its name is a property name of the type, and a spelling of it is as
-         * unpredictable as any other collision.
-         *
-         * @param description the type's introspection
-         * @return the declared property names
-         */
-        private static Set<String> declaredPropertyNames(BeanDescription description) {
-            Set<String> names = new TreeSet<>();
+        private PropertyNames introspect(Class<?> type) {
+            JavaType javaType = mapper.getTypeFactory().constructType(type);
+            BeanDescription description = mapper.getSerializationConfig().introspect(javaType);
+            AnnotationIntrospector introspector =
+                    mapper.getSerializationConfig().getAnnotationIntrospector();
+            Map<Member, PropertyMetadata> members = new HashMap<>();
+            Map<String, PropertyMetadata> internalNames = new HashMap<>();
             for (BeanPropertyDefinition property : description.findProperties()) {
-                String name = property.getName();
-                if (name != null && !name.isEmpty()) {
-                    names.add(name);
-                }
-            }
-            return names;
-        }
-
-        /**
-         * The alias spellings more than one property of a type claims.
-         *
-         * <p>A property claiming one spelling twice counts once, and a spelling equal to the claiming
-         * property's own wire name is not a claim at all. Every property of the type is counted,
-         * including one the document does not publish: Jackson still routes the key to it, so the
-         * generator still cannot predict which member such a key reaches.
-         *
-         * @param description the type's deserialization introspection
-         * @return the contested spellings
-         */
-        private static Set<String> contestedAliasSpellings(BeanDescription description) {
-            Map<String, Integer> claimants = new TreeMap<>();
-            for (BeanPropertyDefinition property : description.findProperties()) {
-                Set<String> own = new TreeSet<>();
-                for (PropertyName alias : property.findAliases()) {
-                    String simple = alias.getSimpleName();
-                    if (simple != null && !simple.isEmpty() && !simple.equals(property.getName())) {
-                        own.add(simple);
-                    }
-                }
-                own.forEach(spelling -> claimants.merge(spelling, 1, Integer::sum));
-            }
-            Set<String> contested = new TreeSet<>();
-            claimants.forEach((spelling, count) -> {
-                if (count > 1) {
-                    contested.add(spelling);
-                }
-            });
-            return contested;
-        }
-
-        /**
-         * Whether any member of a property is an any-accessor or the storage one fills, in which case
-         * the property is not a named input property at all and reserves no name.
-         *
-         * @param property     the introspected property
-         * @param anyAccessors the type's any-accessor members
-         * @return {@code true} when the property backs an any-accessor
-         */
-        private static boolean backsAnAnyAccessor(BeanPropertyDefinition property, AnyAccessors anyAccessors) {
-            for (AnnotatedMember member :
-                    new AnnotatedMember[] {property.getField(), property.getGetter(), property.getSetter()}) {
-                if (member != null
-                        && (anyAccessors.members().contains(member.getMember())
-                                || anyAccessors.backingMembers().contains(member.getMember()))) {
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        /**
-         * The members a property is identified by: its field, getter, and setter, plus the record
-         * component when the declaring type is a record.
-         *
-         * <p>An empty result is the creator-parameter-only shape — Jackson binds the name but links no
-         * field, setter, getter, or record component to it — for which member identity is not
-         * recoverable and the reserved-name rule fails open.
-         *
-         * @param type     the erased type being introspected
-         * @param property the introspected property
-         * @return the property's own members, possibly empty
-         */
-        private static Set<Member> ownMembers(Class<?> type, BeanPropertyDefinition property) {
-            Set<Member> own = new HashSet<>();
-            for (AnnotatedMember member :
-                    new AnnotatedMember[] {property.getField(), property.getGetter(), property.getSetter()}) {
-                if (member != null && member.getMember() != null) {
-                    own.add(member.getMember());
-                }
-            }
-            if (type.isRecord()) {
-                for (RecordComponent component : type.getRecordComponents()) {
-                    if (component.getName().equals(property.getInternalName())) {
-                        own.add(component.getAccessor());
+                boolean visible = property.couldSerialize()
+                        && propertyAccess(introspector, property) != JsonProperty.Access.WRITE_ONLY;
+                PropertyMetadata metadata = new PropertyMetadata(property.getName(), visible);
+                internalNames.put(property.getInternalName(), metadata);
+                internalNames.put(property.getName(), metadata);
+                for (AnnotatedMember member :
+                        new AnnotatedMember[] {property.getField(), property.getGetter(), property.getSetter()}) {
+                    if (member != null) {
+                        members.put(member.getMember(), metadata);
                     }
                 }
             }
-            return Set.copyOf(own);
+            return new PropertyNames(
+                    Map.copyOf(members),
+                    Map.copyOf(internalNames),
+                    walkedFieldsByWireName(type, members, internalNames));
         }
 
-        /**
-         * The any-accessor facts of one type.
-         *
-         * @param members            the any-setter and any-getter members themselves
-         * @param backingMembers     the members that store what those accessors collect
-         * @param getterStorageNames the names Jackson binds straight into a method any-getter's
-         *                           storage, through that getter
-         * @param anySetterValueType the declared value type of the any-setter Jackson would use, or
-         *                           {@code null} when the type has none
-         */
-        private record AnyAccessors(
-                Set<Member> members,
-                Set<Member> backingMembers,
-                Set<String> getterStorageNames,
-                Type anySetterValueType) {
-
-            /** The verdict for a type with no any-accessor, and for the output direction. */
-            static final AnyAccessors NONE = new AnyAccessors(Set.of(), Set.of(), Set.of(), null);
-        }
-
-        /**
-         * Collects the any-setter and any-getter members of a type, the members that store what they
-         * collect — so neither is ever described as a named property — and the any-setter's declared
-         * value type, which is how its extra keys are described.
-         *
-         * <p>Storage is identified by member and never by a name derived from an accessor: a field
-         * annotated {@code @JsonAnySetter}, the record component whose field that is, a field
-         * annotated {@code @JsonAnyGetter}, and the field Jackson links to a method
-         * {@code @JsonAnyGetter}, where the field's type can be that getter's return value. A
-         * property whose name an accessor merely implies — {@code attribute} beside an any-setter
-         * {@code setAttribute(String, Object)} — is a real property and stays described.
-         *
-         * <p>Jackson binds a map-like or collection-like type as a container and never routes input
-         * to its any-setter, so for such a type the any-setter is ignored here as Jackson ignores it:
-         * it yields no value type either, and such a type is therefore described exactly as if it
-         * declared no any-setter at all.
-         *
-         * @param type        the erased type being introspected
-         * @param javaType    its resolved Jackson type
-         * @param description the type's deserialization introspection
-         * @return the type's any-accessor facts
-         */
-        private static AnyAccessors collectAnyAccessors(Class<?> type, JavaType javaType, BeanDescription description) {
-            Set<Member> accessors = new HashSet<>();
-            Set<Member> backing = new HashSet<>();
-            Set<String> getterStorageNames = new TreeSet<>();
-            boolean boundAsContainer = javaType.isMapLikeType() || javaType.isCollectionLikeType();
-            AnnotatedMember anySetter = boundAsContainer ? null : description.findAnySetterAccessor();
-            AnnotatedMember anyGetter = description.findAnyGetter();
-            for (AnnotatedMember any : new AnnotatedMember[] {anySetter, anyGetter}) {
-                if (any != null && any.getMember() != null) {
-                    accessors.add(any.getMember());
-                }
-            }
-            if (anySetter instanceof AnnotatedField field) {
-                backing.add(field.getMember());
-                if (type.isRecord() && field.getDeclaringClass() == type) {
-                    for (RecordComponent component : type.getRecordComponents()) {
-                        if (component.getName().equals(field.getName())) {
-                            backing.add(component.getAccessor());
-                        }
-                    }
-                }
-            }
-            if (anyGetter instanceof AnnotatedField field) {
-                backing.add(field.getMember());
-            } else if (anyGetter instanceof AnnotatedMethod getter) {
-                for (BeanPropertyDefinition property : description.findProperties()) {
-                    AnnotatedMember linkedGetter = property.getGetter();
-                    AnnotatedField linkedField = property.getField();
-                    if (linkedGetter != null
-                            && linkedField != null
-                            && linkedGetter.getMember().equals(getter.getMember())
-                            && getter.getRawType().isAssignableFrom(linkedField.getRawType())) {
-                        backing.add(linkedField.getMember());
-                        // Jackson binds this name straight into the any-getter's storage, through the
-                        // getter, so the name is bound on input even though nothing publishes it.
-                        getterStorageNames.add(property.getName());
-                    }
-                }
-            }
-            return new AnyAccessors(
-                    Set.copyOf(accessors),
-                    Set.copyOf(backing),
-                    Set.copyOf(getterStorageNames),
-                    anySetter == null ? null : anySetterValueType(anySetter));
-        }
-
-        /**
-         * The Java value type an any-setter accepts: the map value type of a field-level any-setter,
-         * or the second parameter of a method-level one.
-         *
-         * <p>A field any-setter's value type is the map content type Jackson resolves for the field,
-         * never a type argument written on the field's declared type: a map subclass such as {@code
-         * StringKeys<V> extends LinkedHashMap<String, V>} or a non-generic {@code IntMap extends
-         * LinkedHashMap<String, Integer>} writes arguments that are not the map's key and value, or none
-         * at all. The resolved type keeps its own type arguments, so a {@code List<Integer>} value stays
-         * a list of integers.
-         *
-         * <p>An any-setter field that is not map-like — an {@code ObjectNode} or {@code JsonNode}
-         * field — accepts every JSON value, which {@code Object} stands for here. A value type the
-         * generator's own type grammar cannot resolve — a type variable or a wildcard — falls back to
-         * the erased type Jackson resolved it to, so a raw or wildcard declaration still yields a
-         * describable type rather than failing generation. Jackson introspects the erased class, so a
-         * field value declared as a class type variable resolves to that variable's bound, as before.
-         *
-         * @param anySetter the any-setter member
-         * @return the declared value type, never {@code null}
-         */
-        private static Type anySetterValueType(AnnotatedMember anySetter) {
-            if (anySetter instanceof AnnotatedMethod method) {
-                Type declared = method.getAnnotated().getGenericParameterTypes()[1];
-                return declared instanceof Class<?> || declared instanceof ParameterizedType
-                        ? declared
-                        : method.getParameterType(1).getRawClass();
-            }
-            if (anySetter instanceof AnnotatedField field) {
-                JavaType fieldType = field.getType();
-                return fieldType.isMapLikeType() ? reflectType(fieldType.getContentType()) : Object.class;
-            }
-            return Object.class;
-        }
-
-        /**
-         * Carries a Jackson-resolved type over to the {@code java.lang.reflect.Type} the schema
-         * library consumes, with every type argument Jackson bound: a classmate {@link ResolvedType}
-         * is itself a {@code Type}, and the library's type context takes one as already resolved.
-         *
-         * @param type the Jackson-resolved type
-         * @return the same type, arguments included
-         */
-        private static Type reflectType(JavaType type) {
-            if (type.isArrayType()) {
-                return VALUE_TYPE_RESOLVER.arrayType(reflectType(type.getContentType()));
-            }
-            List<JavaType> bound = type.getBindings().getTypeParameters();
-            Type[] arguments = new Type[bound.size()];
-            for (int i = 0; i < arguments.length; i++) {
-                arguments[i] = reflectType(bound.get(i));
-            }
-            return VALUE_TYPE_RESOLVER.resolve(type.getRawClass(), arguments);
-        }
-
-        /**
-         * The {@code additionalProperties} resolver for the input direction: the any-setter's value
-         * schema, the empty schema for an unconstrained value type, or {@code null} for "no opinion".
-         *
-         * <p>"No opinion" covers a type with no any-setter, a primitive or array, and a class carrying
-         * {@code @Schema(additionalProperties = FALSE)} — declared or inherited — whose restriction the
-         * Swagger 2 module then publishes as {@code false} unopposed.
-         *
-         * @param scope   the type being described
-         * @param context the generation context, which owns the definition of the value type
-         * @return the extras schema, or {@code null} to leave the decision to the later resolvers
-         */
-        private JsonNode anySetterExtras(TypeScope scope, SchemaGenerationContext context) {
-            Class<?> erased = scope.getType().getErasedType();
-            if (erased.isPrimitive() || erased.isArray()) {
-                return null;
-            }
-            Type valueType = namesByType.get(erased).anySetterValueType();
-            if (valueType == null) {
-                return null;
-            }
-            Schema schema = erased.getAnnotation(Schema.class);
-            if (schema != null && schema.additionalProperties() == Schema.AdditionalPropertiesValue.FALSE) {
-                return null;
-            }
-            ResolvedType resolved = context.getTypeContext().resolve(valueType);
-            if (UNCONSTRAINED_VALUE_TYPES.contains(resolved.getErasedType())) {
-                return context.getGeneratorConfig().createObjectNode();
-            }
-            // The context's own definition reference, not a hand-built fragment: a profile override, a
-            // format, and a shared definition then apply to an extra value exactly as to a property.
-            return context.createDefinitionReference(resolved);
-        }
-
-        /**
-         * The type-attribute override for the input direction: marks a definition whose type carries
-         * aliased properties, for expansion once every reference is resolved, and publishes, beside
-         * described extras, the names Jackson binds on input that the finished definition does not
-         * publish.
-         *
-         * <p>Registered after the annotation modules, so {@code properties} and {@code
-         * additionalProperties} are final by the time this runs. The subtraction is by member and never
-         * by spelling, mirroring the any-accessor exclusion: if any member of an input-bound property
-         * was carried into the document, that property is published — under whatever name — and its
-         * Jackson name is not an extra to reserve. A property with no member at all is the
-         * creator-parameter-only shape, whose identity cannot be recovered; the rule fails open for it
-         * rather than refusing the valid traffic that binds to it.
-         *
-         * <p>The alias plan is written into the definition rather than recorded out of band, because
-         * the {@code ObjectNode} handed to a type-attribute override is not the node that reaches the
-         * finished document — see {@link AliasExpansion#MARKER}.
-         *
-         * @param definition the finished definition of the type
-         * @param scope      the type being described
-         * @param context    the generation context, unused
-         */
-        private void markAliasesAndReservedNames(
-                ObjectNode definition, TypeScope scope, SchemaGenerationContext context) {
-            Class<?> erased = scope.getType().getErasedType();
-            if (erased.isPrimitive() || erased.isArray()) {
-                return;
-            }
-            PropertyNames names = namesByType.get(erased);
-            JsonNode properties = definition.get("properties");
-            if (!names.aliasesByWireName().isEmpty() && properties != null && properties.isObject()) {
-                ObjectNode marker = definition.putObject(AliasExpansion.MARKER);
-                marker.put(AliasExpansion.STRICT, strictSpellings);
-                ObjectNode byWireName = marker.putObject(AliasExpansion.ALIASES);
-                names.aliasesByWireName().forEach((wireName, spellings) -> {
-                    ArrayNode array = byWireName.putArray(wireName);
-                    spellings.forEach(array::add);
-                });
-            }
-            if (names.reservedInputNames().isEmpty()) {
-                return;
-            }
-            JsonNode additional = definition.get("additionalProperties");
-            boolean extrasDescribed = additional != null && !(additional.isBoolean() && !additional.booleanValue());
-            if (!extrasDescribed) {
-                // The object is closed — by a class-level @Schema(additionalProperties = FALSE), or by
-                // a consumer-side hardener later — so every unpublished name is already refused.
-                return;
-            }
-            Set<String> publishedNames = new TreeSet<>();
-            if (properties != null && properties.isObject()) {
-                properties.fieldNames().forEachRemaining(publishedNames::add);
-            }
-            Set<String> reservedNames = new TreeSet<>(names.reservedInputNames());
-            reservedNames.removeAll(publishedNames);
-            Map<Member, String> resolvedMembers = resolvedMembersByType.getOrDefault(erased, Map.of());
-            names.inputBoundMembers().forEach((name, members) -> {
-                if (members.isEmpty()) {
-                    reservedNames.remove(name);
-                    return;
-                }
-                for (Member member : members) {
-                    String carriedAs = resolvedMembers.get(member);
-                    if (carriedAs != null && publishedNames.contains(carriedAs)) {
-                        reservedNames.remove(name);
-                        return;
-                    }
-                }
-            });
-            // Release a property's alias spellings exactly where expansion will publish them:
-            // AliasExpansion copies a spelling's schema from the owning property's own entry in the
-            // finished properties object and does nothing when that entry is absent, so a released
-            // spelling is always a published one and a spelling that stays reserved is never published.
-            // A spelling the collision rule withheld — one that is already a property name of this type —
-            // never reaches this map, so releasing the aliasing property's spellings cannot release it.
-            names.aliasesByWireName().forEach((wireName, spellings) -> {
-                if (publishedNames.contains(wireName)) {
-                    reservedNames.removeAll(spellings);
-                }
-            });
-            if (reservedNames.isEmpty()) {
-                return;
-            }
-            ObjectNode reserved = JsonNodeFactory.instance.objectNode();
-            ArrayNode values = reserved.putObject("not").putArray("enum");
-            reservedNames.forEach(values::add);
-            JsonNode existing = definition.get("propertyNames");
-            if (existing == null) {
-                definition.set("propertyNames", reserved);
-            } else {
-                // Never displace a declared propertyNames: both constraints must hold.
-                ObjectNode combined = JsonNodeFactory.instance.objectNode();
-                combined.putArray("allOf").add(existing).add(reserved);
-                definition.set("propertyNames", combined);
-            }
-        }
-
-        private JsonProperty.Access propertyAccess(BeanPropertyDefinition property) {
-            AnnotationIntrospector introspector = direction == Direction.INPUT
-                    ? mapper.getDeserializationConfig().getAnnotationIntrospector()
-                    : mapper.getSerializationConfig().getAnnotationIntrospector();
+        private static JsonProperty.Access propertyAccess(
+                AnnotationIntrospector introspector, BeanPropertyDefinition property) {
             AnnotatedMember[] members = {
                 property.getGetter(), property.getSetter(), property.getField(), property.getConstructorParameter()
             };
@@ -1279,6 +661,9 @@ public final class AnnotationJsonSchemaGenerator {
             ObjectNode generated;
             try {
                 generated = generator.generateSchema(type);
+                // Applied first, so an alias copy of a property schema is taken after its nullability
+                // is final; a no-op in every mode but the input direction, which alone writes the mark.
+                InputPropertyDescriber.applyNullability(generated);
                 // Refused before expansion strips the key, and in every construction mode, because
                 // expansion strips it whether or not this mode ever writes one.
                 AliasExpansion.requireNoMarkerPropertyName(generated, type);
@@ -1369,6 +754,9 @@ public final class AnnotationJsonSchemaGenerator {
      * @param aborted the failure that ended the generation and is about to propagate
      */
     private void restoreProviderStateAfterAbortedGeneration(Throwable aborted) {
+        if (describer != null) {
+            describer.resetAfterAbortedGeneration();
+        }
         try {
             generator.getConfig().resetAfterSchemaGenerationFinished();
         } catch (Throwable resetFailed) {
@@ -1418,10 +806,10 @@ public final class AnnotationJsonSchemaGenerator {
         static final String MARKER = "x-vertique-alias-plan";
 
         /** The plan member carrying whether the profile's mapper forbids several spellings. */
-        private static final String STRICT = "strict";
+        static final String STRICT = "strict";
 
         /** The plan member carrying each aliased property's spellings, keyed by its own wire name. */
-        private static final String ALIASES = "aliases";
+        static final String ALIASES = "aliases";
 
         /**
          * The keywords whose value is JSON data rather than schema: none of the walks descends into
@@ -1500,8 +888,23 @@ public final class AnnotationJsonSchemaGenerator {
          */
         static boolean fragmentCarriesMarker(JsonNode fragment) {
             boolean[] found = {false};
-            walkSchemaPositions(fragment, false, newVisitedSet(), schema -> found[0] |= schema.has(MARKER));
+            walkSchemaPositions(
+                    fragment,
+                    false,
+                    newVisitedSet(),
+                    schema -> found[0] |= schema.has(MARKER) || schema.has(InputPropertyDescriber.NULLABLE_MARKER));
             return found[0];
+        }
+
+        /**
+         * Visits every object at a schema position of a document, parent before children, never
+         * entering literal data; the entry point the describer's post-generation walk shares.
+         *
+         * @param node    the document
+         * @param visitor the action applied to each schema object
+         */
+        static void walkSchemaPositions(JsonNode node, Consumer<ObjectNode> visitor) {
+            walkSchemaPositions(node, false, newVisitedSet(), visitor);
         }
 
         /**
