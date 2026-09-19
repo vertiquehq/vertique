@@ -75,6 +75,17 @@ SPDX-License-Identifier: EUPL-1.2
             <scope>test</scope>
         </dependency>
         <!--
+          Test scope only: ProfilePropertyDiscoveryTest's builder fixture must be produced by the real
+          Lombok annotation processor (@Builder @Jacksonized @Getter), because what the generator has
+          to discover is exactly what that processor emits. The processor path itself is declared once
+          in the parent's maven-compiler-plugin configuration. Production code never sees Lombok.
+        -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!--
           Test scope only: SchemaFixtureMatrixTest compiles a generated schema through the real
           vertx-json-schema validator to pin its pattern-matching semantics (find vs. match) against
           the anchored strict-decimal pattern (S6, PRD §6.2/§2 finding 12). Production code never

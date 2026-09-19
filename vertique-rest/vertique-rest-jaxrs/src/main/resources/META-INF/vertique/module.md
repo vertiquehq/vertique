@@ -540,6 +540,12 @@ threading the mount's own `MountMeta` (from `JaxRsRouterMount.meta()`) into ever
 a strategy overriding only the 2-arg form is unaffected, while one overriding the 3-arg form (e.g. a
 per-mount OpenAPI contract) receives the registering mount's metadata for every operation.
 
+`OperationSchemaSource.schemasFor` takes the operation's effective `JsonMapperProfile` alongside the
+descriptor — `schemasFor(op, JsonMapperProfile profile)`. `JaxRsRouteRegistrar` resolves that profile
+once per operation at router build and passes it with every call. The one-argument form is removed
+rather than kept as a default overload, so an existing implementor recompiles once against the
+two-argument signature.
+
 ### `RestExceptionMapperCustomizer`
 
 Contributes `Throwable → Throwable` translations to the REST error pipeline.

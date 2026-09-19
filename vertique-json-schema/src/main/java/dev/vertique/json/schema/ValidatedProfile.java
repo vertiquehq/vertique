@@ -61,8 +61,9 @@ final class ValidatedProfile {
      *                  {@link Direction#OUTPUT}
      * @return the validated, direction-filtered view of the profile
      * @throws JsonSchemaGenerationException if the profile's id, mapper, override list, an override,
-     *     or an override member is {@code null}, if a fragment cannot be read back as JSON, or if the
-     *     whole declaration carries a duplicate effective {@code (class, direction)} mapping
+     *     or an override member is {@code null}, if a fragment cannot be read back as JSON, if a
+     *     selected fragment carries the alias-expansion keyword on a schema object, or if the whole
+     *     declaration carries a duplicate effective {@code (class, direction)} mapping
      */
     static ValidatedProfile forDirection(JsonMapperProfile profile, Direction direction) {
         JsonProfileId id = profile.id();
@@ -104,8 +105,8 @@ final class ValidatedProfile {
      * @param effectiveKeys the accumulating set of expanded {@code (class, direction)} keys
      * @param selected      the accumulating direction-filtered fragment map
      * @throws JsonSchemaGenerationException if the override or one of its members is {@code null}, if
-     *     the fragment cannot be read back as JSON, or if it duplicates an effective mapping already
-     *     declared
+     *     the fragment cannot be read back as JSON, if a selected fragment carries the alias-expansion
+     *     keyword at a schema position, or if it duplicates an effective mapping already declared
      */
     private static void validateAndCollect(
             JsonSchemaTypeOverride override,
@@ -140,7 +141,16 @@ final class ValidatedProfile {
         }
 
         if (declaredDirection == Direction.BOTH || declaredDirection == direction) {
-            selected.put(javaType, parse(fragment.canonicalJson(), profileLabel, javaType));
+            JsonNode parsed = parse(fragment.canonicalJson(), profileLabel, javaType);
+            if (AnnotationJsonSchemaGenerator.AliasExpansion.fragmentCarriesMarker(parsed)) {
+                throw Diagnostics.failure(
+                        "cannot construct a JSON Schema generator: " + profileLabel
+                                + " declares a schema type override fragment for " + Diagnostics.typeIdentity(javaType)
+                                + " that carries the keyword \"" + AnnotationJsonSchemaGenerator.AliasExpansion.MARKER
+                                + "\", which is reserved by the generator's alias expansion",
+                        null);
+            }
+            selected.put(javaType, parsed);
         }
     }
 

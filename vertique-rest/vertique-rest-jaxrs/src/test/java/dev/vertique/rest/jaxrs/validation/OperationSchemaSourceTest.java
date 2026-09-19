@@ -6,6 +6,9 @@ package dev.vertique.rest.jaxrs.validation;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
+import dev.vertique.core.json.JsonMapperProfile;
+import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.json.DefaultJsonMapperProfileRegistry;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
 import dev.vertique.rest.jaxrs.routing.ParamLocation;
 import dev.vertique.rest.jaxrs.routing.StubOperationDescriptor;
@@ -13,6 +16,7 @@ import io.vertx.core.json.JsonObject;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -32,15 +36,21 @@ class OperationSchemaSourceTest {
                 .build();
     }
 
+    /** The reserved {@code vertique} floor profile, the effective profile of an unannotated operation. */
+    private static JsonMapperProfile vertiqueProfile() {
+        return new DefaultJsonMapperProfileRegistry(Set.of()).profile(JsonProfileId.of("vertique"));
+    }
+
     @Test
     @DisplayName("OperationSchemaSource seam is satisfiable by a test double returning a hardcoded query-param schema")
     void operationSchemaSourceSeamProvenByTestDouble() {
-        OperationSchemaSource source = op -> OperationSchemas.builder()
+        OperationSchemaSource source = (op, profile) -> OperationSchemas.builder()
                 .parameterSchema(ParamLocation.QUERY, "age", new JsonObject().put("minimum", 18))
                 .build();
 
         JaxRsOperationDescriptor d = emptyOp();
-        Optional<JsonObject> ageSchema = source.schemasFor(d).parameterSchema(ParamLocation.QUERY, "age");
+        Optional<JsonObject> ageSchema =
+                source.schemasFor(d, vertiqueProfile()).parameterSchema(ParamLocation.QUERY, "age");
 
         assertEquals(18, ageSchema.orElseThrow().getInteger("minimum"));
     }

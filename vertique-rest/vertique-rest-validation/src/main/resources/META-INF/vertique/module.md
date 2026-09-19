@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Beta
 > **Package:** `dev.vertique.rest.validation`
 > **Artifact:** `vertique-rest-validation`
-> **Depends on:** rest-jaxrs, json-schema
+> **Depends on:** rest-jaxrs, rest-core, json-schema, core
 
 Default annotation-driven request-validation strategy for the REST framework. Synthesizes JSON Schemas from JAX-RS and Bean Validation annotations at startup and validates incoming requests against those schemas using `vertx-json-schema`. This is the `web-validation` strategy — the default path that carries no dependency on the preview `vertx-openapi` artifact. The opt-in `openapi-contract` strategy, which validates against the generated `openapi.json`, lives in the sibling `vertique-rest-openapi-validation` module.
 
@@ -16,7 +16,7 @@ Default annotation-driven request-validation strategy for the REST framework. Sy
 
 ## When To Use It
 
-`vertique-rest-validation` is on the default request path; most applications install it implicitly by not specifying `jaxrs.validationStrategy`. Use `vertique-rest-openapi-validation` instead only when spec-strict contract validation is required and the `vertx-openapi` preview dependency is acceptable.
+`vertique-rest-validation` is on the default request path; most applications install it implicitly by not specifying `jaxrs.validationStrategy`. Its body schemas are synthesized through each route's effective JSON profile, so a profile-specific wire shape — a `vertique-strict` `BigDecimal` carried as a decimal string, for instance — validates correctly here and is no longer a reason to change strategy. Use `vertique-rest-openapi-validation` instead when the generated `openapi.json` must itself be the validating authority, so the published contract document and the runtime check cannot diverge, and the `vertx-openapi` preview dependency is acceptable.
 
 ---
 
@@ -40,7 +40,9 @@ validation error; a synchronous throw, failed future, null future, or null resul
 infrastructure error. The built-in magic-byte verifier is opt-in through
 `MagicBytesVerifierModule`.
 
-**Schema synthesis** happens at startup: `AnnotationSchemaSource` reads JAX-RS (`@PathParam`, `@QueryParam`, `@NotNull`, `@Pattern`, `@Size`, etc.) and Bean Validation annotations from each resource method and emits JSON Schema fragments. Body-type generation delegates to `dev.vertique:vertique-json-schema`'s `AnnotationJsonSchemaGenerator` in its `withVictoolsDefaults()` mode — a behavior-preserving translation of Java type and constraint annotations into JSON Schema 2020-12 vocabulary, with object keys canonically ordered. Loose-parameter schema assembly remains owned by this module: the generator introspects types and fields, not individual method parameters. A body type the generator cannot represent fails startup with a bounded `JsonSchemaGenerationException`; request-validation outcomes and error categories are unaffected. Each operation's schemas are synthesized once at registration — no per-request reflection. There is deliberately no per-operationId schema cache: duplicate-operationId is enforced only within a single mount, so two mounts may legitimately reuse an operationId for different operations, and an operationId-keyed cache would hand the second mount the first mount's schema.
+**Schema synthesis** happens at router construction: `AnnotationSchemaSource` reads JAX-RS (`@PathParam`, `@QueryParam`, `@NotNull`, `@Pattern`, `@Size`, etc.) and Bean Validation annotations from each resource method and emits JSON Schema fragments. Body-type generation is **always profiled**: every route's body schema is produced by `dev.vertique:vertique-json-schema`'s `AnnotationJsonSchemaGenerator.forInputProfile(profile)` for the effective JSON profile the registrar resolved for that operation, so the synthesized document describes the wire shape that profile's mapper actually parses and the profile's input type overrides land in the schema the gate enforces. There is no profile-agnostic generation path and no fallback to a default generator. This module holds **no profile-selection rule**: the effective profile arrives as the `schemasFor(op, profile)` argument, and nothing here reads a profile id, a mapper identity, or configuration to choose one. Loose-parameter schema assembly remains owned by this module: the generator introspects types and fields, not individual method parameters, and loose parameters are not profiled. A body the profile's generator cannot represent fails router construction with a `RestConfigurationException` naming the operation id and carrying the generator's failure as cause — the mount is never installed and none of its routes serve traffic; request-validation outcomes and error categories for bodies that do generate are unaffected. Each operation's schemas are synthesized once at registration — no per-request reflection. There is deliberately no per-operationId schema cache: duplicate-operationId is enforced only within a single mount, so two mounts may legitimately reuse an operationId for different operations, and an operationId-keyed cache would hand the second mount the first mount's schema.
+
+Under `web-validation` the body document's regular expressions are compiled at router construction too: `WebValidationStrategy.gateFor` walks the operation's body document once, beside its existing validator compilation, and compiles every string-valued member keyed `pattern` and every key of every object keyed `patternProperties`, at any depth and with no position allowlist. An uncompilable expression therefore fails the mount instead of failing per request: the failure is a `RestConfigurationException` naming the operation id, the JSON pointer, and the regex engine's description and index, with the complete pattern text and the `PatternSyntaxException` itself absent from the message, cause, and suppressed chains. A `patternProperties` key is pattern text however well it compiles, so the pointer never names one: a position inside such an object is reported as the key's bracketed ordinal in document order, `…/patternProperties/[key-0]/pattern`, whether the failing expression is the key itself or something beneath it. The assembled message is bounded to 512 UTF-16 code units by eliding the engine's description alone, never splitting a surrogate pair; when the identifying part — operation id, pointer, and index — reaches that bound by itself, it is reported in full and the description is dropped entirely, because cutting the identity would lose the failing position. A property literally named `pattern` is an object under `properties` and is never compiled. The walk never enters literal data — the value of `const`, `enum`, `default`, `examples`, or `example` — so a `pattern` member inside such a value is data and is not compiled; a property whose own name is one of those keywords is still a schema and is walked. A non-regex string keyed `pattern` anywhere else, including inside an annotation keyword a profile fragment carries, is a spurious startup failure, reported with its JSON pointer. Only `web-validation` performs this walk; loose-parameter patterns keep their pre-existing per-request behavior.
 
 **Strict boolean coercion.** The `web-validation` gate enforces that boolean parameters accept only the literal strings `"true"` or `"false"`. Values such as `"1"`, `"yes"`, `"on"`, or `""` are rejected with a 400 type-violation error. This prevents silent coercion ambiguity for boolean query/path/header parameters.
 
@@ -136,33 +138,96 @@ Built-in strategy IDs:
 
 ### OperationSchemaSource
 
-Optional seam that produces the validation schemas for a single REST operation. The `WebValidationStrategy` calls the registered `OperationSchemaSource` once per operation at mount time and closes over the returned schemas in the per-route gate handler — no operationId cache is involved (two mounts may legitimately reuse an operationId for different operations, so an operationId-keyed cache would hand the second mount the first mount's schema).
+Optional seam that produces the validation schemas for a single REST operation. `JaxRsRouteRegistrar` — not the strategy — calls the registered `OperationSchemaSource` once per operation at router build, for **every** operation whatever `jaxrs.validationStrategy` selects, and passes the result to the selected strategy's `gateFor`. `web-validation` then closes over those schemas in its per-route gate handler; a strategy that ignores them, `none` among them, does not stop them being synthesized, so wherever a source is bound a synthesis failure fails the mount under any strategy. No operationId cache is involved (two mounts may legitimately reuse an operationId for different operations, so an operationId-keyed cache would hand the second mount the first mount's schema).
 
 ```java
 public interface OperationSchemaSource {
     /**
-     * Produces the parameter and body schemas for the given operation.
+     * Produces the parameter and body schemas for the given operation under the effective JSON
+     * profile the registrar resolved for it — the profile whose mapper parses the operation's body.
      *
-     * @param op the JAX-RS operation descriptor whose parameters and body are introspected
+     * @param op      the JAX-RS operation descriptor whose parameters and body are introspected
+     * @param profile the effective, registry-resolved profile for this operation; never {@code null}
      * @return the operation's schemas; never {@code null}
      */
-    OperationSchemas schemasFor(JaxRsOperationDescriptor op);
+    OperationSchemas schemasFor(JaxRsOperationDescriptor op, JsonMapperProfile profile);
 }
 ```
 
-Contribute a custom schema source via `@Provides @IntoSet OperationSchemaSource`.
+`RestModule` declares this seam with `@BindsOptionalOf OperationSchemaSource`: it is a single optional binding, **not** a multibinding. Contribute a custom source with a plain `@Provides` or `@Binds` of `OperationSchemaSource` — never `@IntoSet`, which satisfies nothing here — and do not include `RestValidationModule` in the same component, whose `@Binds` of `AnnotationSchemaSource` would then be a duplicate binding and fail the Dagger build. See [OperationSchemaSource (binding)](#operationschemasource-binding) below.
 
 ### AnnotationSchemaSource
 
-Default `OperationSchemaSource` that synthesizes JSON Schema from JAX-RS and Bean Validation annotations. Body types are handed to the shared `AnnotationJsonSchemaGenerator` (`dev.vertique:vertique-json-schema`, `withVictoolsDefaults()` mode), which translates Java types and constraint annotations into canonically ordered JSON Schema 2020-12. Parameter schemas are assembled by this class from each parameter's declared type, collection component type, and constraint annotations.
+Default `OperationSchemaSource` that synthesizes JSON Schema from JAX-RS and Bean Validation annotations. Body types are handed to the shared `AnnotationJsonSchemaGenerator` (`dev.vertique:vertique-json-schema`) built with `forInputProfile(profile)` for the effective profile the registrar resolved for the operation, which translates Java types, profile input overrides, and constraint annotations into canonically ordered JSON Schema 2020-12. Every body schema is generated this way; no route uses a profile-agnostic generator. Parameter schemas are assembled by this class from each parameter's declared type, collection component type, and constraint annotations, and are not profiled.
 
-The protected `generateBodySchema(Type)` seam is overridable: its default implementation parses the generator's canonical document into a fresh `JsonNode`, and a subclass may substitute its own node.
+The protected `generateBodySchema(Type, JsonMapperProfile)` seam is the only generation path and is invoked exactly once per body synthesis; its default implementation parses the generator's canonical document into a fresh `JsonNode`, and a subclass may substitute its own node. The one-argument `generateBodySchema(Type)` seam no longer exists. **This seam is INTERNAL**: it is a substitution point for framework and test code — counting or replacing generation invocations — and not an application contract. It sits outside this module's compatibility promise and may change or be removed in any release; application code should contribute an `OperationSchemaSource` instead of overriding it.
+
+**One generator per profile instance.** The source builds at most one `AnnotationJsonSchemaGenerator` per distinct `JsonMapperProfile` instance, keyed by reference identity, on first use, and retains it for the source's lifetime — at most one even when parallel router builds call `schemasFor` concurrently. Retention is bounded by the number of distinct profile instances the profile registry hands out; the built-in registry and profiles contributed through `RestTestContributions.jsonMapperProfiles` hand out stable instances, so that bound is the profile count. A registry implementation that returns a **fresh profile instance per call** defeats the bound and grows the retained set without limit; that is a misconfiguration, not a supported mode. No generated schema is cached by operation id, Java type, or mapper identity.
+
+**A schema-implementation redirect on an overridden type fails router construction.** `@Schema(implementation = ...)` on a property whose declared type graph carries an effective override for the operation's profile is rejected during generation, so the mount fails to build with a `RestConfigurationException` naming the operation and the property, and is never installed. The redirect still applies exactly as before on a route whose effective profile declares no override for that type. The trigger is configuration-only: `json.jsonProfile: vertique-strict`, or a `@JsonProfile` selection of a profile carrying that override, on an application whose DTOs still carry the previously recommended `@Schema(implementation = String.class)` workaround on a `BigDecimal` property. Remove the redirect — the profile itself supplies the string form, with the decimal grammar and length bound the annotation never carried. Because the schema source runs for every operation whatever validation strategy is selected, this failure is not confined to `web-validation`.
 
 **What it covers:**
 - `@PathParam`, `@QueryParam`, `@HeaderParam` — type coercion + nullability
 - `@NotNull`, `@Size`, `@Min`, `@Max`, `@Pattern`, `@Email` on parameters and DTO fields
 - `@Consumes` → `content-type` enforcement via the 415 gate (separate from JSON Schema)
 - `List<T>`, `Optional<T>`, primitive types, records, and nested DTOs
+
+**Which body property shapes are described, and therefore validated.** A body property is described
+when Jackson reports it deserializable **or** it has a backing field, and its access is not
+read-only. So a private field reachable only through a getter, a field-backed getter-only
+`List<String>` or `Map<String, String>`, and a DTO holding such a shape as a property are all
+described with their types, formats, and item constraints, and the gate rejects a value the binder
+would otherwise coerce at any of those positions — a number posted for a `LocalDate`, a numeric
+string for an `Integer`, numeric items for a `List<String>`. A Lombok `@Builder @Jacksonized` type
+is filled through its builder, so it is described only when it also carries `@Getter`; without one
+its schema stays `{"type":"object"}` and nothing inside it is validated.
+
+A `@JsonAnySetter` or `@JsonAnyGetter` backing store is never described as a named property, because
+the keys it collects are extra keys rather than members of the body's property set. It is excluded
+by member, never by a name an accessor implies, so a real constrained property is never hidden
+because an any-setter's name happens to imply it. Values *inside* a described `Map` property are not
+themselves described; constrain them with Bean Validation.
+
+**How a `@JsonAnySetter` body is validated.** The extra keys such a body accepts *are* described, by
+the any-setter's value type, so the gate validates them: a body posting `{"x": 5}` to a
+`Map<String, String>` any-setter is rejected with 400 where the binder would have stored the string
+`"5"`, and `19000` posted to a `Map<String, LocalDate>` any-setter is rejected where the binder would
+have bound `2022-01-08`. Valid extras still reach the resource unchanged. An unconstrained value type
+(`Object`, `JsonNode`) accepts every JSON value, and a body type carrying a class-level
+`@Schema(additionalProperties = FALSE)` stays closed.
+
+Beside those extras the schema also reserves every name Jackson binds on input that the request
+schema does not publish, so such a name is rejected rather than routed into the member it names.
+Without it, posting `{"role": "admin"}` or `{"id": "forged"}` to an any-setter body would reach the
+binder — the read-only and ignored properties are absent from the schema, so nothing else refuses
+them — and `{"extras": {"role": "admin"}}` would fill a method `@JsonAnyGetter`'s storage map through
+its getter. The reserved set covers ignored and read-only names, a class-level ignoral, a method
+any-getter's storage field, and a name bound only through a setter, an accessor pair, a
+`@Schema(hidden = true)` field, or a `transient` field. A `@JsonCreator` parameter renamed away from
+its field is the documented exception: it carries no member to identify it by, so it is not reserved
+and keeps binding as before — constrain it with Bean Validation.
+
+A property marked `@JsonIgnore` or read-only is absent from the request schema, so on an ordinary
+body sending it is not a schema error; a write-only property is described and validated. On a body
+whose extra keys are described, such a name is reserved and its presence *is* a schema error.
+
+**How a `@JsonAlias` spelling is validated.** Every spelling of a described body property is listed
+in the request schema with a copy of that property's own schema, so the gate applies the same
+constraints to it: `{"qty": 999}` is rejected with 400 against a `@Max(10) @JsonAlias("qty")
+quantity`, and an unknown constant under an enum property's alias is rejected where the binder would
+have bound the `@JsonEnumDefaultValue` constant. A required aliased property is satisfied by any one
+of its spellings, so `{"qty": 5}` alone is accepted, and a body carrying none of them is still
+rejected. Whether one body may carry several spellings at once follows the route's effective profile
+and nothing else: a profile whose mapper enables strict duplicate detection — `vertique-strict`
+among the built-ins — rejects `{"quantity": 5, "qty": 5}` with 400, while `system` and `vertique`
+accept it. That rule is the gate's alone; every profile's binder accepts both spellings, so a route
+on the `none` strategy is unaffected.
+
+A spelling more than one property of the body type claims is described nowhere, because the
+generator cannot predict which property Jackson binds it to; on a body whose extra keys are
+described it is reserved, and elsewhere it reaches the binder unvalidated — constrain that shape
+with Bean Validation. A spelling of a property the request schema does not publish, such as a
+`@Schema(hidden = true)` field's alias, is likewise not described and stays a reserved name.
 
 Each operation's schemas are synthesized once at registration and closed over by the per-route gate handler, so no schema is compiled on the request hot path. There is no per-operationId cache (see Core Concepts) — distinct operations sharing an operationId across mounts get distinct schemas.
 
@@ -184,6 +249,44 @@ Aggregate/fail-fast mode applies to stages 1–3. Verifier execution is always s
 fail-fast. Each physical `FileUpload` instance is checked and verified at most once even when more
 than one resource parameter exposes it. Same-name duplicate uploads are distinct and use error
 paths `name`, `name[1]`, and so on.
+
+**A schema failure is always a rejection.** A validation call — the body, and each declared
+parameter independently — whose result the validator does not report valid is rejected with 400,
+whatever keywords the reported errors carry. Each reported error normally becomes one error detail
+naming the violated keyword as `type` and its expected value as `args` — the declared number or
+pattern, also when the keyword sits inside an `allOf`, `anyOf`, or `oneOf` branch, a `prefixItems`
+position, behind a local `$ref`, or under an escaped property name, so a `maxLength` there reads
+`{"maxLength": 3}` and "must have a maximum length of 3". A `type` detail names the declared type the
+same way: `{"type": "string"}` and "must be of type: string", or for a declared list such as
+`["string", "null"]` the JSON array `{"type": ["string", "null"]}` and "must be of type: string or
+null". A declared value that cannot be reached — behind a remote `$ref` or a `$dynamicRef` — is
+reported as `{"<keyword>": true}`; for `type` the message then reads "must be of the required
+type". Structural keywords (`oneOf`, `anyOf`, `not`, `additionalProperties`) describe how the
+schema was traversed rather than a constraint the client can act on, so they produce no such detail. When every error a call reported is
+structural, that call instead contributes exactly one value-free detail: it names the failing
+instance location as its `path` and carries no `type` and no `args`. That location is cut back to the
+part the schema declares, so it names no text the client chose: an undeclared property under a closed
+object is reported at `#/<the client's own key>`, and the detail names the containing location `#`
+instead, while a failure under a declared property keeps that property's location. Its message is a
+fixed literal, so no submitted value and no raw validator message reaches the response through it.
+A concrete detail's `path` is cut back by the same rule: a wrong-typed value under an undeclared key
+— an extra an any-setter type describes, say — is reported at `#/<the client's own key>`, and its
+detail names the containing location instead, so the key never reaches the response. The location
+is kept segment by segment, up to the first segment the schema does not declare: a segment is kept
+when it is a name a `properties` entry spells, or an array index a `prefixItems` position or an
+`items` schema covers, at that point or in any `allOf`, `anyOf`, or `oneOf` branch there, following
+local `$ref`s. A field inside a nullable nested object, published as `anyOf: [null, $ref]`, is
+therefore named, and so is a tuple index. A declared name is kept in the spelling the validator
+reports, RFC 6901-escaped and percent-encoded (`a b` as `a%20b`, `a/b` as `a~1b`). A key only
+`additionalProperties` or `patternProperties` admits is never kept, and neither is anything under a
+reference or composition that cannot be resolved within a fixed bound. An all-digit segment is kept
+as an index only when it is a plausible one — at most ten digits, no leading zero other than `0`
+itself, inside the tuple's length or under an `items` schema other than `false` — so a digit-only key
+a client sends for the open-object branch of a map-or-list composition is cut like any other key. The rule counts per call, so a body failure is
+never masked by a detail produced for a parameter, and a call that already produced a concrete detail
+gains nothing extra. A body the validator reports valid still produces no detail and no rejection.
+This is what makes a schema rule published as `oneOf`, `anyOf`, or `not` branches — the strict
+one-spelling alias rule above among them — enforceable at the gate.
 
 ---
 
@@ -213,13 +316,31 @@ Set `jaxrs.validationStrategy = "my-custom"` in `config/application.json` to act
 
 ### OperationSchemaSource (binding)
 
-`RestValidationModule` binds `AnnotationSchemaSource` as the operation schema source. A custom
-validation assembly can bind another implementation instead:
+`RestModule` declares `@BindsOptionalOf OperationSchemaSource`, so the component holds **at most one**
+schema source. This is not a `Set` multibinding: `@IntoSet` contributes to nothing the framework
+reads. `RestValidationModule` supplies the one binding, `AnnotationSchemaSource`. A custom validation
+assembly therefore replaces it — bind your own implementation and leave `RestValidationModule` out of
+the component, because two bindings of the same type fail the Dagger build:
 
 ```java
 @Provides
 static OperationSchemaSource openApiEnrichedSource(OpenApiSchemaStore store) {
-    return descriptor -> store.schemasFor(descriptor.operationId());
+    return (descriptor, profile) -> store.schemasFor(descriptor.operationId());
+}
+```
+
+This example ignores the `profile` parameter. A source that ignores the profile is guaranteeing
+that its stored schemas already match that profile's wire shape; the framework cannot check this.
+
+Dropping `RestValidationModule` also drops its `web-validation` strategy contribution, so the
+default `jaxrs.validationStrategy` would match no registered strategy and `RequestValidationStrategySelector`
+would fail the mount. Either select a strategy you contribute yourself, or re-contribute the
+built-in one alongside your source:
+
+```java
+@Provides @IntoSet
+static RequestValidationStrategy webValidation(WebValidationStrategy strategy) {
+    return strategy;
 }
 ```
 
@@ -270,7 +391,12 @@ validation; unmapped declared types are accepted without I/O.
 ## Dependencies
 
 - `dev.vertique:vertique-rest-jaxrs`
+- `dev.vertique:vertique-rest-core` — the `RestConfigurationException` the schema-synthesis and regex-precompilation failures are reported as
 - `dev.vertique:vertique-json-schema`
+- `dev.vertique:vertique-core`
 - `io.vertx:vertx-json-schema`
 - `com.google.dagger:dagger`
 - `jakarta.inject:jakarta.inject-api`
+- `com.fasterxml.jackson.core:jackson-databind`
+- `jakarta.validation:jakarta.validation-api`
+- `io.swagger.core.v3:swagger-annotations-jakarta`

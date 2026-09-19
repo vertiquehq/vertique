@@ -59,6 +59,160 @@ Validation module with `NOT_NULLABLE_FIELD_IS_REQUIRED` and `INCLUDE_PATTERN_EXP
 Swagger 2 module — so only the mapper source and the selected profile overrides differ between
 modes.
 
+### Which properties the input direction describes
+
+`forInputProfile(JsonMapperProfile)` describes a walked property when Jackson reports it
+deserializable **or** it has a backing field, and its access is not `READ_ONLY`. A backing field
+counts because Jackson populates a private field through reflection wherever the mapper infers
+property mutators — Jackson's default, and the setting every built-in profile leaves alone — so the
+commonest DTO shape of all, a private field reachable only through a getter, is described with its
+type and format. So are a field-backed getter-only `List<String>` or `Map<String, String>` and a
+type holding such a shape as a property.
+
+A builder type is filled through its builder rather than through the field, so it is described only
+when its properties are also visible to introspection: a Lombok `@Builder @Jacksonized` type needs
+`@Getter`. Without it the document stays `{"type":"object"}` and nothing inside it is validated.
+
+The backing storage of a `@JsonAnySetter` or `@JsonAnyGetter` is never described as a named
+property, because the keys those accessors collect are extra keys rather than members of the
+object's property set. The storage is identified **by member alone** — a field annotated
+`@JsonAnySetter`, the record component whose field that is, a field annotated `@JsonAnyGetter`, and
+the field a method `@JsonAnyGetter` returns — so a real property is never hidden merely because its
+name matches one an accessor method implies: a constrained `attribute` property beside an any-setter
+`setAttribute(String, Object)` stays described with its constraint. For a type Jackson deserializes
+as map-like or collection-like, the any-setter is ignored, as Jackson itself ignores it.
+
+A property marked `@JsonIgnore` or read-only stays absent from the input document, and a write-only
+property is described with `writeOnly: true`. This rule applies to the input direction only:
+`forOutputProfile(JsonMapperProfile)` describes a property Jackson reports serializable whose access
+is not `WRITE_ONLY`, unchanged.
+
+This rule decides which walked properties are *described*; it does not make every key the binder
+accepts a described property. A key the schema does not describe is left to the binder and to Bean
+Validation.
+
+### How an any-setter's extra keys are described
+
+A type with a `@JsonAnySetter` describes its extra keys through `additionalProperties`, typed by the
+any-setter's value type: the map value type of a field-level any-setter, or the second parameter of
+a method-level one. A field's map value type is the content type Jackson resolves for the field, so a
+map subclass declares it correctly however its own type parameters are written — a
+`StringKeys<Integer>` over `LinkedHashMap<String, V>`, a `Reversed<Integer, String>` over
+`LinkedHashMap<K, V>`, and a non-generic `IntMap extends LinkedHashMap<String, Integer>` all describe
+integer extras — and a generic value type such as `List<Integer>` keeps its arguments. The value type is published as the generator's own definition of that type, so a
+profile override, a format, and a shared definition apply to an extra value exactly as they do to a
+named property — a `Map<String, LocalDate>` any-setter's extras carry `format: date`, and under
+`vertique-strict` a `Map<String, BigDecimal>` any-setter's extras carry that profile's decimal
+fragment.
+
+An unconstrained value type — `Object`, `JsonNode`, `TreeNode`, or a wildcard or raw form resolving
+to one — is described as the empty schema `{}`, which accepts every JSON value. A class-level
+`@Schema(additionalProperties = FALSE)`, declared or inherited, keeps the object closed and is never
+overridden. A class-level `@Schema(additionalProperties = TRUE)` says only that extras are allowed,
+which the typed description already says more precisely, so the description wins. A type Jackson
+deserializes as map-like or collection-like is described exactly as if it declared no any-setter:
+Jackson never routes a key to that any-setter, so describing it would reject legal map entries.
+
+### Reserved names beside described extras
+
+Where extra keys are described, the document also carries
+
+```json
+"propertyNames": {"not": {"enum": ["id", "role"]}}
+```
+
+which lists one reserved set, computed as a difference rather than as a list of categories: every
+name Jackson binds on input for the type, minus every name the document publishes under
+`properties`, minus every name whose Jackson property definition carries no member at all. Without
+it, a name the document never published would be accepted as an ordinary extra key and bound
+straight into the member it names. Its members are therefore a consequence of the rule rather than
+separate cases:
+
+- a name marked `@JsonIgnore`, and a name a class-level `@JsonIgnoreProperties` ignores;
+- a name whose access is read-only, or that is otherwise invisible on input;
+- the storage field a method `@JsonAnyGetter` returns, which Jackson fills through that getter;
+- a name bound only through a setter with no field, through an accessor pair over a differently
+  named field, through a `@Schema(hidden = true)` field, or through a `transient` field;
+- a `@JsonAlias` spelling more than one property claims, and a spelling of a property the document
+  does not publish under its own wire name — neither is published, so neither is subtracted.
+
+A field carrying both `@JsonAnyGetter` and `@JsonAnySetter` reserves no storage name, because
+Jackson stores a key named after it as an ordinary entry of the map. The published-name subtraction
+is by member and never by spelling, so a property the document publishes under some other name is
+not reserved. The memberless subtraction fails open for the one shape whose member identity cannot
+be recovered — a `@JsonCreator` parameter renamed away from the field it populates — which therefore
+keeps accepting the traffic it already accepted; constrain that shape with Bean Validation. An
+application-declared `propertyNames` is never displaced: the reserved set is combined with it under
+`allOf`.
+
+### How an alias spelling is described
+
+Every `@JsonAlias` spelling of a visible input property that does not back an any-accessor is listed
+under `properties` with a copy of the schema that property is published with, so the same
+constraints apply under either spelling. Without it an alias reaches a gate undescribed: `{"qty":
+999}` binds a property declared `@Max(10)`, and an unknown enum value under its alias binds the
+default constant.
+
+```json
+"properties": {
+  "quantity": {"maximum": 10, "type": "integer"},
+  "qty":      {"maximum": 10, "type": "integer"}
+}
+```
+
+A spelling is listed exactly where its property's own wire name is published, because listing copies
+that entry: a spelling of a property the document never publishes — a `@Schema(hidden = true)`
+field, an accessor pair with no same-named field, a property published under some other name — is
+listed nowhere and stays a reserved name. A spelling that is already another property's name is not
+listed either — whether or not the document publishes that property, because the type still binds
+that name — and neither is a spelling more than one property of the type claims: the generator
+cannot predict which claimant Jackson binds such a key to, so publishing it would attach one
+claimant's schema to another claimant's value. A contested spelling is therefore published nowhere,
+named in no rule, and reserved where extras are described; constrain that shape with Bean
+Validation.
+
+A required aliased property leaves the top-level `required` list, because one rule per aliased
+property states which spellings may appear instead. Which rule depends on the selected profile's own
+mapper, and on nothing else: a profile whose mapper enables
+`JsonParser.Feature.STRICT_DUPLICATE_DETECTION` — of the built-ins, `vertique-strict` alone — gets
+the strict form.
+
+| Profile | Required property | Optional property |
+| --- | --- | --- |
+| Lenient (`system`, `vertique`) | at least one spelling: `anyOf` of `{"required": [spelling]}` | no rule |
+| Strict (`vertique-strict`) | exactly one spelling: `oneOf` of the same branches | at most one: the same branches plus `{"not": {"anyOf": [...]}}` |
+
+```json
+"oneOf": [
+  {"required": ["quantity"]},
+  {"required": ["qty"]},
+  {"not": {"anyOf": [{"required": ["quantity"]}, {"required": ["qty"]}]}}
+]
+```
+
+The rules are appended to one `allOf`, or stand alone when there is one rule and its keyword is
+free, and their branches carry only `required` or `not`, never `properties`, so a consumer that
+closes an object carrying `properties` does not close a branch. The rule is the schema's alone: a
+Jackson binder accepts several spellings of one property under every profile, so the strict form is
+stricter than the binder rather than a description of it.
+
+Listing runs over the finished document, after generation, so every reference a copied schema
+carries is already resolved. The plan is carried in the document under one generator-private
+keyword, `x-vertique-alias-plan`, which that pass removes; a type publishing a property under that
+exact wire name — including one listing would publish under it, so an alias spelling equal to the
+keyword is refused exactly as a property named for it is — is therefore refused at generation with a
+bounded diagnostic naming the type and the name, rather than being published stripped of its
+constraints. Rename such a property, or such a spelling, on the wire — for example with
+`@JsonProperty` or `@JsonAlias`.
+
+A profile override fragment that carries the keyword as a member of a schema object, at any depth,
+is refused when the generator is constructed for a direction the fragment applies to: expansion would
+otherwise strip it without a trace, or execute it as a plan against the enclosing schema. Literal
+data is exempt. The listing pass and the refusal never enter the value of `const`, `enum`,
+`default`, `examples`, or `example`, so a fragment `{"const": {"x-vertique-alias-plan": "mandatory",
+"value": "ok"}}` is published exactly as written and still accepts only that object. A property whose
+own name is one of those keywords is a schema like any other and is still expanded.
+
 ### Canonical output
 
 `generateCanonical(Type)` returns a fresh, compact JSON document with every object member whose
@@ -128,7 +282,7 @@ type.
 
 ### Constraints and common mistakes
 
-Two annotation combinations fail generation rather than producing a schema that quietly
+Three annotation combinations fail generation rather than producing a schema that quietly
 misdescribes the wire:
 
 - **An `implementation = ...` redirect on a property whose declared type graph carries a profile
@@ -172,6 +326,18 @@ misdescribes the wire:
   followed only when its target is itself a schema position (see below): `#/$defs/Money` and
   `#/properties/amount` are conjoined, while a pointer at data such as `#/default`, or at the
   container object under `#/$defs/Money/properties`, contributes nothing.
+- **A `@Schema(name = ...)` rename that publishes two members under one name.** In the
+  profile-aware modes, a walked field that Jackson does not attach to any property of its own, and
+  that is renamed onto a property backed by another field the schema library walks, would publish
+  both fields under one name, the renamed one with the other's input or output visibility and wire
+  name. Generation instead fails with a bounded `JsonSchemaGenerationException` naming the type, the
+  renamed member, and the wire name of the property it collides with. Rename one of the two
+  properties, or name them apart on the wire with `@JsonProperty`. A rename onto a property no other
+  walked field backs is unaffected and keeps its schema: the Lombok-style `@Schema(name = "active")
+  boolean isActive` behind `isActive()` and `setActive(...)`, or an `mName` field behind
+  `getName()` and `setName(...)`, publishes `active` or `name` as before. So is a rename to the
+  member's own property name, or to a name no property carries. Where a field name and its accessor
+  property differ, `@JsonProperty("active")` on the field joins the two for Jackson as well.
 
 `@Schema(type = ...)` has no effect in this module; `implementation` is the supported way for a
 property to contribute a type shape.

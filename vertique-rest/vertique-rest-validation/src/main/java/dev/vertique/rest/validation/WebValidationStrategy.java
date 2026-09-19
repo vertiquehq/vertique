@@ -26,6 +26,7 @@ import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.MultiMap;
 import io.vertx.core.http.Cookie;
+import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.FileUpload;
 import io.vertx.ext.web.RoutingContext;
@@ -37,6 +38,11 @@ import io.vertx.json.schema.OutputUnit;
 import io.vertx.json.schema.Validator;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
+import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -45,6 +51,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
+import java.util.stream.Collectors;
 
 /**
  * The {@code web-validation} {@link RequestValidationStrategy}: validates each request body and
@@ -55,6 +64,17 @@ import java.util.Set;
  * <p><strong>Validators are built once, at {@code gateFor} time (startup).</strong> For NFR-002
  * efficiency the body validator and each per-parameter validator are compiled when the gate is
  * produced and closed over by the returned handler, so no schema is compiled on the request hot path.
+ *
+ * <p><strong>Regular expressions are compiled once, at the same point.</strong> Beside the body
+ * validator's compilation, {@link #gateFor(JaxRsOperationDescriptor, OperationSchemas)} walks the
+ * whole body document and compiles every string-valued member keyed {@code pattern} and every key of
+ * every object keyed {@code patternProperties}, at any depth and at any position. A pattern the regex
+ * engine rejects fails router construction with a {@link RestConfigurationException} naming the
+ * operation, the JSON pointer, and the engine's own description and index — never the pattern text
+ * itself, and never the engine's exception, which quotes that text. The pointer withholds a
+ * {@code patternProperties} key whether or not that key is the failing one, naming its ordinal
+ * instead, because a key is a regular expression however well it compiles. A schema this strategy
+ * never gates keeps its unparseable pattern: the check lives here and nowhere else.
  *
  * <p><strong>Body</strong> validation uses the shared per-request {@link BoundRequest}: the gate
  * obtains it from the routing context (binding and stashing one if absent) so the gate and downstream
@@ -114,6 +134,70 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
     /** The selection id for the web-validation strategy. */
     public static final String ID = "web-validation";
 
+    /** The JSON Schema keyword whose string value is a regular expression. */
+    private static final String PATTERN_KEYWORD = "pattern";
+
+    /** The JSON Schema keyword whose object keys are regular expressions. */
+    private static final String PATTERN_PROPERTIES_KEYWORD = "patternProperties";
+
+    /**
+     * The keywords whose value is JSON data rather than schema. The regex walk never descends into
+     * one, so a {@code pattern} member inside a {@code const} or {@code enum} value is not compiled.
+     * An exclusion rather than an allowlist of subschema keywords, so the walk still reaches every
+     * schema position, including an annotation keyword a profile fragment carries.
+     */
+    private static final Set<String> LITERAL_KEYWORDS = Set.of("const", "enum", "default", "examples", "example");
+
+    /**
+     * The keywords whose value is an object keyed by names rather than by keywords: each member is a
+     * schema whatever it is called, so a property named {@code const} is still walked.
+     */
+    private static final Set<String> NAMED_MEMBER_KEYWORDS =
+            Set.of("properties", PATTERN_PROPERTIES_KEYWORD, "$defs", "dependentSchemas");
+
+    /** FR-JSON-075's message bound, applied at this module's boundary, in UTF-16 code units. */
+    private static final int MAX_MESSAGE_LENGTH = 512;
+
+    /** Marker appended in place of the elided tail of a truncated description. */
+    private static final String ELLIPSIS = "...";
+
+    /** Opens the bracketed ordinal that stands in for a withheld {@code patternProperties} key. */
+    private static final String REDACTED_KEY_PREFIX = "[key-";
+
+    /** Closes the bracketed ordinal that stands in for a withheld {@code patternProperties} key. */
+    private static final String REDACTED_KEY_SUFFIX = "]";
+
+    /**
+     * The fixed message of the value-free detail a not-valid validation call contributes when every
+     * error it reported named a structural keyword (FR-018). It is a literal rather than a formatted
+     * message, so no keyword argument and no submitted request value can reach the response through it.
+     */
+    private static final String VALUE_FREE_DETAIL_MESSAGE = "does not satisfy the schema";
+
+    /**
+     * The number of local {@code $ref} hops followed while deciding whether an instance-location
+     * segment names something the schema declares. A chain longer than this ends the run, so a
+     * self-referential or mutually referential document bounds the walk instead of spinning in it.
+     */
+    private static final int MAX_LOCAL_REF_HOPS = 16;
+
+    /**
+     * The number of subschemas — each reached one's {@code $ref} target and its {@code allOf},
+     * {@code anyOf} and {@code oneOf} branches, transitively — examined while deciding whether one
+     * instance-location segment is declared. A composition wider or deeper than this ends the run, so
+     * a self-referential composition bounds the walk instead of spinning in it.
+     */
+    private static final int MAX_COMPOSED_SUBSCHEMAS = 64;
+
+    /**
+     * The most digits an instance-location segment may have and still be named as an array index: ten
+     * covers every index a Java array or list can hold.
+     */
+    private static final int MAX_INDEX_DIGITS = 10;
+
+    /** The applicators whose branches may each declare a name at the same instance location. */
+    private static final List<String> COMPOSITION_KEYWORDS = List.of("allOf", "anyOf", "oneOf");
+
     private static final JsonSchemaOptions SCHEMA_OPTIONS = new JsonSchemaOptions()
             .setDraft(Draft.DRAFT202012)
             .setBaseUri("https://vertique.local/")
@@ -124,7 +208,8 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
     /**
      * Common JSON Schema keywords whose constraint value is a simple scalar (number or string) that
      * can be extracted from the schema {@link JsonObject} by navigating the path preceding the last
-     * segment of the keyword location. Keywords not in this set fall back to {@code {keyword: true}}.
+     * segment of the keyword location. Keywords not in this set, other than {@link #TYPE_KEYWORD},
+     * fall back to {@code {keyword: true}}.
      */
     private static final Set<String> SCALAR_CONSTRAINT_KEYWORDS = Set.of(
             "minLength",
@@ -139,6 +224,12 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
             "minProperties",
             "maxProperties",
             "multipleOf");
+
+    /**
+     * The {@code type} keyword, whose declared value is a type name or a list of type names rather than
+     * a scalar, and is looked up alongside {@link #SCALAR_CONSTRAINT_KEYWORDS}.
+     */
+    private static final String TYPE_KEYWORD = "type";
 
     /** The {@code aggregate} validation-mode literal: collect all violations before failing. */
     private static final String MODE_AGGREGATE = "aggregate";
@@ -248,11 +339,27 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
         return true;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Compiles the body and parameter validators, and — beside the body validator — every regular
+     * expression the body document declares, so an unparseable pattern fails the router build rather
+     * than the first request that reaches the route.
+     *
+     * @param op      the operation to gate
+     * @param schemas the operation's synthesized schemas
+     * @return the gate handler, or {@link Optional#empty()} when the operation has nothing to validate
+     * @throws RestConfigurationException if the body document declares a pattern the regex engine
+     *     rejects
+     */
     @Override
     public Optional<Handler<RoutingContext>> gateFor(JaxRsOperationDescriptor op, OperationSchemas schemas) {
         Validator bodyValidator =
                 schemas.bodySchema().map(WebValidationStrategy::compile).orElse(null);
         JsonObject bodySchema = schemas.bodySchema().orElse(null);
+        if (bodySchema != null) {
+            precompilePatterns(op.operationId(), bodySchema);
+        }
         List<FilePartDescriptor> fileParts = List.copyOf(op.fileParts());
 
         List<ParamValidator> paramValidators = new ArrayList<>();
@@ -292,6 +399,192 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
      */
     private static Validator compile(JsonObject schema) {
         return Validator.create(JsonSchema.of(schema), SCHEMA_OPTIONS);
+    }
+
+    // --- Regex precompilation (FR-008) ---
+
+    /**
+     * Compiles every regular expression the body document declares, so a pattern the engine rejects
+     * fails router construction instead of the first request routed here.
+     *
+     * @param operationId the operation whose body document is walked
+     * @param bodySchema  the synthesized body document
+     * @throws RestConfigurationException if any declared pattern is unparseable
+     */
+    private static void precompilePatterns(String operationId, JsonObject bodySchema) {
+        precompilePatterns(operationId, bodySchema, "", false, false);
+    }
+
+    /**
+     * Walks one node of the body document, compiling the regular expressions it declares and
+     * descending into every member except literal data, with no position allowlist: a {@code pattern}
+     * member is a regular expression wherever it carries a string, and a {@code patternProperties}
+     * member's keys are regular expressions wherever that object appears. A <em>property</em> named
+     * {@code pattern} is a subschema object rather than a string, so it is descended into rather than
+     * compiled.
+     *
+     * <p>The value of a {@link #LITERAL_KEYWORDS} member is JSON data, so it is never entered: a
+     * {@code pattern} inside a {@code const} or {@code enum} value is not a regular expression. A
+     * member of a {@link #NAMED_MEMBER_KEYWORDS} object is a schema whatever its name, so {@code
+     * membersAreNames} keeps a property named {@code const} walked.
+     *
+     * <p>Every member name this object contributes to the pointer is a schema keyword or a property
+     * name — except inside a {@code patternProperties} object, whose member names are themselves
+     * regular expressions. {@code membersArePatterns} marks that case, and the member name is then
+     * replaced by {@link #redactedKeySegment(int) its ordinal}: a failure <em>beneath</em> a key that
+     * happens to compile must disclose the key no more than a failure <em>in</em> one that does not
+     * (FR-008, AC-008.2).
+     *
+     * @param operationId        the operation whose body document is walked
+     * @param value              the current node: an object, an array, or a scalar
+     * @param pointer            the JSON pointer of {@code value} within the body document
+     * @param membersArePatterns whether {@code value}'s member names are regular expressions, so that
+     *     naming one in a pointer would disclose pattern text
+     * @param membersAreNames    whether {@code value}'s member names are names rather than keywords, so
+     *     that a member named like a literal keyword is still a schema
+     * @throws RestConfigurationException if any declared pattern is unparseable
+     */
+    private static void precompilePatterns(
+            String operationId, Object value, String pointer, boolean membersArePatterns, boolean membersAreNames) {
+        if (value instanceof JsonObject object) {
+            int ordinal = 0;
+            for (String field : object.fieldNames()) {
+                Object member = object.getValue(field);
+                String memberPointer = membersArePatterns
+                        ? pointer + "/" + redactedKeySegment(ordinal)
+                        : pointer + "/" + escapePointerSegment(field);
+                ordinal++;
+                if (!membersAreNames && LITERAL_KEYWORDS.contains(field)) {
+                    continue;
+                }
+                boolean patternProperties = PATTERN_PROPERTIES_KEYWORD.equals(field) && member instanceof JsonObject;
+                if (PATTERN_KEYWORD.equals(field) && member instanceof String regex) {
+                    compilePattern(operationId, memberPointer, regex);
+                } else if (patternProperties && member instanceof JsonObject byPattern) {
+                    // The keys are compiled before the walk descends into their subschemas, and the
+                    // pointer deliberately stops at this object: a key IS a pattern, so naming it
+                    // would disclose the text the diagnostic must withhold.
+                    for (String key : byPattern.fieldNames()) {
+                        compilePattern(operationId, memberPointer, key);
+                    }
+                }
+                boolean namedMembers =
+                        !membersAreNames && NAMED_MEMBER_KEYWORDS.contains(field) && member instanceof JsonObject;
+                precompilePatterns(operationId, member, memberPointer, patternProperties, namedMembers);
+            }
+        } else if (value instanceof JsonArray array) {
+            for (int index = 0; index < array.size(); index++) {
+                precompilePatterns(operationId, array.getValue(index), pointer + "/" + index, false, false);
+            }
+        }
+    }
+
+    /**
+     * Builds the pointer segment that stands in for one withheld {@code patternProperties} key: the
+     * key's zero-based ordinal in document order, bracketed.
+     *
+     * <p>The ordinal identifies the failing position unambiguously within the document the diagnostic
+     * already names, while disclosing none of the key. The brackets keep it distinguishable from a
+     * member name and from an array index, and the segment carries no parenthesis, so the proof that
+     * a one-character pattern such as an unclosed group never leaks stays mechanical.
+     *
+     * @param ordinal the key's zero-based position among the object's members
+     * @return the redacted reference token
+     */
+    private static String redactedKeySegment(int ordinal) {
+        return REDACTED_KEY_PREFIX + ordinal + REDACTED_KEY_SUFFIX;
+    }
+
+    /**
+     * Escapes one JSON pointer reference token, per RFC 6901: {@code ~} becomes {@code ~0} and
+     * {@code /} becomes {@code ~1}, in that order.
+     *
+     * @param segment the member name to escape
+     * @return the escaped reference token
+     */
+    private static String escapePointerSegment(String segment) {
+        return segment.replace("~", "~0").replace("/", "~1");
+    }
+
+    /**
+     * Compiles one declared regular expression, discarding the compiled pattern: this runs for its
+     * failure, not for its result, because vertx-json-schema compiles its own.
+     *
+     * @param operationId the operation whose body document declares the pattern
+     * @param pointer     the JSON pointer of the position that declares it
+     * @param regex       the declared regular expression
+     * @throws RestConfigurationException if the regex engine rejects it
+     */
+    private static void compilePattern(String operationId, String pointer, String regex) {
+        try {
+            Pattern.compile(regex);
+        } catch (PatternSyntaxException rejected) {
+            // Neither cause nor suppressed: this exception's own message quotes the complete pattern,
+            // so only its description and index are read out of it and it is dropped here.
+            throw new RestConfigurationException(
+                    patternFailure(operationId, pointer, rejected.getDescription(), rejected.getIndex()));
+        }
+    }
+
+    /**
+     * Assembles the bounded diagnostic for an unparseable pattern.
+     *
+     * <p>The operation, the pointer, and the index precede the engine's description and always
+     * survive; only the description is elided, because the engine bounds the token it quotes by the
+     * pattern's own length alone. The assembled message is at most {@value #MAX_MESSAGE_LENGTH} UTF-16
+     * code units, and an elision never splits a surrogate pair. JSON-005's own bounding helper is
+     * package-private to {@code vertique-json-schema}, so the numeric bound is applied here instead.
+     *
+     * <p>The wording carries no parenthesis on purpose: a one-character pattern such as an unclosed
+     * group is disclosed by any parenthesis in this text, so the proof that the pattern never leaks is
+     * mechanically the absence of that character.
+     *
+     * @param operationId the operation whose body document declares the pattern
+     * @param pointer     the JSON pointer of the position that declares it
+     * @param description the engine's description of the syntax error
+     * @param index       the engine's index of the syntax error within the pattern
+     * @return the bounded, pattern-free diagnostic
+     */
+    private static String patternFailure(String operationId, String pointer, String description, int index) {
+        String identified = "Unparseable regular expression in the request body schema of operation '" + operationId
+                + "' at JSON pointer " + pointer + ", rejected at index " + index + ": ";
+        if (identified.length() >= MAX_MESSAGE_LENGTH) {
+            // Only the description is elidable, so an identity this long is reported unbounded rather
+            // than cut where the pointer or the index would be lost.
+            return identified;
+        }
+        return identified + elide(String.valueOf(description), MAX_MESSAGE_LENGTH - identified.length());
+    }
+
+    /**
+     * Bounds one fragment to {@code max} UTF-16 code units, marking an elision when there is room for
+     * the marker and never splitting a surrogate pair.
+     *
+     * @param value the fragment to bound
+     * @param max   the maximum retained length in UTF-16 code units; always positive here
+     * @return the bounded fragment, never longer than {@code max}
+     */
+    private static String elide(String value, int max) {
+        if (value.length() <= max) {
+            return value;
+        }
+        if (max < ELLIPSIS.length()) {
+            // No room to signal an elision at all, so the fragment is simply cut: the marker stays
+            // inside the bound rather than extending past it.
+            return value.substring(0, cutPoint(value, max));
+        }
+        return value.substring(0, cutPoint(value, max - ELLIPSIS.length())) + ELLIPSIS;
+    }
+
+    /**
+     * Moves a cut point back one code unit when it would land inside a surrogate pair.
+     *
+     * @param value  the fragment being cut
+     * @param length the intended cut length in UTF-16 code units
+     * @return the cut length that keeps every surrogate pair whole
+     */
+    private static int cutPoint(String value, int length) {
+        return length > 0 && Character.isHighSurrogate(value.charAt(length - 1)) ? length - 1 : length;
     }
 
     /**
@@ -375,11 +668,15 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
      * Resolves the constraint value for the given failed keyword by navigating the schema
      * {@link JsonObject} along the keyword location path. For common scalar-valued keywords
      * (e.g. {@code minLength}, {@code maximum}, {@code pattern}), the value is the schema node
-     * at that path. For keywords whose value cannot be resolved, returns {@code {keyword: true}}.
+     * at that path; for {@code type} it is the declared type name, or the declared list of type names
+     * as a {@code List<String>}. For keywords whose value cannot be resolved, returns
+     * {@code {keyword: true}}.
      *
      * <p>The keyword location from vertx-json-schema Basic output uses a {@code #/} prefix, e.g.
      * {@code #/properties/code/minLength}. This method strips the {@code #} anchor, navigates to
-     * {@code /properties/code}, and reads the {@code minLength} field from the schema sub-object.
+     * {@code /properties/code}, and reads the {@code minLength} field from the schema sub-object. The
+     * navigation follows composition and tuple indexes, local {@code $ref}s and escaped names, as
+     * {@link #navigateKeywordLocation(JsonObject, String)} describes.
      *
      * <p>The returned map <strong>never</strong> includes the submitted request value — only the
      * schema constraint is included.
@@ -396,7 +693,8 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
         if (schema == null || keywordLocation == null || keyword == null) {
             return keyword != null ? Map.of(keyword, Boolean.TRUE) : Map.of();
         }
-        if (!SCALAR_CONSTRAINT_KEYWORDS.contains(keyword)) {
+        boolean isType = TYPE_KEYWORD.equals(keyword);
+        if (!isType && !SCALAR_CONSTRAINT_KEYWORDS.contains(keyword)) {
             return Map.of(keyword, Boolean.TRUE);
         }
         // Strip the JSON Schema anchor prefix '#' from the keyword location before navigating.
@@ -410,15 +708,84 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
         if (parentPath.endsWith("/")) {
             parentPath = parentPath.substring(0, parentPath.length() - 1);
         }
-        JsonObject node = navigateSchema(schema, parentPath);
+        JsonObject node = navigateKeywordLocation(schema, parentPath);
         if (node == null) {
             return Map.of(keyword, Boolean.TRUE);
         }
         Object value = node.getValue(keyword);
+        if (isType) {
+            value = declaredType(value);
+        }
         if (value == null) {
             return Map.of(keyword, Boolean.TRUE);
         }
         return Map.of(keyword, value);
+    }
+
+    /**
+     * Normalizes a declared {@code type} value: a single type name stays a string, and a non-empty list
+     * of type names becomes an immutable {@code List<String>} so it serializes as a JSON array. Any
+     * other shape — an empty list, or a list holding a non-string — is not a type the schema can
+     * declare, and yields {@code null} so the caller falls back to the placeholder.
+     *
+     * @param value the raw {@code type} value read from the schema, or {@code null}
+     * @return the declared type name, the declared list of type names, or {@code null}
+     */
+    private static Object declaredType(Object value) {
+        if (value instanceof String name) {
+            return name;
+        }
+        if (value instanceof JsonArray array && !array.isEmpty()) {
+            List<String> names = new ArrayList<>(array.size());
+            for (Object element : array) {
+                if (!(element instanceof String name)) {
+                    return null;
+                }
+                names.add(name);
+            }
+            return List.copyOf(names);
+        }
+        return null;
+    }
+
+    /**
+     * Navigates a schema along a keyword location the validator reported, returning the subschema
+     * that carries the failing keyword, or {@code null} when it cannot be reached.
+     *
+     * <p>A keyword location is not a plain pointer into the document: it indexes the arrays of
+     * {@code allOf}, {@code anyOf}, {@code oneOf} and {@code prefixItems}, it passes through a
+     * {@code $ref} as the segment {@code $ref} and continues inside the referenced subschema, and it
+     * spells each property name RFC 6901-escaped and percent-encoded. Each of those is followed here,
+     * so a constraint inside a composed, referenced or tuple position resolves to its declared value.
+     * A {@code $ref} is followed only when it is local; anything else ends the navigation.
+     *
+     * @param root the root schema, against which a local {@code $ref} is resolved
+     * @param path the keyword location of the keyword's parent, without the {@code #} anchor
+     * @return the subschema at {@code path}, or {@code null} if unreachable
+     */
+    private static JsonObject navigateKeywordLocation(JsonObject root, String path) {
+        Object current = root;
+        for (String segment : path.split("/", -1)) {
+            if (segment.isEmpty()) {
+                continue;
+            }
+            Object next = null;
+            if (current instanceof JsonArray array) {
+                long index = GateHandler.arrayIndex(segment);
+                next = index >= 0 && index < array.size() ? array.getValue((int) index) : null;
+            } else if (current instanceof JsonObject object) {
+                String name = GateHandler.decodeSegment(segment);
+                next = name == null ? null : object.getValue(name);
+                if ("$ref".equals(name) && next instanceof String ref) {
+                    next = ref.startsWith("#") ? navigateSchema(root, ref.substring(1)) : null;
+                }
+            }
+            if (next == null) {
+                return null;
+            }
+            current = next;
+        }
+        return current instanceof JsonObject object ? object : null;
     }
 
     /**
@@ -1041,6 +1408,13 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
          * <p>When {@code failFast} is {@code true}, only the first non-structural error is added to
          * {@code failures} and then this method returns immediately.
          *
+         * <p>Postcondition (FR-018): a result whose validity is not {@code true} always contributes at
+         * least one detail. When every error the call reported was structural, so no concrete detail was
+         * produced, exactly one value-free detail is appended for this call — see
+         * {@link #valueFreeDetail(String, String, String, JsonObject)}. The count is per call, so a
+         * detail produced for another validation call never satisfies this one's obligation, and a body
+         * failure cannot be masked by a detail added for a parameter.
+         *
          * @param result       the validation result
          * @param location     the location token for the error ({@code body}, {@code query}, etc.)
          * @param fallbackPath a fallback {@code path} (the parameter name) used when the error reports a
@@ -1060,6 +1434,9 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
             if (result.getValid() != null && result.getValid()) {
                 return;
             }
+            // Counted per validation call, so a detail produced for another call — a parameter, say —
+            // can never stand in for this call's failure (FR-018).
+            int addedBefore = failures.size();
             List<OutputUnit> errors = result.getErrors();
             if (errors == null || errors.isEmpty()) {
                 // Single-error result (e.g. scalar param validated directly)
@@ -1071,6 +1448,9 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                     failures.add(new ValidationErrorDetail(
                             pathFor(null, fallbackPath), detail, location, keyword, args.isEmpty() ? null : args));
                 }
+                if (failures.size() == addedBefore) {
+                    failures.add(valueFreeDetail(result.getInstanceLocation(), fallbackPath, location, schema));
+                }
                 return;
             }
             for (OutputUnit error : errors) {
@@ -1081,8 +1461,12 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                 }
                 Map<String, Object> args = resolveConstraintArgs(keyword, error.getKeywordLocation(), schema);
                 String detail = safeDetail(keyword, args, error.getError());
+                // Cut back exactly as the value-free detail is: a value violation under an undeclared key
+                // — an any-setter's described extra, say — is reported at a location ending in the
+                // client's own key, which must never reach the response (vertique-dev#598). A location
+                // the schema declares is unchanged.
                 failures.add(new ValidationErrorDetail(
-                        pathFor(error.getInstanceLocation(), fallbackPath),
+                        pathFor(declaredLocation(error.getInstanceLocation(), schema), fallbackPath),
                         detail,
                         location,
                         keyword,
@@ -1091,6 +1475,303 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                     return;
                 }
             }
+            if (failures.size() == addedBefore) {
+                // Every error this call reported was structural, so the loop produced no concrete
+                // detail. The first reported error names the failing instance location.
+                failures.add(valueFreeDetail(errors.get(0).getInstanceLocation(), fallbackPath, location, schema));
+            }
+        }
+
+        /**
+         * Builds the one value-free {@link ValidationErrorDetail} a not-valid result contributes when the
+         * call produced no concrete detail, because every error it reported named a structural keyword.
+         *
+         * <p>The detail names the instance location the reported error names, cut back by {@link
+         * #declaredLocation(String, JsonObject)} to the part the schema itself declares, and falling back
+         * to the parameter-name rule of {@link #pathFor(String, String)} for a root location. It carries
+         * no keyword and no constraint arguments, and its message is a fixed literal rather than anything
+         * derived from {@link #safeDetail(String, Map, String)}, whose fallback can echo the raw
+         * vertx-json-schema message and with it a submitted request value.
+         *
+         * @param instanceLocation the reported error's instance location, possibly {@code null}
+         * @param fallbackPath     the parameter-name fallback, or {@code null} for a body error
+         * @param location         the location token for the error ({@code body}, {@code query}, etc.)
+         * @param schema           the schema this call validated against, used to tell a declared name
+         *                         from a client-chosen key; may be {@code null}
+         * @return the value-free detail
+         */
+        private static ValidationErrorDetail valueFreeDetail(
+                String instanceLocation, String fallbackPath, String location, JsonObject schema) {
+            return new ValidationErrorDetail(
+                    pathFor(declaredLocation(instanceLocation, schema), fallbackPath),
+                    VALUE_FREE_DETAIL_MESSAGE,
+                    location,
+                    null,
+                    null);
+        }
+
+        /**
+         * Cuts a reported instance location back to its longest leading run of segments the schema
+         * itself declares, so a detail — value-free or concrete — names a failing location without
+         * naming any text the client chose.
+         *
+         * <p>An undeclared property under a closed object is reported at an instance location whose last
+         * segment is the client's own key, of whatever length the client sent, and the value-free detail
+         * is the one detail composed without a keyword and without the raw validator message — so the
+         * location was the last way a submitted string could reach the response through it. The rule is
+         * therefore the containing-location one of FR-018 rather than a length bound: the reported
+         * location is named where its last segment is a name the schema declares, and otherwise the
+         * containing location is named, up to the document root. What survives is spelled entirely by
+         * the schema's own declared names, so its length is fixed at router construction rather than by
+         * the request.
+         *
+         * <p>A segment is declared when a {@code properties} entry, a {@code prefixItems} position or an
+         * {@code items} schema at that point names it — at the subschema reached so far or in any
+         * {@code allOf}, {@code anyOf} or {@code oneOf} branch of it, so a nullable nested object
+         * published as {@code anyOf: [null, $ref]} keeps its field names. The validator reports each
+         * segment RFC 6901-escaped and percent-encoded, so a segment is decoded before it is looked up;
+         * the reported, encoded spelling is what the path names (vertique-dev#598). A segment counts as
+         * an array index only when it is a plausible one — see {@link #arrayIndex(String)} — and lies
+         * within the tuple or under an {@code items} schema other than {@code false}.
+         *
+         * <p>Resolution is deliberately fail-closed: a segment this method cannot show to be declared —
+         * under an unresolvable {@code $ref}, a composition past the subschema bound, a malformed
+         * encoding, or a {@code null} schema — ends the run, which names a shorter location and never a
+         * longer one.
+         *
+         * @param instanceLocation the reported instance location, possibly {@code null}
+         * @param schema           the schema the failing call validated against; may be {@code null}
+         * @return the declared leading part of the location, possibly the bare root anchor
+         */
+        private static String declaredLocation(String instanceLocation, JsonObject schema) {
+            if (instanceLocation == null || instanceLocation.isEmpty()) {
+                return instanceLocation;
+            }
+            String anchor = instanceLocation.startsWith("#") ? "#" : "";
+            String pointer = instanceLocation.substring(anchor.length());
+            if (pointer.isEmpty() || "/".equals(pointer)) {
+                return instanceLocation;
+            }
+            StringBuilder declared = new StringBuilder(anchor);
+            List<JsonObject> nodes = schema == null ? List.of() : List.of(schema);
+            for (String segment : pointer.split("/", -1)) {
+                if (segment.isEmpty()) {
+                    continue;
+                }
+                String name = decodeSegment(segment);
+                if (name == null) {
+                    break;
+                }
+                List<JsonObject> children = declaredChildren(nodes, segment, name, schema);
+                if (children.isEmpty()) {
+                    break;
+                }
+                declared.append('/').append(segment);
+                nodes = children;
+            }
+            return declared.toString();
+        }
+
+        /**
+         * The subschemas a declared segment of an instance location leads to: every {@code properties}
+         * entry of that name, and for a plausible array index every {@code prefixItems} position or
+         * {@code items} schema other than {@code false} it falls under, gathered across the subschemas reached so far and each of their
+         * {@code allOf}, {@code anyOf} and {@code oneOf} branches.
+         *
+         * <p>Only a name the schema spells itself matches — never {@code additionalProperties} or
+         * {@code patternProperties}, which admit keys the client chose. A declared segment whose
+         * subschema is a boolean rather than an object resolves to the empty object, which declares
+         * nothing further, so the run ends at the deepest segment the schema actually names.
+         *
+         * @param nodes   the subschemas the run has reached
+         * @param segment the next instance-location segment, as reported
+         * @param name    the same segment, decoded
+         * @param root    the root schema, against which a local {@code $ref} is resolved
+         * @return the subschemas for {@code segment}; empty when the schema does not declare it
+         */
+        private static List<JsonObject> declaredChildren(
+                List<JsonObject> nodes, String segment, String name, JsonObject root) {
+            List<JsonObject> children = new ArrayList<>();
+            for (JsonObject node : composedSubschemas(nodes, root)) {
+                JsonObject properties = node.getJsonObject("properties");
+                if (properties != null && properties.containsKey(name)) {
+                    children.add(asSubschema(properties.getValue(name)));
+                    continue;
+                }
+                long index = arrayIndex(segment);
+                if (index < 0) {
+                    continue;
+                }
+                Object prefixItems = node.getValue("prefixItems");
+                int prefixSize = prefixItems instanceof JsonArray tuple ? tuple.size() : 0;
+                Object items = node.getValue("items");
+                if (index < prefixSize) {
+                    children.add(asSubschema(((JsonArray) prefixItems).getValue((int) index)));
+                } else if (items != null && !Boolean.FALSE.equals(items)) {
+                    // `items: false` closes the tuple: no index past it is declared.
+                    children.add(asSubschema(items));
+                }
+            }
+            return children;
+        }
+
+        /**
+         * Expands the subschemas the run has reached into each one's local {@code $ref} target and,
+         * transitively, every {@code allOf}, {@code anyOf} and {@code oneOf} branch, bounded by {@link
+         * #MAX_COMPOSED_SUBSCHEMAS} so a self-referential composition cannot spin here.
+         *
+         * <p>A branch whose reference cannot be followed contributes nothing. Past the bound the whole
+         * expansion is abandoned and the run ends, which names a shorter location, never a longer one.
+         *
+         * @param nodes the subschemas the run has reached
+         * @param root  the root schema, against which a local {@code $ref} is resolved
+         * @return the resolved subschemas and their composition branches; empty past the bound
+         */
+        private static List<JsonObject> composedSubschemas(List<JsonObject> nodes, JsonObject root) {
+            List<JsonObject> expanded = new ArrayList<>();
+            Set<Map<String, Object>> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+            ArrayDeque<JsonObject> pending = new ArrayDeque<>(nodes);
+            while (!pending.isEmpty()) {
+                JsonObject resolved = resolveLocalRef(pending.poll(), root);
+                if (resolved == null || !seen.add(resolved.getMap())) {
+                    continue;
+                }
+                if (expanded.size() == MAX_COMPOSED_SUBSCHEMAS) {
+                    return List.of();
+                }
+                expanded.add(resolved);
+                for (String keyword : COMPOSITION_KEYWORDS) {
+                    if (resolved.getValue(keyword) instanceof JsonArray branches) {
+                        for (Object branch : branches) {
+                            if (branch instanceof JsonObject object) {
+                                pending.add(object);
+                            }
+                        }
+                    }
+                }
+            }
+            return expanded;
+        }
+
+        /**
+         * A declared subschema as an object: a boolean subschema becomes the empty object, which declares
+         * nothing further.
+         *
+         * @param subschema the declared subschema
+         * @return the subschema, or the empty object when it is not an object
+         */
+        private static JsonObject asSubschema(Object subschema) {
+            return subschema instanceof JsonObject object ? object : new JsonObject();
+        }
+
+        /**
+         * Decodes one instance-location segment as the validator reports it — percent-encoded UTF-8 over
+         * an RFC 6901-escaped name — back to the property name the schema would declare.
+         *
+         * @param segment the reported segment
+         * @return the decoded name, or {@code null} when the segment is not a well-formed encoding
+         */
+        private static String decodeSegment(String segment) {
+            if (segment.indexOf('%') < 0 && segment.indexOf('~') < 0) {
+                return segment;
+            }
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream(segment.length());
+            for (int index = 0; index < segment.length(); index++) {
+                char c = segment.charAt(index);
+                if (c == '%') {
+                    if (index + 2 >= segment.length()) {
+                        return null;
+                    }
+                    int high = Character.digit(segment.charAt(index + 1), 16);
+                    int low = Character.digit(segment.charAt(index + 2), 16);
+                    if (high < 0 || low < 0) {
+                        return null;
+                    }
+                    bytes.write(high * 16 + low);
+                    index += 2;
+                } else if (c < 0x80) {
+                    bytes.write(c);
+                } else {
+                    byte[] encoded = String.valueOf(c).getBytes(StandardCharsets.UTF_8);
+                    bytes.write(encoded, 0, encoded.length);
+                }
+            }
+            String escaped;
+            try {
+                escaped = StandardCharsets.UTF_8
+                        .newDecoder()
+                        .decode(ByteBuffer.wrap(bytes.toByteArray()))
+                        .toString();
+            } catch (CharacterCodingException e) {
+                return null;
+            }
+            StringBuilder name = new StringBuilder(escaped.length());
+            for (int index = 0; index < escaped.length(); index++) {
+                char c = escaped.charAt(index);
+                if (c != '~') {
+                    name.append(c);
+                    continue;
+                }
+                char next = index + 1 < escaped.length() ? escaped.charAt(index + 1) : 0;
+                if (next == '0') {
+                    name.append('~');
+                } else if (next == '1') {
+                    name.append('/');
+                } else {
+                    return null;
+                }
+                index++;
+            }
+            return name.toString();
+        }
+
+        /**
+         * Follows a local {@code $ref} chain to the subschema it names, within a fixed hop bound so a
+         * self-referential document cannot spin here.
+         *
+         * @param node the subschema, possibly carrying a {@code $ref}; may be {@code null}
+         * @param root the root schema the pointer is resolved against
+         * @return the referenced subschema, or {@code null} when the chain cannot be followed
+         */
+        private static JsonObject resolveLocalRef(JsonObject node, JsonObject root) {
+            JsonObject current = node;
+            for (int hop = 0; hop < MAX_LOCAL_REF_HOPS; hop++) {
+                if (current == null || root == null) {
+                    return current;
+                }
+                Object ref = current.getValue("$ref");
+                if (!(ref instanceof String pointer) || !pointer.startsWith("#")) {
+                    return current;
+                }
+                current = navigateSchema(root, pointer.substring(1));
+            }
+            return null;
+        }
+
+        /**
+         * Reads an instance-location segment as a plausible array index.
+         *
+         * <p>Under a composition that mixes an array branch with an open-object branch, a key the client
+         * chose for the object can be spelled entirely of digits, so a digit run alone does not make an
+         * index. A plausible index is the canonical spelling of a non-negative integer — no leading zero
+         * except {@code 0} itself — of at most {@value #MAX_INDEX_DIGITS} digits, which bounds what an
+         * all-digit client key can contribute to a path whatever its length (vertique-dev#598).
+         *
+         * @param segment the segment, as reported
+         * @return the index, or {@code -1} when the segment is not a plausible index
+         */
+        private static long arrayIndex(String segment) {
+            int length = segment.length();
+            if (length == 0 || length > MAX_INDEX_DIGITS || (length > 1 && segment.charAt(0) == '0')) {
+                return -1;
+            }
+            for (int index = 0; index < length; index++) {
+                char c = segment.charAt(index);
+                if (c < '0' || c > '9') {
+                    return -1;
+                }
+            }
+            return Long.parseLong(segment);
         }
 
         /**
@@ -1128,7 +1809,7 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                     case "multipleOf" -> "must be a multiple of " + constraintValue;
                     case "pattern" -> "must match pattern: " + constraintValue;
                     case "required" -> rawMessage != null ? rawMessage : "is missing a required field";
-                    case "type" -> "must be of type: " + constraintValue;
+                    case "type" -> typeDetail(constraintValue);
                     default -> rawMessage != null ? rawMessage : keyword + " constraint violated";
                 };
             }
@@ -1136,6 +1817,30 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
             return rawMessage != null
                     ? rawMessage
                     : (keyword != null ? keyword + " constraint violated" : "is invalid");
+        }
+
+        /**
+         * Renders a {@code type} detail from the declared type: {@code "must be of type: string"} for one
+         * type, and {@code "must be of type: string or null"} or {@code "must be of type: string,
+         * integer or null"} for a list. When the declared type could not be resolved — the value is the
+         * {@code true} placeholder, as behind a remote {@code $ref} — the message names no type rather
+         * than the placeholder.
+         *
+         * @param constraintValue the resolved {@code type} arg: a type name, a list of names, or the
+         *     placeholder
+         * @return the detail message
+         */
+        private static String typeDetail(Object constraintValue) {
+            if (constraintValue instanceof String name) {
+                return "must be of type: " + name;
+            }
+            if (constraintValue instanceof List<?> names && !names.isEmpty()) {
+                int last = names.size() - 1;
+                String head =
+                        names.subList(0, last).stream().map(String::valueOf).collect(Collectors.joining(", "));
+                return "must be of type: " + (last == 0 ? names.get(0) : head + " or " + names.get(last));
+            }
+            return "must be of the required type";
         }
 
         /**

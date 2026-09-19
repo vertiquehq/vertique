@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","properties":{"address":{"properties":{"city":{"minLength":1,"type":"string"}},"required":["city"],"type":"object"}},"type":"object"}

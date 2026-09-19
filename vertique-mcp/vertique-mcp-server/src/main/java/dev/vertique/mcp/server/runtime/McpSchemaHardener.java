@@ -15,17 +15,21 @@ import java.util.Objects;
  *
  * <p>Hardening is document-driven, never type-graph-driven, and never dereferences a {@code $ref}:
  * it descends a fixed, fixture-backed schema grammar — {@code properties}, {@code items},
- * {@code prefixItems}, {@code anyOf}, {@code oneOf}, {@code allOf}, {@code $defs} — keyed on schema
- * position, with visited-node tracking so a structural cycle would still terminate the walk. Two
- * rewrites are applied:
+ * {@code additionalProperties}, {@code prefixItems}, {@code anyOf}, {@code oneOf}, {@code allOf},
+ * {@code $defs} — keyed on schema position, with visited-node tracking so a structural cycle would
+ * still terminate the walk. Two rewrites are applied:
  *
  * <ol>
  *   <li>the root carrier object is closed unconditionally by provenance — including a zero-argument
  *       carrier — by setting {@code additionalProperties: false}; a non-root object schema is closed
- *       the same way exactly when it declares a non-empty {@code properties} member and no sibling
+ *       the same way exactly when it declares a non-empty {@code properties} member, no sibling
  *       {@code $ref} (a sibling {@code false} beside a {@code $ref} would reject the referenced
- *       object's entire property set). A property-less non-root object — a resolved map included —
- *       stays open and schema-unconstrained for values.
+ *       object's entire property set), and no {@code additionalProperties} member of its own. A
+ *       declared {@code additionalProperties} — a schema, {@code true}, or {@code false} — is never
+ *       overwritten, so a type that publishes its typed extra keys keeps accepting them; the walk
+ *       descends into that declared schema, closing the value type like any other subschema. A
+ *       property-less non-root object — a resolved map included — stays open and
+ *       schema-unconstrained for values.
  *   <li>parameter descriptions are attached to root-carrier properties only, as a separate pass
  *       keyed on {@link McpToolParameterMetadata#externalName()}.
  * </ol>
@@ -81,11 +85,12 @@ final class McpSchemaHardener {
         }
         if (isRoot) {
             close(node);
-        } else if (hasNonEmptyProperties(node) && !node.has("$ref")) {
+        } else if (hasNonEmptyProperties(node) && !node.has("$ref") && !node.has("additionalProperties")) {
             close(node);
         }
         descendInto(node, "properties", visited, McpSchemaHardener::propertyValues);
         descendIntoSingle(node, "items", visited);
+        descendIntoSingle(node, "additionalProperties", visited);
         descendInto(node, "prefixItems", visited, McpSchemaHardener::arrayElements);
         for (String keyword : SUBSCHEMA_ARRAY_KEYWORDS) {
             descendInto(node, keyword, visited, McpSchemaHardener::arrayElements);

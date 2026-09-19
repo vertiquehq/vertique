@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","properties":{"category":{"pattern":"[A-Z]+","type":"string"},"code":{"minLength":2,"type":"string"}},"type":"object"}
