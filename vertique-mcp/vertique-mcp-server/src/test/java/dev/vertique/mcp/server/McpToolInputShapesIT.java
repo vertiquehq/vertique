@@ -235,15 +235,20 @@ class McpToolInputShapesIT {
     }
 
     @Test
-    @DisplayName("TP-004: a map subclass with an any-setter keeps its released verdict")
-    void mapSubclassWithAnAnySetterKeepsItsReleasedVerdict() throws Exception {
+    @DisplayName("TP-004: a map subclass with an any-setter is described as the map the binder fills")
+    void mapSubclassWithAnAnySetterIsDescribedAsAMap() throws Exception {
         startServer();
 
-        assertSchemaRejection(
+        // Jackson binds the type as a map: its field is never filled and its any-setter never invoked
+        // (measured), so the document describes its entries and the hardener leaves the object open.
+        assertAccepted(
                 McpToolInputShapesITFixture.MAP_SUBCLASS_TOOL,
                 new JsonObject().put("empty", "x"),
-                "a map-like type is described as if it declared no any-setter, so the hardener closes its "
-                        + "object and stage 1 rejects the entry, exactly as in 0.2.0");
+                "a legal map entry is what the binder accepts, so the gate accepts it too");
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.MAP_SUBCLASS_TOOL,
+                new JsonObject().put("empty", 5),
+                "the entries are described with the map's value type, so a wrong-typed entry is refused");
     }
 
     // --- TP-005: aliases, reserved names, and storage names ---
@@ -319,13 +324,19 @@ class McpToolInputShapesIT {
         assertSchemaRejection(
                 McpToolInputShapesITFixture.SHARED_ALIAS_TOOL,
                 new JsonObject().put("x", "TOOLONG"),
-                "a spelling two properties claim is published nowhere, so it cannot reach the @Size(max = 3) "
-                        + "claimant unconstrained (design proof v7, DA1 and DA2)");
-        assertSchemaRejection(
+                "a spelling two properties claim is published with the claimant the binder routes it to, "
+                        + "the @Size(max = 3) property, so an over-long value is refused before it reaches it "
+                        + "(design proof v7, DA1 and DA2)");
+        assertAccepted(
                 McpToolInputShapesITFixture.SETTER_ONLY_TOOL,
                 new JsonObject().put("admin", true),
-                "a name bound only through a setter is never published, so it must not set the real member "
-                        + "through the extras (design proof v7, SO1)");
+                "a name bound only through a setter is described with the setter's parameter type, so a "
+                        + "well-typed value reaches the member (design proof v7, SO1)");
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.SETTER_ONLY_TOOL,
+                new JsonObject().put("admin", "yes"),
+                "a name bound only through a setter is described with the setter's parameter type, so a "
+                        + "wrong-typed value never reaches the member (design proof v7, SO1)");
         assertSchemaRejection(
                 McpToolInputShapesITFixture.HIDDEN_ALIAS_TOOL,
                 new JsonObject().put("lvl", 999),
@@ -336,13 +347,19 @@ class McpToolInputShapesIT {
                 fixture.tool(McpToolInputShapesITFixture.SHARED_ALIAS_TOOL).inputSchema();
         JsonObject shape =
                 new JsonObject(publishedSchema).getJsonObject("properties").getJsonObject("payload");
-        assertThat(shape.getJsonObject("properties").fieldNames())
-                .as("the contested spelling must not be published under properties")
-                .doesNotContain("x");
-        assertThat(shape.encode())
-                .as("the contested spelling must appear in no alias rule either; the only place 'x' may "
-                        + "appear is the reserved-name set")
-                .doesNotContain("\"required\":[\"x\"]");
+        // The binder's own routing decides which claimant a contested spelling reaches; the published
+        // schema under the spelling must be that claimant's, so the gate checks what the binder binds.
+        McpToolInputShapesITFixture.ContestedSpellingWithAnySetter bound =
+                new com.fasterxml.jackson.databind.ObjectMapper()
+                        .readValue("{\"x\":\"abc\"}", McpToolInputShapesITFixture.ContestedSpellingWithAnySetter.class);
+        String claimant = "abc".equals(bound.b) ? "b" : "abc".equals(bound.a) ? "a" : null;
+        assertThat(claimant)
+                .as("the binder must route the contested spelling to one claimant")
+                .isNotNull();
+        assertThat(shape.getJsonObject("properties").getJsonObject("x"))
+                .as("the contested spelling must be published with the schema of the claimant the binder"
+                        + " routes it to")
+                .isEqualTo(shape.getJsonObject("properties").getJsonObject(claimant));
     }
 
     // --- T010 TP-002: an alias spelling naming a member the document never publishes ---
