@@ -413,6 +413,11 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         SettableAnyProperty anySetter = builder == null ? null : builder.getAnySetter();
         Set<Object> storage = storageMembers(javaType, anySetter);
         ObjectNode[] patternProperties = new ObjectNode[1];
+        // F2 (security review round 1, HIGH): every unwrapped child's alias spellings and hidden/ignored
+        // names, folded into the parent's own alias plan and reserved-name seed below, keyed by the
+        // child's wire names with any unwrapped prefix or suffix applied — see the unwrapped loop.
+        Map<String, List<String>> unwrappedAliasPlan = new TreeMap<>();
+        Set<String> unwrappedReservedSeed = new LinkedHashSet<>();
         for (SettableBeanProperty property : bound) {
             String name = property.getName();
             if (name.isEmpty() || published.contains(name)) {
@@ -453,16 +458,30 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 if (!(renamed instanceof BeanDeserializerBase unwrapped)) {
                     continue;
                 }
-                requireCaseSensitive(
-                        unwrapped, property.getType().getRawClass(), "the unwrapped member " + property.getName());
+                Class<?> childClass = property.getType().getRawClass();
+                requireCaseSensitive(unwrapped, childClass, "the unwrapped member " + property.getName());
+                BeanDeserializerBuilder childBuilder = builderFor(property.getType(), unwrapped);
+                boolean anySetterType = anySetter != null
+                        || (childBuilder != null && childBuilder.getAnySetter() != null);
+                if (anySetterType) {
+                    // F2 (security review round 1, HIGH): a nested @JsonUnwrapped chain (this unwrapped
+                    // child itself declares another unwrapped member) is refused rather than folded
+                    // unsoundly on an any-setter type — the same posture #{@link #requireCaseSensitive}
+                    // already takes for a case-insensitive unwrapped member. Folding is bounded to one
+                    // level: the reserved-name and alias-spelling sweep below reads the child's own
+                    // introspection and bound-property list directly, which does not itself descend into
+                    // a grandchild's own unwrapped member, so a grandchild's alias or hidden member could
+                    // otherwise bind through the extras bucket unconstrained exactly like F2's own probe.
+                    requireNoNestedUnwrapping(childBuilder, childClass, property.getName());
+                }
                 ResolvedType childResolved = resolve(context, property.getType());
-                for (SettableBeanProperty childProperty : boundProperties(unwrapped, null)) {
+                List<SettableBeanProperty> childBound = boundProperties(unwrapped, null);
+                for (SettableBeanProperty childProperty : childBound) {
                     String name = childProperty.getName();
                     if (name.isEmpty() || published.contains(name)) {
                         continue;
                     }
-                    JsonNode schema = propertySchema(
-                            childProperty, property.getType().getRawClass(), childResolved, context, required);
+                    JsonNode schema = propertySchema(childProperty, childClass, childResolved, context, required);
                     if (schema != null) {
                         properties.set(name, schema);
                         published.add(name);
@@ -471,11 +490,15 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                         }
                     }
                 }
-                if (anySetter == null) {
-                    BeanDeserializerBuilder childBuilder = builderFor(property.getType(), unwrapped);
-                    if (childBuilder != null) {
-                        anySetter = childBuilder.getAnySetter();
-                    }
+                if (anySetter == null && childBuilder != null) {
+                    anySetter = childBuilder.getAnySetter();
+                }
+                if (anySetterType) {
+                    // Fold this child's own alias spellings and hidden/ignored names into the parent's
+                    // plan and reservation, keyed by the child's wire names with the unwrapping prefix or
+                    // suffix applied — see the F2 comment above and this method's own class Javadoc.
+                    foldUnwrappedChildIntoParentPlan(
+                            transformer, childClass, childBound, published, unwrappedAliasPlan, unwrappedReservedSeed);
                 }
             }
         }
@@ -493,6 +516,8 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         }
 
         Map<String, List<String>> aliasPlan = aliasPlan(bean, bound, published);
+        unwrappedAliasPlan.forEach((claimant, spellings) ->
+                aliasPlan.computeIfAbsent(claimant, key -> new ArrayList<>()).addAll(spellings));
         if (!aliasPlan.isEmpty()) {
             if (caseInsensitive) {
                 // The alias-expansion post-pass rewrites `required`/`enum` branches keyed on exact wire
@@ -521,6 +546,10 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         if (extrasDescribed) {
             reserved = reservedNames(javaType, bean, bound, published, aliasPlan);
             reserved.removeAll(excludedFromReservation);
+            // F2: every unwrapped child's own hidden/ignored name and bound-but-unpublished name, folded
+            // in beside the parent's own reservation — see foldUnwrappedChildIntoParentPlan.
+            reserved.addAll(unwrappedReservedSeed);
+            reserved.removeAll(published);
         } else {
             reserved = Set.of();
         }
@@ -1712,6 +1741,118 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                             + " cannot describe; bind it case-sensitively, or declare a JsonSchemaTypeOverride for the"
                             + " type on the profile",
                     null);
+        }
+    }
+
+    /**
+     * Refuses an unwrapped member on an any-setter type whose own value type declares a nested
+     * {@code @JsonUnwrapped} member of its own (F2, security review round 1, HIGH).
+     *
+     * <p>{@link #foldUnwrappedChildIntoParentPlan} folds one unwrapped child's alias spellings and
+     * hidden/ignored names into the parent's own alias plan and reserved-name set, so a key that would
+     * otherwise bind through the extras bucket unconstrained is instead published or refused. That fold
+     * reads the child's own introspection and one-level {@link #boundProperties} list directly; it does
+     * not itself descend into a grandchild's own unwrapped member, so a grandchild's alias or hidden
+     * member would still bind through the extras bucket unconstrained if this method did not refuse the
+     * combination outright — the same soundness posture {@link #requireCaseSensitive} already takes for
+     * a case-insensitive unwrapped member, applied here instead of an unsound two-level fold.
+     *
+     * @param childBuilder the unwrapped child's own captured builder, or {@code null} when it declares
+     *                     no builder-visible property at all (nothing to descend into, so nothing to
+     *                     refuse)
+     * @param childClass   the unwrapped child's own raw type, named in the diagnostic
+     * @param parentMember the parent's member name carrying the unwrapped child, named in the diagnostic
+     * @throws JsonSchemaGenerationException when {@code childBuilder} declares a nested unwrapped member
+     */
+    private void requireNoNestedUnwrapping(BeanDeserializerBuilder childBuilder, Class<?> childClass, String parentMember) {
+        if (childBuilder == null) {
+            return;
+        }
+        Iterator<SettableBeanProperty> it = childBuilder.getProperties();
+        while (it.hasNext()) {
+            SettableBeanProperty grandchildProperty = it.next();
+            if (introspector().findUnwrappingNameTransformer(grandchildProperty.getMember()) != null) {
+                throw Diagnostics.failure(
+                        "JSON Schema generation failed for " + Diagnostics.typeIdentity(childClass)
+                                + ": the unwrapped member \"" + Diagnostics.truncate(parentMember, Diagnostics.MAX_SHORT_IDENTITY_LENGTH)
+                                + "\" is itself bound on an any-setter type and declares a nested @JsonUnwrapped"
+                                + " member of its own, which this generator cannot fold soundly two levels deep;"
+                                + " declare a JsonSchemaTypeOverride for the type on the profile, or flatten the"
+                                + " nested unwrap by hand",
+                        null);
+            }
+        }
+    }
+
+    /**
+     * Folds one unwrapped child's alias spellings and hidden/ignored names into the parent's own alias
+     * plan and reserved-name seed (F2, security review round 1, HIGH): before this fold, {@code
+     * aliasPlan} and {@code reservedNames} read only the parent's own {@link #boundProperties} list,
+     * which {@link #boundProperties(BeanDeserializerBase, BeanDeserializerBuilder)} builds
+     * <em>excluding</em> unwrapped members, and the parent's own introspection, which never reaches a
+     * member of the unwrapped child's declaring class at all. A client-submitted key spelling an
+     * unwrapped child's {@code @JsonAlias}, or naming its {@code @Schema(hidden = true)} or {@code
+     * @JsonIgnore} member, therefore bound through the extras bucket unconstrained: neither published
+     * (so not validated against the real member's own constraint) nor reserved (so not refused either).
+     *
+     * <p>Every name this method contributes is the child's own <em>local</em> spelling with {@code
+     * transformer}'s unwrapping prefix or suffix applied by hand — the actual wire spelling the binder
+     * reads — since only a bound child property's own name (already read from the transformed {@code
+     * unwrapped} deserializer by the caller) already carries that transform; an alias declared directly
+     * on the child's raw member, and a name this method reads through the child's own untransformed
+     * {@link #introspectUnboundNames}, do not.
+     *
+     * @param transformer          the unwrapping name transformer Jackson resolved for this child
+     * @param childClass           the unwrapped child's own raw type
+     * @param childBound           the child's own bound properties, read from the transformed deserializer
+     * @param published            the names published so far, parent and every prior child included
+     * @param aliasPlanTarget      the parent's own alias plan, folded into in place
+     * @param reservedSeedTarget   the parent's own reserved-name seed, folded into in place
+     */
+    private void foldUnwrappedChildIntoParentPlan(
+            NameTransformer transformer,
+            Class<?> childClass,
+            List<SettableBeanProperty> childBound,
+            Set<String> published,
+            Map<String, List<String>> aliasPlanTarget,
+            Set<String> reservedSeedTarget) {
+        for (SettableBeanProperty childProperty : childBound) {
+            String claimant = childProperty.getName();
+            if (!published.contains(claimant)) {
+                // Bound by the child but not published here: a name a sibling already claimed, or one
+                // {@link #propertySchema} hid on purpose (@Schema(hidden = true)) — either way, reserved
+                // rather than left to fall through to the extras bucket unconstrained.
+                reservedSeedTarget.add(claimant);
+                continue;
+            }
+            AnnotatedMember member = childProperty.getMember();
+            if (member == null) {
+                continue;
+            }
+            List<PropertyName> aliases = introspector().findPropertyAliases(member);
+            if (aliases == null) {
+                continue;
+            }
+            for (PropertyName alias : aliases) {
+                String localSpelling = alias.getSimpleName();
+                if (localSpelling == null || localSpelling.isEmpty()) {
+                    continue;
+                }
+                String wireSpelling = transformer.transform(localSpelling);
+                if (wireSpelling.isEmpty() || published.contains(wireSpelling)) {
+                    continue;
+                }
+                List<String> spellings = aliasPlanTarget.computeIfAbsent(claimant, key -> new ArrayList<>());
+                if (!spellings.contains(wireSpelling)) {
+                    spellings.add(wireSpelling);
+                }
+            }
+        }
+        for (String localUnboundName : introspectUnboundNames(mapper.getTypeFactory().constructType(childClass))) {
+            String wireName = transformer.transform(localUnboundName);
+            if (!wireName.isEmpty() && !published.contains(wireName)) {
+                reservedSeedTarget.add(wireName);
+            }
         }
     }
 
