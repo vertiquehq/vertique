@@ -1114,10 +1114,11 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 // property of the same wire name, as introspected — never a raw field-name scan — since
                 // Jackson's own introspection is the only guarantee available here: it says which field a
                 // property of that wire name means, never what the builder method's own body does with
-                // the value before storing it. The borrow itself is only published when
-                // BuilderBorrowDetector judges it sound (a Lombok builder, or the exact Lombok builder
-                // shape) — see module.md's "Builder borrow assumption" for the ruling and the documented
-                // consequence for a hand-written builder that goes unresolved.
+                // the value before storing it. When that property has a getter the borrow is published
+                // unconditionally, for any builder; when it has no getter, the borrow is published only
+                // when BuilderBorrowDetector judges it sound (a Lombok builder, or the exact Lombok
+                // builder shape) — see module.md's "Builder borrow assumption" for the ruling and the
+                // documented consequence for a getter-less, hand-written builder that goes unresolved.
                 borrowBuilderFieldAttributes(method, builtClass, property.getName(), schema, context, required);
             } else {
                 // a setter: the field Jackson's own introspection merges into the same wire-named
@@ -1222,16 +1223,19 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
 
     /**
      * The built type's <em>Jackson-introspected</em> property of the given wire name, whose attributes
-     * a builder method borrows — never a raw field-name scan, unlike {@link #borrowFieldAttributes} —
-     * when {@link BuilderBorrowDetector} judges the borrow sound: a Lombok {@code @Builder} setter is
-     * guaranteed by construction to set the built field of that same property, so borrowing through
-     * Jackson's own introspected wire name renders identically to the raw scan this replaces for that
-     * guaranteed shape. A hand-written builder that transforms the value before assigning it carries no
-     * such guarantee, and the owner ruling (see {@code module.md}'s "Builder borrow assumption") keeps
-     * the borrow only for the shapes {@link BuilderBorrowDetector} can vouch for; every other builder's
-     * property is published by type only, with no borrowed constraint — the same gap the field walk
-     * always carried for a builder, now bounded to the shapes it cannot resolve rather than accepted
-     * for every builder unconditionally.
+     * a builder method borrows — never a raw field-name scan, unlike {@link #borrowFieldAttributes}.
+     *
+     * <p>Round 2 (this task's owner ruling): when the property has a getter, the borrow is published
+     * unconditionally, for any builder — exactly what {@code main}'s field walk did, since a
+     * getter-backed field's constraints were always published there regardless of what any builder
+     * method's body did with the value before assigning it. Only when the property has no getter (the
+     * private, getter-less case {@code main}'s field walk never published either) does the borrow stay
+     * bounded to the shapes {@link BuilderBorrowDetector} can vouch for: a Lombok {@code @Builder}
+     * setter is guaranteed by construction to set the built field of that same property, so borrowing
+     * through Jackson's own introspected wire name renders identically to the raw scan this replaces
+     * for that guaranteed shape, while a hand-written builder that transforms the value before
+     * assigning it carries no such guarantee and, absent a getter, is published by type only — see
+     * {@code module.md}'s "Builder borrow assumption".
      */
     private void borrowBuilderFieldAttributes(
             Method builderMethod,
@@ -1246,7 +1250,9 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 continue;
             }
             AnnotatedField field = candidate.getField();
-            if (field != null && BuilderBorrowDetector.isSoundBorrow(builderMethod, builtClass, field.getAnnotated())) {
+            if (field != null
+                    && (candidate.getGetter() != null
+                            || BuilderBorrowDetector.isSoundBorrow(builderMethod, builtClass, field.getAnnotated()))) {
                 applyFieldScopeAttributes(
                         field.getAnnotated(), field.getDeclaringClass(), wireName, schema, context, required);
             }

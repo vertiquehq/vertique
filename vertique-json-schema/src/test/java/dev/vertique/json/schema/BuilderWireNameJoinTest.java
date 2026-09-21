@@ -6,7 +6,6 @@ package dev.vertique.json.schema;
 import static dev.vertique.json.schema.SchemaAssertions.assertCanonicalForm;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -16,6 +15,7 @@ import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
 import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Size;
 import java.util.List;
 import lombok.Builder;
 import lombok.Getter;
@@ -33,16 +33,32 @@ import org.junit.jupiter.api.Test;
  * for a Lombok {@code @Builder @Jacksonized} setter but not for a hand-written builder that transforms
  * the value before assigning it.
  *
- * <p>The owner ruling ({@code spike/deserializer-driven-schema}) closes that gap by bounding the
+ * <p>The first owner ruling ({@code spike/deserializer-driven-schema}) closed that gap by bounding the
  * borrow to the shape it can actually vouch for — see {@link BuilderBorrowDetector} and {@code
  * module.md}'s "Builder borrow assumption": the whole shape {@code @Jacksonized} generates by
  * default, read entirely through {@code java.lang.reflect} over Jackson's own runtime-visible
  * annotations. A hand-written builder reproducing that exact shape resolves too — the ruling tolerates
  * that ({@link #handWrittenLombokShapedBuilderAlsoBorrows()} pins it) — but one that does not (a
- * value-transforming setter behind a plainly named builder class, {@link
- * #handWrittenTransformingBuilderNoLongerBorrows()}) is published by type only, with no borrowed
- * constraint. {@link #lombokBuilderStillBorrowsBuiltFieldConstraint()} pins that a genuine Lombok
- * builder is unaffected.
+ * value-transforming setter behind a plainly named builder class, on a <em>getter-less</em> field) is
+ * published by type only, with no borrowed constraint. {@link #lombokBuilderStillBorrowsBuiltFieldConstraint()}
+ * pins that a genuine Lombok builder is unaffected.
+ *
+ * <p><strong>Round 2 (this task's owner ruling).</strong> A package review found the shape-only gate
+ * loosens the gate against {@code main} for a hand-written builder whose built type has getters:
+ * {@code main}'s field walk published every getter-backed field's constraints regardless of the
+ * builder, but the shape gate drops them, so a value {@code main} would have rejected is silently
+ * accepted. The owner ruling: borrow from the built type's Jackson-visible property with a getter for
+ * <em>any</em> builder, exactly what {@code main} did; keep the Lombok-shape rule only for the
+ * getter-less private-field case, where {@code main} published nothing. {@link
+ * #withPrefixBuilderStillBorrowsThroughTheGetterBackedProperty()}, {@link
+ * #plainlyNamedBuilderClassStillBorrowsThroughTheGetterBackedProperty()}, and {@link
+ * #renamedBuildMethodStillBorrowsThroughTheGetterBackedProperty()} each violate exactly one condition
+ * of {@link BuilderBorrowDetector}'s Lombok shape while keeping both built properties getter-backed —
+ * expected red now, since production code still gates every builder on the Lombok shape regardless of
+ * a getter. {@link #handWrittenTransformingBuilderWithGetterBorrowsMainsInheritedBehavior()} pins the
+ * value-transforming counterpart: main's field walk borrowed the getter-backed field's constraint even
+ * though the builder itself transforms the value, so this is main's own inherited behavior, not a new
+ * strictness the round-2 fix introduces.
  */
 class BuilderWireNameJoinTest {
 
@@ -107,6 +123,39 @@ class BuilderWireNameJoinTest {
     }
 
     /**
+     * The getter-less counterpart to {@link TransformingBuilderDto}: the same hand-written,
+     * value-transforming, non-Lombok-shaped builder, but the built field has no accessor at all. Round
+     * 2 (this task's owner ruling) draws the line at the getter — {@code main} never published a
+     * getter-less field's constraint either, so this shape must stay unresolved before and after the
+     * round-2 fix, unlike {@link TransformingBuilderDto}'s getter-backed {@code amount}. {@code
+     * MetadataConstraintSourceCoverageTest} pins this with and without a validator, alongside the
+     * getter-backed sibling.
+     */
+    @JsonDeserialize(builder = TransformingBuilderNoGetterDto.Builder.class)
+    static final class TransformingBuilderNoGetterDto {
+        @Max(10)
+        private final int amount;
+
+        private TransformingBuilderNoGetterDto(int amount) {
+            this.amount = amount;
+        }
+
+        @JsonPOJOBuilder(withPrefix = "")
+        static final class Builder {
+            private int amount;
+
+            Builder amount(int amountCents) {
+                this.amount = amountCents / 100;
+                return this;
+            }
+
+            TransformingBuilderNoGetterDto build() {
+                return new TransformingBuilderNoGetterDto(amount);
+            }
+        }
+    }
+
+    /**
      * A real Lombok {@code @Builder @Jacksonized} type with a constrained field, the counterpart to
      * {@link TransformingBuilderDto}: {@code @Jacksonized} emits {@code @JsonDeserialize(builder =
      * LombokAmountDtoBuilder.class)} on this class and {@code @JsonPOJOBuilder(withPrefix = "",
@@ -159,24 +208,238 @@ class BuilderWireNameJoinTest {
         }
     }
 
+    /**
+     * Round 2 owner ruling (this task): {@link TransformingBuilderDto#getAmount()} makes {@code amount}
+     * a getter-backed property, so it is no longer bounded by {@link BuilderBorrowDetector}'s Lombok
+     * shape at all — the borrow must resolve exactly as {@code main}'s field walk did, unconditionally
+     * on the builder's shape, even though the builder itself transforms the value before assigning it.
+     * This is main's own inherited behavior through the getter, not a new strictness round 2
+     * introduces: main's field walk borrowed every getter-backed field's constraints regardless of
+     * what any builder method's body did with the value. Expected red now: production code still
+     * requires {@link BuilderBorrowDetector#isSoundBorrow} for every builder, getter-backed or not, so
+     * {@code amount} is currently published by type only.
+     */
     @Test
-    @DisplayName("Owner ruling: a hand-written builder method that transforms its value no longer borrows the"
-            + " built field's constraint — the property is published by type only")
-    void handWrittenTransformingBuilderNoLongerBorrows() {
+    @DisplayName("Round 2: a hand-written, value-transforming builder still borrows a getter-backed built field's"
+            + " constraint — main's own inherited behavior, not a new strictness")
+    void handWrittenTransformingBuilderWithGetterBorrowsMainsInheritedBehavior() {
         JsonNode document = document(TransformingBuilderDto.class);
         JsonNode amount = document.at("/properties/amount");
 
         assertFalse(amount.isMissingNode(), "amount must still be published: the builder method binds it");
-        assertTrue(
-                amount.at("/maximum").isMissingNode(),
-                "a hand-written builder that does not reproduce the Lombok shape must not have its"
-                        + " constraint borrowed: amount must carry no maximum, only its type; document: "
-                        + document);
+        assertEquals(
+                10,
+                amount.at("/maximum").asInt(-1),
+                "ROUND-2 DECISIVE (expected red now): amount has a getter, so its @Max(10) must be borrowed"
+                        + " exactly as main's field walk always did, regardless of the builder's own"
+                        + " value-transforming body or its plainly named builder class; document: " + document);
         assertEquals(
                 "integer",
                 amount.at("/type").asText(),
-                "the property must still be described by its Jackson-resolved type even with no borrowed"
-                        + " constraint; document: " + document);
+                "the property must still be described by its Jackson-resolved type; document: " + document);
+    }
+
+    // --- Round 2: getter-backed properties borrow for any hand-written builder shape ---
+
+    /**
+     * Round 2: a hand-written builder whose {@code @JsonPOJOBuilder} carries a non-empty
+     * {@code withPrefix} ({@code "with"}, never the empty string {@code @Jacksonized} always emits)
+     * fails {@link BuilderBorrowDetector}'s shape match on that condition alone. Both built properties
+     * carry a getter, so under the round-2 owner ruling the borrow no longer depends on the shape at
+     * all.
+     */
+    @JsonDeserialize(builder = WithPrefixBuilderDto.WithPrefixBuilderDtoBuilder.class)
+    static final class WithPrefixBuilderDto {
+        @Size(max = 3)
+        private final String name;
+
+        @Max(10)
+        private final int level;
+
+        private WithPrefixBuilderDto(String name, int level) {
+            this.name = name;
+            this.level = level;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public int getLevel() {
+            return level;
+        }
+
+        @JsonPOJOBuilder(withPrefix = "with", buildMethodName = "build")
+        static final class WithPrefixBuilderDtoBuilder {
+            private String name;
+            private int level;
+
+            WithPrefixBuilderDtoBuilder withName(String name) {
+                this.name = name;
+                return this;
+            }
+
+            WithPrefixBuilderDtoBuilder withLevel(int level) {
+                this.level = level;
+                return this;
+            }
+
+            WithPrefixBuilderDto build() {
+                return new WithPrefixBuilderDto(name, level);
+            }
+        }
+    }
+
+    /**
+     * Round 2: a hand-written builder class named plainly ({@code Factory}), not in the Lombok
+     * {@code <Type>Builder} convention, fails {@link BuilderBorrowDetector}'s naming condition alone.
+     * Both built properties carry a getter.
+     */
+    @JsonDeserialize(builder = PlainlyNamedBuilderClassDto.Factory.class)
+    static final class PlainlyNamedBuilderClassDto {
+        @Size(max = 3)
+        private final String name;
+
+        @Max(10)
+        private final int level;
+
+        private PlainlyNamedBuilderClassDto(String name, int level) {
+            this.name = name;
+            this.level = level;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public int getLevel() {
+            return level;
+        }
+
+        @JsonPOJOBuilder(withPrefix = "", buildMethodName = "build")
+        static final class Factory {
+            private String name;
+            private int level;
+
+            Factory name(String name) {
+                this.name = name;
+                return this;
+            }
+
+            Factory level(int level) {
+                this.level = level;
+                return this;
+            }
+
+            PlainlyNamedBuilderClassDto build() {
+                return new PlainlyNamedBuilderClassDto(name, level);
+            }
+        }
+    }
+
+    /**
+     * Round 2: a hand-written builder whose build method is named {@code create}, not {@code build},
+     * fails {@link BuilderBorrowDetector}'s build-method-name condition alone. Both built properties
+     * carry a getter.
+     */
+    @JsonDeserialize(builder = RenamedBuildMethodDto.RenamedBuildMethodDtoBuilder.class)
+    static final class RenamedBuildMethodDto {
+        @Size(max = 3)
+        private final String name;
+
+        @Max(10)
+        private final int level;
+
+        private RenamedBuildMethodDto(String name, int level) {
+            this.name = name;
+            this.level = level;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public int getLevel() {
+            return level;
+        }
+
+        @JsonPOJOBuilder(withPrefix = "", buildMethodName = "create")
+        static final class RenamedBuildMethodDtoBuilder {
+            private String name;
+            private int level;
+
+            RenamedBuildMethodDtoBuilder name(String name) {
+                this.name = name;
+                return this;
+            }
+
+            RenamedBuildMethodDtoBuilder level(int level) {
+                this.level = level;
+                return this;
+            }
+
+            RenamedBuildMethodDto create() {
+                return new RenamedBuildMethodDto(name, level);
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Round 2: a getter-backed property borrows even when @JsonPOJOBuilder's withPrefix is not empty")
+    void withPrefixBuilderStillBorrowsThroughTheGetterBackedProperty() {
+        JsonNode document = document(WithPrefixBuilderDto.class);
+        JsonNode name = document.at("/properties/name");
+        JsonNode level = document.at("/properties/level");
+
+        assertEquals(
+                3,
+                name.at("/maxLength").asInt(-1),
+                "ROUND-2 DECISIVE (expected red now): name has a getter, so its @Size(max = 3) must be"
+                        + " borrowed regardless of the builder's non-empty withPrefix; document: " + document);
+        assertEquals(
+                10,
+                level.at("/maximum").asInt(-1),
+                "ROUND-2 DECISIVE (expected red now): level has a getter, so its @Max(10) must be borrowed"
+                        + " regardless of the builder's non-empty withPrefix; document: " + document);
+    }
+
+    @Test
+    @DisplayName(
+            "Round 2: a getter-backed property borrows even when the builder class is not named" + " <Type>Builder")
+    void plainlyNamedBuilderClassStillBorrowsThroughTheGetterBackedProperty() {
+        JsonNode document = document(PlainlyNamedBuilderClassDto.class);
+        JsonNode name = document.at("/properties/name");
+        JsonNode level = document.at("/properties/level");
+
+        assertEquals(
+                3,
+                name.at("/maxLength").asInt(-1),
+                "ROUND-2 DECISIVE (expected red now): name has a getter, so its @Size(max = 3) must be"
+                        + " borrowed regardless of the builder class's plain name; document: " + document);
+        assertEquals(
+                10,
+                level.at("/maximum").asInt(-1),
+                "ROUND-2 DECISIVE (expected red now): level has a getter, so its @Max(10) must be borrowed"
+                        + " regardless of the builder class's plain name; document: " + document);
+    }
+
+    @Test
+    @DisplayName("Round 2: a getter-backed property borrows even when the build method is not named build")
+    void renamedBuildMethodStillBorrowsThroughTheGetterBackedProperty() {
+        JsonNode document = document(RenamedBuildMethodDto.class);
+        JsonNode name = document.at("/properties/name");
+        JsonNode level = document.at("/properties/level");
+
+        assertEquals(
+                3,
+                name.at("/maxLength").asInt(-1),
+                "ROUND-2 DECISIVE (expected red now): name has a getter, so its @Size(max = 3) must be"
+                        + " borrowed regardless of the builder's renamed build method; document: " + document);
+        assertEquals(
+                10,
+                level.at("/maximum").asInt(-1),
+                "ROUND-2 DECISIVE (expected red now): level has a getter, so its @Max(10) must be borrowed"
+                        + " regardless of the builder's renamed build method; document: " + document);
     }
 
     @Test

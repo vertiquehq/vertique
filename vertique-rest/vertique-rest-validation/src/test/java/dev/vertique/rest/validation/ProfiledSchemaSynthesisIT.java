@@ -307,12 +307,16 @@ public class ProfiledSchemaSynthesisIT {
 
     /**
      * The gate-level half of the owner ruling's fix proof for {@code InputPropertyDescriber}'s
-     * builder-method borrow ({@code BuilderBorrowDetector}). {@link TransformingBuilderBody}'s
-     * hand-written builder method divides the incoming value by 100 before assigning it to the built
-     * field of the same wire name — the same shape {@link
-     * dev.vertique.json.schema.BuilderWireNameJoinTest.TransformingBuilderDto} pins at the schema level
-     * — and its builder class is named plainly rather than in the Lombok {@code <Type>Builder}
-     * convention, so it matches neither {@code @lombok.Generated} nor the fallback shape.
+     * builder-method borrow ({@code BuilderBorrowDetector}). {@link TransformingBuilderBody} is
+     * deliberately getter-less — its {@code amount} field has no accessor — so it is the round-2 owner
+     * ruling's control: {@code main} never published a getter-less field's constraint either, so this
+     * shape must stay unresolved before and after the round-2 fix. (The round-1 fixture it was
+     * originally paired with, {@link dev.vertique.json.schema.BuilderWireNameJoinTest.TransformingBuilderDto},
+     * carries a getter and was repurposed for the round-2 characterization instead — see that class's
+     * Javadoc.) Its hand-written builder method divides the incoming value by 100 before assigning it
+     * to the built field of the same wire name, and its builder class is named plainly rather than in
+     * the Lombok {@code <Type>Builder} convention, so it matches neither {@code @lombok.Generated} nor
+     * the fallback shape.
      *
      * <p>Behavior-change: red at {@code 3802ff0f} (the task's baseline commit, with the borrow still
      * unconditional) — a 400, never reaching the resource, because the schema published the built
@@ -345,6 +349,85 @@ public class ProfiledSchemaSynthesisIT {
                 "the accepted body must bind through the builder's own transform, not a borrowed field"
                         + " constraint");
         assertEquals(1, resource.invocations.get(), "the accepted body must reach the resource exactly once");
+    }
+
+    // --- Round 2 (this task's owner ruling): a getter-backed built property borrows for any builder ---
+
+    /**
+     * The gate-level half of the round-2 owner ruling's fix proof. A package review found that {@code
+     * BuilderBorrowDetector}'s Lombok-shape gate loosens the gate against {@code main} for a
+     * hand-written builder whose built type has getters: {@code main}'s field walk published every
+     * getter-backed field's constraints regardless of the builder, but the shape gate drops them, so a
+     * value {@code main} would have rejected is silently accepted. {@link Round2WithPrefixBuilderBody},
+     * {@link Round2PlainBuilderClassBody}, and {@link Round2RenamedBuildMethodBody} each violate exactly
+     * one condition of {@code BuilderBorrowDetector}'s Lombok shape — a non-empty {@code withPrefix}, a
+     * builder class not named {@code <Type>Builder}, and a build method not named {@code build} — while
+     * both built properties ({@code name} and {@code level}) carry a getter, the schema-level unit
+     * counterparts of {@code
+     * dev.vertique.json.schema.BuilderWireNameJoinTest#withPrefixBuilderStillBorrowsThroughTheGetterBackedProperty},
+     * {@code
+     * dev.vertique.json.schema.BuilderWireNameJoinTest#plainlyNamedBuilderClassStillBorrowsThroughTheGetterBackedProperty},
+     * and {@code
+     * dev.vertique.json.schema.BuilderWireNameJoinTest#renamedBuildMethodStillBorrowsThroughTheGetterBackedProperty}.
+     *
+     * <p>Expected red now: production code still gates every builder on the Lombok shape regardless of
+     * a getter, so each property is published by type only and every out-of-bound value below is
+     * accepted with a 200 instead of rejected with a 400.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("Round 2 (owner ruling): the gate rejects an out-of-bound value for each getter-backed built"
+            + " property, whatever shape violation keeps the builder from matching the Lombok convention")
+    void round2GateRejectsOutOfBoundValuesForEachGetterBackedShapeViolation() throws Exception {
+        Round2WithPrefixBuilderResource withPrefix = new Round2WithPrefixBuilderResource();
+        Round2PlainBuilderClassResource plainClass = new Round2PlainBuilderClassResource();
+        Round2RenamedBuildMethodResource renamedMethod = new Round2RenamedBuildMethodResource();
+        int gatePort = start(gateMount(), Set.of(withPrefix, plainClass, renamedMethod));
+
+        assertAll(
+                () -> assertEquals(
+                        400,
+                        post(gatePort, "/round2-with-prefix/fields", "{\"level\":999}")
+                                .statusCode(),
+                        "ROUND-2 DECISIVE (expected red now): level has a getter, so its @Max(10) must be"
+                                + " borrowed regardless of the builder's non-empty withPrefix"),
+                () -> assertEquals(
+                        400,
+                        post(gatePort, "/round2-with-prefix/fields", "{\"name\":\"TOOLONG\"}")
+                                .statusCode(),
+                        "ROUND-2 DECISIVE (expected red now): name has a getter, so its @Size(max = 3) must be"
+                                + " borrowed regardless of the builder's non-empty withPrefix"),
+                () -> assertEquals(
+                        400,
+                        post(gatePort, "/round2-plain-class/fields", "{\"level\":999}")
+                                .statusCode(),
+                        "ROUND-2 DECISIVE (expected red now): level has a getter, so its @Max(10) must be"
+                                + " borrowed regardless of the builder class's plain name"),
+                () -> assertEquals(
+                        400,
+                        post(gatePort, "/round2-plain-class/fields", "{\"name\":\"TOOLONG\"}")
+                                .statusCode(),
+                        "ROUND-2 DECISIVE (expected red now): name has a getter, so its @Size(max = 3) must be"
+                                + " borrowed regardless of the builder class's plain name"),
+                () -> assertEquals(
+                        400,
+                        post(gatePort, "/round2-renamed-method/fields", "{\"level\":999}")
+                                .statusCode(),
+                        "ROUND-2 DECISIVE (expected red now): level has a getter, so its @Max(10) must be"
+                                + " borrowed regardless of the builder's renamed build method"),
+                () -> assertEquals(
+                        400,
+                        post(gatePort, "/round2-renamed-method/fields", "{\"name\":\"TOOLONG\"}")
+                                .statusCode(),
+                        "ROUND-2 DECISIVE (expected red now): name has a getter, so its @Size(max = 3) must be"
+                                + " borrowed regardless of the builder's renamed build method"),
+                () -> assertEquals(
+                        0, withPrefix.invocations.get(), "no rejected body may reach the resource under the gate"),
+                () -> assertEquals(
+                        0, plainClass.invocations.get(), "no rejected body may reach the resource under the gate"),
+                () -> assertEquals(
+                        0, renamedMethod.invocations.get(), "no rejected body may reach the resource under the gate"));
     }
 
     // --- H4: getter-only collection with no backing field ---
@@ -1879,6 +1962,254 @@ public class ProfiledSchemaSynthesisIT {
         public String echo(TransformingBuilderBody body) {
             invocations.incrementAndGet();
             return "amount=" + body.amount;
+        }
+    }
+
+    /**
+     * Round 2: a hand-written builder whose {@code @JsonPOJOBuilder} carries a non-empty
+     * {@code withPrefix} ({@code "with"}, never the empty string {@code @Jacksonized} always emits)
+     * fails {@code BuilderBorrowDetector}'s shape match on that condition alone. Both built properties
+     * carry a getter, so under the round-2 owner ruling the borrow no longer depends on the shape at
+     * all.
+     */
+    @JsonDeserialize(builder = Round2WithPrefixBuilderBody.Builder.class)
+    public static class Round2WithPrefixBuilderBody {
+
+        @Size(max = 3)
+        private final String name;
+
+        @Max(10)
+        private final int level;
+
+        private Round2WithPrefixBuilderBody(String name, int level) {
+            this.name = name;
+            this.level = level;
+        }
+
+        /**
+         * Returns the built name.
+         *
+         * @return the name
+         */
+        public String getName() {
+            return name;
+        }
+
+        /**
+         * Returns the built level.
+         *
+         * @return the level
+         */
+        public int getLevel() {
+            return level;
+        }
+
+        @JsonPOJOBuilder(withPrefix = "with", buildMethodName = "build")
+        public static final class Builder {
+            private String name;
+            private int level;
+
+            public Builder withName(String name) {
+                this.name = name;
+                return this;
+            }
+
+            public Builder withLevel(int level) {
+                this.level = level;
+                return this;
+            }
+
+            public Round2WithPrefixBuilderBody build() {
+                return new Round2WithPrefixBuilderBody(name, level);
+            }
+        }
+    }
+
+    /** The resource for {@link Round2WithPrefixBuilderBody}, on the unannotated floor profile. */
+    @Path("/round2-with-prefix")
+    public static class Round2WithPrefixBuilderResource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the bound name and level.
+         *
+         * @param body the round-2 with-prefix fixture body
+         * @return the echoed name and level
+         */
+        @POST
+        @Path("/fields")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "round2WithPrefixFieldsEcho")
+        public String echo(Round2WithPrefixBuilderBody body) {
+            invocations.incrementAndGet();
+            return "name=" + body.getName() + " level=" + body.getLevel();
+        }
+    }
+
+    /**
+     * Round 2: a hand-written builder class named plainly ({@code Factory}), not in the Lombok
+     * {@code <Type>Builder} convention, fails {@code BuilderBorrowDetector}'s naming condition alone.
+     * Both built properties carry a getter.
+     */
+    @JsonDeserialize(builder = Round2PlainBuilderClassBody.Factory.class)
+    public static class Round2PlainBuilderClassBody {
+
+        @Size(max = 3)
+        private final String name;
+
+        @Max(10)
+        private final int level;
+
+        private Round2PlainBuilderClassBody(String name, int level) {
+            this.name = name;
+            this.level = level;
+        }
+
+        /**
+         * Returns the built name.
+         *
+         * @return the name
+         */
+        public String getName() {
+            return name;
+        }
+
+        /**
+         * Returns the built level.
+         *
+         * @return the level
+         */
+        public int getLevel() {
+            return level;
+        }
+
+        @JsonPOJOBuilder(withPrefix = "", buildMethodName = "build")
+        public static final class Factory {
+            private String name;
+            private int level;
+
+            public Factory name(String name) {
+                this.name = name;
+                return this;
+            }
+
+            public Factory level(int level) {
+                this.level = level;
+                return this;
+            }
+
+            public Round2PlainBuilderClassBody build() {
+                return new Round2PlainBuilderClassBody(name, level);
+            }
+        }
+    }
+
+    /** The resource for {@link Round2PlainBuilderClassBody}, on the unannotated floor profile. */
+    @Path("/round2-plain-class")
+    public static class Round2PlainBuilderClassResource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the bound name and level.
+         *
+         * @param body the round-2 plain-builder-class fixture body
+         * @return the echoed name and level
+         */
+        @POST
+        @Path("/fields")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "round2PlainClassFieldsEcho")
+        public String echo(Round2PlainBuilderClassBody body) {
+            invocations.incrementAndGet();
+            return "name=" + body.getName() + " level=" + body.getLevel();
+        }
+    }
+
+    /**
+     * Round 2: a hand-written builder whose build method is named {@code create}, not {@code build},
+     * fails {@code BuilderBorrowDetector}'s build-method-name condition alone. Both built properties
+     * carry a getter.
+     */
+    @JsonDeserialize(builder = Round2RenamedBuildMethodBody.Builder.class)
+    public static class Round2RenamedBuildMethodBody {
+
+        @Size(max = 3)
+        private final String name;
+
+        @Max(10)
+        private final int level;
+
+        private Round2RenamedBuildMethodBody(String name, int level) {
+            this.name = name;
+            this.level = level;
+        }
+
+        /**
+         * Returns the built name.
+         *
+         * @return the name
+         */
+        public String getName() {
+            return name;
+        }
+
+        /**
+         * Returns the built level.
+         *
+         * @return the level
+         */
+        public int getLevel() {
+            return level;
+        }
+
+        @JsonPOJOBuilder(withPrefix = "", buildMethodName = "create")
+        public static final class Builder {
+            private String name;
+            private int level;
+
+            public Builder name(String name) {
+                this.name = name;
+                return this;
+            }
+
+            public Builder level(int level) {
+                this.level = level;
+                return this;
+            }
+
+            public Round2RenamedBuildMethodBody create() {
+                return new Round2RenamedBuildMethodBody(name, level);
+            }
+        }
+    }
+
+    /** The resource for {@link Round2RenamedBuildMethodBody}, on the unannotated floor profile. */
+    @Path("/round2-renamed-method")
+    public static class Round2RenamedBuildMethodResource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the bound name and level.
+         *
+         * @param body the round-2 renamed-build-method fixture body
+         * @return the echoed name and level
+         */
+        @POST
+        @Path("/fields")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "round2RenamedMethodFieldsEcho")
+        public String echo(Round2RenamedBuildMethodBody body) {
+            invocations.incrementAndGet();
+            return "name=" + body.getName() + " level=" + body.getLevel();
         }
     }
 

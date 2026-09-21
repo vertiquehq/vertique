@@ -137,25 +137,71 @@ class MetadataConstraintSourceCoverageTest {
     }
 
     @Test
-    @DisplayName("owner ruling: a hand-written builder method's property does not join even under a validator —"
-            + " the supplement must not silently reintroduce the constraint the floor stopped borrowing")
-    void handWrittenBuilderDoesNotJoinEvenUnderAValidator() {
+    @DisplayName("round 2 (owner ruling): a hand-written builder's getter-less property does not join with or"
+            + " without a validator — the supplement must not silently reintroduce the constraint the floor"
+            + " never borrows for this shape")
+    void handWrittenBuilderWithNoGetterDoesNotJoinWithOrWithoutAValidator() {
         // Without BuilderBorrowDetector gating this class's own join too, this class's direct
-        // reflection over the built class (validator.getConstraintsForClass(TransformingBuilderDto
+        // reflection over the built class (validator.getConstraintsForClass(TransformingBuilderNoGetterDto
         // .class).getConstraintsForProperty("amount")) would find the field's real, class-level
         // @Max(10) — Bean Validation does not care how the value got there — and render it as an
-        // addition, since the floor no longer sets "maximum" for this property. That would make
-        // generation depend on whether a Validator happens to be supplied, silently reversing the
-        // owner ruling for exactly the callers who supply one.
+        // addition, since the floor never sets "maximum" for a getter-less property built through a
+        // non-Lombok-shaped builder. That would make generation depend on whether a Validator happens
+        // to be supplied, silently reversing the owner ruling for exactly the callers who supply one.
+        // Round 2 draws the borrow line at the getter (BuilderWireNameJoinTest
+        // .TransformingBuilderNoGetterDto's Javadoc), so this getter-less shape must stay unresolved
+        // both with and without a validator — the getter-backed sibling is pinned separately by
+        // handWrittenBuilderWithGetterJoinsWithOrWithoutAValidator below.
         Validator validator = MetadataTestValidators.plain();
-        JsonNode document = metadataDocument(BuilderWireNameJoinTest.TransformingBuilderDto.class, validator);
-        JsonNode amount = document.at("/properties/amount");
+        JsonNode withValidator =
+                metadataDocument(BuilderWireNameJoinTest.TransformingBuilderNoGetterDto.class, validator);
+        JsonNode withoutValidator = walkDocument(BuilderWireNameJoinTest.TransformingBuilderNoGetterDto.class);
 
-        assertFalse(amount.isMissingNode(), "amount must still be published: the builder method binds it");
+        JsonNode amountWithValidator = withValidator.at("/properties/amount");
+        JsonNode amountWithoutValidator = withoutValidator.at("/properties/amount");
+
+        assertFalse(
+                amountWithValidator.isMissingNode(),
+                "amount must still be published with a validator: the builder method binds it");
         assertTrue(
-                amount.at("/maximum").isMissingNode(),
-                "the hand-written builder's property must carry no borrowed maximum even with a validator"
-                        + " supplied; document: " + document);
+                amountWithValidator.at("/maximum").isMissingNode(),
+                "the getter-less hand-written builder's property must carry no borrowed maximum even with a"
+                        + " validator supplied; document: " + withValidator);
+        assertFalse(
+                amountWithoutValidator.isMissingNode(),
+                "amount must still be published without a validator: the builder method binds it");
+        assertTrue(
+                amountWithoutValidator.at("/maximum").isMissingNode(),
+                "the getter-less hand-written builder's property must carry no borrowed maximum without a"
+                        + " validator either; document: " + withoutValidator);
+    }
+
+    @Test
+    @DisplayName("round 2 (owner ruling): a hand-written builder's getter-backed property joins with and without"
+            + " a validator — main's own inherited behavior through the getter, not a new strictness")
+    void handWrittenBuilderWithGetterJoinsWithOrWithoutAValidator() {
+        // The sibling of handWrittenBuilderWithNoGetterDoesNotJoinWithOrWithoutAValidator above: same
+        // hand-written, value-transforming, non-Lombok-shaped builder, but the built field has a getter
+        // (BuilderWireNameJoinTest.TransformingBuilderDto). Round 2 borrows a getter-backed built
+        // property's constraint for any builder shape, exactly what main's field walk always did — the
+        // floor half is pinned without a validator by BuilderWireNameJoinTest
+        // .handWrittenTransformingBuilderWithGetterBorrowsMainsInheritedBehavior; this pins both the
+        // supplement's own agreement under a validator and the floor's own result again through this
+        // class's walkDocument helper, so both branches of the rule are recorded in this suite too.
+        Validator validator = MetadataTestValidators.plain();
+        JsonNode withValidator = metadataDocument(BuilderWireNameJoinTest.TransformingBuilderDto.class, validator);
+        JsonNode withoutValidator = walkDocument(BuilderWireNameJoinTest.TransformingBuilderDto.class);
+
+        assertEquals(
+                10,
+                withValidator.at("/properties/amount/maximum").asInt(-1),
+                "the getter-backed hand-written builder's property must carry the borrowed maximum with a"
+                        + " validator supplied; document: " + withValidator);
+        assertEquals(
+                10,
+                withoutValidator.at("/properties/amount/maximum").asInt(-1),
+                "the getter-backed hand-written builder's property must carry the borrowed maximum without a"
+                        + " validator too; document: " + withoutValidator);
     }
 
     @Test

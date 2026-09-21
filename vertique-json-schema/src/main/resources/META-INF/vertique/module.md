@@ -86,26 +86,36 @@ supplement on top when one is:
   are one logical property, never a name coincidence the walk goes looking for), and a builder method
   borrows the built type's Jackson-introspected property of that same wire name — also
   unconditionally, whether or not a validator is supplied — **when the borrow is sound**. **Builder
-  borrow assumption (owner ruling, `spike/deserializer-driven-schema`).** A builder method is assumed
-  to set the built property of that same wire name: guaranteed by construction for a Lombok `@Builder`
-  setter, which this framework's own configuration types use throughout. That guarantee does not hold
-  for a hand-written builder whose method transforms the value before assigning it — the walk has no
-  way to read a method body — so the borrow is bounded to the shape it can actually vouch for,
-  detected by `BuilderBorrowDetector` entirely through `java.lang.reflect` over Jackson's own
-  `RUNTIME`-retained annotations: the built type carries `@JsonDeserialize(builder = ...)` naming a
-  `static` nested class of the built type named `<Type>Builder`; that class carries
-  `@JsonPOJOBuilder(withPrefix = "", buildMethodName = "build")` — the exact values `@Jacksonized`
-  generates — and a zero-argument `build()` returning the built type; and, for the property in
-  question, a builder method with exactly one parameter whose type and name both match the built field
-  exactly. Detection deliberately does not read `@lombok.Generated`: that annotation carries
-  `RetentionPolicy.CLASS`, so recognizing it would mean parsing the compiled class file directly
-  (as JaCoCo's own coverage exclusion does) rather than through ordinary reflection — disproportionate
-  surface for a detection hint in a module whose compile dependencies are deliberately frozen. A
-  hand-written builder that reproduces the whole shape by hand resolves too — the ruling tolerates
-  that: it says a hand-written builder *may* go unresolved, not that it must; one that does not
-  reproduce it gets no borrowed constraint at all, and its property is published by type only. The
-  same soundness check gates the Bean Validation supplement's own, independent join for a builder
-  method (`MetadataConstraintSource`
+  borrow assumption (owner ruling, `spike/deserializer-driven-schema`, round 2).** A builder method is
+  assumed to set the built property of that same wire name. The borrow now splits on whether that
+  built-type property has a getter:
+  - **Getter-backed property: borrowed unconditionally, for any builder.** This is exactly what
+    `main`'s field walk always did — it published every getter-backed field's constraints regardless
+    of what any builder method's body did with the value before assigning it — so the round-2 ruling
+    restores that behavior rather than gate it on the builder's own shape. A hand-written builder that
+    transforms the value before assigning it (dividing cents into whole units, say) still has its
+    getter-backed built field's constraint borrowed, exactly as a genuine Lombok builder's does.
+  - **Getter-less property (the private, no-accessor case): bounded to the shape `BuilderBorrowDetector`
+    can vouch for.** Here the borrow is guaranteed by construction only for a Lombok `@Builder` setter,
+    which this framework's own configuration types use throughout; a hand-written builder that does
+    not reproduce that shape carries no such guarantee — the walk has no way to read a method body —
+    so the borrow is bounded to the shape `BuilderBorrowDetector` detects entirely through
+    `java.lang.reflect` over Jackson's own `RUNTIME`-retained annotations: the built type carries
+    `@JsonDeserialize(builder = ...)` naming a `static` nested class of the built type named
+    `<Type>Builder`; that class carries `@JsonPOJOBuilder(withPrefix = "", buildMethodName = "build")`
+    — the exact values `@Jacksonized` generates — and a zero-argument `build()` returning the built
+    type; and, for the property in question, a builder method with exactly one parameter whose type
+    and name both match the built field exactly. Detection deliberately does not read
+    `@lombok.Generated`: that annotation carries `RetentionPolicy.CLASS`, so recognizing it would mean
+    parsing the compiled class file directly (as JaCoCo's own coverage exclusion does) rather than
+    through ordinary reflection — disproportionate surface for a detection hint in a module whose
+    compile dependencies are deliberately frozen. A hand-written builder that reproduces the whole
+    shape by hand resolves too — the ruling tolerates that: it says a hand-written builder *may* go
+    unresolved, not that it must; one that does not reproduce it gets no borrowed constraint at all,
+    and its property is published by type only.
+
+  `BuilderBorrowDetector`'s soundness check is unaffected by round 2 and still gates the Bean
+  Validation supplement's own, independent join for a builder method (`MetadataConstraintSource`
   reflects over the built class directly, so without this it would silently re-add a hand-written
   builder's constraint whenever a `Validator` happens to be supplied, even though the floor no longer
   does) — an ordinary setter's join is unaffected either way, since a setter's own field is never in
@@ -141,8 +151,14 @@ supplement on top when one is:
 member's Java bean name — the field name, or the name a getter/setter implies by stripping its
 `get`/`is`/`set`/`with` prefix — **never** by the wire name; a builder method joins the same way, on
 the built type, but only when `BuilderBorrowDetector` judges the join sound (see "Builder borrow
-assumption" above) — an unresolved hand-written builder's property contributes no supplement, exactly
-as it gets no borrow from the floor. **Setter-only field-borrow fallback (owner ruling,
+assumption" above) — the supplement's own builder gate is unaffected by round 2 and stays bounded to
+that shape check regardless of a getter. For the getter-less shape this matches the floor exactly: an
+unresolved hand-written builder's property contributes no supplement, exactly as it gets no borrow
+from the floor. For a getter-backed shape that fails the shape check, the two diverge on purpose: the
+floor already borrows the constraint unconditionally (see "Builder borrow assumption" above), so the
+supplement contributes nothing further there either — its own addition/correction merge only ever
+fills a keyword the floor left unset, and the floor never leaves one unset for a getter-backed
+property. **Setter-only field-borrow fallback (owner ruling,
 `spike/deserializer-driven-schema`).** The floor itself joins a setter to its backing field through
 Jackson's own `BeanPropertyDefinition#getField()` — the field Jackson associates with the same
 wire-named property, guaranteed by construction to be the one the setter's value corresponds to. That
@@ -251,7 +267,10 @@ type holding such a shape as a property.
 
 A builder type is filled through its builder rather than through the field. A builder method's own
 constraint is borrowed from the built type's Jackson-introspected property of the same wire name —
-never a raw field-name scan — when the builder borrow detector judges the borrow sound: a Lombok
+never a raw field-name scan. When that property has a getter, the borrow is unconditional, for any
+builder — a Lombok `@Builder @Jacksonized` type, a hand-written builder that reproduces its shape, or
+a hand-written builder that does not (round 2, owner ruling). When the property has no getter, the
+borrow stays bounded to the shape the builder borrow detector can vouch for: a Lombok
 `@Builder @Jacksonized` type, or the exact shape it generates by construction. **Closed (BG1):** a
 constrained private field with no `@Getter` at all is invisible to Jackson's own introspection, so
 the floor has nothing to join the builder method to — that one property still publishes, by type

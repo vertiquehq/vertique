@@ -43,14 +43,17 @@ import java.util.Set;
  * shape is outside what Bean Validation exposes ({@link BeanDescriptor#getConstraintsForConstructor}
  * covers constructors only) — but {@link WalkConstraintSource} still renders its own annotations
  * directly as the floor, so the constraint is not lost (C3). A setter property is folded into the
- * same property-name join as a field or getter. A builder-method property joins the same way only
- * when {@link BuilderBorrowDetector} judges the join sound (a Lombok builder, or the exact Lombok
- * builder shape) — otherwise it contributes no supplement either, matching {@link
- * InputPropertyDescriber}'s own floor-side borrow: this class's own reflection over {@code
- * builtClass} would otherwise find and re-add a hand-written builder's borrowed constraint even after
- * the floor stopped rendering it, silently reintroducing the over-strict schema the owner ruling
- * removed whenever a {@code Validator} happens to be supplied. Where a property matches nothing, it
- * contributes no supplement.
+ * same property-name join as a field or getter. A builder-method property joins here only when
+ * {@link BuilderBorrowDetector} judges the join sound (a Lombok builder, or the exact Lombok builder
+ * shape) — otherwise it contributes no supplement either. This class's own gate is unconditional on
+ * getter presence, unlike {@link InputPropertyDescriber}'s own floor-side borrow (round 2, which
+ * borrows a getter-backed property for any builder): for a getter-less builder property the two
+ * agree, so this class's own reflection over {@code builtClass} does not find and re-add a
+ * hand-written builder's borrowed constraint even after the floor stopped rendering it, silently
+ * reintroducing the over-strict schema the owner ruling removed whenever a {@code Validator} happens
+ * to be supplied; a getter-backed builder property is unaffected by this class's own gate, since the
+ * floor already publishes it regardless. Where a property matches nothing, it contributes no
+ * supplement.
  *
  * <p><strong>Group filter.</strong> Only a constraint whose {@link ConstraintDescriptor#getGroups()}
  * is empty or contains {@link Default} is rendered; {@code @Valid} cascades are never consulted here
