@@ -291,14 +291,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 // binder would accept, unlike refusing generation outright.
                 return unconstrained(context);
             }
-            throw Diagnostics.failure(
-                    "JSON Schema generation failed for " + Diagnostics.typeIdentity(javaType.getRawClass())
-                            + ": the profile's mapper deserializes it with "
-                            + Diagnostics.truncate(
-                                    deserializer.getClass().getName(), Diagnostics.MAX_SHORT_IDENTITY_LENGTH)
-                            + ", whose wire shape the generator cannot describe; declare a JsonSchemaTypeOverride for"
-                            + " the type on the profile, or deserialize it as a bean",
-                    null);
+            throw refuseCustomDeserializer(javaType, deserializer);
         }
         ObjectNode definition = context.getGeneratorConfig().createObjectNode();
         ValueInstantiator instantiator = bean.getValueInstantiator();
@@ -387,6 +380,31 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             // case above could.
             throw refuseDelegatingCreator(javaType, "an array-delegating @JsonCreator");
         }
+    }
+
+    /**
+     * The shared diagnostic for a deserializer that does not resolve to a bean deserializer — neither a
+     * type-level custom deserializer refused at the root ({@link #describe}) nor, after C-1's fix, an
+     * {@code @JsonUnwrapped} child whose own root deserializer does not resolve to one either (the
+     * unwrapped-child loop in {@link #populateObjectSchema}): both name a type whose wire shape a schema
+     * cannot describe, refused with the same remedy rather than silently skipped.
+     *
+     * @param javaType     the type being described
+     * @param deserializer the deserializer that failed to resolve to a bean deserializer, or {@code
+     *                     null} when none resolved at all
+     * @return the bounded diagnostic to throw
+     */
+    private static JsonSchemaGenerationException refuseCustomDeserializer(
+            JavaType javaType, JsonDeserializer<?> deserializer) {
+        String identity = deserializer == null
+                ? "no deserializer"
+                : Diagnostics.truncate(deserializer.getClass().getName(), Diagnostics.MAX_SHORT_IDENTITY_LENGTH);
+        return Diagnostics.failure(
+                "JSON Schema generation failed for " + Diagnostics.typeIdentity(javaType.getRawClass())
+                        + ": the profile's mapper deserializes it with " + identity
+                        + ", whose wire shape the generator cannot describe; declare a JsonSchemaTypeOverride for"
+                        + " the type on the profile, or deserialize it as a bean",
+                null);
     }
 
     /** A schema accepting any JSON value, for an opaque type this describer cannot know the shape of. */
@@ -496,10 +514,20 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 if (transformer == null) {
                     continue;
                 }
-                JsonDeserializer<?> child = rootDeserializer(property.getType());
+                // C-1 (security review round 6 finding): routed through unwrapDelegating, the same bound
+                // applied at the root (describe()) and inline (propertySchema()) seams — otherwise a
+                // mapper-wide BeanDeserializerModifier that wraps every bean deserializer in a forwarding
+                // DelegatingDeserializer subclass leaves this child's own root deserializer un-unwrapped,
+                // the instanceof BeanDeserializerBase check below fails, and the child is silently
+                // skipped: neither its property nor its constraint reaches the document, and (for a
+                // case-insensitively bound child) requireCaseSensitive below never even runs.
+                JsonDeserializer<?> child = unwrapDelegating(rootDeserializer(property.getType()));
                 JsonDeserializer<?> renamed = child == null ? null : child.unwrappingDeserializer(transformer);
                 if (!(renamed instanceof BeanDeserializerBase unwrapped)) {
-                    continue;
+                    // A silently skipped child is exactly the bypass this fix closes: refuse with the
+                    // same bounded custom-deserializer diagnostic the root seam throws, rather than
+                    // continuing past a declared @JsonUnwrapped member this generator cannot describe.
+                    throw refuseCustomDeserializer(property.getType(), child);
                 }
                 Class<?> childClass = property.getType().getRawClass();
                 requireCaseSensitive(unwrapped, childClass, "the unwrapped member " + property.getName());

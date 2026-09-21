@@ -304,18 +304,34 @@ class overrides none of `deserialize(JsonParser, DeserializationContext)`,
 reach the original bean deserializer unchanged. For that bounded shape the generator unwraps the chain
 down to its ultimate delegate, mirroring the existing `TypeWrappedDeserializer` unwrap, and describes
 the wrapped bean from the delegate rather than refusing it as an opaque type-level override; the same
-bound applies wherever the generator unwraps a `DelegatingDeserializer` — both at the root/nested-
-reference seat and on the member-level case-insensitive inline path (S-1, round 5 review finding). A
-`DelegatingDeserializer` subclass that overrides any of the three methods — accepting a wire form of
-its own before, or instead of, ever reaching the delegate — is *not* unwrapped: it is treated as a
-replaced deserializer and refused exactly like the shape described above, with the same diagnostic,
-since unwrapping straight to the delegate's plain bean description would silently drop whatever the
-override actually does. This is deliberately narrower than the refusal it exempts from: a third-party
-type with a settable property whose deserializer a profile module attaches directly
-(`SimpleModule.addDeserializer(...)`, or a `BeanDeserializerModifier` that returns something other than
-a pure-forwarding `DelegatingDeserializer` wrapping the original bean deserializer) is not a
+bound applies at all three seams the generator unwraps a `DelegatingDeserializer` at — the
+root/nested-reference seat, the member-level case-insensitive inline path (S-1, round 5 review
+finding), and the `@JsonUnwrapped` unwrapped-child loop (C-1, round 6 finding): an unwrapped child's
+own root deserializer is unwrapped the same bounded way before the loop asks Jackson for its
+unwrapping deserializer, so a mapper-wide forwarding wrapper no longer leaves the child's own bean
+deserializer hidden behind it. A `DelegatingDeserializer` subclass that overrides any of the three
+methods — accepting a wire form of its own before, or instead of, ever reaching the delegate — is *not*
+unwrapped: it is treated as a replaced deserializer and refused exactly like the shape described above,
+with the same diagnostic, since unwrapping straight to the delegate's plain bean description would
+silently drop whatever the override actually does. This is deliberately narrower than the refusal it
+exempts from: a third-party type with a settable property whose deserializer a profile module attaches
+directly (`SimpleModule.addDeserializer(...)`, or a `BeanDeserializerModifier` that returns something
+other than a pure-forwarding `DelegatingDeserializer` wrapping the original bean deserializer) is not a
 `DelegatingDeserializer` chain to unwrap, and stays refused exactly as described above — the remedy for
-that shape is still a `JsonSchemaTypeOverride`.
+that shape is still a `JsonSchemaTypeOverride`. **An `@JsonUnwrapped` child is now refused, not
+silently skipped, when its own root deserializer still does not resolve to a bean deserializer after
+that unwrap** (C-1, round 6 finding): before this fix the unwrapped-child loop's own `instanceof
+BeanDeserializerBase` check simply `continue`d past such a child, publishing neither its property nor
+its constraint and — for a case-insensitively bound child — never even reaching the case-sensitivity
+refusal below. It now throws the same bounded custom-deserializer diagnostic the root seat throws for
+the identical shape.
+
+**A case-insensitively bound `@JsonUnwrapped` child is refused, at every seam a wrapper can hide it
+behind.** `requireCaseSensitive` runs immediately once an unwrapped child resolves to a bean
+deserializer, so the C-1 unwrap fix above also restores this refusal under a mapper-wide forwarding
+wrapper: before the fix, the wrapper left the child's root deserializer un-unwrapped, the loop's own
+`instanceof BeanDeserializerBase` check failed first, and generation silently succeeded with the
+child's property simply missing instead of refusing the genuinely case-insensitive binding.
 
 **A delegating `@JsonCreator`** — object-delegating (`Mode.DELEGATING` over a single non-array-like
 parameter) or array-delegating (the same mode over a `List`/array-shaped parameter) — is refused with
