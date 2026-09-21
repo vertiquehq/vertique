@@ -1907,6 +1907,16 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             Set<String> published,
             Map<String, List<String>> aliasPlanTarget,
             Set<String> reservedSeedTarget) {
+        // S1 (spike/deserializer-driven-schema round 4 ruling): alias folding is skipped outright for a
+        // non-no-op unwrap transformer (a declared @JsonUnwrapped prefix or suffix) — measured: neither
+        // the alias's own plain local spelling nor the hand-transformed one actually binds through
+        // Jackson's own unwrapping deserializer once a real prefix or suffix is in play, so folding
+        // either one into the plan would publish and validate a spelling the binder never reaches under
+        // this member. Reservation of an unpublished or hidden child name (below) is unaffected: that
+        // name still comes from the already-transformed bound-property list or from
+        // introspectUnboundNames plus a correct hand transform, neither of which shares the alias fold's
+        // own unsoundness.
+        boolean noOpTransformer = transformer == NameTransformer.NOP;
         for (SettableBeanProperty childProperty : childBound) {
             String claimant = childProperty.getName();
             if (!published.contains(claimant)) {
@@ -1914,6 +1924,9 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 // {@link #propertySchema} hid on purpose (@Schema(hidden = true)) — either way, reserved
                 // rather than left to fall through to the extras bucket unconstrained.
                 reservedSeedTarget.add(claimant);
+                continue;
+            }
+            if (!noOpTransformer) {
                 continue;
             }
             AnnotatedMember member = childProperty.getMember();
