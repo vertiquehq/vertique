@@ -597,7 +597,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                     context,
                     true);
             if (member != null) {
-                translateConstraints(member, builtClass, inline, property.getName(), required);
+                translateConstraints(member, builtClass, inline, property.getName(), property.getType(), required);
             }
             return inline;
         }
@@ -608,7 +608,8 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             JsonNode schema = context.createDefinitionReference(
                     context.getTypeContext().resolve(converting.getDelegatee().handledType()));
             if (member != null) {
-                translateConstraints(member, builtClass, (ObjectNode) schema, property.getName(), required);
+                translateConstraints(
+                        member, builtClass, (ObjectNode) schema, property.getName(), property.getType(), required);
             }
             return schema;
         }
@@ -624,7 +625,8 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 JsonNode schema = fieldSchema(
                         backing, builtClass, resolved, property.getName(), property.getType(), context, required);
                 if (schema != null && member != null) {
-                    translateConstraints(member, builtClass, (ObjectNode) schema, property.getName(), required);
+                    translateConstraints(
+                            member, builtClass, (ObjectNode) schema, property.getName(), property.getType(), required);
                 }
                 return schema;
             }
@@ -633,7 +635,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         // constraints from Jackson's merged annotation map.
         ObjectNode schema = context.createDefinitionReference(resolve(context, property.getType()));
         if (member != null) {
-            translateConstraints(member, builtClass, schema, property.getName(), required);
+            translateConstraints(member, builtClass, schema, property.getName(), property.getType(), required);
         }
         boolean objectId = property instanceof com.fasterxml.jackson.databind.deser.impl.ObjectIdValueProperty;
         if (!objectId
@@ -817,7 +819,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             // returns the builder. The value type comes from the deserializer, the constraints from
             // Jackson's merged annotation map, and a builder method borrows the built type's field.
             ObjectNode schema = context.createDefinitionReference(resolve(context, property.getType()));
-            translateConstraints(member, builtClass, schema, property.getName(), required);
+            translateConstraints(member, builtClass, schema, property.getName(), property.getType(), required);
             if (method.getDeclaringClass() != builtClass
                     && !method.getDeclaringClass().isAssignableFrom(builtClass)) {
                 // a builder method: the constraints are borrowed from the built type's own Jackson
@@ -876,7 +878,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             return schema;
         }
         ObjectNode schema = context.createDefinitionReference(resolve(context, property.getType()));
-        translateConstraints(member, builtClass, schema, property.getName(), required);
+        translateConstraints(member, builtClass, schema, property.getName(), property.getType(), required);
         return schema;
     }
 
@@ -1025,13 +1027,26 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * silently dropped when a validator is supplied (C3), since Bean Validation itself can join a
      * creator parameter only through a constructor. The supplement, when active, is merged on top —
      * see {@link #mergeConstraints}. The Swagger translation is source-independent and always applied.
+     *
+     * @param propertyType the property's own Jackson-resolved value type (D4, unscoped-member
+     *                      counterpart): a builder or setter {@code member}'s {@link
+     *                      AnnotatedMember#getRawType()} is that <em>method's</em> raw type, which for
+     *                      Jackson's own {@link com.fasterxml.jackson.databind.introspect.AnnotatedMethod}
+     *                      is its return type — the builder's own type for a builder method, {@code
+     *                      void} for an ordinary setter — never the parameter the value actually binds
+     *                      as; only {@code property}'s own type says that
      */
     private void translateConstraints(
-            AnnotatedMember member, Class<?> builtClass, ObjectNode schema, String name, List<String> required) {
+            AnnotatedMember member,
+            Class<?> builtClass,
+            ObjectNode schema,
+            String name,
+            JavaType propertyType,
+            List<String> required) {
         if (member == null) {
             return;
         }
-        ConstraintValueKind kind = ConstraintValueKind.fromJavaType(member.getRawType());
+        ConstraintValueKind kind = ConstraintValueKind.fromJavaType(propertyType.getRawClass());
         String javaName = javaBeanName(member);
         ResolvedConstraints floor = WalkConstraintSource.INSTANCE.forUnscopedMember(builtClass, javaName, kind, member);
         mergeConstraints(schema, floor, name, required);
