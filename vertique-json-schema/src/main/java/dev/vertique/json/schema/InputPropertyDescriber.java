@@ -103,15 +103,18 @@ import java.util.concurrent.ConcurrentHashMap;
  * unresolved.
  *
  * <p>Two mechanisms are detected and refused rather than described, because a document describing
- * them would be false: a <em>bean-like</em> type whose own class carries an explicit type-level
- * {@code @JsonDeserialize(using = ...)} (or equivalent) unless the profile declares a schema override
- * for it, and a type bound case-insensitively through the mapper, a class-level or a member-level
- * {@code @JsonFormat}. Both fail generation with a bounded diagnostic naming the type and the remedy.
- * A type whose deserializer is not a bean deserializer for any <em>other</em> reason — a module
- * registered a plain deserializer for a foreign, opaque type that never had bean properties to begin
+ * them would be false: a <em>bean-like</em> type — one whose own class carries an explicit type-level
+ * {@code @JsonDeserialize(using = ...)} (or equivalent), <strong>or</strong> one the mapper's own
+ * reflective introspection still reports properties for even though a profile module attached its
+ * deserializer some other way ({@code SimpleModule.addDeserializer}, a {@code
+ * BeanDeserializerModifier} wrapper) — unless the profile declares a schema override for it; and a
+ * type bound case-insensitively through the mapper, a class-level or a member-level {@code
+ * @JsonFormat}. Both fail generation with a bounded diagnostic naming the type and the remedy. A type
+ * whose deserializer is not a bean deserializer for any <em>other</em> reason — introspection reports
+ * no properties for it either, so it is a foreign, opaque type that never had bean properties to begin
  * with (a scalar, container, node, or Vert.x-style wrapper such as {@code JsonObject}/{@code
  * JsonArray}/{@code Buffer}) — is described as accepting any JSON value instead, since there is no
- * field walk such a refusal could be protecting.
+ * field walk such a refusal could be protecting for that type.
  *
  * <p>Registered after the annotation modules on purpose: the Jackson module's subtype resolver keeps
  * precedence for a {@code @JsonTypeInfo} root and consults this provider for each concrete subtype;
@@ -222,13 +225,23 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             return describeMapLike(javaType, context);
         }
         if (!(deserializer instanceof BeanDeserializerBase bean)) {
-            if (!declaresOwnDeserializerOverride(javaType)) {
+            // F1 (security review round 1, HIGH): declaresOwnDeserializerOverride alone only catches a
+            // class-level @JsonDeserialize(using = ...); a deserializer a profile module registers
+            // (SimpleModule.addDeserializer, or a BeanDeserializerModifier wrapper) carries no such
+            // annotation, so an application DTO the mapper's own reflective introspection still reports
+            // bean properties for — a bean-like type main's field walk would have published — must be
+            // refused too, or a document describing it as {} silently drops every constraint on it. A
+            // type introspection reports no properties for (JsonObject, Buffer, a scalar, a container,
+            // a node) never had a field walk to protect and stays described as unconstrained.
+            boolean beanLike = !introspection(javaType).findProperties().isEmpty();
+            if (!declaresOwnDeserializerOverride(javaType) && !beanLike) {
                 // A scalar, container, node, or Vert.x-style opaque wrapper: some module registered a
                 // plain (non-bean) deserializer for this *foreign* type, but the type's own class
-                // carries no explicit @JsonDeserialize(using = ...) — it never looked like a bean to
-                // begin with, so there is no field walk this description could be dropping. Describing
-                // it as accepting any JSON value (exactly like Object.class/JsonNode.class) is honest:
-                // it never rejects traffic the binder would accept, unlike refusing generation outright.
+                // carries no explicit @JsonDeserialize(using = ...) and introspection reports no
+                // properties for it — it never looked like a bean to begin with, so there is no field
+                // walk this description could be dropping. Describing it as accepting any JSON value
+                // (exactly like Object.class/JsonNode.class) is honest: it never rejects traffic the
+                // binder would accept, unlike refusing generation outright.
                 return unconstrained(context);
             }
             throw Diagnostics.failure(

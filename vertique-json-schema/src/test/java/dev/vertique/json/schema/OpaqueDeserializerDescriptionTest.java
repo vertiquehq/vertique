@@ -101,6 +101,58 @@ class OpaqueDeserializerDescriptionTest {
         return JsonMapperProfiles.of(JsonProfileId.of("opaque-wrapper-test"), mapper);
     }
 
+    /**
+     * F1 (security review round 1, HIGH): a bean-like application DTO whose deserializer is attached
+     * through a profile module — {@code SimpleModule.addDeserializer(Money.class, ...)} — rather than
+     * a class-level {@code @JsonDeserialize(using = ...)}. {@code declaresOwnDeserializerOverride}
+     * alone missed this: the class carries no annotation, so before the fix this fell into the same
+     * "opaque wrapper" branch as {@link OpaqueWrapper} and was described as {@code {}}, dropping the
+     * {@code @Max(100)} constraint the field walk on {@code main} always published.
+     */
+    static final class Money {
+        @jakarta.validation.constraints.Max(100)
+        public int amount;
+    }
+
+    static final class MoneyDeserializer extends StdDeserializer<Money> {
+        MoneyDeserializer() {
+            super(Money.class);
+        }
+
+        @Override
+        public Money deserialize(
+                com.fasterxml.jackson.core.JsonParser parser,
+                com.fasterxml.jackson.databind.DeserializationContext ctxt) {
+            throw new UnsupportedOperationException("not exercised");
+        }
+    }
+
+    /** A DTO holding the module-deserialized bean-like type as a member. */
+    static final class HoldsMoney {
+        public Money money;
+    }
+
+    private static JsonMapperProfile profileWithModuleRegisteredBeanDeserializer() {
+        ObjectMapper mapper = new ObjectMapper();
+        SimpleModule module = new SimpleModule("module-registered-bean-deserializer-test");
+        module.addDeserializer(Money.class, new MoneyDeserializer());
+        mapper.registerModule(module);
+        return JsonMapperProfiles.of(JsonProfileId.of("module-registered-bean-deserializer-test"), mapper);
+    }
+
+    @Test
+    @DisplayName("F1: a bean-like type with a module-registered (non-annotated) deserializer is refused, not"
+            + " described as {} — every constraint on it must not be silently dropped")
+    void beanLikeTypeWithModuleRegisteredDeserializerIsRefused() {
+        JsonMapperProfile profile = profileWithModuleRegisteredBeanDeserializer();
+        JsonSchemaGenerationException failure = assertThrows(
+                JsonSchemaGenerationException.class,
+                () -> AnnotationJsonSchemaGenerator.forInputProfile(profile).generateCanonical(HoldsMoney.class));
+        org.junit.jupiter.api.Assertions.assertTrue(
+                failure.getMessage().contains("whose wire shape the generator cannot describe"),
+                () -> "unexpected message: " + failure.getMessage());
+    }
+
     private static JsonNode inputDocument(Type type) {
         return assertCanonicalForm(AnnotationJsonSchemaGenerator.forInputProfile(profileWithOpaqueWrapper())
                 .generateCanonical(type));
