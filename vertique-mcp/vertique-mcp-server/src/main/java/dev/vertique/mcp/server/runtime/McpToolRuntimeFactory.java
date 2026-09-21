@@ -57,10 +57,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * close. None of this happens on the request path: it runs exactly once per tool, here, during
  * composition.
  *
- * <p>The input-direction generator sources its value-schema constraints from Bean Validation
- * metadata instead of the annotation walk whenever the same optional {@code Validator}
+ * <p>The input-direction generator additionally sources its value-schema constraints from Bean
+ * Validation metadata whenever the same optional {@code Validator}
  * {@link dev.vertique.mcp.server.McpServerModule} declares for generated invokers' runtime
- * validation is present on the graph; when absent, generation is unchanged.
+ * validation is present on the graph — the annotation walk still runs first, as the floor every
+ * generation mode shares, and the metadata source only supplements or, for a bounded set of shapes,
+ * corrects it; when absent, generation is unchanged.
  */
 @Singleton
 public final class McpToolRuntimeFactory {
@@ -81,10 +83,11 @@ public final class McpToolRuntimeFactory {
     /**
      * The same optional application-bound {@link Validator} {@link McpServerModule} already declares
      * {@code @BindsOptionalOf} for generated tool invokers' runtime Bean Validation. When present,
-     * every input-direction generator this factory builds also sources its value-schema constraints
-     * from Bean Validation metadata instead of the annotation walk — see {@code ConstraintSource} in
-     * {@code vertique-json-schema}. The output direction is unaffected: it has no validator-accepting
-     * overload.
+     * every input-direction generator this factory builds also additionally sources its value-schema
+     * constraints from Bean Validation metadata — the annotation walk still runs first, as the floor
+     * every generator carries, and the metadata source only supplements or, for a bounded set of
+     * shapes, corrects it — see {@code ConstraintSource} in {@code vertique-json-schema}. The output
+     * direction is unaffected: it has no validator-accepting overload.
      */
     private final Optional<Validator> validator;
 

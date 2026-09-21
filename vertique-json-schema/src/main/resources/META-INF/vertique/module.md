@@ -50,10 +50,12 @@ overrides apply:
   advertised as accepted input; only the profile's `INPUT`- and `BOTH`-direction schema-type
   overrides apply.
 - `forInputProfile(JsonMapperProfile, jakarta.validation.Validator)` — identical to
-  `forInputProfile(JsonMapperProfile)`, except that value-schema constraints are sourced from Bean
-  Validation metadata instead of the annotation walk. See "Constraint sources" below. Pass `null`
-  (or use the single-argument overload) when no `Validator` is available; a `null` validator is
-  exactly the single-argument overload's behavior, not a degraded mode.
+  `forInputProfile(JsonMapperProfile)`, except that value-schema constraints are additionally
+  sourced from Bean Validation metadata — the annotation walk still runs first, as the floor every
+  generation mode shares; the metadata source only supplements or, for a bounded set of shapes,
+  corrects it. See "Constraint sources" below. Pass `null` (or use the single-argument overload)
+  when no `Validator` is available; a `null` validator is exactly the single-argument overload's
+  behavior, not a degraded mode.
 - `forOutputProfile(JsonMapperProfile)` — property discovery and external property names use the
   output-direction Jackson introspection of `profile.mapper()`; the same mapper metadata applies,
   so write-only properties are not advertised as emitted output; only the profile's `OUTPUT`- and
@@ -154,7 +156,13 @@ described by the generator at all today, so it is unaffected either way.
 shape) is derived from the member's **declared Java type**, never from the schema's own rendered
 `type` keyword — that keyword is unavailable at the point a `Map`, a bean, or an `Optional` value's
 constraints are applied. Deriving it from the schema's `type` instead was tried and reverted: it
-silently misrendered `@Size` on a `Map` as `maxLength`.
+silently misrendered `@Size` on a `Map` as `maxLength`. The declared type is resolved as Jackson
+itself sees it for the built type's own parameterization — never a raw `java.lang.reflect.Field` or
+`Method`'s reflected type, which erases a generic holder's type variable to its bound regardless of
+what a particular embedding binds it to. A member whose resolved kind is neither `STRING`, `ARRAY`,
+nor `MAP` (a number, or an unrecognized kind) contributes no `@Size`/`@NotEmpty`/`@NotBlank` size
+keyword at all: none of those three keyword families applies to it, so the correct render is
+nothing, matching what the annotation walk renders for the same member kind.
 
 **The group filter.** Only a constraint whose declared groups are empty or contain
 `jakarta.validation.groups.Default` is proposed by the supplement (as either an addition or a
@@ -621,7 +629,7 @@ modes consume.
 |----------|-------|---------|
 | `dev.vertique:vertique-core` | compile | `JsonMapperProfile`, `JsonSchemaFragment`, `JsonSchemaTypeOverride` — the stable JSON profile contracts this module consumes |
 | `com.fasterxml.jackson.core:jackson-databind` | compile | `ObjectMapper` property discovery that Victools' Jackson module introspects |
-| `jakarta.validation:jakarta.validation-api` | compile | Jakarta Validation constraint annotations Victools' Jakarta Validation module introspects; also the `Validator`/constraint-metadata types `forInputProfile(profile, Validator)`'s metadata constraint source reads. No `hibernate-validator` (or any other provider implementation) dependency — Hibernate's `@Length`/`@Range`/`@URL` are recognized by annotation simple name alone, keeping this module provider-agnostic |
+| `jakarta.validation:jakarta.validation-api` | compile | Jakarta Validation constraint annotations Victools' Jakarta Validation module introspects; also the `Validator`/constraint-metadata types `forInputProfile(profile, Validator)`'s metadata constraint source reads. No `hibernate-validator` (or any other provider implementation) dependency — Hibernate's `@Length`/`@Range`/`@URL` are recognized by fully-qualified annotation class name, never by simple name alone, keeping this module provider-agnostic |
 | `io.swagger.core.v3:swagger-annotations-jakarta` | compile | `@Schema` / `@ArraySchema` annotations Victools' Swagger 2 module introspects |
 | `com.github.victools:jsonschema-generator` | compile | The Draft 2020-12 schema generation engine |
 | `com.github.victools:jsonschema-module-jackson` | compile | Jackson property discovery module |

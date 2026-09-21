@@ -178,10 +178,11 @@ The protected `generateBodySchema(Type, JsonMapperProfile)` seam is the only gen
 uses for tool-input validation. When present (an application depends on `vertique-validation`, which
 binds a plain `Validator`, or an application binds its own), every body schema this source
 synthesizes is built through `AnnotationJsonSchemaGenerator.forInputProfile(profile, validator)`, so
-constraints come from Bean Validation metadata instead of the annotation walk — see
-`vertique-json-schema`'s module reference for the join rules, the group filter, and the rendered
-keyword table. When absent, generation is exactly what it was before this binding existed: the
-annotation walk, with no behavior change. `AnnotationSchemaSource`'s no-argument public constructor
+constraints additionally come from Bean Validation metadata — the annotation walk still runs first,
+as the floor every generation mode shares, and the metadata source only supplements or, for a
+bounded set of shapes, corrects it — see `vertique-json-schema`'s module reference for the join
+rules, the group filter, and the rendered keyword table. When absent, generation is exactly what it
+was before this binding existed: the annotation walk alone, with no behavior change. `AnnotationSchemaSource`'s no-argument public constructor
 is retained (equivalent to `Optional.empty()`) for source compatibility with code that constructs it
 directly rather than through Dagger; the `@Inject`-annotated constructor is the
 `Optional<Validator>`-accepting one.

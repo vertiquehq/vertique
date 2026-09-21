@@ -131,9 +131,10 @@ public class AnnotationSchemaSource implements OperationSchemaSource {
     /**
      * The optional application-bound {@link Validator}: present when an application depends on
      * {@code vertique-validation} (or binds its own {@code Validator}), absent otherwise. When
-     * present, every generator this source builds sources its value-schema constraints from Bean
-     * Validation metadata instead of the annotation walk; see {@code ConstraintSource} in
-     * {@code vertique-json-schema}.
+     * present, every generator this source builds additionally sources its value-schema constraints
+     * from Bean Validation metadata — the annotation walk still runs first, as the floor every
+     * generator carries, and the metadata source only supplements or, for a bounded set of shapes,
+     * corrects it; see {@code ConstraintSource} in {@code vertique-json-schema}.
      */
     private final Optional<Validator> validator;
 

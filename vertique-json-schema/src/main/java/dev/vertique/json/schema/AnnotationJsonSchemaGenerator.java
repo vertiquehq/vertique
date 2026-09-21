@@ -345,15 +345,17 @@ public final class AnnotationJsonSchemaGenerator {
 
     /**
      * Constructs an input-direction generator exactly as {@link #forInputProfile(JsonMapperProfile)}
-     * does, except that value-schema constraints are read from Bean Validation metadata
-     * ({@code validator.getConstraintsForClass}) instead of the annotation walk, whenever a non-null
-     * {@code validator} is supplied.
+     * does, except that value-schema constraints are additionally read from Bean Validation metadata
+     * ({@code validator.getConstraintsForClass}), whenever a non-null {@code validator} is supplied.
      *
      * <p>Bean Validation is an optional dependency: an application without a {@link Validator}
      * available passes {@code null} (or calls the single-argument overload), and generation is
-     * unchanged from before this overload existed. When a validator is supplied, the generator
-     * disables its own Jakarta Validation module for the whole instance, so the two never double-emit
-     * or conflict — see {@code ConstraintSource} for the join rules and the group filter.
+     * unchanged from before this overload existed. When a validator is supplied, the schema library's
+     * own Jakarta Validation module still runs unconditionally for every scoped member — it is the
+     * floor every generation mode shares — and the Bean Validation metadata source only supplements
+     * or, for a bounded set of shapes, corrects what it rendered; the two are never in conflict by
+     * construction, never by one disabling the other — see {@code ConstraintSource} for the join
+     * rules and the group filter.
      *
      * @param profile   the resolved JSON mapper profile whose mapper and input-applicable overrides
      *                  drive generation; must not be {@code null}
