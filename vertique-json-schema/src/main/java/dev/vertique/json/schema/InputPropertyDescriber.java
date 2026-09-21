@@ -40,6 +40,7 @@ import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.node.TextNode;
 import com.fasterxml.jackson.databind.type.TypeFactory;
 import com.fasterxml.jackson.databind.util.NameTransformer;
 import com.github.victools.jsonschema.generator.CustomDefinition;
@@ -853,7 +854,18 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         });
     }
 
-    /** Applies one encoded keyword set onto a finished schema node; see {@link #applyDeferredScopedConstraints}. */
+    /**
+     * Applies one encoded keyword set onto a finished schema node; see
+     * {@link #applyDeferredScopedConstraints}.
+     *
+     * <p>F7 (security review round 1, LOW): for a correction ({@code overwrite == true}), a bound
+     * keyword ({@link #MIN_BOUND_KEYWORDS}/{@link #MAX_BOUND_KEYWORDS}) the schema already carries a
+     * numeric value for is only overwritten by a value at least as strict as the existing one — see
+     * {@link #applyCorrection}, the unscoped-member counterpart this mirrors — and a differing {@code
+     * pattern} is combined with the existing one as an {@code allOf} instead of replacing it. An
+     * addition ({@code overwrite == false}) is unaffected: it is still applied only where the schema
+     * does not already carry that keyword.
+     */
     private static void applyEncodedKeywords(ObjectNode schema, ObjectNode encoded, boolean overwrite) {
         encoded.properties().forEach(entry -> {
             String key = entry.getKey();
@@ -866,9 +878,24 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 });
                 return;
             }
-            if (overwrite || !schema.has(key)) {
-                schema.set(key, value);
+            if (!overwrite) {
+                if (!schema.has(key)) {
+                    schema.set(key, value);
+                }
+                return;
             }
+            if ("pattern".equals(key) && value.isTextual() && schema.get("pattern") instanceof TextNode existing) {
+                mergePatternAsAllOf(schema, existing.asText(), value.asText());
+                return;
+            }
+            if ((MIN_BOUND_KEYWORDS.contains(key) || MAX_BOUND_KEYWORDS.contains(key))
+                    && schema.get(key) instanceof JsonNode existing
+                    && existing.isNumber()
+                    && value.isNumber()
+                    && !isStricterOrEqual(key, value.decimalValue(), existing.decimalValue())) {
+                return; // the floor's existing bound is already at least as strict; keep it
+            }
+            schema.set(key, value);
         });
     }
 
@@ -1131,11 +1158,12 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
 
     /**
      * Merges a resolved constraint set onto a schema and its required-list entry: an addition is
-     * applied only where the schema does not already carry that keyword, a correction unconditionally
-     * — see {@link ResolvedConstraints}. {@code "items"} is always applied regardless of whether the
-     * schema already carries the keyword: it names a nested keyword map for a container-element
-     * position, and {@link #putKeyword} itself merges only the individual nested keys that are unset,
-     * never overwriting the {@code items} subschema's own structural keywords ({@code type}, ...).
+     * applied only where the schema does not already carry that keyword, a correction through {@link
+     * #applyCorrection} — see {@link ResolvedConstraints}. {@code "items"} is always applied regardless
+     * of whether the schema already carries the keyword: it names a nested keyword map for a
+     * container-element position, and {@link #putKeyword} itself merges only the individual nested keys
+     * that are unset, never overwriting the {@code items} subschema's own structural keywords ({@code
+     * type}, ...).
      */
     private static void mergeConstraints(
             ObjectNode schema, ResolvedConstraints resolved, String wireName, List<String> required) {
@@ -1145,11 +1173,130 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             }
         }
         for (Map.Entry<String, Object> entry : resolved.corrections().entrySet()) {
-            putKeyword(schema, entry.getKey(), entry.getValue());
+            applyCorrection(schema, entry.getKey(), entry.getValue());
         }
         if (resolved.required() && !required.contains(wireName)) {
             required.add(wireName);
         }
+    }
+
+    /**
+     * The bound keywords whose "min" half a stricter (larger) value replaces (F7, security review
+     * round 1, LOW).
+     */
+    private static final Set<String> MIN_BOUND_KEYWORDS =
+            Set.of("minimum", "exclusiveMinimum", "minLength", "minItems", "minProperties");
+
+    /**
+     * The bound keywords whose "max" half a stricter (smaller) value replaces (F7, security review
+     * round 1, LOW).
+     */
+    private static final Set<String> MAX_BOUND_KEYWORDS =
+            Set.of("maximum", "exclusiveMaximum", "maxLength", "maxItems", "maxProperties");
+
+    /**
+     * Applies one #606 correction keyword onto a schema the floor already wrote to.
+     *
+     * <p>F7 (security review round 1, LOW): a correction is keyed by annotation type but applied by
+     * keyword, unconditionally — before this method existed, a correction from a different annotation
+     * than the one the floor rendered from (e.g. {@code @Range(min = 10, max = 20)} correcting over a
+     * floor {@code minimum: 15} rendered from a separate {@code @Min(15)}) silently overwrote a
+     * <em>stricter</em> value the floor already had right, loosening the gate below both the floor and
+     * the binder — Bean Validation enforces the conjunction of every constraint on a member, not only
+     * the last one rendered. When both the floor and this correction set the same bound keyword, the
+     * stricter of the two now wins: for a "min" keyword the larger value, for a "max" keyword the
+     * smaller one. For {@code pattern}, where "stricter" has no total order, both patterns are kept, as
+     * an {@code allOf} of two single-{@code pattern} subschemas — the same shape {@link #putKeyword}
+     * already renders for two {@code @Pattern} constraints from the <em>same</em> source (S5). Every
+     * other keyword keeps the pre-existing unconditional-overwrite behavior.
+     *
+     * @param schema the schema the floor already wrote to
+     * @param key    the correction's keyword
+     * @param value  the correction's value, in the same representation {@link #putKeyword} accepts
+     */
+    static void applyCorrection(ObjectNode schema, String key, Object value) {
+        if ("pattern".equals(key) && value instanceof String candidate && schema.get("pattern") instanceof TextNode existing) {
+            mergePatternAsAllOf(schema, existing.asText(), candidate);
+            return;
+        }
+        if ((MIN_BOUND_KEYWORDS.contains(key) || MAX_BOUND_KEYWORDS.contains(key))
+                && schema.get(key) instanceof JsonNode existing
+                && existing.isNumber()) {
+            BigDecimal candidateValue = numericValue(value);
+            if (candidateValue != null && !isStricterOrEqual(key, candidateValue, existing.decimalValue())) {
+                return; // the floor's existing bound is already at least as strict; keep it
+            }
+        }
+        putKeyword(schema, key, value);
+    }
+
+    /**
+     * Whether {@code candidate} is at least as strict as {@code existing} for the given bound keyword:
+     * greater-or-equal for a "min" keyword, less-or-equal for a "max" one.
+     */
+    static boolean isStricterOrEqual(String key, BigDecimal candidate, BigDecimal existing) {
+        int comparison = candidate.compareTo(existing);
+        return MIN_BOUND_KEYWORDS.contains(key) ? comparison >= 0 : comparison <= 0;
+    }
+
+    /** The numeric value a correction keyword's raw value carries, or {@code null} for a non-numeric one. */
+    private static BigDecimal numericValue(Object value) {
+        if (value instanceof Long l) {
+            return BigDecimal.valueOf(l);
+        }
+        if (value instanceof Integer i) {
+            return BigDecimal.valueOf(i);
+        }
+        if (value instanceof BigDecimal decimal) {
+            return decimal;
+        }
+        return null;
+    }
+
+    /**
+     * Combines two differing {@code pattern} values into an {@code allOf} of one single-{@code pattern}
+     * subschema each, removing the plain {@code pattern} keyword — the shape a client must satisfy both
+     * regular expressions to pass, matching Bean Validation's own conjunction of the two constraints
+     * that rendered them. A no-op when the two patterns are textually identical.
+     *
+     * <p>Excepted: when {@code candidatePattern} is exactly {@code existingPattern} with an inline Java
+     * regex modifier group embedded around it — {@link MetadataConstraintSource#renderPattern}'s own
+     * shape for a single {@code @Pattern}'s flags (#606) — the two values are not two different
+     * annotations in conflict, only the same one rendered twice at different fidelity: the floor (the
+     * schema library's own Jakarta module, or {@link WalkConstraintSource} for an unscoped member)
+     * embeds no flags, and this correction is the flag-aware rendering of that identical regexp. The
+     * more complete rendering replaces the floor's own outright, exactly as it did before F7 (proven by
+     * {@code MetadataConstraintSourceCoverageTest#sharp606Shapes}), rather than being combined with it
+     * into a redundant {@code allOf}.
+     *
+     * <p>Appends to an existing {@code allOf} array rather than replacing it, so a genuine two-source
+     * conflict composes with S5's own same-source multi-pattern rendering instead of discarding it.
+     */
+    static void mergePatternAsAllOf(ObjectNode schema, String existingPattern, String candidatePattern) {
+        if (existingPattern.equals(candidatePattern)) {
+            return;
+        }
+        if (embedsFlaggedRegexp(candidatePattern, existingPattern)) {
+            schema.put("pattern", candidatePattern);
+            return;
+        }
+        ArrayNode allOf =
+                schema.get("allOf") instanceof ArrayNode existingAllOf ? existingAllOf : schema.putArray("allOf");
+        allOf.addObject().put("pattern", existingPattern);
+        allOf.addObject().put("pattern", candidatePattern);
+        schema.remove("pattern");
+    }
+
+    /**
+     * Whether {@code flagged} is exactly {@code plainRegexp} wrapped in an inline Java regex modifier
+     * group — {@code "(?" + modifiers + ":" + plainRegexp + ")"}, {@link
+     * MetadataConstraintSource#renderPattern}'s own shape for a single {@code @Pattern}'s embedded
+     * flags — meaning both values render the very same {@code @Pattern} annotation, not two different
+     * ones in conflict.
+     */
+    private static boolean embedsFlaggedRegexp(String flagged, String plainRegexp) {
+        String suffix = ":" + plainRegexp + ")";
+        return flagged.startsWith("(?") && flagged.length() > suffix.length() && flagged.endsWith(suffix);
     }
 
     /**

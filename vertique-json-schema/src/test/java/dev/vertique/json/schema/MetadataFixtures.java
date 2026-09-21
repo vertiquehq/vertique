@@ -190,6 +190,15 @@ final class MetadataFixtures {
         public java.math.BigDecimal exclusiveMax;
     }
 
+    // --- F7 (security review round 1, LOW): a #606 correction must not loosen a stricter floor bound ---
+
+    static final class F7StricterCorrectionDto {
+        /** floor renders minimum:15 from @Min; the @Range(min=10) correction must not loosen it. */
+        @Range(min = 10, max = 20)
+        @Min(15)
+        public int rangeBesideStricterMin;
+    }
+
     // --- W3: fully-qualified constraint-type matching ---
 
     /** An app-defined "Size" (in another package, {@link dev.vertique.json.schema.appconstraints.Size}) composing @Pattern. */

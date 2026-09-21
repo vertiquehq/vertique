@@ -398,6 +398,92 @@ class MetadataConstraintSourceCoverageTest {
                                 .decimalValue()));
     }
 
+    // --- F7 (security review round 1, LOW): a #606 correction must not loosen a stricter floor bound ---
+
+    @Test
+    @DisplayName(
+            "F7: a @Range correction does not overwrite a stricter minimum the floor rendered from a"
+                    + " separate @Min on the same field")
+    void correctionDoesNotLoosenAStricterFloorBound() {
+        Validator validator = MetadataTestValidators.plain();
+        JsonNode document = metadataDocument(MetadataFixtures.F7StricterCorrectionDto.class, validator);
+
+        List<JsonNode> closure = propertyClosure(document, "rangeBesideStricterMin");
+        assertEquals(
+                List.of(15),
+                keywordValues(closure, "minimum").stream()
+                        .map(v -> v.decimalValue().intValue())
+                        .toList(),
+                "the @Range(min = 10) correction must not loosen the stricter minimum @Min(15) already"
+                        + " rendered — Bean Validation enforces the conjunction of both, 15 being the"
+                        + " tighter bound; document: " + document);
+        assertEquals(
+                List.of(20),
+                keywordValues(closure, "maximum").stream()
+                        .map(v -> v.decimalValue().intValue())
+                        .toList(),
+                "the @Range's own maximum, which no other annotation contests, must still apply; document: "
+                        + document);
+    }
+
+    @Test
+    @DisplayName(
+            "F7: #606's flagged-@Pattern rendering still replaces the floor's own unflagged rendering of"
+                    + " the *same* @Pattern outright (regression guard for sharp606Shapes)")
+    void sameAnnotationFlaggedPatternStillReplacesOutright() {
+        // The one shape already exercised end-to-end by sharp606Shapes: the floor (the schema library's
+        // own Jakarta module) renders a plain @Pattern's regexp with no flag awareness, and this
+        // source's own correction re-renders the *same* annotation with its flags embedded (#606). The
+        // two are not different annotations in conflict — mergePatternAsAllOf must keep replacing the
+        // floor's rendering outright, never combine them into a redundant allOf.
+        com.fasterxml.jackson.databind.node.ObjectNode schema =
+                com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+        schema.put("type", "string").put("pattern", "^abc$");
+
+        InputPropertyDescriber.applyCorrection(schema, "pattern", "(?i:^abc$)");
+
+        assertEquals(
+                "(?i:^abc$)",
+                schema.path("pattern").asText(null),
+                "the flag-aware rendering must replace the floor's own outright; schema: " + schema);
+        assertFalse(schema.has("allOf"), "the same-annotation case must not produce a redundant allOf; schema: " + schema);
+    }
+
+    @Test
+    @DisplayName("F7: a #606 pattern correction genuinely disagreeing with the floor's pattern is combined as an allOf")
+    void genuinelyDifferentPatternCorrectionIsCombinedAsAllOf() {
+        // A correction whose value is not a flagged rendering of the floor's own pattern — a genuine
+        // two-source disagreement, the shape the fix's "keep both, as an allOf" remedy targets.
+        com.fasterxml.jackson.databind.node.ObjectNode schema =
+                com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+        schema.put("type", "string").put("pattern", "^[A-Z]+$");
+
+        InputPropertyDescriber.applyCorrection(schema, "pattern", "^[a-z]+$");
+
+        assertFalse(schema.has("pattern"), "the plain pattern keyword must be replaced by the allOf; schema: " + schema);
+        List<String> patterns = new java.util.ArrayList<>();
+        schema.path("allOf").forEach(branch -> patterns.add(branch.path("pattern").asText()));
+        assertEquals(
+                List.of("^[A-Z]+$", "^[a-z]+$"),
+                patterns,
+                "both the floor's and the correction's pattern must be enforced, as an allOf; schema: " + schema);
+    }
+
+    @Test
+    @DisplayName("F7: a stricter bound correction still wins outright — the merge only ever narrows, never widens")
+    void strictestNumericBoundWinsRegardlessOfWhichSideIsStricter() {
+        com.fasterxml.jackson.databind.node.ObjectNode schema =
+                com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+        schema.put("type", "integer").put("minimum", 10L).put("maximum", 100L);
+
+        // A correction stricter than the floor on both bounds must still win.
+        InputPropertyDescriber.applyCorrection(schema, "minimum", 20L);
+        InputPropertyDescriber.applyCorrection(schema, "maximum", 50L);
+
+        assertEquals(20, schema.path("minimum").intValue());
+        assertEquals(50, schema.path("maximum").intValue());
+    }
+
     // --- W3: fully-qualified constraint-type matching ---
 
     @Test
