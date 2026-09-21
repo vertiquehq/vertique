@@ -1403,12 +1403,14 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
          * {@code detail} message is generated from the keyword and constraint value — the raw
          * vertx-json-schema error message is intentionally not used because it may echo the submitted
          * request value (e.g. "500 is greater than 100"). For a resolved keyword without resolved args,
-         * the raw message is used as a fallback. An error in the multi-error loop below whose keyword
-         * location resolves to no keyword at all — absent or empty, rather than naming a structural
-         * traversal keyword — never reaches that fallback (W4, spike/deserializer-driven-schema round 4
-         * ruling): it produces a value-free detail instead, since the raw fallback is not reviewed for
-         * that shape and could otherwise echo the submitted value the same way it can for an enriched
-         * keyword.
+         * the raw message is used as a fallback. An error — in either the single-error branch below (a
+         * result with no {@code errors} list, e.g. a scalar parameter validated directly) or the
+         * multi-error loop below — whose keyword location resolves to no keyword at all — absent or
+         * empty, rather than naming a structural traversal keyword — never reaches that fallback (W4,
+         * spike/deserializer-driven-schema round 4 ruling): it produces a value-free detail instead,
+         * since the raw fallback is not reviewed for that shape and could otherwise echo the submitted
+         * value the same way it can for an enriched keyword. {@code safeDetail} is therefore never
+         * invoked with a {@code null} keyword from this method.
          *
          * <p>When {@code failFast} is {@code true}, only the first non-structural error is added to
          * {@code failures} and then this method returns immediately.
@@ -1447,7 +1449,20 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                 // Single-error result (e.g. scalar param validated directly)
                 String keyword = extractKeywordFor(result);
                 // Skip structural wrapper errors (keyword is null and the location names a structural keyword)
-                if (keyword != null || !isStructuralError(result.getKeywordLocation())) {
+                if (keyword == null && isStructuralError(result.getKeywordLocation())) {
+                    // no concrete detail for a structural wrapper; falls through to the value-free
+                    // detail below via the addedBefore check
+                } else if (keyword == null) {
+                    // W4 (spike/deserializer-driven-schema round 4 ruling): same shape the multi-error
+                    // loop below was fixed for — the keyword location is absent (or empty) rather than
+                    // structural, so extractKeywordFor still yields null, but there is no resolved
+                    // keyword to render a canonical message from. Falling through to safeDetail's own
+                    // raw-message fallback would return vertx-json-schema's own message unfiltered, the
+                    // same class of leak FR-018/#598 removed for every other keyword (it may itself echo
+                    // the submitted value). A value-free detail is produced instead, never calling
+                    // safeDetail with a null keyword.
+                    failures.add(valueFreeDetail(result.getInstanceLocation(), fallbackPath, location, schema));
+                } else {
                     Map<String, Object> args = resolveConstraintArgs(keyword, result.getKeywordLocation(), schema);
                     String detail = safeDetail(keyword, args, result.getError());
                     failures.add(new ValidationErrorDetail(
@@ -1806,10 +1821,10 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
          *
          * <p>For a resolved keyword without resolved args (where args contain only
          * {@code {keyword: true}}), the raw error message is used as a fallback since no
-         * submitted-value risk is evident. The multi-error loop in {@link #collectFailures} never calls
-         * this method with a {@code null} keyword for a non-structural error (W4,
-         * spike/deserializer-driven-schema round 4 ruling): it produces a value-free detail for that
-         * shape instead, since this fallback is not reviewed for it.
+         * submitted-value risk is evident. Neither the single-error branch nor the multi-error loop in
+         * {@link #collectFailures} calls this method with a {@code null} keyword for a non-structural
+         * error (W4, spike/deserializer-driven-schema round 4 ruling): each produces a value-free detail
+         * for that shape instead, since this fallback is not reviewed for it.
          *
          * @param keyword    the failed keyword, or {@code null} when not resolvable
          * @param args       the resolved constraint args map (empty when keyword is unknown)

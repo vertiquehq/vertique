@@ -71,6 +71,50 @@ class WebValidationStrategyNullKeywordDetailTest {
     }
 
     /**
+     * W4 follow-up: the implementer reports that {@code collectFailures}'s <em>single-error</em>
+     * branch — reached when {@code result.getErrors()} is {@code null} or empty, e.g. a scalar
+     * parameter validated directly — still has the {@code safeDetail(null, {}, rawMessage)} fallback
+     * the multi-error loop above was fixed to avoid. This proof reaches that branch directly with a
+     * synthetic top-level {@link OutputUnit} (not wrapped in an {@code errors} list) whose own {@code
+     * keywordLocation} is absent and whose own {@code instanceLocation} is not a structural keyword,
+     * carrying a distinctive client value in its raw {@code error} message.
+     *
+     * <p>In the single-error branch, {@code keyword = extractKeywordFor(result)} is {@code null}
+     * (absent keyword location), and {@code isStructuralError(result.getKeywordLocation())} is also
+     * {@code false} (a {@code null} location resolves to no keyword segment at all, so it cannot name a
+     * structural one either) — so the guard {@code keyword != null || !isStructuralError(...)} is
+     * {@code true} and the branch proceeds to {@code safeDetail(null, {}, result.getError())}, whose
+     * only non-fallback branch requires a non-null keyword, landing on
+     * {@code rawMessage != null ? rawMessage : ...}: the raw vertx-json-schema message, unfiltered.
+     */
+    @Test
+    @DisplayName("W4 follow-up: the single-error branch's absent (non-structural) keyword location must"
+            + " also produce a value-free detail, never vertx-json-schema's own raw message")
+    void nullKeywordNonStructuralSingleErrorMustProduceAValueFreeDetail() throws Exception {
+        OutputUnit result = new OutputUnit()
+                .setValid(false)
+                .setKeywordLocation(null) // extractKeywordFor(result) yields null: no keyword resolved
+                .setInstanceLocation("#/amount") // "amount" is not a structural keyword either
+                .setError("the value " + CLIENT_VALUE + " does not satisfy an unresolvable constraint");
+        // No .setErrors(...): getErrors() is null, so collectFailures takes the single-error branch
+        // (result IS the leaf), not the multi-error loop the first test in this class exercises.
+
+        List<ValidationErrorDetail> failures = new ArrayList<>();
+        invokeCollectFailures(result, "body", null, null, failures, false);
+
+        assertEquals(1, failures.size(), "exactly one detail must be produced for the single-error result");
+        ValidationErrorDetail detail = failures.get(0);
+
+        assertFalse(
+                detail.detail().contains(CLIENT_VALUE),
+                "W4 follow-up DECISIVE: the single-error branch must never echo vertx-json-schema's raw"
+                        + " message, which may itself echo the client-submitted value; detail: " + detail.detail());
+        assertNull(
+                detail.type(),
+                "no keyword was resolved for this synthetic error, so the detail must carry none either");
+    }
+
+    /**
      * Invokes {@code WebValidationStrategy$GateHandler#collectFailures} through reflection: it is
      * {@code private static} on a package-private nested class, with no public or package-private test
      * seam that reaches it directly.
