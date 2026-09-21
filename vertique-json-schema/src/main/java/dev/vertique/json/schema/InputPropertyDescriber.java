@@ -182,7 +182,10 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      *                         applies there; {@code null} is treated as "no overrides declared"
      */
     InputPropertyDescriber(
-            ObjectMapper mapper, boolean strictSpellings, ConstraintSource supplement, ValidatedProfile validatedProfile) {
+            ObjectMapper mapper,
+            boolean strictSpellings,
+            ConstraintSource supplement,
+            ValidatedProfile validatedProfile) {
         this.mapper = mapper;
         this.strictSpellings = strictSpellings;
         this.supplement = supplement;
@@ -260,7 +263,8 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             // settable property nor an io.vertx.* package (a scalar, a container, a node) never had a
             // field walk to protect and stays described as unconstrained.
             boolean beanLike = !javaType.getRawClass().getName().startsWith("io.vertx.")
-                    && introspection(javaType).findProperties().stream().anyMatch(BeanPropertyDefinition::couldDeserialize);
+                    && introspection(javaType).findProperties().stream()
+                            .anyMatch(BeanPropertyDefinition::couldDeserialize);
             if (!declaresOwnDeserializerOverride(javaType) && !beanLike) {
                 // A scalar, container, node, or Vert.x-style opaque wrapper: some module registered a
                 // plain (non-bean) deserializer for this *foreign* type, but the type's own class
@@ -461,8 +465,8 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 Class<?> childClass = property.getType().getRawClass();
                 requireCaseSensitive(unwrapped, childClass, "the unwrapped member " + property.getName());
                 BeanDeserializerBuilder childBuilder = builderFor(property.getType(), unwrapped);
-                boolean anySetterType = anySetter != null
-                        || (childBuilder != null && childBuilder.getAnySetter() != null);
+                boolean anySetterType =
+                        anySetter != null || (childBuilder != null && childBuilder.getAnySetter() != null);
                 if (anySetterType) {
                     // F2 (security review round 1, HIGH): a nested @JsonUnwrapped chain (this unwrapped
                     // child itself declares another unwrapped member) is refused rather than folded
@@ -1255,7 +1259,9 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * @param value  the correction's value, in the same representation {@link #putKeyword} accepts
      */
     static void applyCorrection(ObjectNode schema, String key, Object value) {
-        if ("pattern".equals(key) && value instanceof String candidate && schema.get("pattern") instanceof TextNode existing) {
+        if ("pattern".equals(key)
+                && value instanceof String candidate
+                && schema.get("pattern") instanceof TextNode existing) {
             mergePatternAsAllOf(schema, existing.asText(), candidate);
             return;
         }
@@ -1764,7 +1770,8 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * @param parentMember the parent's member name carrying the unwrapped child, named in the diagnostic
      * @throws JsonSchemaGenerationException when {@code childBuilder} declares a nested unwrapped member
      */
-    private void requireNoNestedUnwrapping(BeanDeserializerBuilder childBuilder, Class<?> childClass, String parentMember) {
+    private void requireNoNestedUnwrapping(
+            BeanDeserializerBuilder childBuilder, Class<?> childClass, String parentMember) {
         if (childBuilder == null) {
             return;
         }
@@ -1774,7 +1781,8 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             if (introspector().findUnwrappingNameTransformer(grandchildProperty.getMember()) != null) {
                 throw Diagnostics.failure(
                         "JSON Schema generation failed for " + Diagnostics.typeIdentity(childClass)
-                                + ": the unwrapped member \"" + Diagnostics.truncate(parentMember, Diagnostics.MAX_SHORT_IDENTITY_LENGTH)
+                                + ": the unwrapped member \""
+                                + Diagnostics.truncate(parentMember, Diagnostics.MAX_SHORT_IDENTITY_LENGTH)
                                 + "\" is itself bound on an any-setter type and declares a nested @JsonUnwrapped"
                                 + " member of its own, which this generator cannot fold soundly two levels deep;"
                                 + " declare a JsonSchemaTypeOverride for the type on the profile, or flatten the"
@@ -1848,7 +1856,8 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 }
             }
         }
-        for (String localUnboundName : introspectUnboundNames(mapper.getTypeFactory().constructType(childClass))) {
+        for (String localUnboundName :
+                introspectUnboundNames(mapper.getTypeFactory().constructType(childClass))) {
             String wireName = transformer.transform(localUnboundName);
             if (!wireName.isEmpty() && !published.contains(wireName)) {
                 reservedSeedTarget.add(wireName);

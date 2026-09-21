@@ -285,7 +285,17 @@ same way: `{"type": "string"}` and "must be of type: string", or for a declared 
 null". A declared value that cannot be reached — behind a remote `$ref` or a `$dynamicRef` — is
 reported as `{"<keyword>": true}`; for `type` the message then reads "must be of the required
 type". Structural keywords (`oneOf`, `anyOf`, `not`, `additionalProperties`) describe how the
-schema was traversed rather than a constraint the client can act on, so they produce no such detail. When every error a call reported is
+schema was traversed rather than a constraint the client can act on, so they produce no such detail.
+`propertyNames` and `patternProperties` — the two keywords this module's own `vertique-json-schema`
+generator extends beyond vertx-json-schema's own generated rules (a case-insensitive type's non-ASCII
+fold refusal, and its folded per-casing entries) — get a fixed, value-free message of their own
+instead ("contains a property name the schema does not allow"; the generic structural fallback
+below) rather than falling to the raw validator message: vertx-json-schema's own wrapper text for
+both names the client's submitted key verbatim, and for `patternProperties` the generated regex too,
+which would otherwise reach the response exactly like the raw-value echo this module's own detail
+generation exists to prevent. Every other keyword this method does not explicitly render falls to a
+value-free `"<keyword> constraint violated"` too — the raw validator message is never used as a
+silent fallback for an unreviewed keyword. When every error a call reported is
 structural, that call instead contributes exactly one value-free detail: it names the failing
 instance location as its `path` and carries no `type` and no `args`. That location is cut back to the
 part the schema declares, so it names no text the client chose: an undeclared property under a closed

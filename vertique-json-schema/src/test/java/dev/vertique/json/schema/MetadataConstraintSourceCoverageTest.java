@@ -401,9 +401,8 @@ class MetadataConstraintSourceCoverageTest {
     // --- F7 (security review round 1, LOW): a #606 correction must not loosen a stricter floor bound ---
 
     @Test
-    @DisplayName(
-            "F7: a @Range correction does not overwrite a stricter minimum the floor rendered from a"
-                    + " separate @Min on the same field")
+    @DisplayName("F7: a @Range correction does not overwrite a stricter minimum the floor rendered from a"
+            + " separate @Min on the same field")
     void correctionDoesNotLoosenAStricterFloorBound() {
         Validator validator = MetadataTestValidators.plain();
         JsonNode document = metadataDocument(MetadataFixtures.F7StricterCorrectionDto.class, validator);
@@ -427,9 +426,8 @@ class MetadataConstraintSourceCoverageTest {
     }
 
     @Test
-    @DisplayName(
-            "F7: #606's flagged-@Pattern rendering still replaces the floor's own unflagged rendering of"
-                    + " the *same* @Pattern outright (regression guard for sharp606Shapes)")
+    @DisplayName("F7: #606's flagged-@Pattern rendering still replaces the floor's own unflagged rendering of"
+            + " the *same* @Pattern outright (regression guard for sharp606Shapes)")
     void sameAnnotationFlaggedPatternStillReplacesOutright() {
         // The one shape already exercised end-to-end by sharp606Shapes: the floor (the schema library's
         // own Jakarta module) renders a plain @Pattern's regexp with no flag awareness, and this
@@ -446,7 +444,8 @@ class MetadataConstraintSourceCoverageTest {
                 "(?i:^abc$)",
                 schema.path("pattern").asText(null),
                 "the flag-aware rendering must replace the floor's own outright; schema: " + schema);
-        assertFalse(schema.has("allOf"), "the same-annotation case must not produce a redundant allOf; schema: " + schema);
+        assertFalse(
+                schema.has("allOf"), "the same-annotation case must not produce a redundant allOf; schema: " + schema);
     }
 
     @Test
@@ -460,9 +459,11 @@ class MetadataConstraintSourceCoverageTest {
 
         InputPropertyDescriber.applyCorrection(schema, "pattern", "^[a-z]+$");
 
-        assertFalse(schema.has("pattern"), "the plain pattern keyword must be replaced by the allOf; schema: " + schema);
+        assertFalse(
+                schema.has("pattern"), "the plain pattern keyword must be replaced by the allOf; schema: " + schema);
         List<String> patterns = new java.util.ArrayList<>();
-        schema.path("allOf").forEach(branch -> patterns.add(branch.path("pattern").asText()));
+        schema.path("allOf")
+                .forEach(branch -> patterns.add(branch.path("pattern").asText()));
         assertEquals(
                 List.of("^[A-Z]+$", "^[a-z]+$"),
                 patterns,

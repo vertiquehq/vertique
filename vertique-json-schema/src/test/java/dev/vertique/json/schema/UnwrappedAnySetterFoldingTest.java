@@ -65,9 +65,8 @@ class UnwrappedAnySetterFoldingTest {
     }
 
     @Test
-    @DisplayName(
-            "F2: an unwrapped child's alias spelling is published under the child member's own"
-                    + " constraint, never left unconstrained in the extras bucket")
+    @DisplayName("F2: an unwrapped child's alias spelling is published under the child member's own"
+            + " constraint, never left unconstrained in the extras bucket")
     void unwrappedChildAliasIsPublishedWithTheChildMembersConstraint() {
         // CHARACTERIZATION NOTE, checked empirically against this project's pinned Jackson 2.21.4:
         // for a *bare* @JsonUnwrapped (no prefix/suffix), Jackson's own unwrappingDeserializer already
@@ -112,9 +111,8 @@ class UnwrappedAnySetterFoldingTest {
     }
 
     @Test
-    @DisplayName(
-            "F2: an unwrapped child's hidden member is reserved on the parent, refusing a key spelling it"
-                    + " instead of leaving it to the extras bucket")
+    @DisplayName("F2: an unwrapped child's hidden member is reserved on the parent, refusing a key spelling it"
+            + " instead of leaving it to the extras bucket")
     void unwrappedChildHiddenMemberIsReserved() {
         JsonNode document = inputDocument(HiddenParent.class);
 
@@ -148,9 +146,8 @@ class UnwrappedAnySetterFoldingTest {
      * @throws Exception when the binder itself throws
      */
     @Test
-    @DisplayName(
-            "F2 premise: the real binder routes a key spelling an unwrapped child's hidden member straight"
-                    + " into the constrained field, oversized value included")
+    @DisplayName("F2 premise: the real binder routes a key spelling an unwrapped child's hidden member straight"
+            + " into the constrained field, oversized value included")
     void jacksonBinderRoutesTheHiddenKeyIntoTheConstrainedField() throws Exception {
         HiddenParent bound = plainProfile().mapper().readValue("{\"token\":\"toolongvalue\"}", HiddenParent.class);
 
@@ -184,14 +181,12 @@ class UnwrappedAnySetterFoldingTest {
     @Test
     @DisplayName("F2: a nested @JsonUnwrapped chain on an any-setter type is refused with a bounded diagnostic")
     void nestedUnwrappedChainOnAnAnySetterTypeIsRefused() {
-        JsonSchemaGenerationException failure = assertThrows(
-                JsonSchemaGenerationException.class, () -> inputDocument(NestedAnySetterParent.class));
+        JsonSchemaGenerationException failure =
+                assertThrows(JsonSchemaGenerationException.class, () -> inputDocument(NestedAnySetterParent.class));
 
         assertTrue(
                 failure.getMessage().contains("nested"),
                 "the diagnostic must name what is refused; was: " + failure.getMessage());
-        assertTrue(
-                failure.getMessage().length() <= Diagnostics.MAX_MESSAGE_LENGTH,
-                "was: " + failure.getMessage());
+        assertTrue(failure.getMessage().length() <= Diagnostics.MAX_MESSAGE_LENGTH, "was: " + failure.getMessage());
     }
 }

@@ -241,7 +241,8 @@ final class ValidatedProfile {
         }
         // "Settable" (BeanPropertyDefinition#couldDeserialize()), not merely "known": a getter-only
         // property is not a field walk this check protects.
-        return mapper.getDeserializationConfig()
+        return mapper
+                .getDeserializationConfig()
                 .introspect(mapper.getTypeFactory().constructType(javaType))
                 .findProperties()
                 .stream()

@@ -101,9 +101,8 @@ class CaseInsensitiveUnicodeFoldingTest {
     }
 
     @Test
-    @DisplayName(
-            "F3: a *closed* case-insensitive type (no any-setter, no extras) still carries a propertyNames"
-                    + " non-ASCII fold refusal — REST has no additionalProperties closure to fall back on")
+    @DisplayName("F3: a *closed* case-insensitive type (no any-setter, no extras) still carries a propertyNames"
+            + " non-ASCII fold refusal — REST has no additionalProperties closure to fall back on")
     void closedCaseInsensitiveTypeStillRefusesNonAsciiKey() throws Exception {
         JsonNode document = inputDocument(ClosedCaseInsensitive.class);
         JsonNode rule = document.path("propertyNames").path("not").path("pattern");

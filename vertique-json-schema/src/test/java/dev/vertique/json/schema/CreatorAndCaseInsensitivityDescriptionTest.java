@@ -271,9 +271,8 @@ class CreatorAndCaseInsensitivityDescriptionTest {
     // ================================================================== F4: member-level CI inline refusals
 
     @Test
-    @DisplayName(
-            "F4: a delegating creator behind a member-level case-insensitive @JsonFormat is refused, not"
-                    + " described inline (the same refusal describe() runs for the type at any other position)")
+    @DisplayName("F4: a delegating creator behind a member-level case-insensitive @JsonFormat is refused, not"
+            + " described inline (the same refusal describe() runs for the type at any other position)")
     void memberLevelCaseInsensitiveDelegatingChildIsRefused() {
         JsonSchemaGenerationException failure =
                 assertThrows(JsonSchemaGenerationException.class, () -> inputDocument(CI6Holder.class));
@@ -287,9 +286,8 @@ class CreatorAndCaseInsensitivityDescriptionTest {
     }
 
     @Test
-    @DisplayName(
-            "F4: a profile override declared for the case-insensitive child's type is honored at that"
-                    + " position, not silently ignored by the inline path")
+    @DisplayName("F4: a profile override declared for the case-insensitive child's type is honored at that"
+            + " position, not silently ignored by the inline path")
     void memberLevelCaseInsensitiveOverrideIsHonored() {
         String marker = "ci-delegating-override-marker";
         JsonMapperProfile overridden = profile(

@@ -483,8 +483,7 @@ public class ProfiledSchemaSynthesisIT {
      * @throws Exception when a round trip fails or times out
      */
     @Test
-    @DisplayName(
-            "F5: a propertyNames rejection echoes neither the submitted key nor the generated pattern")
+    @DisplayName("F5: a propertyNames rejection echoes neither the submitted key nor the generated pattern")
     void f5PropertyNamesRejectionDoesNotEchoTheKeyOrPattern() throws Exception {
         Ac005Resource resource = new Ac005Resource();
         int gatePort = start(gateMount(), Set.of(resource));

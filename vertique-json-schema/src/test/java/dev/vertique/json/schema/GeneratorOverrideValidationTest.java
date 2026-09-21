@@ -204,9 +204,8 @@ class GeneratorOverrideValidationTest {
     // --- F6 (security review round 1, MEDIUM): an INPUT override for a bean-like type must close it ---
 
     @Test
-    @DisplayName(
-            "F6: an INPUT override for a bean-like type declaring neither properties nor additionalProperties"
-                    + " is refused at construction, bounded")
+    @DisplayName("F6: an INPUT override for a bean-like type declaring neither properties nor additionalProperties"
+            + " is refused at construction, bounded")
     void openObjectOverrideForBeanLikeTypeAtInputIsRefused() {
         // Given: the documented remedy for a generator refusal, applied bare — {"type":"object"} — for a
         // bean-like type (a public-field DTO, exactly what F1's own beanLike check would also treat as
@@ -226,9 +225,7 @@ class GeneratorOverrideValidationTest {
         assertTrue(
                 failure.getMessage().contains("properties"),
                 "the message must name the remedy; was: " + failure.getMessage());
-        assertTrue(
-                failure.getMessage().length() <= Diagnostics.MAX_MESSAGE_LENGTH,
-                "was: " + failure.getMessage());
+        assertTrue(failure.getMessage().length() <= Diagnostics.MAX_MESSAGE_LENGTH, "was: " + failure.getMessage());
     }
 
     @Test
@@ -256,7 +253,8 @@ class GeneratorOverrideValidationTest {
         // exactly the shape F1's own beanLike check exempts) carries no open-object risk.
         JsonMapperProfile scalarOverride = HardeningFixtures.profile(
                 PROFILE_ID,
-                List.of(JsonSchemaTypeOverride.input(NotBeanLike.class, JsonSchemaFragment.parse("{\"type\":\"object\"}"))));
+                List.of(JsonSchemaTypeOverride.input(
+                        NotBeanLike.class, JsonSchemaFragment.parse("{\"type\":\"object\"}"))));
         AnnotationJsonSchemaGenerator.forInputProfile(scalarOverride); // must not throw
 
         // An OUTPUT-direction override is not the F1/F3 refusal's documented remedy and is unaffected.

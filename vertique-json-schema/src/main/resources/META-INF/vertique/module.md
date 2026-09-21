@@ -205,6 +205,21 @@ scoped member are therefore recorded and applied once the whole document is fini
 before nullability and alias expansion run — the same "must wait for the finished document"
 technique this module already uses for nullability and alias expansion.
 
+**A correction never loosens a stricter bound the floor rendered from a different annotation.** A
+correction is keyed by annotation type but applied by keyword: `@Range(min = 10, max = 20)` beside a
+separate `@Min(15)` on the same member would otherwise let the `@Range` correction overwrite the
+floor's own `minimum: 15` with `minimum: 10` — looser than both the floor and the binder, since Bean
+Validation enforces the conjunction of every constraint on a member, not only the last one rendered.
+When both the floor and a correction set the same bound keyword (`minimum`/`maximum`/
+`exclusiveMinimum`/`exclusiveMaximum`/`minLength`/`maxLength`/`minItems`/`maxItems`/`minProperties`/
+`maxProperties`), the stricter of the two wins — the larger value for a "min" keyword, the smaller for
+a "max" one. For `pattern`, where "stricter" has no total order, a correction whose value genuinely
+differs from the floor's is combined with it as an `allOf` of two single-`pattern` subschemas instead
+of replacing it, so a client must satisfy both. The one exception is `#606`'s own flagged-`@Pattern`
+rendering: when the correction's pattern is exactly the floor's own regexp wrapped in an inline
+modifier group, it is the *same* `@Pattern` annotation rendered twice at different fidelity, not two
+annotations in conflict, and the flag-aware rendering still replaces the floor's outright.
+
 **Bootstrapping a `Validator`.** `HibernateValidator.configure().messageInterpolator(new
 ParameterMessageInterpolator())` avoids an expression-language dependency; the default message
 interpolator does not. This module never constructs a `Validator` itself
@@ -249,14 +264,20 @@ accepts a described property. A key the schema does not describe is left to the 
 Validation.
 
 **A type whose resolved deserializer is not a bean deserializer** is refused with a bounded
-diagnostic only when the type's own class carries an explicit type-level
+diagnostic when the type's own class carries an explicit type-level
 `@JsonDeserialize(using = ...)` (or equivalent) — genuinely bean-like structure whose deserializer was
-swapped out, which may be hiding a field walk this description would otherwise have produced. A type
-some module registers a plain, non-bean deserializer for on its own — a scalar, container, node, or
-Vert.x-style opaque wrapper such as `JsonObject`, `JsonArray`, or `Buffer`, none of which ever had
-bean properties to begin with — is instead described as accepting any JSON value, exactly like
-`Object.class`/`JsonNode.class`, both at the root and nested as a member; there is no field walk such
-a refusal could be protecting there.
+swapped out — **or** when the mapper's own reflective introspection still reports a settable property
+(a field, a setter, or a creator parameter) for the type even though its deserializer was attached some
+other way: a profile module's `SimpleModule.addDeserializer(...)`, or a `BeanDeserializerModifier`
+wrapper, carries no class-level annotation to detect, so an application DTO shaped this way is still
+bean-like and still has a field walk this refusal protects. A type with no settable property at all —
+a scalar, container, node, or Vert.x-style opaque wrapper such as `JsonObject`, `JsonArray`, or
+`Buffer`, none of which ever had bean properties to begin with — is instead described as accepting any
+JSON value, exactly like `Object.class`/`JsonNode.class`, both at the root and nested as a member;
+there is no field walk such a refusal could be protecting there. The `io.vertx.*` package is excluded
+from the settable-property check outright: a no-argument getter such as `Buffer#getBytes()` or a
+mutable-collection getter such as `JsonArray#getList()` makes plain reflective introspection report a
+property for these well-known wrapper types even though neither is ever bound as a bean.
 
 **A delegating `@JsonCreator`** — object-delegating (`Mode.DELEGATING` over a single non-array-like
 parameter) or array-delegating (the same mode over a `List`/array-shaped parameter) — is refused with
@@ -311,7 +332,12 @@ separate cases:
 - a name bound only through a setter with no field, through an accessor pair over a differently
   named field, through a `@Schema(hidden = true)` field, or through a `transient` field;
 - a `@JsonAlias` spelling more than one property claims, and a spelling of a property the document
-  does not publish under its own wire name — neither is published, so neither is subtracted.
+  does not publish under its own wire name — neither is published, so neither is subtracted;
+- a `@JsonUnwrapped` child's own alias spelling, and its own hidden, ignored, or bound-but-unpublished
+  name, keyed by the child's wire name with any unwrapped prefix or suffix applied — folded in beside
+  the parent's own names, scoped to when the parent actually has an any-setter (the only case where an
+  unrecognized key binds anywhere at all). A nested `@JsonUnwrapped` chain under an any-setter type —
+  where this one-level fold cannot itself be sound — is refused with a bounded diagnostic instead.
 
 A field carrying both `@JsonAnyGetter` and `@JsonAnySetter` reserves no storage name, because
 Jackson stores a key named after it as an ordinary entry of the map. The published-name subtraction
@@ -330,17 +356,28 @@ case-insensitive lookup measurably uses `String#toLowerCase()`/`toUpperCase()` w
 `\z`, not `$`: `io.vertx.json.schema` 5.1.6 compiles the `pattern` keyword with plain
 `java.util.regex.Pattern`, whose `$` — without `Pattern.MULTILINE` — still matches immediately before
 a single trailing line terminator, not only at the true end of input; a key ending in a newline would
-otherwise wrongly match the fold. Where extras are also
-described, `propertyNames` additionally refuses any key containing a non-ASCII code unit,
-unconditionally — not only when a reserved name exists. This closes a real gap: a non-ASCII code
-point can fold to an ASCII letter under Java's locale-independent Unicode case mapping regardless of
-locale (U+212A KELVIN SIGN folds to ASCII `k`), so a key spelled with it binds at the *binder* to the
-same member an ASCII spelling would, while the ASCII-only `patternProperties` fold and the
-reserved-name pattern both miss it at the *schema* — without this rule such a key would fall through
-to `additionalProperties` and validate as a permissive extra instead of against the real member's own
-constraint. A closed type (no any-setter) at a REST gate relies on the MCP hardener or Bean
-Validation for closure, as it did before this rule existed; this rule covers only a type where extras
-are described.
+otherwise wrongly match the fold. Every case-insensitively bound type additionally carries a
+`propertyNames` rule refusing any key containing a non-ASCII code unit, **unconditionally** — where
+extras are also described, folded together with the reserved-name pattern; where they are not, on its
+own. This closes a real gap: a non-ASCII code point can fold to an ASCII letter under Java's
+locale-independent Unicode case mapping regardless of locale (U+212A KELVIN SIGN folds to ASCII `k`),
+so a key spelled with it binds at the *binder* to the same member an ASCII spelling would. Where
+extras are described, the ASCII-only `patternProperties` fold and the reserved-name pattern both miss
+it at the *schema*, so without this rule the key would fall through to `additionalProperties` and
+validate as a permissive extra instead of against the real member's own constraint. A **closed** type
+(no any-setter) at the REST gate has no other closure at all — REST has no hardener, and a closed type
+publishes no `additionalProperties` — so without this rule the key would simply be accepted and bound;
+the rule is emitted unconditionally for exactly this reason, not only where extras are described. A
+closed type still relies on Bean Validation, when one is supplied, as its own backstop after binding.
+
+**Member-level case-insensitive binding.** A member bound case-insensitively only through its own
+contextual `@JsonFormat(with = ACCEPT_CASE_INSENSITIVE_PROPERTIES)` is described inline at that
+position rather than by reference to the type's ordinary (case-sensitive) shared definition, since the
+same class used elsewhere without the annotation stays case-sensitive there. Before describing it
+inline, the same delegating/array-delegating refusal the type would face at any other position still
+runs, and a profile override declared for the member's type still applies — resolved through the
+ordinary reference lookup, which re-enters the full provider chain — in preference to the inline
+description.
 
 ### How an alias spelling is described
 
@@ -447,6 +484,20 @@ reached — the mapped root type, a property, or a collection element — and ne
 Property-level Swagger schema metadata and applicable Jakarta constraints then narrow that
 baseline through explicit conjunction; neither contributor overwrites the other's declared
 keyword.
+
+**An INPUT override for a bean-like class must declare `properties` or `additionalProperties`.**
+This is the documented remedy for a generator refusal (the custom-deserializer, delegating-creator,
+and case-insensitive refusals above), so nothing else validates that a declared fragment actually
+describes or closes anything. A bare `{"type":"object"}` — the natural one-line remedy — publishes
+as a non-root object with no `properties` and no `additionalProperties`, which the MCP hardener
+deliberately leaves open (it only closes an object that already declares a non-empty `properties`),
+and as an unconstrained body member at REST. Construction fails with a bounded diagnostic instead.
+"Bean-like" is decided the same way the custom-deserializer refusal decides it (a settable property
+by the mapper's own reflective introspection, with the same `java.`/`javax.`/`jakarta.`/
+`com.fasterxml.jackson.`/`io.vertx.` package exclusions), and a fragment that replaces the type
+wholesale with a declared non-`object` type is exempt — it is fully constrained by that type, with
+no property position for an unconstrained extra key to hide in. OUTPUT-direction overrides are
+unaffected.
 
 A constraint that does not apply to the substituted wire type is not published as if it did. The
 numeric-domain keywords `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, and
