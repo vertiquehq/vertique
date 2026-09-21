@@ -17,10 +17,14 @@ import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.json.DefaultJsonMapperProfileRegistry;
 import jakarta.validation.Validator;
 import java.lang.reflect.Type;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * Coverage for {@link MetadataConstraintSource}: shapes the annotation walk cannot join by wire name
@@ -489,5 +493,37 @@ class MetadataConstraintSourceCoverageTest {
                 .generateCanonical(MetadataFixtures.RenamedFieldDto.class);
 
         assertEquals(throughOverload, withNullValidator);
+    }
+
+    /**
+     * Every {@code MetadataFixtures} coverage fixture — the shapes this class and {@link
+     * MetadataParityTest} generate under a real {@link Validator} — as its own root type, for the
+     * broader fallback-identity proof below.
+     */
+    static Stream<Class<?>> coverageFixtures() {
+        return Arrays.stream(MetadataFixtures.class.getDeclaredClasses());
+    }
+
+    @ParameterizedTest
+    @MethodSource("coverageFixtures")
+    @DisplayName("fallback identity: forInputProfile(profile) matches forInputProfile(profile, null) for every"
+            + " coverage fixture, not just one type")
+    void fallbackMatchesSingleArgumentFactoryForEveryCoverageFixture(Class<?> fixture) {
+        // The single-argument factory (AnnotationJsonSchemaGenerator#forInputProfile(JsonMapperProfile))
+        // and the two-argument overload called with an explicit null Validator must be indistinguishable
+        // generators for every shape this module's own coverage exercises, not merely the one DTO
+        // fallbackWithoutValidatorMatchesWalk above happens to use — a divergence limited to one
+        // particular shape (a builder, a record, an inherited member, a composed constraint, ...) would
+        // otherwise go unnoticed.
+        String throughOverload =
+                AnnotationJsonSchemaGenerator.forInputProfile(vertiqueProfile()).generateCanonical(fixture);
+        String withNullValidator =
+                AnnotationJsonSchemaGenerator.forInputProfile(vertiqueProfile(), null).generateCanonical(fixture);
+
+        assertEquals(
+                throughOverload,
+                withNullValidator,
+                "the single-argument factory and the two-argument overload with a null Validator must be"
+                        + " byte-identical for " + fixture.getSimpleName());
     }
 }
