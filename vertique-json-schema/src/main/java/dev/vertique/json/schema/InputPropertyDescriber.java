@@ -13,6 +13,7 @@ import com.fasterxml.jackson.core.TreeNode;
 import com.fasterxml.jackson.databind.AnnotationIntrospector;
 import com.fasterxml.jackson.databind.BeanDescription;
 import com.fasterxml.jackson.databind.DeserializationConfig;
+import com.fasterxml.jackson.databind.DeserializationContext;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.JsonDeserializer;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -38,6 +39,7 @@ import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
 import com.fasterxml.jackson.databind.introspect.AnnotatedMethod;
 import com.fasterxml.jackson.databind.introspect.AnnotatedParameter;
 import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
+import com.fasterxml.jackson.databind.jsontype.TypeDeserializer;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
@@ -244,7 +246,11 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         // DelegatingDeserializer subclass still ends up calling the wrapped bean deserializer at bind
         // time through getDelegatee(), so the wrapped bean is described from its own delegate rather
         // than misclassified as an opaque type-level override the way F1's own refusal treats a genuine
-        // custom deserializer.
+        // custom deserializer. Bounded to a pure forwarder (W-1, round 5 review finding): a
+        // DelegatingDeserializer subclass that overrides deserialize(...)/deserializeWithType(...) itself
+        // is left un-unwrapped by unwrapDelegating and falls through to the same bean-like refusal below,
+        // since such an override may read a wire shape the delegate's own bean description does not
+        // capture — see unwrapDelegating's own Javadoc for the exact bound.
         JsonDeserializer<?> deserializer = unwrapDelegating(rootDeserializer(javaType));
         if (deserializer == null || deserializer instanceof AbstractDeserializer) {
             // A polymorphic base: the Jackson module's subtype resolver owns it.
@@ -2272,13 +2278,26 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * #unwrap(JsonDeserializer)}'s own {@code TypeWrappedDeserializer} unwrap: a mapper-wide {@code
      * BeanDeserializerModifier} that wraps every bean deserializer in a forwarding {@code
      * DelegatingDeserializer} subclass still ends up calling the wrapped bean deserializer at bind time
-     * through {@code getDelegatee()}, so {@link #describe} must decide bean-ness from the delegate
+     * through {@code getDelegatee()}, so a caller deciding bean-ness must decide it from the delegate
      * rather than from the forwarding wrapper itself. {@code null} or self-referential is treated the
      * same as "nothing further to unwrap", never looping.
+     *
+     * <p>Bounded to a <em>pure</em> forwarder (W-1, round 5 review finding): unwrapping stops at the
+     * first {@code DelegatingDeserializer} whose own class overrides any of {@code
+     * deserialize(JsonParser, DeserializationContext)}, {@code deserialize(JsonParser,
+     * DeserializationContext, Object)}, or {@code deserializeWithType(...)} — see {@link
+     * #overridesDelegatingDeserializerMethods}. Such an override can read from the parser itself before,
+     * or instead of, ever reaching the delegate, so the wire shape it actually accepts is not provably
+     * the delegate's own; unwrapping straight through it would silently describe a shape the type does
+     * not accept. The un-unwrapped wrapper is then classified — and, for a bean-like type, refused — by
+     * the same rule a genuine type-level deserializer override is refused by (F1's posture), since a
+     * subclass overriding one of these methods is a replaced deserializer in every sense that matters
+     * here. Every call site that needs this bound gets it from this one method.
      */
     private static JsonDeserializer<?> unwrapDelegating(JsonDeserializer<?> deserializer) {
         JsonDeserializer<?> current = deserializer;
-        while (current instanceof DelegatingDeserializer delegating) {
+        while (current instanceof DelegatingDeserializer delegating
+                && !overridesDelegatingDeserializerMethods(delegating.getClass())) {
             JsonDeserializer<?> delegatee = delegating.getDelegatee();
             if (delegatee == null || delegatee == current) {
                 break;
@@ -2286,6 +2305,47 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             current = delegatee;
         }
         return current;
+    }
+
+    /**
+     * Whether {@code deserializerClass} — a concrete {@link DelegatingDeserializer} subclass — declares
+     * its own override of at least one of the three methods {@link DelegatingDeserializer} itself
+     * implements as pure forwarding to its delegate: {@code deserialize(JsonParser,
+     * DeserializationContext)}, {@code deserialize(JsonParser, DeserializationContext, Object)}, and
+     * {@code deserializeWithType(JsonParser, DeserializationContext, TypeDeserializer)} (W-1, round 5
+     * review finding). {@code DelegatingDeserializer} remains every one of the three methods' declaring
+     * class exactly when the subclass changes none of them, which is the only shape {@link
+     * #unwrapDelegating} may safely unwrap straight through.
+     *
+     * @param deserializerClass the concrete {@code DelegatingDeserializer} subclass to inspect
+     * @return {@code true} when the class overrides at least one of the three methods itself
+     */
+    private static boolean overridesDelegatingDeserializerMethods(Class<?> deserializerClass) {
+        return declaresOwnMethod(deserializerClass, "deserialize", JsonParser.class, DeserializationContext.class)
+                || declaresOwnMethod(
+                        deserializerClass, "deserialize", JsonParser.class, DeserializationContext.class, Object.class)
+                || declaresOwnMethod(
+                        deserializerClass,
+                        "deserializeWithType",
+                        JsonParser.class,
+                        DeserializationContext.class,
+                        TypeDeserializer.class);
+    }
+
+    /**
+     * Whether the given method, as resolved on {@code type}, is declared by a class other than {@link
+     * DelegatingDeserializer} — i.e. some subclass between {@code type} and {@code DelegatingDeserializer}
+     * overrides it. Every {@code DelegatingDeserializer} subclass inherits all three methods {@link
+     * #overridesDelegatingDeserializerMethods} inspects, so a lookup miss never occurs for the methods
+     * this is used for; it is still treated as "not overridden" rather than propagating the checked
+     * exception, since a miss here would mean a shape this hierarchy does not have.
+     */
+    private static boolean declaresOwnMethod(Class<?> type, String name, Class<?>... parameterTypes) {
+        try {
+            return type.getMethod(name, parameterTypes).getDeclaringClass() != DelegatingDeserializer.class;
+        } catch (NoSuchMethodException impossible) {
+            return false;
+        }
     }
 
     /**

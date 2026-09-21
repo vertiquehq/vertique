@@ -18,11 +18,23 @@ import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonUnwrapped;
+import com.fasterxml.jackson.databind.BeanDescription;
+import com.fasterxml.jackson.databind.DeserializationConfig;
+import com.fasterxml.jackson.databind.JsonDeserializer;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.annotation.JsonPOJOBuilder;
+import com.fasterxml.jackson.databind.deser.BeanDeserializerModifier;
+import com.fasterxml.jackson.databind.deser.std.DelegatingDeserializer;
+import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.databind.module.SimpleModule;
+import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfile;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.VertiqueJson;
+import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.VertxJsonSupport;
 import dev.vertique.rest.jaxrs.validation.NoneValidationStrategy;
 import dev.vertique.rest.test.RestTestContributions;
 import dev.vertique.rest.test.RestTestMount;
@@ -2980,6 +2992,130 @@ public class ProfiledSchemaSynthesisIT {
             invocations.incrementAndGet();
             return "quantity=" + body.quantity;
         }
+    }
+
+    // --- C-1 (round 5 review finding, spike/deserializer-driven-schema): the gate-level half ---
+
+    /**
+     * Forwards every operation to the delegate, exactly as a bean-preserving wrapper module would —
+     * mirrors {@code DelegatingDeserializerWrapperTest.ForwardingDelegatingDeserializer} in {@code
+     * vertique-json-schema}, duplicated here since that fixture is package-private in a sibling
+     * module and this class needs its own mapper-wide {@link BeanDeserializerModifier}.
+     */
+    static final class C1ForwardingDelegatingDeserializer extends DelegatingDeserializer {
+        C1ForwardingDelegatingDeserializer(JsonDeserializer<?> delegate) {
+            super(delegate);
+        }
+
+        @Override
+        protected JsonDeserializer<?> newDelegatingInstance(JsonDeserializer<?> newDelegatee) {
+            return new C1ForwardingDelegatingDeserializer(newDelegatee);
+        }
+    }
+
+    /** An ordinary constrained member, unwrapped onto the parent rather than published as its own object. */
+    static final class C1Child {
+        @Size(max = 3)
+        public String name;
+    }
+
+    /** Carries {@link C1Child} through {@code @JsonUnwrapped}, under the mapper-wide wrapper profile below. */
+    static final class C1Parent {
+        @JsonUnwrapped
+        public C1Child child;
+    }
+
+    /**
+     * Builds the test-scope profile a {@code @JsonProfile("c1-delegating-wrapper")} route selects: a
+     * plain mapper whose {@link BeanDeserializerModifier} wraps every bean deserializer in a
+     * forwarding {@link DelegatingDeserializer}, the same mapper-wide shape {@code
+     * DelegatingDeserializerWrapperTest} exercises at the unit level.
+     *
+     * @return the wrapper profile, registered through {@link RestTestContributions}
+     */
+    private static JsonMapperProfile c1DelegatingWrapperProfile() {
+        // Vert.x JSON support: the registry probes a contributed mapper with a JsonObject round trip.
+        ObjectMapper mapper =
+                JsonMapper.builder().addModule(VertxJsonSupport.module()).build();
+        mapper.registerModule(new SimpleModule() {
+            @Override
+            public void setupModule(SetupContext context) {
+                super.setupModule(context);
+                context.addBeanDeserializerModifier(new BeanDeserializerModifier() {
+                    @Override
+                    public JsonDeserializer<?> modifyDeserializer(
+                            DeserializationConfig config, BeanDescription beanDesc, JsonDeserializer<?> deserializer) {
+                        return new C1ForwardingDelegatingDeserializer(deserializer);
+                    }
+                });
+            }
+        });
+        return JsonMapperProfiles.of(JsonProfileId.of("c1-delegating-wrapper"), mapper);
+    }
+
+    /**
+     * The resource for {@link C1Parent}, mounted under the {@code c1-delegating-wrapper} profile.
+     */
+    @Path("/c1")
+    @JsonProfile("c1-delegating-wrapper")
+    public static class C1Resource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the unwrapped child's name, so an accepted body is observable as more than a status code.
+         *
+         * @param body the request body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/unwrapped")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "c1UnwrappedEcho")
+        public String echo(C1Parent body) {
+            invocations.incrementAndGet();
+            return "name=" + (body.child == null ? null : body.child.name);
+        }
+    }
+
+    /**
+     * C-1 (independent review, by-reading finding). Under a mapper-wide {@code
+     * BeanDeserializerModifier} that wraps every bean deserializer in a forwarding {@code
+     * DelegatingDeserializer}, the review's premise is that {@code InputPropertyDescriber}'s
+     * unwrapped-child loop silently skips an {@code @JsonUnwrapped} child, publishing neither its
+     * property nor its {@code @Size(max = 3)} constraint — so the gate would accept an oversized value.
+     *
+     * <p>Expected red (per the review's premise): the property is absent from the document and {@code
+     * {"name":"abcdef"}} (6 characters) is accepted with a 200.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("C-1: under a mapper-wide DelegatingDeserializer wrapper, the gate rejects an oversized"
+            + " unwrapped child value")
+    void c1UnwrappedChildUnderDelegatingWrapperIsRejectedAtTheGate() throws Exception {
+        C1Resource resource = new C1Resource();
+        RestTestContributions contributions = RestTestContributions.builder()
+                .addJsonMapperProfile(c1DelegatingWrapperProfile())
+                .build();
+        int port = start(MountFixtures.mount(vertx, new JsonObject(), contributions), Set.of(resource));
+
+        HttpResponse<Buffer> rejected = post(port, "/c1/unwrapped", "{\"name\":\"abcdef\"}");
+
+        assertEquals(
+                400,
+                rejected.statusCode(),
+                "C-1 DECISIVE: the unwrapped child's own @Size(max = 3) must reject a 6-character value under"
+                        + " the mapper-wide DelegatingDeserializer wrapper profile; body: "
+                        + rejected.bodyAsString());
+        assertEquals(
+                0,
+                resource.invocations.get(),
+                "a rejected body must never reach the resource; a green pre-fix run here would mean the"
+                        + " oversized value reached the resource because the unwrapped child was never"
+                        + " described at all");
     }
 
     // --- Mounts and helpers ---
