@@ -736,8 +736,16 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             List<String> required) {
         AnnotatedMember member = property.getMember();
         Member raw = member == null ? null : member.getMember();
+        // S-1 (round 5 review finding): unwrap() alone strips only a TypeWrappedDeserializer; under a
+        // mapper-wide BeanDeserializerModifier that wraps every bean deserializer in a forwarding
+        // DelegatingDeserializer, the member's own contextual deserializer is still that wrapper, so the
+        // instanceof BeanDeserializerBase check below missed a case-insensitive member entirely before
+        // this fix. unwrapDelegating applies the same W-1 bound here as at the root seam: it unwraps a
+        // pure forwarder, and leaves a shape-changing DelegatingDeserializer subclass un-unwrapped (which
+        // then simply fails the instanceof check below, exactly as an unrelated non-bean deserializer
+        // already does).
         JsonDeserializer<?> valueDeserializer =
-                property.hasValueDeserializer() ? unwrap(property.getValueDeserializer()) : null;
+                property.hasValueDeserializer() ? unwrapDelegating(unwrap(property.getValueDeserializer())) : null;
         if (valueDeserializer instanceof BeanDeserializerBase nestedBean && nestedBean.isCaseInsensitive()) {
             // Case-insensitive only through this member's own contextual
             // @JsonFormat(with = ACCEPT_CASE_INSENSITIVE_PROPERTIES) (or a mapper-wide feature reaching
