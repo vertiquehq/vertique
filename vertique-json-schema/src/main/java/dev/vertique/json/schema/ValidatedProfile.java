@@ -172,8 +172,13 @@ final class ValidatedProfile {
      * no {@code additionalProperties} — which {@code McpSchemaHardener} deliberately leaves open (it
      * only closes an object that already declares a non-empty {@code properties}). An INPUT override
      * for a bean-like class must now declare {@code properties} or an explicit {@code
-     * additionalProperties}, so the remedy cannot itself become an unconstrained, unclosed argument
-     * object at MCP or an unconstrained body member at REST.
+     * additionalProperties} — or, per {@link #isFullyConstrainedShape} (W3, spike/deserializer-driven
+     * -schema round 4 ruling), some other keyword that fully constrains the fragment's own wire shape
+     * regardless: a {@code type} that is not (or does not contain) {@code "object"}, an {@code enum}, a
+     * {@code const}, or a {@code oneOf}/{@code anyOf}/{@code allOf} whose every branch itself qualifies
+     * — so the remedy cannot itself become an unconstrained, unclosed argument object at MCP or an
+     * unconstrained body member at REST, without over-refusing a fragment that never had an
+     * open-object position to begin with.
      *
      * <p>"Bean-like" is decided through {@link BeanLikeTypes#beanLike}, the one shared check (S5,
      * spike/deserializer-driven-schema round 4 ruling) {@link InputPropertyDescriber}'s own F1 refusal
@@ -192,15 +197,7 @@ final class ValidatedProfile {
      */
     private static void requireClosedOrDeclaredForBeanLikeType(
             ObjectMapper mapper, Class<?> javaType, JsonNode parsed, String profileLabel) {
-        if (parsed.has("properties") || parsed.has("additionalProperties")) {
-            return;
-        }
-        JsonNode declaredType = parsed.get("type");
-        if (declaredType != null && declaredType.isTextual() && !"object".equals(declaredType.textValue())) {
-            // The fragment replaces the type wholesale with a non-object shape (a string, a number, an
-            // array, ...): it is fully constrained by that declared type, with no property-level
-            // position for an unconstrained extra key to hide in, so it carries none of the open-object
-            // risk this check exists to catch.
+        if (isFullyConstrainedShape(parsed)) {
             return;
         }
         if (!BeanLikeTypes.beanLike(mapper, javaType)) {
@@ -213,6 +210,70 @@ final class ValidatedProfile {
                         + " additionalProperties, or the type stays open at every position it resolves,"
                         + " unclosed by the MCP hardener",
                 null);
+    }
+
+    /** The composition keywords {@link #isFullyConstrainedShape} descends into (W3, round 4 ruling). */
+    private static final List<String> COMPOSITION_KEYWORDS = List.of("oneOf", "anyOf", "allOf");
+
+    /**
+     * W3 (spike/deserializer-driven-schema round 4 ruling): whether an override fragment fully
+     * constrains its own wire shape, leaving no property-level position an unconstrained extra key
+     * could hide in — the same open-object risk {@link #requireClosedOrDeclaredForBeanLikeType} exists
+     * to catch. Exempted, beside declaring {@code properties} or {@code additionalProperties}: a
+     * {@code type} that is a single non-{@code "object"} string, or an array not containing
+     * {@code "object"}; an {@code enum}; a {@code const}; and a {@code oneOf}/{@code anyOf}/
+     * {@code allOf} whose every branch itself satisfies this same rule, recursively. A bare
+     * {@code {"type":"object"}} — the pre-existing refused control shape — satisfies none of these and
+     * stays refused for a bean-like type.
+     *
+     * @param fragment the override fragment (or, recursively, one of its composition branches)
+     * @return {@code true} when {@code fragment} carries no open-object risk on its own
+     */
+    private static boolean isFullyConstrainedShape(JsonNode fragment) {
+        if (fragment.has("properties") || fragment.has("additionalProperties")) {
+            return true;
+        }
+        if (fragment.has("enum") || fragment.has("const")) {
+            return true;
+        }
+        JsonNode declaredType = fragment.get("type");
+        if (declaredType != null) {
+            if (declaredType.isTextual() && !"object".equals(declaredType.textValue())) {
+                // The fragment replaces the type wholesale with a non-object shape (a string, a number,
+                // an array, ...): it is fully constrained by that declared type, with no property-level
+                // position for an unconstrained extra key to hide in.
+                return true;
+            }
+            if (declaredType.isArray()) {
+                boolean containsObject = false;
+                for (JsonNode entry : declaredType) {
+                    if (entry.isTextual() && "object".equals(entry.textValue())) {
+                        containsObject = true;
+                        break;
+                    }
+                }
+                if (!containsObject) {
+                    return true;
+                }
+            }
+        }
+        for (String composition : COMPOSITION_KEYWORDS) {
+            JsonNode branches = fragment.get(composition);
+            if (branches == null || !branches.isArray() || branches.isEmpty()) {
+                continue;
+            }
+            boolean everyBranchConstrained = true;
+            for (JsonNode branch : branches) {
+                if (!branch.isObject() || !isFullyConstrainedShape(branch)) {
+                    everyBranchConstrained = false;
+                    break;
+                }
+            }
+            if (everyBranchConstrained) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
