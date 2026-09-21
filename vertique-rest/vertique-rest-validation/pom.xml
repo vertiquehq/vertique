@@ -130,6 +130,23 @@ SPDX-License-Identifier: EUPL-1.2
 
     <build>
         <plugins>
+            <!-- Test sources only: ProfiledSchemaSynthesisIT's transforming-constructor gate-level proof
+                 (rest-020-refresh, the InputPropertyDescriber#backingField compiled-parameter-name join
+                 removal) needs its fixture's constructor parameter compiled with a Java name present at
+                 runtime, which javac only emits under -parameters — mirrors vertique-json-schema's own
+                 test-only default-testCompile override. Main sources are unaffected. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>default-testCompile</id>
+                        <configuration>
+                            <parameters>true</parameters>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <!-- The profile proofs in this module install the process JSON codec's mapper and restore
                  the raw Vert.x delegate in @AfterEach, so both forks enable the reset seam. The flag is
                  read once at VertiqueJson class initialization; it is a test-only argLine and never

@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonAnyGetter;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
+import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonEnumDefaultValue;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
@@ -239,6 +240,50 @@ public class ProfiledSchemaSynthesisIT {
                 "a string with a trailing CRLF must be rejected, not silently trimmed");
 
         assertEquals(1, resource.invocations.get(), "no rejected body may reach the resource");
+    }
+
+    // --- rest-020-refresh: the removed compiled-parameter-name creator-parameter join ---
+
+    /**
+     * The gate-level half of the fix proof for {@code InputPropertyDescriber#backingField}'s removed
+     * compiled-parameter-name candidate. {@link TransformingConstructorBody}'s constructor parameter's
+     * <em>compiled Java name</em> ({@code "amount"}) coincides with an unrelated field's own name, but
+     * its wire name ({@code "amount_cents"}) does not, and the constructor divides the incoming value
+     * by 100 before storing it. Before the fix, the removed join borrowed the field's {@code @Max(10)}
+     * onto {@code amount_cents} and the gate rejected {@code {"amount_cents": 500}} — a body the
+     * constructor turns into {@code amount = 5}, well under the field's own ceiling.
+     *
+     * <p>Behavior-change: red at {@code fcc201cb} (the task's baseline commit, with the join still in
+     * place) — a 400, never reaching the resource. Green after the fix — a 200, bound through the
+     * constructor's own transform. The fixture needs its constructor parameter's compiled name present
+     * at runtime for the pre-fix join to have had anything to bite on; {@code pom.xml}'s test-only
+     * {@code default-testCompile} override compiles this module's test sources with {@code -parameters}
+     * for exactly that reason.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("The gate accepts a transforming constructor's wire value and binds through its transform,"
+            + " not a borrowed field constraint")
+    void transformingConstructorParameterAcceptsValueTheFieldsConstraintWouldHaveRejected() throws Exception {
+        TransformingConstructorResource resource = new TransformingConstructorResource();
+        int gatePort = start(gateMount(), Set.of(resource));
+
+        HttpResponse<Buffer> response = post(gatePort, "/transforming/amount", "{\"amount_cents\":500}");
+
+        assertEquals(
+                200,
+                response.statusCode(),
+                "the gate must accept amount_cents=500: the removed join used to borrow the field's"
+                        + " @Max(10) onto the wire name amount_cents and reject this body even though the"
+                        + " constructor turns it into amount = 5, well under 10; body: "
+                        + response.bodyAsString());
+        assertEquals(
+                "amount=5",
+                response.bodyAsString(),
+                "the accepted body must bind through the constructor's own transform, not the field's"
+                        + " raw wire value");
+        assertEquals(1, resource.invocations.get(), "the accepted body must reach the resource exactly once");
     }
 
     // --- TP-010: enum protection and the property-model negatives ---
@@ -1412,6 +1457,52 @@ public class ProfiledSchemaSynthesisIT {
         public String echo(Payment payment) {
             invocations.incrementAndGet();
             return "amount=" + payment.amount;
+        }
+    }
+
+    /**
+     * rest-020-refresh: a transforming constructor whose parameter's compiled Java name coincides with
+     * an unrelated field's own name. No getter is declared on purpose: a public getter here would let
+     * Jackson pair the private field with a getter-implied property of its own name — a second,
+     * genuinely field-backed property this fixture does not intend to exercise. The resource below
+     * reads {@link #amount} directly; both classes are nested in this same top-level type, so the
+     * private field is accessible to it.
+     */
+    public static class TransformingConstructorBody {
+
+        @Max(10)
+        private final int amount;
+
+        @JsonCreator
+        public TransformingConstructorBody(@JsonProperty("amount_cents") int amount) {
+            this.amount = amount / 100;
+        }
+    }
+
+    /**
+     * The resource on the {@code vertique} floor for {@link TransformingConstructorBody}: it carries no
+     * {@code @JsonProfile}, so the gate schema is generated from the unannotated floor profile.
+     */
+    @Path("/transforming")
+    public static class TransformingConstructorResource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the bound (already-transformed) amount.
+         *
+         * @param body the transforming-constructor fixture body
+         * @return the echoed amount
+         */
+        @POST
+        @Path("/amount")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "transformingConstructorAmountEcho")
+        public String echo(TransformingConstructorBody body) {
+            invocations.incrementAndGet();
+            return "amount=" + body.amount;
         }
     }
 
