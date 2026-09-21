@@ -20,6 +20,7 @@ import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
+import jakarta.validation.Validator;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Max;
@@ -31,6 +32,7 @@ import java.lang.reflect.Type;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -126,9 +128,35 @@ public class AnnotationSchemaSource implements OperationSchemaSource {
      */
     private final AtomicInteger generatorConstructions = new AtomicInteger();
 
-    /** Creates a schema source with an empty generator cache; generators are built on first use. */
+    /**
+     * The optional application-bound {@link Validator}: present when an application depends on
+     * {@code vertique-validation} (or binds its own {@code Validator}), absent otherwise. When
+     * present, every generator this source builds sources its value-schema constraints from Bean
+     * Validation metadata instead of the annotation walk; see {@code ConstraintSource} in
+     * {@code vertique-json-schema}.
+     */
+    private final Optional<Validator> validator;
+
+    /**
+     * Creates a schema source with an empty generator cache and no Bean Validation validator; every
+     * generator this source builds uses the annotation walk. Equivalent to
+     * {@code AnnotationSchemaSource(Optional.empty())}, kept for source compatibility with callers
+     * that construct this class directly rather than through Dagger.
+     */
+    public AnnotationSchemaSource() {
+        this(Optional.empty());
+    }
+
+    /**
+     * Creates a schema source with an empty generator cache; generators are built on first use.
+     *
+     * @param validator the application's optional Bean Validation validator, declared
+     *                  {@code @BindsOptionalOf} in {@link RestValidationModule}
+     */
     @Inject
-    public AnnotationSchemaSource() {}
+    public AnnotationSchemaSource(Optional<Validator> validator) {
+        this.validator = validator;
+    }
 
     /**
      * {@inheritDoc}
@@ -242,7 +270,8 @@ public class AnnotationSchemaSource implements OperationSchemaSource {
      */
     private AnnotationJsonSchemaGenerator generatorFor(JsonMapperProfile profile) {
         return generatorsByProfile.computeIfAbsent(new ProfileKey(profile), key -> {
-            AnnotationJsonSchemaGenerator built = AnnotationJsonSchemaGenerator.forInputProfile(key.profile());
+            AnnotationJsonSchemaGenerator built =
+                    AnnotationJsonSchemaGenerator.forInputProfile(key.profile(), validator.orElse(null));
             generatorConstructions.incrementAndGet();
             return built;
         });

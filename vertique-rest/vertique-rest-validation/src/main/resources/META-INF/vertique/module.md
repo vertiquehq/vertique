@@ -58,8 +58,9 @@ auth handler(s) → @Consumes 415 gate → validation gate → OperationHandlerC
 ### RestValidationModule
 
 Abstract Dagger `@Module` and the module's wiring entry point. Contributes
-`WebValidationStrategy` into the `Set<RequestValidationStrategy>` declared by `RestModule` and binds
-`AnnotationSchemaSource` as the single `OperationSchemaSource`.
+`WebValidationStrategy` into the `Set<RequestValidationStrategy>` declared by `RestModule`, binds
+`AnnotationSchemaSource` as the single `OperationSchemaSource`, and declares the optional
+`Validator` binding `AnnotationSchemaSource` consumes as `Optional<Validator>`.
 
 ```java
 @Module
@@ -69,8 +70,15 @@ public abstract class RestValidationModule {
 
     @Binds
     abstract OperationSchemaSource operationSchemaSource(AnnotationSchemaSource source);
+
+    @BindsOptionalOf
+    abstract Validator validator();
 }
 ```
+
+An application that also installs `vertique-validation`'s `ValidationModule` (which binds a plain
+`Validator`) gets the Bean Validation metadata constraint source automatically, with no additional
+wiring; one that does not gets `Optional.empty()` and the annotation walk, unchanged.
 
 Include in your Dagger `@Component` alongside `RestModule` to activate the default `web-validation` path:
 
@@ -163,6 +171,20 @@ Default `OperationSchemaSource` that synthesizes JSON Schema from JAX-RS and Bea
 The protected `generateBodySchema(Type, JsonMapperProfile)` seam is the only generation path and is invoked exactly once per body synthesis; its default implementation parses the generator's canonical document into a fresh `JsonNode`, and a subclass may substitute its own node. The one-argument `generateBodySchema(Type)` seam no longer exists. **This seam is INTERNAL**: it is a substitution point for framework and test code — counting or replacing generation invocations — and not an application contract. It sits outside this module's compatibility promise and may change or be removed in any release; application code should contribute an `OperationSchemaSource` instead of overriding it.
 
 **One generator per profile instance.** The source builds at most one `AnnotationJsonSchemaGenerator` per distinct `JsonMapperProfile` instance, keyed by reference identity, on first use, and retains it for the source's lifetime — at most one even when parallel router builds call `schemasFor` concurrently. Retention is bounded by the number of distinct profile instances the profile registry hands out; the built-in registry and profiles contributed through `RestTestContributions.jsonMapperProfiles` hand out stable instances, so that bound is the profile count. A registry implementation that returns a **fresh profile instance per call** defeats the bound and grows the retained set without limit; that is a misconfiguration, not a supported mode. No generated schema is cached by operation id, Java type, or mapper identity.
+
+**Optional Bean Validation metadata source.** `AnnotationSchemaSource` declares an
+`Optional<jakarta.validation.Validator>` constructor parameter, satisfied by `RestValidationModule`'s
+`@BindsOptionalOf Validator` — the same pattern `vertique-mcp-server`'s `McpServerModule` already
+uses for tool-input validation. When present (an application depends on `vertique-validation`, which
+binds a plain `Validator`, or an application binds its own), every body schema this source
+synthesizes is built through `AnnotationJsonSchemaGenerator.forInputProfile(profile, validator)`, so
+constraints come from Bean Validation metadata instead of the annotation walk — see
+`vertique-json-schema`'s module reference for the join rules, the group filter, and the rendered
+keyword table. When absent, generation is exactly what it was before this binding existed: the
+annotation walk, with no behavior change. `AnnotationSchemaSource`'s no-argument public constructor
+is retained (equivalent to `Optional.empty()`) for source compatibility with code that constructs it
+directly rather than through Dagger; the `@Inject`-annotated constructor is the
+`Optional<Validator>`-accepting one.
 
 **A schema-implementation redirect on an overridden type fails router construction.** `@Schema(implementation = ...)` on a property whose declared type graph carries an effective override for the operation's profile is rejected during generation, so the mount fails to build with a `RestConfigurationException` naming the operation and the property, and is never installed. The redirect still applies exactly as before on a route whose effective profile declares no override for that type. The trigger is configuration-only: `json.jsonProfile: vertique-strict`, or a `@JsonProfile` selection of a profile carrying that override, on an application whose DTOs still carry the previously recommended `@Schema(implementation = String.class)` workaround on a `BigDecimal` property. Remove the redirect — the profile itself supplies the string form, with the decimal grammar and length bound the annotation never carried. Because the schema source runs for every operation whatever validation strategy is selected, this failure is not confined to `web-validation`.
 

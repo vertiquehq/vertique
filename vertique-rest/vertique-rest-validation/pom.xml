@@ -113,6 +113,19 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-json</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- Test scope only: SchemaCorpusMetadataCrossCheckTest exercises AnnotationSchemaSource's
+             optional Validator with a real Bean Validation implementation. -->
+        <dependency>
+            <groupId>org.hibernate.validator</groupId>
+            <artifactId>hibernate-validator</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.glassfish.expressly</groupId>
+            <artifactId>expressly</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
