@@ -29,6 +29,7 @@ import com.fasterxml.jackson.databind.deser.SettableAnyProperty;
 import com.fasterxml.jackson.databind.deser.SettableBeanProperty;
 import com.fasterxml.jackson.databind.deser.ValueInstantiator;
 import com.fasterxml.jackson.databind.deser.impl.TypeWrappedDeserializer;
+import com.fasterxml.jackson.databind.deser.std.DelegatingDeserializer;
 import com.fasterxml.jackson.databind.deser.std.MapDeserializer;
 import com.fasterxml.jackson.databind.deser.std.StdDelegatingDeserializer;
 import com.fasterxml.jackson.databind.introspect.AnnotatedClass;
@@ -236,7 +237,15 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     }
 
     private CustomDefinition describe(JavaType javaType, ResolvedType resolved, SchemaGenerationContext context) {
-        JsonDeserializer<?> deserializer = rootDeserializer(javaType);
+        // W2 (spike/deserializer-driven-schema round 4 ruling): unwrapped through getDelegatee() before
+        // this method decides whether the type's deserializer was replaced — mirroring the existing
+        // TypeWrappedDeserializer unwrap rootDeserializer itself performs. A mapper-wide
+        // BeanDeserializerModifier that wraps every bean deserializer in a forwarding
+        // DelegatingDeserializer subclass still ends up calling the wrapped bean deserializer at bind
+        // time through getDelegatee(), so the wrapped bean is described from its own delegate rather
+        // than misclassified as an opaque type-level override the way F1's own refusal treats a genuine
+        // custom deserializer.
+        JsonDeserializer<?> deserializer = unwrapDelegating(rootDeserializer(javaType));
         if (deserializer == null || deserializer instanceof AbstractDeserializer) {
             // A polymorphic base: the Jackson module's subtype resolver owns it.
             return null;
@@ -2225,6 +2234,28 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         JsonDeserializer<?> current = deserializer;
         while (current instanceof TypeWrappedDeserializer wrapped && wrapped.getDelegatee() != null) {
             current = wrapped.getDelegatee();
+        }
+        return current;
+    }
+
+    /**
+     * Unwraps a {@link DelegatingDeserializer} chain down to its ultimate delegate (W2,
+     * spike/deserializer-driven-schema round 4 ruling), the root-level counterpart of {@link
+     * #unwrap(JsonDeserializer)}'s own {@code TypeWrappedDeserializer} unwrap: a mapper-wide {@code
+     * BeanDeserializerModifier} that wraps every bean deserializer in a forwarding {@code
+     * DelegatingDeserializer} subclass still ends up calling the wrapped bean deserializer at bind time
+     * through {@code getDelegatee()}, so {@link #describe} must decide bean-ness from the delegate
+     * rather than from the forwarding wrapper itself. {@code null} or self-referential is treated the
+     * same as "nothing further to unwrap", never looping.
+     */
+    private static JsonDeserializer<?> unwrapDelegating(JsonDeserializer<?> deserializer) {
+        JsonDeserializer<?> current = deserializer;
+        while (current instanceof DelegatingDeserializer delegating) {
+            JsonDeserializer<?> delegatee = delegating.getDelegatee();
+            if (delegatee == null || delegatee == current) {
+                break;
+            }
+            current = delegatee;
         }
         return current;
     }

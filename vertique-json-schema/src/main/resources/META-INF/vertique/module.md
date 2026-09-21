@@ -289,6 +289,19 @@ from the settable-property check outright: a no-argument getter such as `Buffer#
 mutable-collection getter such as `JsonArray#getList()` makes plain reflective introspection report a
 property for these well-known wrapper types even though neither is ever bound as a bean.
 
+**A `DelegatingDeserializer` wrapper is unwrapped before this decision (W2, owner ruling,
+`spike/deserializer-driven-schema`).** A mapper-wide `BeanDeserializerModifier` that wraps *every*
+bean deserializer in a forwarding `DelegatingDeserializer` subclass — forwarding every operation to
+the original bean deserializer through `getDelegatee()` — is a legitimate, if unusual, module shape:
+the type still binds exactly as it would unwrapped. This generator unwraps that chain down to its
+ultimate delegate, mirroring the existing `TypeWrappedDeserializer` unwrap, and describes the wrapped
+bean from the delegate rather than refusing it as an opaque type-level override. This is deliberately
+narrower than the refusal it exempts from: a third-party type with a settable property whose
+deserializer a profile module attaches directly (`SimpleModule.addDeserializer(...)`, or a
+`BeanDeserializerModifier` that returns something other than a `DelegatingDeserializer` wrapping the
+original bean deserializer) is not a `DelegatingDeserializer` chain to unwrap, and stays refused
+exactly as described above — the remedy for that shape is still a `JsonSchemaTypeOverride`.
+
 **A delegating `@JsonCreator`** — object-delegating (`Mode.DELEGATING` over a single non-array-like
 parameter) or array-delegating (the same mode over a `List`/array-shaped parameter) — is refused with
 a bounded diagnostic, in either shape: the whole value is bound through the delegate type, so no named
