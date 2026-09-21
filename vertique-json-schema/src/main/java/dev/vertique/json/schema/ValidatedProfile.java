@@ -175,11 +175,13 @@ final class ValidatedProfile {
      * additionalProperties}, so the remedy cannot itself become an unconstrained, unclosed argument
      * object at MCP or an unconstrained body member at REST.
      *
-     * <p>"Bean-like" is decided the same way {@link InputPropertyDescriber}'s own F1 refusal decides
-     * it: whether the mapper's reflective introspection reports any property for the class at all. A
-     * type with no introspected properties (a scalar, a container, a {@code Map} subclass, a
-     * Vert.x-style wrapper) is not a bean the override could be leaving unconstrained, so it is exempt.
-     * Output-direction overrides are unaffected: this check runs only for {@code direction == INPUT}.
+     * <p>"Bean-like" is decided through {@link BeanLikeTypes#beanLike}, the one shared check (S5,
+     * spike/deserializer-driven-schema round 4 ruling) {@link InputPropertyDescriber}'s own F1 refusal
+     * also consults: whether the mapper's reflective introspection reports any settable property for the
+     * class at all. A type with no introspected properties (a scalar, a container, a {@code Map}
+     * subclass, a Vert.x-style wrapper) is not a bean the override could be leaving unconstrained, so it
+     * is exempt. Output-direction overrides are unaffected: this check runs only for
+     * {@code direction == INPUT}.
      *
      * @param mapper       the profile's mapper, whose reflective introspection decides bean-likeness
      * @param javaType     the overridden class
@@ -201,7 +203,7 @@ final class ValidatedProfile {
             // risk this check exists to catch.
             return;
         }
-        if (!beanLike(mapper, javaType)) {
+        if (!BeanLikeTypes.beanLike(mapper, javaType)) {
             return;
         }
         throw Diagnostics.failure(
@@ -211,42 +213,6 @@ final class ValidatedProfile {
                         + " additionalProperties, or the type stays open at every position it resolves,"
                         + " unclosed by the MCP hardener",
                 null);
-    }
-
-    /**
-     * Whether {@code javaType} is a type {@link InputPropertyDescriber} would ever actually describe as
-     * a bean — excluding, exactly as {@link InputPropertyDescriber#provideCustomSchemaDefinition}
-     * excludes at its own entry point, a primitive, array, enum, annotation, or a JDK/Jakarta/Jackson
-     * type. Those never reach the describer at all (Victools' own built-in handling applies instead),
-     * so this check must not call {@code java.math.BigDecimal} — or any other JDK scalar wrapper —
-     * "bean-like" merely because the mapper's reflective introspection happens to enumerate some
-     * property-shaped method on it; the describer itself never would.
-     */
-    private static boolean beanLike(ObjectMapper mapper, Class<?> javaType) {
-        if (javaType.isPrimitive()
-                || javaType.isArray()
-                || javaType.isEnum()
-                || javaType.isAnnotation()
-                || javaType.getName().startsWith("java.")
-                || javaType.getName().startsWith("javax.")
-                || javaType.getName().startsWith("jakarta.")
-                || javaType.getName().startsWith("com.fasterxml.jackson.")
-                || javaType.getName().startsWith("io.vertx.")) {
-            // The last exclusion mirrors InputPropertyDescriber's own F1 beanLike check exactly: Vert.x's
-            // io.vertx.* family (JsonObject, JsonArray, Buffer, ...) carries getter-shaped members
-            // (JsonArray#getList(), a mutable-collection getter; Buffer#getBytes()) that make plain
-            // reflective introspection report a "settable" property even though the type is never bound
-            // as a bean — see that method's own comment for the full reasoning.
-            return false;
-        }
-        // "Settable" (BeanPropertyDefinition#couldDeserialize()), not merely "known": a getter-only
-        // property is not a field walk this check protects.
-        return mapper
-                .getDeserializationConfig()
-                .introspect(mapper.getTypeFactory().constructType(javaType))
-                .findProperties()
-                .stream()
-                .anyMatch(com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition::couldDeserialize);
     }
 
     /**

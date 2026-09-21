@@ -271,10 +271,10 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             // not a safe signal for this specific, well-known opaque-wrapper family either — the same
             // family this method's own class Javadoc and D005 name by example. A type with neither a
             // settable property nor an io.vertx.* package (a scalar, a container, a node) never had a
-            // field walk to protect and stays described as unconstrained.
-            boolean beanLike = !javaType.getRawClass().getName().startsWith("io.vertx.")
-                    && introspection(javaType).findProperties().stream()
-                            .anyMatch(BeanPropertyDefinition::couldDeserialize);
+            // field walk to protect and stays described as unconstrained. S5 (spike/deserializer-driven
+            // -schema round 4 ruling): this decision is the shared BeanLikeTypes.beanLike check, the one
+            // exclusion list also consulted by ValidatedProfile's own F6 override-closure check.
+            boolean beanLike = BeanLikeTypes.beanLike(mapper, javaType.getRawClass());
             if (!declaresOwnDeserializerOverride(javaType) && !beanLike) {
                 // A scalar, container, node, or Vert.x-style opaque wrapper: some module registered a
                 // plain (non-bean) deserializer for this *foreign* type, but the type's own class
