@@ -72,9 +72,11 @@ class WebValidationStrategyNullKeywordDetailTest {
 
     /**
      * W4 follow-up: the implementer reports that {@code collectFailures}'s <em>single-error</em>
-     * branch — reached when {@code result.getErrors()} is {@code null} or empty, e.g. a scalar
-     * parameter validated directly — still has the {@code safeDetail(null, {}, rawMessage)} fallback
-     * the multi-error loop above was fixed to avoid. This proof reaches that branch directly with a
+     * branch — reached when {@code result.getErrors()} is {@code null} or empty, which happens only for
+     * a root result that itself reports no nested errors (e.g. a boolean {@code false} schema, whose
+     * {@link OutputUnit} carries no {@code errors} list at all), never for a scalar parameter validated
+     * directly — still has the {@code safeDetail(null, {}, rawMessage)} fallback the multi-error loop
+     * above was fixed to avoid. This proof reaches that branch directly with a
      * synthetic top-level {@link OutputUnit} (not wrapped in an {@code errors} list) whose own {@code
      * keywordLocation} is absent and whose own {@code instanceLocation} is not a structural keyword,
      * carrying a distinctive client value in its raw {@code error} message.

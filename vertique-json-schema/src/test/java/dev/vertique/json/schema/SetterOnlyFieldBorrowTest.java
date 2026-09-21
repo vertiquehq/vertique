@@ -12,6 +12,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
+import jakarta.validation.Validator;
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Size;
 import java.lang.reflect.Type;
 import java.util.List;
@@ -55,6 +57,11 @@ class SetterOnlyFieldBorrowTest {
     private static JsonNode document(Type type) {
         return assertCanonicalForm(
                 AnnotationJsonSchemaGenerator.forInputProfile(profile()).generateCanonical(type));
+    }
+
+    private static JsonNode document(Type type, Validator validator) {
+        return assertCanonicalForm(AnnotationJsonSchemaGenerator.forInputProfile(profile(), validator)
+                .generateCanonical(type));
     }
 
     /** W1: a private, constrained field bound only through a setter — no getter, no public field. */
@@ -117,5 +124,99 @@ class SetterOnlyFieldBorrowTest {
                 "control: a field reachable through a getter is unaffected by W1 — getField() resolves"
                         + " normally, so the constraint must already be borrowed on unchanged production code;"
                         + " document: " + document);
+    }
+
+    // --- Reopened finding: a transient field with BOTH a getter and a setter, no validator ---
+
+    /**
+     * A private, {@code transient}, {@code @Max}-constrained numeric field bound through both a getter
+     * and a setter. {@code BeanPropertyDefinition#getField()} is {@code null} for a transient field
+     * (Jackson's property definition has no field member for it), so W1's own fallback in {@link
+     * dev.vertique.json.schema.InputPropertyDescriber#borrowFieldAttributes} would be the only remaining
+     * path to the constraint — but that fallback is bounded to {@code candidate.getGetter() == null},
+     * which this shape does not satisfy (it has a getter), so neither path borrows the field's
+     * {@code @Max(10)} onto the published property.
+     */
+    static final class TransientNumericField {
+        @Max(10)
+        private transient int level;
+
+        public int getLevel() {
+            return level;
+        }
+
+        public void setLevel(int level) {
+            this.level = level;
+        }
+    }
+
+    /** The same shape for a {@code @Size(max = 3)} {@code String} field, rather than a numeric one. */
+    static final class TransientStringField {
+        @Size(max = 3)
+        private transient String token;
+
+        public String getToken() {
+            return token;
+        }
+
+        public void setToken(String token) {
+            this.token = token;
+        }
+    }
+
+    @Test
+    @DisplayName(
+            "REOPENED: a transient numeric field with a getter and a setter loses its @Max without a" + " validator")
+    void transientNumericFieldWithGetterAndSetterLosesMaxWithoutAValidator() {
+        JsonNode document = document(TransientNumericField.class);
+        JsonNode level = document.path("properties").path("level");
+
+        assertFalse(
+                level.isMissingNode(),
+                "level must still be published: the getter/setter pair binds it;" + " document: " + document);
+        assertEquals(
+                10,
+                level.path("maximum").asInt(-1),
+                "REOPENED DECISIVE: a transient field's own @Max(10) must still be borrowed onto the published"
+                        + " property even though it also has a getter — getField() is null for a transient field"
+                        + " (no field member in Jackson's property definition), and the write-only fallback added"
+                        + " for W1 only fires when there is also no getter, so this shape currently falls through"
+                        + " both paths unborrowed; document: " + document);
+    }
+
+    @Test
+    @DisplayName(
+            "REOPENED: a transient String field with a getter and a setter loses its @Size without a" + " validator")
+    void transientStringFieldWithGetterAndSetterLosesSizeWithoutAValidator() {
+        JsonNode document = document(TransientStringField.class);
+        JsonNode token = document.path("properties").path("token");
+
+        assertFalse(
+                token.isMissingNode(),
+                "token must still be published: the getter/setter pair binds it; document: " + document);
+        assertEquals(
+                3,
+                token.path("maxLength").asInt(-1),
+                "REOPENED DECISIVE: a transient field's own @Size(max = 3) must still be borrowed onto the"
+                        + " published property even though it also has a getter, for the same reason as the"
+                        + " numeric shape above; document: " + document);
+    }
+
+    @Test
+    @DisplayName("REOPENED control: a validator-backed generator still publishes the transient numeric field's"
+            + " @Max, unaffected by the no-validator gap above")
+    void transientNumericFieldConstraintIsPublishedUnderAValidator() {
+        Validator validator = MetadataTestValidators.plain();
+        JsonNode document = document(TransientNumericField.class, validator);
+        JsonNode level = document.path("properties").path("level");
+
+        assertFalse(level.isMissingNode(), "document: " + document);
+        assertEquals(
+                10,
+                level.path("maximum").asInt(-1),
+                "control: the Bean Validation metadata supplement reads the field directly (not through"
+                        + " Jackson's getField() join), so a validator-backed generator must publish the"
+                        + " constraint regardless of the no-validator gap this class otherwise proves; document: "
+                        + document);
     }
 }

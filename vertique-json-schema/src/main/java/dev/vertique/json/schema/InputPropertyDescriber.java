@@ -1123,6 +1123,14 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * setter's own implied name (the JavaBean convention the method name itself implies, e.g. {@code
      * setLevel} implies {@code level}), the same implied-name convention {@link #impliedFieldName}
      * already names for this purpose.
+     *
+     * <p>Reopened (round 6 finding): {@code getField()} is {@code null} for exactly the same reason for a
+     * {@code transient} field — Jackson's property definition carries no field member for it either, not
+     * only when the field is otherwise inaccessible — regardless of whether a getter is also present. The
+     * implied-name fallback above was wrongly bounded to "no field member <em>and</em> no getter"; it now
+     * fires whenever there is no field member, whether or not a getter exists, since the absence of a
+     * field member — not the presence or absence of a getter — is what leaves Jackson's own merge with
+     * nothing to join through. The getter-present-and-field-present path above is unchanged.
      */
     private void borrowFieldAttributes(
             Class<?> builtClass,
@@ -1139,7 +1147,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             if (field != null) {
                 applyFieldScopeAttributes(
                         field.getAnnotated(), field.getDeclaringClass(), wireName, schema, context, required);
-            } else if (candidate.getGetter() == null) {
+            } else {
                 AnnotatedMethod setter = candidate.getSetter();
                 Field implied = setter == null ? null : fieldNamed(builtClass, impliedFieldName(setter.getAnnotated()));
                 if (implied != null) {

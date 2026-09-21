@@ -146,14 +146,17 @@ as it gets no borrow from the floor. **Setter-only field-borrow fallback (owner 
 `spike/deserializer-driven-schema`).** The floor itself joins a setter to its backing field through
 Jackson's own `BeanPropertyDefinition#getField()` — the field Jackson associates with the same
 wire-named property, guaranteed by construction to be the one the setter's value corresponds to. That
-accessor is `null` when the only accessor Jackson associates with the property is the setter itself —
-a private field with a setter and no getter, no public field either — so there is nothing to join
-through. Bounded to exactly that shape (never applied when a getter resolves, which would mean
-`getField()` had something to say), the floor falls back to the field whose Java name equals the
-setter's own implied name — stripping only its own `set`/`with` prefix (`impliedFieldName`), narrower
-than the `get`/`is`/`set`/`with` convention named above, since this fallback only ever sees a setter,
-never a getter — which still carries the constraints the developer wrote for the value even though
-Jackson's own property metadata cannot join it directly. A creator-parameter property joins to a `ParameterDescriptor` by its declaring
+accessor is `null` in two shapes: the only accessor Jackson associates with the property is the setter
+itself — a private field with a setter and no getter, no public field either — or the field is
+`transient`, which Jackson's property definition carries no field member for regardless of whether a
+getter is also present. Bounded to exactly "no field member" (the getter's own presence or absence is
+irrelevant — a transient field with both a getter and a setter still has no `getField()` to join
+through, so it falls back the same as the getter-less shape; a *non*-transient field with a getter
+still joins through `getField()` normally and never reaches this fallback), the floor falls back to
+the field whose Java name equals the setter's own implied name — stripping only its own `set`/`with`
+prefix (`impliedFieldName`), narrower than the `get`/`is`/`set`/`with` convention named above, since
+this fallback only ever sees a setter, never a getter — which still carries the constraints the
+developer wrote for the value even though Jackson's own property metadata cannot join it directly. A creator-parameter property joins to a `ParameterDescriptor` by its declaring
 constructor and parameter index (`SettableBeanProperty.getCreatorIndex()`), never by name; a
 static-factory creator's parameters join to nothing in Bean Validation (constrained constructors
 only), which is exactly why the floor's own annotation read — not the supplement — is what renders

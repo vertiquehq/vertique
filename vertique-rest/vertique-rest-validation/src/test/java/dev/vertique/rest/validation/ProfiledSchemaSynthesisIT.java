@@ -3083,12 +3083,21 @@ public class ProfiledSchemaSynthesisIT {
     /**
      * C-1 (independent review, by-reading finding). Under a mapper-wide {@code
      * BeanDeserializerModifier} that wraps every bean deserializer in a forwarding {@code
-     * DelegatingDeserializer}, the review's premise is that {@code InputPropertyDescriber}'s
+     * DelegatingDeserializer}, the review's premise was that {@code InputPropertyDescriber}'s
      * unwrapped-child loop silently skips an {@code @JsonUnwrapped} child, publishing neither its
      * property nor its {@code @Size(max = 3)} constraint — so the gate would accept an oversized value.
      *
-     * <p>Expected red (per the review's premise): the property is absent from the document and {@code
-     * {"name":"abcdef"}} (6 characters) is accepted with a 200.
+     * <p>CORRECTED (round 6 finding): this row never actually characterized the loop, and was never red.
+     * {@link C1Child}'s {@code name} member is an ordinary, plain property — not hidden, not an alias,
+     * not on an any-setter type — and the schema library's own generation independently publishes a bare
+     * {@code @JsonUnwrapped} member's plain properties onto the parent regardless of whether this
+     * describer's own loop processes the child at all (measured directly, mirroring {@code
+     * DelegatingDeserializerWrapperTest.unwrappedChildUnderMapperWideDelegatingWrapperIsDescribed}'s own
+     * corrected Javadoc: forcing the loop to unconditionally skip every unwrapped child still leaves
+     * {@code "name"} published with its {@code @Size(max = 3)}). This row is kept as a positive
+     * regression guard for that already-independent library behavior, never as the loop's own
+     * discriminating proof — the loop's own bug is discriminating only for a shape the library's own
+     * flattening does not cover on its own, which the C-2 row below exercises instead.
      *
      * @throws Exception when a round trip fails or times out
      */
@@ -3113,9 +3122,180 @@ public class ProfiledSchemaSynthesisIT {
         assertEquals(
                 0,
                 resource.invocations.get(),
+                "a rejected body must never reach the resource — this row characterizes the schema library's"
+                        + " own independent flattening of a plain unwrapped property (see the corrected"
+                        + " Javadoc above), not the unwrapped-child loop's own fix");
+    }
+
+    // --- Reopened finding: a transient field with a getter and setter loses its constraint (no validator) ---
+
+    /**
+     * A private, {@code transient}, {@code @Max}-constrained numeric field bound through both a getter
+     * and a setter — the same shape {@code
+     * dev.vertique.json.schema.SetterOnlyFieldBorrowTest.TransientNumericField} pins at the unit level.
+     * {@code BeanPropertyDefinition#getField()} is {@code null} for a transient field, and the
+     * write-only fallback W1 added only fires when there is also no getter, so neither path currently
+     * borrows the field's own {@code @Max(10)} onto the published property without a validator.
+     */
+    static final class TransientNumericFieldBody {
+        @Max(10)
+        private transient int level;
+
+        public int getLevel() {
+            return level;
+        }
+
+        public void setLevel(int level) {
+            this.level = level;
+        }
+    }
+
+    /** The resource for {@link TransientNumericFieldBody}, on the unannotated floor profile. */
+    @Path("/transient-numeric")
+    public static class TransientNumericFieldResource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the bound level.
+         *
+         * @param body the transient-field fixture body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/level")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "transientNumericFieldLevelEcho")
+        public String echo(TransientNumericFieldBody body) {
+            invocations.incrementAndGet();
+            return "level=" + body.getLevel();
+        }
+    }
+
+    /**
+     * The gate-level half of the reopened W1 proof, no-validator mode. {@link
+     * dev.vertique.json.schema.SetterOnlyFieldBorrowTest} carries the unit-level halves: the two
+     * decisive no-validator proofs and the validator-backed control that the same shape's constraint is
+     * still published under a validator (unaffected by this gap).
+     *
+     * <p>Expected red now: the gate accepts {@code {"level":999}} with a 200, because the published
+     * property carries no {@code maximum} keyword at all.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("REOPENED: the gate rejects an out-of-range value for a transient numeric field with a getter"
+            + " and setter, without a validator")
+    void transientNumericFieldWithGetterAndSetterIsRejectedAtTheGateWithoutAValidator() throws Exception {
+        TransientNumericFieldResource resource = new TransientNumericFieldResource();
+        int gatePort = start(gateMount(), Set.of(resource));
+
+        HttpResponse<Buffer> rejected = post(gatePort, "/transient-numeric/level", "{\"level\":999}");
+
+        assertEquals(
+                400,
+                rejected.statusCode(),
+                "REOPENED DECISIVE (expected red now): a transient field's own @Max(10) must still be"
+                        + " borrowed onto the published property even though the property also carries a"
+                        + " getter, without a validator; body: " + rejected.bodyAsString());
+        assertEquals(0, resource.invocations.get(), "a rejected body must never reach the resource");
+    }
+
+    // --- C-2 (reopened, round 6 finding): a hidden member on an unwrapped child of an any-setter parent ---
+
+    /**
+     * A {@code @Schema(hidden = true)}-constrained unwrapped member on an any-setter parent — the same
+     * shape {@code
+     * dev.vertique.json.schema.DelegatingDeserializerWrapperTest.hiddenUnwrappedChildMemberIsReservedUnderMapperWideDelegatingWrapper}
+     * pins at the unit level. Unlike {@link C1Child}'s plain property, a hidden member is never
+     * published by the type's own class-level members — it can only reach the document through the
+     * unwrapped-child loop's own alias/reservation fold, which the mapper-wide wrapper causes the loop to
+     * skip entirely, so this shape genuinely discriminates the loop's own bug.
+     */
+    static final class C2HiddenChild {
+        @Schema(hidden = true)
+        @Size(max = 3)
+        public String token;
+    }
+
+    /** Carries {@link C2HiddenChild} through {@code @JsonUnwrapped} on an any-setter type. */
+    static final class C2AnySetterParent {
+        @JsonUnwrapped
+        public C2HiddenChild child;
+
+        @JsonAnySetter
+        private final Map<String, Object> extras = new LinkedHashMap<>();
+    }
+
+    /** The resource for {@link C2AnySetterParent}, mounted under the {@code c1-delegating-wrapper} profile. */
+    @Path("/c2")
+    @JsonProfile("c1-delegating-wrapper")
+    public static class C2Resource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the unwrapped child's hidden token, so an accepted body is observable as more than a
+         * status code.
+         *
+         * @param body the C-2 fixture body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/hidden-unwrapped")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "c2HiddenUnwrappedEcho")
+        public String echo(C2AnySetterParent body) {
+            invocations.incrementAndGet();
+            return "token=" + (body.child == null ? null : body.child.token);
+        }
+    }
+
+    /**
+     * C-2 (reopened, round 6 finding). Under the same mapper-wide {@code DelegatingDeserializer} wrapper
+     * as C-1, the unwrapped-child loop skips {@link C2HiddenChild} for the same reason C-1's own Javadoc
+     * explains — but unlike C-1's plain property, {@code "token"} is hidden, so it can only be reserved
+     * through {@code foldUnwrappedChildIntoParentPlan}, which never runs when the loop skips the child.
+     * The real Jackson binder still routes {@code "token"} straight into {@code child.token} regardless
+     * of the wrapper (the wrapper only forwards, it does not change how the binder's own unwrapped
+     * -property machinery works), so an unreserved, unpublished {@code "token"} is a genuine constraint
+     * bypass at the gate, not only a description gap — the REST-level counterpart of
+     * {@code UnwrappedAnySetterFoldingTest.jacksonBinderRoutesTheHiddenKeyIntoTheConstrainedField}.
+     *
+     * <p>Expected red now: the gate accepts {@code {"token":"abcdefghijkl"}} (12 characters, over the
+     * child's own {@code @Size(max = 3)}) with a 200.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("C-2: under a mapper-wide DelegatingDeserializer wrapper, the gate rejects an unwrapped any"
+            + "-setter parent's hidden child value spelling the hidden member's own key")
+    void c2HiddenUnwrappedChildUnderDelegatingWrapperIsRejectedAtTheGate() throws Exception {
+        C2Resource resource = new C2Resource();
+        RestTestContributions contributions = RestTestContributions.builder()
+                .addJsonMapperProfile(c1DelegatingWrapperProfile())
+                .build();
+        int port = start(MountFixtures.mount(vertx, new JsonObject(), contributions), Set.of(resource));
+
+        HttpResponse<Buffer> rejected = post(port, "/c2/hidden-unwrapped", "{\"token\":\"abcdefghijkl\"}");
+
+        assertEquals(
+                400,
+                rejected.statusCode(),
+                "C-2 DECISIVE (expected red now): the unwrapped child's hidden @Size(max = 3) member must be"
+                        + " reserved under the mapper-wide wrapper profile on an any-setter parent, refusing"
+                        + " the key outright rather than letting it fall through to the extras bucket"
+                        + " unconstrained; body: " + rejected.bodyAsString());
+        assertEquals(
+                0,
+                resource.invocations.get(),
                 "a rejected body must never reach the resource; a green pre-fix run here would mean the"
-                        + " oversized value reached the resource because the unwrapped child was never"
-                        + " described at all");
+                        + " oversized value reached the resource through the extras bucket because the hidden"
+                        + " member was never reserved at all");
     }
 
     // --- Mounts and helpers ---
