@@ -613,7 +613,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             return schema;
         }
         if (raw instanceof Field field) {
-            return fieldSchema(field, builtClass, resolved, property.getName(), context, required);
+            return fieldSchema(field, builtClass, resolved, property.getName(), property.getType(), context, required);
         }
         if (raw instanceof Method method) {
             return methodSchema(method, property, builtClass, resolved, context, required);
@@ -621,7 +621,8 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         if (member instanceof AnnotatedParameter parameter) {
             Field backing = backingField(builtClass, parameter, property.getName());
             if (backing != null) {
-                JsonNode schema = fieldSchema(backing, builtClass, resolved, property.getName(), context, required);
+                JsonNode schema = fieldSchema(
+                        backing, builtClass, resolved, property.getName(), property.getType(), context, required);
                 if (schema != null && member != null) {
                     translateConstraints(member, builtClass, (ObjectNode) schema, property.getName(), required);
                 }
@@ -648,6 +649,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             Class<?> builtClass,
             ResolvedType resolved,
             String name,
+            JavaType propertyType,
             SchemaGenerationContext context,
             List<String> required) {
         TypeContext typeContext = context.getTypeContext();
@@ -674,7 +676,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             if (nullable) {
                 markNullable(schema);
             }
-            applyScopedConstraints(schema, builtClass, field.getName(), field.getType(), name, required);
+            applyScopedConstraints(schema, builtClass, field.getName(), propertyType.getRawClass(), name, required);
             return schema;
         }
         // A field the library's member resolution does not list (a static or synthetic one): by type.
@@ -694,9 +696,14 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      *                   always-active Jakarta Validation module rendered
      * @param builtClass the type the property is described on
      * @param javaName   the field's or getter's Java bean name
-     * @param javaType   the member's declared Java type, which selects the size/range keyword family
-     *                   (C2: derived from the Java type, never from the schema's own {@code type},
-     *                   which is absent for a map, a bean, or an {@code Optional} at this point)
+     * @param javaType   the member's Java type, which selects the size/range keyword family (C2: derived
+     *                   from the Java type, never from the schema's own {@code type}, which is absent
+     *                   for a map, a bean, or an {@code Optional} at this point). Resolved as Jackson
+     *                   sees it for the built type's own parameterization — the raw {@link Field} or
+     *                   {@link java.lang.reflect.Method}'s reflected type erases a type variable to its
+     *                   bound (e.g. {@code Object} for an unbounded {@code T}) regardless of what the
+     *                   holder actually binds it to; {@code SettableBeanProperty#getType()}'s {@link
+     *                   JavaType} does not (D4).
      * @param wireName   the published property name, added to {@code required} when applicable
      * @param required   the object schema's required-property list
      */
@@ -862,7 +869,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                         object,
                         builtClass,
                         getterBeanName(method),
-                        method.getReturnType(),
+                        property.getType().getRawClass(),
                         property.getName(),
                         required);
             }

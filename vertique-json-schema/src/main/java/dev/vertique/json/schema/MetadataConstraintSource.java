@@ -312,8 +312,6 @@ final class MetadataConstraintSource implements ConstraintSource {
         }
         String fqcn = descriptor.getAnnotation().annotationType().getName();
         Map<String, Object> attributes = descriptor.getAttributes();
-        boolean array = kind == ConstraintValueKind.ARRAY;
-        boolean map = kind == ConstraintValueKind.MAP;
         // #606: the floor either cannot recognize this annotation at all, or renders it incompletely,
         // so its keyword replaces the floor's unconditionally; every other keyword below only fills a
         // gap the floor left.
@@ -325,18 +323,20 @@ final class MetadataConstraintSource implements ConstraintSource {
                 // @NotBlank, and @NotEmpty are treated identically — any one of the three is
                 // sufficient for NOT_NULLABLE_FIELD_IS_REQUIRED to mark the property required.
                 required[0] = true;
-                String minKeyword = array ? "minItems" : map ? "minProperties" : "minLength";
-                keywords.putIfAbsent(minKeyword, 1);
+                String minKeyword = sizeMinKeyword(kind);
+                if (minKeyword != null) {
+                    keywords.putIfAbsent(minKeyword, 1);
+                }
             }
             case C_SIZE -> {
                 Integer min = (Integer) attributes.get("min");
                 Integer max = (Integer) attributes.get("max");
-                String maxKeyword = array ? "maxItems" : map ? "maxProperties" : "maxLength";
-                String minKeyword = array ? "minItems" : map ? "minProperties" : "minLength";
-                if (min != null && min != 0) {
+                String minKeyword = sizeMinKeyword(kind);
+                String maxKeyword = sizeMaxKeyword(kind);
+                if (minKeyword != null && min != null && min != 0) {
                     keywords.put(minKeyword, min);
                 }
-                if (max != null && max != Integer.MAX_VALUE) {
+                if (maxKeyword != null && max != null && max != Integer.MAX_VALUE) {
                     keywords.put(maxKeyword, max);
                 }
             }
@@ -386,6 +386,33 @@ final class MetadataConstraintSource implements ConstraintSource {
                         descriptor.getAnnotation().annotationType().getSimpleName(),
                         label);
         }
+    }
+
+    /**
+     * The {@code minLength}/{@code minItems}/{@code minProperties} keyword a {@code @Size}, {@code
+     * @NotEmpty}, or {@code @NotBlank} constraint targets for the given kind — or {@code null} for
+     * {@link ConstraintValueKind#NUMBER} or {@link ConstraintValueKind#OTHER} (D4): none of the three
+     * size/range keyword families applies to a number or an unrecognized kind, so the constraint
+     * contributes no keyword there rather than defaulting to the string family, matching the walk (which
+     * never runs for a scoped member at all — see {@link WalkConstraintSource#forScopedMember}).
+     */
+    private static String sizeMinKeyword(ConstraintValueKind kind) {
+        return switch (kind) {
+            case STRING -> "minLength";
+            case ARRAY -> "minItems";
+            case MAP -> "minProperties";
+            case NUMBER, OTHER -> null;
+        };
+    }
+
+    /** The {@code maxLength}/{@code maxItems}/{@code maxProperties} counterpart of {@link #sizeMinKeyword}. */
+    private static String sizeMaxKeyword(ConstraintValueKind kind) {
+        return switch (kind) {
+            case STRING -> "maxLength";
+            case ARRAY -> "maxItems";
+            case MAP -> "maxProperties";
+            case NUMBER, OTHER -> null;
+        };
     }
 
     private static Long asLong(Object value) {
