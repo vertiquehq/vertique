@@ -150,9 +150,10 @@ accessor is `null` when the only accessor Jackson associates with the property i
 a private field with a setter and no getter, no public field either — so there is nothing to join
 through. Bounded to exactly that shape (never applied when a getter resolves, which would mean
 `getField()` had something to say), the floor falls back to the field whose Java name equals the
-setter's own implied name (the same `get`/`is`/`set`/`with`-stripping convention named above), which
-still carries the constraints the developer wrote for the value even though Jackson's own property
-metadata cannot join it directly. A creator-parameter property joins to a `ParameterDescriptor` by its declaring
+setter's own implied name — stripping only its own `set`/`with` prefix (`impliedFieldName`), narrower
+than the `get`/`is`/`set`/`with` convention named above, since this fallback only ever sees a setter,
+never a getter — which still carries the constraints the developer wrote for the value even though
+Jackson's own property metadata cannot join it directly. A creator-parameter property joins to a `ParameterDescriptor` by its declaring
 constructor and parameter index (`SettableBeanProperty.getCreatorIndex()`), never by name; a
 static-factory creator's parameters join to nothing in Bean Validation (constrained constructors
 only), which is exactly why the floor's own annotation read — not the supplement — is what renders
@@ -289,18 +290,29 @@ from the settable-property check outright: a no-argument getter such as `Buffer#
 mutable-collection getter such as `JsonArray#getList()` makes plain reflective introspection report a
 property for these well-known wrapper types even though neither is ever bound as a bean.
 
-**A `DelegatingDeserializer` wrapper is unwrapped before this decision (W2, owner ruling,
-`spike/deserializer-driven-schema`).** A mapper-wide `BeanDeserializerModifier` that wraps *every*
-bean deserializer in a forwarding `DelegatingDeserializer` subclass — forwarding every operation to
-the original bean deserializer through `getDelegatee()` — is a legitimate, if unusual, module shape:
-the type still binds exactly as it would unwrapped. This generator unwraps that chain down to its
-ultimate delegate, mirroring the existing `TypeWrappedDeserializer` unwrap, and describes the wrapped
-bean from the delegate rather than refusing it as an opaque type-level override. This is deliberately
-narrower than the refusal it exempts from: a third-party type with a settable property whose
-deserializer a profile module attaches directly (`SimpleModule.addDeserializer(...)`, or a
-`BeanDeserializerModifier` that returns something other than a `DelegatingDeserializer` wrapping the
-original bean deserializer) is not a `DelegatingDeserializer` chain to unwrap, and stays refused
-exactly as described above — the remedy for that shape is still a `JsonSchemaTypeOverride`.
+**A `DelegatingDeserializer` wrapper is unwrapped before this decision, bounded to a pure forwarder
+(W2 owner ruling; W-1, round 5 review finding, `spike/deserializer-driven-schema`).** A mapper-wide
+`BeanDeserializerModifier` that wraps *every* bean deserializer in a forwarding `DelegatingDeserializer`
+subclass is a legitimate, if unusual, module shape — but the generator does not simply trust that the
+wrapper forwards; it checks. Unwrapping proceeds through `getDelegatee()` only while the wrapper's own
+class overrides none of `deserialize(JsonParser, DeserializationContext)`,
+`deserialize(JsonParser, DeserializationContext, Object)`, or `deserializeWithType(...)` itself — i.e.
+`DelegatingDeserializer` remains the declaring class of all three, so every operation is guaranteed to
+reach the original bean deserializer unchanged. For that bounded shape the generator unwraps the chain
+down to its ultimate delegate, mirroring the existing `TypeWrappedDeserializer` unwrap, and describes
+the wrapped bean from the delegate rather than refusing it as an opaque type-level override; the same
+bound applies wherever the generator unwraps a `DelegatingDeserializer` — both at the root/nested-
+reference seat and on the member-level case-insensitive inline path (S-1, round 5 review finding). A
+`DelegatingDeserializer` subclass that overrides any of the three methods — accepting a wire form of
+its own before, or instead of, ever reaching the delegate — is *not* unwrapped: it is treated as a
+replaced deserializer and refused exactly like the shape described above, with the same diagnostic,
+since unwrapping straight to the delegate's plain bean description would silently drop whatever the
+override actually does. This is deliberately narrower than the refusal it exempts from: a third-party
+type with a settable property whose deserializer a profile module attaches directly
+(`SimpleModule.addDeserializer(...)`, or a `BeanDeserializerModifier` that returns something other than
+a pure-forwarding `DelegatingDeserializer` wrapping the original bean deserializer) is not a
+`DelegatingDeserializer` chain to unwrap, and stays refused exactly as described above — the remedy for
+that shape is still a `JsonSchemaTypeOverride`.
 
 **A delegating `@JsonCreator`** — object-delegating (`Mode.DELEGATING` over a single non-array-like
 parameter) or array-delegating (the same mode over a `List`/array-shaped parameter) — is refused with

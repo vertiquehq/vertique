@@ -1404,7 +1404,10 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
          * vertx-json-schema error message is intentionally not used because it may echo the submitted
          * request value (e.g. "500 is greater than 100"). For a resolved keyword without resolved args,
          * the raw message is used as a fallback. An error — in either the single-error branch below (a
-         * result with no {@code errors} list, e.g. a scalar parameter validated directly) or the
+         * result with no {@code errors} list at all, e.g. a boolean {@code false} schema, whose Basic
+         * output reports only {@code {valid:false}} with no nested error; a scalar parameter's own
+         * constraint failure — {@code type}, {@code minimum}, ... — still populates a one-element
+         * {@code errors} list and is handled by the multi-error loop below instead) or the
          * multi-error loop below — whose keyword location resolves to no keyword at all — absent or
          * empty, rather than naming a structural traversal keyword — never reaches that fallback (W4,
          * spike/deserializer-driven-schema round 4 ruling): it produces a value-free detail instead,
@@ -1446,7 +1449,11 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
             int addedBefore = failures.size();
             List<OutputUnit> errors = result.getErrors();
             if (errors == null || errors.isEmpty()) {
-                // Single-error result (e.g. scalar param validated directly)
+                // Single-error result: no `errors` list at all (e.g. a boolean `false` schema, whose
+                // Basic output is only {valid:false}, with no nested error and no keyword location). A
+                // scalar parameter's own constraint failure is not this shape: it still populates a
+                // one-element `errors` list and falls through the multi-error loop below instead, exactly
+                // like every other keyword failure.
                 String keyword = extractKeywordFor(result);
                 // Skip structural wrapper errors (keyword is null and the location names a structural keyword)
                 if (keyword == null && isStructuralError(result.getKeywordLocation())) {
