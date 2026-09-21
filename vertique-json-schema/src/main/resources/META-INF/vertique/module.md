@@ -166,7 +166,15 @@ they are not redundant: the floor's own borrow only ever sees what the schema li
 Validation module can reach reflectively, so the supplement's own addition/correction merge over that
 same property still adds a constraint invisible to every annotation-reflection path — inherited
 through an interface, composed, or declared entirely through an XML mapping — once a `Validator` is
-supplied, exactly as it already does for a field or getter with a schema-library member scope.
+supplied, exactly as it already does for a field or getter with a schema-library member scope. The
+wire-name join is resolved once, by both sources together: `InputPropertyDescriber` looks up the
+built type's Jackson-introspected property for the member's wire name a single time and shares that
+same definition with the floor's own borrow and the supplement, so the two can never disagree about
+which built property a setter or builder method means. That join still has one known false-positive
+shape: a built-type property that merely *shares* the builder method's wire name but is actually
+assigned by a different member entirely is borrowed from anyway — the module reads Jackson's own
+property identity, never a builder method's body, so it cannot distinguish "this wire name happens to
+match" from "this builder method actually sets this field."
 **Setter-only field-borrow fallback (owner ruling,
 `spike/deserializer-driven-schema`).** The floor itself joins a setter to its backing field through
 Jackson's own `BeanPropertyDefinition#getField()` — the field Jackson associates with the same

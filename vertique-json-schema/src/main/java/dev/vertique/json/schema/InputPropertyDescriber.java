@@ -1111,19 +1111,22 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             // returns the builder. The value type comes from the deserializer, the constraints from
             // Jackson's merged annotation map, and a builder method borrows the built type's field.
             ObjectNode schema = context.createDefinitionReference(resolve(context, property.getType()));
-            translateConstraints(member, builtClass, schema, property.getName(), property.getType(), required);
+            BeanPropertyDefinition builtProperty =
+                    translateConstraints(member, builtClass, schema, property.getName(), property.getType(), required);
             if (method.getDeclaringClass() != builtClass
                     && !method.getDeclaringClass().isAssignableFrom(builtClass)) {
                 // a builder method: the constraints are borrowed from the built type's own Jackson
-                // property of the same wire name, as introspected — never a raw field-name scan — since
-                // Jackson's own introspection is the only guarantee available here: it says which field a
-                // property of that wire name means, never what the builder method's own body does with
-                // the value before storing it. When that property has a getter the borrow is published
+                // property of the same wire name — the same BeanPropertyDefinition translateConstraints
+                // just resolved above, never a second, independent lookup — since Jackson's own
+                // introspection is the only guarantee available here: it says which field a property of
+                // that wire name means, never what the builder method's own body does with the value
+                // before storing it. When that property has a getter the borrow is published
                 // unconditionally, for any builder; when it has no getter, the borrow is published only
                 // when BuilderBorrowDetector judges it sound (a Lombok builder, or the exact Lombok
                 // builder shape) — see module.md's "Builder borrow assumption" for the ruling and the
                 // documented consequence for a getter-less, hand-written builder that goes unresolved.
-                borrowBuilderFieldAttributes(method, builtClass, property.getName(), schema, context, required);
+                borrowBuilderFieldAttributes(
+                        method, builtClass, property.getName(), builtProperty, schema, context, required);
             } else {
                 // a setter: the field Jackson's own introspection merges into the same wire-named
                 // property — transient, private, or renamed on the wire — still carries the
@@ -1240,27 +1243,27 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * for that guaranteed shape, while a hand-written builder that transforms the value before
      * assigning it carries no such guarantee and, absent a getter, is published by type only — see
      * {@code module.md}'s "Builder borrow assumption".
+     *
+     * @param builtProperty the built type's Jackson-introspected property for {@code wireName}, already
+     *                      resolved once by {@link #translateConstraints} — never looked up again here
      */
     private void borrowBuilderFieldAttributes(
             Method builderMethod,
             Class<?> builtClass,
             String wireName,
+            BeanPropertyDefinition builtProperty,
             ObjectNode schema,
             SchemaGenerationContext context,
             List<String> required) {
-        BeanDescription description = introspection(mapper.getTypeFactory().constructType(builtClass));
-        for (BeanPropertyDefinition candidate : description.findProperties()) {
-            if (!candidate.getName().equals(wireName)) {
-                continue;
-            }
-            AnnotatedField field = candidate.getField();
-            if (field != null
-                    && (BuilderBorrowDetector.isGetterBacked(candidate)
-                            || BuilderBorrowDetector.isSoundBorrow(builderMethod, builtClass, field.getAnnotated()))) {
-                applyFieldScopeAttributes(
-                        field.getAnnotated(), field.getDeclaringClass(), wireName, schema, context, required);
-            }
+        if (builtProperty == null) {
             return;
+        }
+        AnnotatedField field = builtProperty.getField();
+        if (field != null
+                && (BuilderBorrowDetector.isGetterBacked(builtProperty)
+                        || BuilderBorrowDetector.isSoundBorrow(builderMethod, builtClass, field.getAnnotated()))) {
+            applyFieldScopeAttributes(
+                    field.getAnnotated(), field.getDeclaringClass(), wireName, schema, context, required);
         }
     }
 
@@ -1367,8 +1370,13 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      *                      is its return type — the builder's own type for a builder method, {@code
      *                      void} for an ordinary setter — never the parameter the value actually binds
      *                      as; only {@code property}'s own type says that
+     * @return the built type's Jackson-introspected property for {@code name} (the wire name), resolved
+     *         once here and shared with {@link ConstraintSource#forUnscopedMember}'s callers below and
+     *         with the builder-method borrow ({@link #borrowBuilderFieldAttributes}) a caller may run
+     *         next for the same member; {@code null} when Jackson reports no property of that wire name
+     *         for the built type at all
      */
-    private void translateConstraints(
+    private BeanPropertyDefinition translateConstraints(
             AnnotatedMember member,
             Class<?> builtClass,
             ObjectNode schema,
@@ -1376,20 +1384,44 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             JavaType propertyType,
             List<String> required) {
         if (member == null) {
-            return;
+            return null;
         }
         ConstraintValueKind kind = ConstraintValueKind.fromJavaType(propertyType.getRawClass());
         String javaName = javaBeanName(member);
-        ResolvedConstraints floor = WalkConstraintSource.INSTANCE.forUnscopedMember(builtClass, javaName, kind, member);
+        // Resolved once, by wire name, from the cached introspection — the single choke point every
+        // unscoped-member call site goes through — so the floor and the supplement below can never
+        // select a different built property for the same member (see ConstraintSource's own
+        // "Resolved-definition contract").
+        BeanPropertyDefinition builtProperty = builtPropertyByWireName(builtClass, name);
+        ResolvedConstraints floor =
+                WalkConstraintSource.INSTANCE.forUnscopedMember(builtClass, javaName, kind, member, builtProperty);
         mergeConstraints(schema, floor, name, required);
         if (supplement != null) {
-            ResolvedConstraints resolved = supplement.forUnscopedMember(builtClass, javaName, kind, member);
+            ResolvedConstraints resolved =
+                    supplement.forUnscopedMember(builtClass, javaName, kind, member, builtProperty);
             mergeConstraints(schema, resolved, name, required);
         }
         Schema swagger = member.getAnnotation(Schema.class);
         if (swagger != null) {
             translateSwagger(swagger, schema);
         }
+        return builtProperty;
+    }
+
+    /**
+     * The built type's Jackson-introspected property for the given wire name, from the cached {@link
+     * #introspection} — the same lookup {@link #borrowBuilderFieldAttributes} ran independently before
+     * this method existed — or {@code null} when Jackson's own introspection reports no property of
+     * that wire name for the built type at all.
+     */
+    private BeanPropertyDefinition builtPropertyByWireName(Class<?> builtClass, String wireName) {
+        BeanDescription description = introspection(mapper.getTypeFactory().constructType(builtClass));
+        for (BeanPropertyDefinition candidate : description.findProperties()) {
+            if (candidate.getName().equals(wireName)) {
+                return candidate;
+            }
+        }
+        return null;
     }
 
     /**

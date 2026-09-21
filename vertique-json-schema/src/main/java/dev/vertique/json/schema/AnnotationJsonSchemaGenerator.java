@@ -435,9 +435,8 @@ public final class AnnotationJsonSchemaGenerator {
         // OutputPropertyNameResolver has no equivalent join to a Validator's property descriptors. The
         // Jakarta Validation module is always installed as the floor regardless (see build() below);
         // null here means "no supplement", not "no constraints".
-        ConstraintSource supplement = direction == Direction.INPUT && validator != null
-                ? new MetadataConstraintSource(validator, validated.mapper())
-                : null;
+        ConstraintSource supplement =
+                direction == Direction.INPUT && validator != null ? new MetadataConstraintSource(validator) : null;
         if (direction == Direction.INPUT) {
             // Read once, from the profile's own mapper instance: the same one that parses a body at the
             // REST gate, so the published rule and the binder's parse decision cannot disagree.

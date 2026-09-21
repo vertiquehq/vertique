@@ -4,6 +4,7 @@
 package dev.vertique.json.schema;
 
 import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
+import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
 
 /**
  * Source of value-schema constraints for an input property, on top of the floor that is always
@@ -24,6 +25,14 @@ import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
  *
  * <p>When no {@code Validator} is supplied, no supplement runs at all, and the floor alone drives
  * generation — unchanged from before this abstraction existed.
+ *
+ * <p><strong>Resolved-definition contract.</strong> {@link InputPropertyDescriber#translateConstraints}
+ * is the single choke point every unscoped-member call site goes through; it resolves the built type's
+ * Jackson-introspected property for the member's wire name exactly once, from its own cached
+ * introspection, and passes that same {@link BeanPropertyDefinition} (or {@code null}, when Jackson
+ * reports no property of that wire name) to every {@link #forUnscopedMember} call for the member — the
+ * floor and the supplement alike. Neither source performs its own, independent wire-name lookup, so
+ * the two can never resolve or disagree about a different built property for the same member.
  */
 interface ConstraintSource {
 
@@ -45,17 +54,25 @@ interface ConstraintSource {
      * runs first as the floor for this member kind.
      *
      * @param builtClass    the type the property is described on
-     * @param javaName      the Java bean name to join by for a setter or builder method (the built
-     *                      type's same-named property); a creator parameter instead joins by its
-     *                      declaring constructor and parameter index, read from {@code jacksonMember}
+     * @param javaName      the implied Java bean name to join by when no {@code builtProperty} field is
+     *                      available (a creator parameter instead joins by its declaring constructor
+     *                      and parameter index, read from {@code jacksonMember})
      * @param kind          the value position, selecting the size/range keyword family
      * @param jacksonMember the member's Jackson-resolved annotated member — an
      *                      {@link com.fasterxml.jackson.databind.introspect.AnnotatedParameter} for a
      *                      creator parameter, an
      *                      {@link com.fasterxml.jackson.databind.introspect.AnnotatedMethod} for a
      *                      setter or builder method; may be {@code null}
+     * @param builtProperty the built type's Jackson-introspected property for the member's wire name,
+     *                      resolved once by {@link InputPropertyDescriber#translateConstraints} and
+     *                      shared by every call for this member; {@code null} when Jackson reports no
+     *                      property of that wire name for the built type at all
      * @return the resolved constraints; {@link ResolvedConstraints#NONE} when nothing joins
      */
     ResolvedConstraints forUnscopedMember(
-            Class<?> builtClass, String javaName, ConstraintValueKind kind, AnnotatedMember jacksonMember);
+            Class<?> builtClass,
+            String javaName,
+            ConstraintValueKind kind,
+            AnnotatedMember jacksonMember,
+            BeanPropertyDefinition builtProperty);
 }

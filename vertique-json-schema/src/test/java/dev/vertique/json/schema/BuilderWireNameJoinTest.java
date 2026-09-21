@@ -6,7 +6,9 @@ package dev.vertique.json.schema;
 import static dev.vertique.json.schema.SchemaAssertions.assertCanonicalForm;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
@@ -156,6 +158,49 @@ class BuilderWireNameJoinTest {
     }
 
     /**
+     * A control twin of {@link TransformingBuilderDto}, testing the floor rather than the metadata
+     * supplement (see {@link MetadataConstraintSourceCoverageTest
+     * #HandWrittenBuilderXmlMappedRenamedDto}, the supplement-side finding fixture): the built field
+     * carries a direct {@code @Max(10)} — always reflectable, no XML mapping or Validator needed — and
+     * the wire name ({@code amount_cents}, via {@code @JsonProperty} on both the getter and the
+     * builder method) diverges from the Java name implied by the builder method ({@code withAmount}
+     * stripped of {@code with} -> {@code amount}). {@link InputPropertyDescriber
+     * #borrowBuilderFieldAttributes} (the floor) keys its own built-property lookup on {@code
+     * BeanPropertyDefinition#getName()} — always the wire name — so this shape is the control proving
+     * the floor already gets the wire-name join right; {@link
+     * #renamedWireNameBuilderStillBorrowsThroughTheGetterBackedProperty()} expects green.
+     */
+    @JsonDeserialize(builder = RenamedWireNameBuilderDto.Builder.class)
+    static final class RenamedWireNameBuilderDto {
+        @Max(10)
+        private final int amount;
+
+        private RenamedWireNameBuilderDto(int amount) {
+            this.amount = amount;
+        }
+
+        @JsonProperty("amount_cents")
+        public int getAmount() {
+            return amount;
+        }
+
+        @JsonPOJOBuilder(withPrefix = "with")
+        static final class Builder {
+            private int amount;
+
+            @JsonProperty("amount_cents")
+            public Builder withAmount(int amount) {
+                this.amount = amount;
+                return this;
+            }
+
+            RenamedWireNameBuilderDto build() {
+                return new RenamedWireNameBuilderDto(amount);
+            }
+        }
+    }
+
+    /**
      * A real Lombok {@code @Builder @Jacksonized} type with a constrained field, the counterpart to
      * {@link TransformingBuilderDto}: {@code @Jacksonized} emits {@code @JsonDeserialize(builder =
      * LombokAmountDtoBuilder.class)} on this class and {@code @JsonPOJOBuilder(withPrefix = "",
@@ -237,6 +282,34 @@ class BuilderWireNameJoinTest {
                 "integer",
                 amount.at("/type").asText(),
                 "the property must still be described by its Jackson-resolved type; document: " + document);
+    }
+
+    @Test
+    @DisplayName("control: a getter-backed property still borrows through the floor when the wire name diverges"
+            + " from the builder method's implied Java name")
+    void renamedWireNameBuilderStillBorrowsThroughTheGetterBackedProperty() {
+        // Control for MetadataConstraintSourceCoverageTest
+        // #handWrittenBuilderWithGetterJoinsAnXmlMappedConstraintUnderARenamedWireName: this fixture's
+        // @Max(10) is directly reflectable, so InputPropertyDescriber#borrowBuilderFieldAttributes (the
+        // floor) alone must already publish it under the wire name, without any Validator. Expected
+        // green: it shows the floor already keys its built-property lookup on the wire name
+        // (BeanPropertyDefinition#getName()), unlike the supplement's own javaName-keyed lookup the
+        // finding targets.
+        JsonNode document = document(RenamedWireNameBuilderDto.class);
+        JsonNode amountCents = document.at("/properties/amount_cents");
+        JsonNode amount = document.at("/properties/amount");
+
+        assertFalse(amountCents.isMissingNode(), "amount_cents must be published: the builder method binds it");
+        assertEquals(
+                10,
+                amountCents.at("/maximum").asInt(-1),
+                "the floor must borrow the getter-backed built field's @Max(10) under its wire name"
+                        + " \"amount_cents\", regardless of the divergence from the builder method's implied"
+                        + " Java name \"amount\"; document: " + document);
+        assertTrue(
+                amount.isMissingNode(),
+                "the property must be published under its wire name \"amount_cents\" only, never the"
+                        + " builder method's implied Java name \"amount\"; document: " + document);
     }
 
     // --- Round 2: getter-backed properties borrow for any hand-written builder shape ---

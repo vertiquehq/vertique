@@ -4,6 +4,7 @@
 package dev.vertique.json.schema;
 
 import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
+import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Max;
@@ -42,7 +43,13 @@ final class WalkConstraintSource implements ConstraintSource {
 
     @Override
     public ResolvedConstraints forUnscopedMember(
-            Class<?> builtClass, String javaName, ConstraintValueKind kind, AnnotatedMember jacksonMember) {
+            Class<?> builtClass,
+            String javaName,
+            ConstraintValueKind kind,
+            AnnotatedMember jacksonMember,
+            BeanPropertyDefinition builtProperty) {
+        // The walk reads jacksonMember's own merged annotation map directly; it needs no resolved
+        // built-type property identity and does not consult builtProperty.
         if (jacksonMember == null) {
             return ResolvedConstraints.NONE;
         }

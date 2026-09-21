@@ -11,6 +11,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonSetter;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.annotation.JsonPOJOBuilder;
@@ -278,6 +280,92 @@ class MetadataConstraintSourceCoverageTest {
         }
     }
 
+    /**
+     * The renamed-wire-name twin of {@link HandWrittenBuilderXmlMappedDto}: same hand-written,
+     * non-Lombok-shaped, getter-backed builder and the same XML-mapped-only constraint, but the wire
+     * name ({@code amount_cents}, via {@code @JsonProperty}) diverges from the Java name implied by the
+     * builder method ({@code amount}, from {@code withAmount} stripped of its {@code with} prefix).
+     * {@code MetadataConstraintSource#forUnscopedMember}'s {@code builtProperty(builtClass, javaName)}
+     * lookup compares that implied Java name against {@link BeanPropertyDefinition#getName()}, which is
+     * always the wire name — so for this shape the comparison can never match, {@code
+     * BuilderBorrowDetector.isGetterBacked} is never reached, and the join falls to the getter-less
+     * Lombok-shape rule, which this hand-written, plainly named {@code Builder} class fails, exactly as
+     * {@link HandWrittenBuilderXmlMappedDto} would if its wire and Java names did not already coincide.
+     */
+    @JsonDeserialize(builder = HandWrittenBuilderXmlMappedRenamedDto.Builder.class)
+    static final class HandWrittenBuilderXmlMappedRenamedDto {
+        private final int amount;
+
+        private HandWrittenBuilderXmlMappedRenamedDto(int amount) {
+            this.amount = amount;
+        }
+
+        @JsonProperty("amount_cents")
+        public int getAmount() {
+            return amount;
+        }
+
+        @JsonPOJOBuilder(withPrefix = "with")
+        static final class Builder {
+            private int amount;
+
+            @JsonProperty("amount_cents")
+            public Builder withAmount(int amount) {
+                this.amount = amount;
+                return this;
+            }
+
+            HandWrittenBuilderXmlMappedRenamedDto build() {
+                return new HandWrittenBuilderXmlMappedRenamedDto(amount);
+            }
+        }
+    }
+
+    /**
+     * The inverse-rename twin: here it is the <em>built class's own getter</em> that carries no
+     * {@code @JsonProperty} at all (its Jackson wire name coincides with its Java name, {@code
+     * amount}), while the <em>builder method</em> is the one annotated {@code
+     * @JsonProperty("amount_cents")} — so the wire name this input schema actually publishes is {@code
+     * amount_cents} (the builder governs deserialization), yet {@code builtClass}'s own introspection
+     * (queried by both the floor's {@code borrowBuilderFieldAttributes} and this class's {@code
+     * builtProperty}) has no property named {@code amount_cents} at all — only {@code amount}. The
+     * floor therefore finds no built property to borrow from, and the wire-name-keyed supplement must
+     * not find one either. {@code MetadataConstraintSource#forUnscopedMember}'s {@code
+     * builtProperty(builtClass, javaName)} bug lookup happens to compare the builder method's
+     * <em>implied Java name</em> ({@code amount}, from {@code withAmount} stripped of its {@code with}
+     * prefix) against {@code builtClass}'s own property name — and here that implied Java name
+     * coincides with the real property name by coincidence, so the buggy lookup wrongly succeeds and
+     * wrongly joins the XML-mapped constraint that belongs to a wire property that was never actually
+     * borrowed.
+     */
+    @JsonDeserialize(builder = HandWrittenBuilderXmlMappedInverseRenamedDto.Builder.class)
+    static final class HandWrittenBuilderXmlMappedInverseRenamedDto {
+        private final int amount;
+
+        private HandWrittenBuilderXmlMappedInverseRenamedDto(int amount) {
+            this.amount = amount;
+        }
+
+        public int getAmount() {
+            return amount;
+        }
+
+        @JsonPOJOBuilder(withPrefix = "with")
+        static final class Builder {
+            private int amount;
+
+            @JsonProperty("amount_cents")
+            public Builder withAmount(int amount) {
+                this.amount = amount;
+                return this;
+            }
+
+            HandWrittenBuilderXmlMappedInverseRenamedDto build() {
+                return new HandWrittenBuilderXmlMappedInverseRenamedDto(amount);
+            }
+        }
+    }
+
     private static final String XML_MAPPED_BUILDER_MAPPING = """
             <?xml version="1.0" encoding="UTF-8"?>
             <constraint-mappings
@@ -293,6 +381,20 @@ class MetadataConstraintSourceCoverageTest {
                     </field>
                 </bean>
                 <bean class="dev.vertique.json.schema.MetadataConstraintSourceCoverageTest$HandWrittenBuilderXmlMappedNoGetterDto" ignore-annotations="false">
+                    <field name="amount">
+                        <constraint annotation="jakarta.validation.constraints.Max">
+                            <element name="value">10</element>
+                        </constraint>
+                    </field>
+                </bean>
+                <bean class="dev.vertique.json.schema.MetadataConstraintSourceCoverageTest$HandWrittenBuilderXmlMappedRenamedDto" ignore-annotations="false">
+                    <field name="amount">
+                        <constraint annotation="jakarta.validation.constraints.Max">
+                            <element name="value">10</element>
+                        </constraint>
+                    </field>
+                </bean>
+                <bean class="dev.vertique.json.schema.MetadataConstraintSourceCoverageTest$HandWrittenBuilderXmlMappedInverseRenamedDto" ignore-annotations="false">
                     <field name="amount">
                         <constraint annotation="jakarta.validation.constraints.Max">
                             <element name="value">10</element>
@@ -354,6 +456,83 @@ class MetadataConstraintSourceCoverageTest {
     }
 
     @Test
+    @DisplayName("finding: a hand-written builder's getter-backed property joins an XML-mapped constraint under"
+            + " a validator even when the wire name diverges from the builder method's implied Java name")
+    void handWrittenBuilderWithGetterJoinsAnXmlMappedConstraintUnderARenamedWireName() {
+        // The renamed-wire-name sibling of handWrittenBuilderWithGetterJoinsAnXmlMappedConstraintUnderAValidator:
+        // MetadataConstraintSource#forUnscopedMember (around line 177) calls
+        // builtProperty(builtClass, javaName) with javaName implied from the builder method's own
+        // declared name (withAmount -> "amount"), but BeanPropertyDefinition#getName() is always the
+        // wire name ("amount_cents" here, via @JsonProperty on both the getter and the builder method).
+        // That comparison can never match for a renamed wire name, so isGetterBacked is never reached,
+        // the join falls to the getter-less Lombok-shape rule, and this hand-written, plainly named
+        // Builder class fails it — expected red on the with-Validator assertion below: "maximum" absent
+        // at /properties/amount_cents even with a Validator supplying the XML-mapped constraint.
+        Validator validator = MetadataTestValidators.withXmlMapping(XML_MAPPED_BUILDER_MAPPING);
+        JsonNode withoutValidator = walkDocument(HandWrittenBuilderXmlMappedRenamedDto.class);
+        JsonNode withValidator = metadataDocument(HandWrittenBuilderXmlMappedRenamedDto.class, validator);
+
+        assertTrue(
+                withoutValidator.at("/properties/amount_cents/maximum").isMissingNode(),
+                "without a validator, no annotation walk can ever see an XML-mapped constraint — expected"
+                        + " and unchanged; document: " + withoutValidator);
+        assertTrue(
+                withoutValidator.at("/properties/amount").isMissingNode(),
+                "the property must be published under its wire name \"amount_cents\", never the builder"
+                        + " method's implied Java name \"amount\"; document: " + withoutValidator);
+        assertTrue(
+                withValidator.at("/properties/amount").isMissingNode(),
+                "the property must be published under its wire name \"amount_cents\", never the builder"
+                        + " method's implied Java name \"amount\", with a validator supplied either;"
+                        + " document: " + withValidator);
+        assertEquals(
+                10,
+                withValidator.at("/properties/amount_cents/maximum").asInt(-1),
+                "the getter-backed hand-written builder's property must carry the XML-mapped constraint once"
+                        + " a validator is supplied, even though its wire name diverges from the builder"
+                        + " method's implied Java name: MetadataConstraintSource#forUnscopedMember's"
+                        + " builtProperty(builtClass, javaName) lookup must compare the implied Java name"
+                        + " against the right value, not against BeanPropertyDefinition#getName() (the wire"
+                        + " name), so a renamed wire name does not silently fall through to the getter-less"
+                        + " Lombok-shape rule; document: " + withValidator);
+    }
+
+    @Test
+    @DisplayName("finding: the inverse rename — the builder method's own @JsonProperty, not the built getter's —"
+            + " must not let the supplement's javaName-keyed lookup coincidentally join a constraint the floor"
+            + " itself finds no built property to borrow")
+    void handWrittenBuilderWithInverseRenamedWireNameDoesNotJoinTheXmlMappedConstraint() {
+        // HandWrittenBuilderXmlMappedInverseRenamedDto's built getter is unannotated (its own Java and
+        // wire names both "amount"), while its builder method is the one annotated
+        // @JsonProperty("amount_cents") — so the schema publishes "amount_cents", the wire name the
+        // builder governs, but builtClass's own Jackson introspection (both the floor's
+        // borrowBuilderFieldAttributes and this class's builtProperty) knows only a property named
+        // "amount", never "amount_cents". Neither may borrow anything for "amount_cents": the floor
+        // correctly finds no built property of that wire name at all. The supplement's own
+        // builtProperty(builtClass, javaName) bug, though, compares the builder method's implied Java
+        // name ("amount", from withAmount stripped of "with") against builtClass's own property name —
+        // and here that implied Java name coincides with the real property "amount" by coincidence, so
+        // the buggy lookup wrongly succeeds, wrongly treats "amount_cents" as getter-backed, and wrongly
+        // joins the XML-mapped constraint. Expected red: /properties/amount_cents must carry no
+        // "maximum" at all, but the buggy lookup currently renders one.
+        Validator validator = MetadataTestValidators.withXmlMapping(XML_MAPPED_BUILDER_MAPPING);
+        JsonNode withValidator = metadataDocument(HandWrittenBuilderXmlMappedInverseRenamedDto.class, validator);
+        JsonNode amountCents = withValidator.at("/properties/amount_cents");
+
+        assertFalse(
+                amountCents.isMissingNode(),
+                "amount_cents must still be published: the builder method binds it; document: " + withValidator);
+        assertTrue(
+                amountCents.at("/maximum").isMissingNode(),
+                "ROUND-3 DECISIVE (expected red now): builtClass has no Jackson-introspected property named"
+                        + " \"amount_cents\" at all, so neither the floor nor the supplement may borrow"
+                        + " anything for it — the supplement's builtProperty(builtClass, javaName) lookup must"
+                        + " not coincidentally match the builder method's implied Java name \"amount\" against"
+                        + " builtClass's own unrelated \"amount\" property and wrongly join the XML-mapped"
+                        + " constraint that was never actually borrowed; document: " + withValidator);
+    }
+
+    @Test
     @DisplayName("control: a hand-written builder's getter-less property does not join an XML-mapped constraint"
             + " even under a validator — the Lombok-shape rule still governs the getter-less case")
     void handWrittenBuilderWithNoGetterDoesNotJoinAnXmlMappedConstraintUnderAValidator() {
@@ -410,6 +589,79 @@ class MetadataConstraintSourceCoverageTest {
                 keywordValues(closure, "maximum").stream()
                         .map(v -> v.decimalValue().intValue())
                         .toList());
+    }
+
+    // --- Renamed setter under an XML-only constraint ---
+
+    /**
+     * The XML-mapped-only twin of {@link MetadataFixtures.ConfigureSetterDto} ({@link
+     * MetadataParityTest#renamedSetterFieldConstraintRendersIdenticallyEitherWay}): the same {@code
+     * @JsonSetter("level")}-renamed setter whose method name ({@code configure}) matches neither the
+     * field name nor the {@code set}/{@code with} convention {@link InputPropertyDescriber#javaBeanName}
+     * strips, but here {@code level} carries no annotation at all — its only constraint is declared
+     * entirely by the XML mapping in the test below, invisible to {@link WalkConstraintSource} (the
+     * floor), which reads only reflected annotations. {@code
+     * MetadataConstraintSource#forUnscopedMember}'s join for a setter uses the same {@code javaName} the
+     * caller derived from the method — {@code configure} here, since it strips no recognized prefix —
+     * never {@code level}, the field Bean Validation's {@code getConstraintsForProperty} actually keys
+     * by, so the XML-mapped constraint can never be found this way.
+     */
+    static final class ConfigureSetterXmlMappedDto {
+        private int level;
+
+        @JsonSetter("level")
+        public void configure(int value) {
+            this.level = value;
+        }
+
+        public int getLevel() {
+            return level;
+        }
+    }
+
+    @Test
+    @DisplayName("finding: a @JsonSetter(\"level\")-renamed setter's XML-mapped-only constraint joins under a"
+            + " validator, not just an XML-mapped constraint reachable by the reflected annotation walk")
+    void renamedSetterJoinsTheXmlMappedConstraintUnderAValidator() {
+        // ConfigureSetterXmlMappedDto's "level" carries no annotation: only the XML mapping below
+        // supplies its @Min(1)-equivalent, so WalkConstraintSource (the floor) can never render it
+        // either, with or without a validator. MetadataConstraintSource's own setter join must still
+        // find it once a validator is supplied — Bean Validation's own getConstraintsForProperty keys by
+        // the field's real Java name "level", never by the setter method's own implied name "configure"
+        // (InputPropertyDescriber#javaBeanName strips no recognized prefix from "configure", so the
+        // implied name is "configure" itself, unchanged) — but the supplement joins by that same wrong
+        // javaName, so this is expected red today: "minimum" absent even with a Validator supplied.
+        String mapping = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <constraint-mappings
+                        xmlns="https://jakarta.ee/xml/ns/validation/mapping"
+                        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                        xsi:schemaLocation="https://jakarta.ee/xml/ns/validation/mapping https://jakarta.ee/xml/ns/validation/mapping/validation-mapping-3.1.xsd"
+                        version="3.1">
+                    <bean class="dev.vertique.json.schema.MetadataConstraintSourceCoverageTest$ConfigureSetterXmlMappedDto" ignore-annotations="false">
+                        <field name="level">
+                            <constraint annotation="jakarta.validation.constraints.Min">
+                                <element name="value">1</element>
+                            </constraint>
+                        </field>
+                    </bean>
+                </constraint-mappings>
+                """;
+        Validator validator = MetadataTestValidators.withXmlMapping(mapping);
+        JsonNode withoutValidator = walkDocument(ConfigureSetterXmlMappedDto.class);
+        JsonNode withValidator = metadataDocument(ConfigureSetterXmlMappedDto.class, validator);
+
+        assertTrue(
+                withoutValidator.at("/properties/level/minimum").isMissingNode(),
+                "without a validator, no annotation walk can ever see an XML-mapped constraint — expected"
+                        + " and unchanged; document: " + withoutValidator);
+        assertEquals(
+                1,
+                withValidator.at("/properties/level/minimum").asInt(-1),
+                "ROUND-3 DECISIVE (expected red now): the renamed setter's XML-mapped-only @Min(1) must"
+                        + " still join once a validator is supplied, joining by the field's real Java name"
+                        + " \"level\" that Bean Validation's own getConstraintsForProperty keys by, not by"
+                        + " the setter method's own implied Java name \"configure\"; document: " + withValidator);
     }
 
     // --- Coverage: shapes the walk cannot express ---
