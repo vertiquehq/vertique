@@ -142,7 +142,17 @@ member's Java bean name — the field name, or the name a getter/setter implies 
 `get`/`is`/`set`/`with` prefix — **never** by the wire name; a builder method joins the same way, on
 the built type, but only when `BuilderBorrowDetector` judges the join sound (see "Builder borrow
 assumption" above) — an unresolved hand-written builder's property contributes no supplement, exactly
-as it gets no borrow from the floor. A creator-parameter property joins to a `ParameterDescriptor` by its declaring
+as it gets no borrow from the floor. **Setter-only field-borrow fallback (owner ruling,
+`spike/deserializer-driven-schema`).** The floor itself joins a setter to its backing field through
+Jackson's own `BeanPropertyDefinition#getField()` — the field Jackson associates with the same
+wire-named property, guaranteed by construction to be the one the setter's value corresponds to. That
+accessor is `null` when the only accessor Jackson associates with the property is the setter itself —
+a private field with a setter and no getter, no public field either — so there is nothing to join
+through. Bounded to exactly that shape (never applied when a getter resolves, which would mean
+`getField()` had something to say), the floor falls back to the field whose Java name equals the
+setter's own implied name (the same `get`/`is`/`set`/`with`-stripping convention named above), which
+still carries the constraints the developer wrote for the value even though Jackson's own property
+metadata cannot join it directly. A creator-parameter property joins to a `ParameterDescriptor` by its declaring
 constructor and parameter index (`SettableBeanProperty.getCreatorIndex()`), never by name; a
 static-factory creator's parameters join to nothing in Bean Validation (constrained constructors
 only), which is exactly why the floor's own annotation read — not the supplement — is what renders

@@ -34,6 +34,7 @@ import com.fasterxml.jackson.databind.deser.std.StdDelegatingDeserializer;
 import com.fasterxml.jackson.databind.introspect.AnnotatedClass;
 import com.fasterxml.jackson.databind.introspect.AnnotatedField;
 import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
+import com.fasterxml.jackson.databind.introspect.AnnotatedMethod;
 import com.fasterxml.jackson.databind.introspect.AnnotatedParameter;
 import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
 import com.fasterxml.jackson.databind.module.SimpleModule;
@@ -1075,6 +1076,15 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * mirroring {@link #borrowBuilderFieldAttributes}'s own join exactly. Transient, private, or renamed
      * on the wire, the field's constraints still carry the constraints the developer wrote for the
      * value.
+     *
+     * <p>W1 (spike/deserializer-driven-schema round 4 ruling): {@code getField()} is {@code null} when
+     * the only accessor Jackson associates with the property is the setter itself — a private field with
+     * a setter and no getter, no public field either — so there is nothing to join through Jackson's own
+     * merge. Bounded to exactly that shape (no getter either — never overriding Jackson's own {@code
+     * getField()} join when one resolves), this falls back to the field whose Java name equals the
+     * setter's own implied name (the JavaBean convention the method name itself implies, e.g. {@code
+     * setLevel} implies {@code level}), the same implied-name convention {@link #impliedFieldName}
+     * already names for this purpose.
      */
     private void borrowFieldAttributes(
             Class<?> builtClass,
@@ -1091,6 +1101,12 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             if (field != null) {
                 applyFieldScopeAttributes(
                         field.getAnnotated(), field.getDeclaringClass(), wireName, schema, context, required);
+            } else if (candidate.getGetter() == null) {
+                AnnotatedMethod setter = candidate.getSetter();
+                Field implied = setter == null ? null : fieldNamed(builtClass, impliedFieldName(setter.getAnnotated()));
+                if (implied != null) {
+                    applyFieldScopeAttributes(implied, builtClass, wireName, schema, context, required);
+                }
             }
             return;
         }
@@ -1192,13 +1208,24 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 }
             }
         }
+        return fieldNamed(builtClass, wireName);
+    }
+
+    /**
+     * The declared, non-static, non-synthetic field of the given Java name, found by walking
+     * {@code builtClass} and its superclasses in declaration order — shared by {@link #backingField}'s
+     * own non-record lookup and, for W1 (spike/deserializer-driven-schema round 4 ruling), {@link
+     * #borrowFieldAttributes}'s fallback join when Jackson's own {@code BeanPropertyDefinition#getField()}
+     * has nothing to join through.
+     */
+    private static Field fieldNamed(Class<?> builtClass, String javaName) {
         for (Class<?> current = builtClass;
                 current != null && current != Object.class;
                 current = current.getSuperclass()) {
             for (Field field : current.getDeclaredFields()) {
                 if (!Modifier.isStatic(field.getModifiers())
                         && !field.isSynthetic()
-                        && field.getName().equals(wireName)) {
+                        && field.getName().equals(javaName)) {
                     return field;
                 }
             }
