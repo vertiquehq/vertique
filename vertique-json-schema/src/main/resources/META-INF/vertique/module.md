@@ -83,20 +83,39 @@ supplement on top when one is:
   already carries the same-named field's and getter's annotations — Jackson's own statement that they
   are one logical property, never a name coincidence the walk goes looking for), and a builder method
   borrows the built type's Jackson-introspected property of that same wire name — also
-  unconditionally, whether or not a validator is supplied. **Builder borrow assumption.** A builder
-  method is assumed to set the built property of that same wire name: guaranteed by construction for a
-  Lombok `@Builder @Jacksonized` type, but not provable for a hand-written builder whose method
-  transforms the value before assigning it — the walk has no way to read a method body. Such a type's
-  published schema can therefore be stricter than what the binder actually accepts; this is a
-  documented, accepted gap (a fixture pins it), not a defect the walk can close, since closing it would
-  require reading source. A creator parameter's own equivalent — the compiled Java *parameter* name
-  coinciding with an unrelated field's name — is not this kind of assumption and is never joined on: a
-  creator parameter joins a field only by wire name, which is Jackson's own statement that the two are
-  one logical property; nothing here reads a constructor body either, so nothing here is ever
-  "guaranteed by construction" for a creator the way a Lombok builder's setters are. This is what keeps
-  a `@JsonCreator` static-factory parameter's own constraint from being dropped even under a validator:
-  Bean Validation itself can join a creator parameter only through a constructor, but the floor reads
-  the parameter's own annotation directly and does not care which kind of creator it belongs to.
+  unconditionally, whether or not a validator is supplied — **when the borrow is sound**. **Builder
+  borrow assumption (owner ruling, `spike/deserializer-driven-schema`).** A builder method is assumed
+  to set the built property of that same wire name: guaranteed by construction for a Lombok `@Builder`
+  setter, which this framework's own configuration types use throughout. That guarantee does not hold
+  for a hand-written builder whose method transforms the value before assigning it — the walk has no
+  way to read a method body — so the borrow is bounded to the shape it can actually vouch for,
+  detected by `BuilderBorrowDetector` entirely through `java.lang.reflect` over Jackson's own
+  `RUNTIME`-retained annotations: the built type carries `@JsonDeserialize(builder = ...)` naming a
+  `static` nested class of the built type named `<Type>Builder`; that class carries
+  `@JsonPOJOBuilder(withPrefix = "", buildMethodName = "build")` — the exact values `@Jacksonized`
+  generates — and a zero-argument `build()` returning the built type; and, for the property in
+  question, a builder method with exactly one parameter whose type and name both match the built field
+  exactly. Detection deliberately does not read `@lombok.Generated`: that annotation carries
+  `RetentionPolicy.CLASS`, so recognizing it would mean parsing the compiled class file directly
+  (as JaCoCo's own coverage exclusion does) rather than through ordinary reflection — disproportionate
+  surface for a detection hint in a module whose compile dependencies are deliberately frozen. A
+  hand-written builder that reproduces the whole shape by hand resolves too — the ruling tolerates
+  that: it says a hand-written builder *may* go unresolved, not that it must; one that does not
+  reproduce it gets no borrowed constraint at all, and its property is published by type only. The
+  same soundness check gates the Bean Validation supplement's own, independent join for a builder
+  method (`MetadataConstraintSource`
+  reflects over the built class directly, so without this it would silently re-add a hand-written
+  builder's constraint whenever a `Validator` happens to be supplied, even though the floor no longer
+  does) — an ordinary setter's join is unaffected either way, since a setter's own field is never in
+  question the way a builder's built-type field is. A creator parameter's own equivalent — the
+  compiled Java *parameter* name coinciding with an unrelated field's name — is not this kind of
+  assumption and is never joined on: a creator parameter joins a field only by wire name, which is
+  Jackson's own statement that the two are one logical property; nothing here reads a constructor body
+  either, so nothing here is ever "guaranteed by construction" for a creator the way a Lombok builder's
+  setters are. This is what keeps a `@JsonCreator` static-factory parameter's own constraint from being
+  dropped even under a validator: Bean Validation itself can join a creator parameter only through a
+  constructor, but the floor reads the parameter's own annotation directly and does not care which kind
+  of creator it belongs to.
 - **The Bean Validation supplement** (`Validator.getConstraintsForClass`; consulted only when a
   `Validator` is supplied to `forInputProfile`, and only *in addition to* the floor above). Unlike
   the floor, it sees constraints that cannot be joined by wire name or reflective annotation
@@ -119,7 +138,9 @@ supplement on top when one is:
 **The join.** A field- or getter/setter-backed property joins to a `PropertyDescriptor` by the
 member's Java bean name — the field name, or the name a getter/setter implies by stripping its
 `get`/`is`/`set`/`with` prefix — **never** by the wire name; a builder method joins the same way, on
-the built type. A creator-parameter property joins to a `ParameterDescriptor` by its declaring
+the built type, but only when `BuilderBorrowDetector` judges the join sound (see "Builder borrow
+assumption" above) — an unresolved hand-written builder's property contributes no supplement, exactly
+as it gets no borrow from the floor. A creator-parameter property joins to a `ParameterDescriptor` by its declaring
 constructor and parameter index (`SettableBeanProperty.getCreatorIndex()`), never by name; a
 static-factory creator's parameters join to nothing in Bean Validation (constrained constructors
 only), which is exactly why the floor's own annotation read — not the supplement — is what renders

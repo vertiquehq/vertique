@@ -15,6 +15,10 @@ import jakarta.validation.metadata.ParameterDescriptor;
 import jakarta.validation.metadata.PropertyDescriptor;
 import java.lang.System.Logger.Level;
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
+import java.lang.reflect.Member;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -38,9 +42,15 @@ import java.util.Set;
  * AnnotatedParameter#getIndex()}; a static-factory creator parameter joins to nothing here — that
  * shape is outside what Bean Validation exposes ({@link BeanDescriptor#getConstraintsForConstructor}
  * covers constructors only) — but {@link WalkConstraintSource} still renders its own annotations
- * directly as the floor, so the constraint is not lost (C3). A setter or builder-method property is
- * folded into the same property-name join as a field or getter, matching the pre-existing borrow.
- * Where a property matches nothing, it contributes no supplement.
+ * directly as the floor, so the constraint is not lost (C3). A setter property is folded into the
+ * same property-name join as a field or getter. A builder-method property joins the same way only
+ * when {@link BuilderBorrowDetector} judges the join sound (a Lombok builder, or the exact Lombok
+ * builder shape) — otherwise it contributes no supplement either, matching {@link
+ * InputPropertyDescriber}'s own floor-side borrow: this class's own reflection over {@code
+ * builtClass} would otherwise find and re-add a hand-written builder's borrowed constraint even after
+ * the floor stopped rendering it, silently reintroducing the over-strict schema the owner ruling
+ * removed whenever a {@code Validator} happens to be supplied. Where a property matches nothing, it
+ * contributes no supplement.
  *
  * <p><strong>Group filter.</strong> Only a constraint whose {@link ConstraintDescriptor#getGroups()}
  * is empty or contains {@link Default} is rendered; {@code @Valid} cascades are never consulted here
@@ -136,8 +146,38 @@ final class MetadataConstraintSource implements ConstraintSource {
         if (jacksonMember instanceof AnnotatedParameter parameter) {
             return forParameter(builtClass, parameter, kind);
         }
-        // A setter or builder method: the same join a field or getter uses, on the built type.
+        Member raw = jacksonMember == null ? null : jacksonMember.getMember();
+        if (raw instanceof Method method
+                && method.getDeclaringClass() != builtClass
+                && !method.getDeclaringClass().isAssignableFrom(builtClass)) {
+            // A builder method: the same built-type property-name join a field or getter uses, but
+            // only when the borrow is sound — see the class Javadoc's "Join" section. An unsound
+            // builder's property contributes no supplement, matching the floor's own refusal to
+            // borrow, so a Validator supplied to the generator cannot silently reintroduce the
+            // over-strict constraint the floor stopped publishing.
+            Field field = declaredField(builtClass, javaName);
+            if (field == null || !BuilderBorrowDetector.isSoundBorrow(method, builtClass, field)) {
+                return ResolvedConstraints.NONE;
+            }
+        }
+        // A setter, or a sound builder method: the same join a field or getter uses, on the built type.
         return renderProperty(builtClass, javaName, kind);
+    }
+
+    /** The built type's own declared field of the given Java bean name, walking its superclass chain. */
+    private static Field declaredField(Class<?> builtClass, String javaName) {
+        for (Class<?> current = builtClass;
+                current != null && current != Object.class;
+                current = current.getSuperclass()) {
+            for (Field field : current.getDeclaredFields()) {
+                if (!Modifier.isStatic(field.getModifiers())
+                        && !field.isSynthetic()
+                        && field.getName().equals(javaName)) {
+                    return field;
+                }
+            }
+        }
+        return null;
     }
 
     private ResolvedConstraints renderProperty(Class<?> builtClass, String javaName, ConstraintValueKind kind) {

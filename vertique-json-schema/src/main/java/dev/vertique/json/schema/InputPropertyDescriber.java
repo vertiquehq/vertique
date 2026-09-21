@@ -92,11 +92,15 @@ import java.util.concurrent.ConcurrentHashMap;
  * as the library's own member scope, so the Jackson, Jakarta Validation and Swagger modules apply
  * unchanged. Two member kinds have no library scope — a creator parameter and a setter — and their
  * constraints are translated by hand from Jackson's merged annotation map, which already carries the
- * same-named field's and getter's annotations. A builder method carries no constraint of its own:
- * its constraints are borrowed from the built type's Jackson-introspected property of the same wire
- * name, on the assumption — guaranteed by construction for a Lombok {@code @Builder}, not provable in
- * general — that the method sets that property; see the module's packaged {@code module.md} for the
- * documented consequence for a hand-written, value-transforming builder.
+ * same-named field's and getter's annotations. A builder method carries no constraint of its own: its
+ * constraints are borrowed from the built type's Jackson-introspected property of the same wire name,
+ * on the assumption — guaranteed by construction for a Lombok {@code @Builder}, not provable in
+ * general — that the method sets that property; {@link BuilderBorrowDetector} bounds the borrow to
+ * the shape that assumption actually holds for (the exact shape {@code @Builder @Jacksonized}
+ * generates, read through {@code java.lang.reflect} over Jackson's own runtime-visible annotations),
+ * and every other builder's property is published by type only — see the module's packaged {@code
+ * module.md} for the ruling and the documented consequence for a hand-written builder that goes
+ * unresolved.
  *
  * <p>Two mechanisms are detected and refused rather than described, because a document describing
  * them would be false: a <em>bean-like</em> type whose own class carries an explicit type-level
@@ -813,8 +817,11 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 // property of the same wire name, as introspected — never a raw field-name scan — since
                 // Jackson's own introspection is the only guarantee available here: it says which field a
                 // property of that wire name means, never what the builder method's own body does with
-                // the value before storing it. See module.md for the documented consequence.
-                borrowBuilderFieldAttributes(builtClass, property.getName(), schema, context, required);
+                // the value before storing it. The borrow itself is only published when
+                // BuilderBorrowDetector judges it sound (a Lombok builder, or the exact Lombok builder
+                // shape) — see module.md's "Builder borrow assumption" for the ruling and the documented
+                // consequence for a hand-written builder that goes unresolved.
+                borrowBuilderFieldAttributes(method, builtClass, property.getName(), schema, context, required);
             } else {
                 // a setter: the field it implies by name — transient, private, or renamed on the wire —
                 // still carries the constraints the developer wrote for the value
@@ -895,17 +902,19 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
 
     /**
      * The built type's <em>Jackson-introspected</em> property of the given wire name, whose attributes
-     * a builder method borrows — never a raw field-name scan, unlike {@link #borrowFieldAttributes}: a
-     * Lombok {@code @Builder} setter is guaranteed by construction to set the built field of that same
-     * property, so borrowing through Jackson's own introspected wire name renders identically to the
-     * raw scan this replaces for that guaranteed shape. A hand-written builder that transforms the
-     * value before assigning it carries no such guarantee — Jackson's introspection still finds the
-     * field, and this still borrows its constraints, which is the documented, accepted gap {@code
-     * module.md} names: such a type's published schema can be stricter than what the binder actually
-     * accepts, the same shape of assumption the field walk always made for a builder, now made
-     * explicit rather than silent.
+     * a builder method borrows — never a raw field-name scan, unlike {@link #borrowFieldAttributes} —
+     * when {@link BuilderBorrowDetector} judges the borrow sound: a Lombok {@code @Builder} setter is
+     * guaranteed by construction to set the built field of that same property, so borrowing through
+     * Jackson's own introspected wire name renders identically to the raw scan this replaces for that
+     * guaranteed shape. A hand-written builder that transforms the value before assigning it carries no
+     * such guarantee, and the owner ruling (see {@code module.md}'s "Builder borrow assumption") keeps
+     * the borrow only for the shapes {@link BuilderBorrowDetector} can vouch for; every other builder's
+     * property is published by type only, with no borrowed constraint — the same gap the field walk
+     * always carried for a builder, now bounded to the shapes it cannot resolve rather than accepted
+     * for every builder unconditionally.
      */
     private void borrowBuilderFieldAttributes(
+            Method builderMethod,
             Class<?> builtClass,
             String wireName,
             ObjectNode schema,
@@ -917,7 +926,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 continue;
             }
             AnnotatedField field = candidate.getField();
-            if (field != null) {
+            if (field != null && BuilderBorrowDetector.isSoundBorrow(builderMethod, builtClass, field.getAnnotated())) {
                 applyFieldScopeAttributes(
                         field.getAnnotated(), field.getDeclaringClass(), wireName, schema, context, required);
             }
