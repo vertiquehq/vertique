@@ -80,9 +80,15 @@ import java.util.function.Consumer;
  * counts because Jackson populates a private field through reflection wherever the mapper infers
  * property mutators — its default, and the setting every built-in profile leaves alone — so a
  * getter-only property with a field behind it is bound and is described. A builder type is filled
- * through its builder rather than through the field, so it is described only when its properties are
- * also visible to introspection: a Lombok {@code @Builder @Jacksonized} type needs {@code @Getter}.
- * The backing storage of an any-setter or an any-getter is never described as a named property, and
+ * through its builder rather than through the field: a builder method's own constraint is borrowed
+ * from the built type's Jackson-introspected property of the same wire name when {@link
+ * BuilderBorrowDetector} judges the borrow sound (a Lombok {@code @Builder @Jacksonized} type, or the
+ * exact shape it generates); a property Jackson's introspection reports no accessor for at all — a
+ * Lombok {@code @Builder} type's constrained private field with no {@code @Getter} (BG1) — still
+ * publishes by type, with no borrowed constraint, since the floor has nothing to join it by; a {@link
+ * jakarta.validation.Validator} supplement, when one is active, still renders the constraint for that
+ * one property by its own field-name join, independent of the floor's own borrow. The backing storage
+ * of an any-setter or an any-getter is never described as a named property, and
  * it is identified by member alone — a field annotated {@code @JsonAnySetter}, the record component
  * whose field that is, a field annotated {@code @JsonAnyGetter}, and the field a method
  * {@code @JsonAnyGetter} returns — so a real property is never hidden because its name matches one an

@@ -220,9 +220,15 @@ commonest DTO shape of all, a private field reachable only through a getter, is 
 type and format. So are a field-backed getter-only `List<String>` or `Map<String, String>` and a
 type holding such a shape as a property.
 
-A builder type is filled through its builder rather than through the field, so it is described only
-when its properties are also visible to introspection: a Lombok `@Builder @Jacksonized` type needs
-`@Getter`. Without it the document stays `{"type":"object"}` and nothing inside it is validated.
+A builder type is filled through its builder rather than through the field. A builder method's own
+constraint is borrowed from the built type's Jackson-introspected property of the same wire name —
+never a raw field-name scan — when the builder borrow detector judges the borrow sound: a Lombok
+`@Builder @Jacksonized` type, or the exact shape it generates by construction. **Closed (BG1):** a
+constrained private field with no `@Getter` at all is invisible to Jackson's own introspection, so
+the floor has nothing to join the builder method to — that one property still publishes, by type
+only, with no borrowed constraint; it is not the whole document that stays unconstrained. When a
+`Validator` supplement is active, it renders the constraint for that property anyway, by its own
+field-name join, independent of whether the floor could borrow it.
 
 The backing storage of a `@JsonAnySetter` or `@JsonAnyGetter` is never described as a named
 property, because the keys those accessors collect are extra keys rather than members of the

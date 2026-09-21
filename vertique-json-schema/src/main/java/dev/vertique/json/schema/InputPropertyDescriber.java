@@ -968,15 +968,10 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 // consequence for a hand-written builder that goes unresolved.
                 borrowBuilderFieldAttributes(method, builtClass, property.getName(), schema, context, required);
             } else {
-                // a setter: the field it implies by name — transient, private, or renamed on the wire —
-                // still carries the constraints the developer wrote for the value
-                borrowFieldAttributes(
-                        method.getDeclaringClass(),
-                        impliedFieldName(method),
-                        property.getName(),
-                        schema,
-                        context,
-                        required);
+                // a setter: the field Jackson's own introspection merges into the same wire-named
+                // property — transient, private, or renamed on the wire — still carries the
+                // constraints the developer wrote for the value.
+                borrowFieldAttributes(builtClass, property.getName(), schema, context, required);
             }
             return schema;
         }
@@ -1019,29 +1014,34 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     }
 
     /**
-     * The built type's field of the given name, whose attributes a setter borrows: the constraints a
-     * developer writes on a setter's implied field — transient, private, or renamed on the wire — still
-     * carry the constraints the developer wrote for the value.
+     * The built type's <em>Jackson-introspected</em> field for the given wire name, whose attributes a
+     * setter borrows — a raw field-name scan by declaration order, over the setter's own implied Java
+     * name or the wire name, joined the shape a coincidental match could misattribute a constraint from
+     * an unrelated field of the same name (the exact join class D002/D003 rejected as unsound for a
+     * creator parameter's own field join, review INFO item). Joining through {@code
+     * BeanPropertyDefinition#getField()} instead uses Jackson's own merge: the field it associates with
+     * the same wire-named property is guaranteed to be the one this setter's own value corresponds to,
+     * mirroring {@link #borrowBuilderFieldAttributes}'s own join exactly. Transient, private, or renamed
+     * on the wire, the field's constraints still carry the constraints the developer wrote for the
+     * value.
      */
-    private static void borrowFieldAttributes(
+    private void borrowFieldAttributes(
             Class<?> builtClass,
-            String memberName,
             String wireName,
             ObjectNode schema,
             SchemaGenerationContext context,
             List<String> required) {
-        for (Class<?> current = builtClass;
-                current != null && current != Object.class;
-                current = current.getSuperclass()) {
-            for (Field field : current.getDeclaredFields()) {
-                if (!Modifier.isStatic(field.getModifiers())
-                        && !field.isSynthetic()
-                        && (field.getName().equals(memberName)
-                                || field.getName().equals(wireName))) {
-                    applyFieldScopeAttributes(field, current, wireName, schema, context, required);
-                    return;
-                }
+        BeanDescription description = introspection(mapper.getTypeFactory().constructType(builtClass));
+        for (BeanPropertyDefinition candidate : description.findProperties()) {
+            if (!candidate.getName().equals(wireName)) {
+                continue;
             }
+            AnnotatedField field = candidate.getField();
+            if (field != null) {
+                applyFieldScopeAttributes(
+                        field.getAnnotated(), field.getDeclaringClass(), wireName, schema, context, required);
+            }
+            return;
         }
     }
 
