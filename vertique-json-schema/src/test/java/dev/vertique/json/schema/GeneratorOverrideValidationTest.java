@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileId;
+import dev.vertique.core.json.JsonSchemaFragment;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -198,6 +199,81 @@ class GeneratorOverrideValidationTest {
         assertTrue(
                 element.contains(HardeningFixtures.MAP_POSITION_MARKER),
                 "a resolved collection element must receive the fragment; was: " + element);
+    }
+
+    // --- F6 (security review round 1, MEDIUM): an INPUT override for a bean-like type must close it ---
+
+    @Test
+    @DisplayName(
+            "F6: an INPUT override for a bean-like type declaring neither properties nor additionalProperties"
+                    + " is refused at construction, bounded")
+    void openObjectOverrideForBeanLikeTypeAtInputIsRefused() {
+        // Given: the documented remedy for a generator refusal, applied bare — {"type":"object"} — for a
+        // bean-like type (a public-field DTO, exactly what F1's own beanLike check would also treat as
+        // bean-like).
+        JsonMapperProfile profile = HardeningFixtures.profile(
+                PROFILE_ID,
+                List.of(JsonSchemaTypeOverride.input(
+                        HardeningFixtures.Money.class, JsonSchemaFragment.parse("{\"type\":\"object\"}"))));
+
+        JsonSchemaGenerationException failure = assertThrows(
+                JsonSchemaGenerationException.class,
+                () -> AnnotationJsonSchemaGenerator.forInputProfile(profile),
+                "an open bean-like override must be refused at construction, not accepted and left open at"
+                        + " every position it resolves");
+
+        assertNotNull(failure.getMessage(), "the refusal must carry a message");
+        assertTrue(
+                failure.getMessage().contains("properties"),
+                "the message must name the remedy; was: " + failure.getMessage());
+        assertTrue(
+                failure.getMessage().length() <= Diagnostics.MAX_MESSAGE_LENGTH,
+                "was: " + failure.getMessage());
+    }
+
+    @Test
+    @DisplayName("F6: declaring properties (or additionalProperties) remedies the open-override refusal")
+    void closedOverrideForBeanLikeTypeAtInputIsAccepted() {
+        JsonMapperProfile withProperties = HardeningFixtures.profile(
+                PROFILE_ID,
+                List.of(JsonSchemaTypeOverride.input(
+                        HardeningFixtures.Money.class,
+                        JsonSchemaFragment.parse("{\"type\":\"object\",\"properties\":{}}"))));
+        AnnotationJsonSchemaGenerator.forInputProfile(withProperties); // must not throw
+
+        JsonMapperProfile withAdditionalProperties = HardeningFixtures.profile(
+                PROFILE_ID,
+                List.of(JsonSchemaTypeOverride.input(
+                        HardeningFixtures.Money.class,
+                        JsonSchemaFragment.parse("{\"type\":\"object\",\"additionalProperties\":false}"))));
+        AnnotationJsonSchemaGenerator.forInputProfile(withAdditionalProperties); // must not throw
+    }
+
+    @Test
+    @DisplayName("F6: a non-bean-like type's open override, and an OUTPUT-direction override, are unaffected")
+    void openOverrideIsScopedToInputBeanLikeTypesOnly() {
+        // A non-bean-like type (no introspected properties — a private final field with no accessor,
+        // exactly the shape F1's own beanLike check exempts) carries no open-object risk.
+        JsonMapperProfile scalarOverride = HardeningFixtures.profile(
+                PROFILE_ID,
+                List.of(JsonSchemaTypeOverride.input(NotBeanLike.class, JsonSchemaFragment.parse("{\"type\":\"object\"}"))));
+        AnnotationJsonSchemaGenerator.forInputProfile(scalarOverride); // must not throw
+
+        // An OUTPUT-direction override is not the F1/F3 refusal's documented remedy and is unaffected.
+        JsonMapperProfile outputOverride = HardeningFixtures.profile(
+                PROFILE_ID,
+                List.of(JsonSchemaTypeOverride.output(
+                        HardeningFixtures.Money.class, JsonSchemaFragment.parse("{\"type\":\"object\"}"))));
+        AnnotationJsonSchemaGenerator.forOutputProfile(outputOverride); // must not throw
+    }
+
+    /** No introspected properties: a private final field with no getter, no setter. */
+    static final class NotBeanLike {
+        private final String raw;
+
+        NotBeanLike(String raw) {
+            this.raw = raw;
+        }
     }
 
     // --- Helpers ---
