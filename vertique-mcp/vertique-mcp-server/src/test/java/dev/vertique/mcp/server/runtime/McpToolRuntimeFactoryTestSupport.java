@@ -61,6 +61,6 @@ public final class McpToolRuntimeFactoryTestSupport {
                 .enabled(true)
                 .jsonProfile(mcpJsonProfile)
                 .build();
-        return new McpToolRuntimeFactory(registry, JsonConfig.defaults(), mcpConfig);
+        return new McpToolRuntimeFactory(registry, JsonConfig.defaults(), mcpConfig, java.util.Optional.empty());
     }
 }

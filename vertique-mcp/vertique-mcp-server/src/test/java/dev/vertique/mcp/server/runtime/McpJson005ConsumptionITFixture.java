@@ -26,6 +26,6 @@ final class McpJson005ConsumptionITFixture {
         JsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
         McpServerConfig mcpConfig =
                 McpServerConfig.builder().enabled(true).jsonProfile(null).build();
-        return new McpToolRuntimeFactory(registry, JsonConfig.defaults(), mcpConfig);
+        return new McpToolRuntimeFactory(registry, JsonConfig.defaults(), mcpConfig, java.util.Optional.empty());
     }
 }

@@ -37,7 +37,7 @@ final class McpJsonProfileITFixture {
     static McpToolRuntimeFactory factory() {
         McpServerConfig mcpConfig =
                 McpServerConfig.builder().enabled(true).jsonProfile(null).build();
-        return new McpToolRuntimeFactory(new FixtureProfileRegistry(), JsonConfig.defaults(), mcpConfig);
+        return new McpToolRuntimeFactory(new FixtureProfileRegistry(), JsonConfig.defaults(), mcpConfig, java.util.Optional.empty());
     }
 
     /**
