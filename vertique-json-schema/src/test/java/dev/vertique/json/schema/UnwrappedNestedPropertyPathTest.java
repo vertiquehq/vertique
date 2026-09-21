@@ -22,6 +22,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.deser.BeanDeserializerModifier;
 import com.fasterxml.jackson.databind.deser.std.DelegatingDeserializer;
 import com.fasterxml.jackson.databind.module.SimpleModule;
+import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.json.JsonMapperProfiles;
@@ -48,8 +49,8 @@ import org.junit.jupiter.api.Test;
  * loop's {@code instanceof BeanDeserializerBase} check on {@code renamed} does not distinguish "same
  * instance, not a bean" (Jackson declining to unwrap) from "different instance, not a bean" (a
  * genuine custom deserializer that changes the wire shape, W-1's own probe in {@link
- * DelegatingDeserializerWrapperTest}) — it refuses both alike, so every DTO below, generatable
- * before dfd5761e, now fails at startup.
+ * DelegatingDeserializerWrapperTest}) — it refuses both alike, so generating a schema for every DTO
+ * below, generatable before dfd5761e, now fails with a diagnostic.
  *
  * <p>The correct bound is Jackson's own: refuse only when the unwrapping deserializer is a
  * <em>different</em> instance and is not a bean deserializer; when it is the same instance, leave
@@ -63,8 +64,12 @@ class UnwrappedNestedPropertyPathTest {
     }
 
     private static JsonNode inputDocument(Type type) {
+        return inputDocument(type, plainProfile());
+    }
+
+    private static JsonNode inputDocument(Type type, JsonMapperProfile profile) {
         return assertCanonicalForm(
-                AnnotationJsonSchemaGenerator.forInputProfile(plainProfile()).generateCanonical(type));
+                AnnotationJsonSchemaGenerator.forInputProfile(profile).generateCanonical(type));
     }
 
     // --- Map<String, Object> ---
@@ -188,17 +193,48 @@ class UnwrappedNestedPropertyPathTest {
         public Optional<Child> maybe;
     }
 
+    /**
+     * Without {@code Jdk8Module} registered, a bare {@code ObjectMapper} has no built-in support for
+     * {@code Optional} at all: Jackson resolves {@code UnsupportedTypeDeserializer} for it, not {@code
+     * OptionalDeserializer}, so a {@code Optional<Child>}-typed DTO was never bindable on that mapper
+     * in the first place, and this class's own {@link #plainProfile()} mapper cannot stand in for the
+     * real {@code OptionalDeserializer} case this block claims to probe. {@code
+     * jackson-datatype-jdk8} is available through {@code vertique-json}'s test-scope dependency.
+     */
+    private static JsonMapperProfile jdk8Profile() {
+        ObjectMapper mapper = new ObjectMapper();
+        mapper.registerModule(new Jdk8Module());
+        return JsonMapperProfiles.of(JsonProfileId.of("unwrapped-nested-property-path-jdk8-test"), mapper);
+    }
+
     @Test
     @DisplayName("N1: an unwrapped Optional<Bean> member is published as an ordinary nested property, not"
             + " refused as an opaque custom deserializer")
     void unwrappedOptionalMemberIsPublishedAsNestedProperty() {
+        JsonMapperProfile profile = jdk8Profile();
         JsonNode document = assertDoesNotThrow(
-                () -> inputDocument(OptionalParent.class),
+                () -> inputDocument(OptionalParent.class, profile),
                 "N1 DECISIVE: Jackson's OptionalDeserializer does not support unwrapping either, so"
                         + " \"maybe\" must be left to the nested-property path rather than refused");
         assertTrue(
                 document.path("properties").has("maybe"),
                 "the member must be published as a nested property named \"maybe\"; document: " + document);
+    }
+
+    @Test
+    @DisplayName("N1 premise: the real binder routes a nested {\"maybe\":{...}} body into the maybe field, not"
+            + " flattened onto the parent, proving Optional is genuinely left to the nested-property path")
+    void jacksonBinderRoutesTheOptionalBodyIntoTheNestedMaybeField() throws Exception {
+        JsonMapperProfile profile = jdk8Profile();
+        OptionalParent bound = profile.mapper().readValue("{\"maybe\":{\"name\":\"Ann\"}}", OptionalParent.class);
+
+        assertTrue(
+                bound.maybe != null && bound.maybe.isPresent() && "Ann".equals(bound.maybe.get().name),
+                "N1 PREMISE: the real Jackson binder (with Jdk8Module registered) must bind the body's"
+                        + " own \"maybe\" object into the member as an ordinary nested property (not flattened"
+                        + " directly onto the parent), which is exactly why the describer's first loop — not"
+                        + " the unwrapped-child loop — must be the one publishing it; bound.maybe="
+                        + (bound.maybe == null ? null : bound.maybe));
     }
 
     // --- The refusal branch itself: a genuinely non-unwrappable custom deserializer must still be refused ---
@@ -291,9 +327,10 @@ class UnwrappedNestedPropertyPathTest {
                 () -> AnnotationJsonSchemaGenerator.forInputProfile(profile).generateCanonical(WireShapeParent.class));
 
         assertTrue(
-                failure.getMessage().contains("child"),
-                "the diagnostic must name the unwrapped member (\"child\"), not only the child type, so a"
-                        + " caller with several unwrapped members on the same parent can tell which one is"
-                        + " refused; was: " + failure.getMessage());
+                failure.getMessage().contains("the unwrapped member \"child\""),
+                "the diagnostic must name the unwrapped member using the describer's own phrase (the"
+                        + " unwrapped member \"child\"), not merely satisfy a case-insensitive match against the"
+                        + " child type name \"Child\", so a caller with several unwrapped members on the same"
+                        + " parent can tell which one is refused; was: " + failure.getMessage());
     }
 }

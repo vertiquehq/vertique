@@ -337,8 +337,9 @@ describes an opaque foreign type as unconstrained — none of which the unwrappe
 since the parent's own first property loop already publishes any of those shapes left un-unwrapped as
 an ordinary nested property, and repeating them here would duplicate rather than protect that path. A
 prior round 6 fix (C-1) refused every such child outright regardless of which of the two instances
-`unwrappingDeserializer(...)` returned, which silently broke every DTO with an unwrapped `Map`,
-abstract `@JsonTypeInfo` base, `Object`, `JsonNode`, or `Optional` member; this is the corrected bound.
+`unwrappingDeserializer(...)` returned, so generation failed with a diagnostic for every DTO with an
+unwrapped `Map`, abstract `@JsonTypeInfo` base, `Object`, `JsonNode`, or `Optional` member; this is the
+corrected bound.
 
 **A case-insensitively bound `@JsonUnwrapped` child is refused, at every seam a wrapper can hide it
 behind.** `requireCaseSensitive` runs immediately once an unwrapped child resolves to a bean
