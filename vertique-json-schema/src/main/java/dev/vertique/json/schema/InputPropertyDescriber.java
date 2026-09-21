@@ -245,11 +245,22 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             // class-level @JsonDeserialize(using = ...); a deserializer a profile module registers
             // (SimpleModule.addDeserializer, or a BeanDeserializerModifier wrapper) carries no such
             // annotation, so an application DTO the mapper's own reflective introspection still reports
-            // bean properties for — a bean-like type main's field walk would have published — must be
-            // refused too, or a document describing it as {} silently drops every constraint on it. A
-            // type introspection reports no properties for (JsonObject, Buffer, a scalar, a container,
-            // a node) never had a field walk to protect and stays described as unconstrained.
-            boolean beanLike = !introspection(javaType).findProperties().isEmpty();
+            // a settable bean property for — a bean-like type main's field walk would have published —
+            // must be refused too, or a document describing it as {} silently drops every constraint on
+            // it. "Settable" (BeanPropertyDefinition#couldDeserialize(): a field, a setter, a creator
+            // parameter, or a mutable-collection getter Jackson would fill in place) rather than merely
+            // "known" matters: Vert.x's own Buffer carries a no-argument getBytes() getter, which
+            // Jackson's introspection reports as a property regardless — findProperties().isEmpty()
+            // alone would misclassify it as bean-like and wrongly refuse it, exactly the false positive
+            // D005 calls out by name. Vert.x's io.vertx.* family (JsonObject, JsonArray, Buffer, ...) is
+            // additionally excluded outright: JsonArray#getList() is itself a mutable-collection getter
+            // Jackson's own "fill in place" fallback treats as settable, so couldDeserialize() alone is
+            // not a safe signal for this specific, well-known opaque-wrapper family either — the same
+            // family this method's own class Javadoc and D005 name by example. A type with neither a
+            // settable property nor an io.vertx.* package (a scalar, a container, a node) never had a
+            // field walk to protect and stays described as unconstrained.
+            boolean beanLike = !javaType.getRawClass().getName().startsWith("io.vertx.")
+                    && introspection(javaType).findProperties().stream().anyMatch(BeanPropertyDefinition::couldDeserialize);
             if (!declaresOwnDeserializerOverride(javaType) && !beanLike) {
                 // A scalar, container, node, or Vert.x-style opaque wrapper: some module registered a
                 // plain (non-bean) deserializer for this *foreign* type, but the type's own class
