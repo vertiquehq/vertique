@@ -31,6 +31,7 @@ import com.fasterxml.jackson.databind.deser.ValueInstantiator;
 import com.fasterxml.jackson.databind.deser.impl.TypeWrappedDeserializer;
 import com.fasterxml.jackson.databind.deser.std.MapDeserializer;
 import com.fasterxml.jackson.databind.deser.std.StdDelegatingDeserializer;
+import com.fasterxml.jackson.databind.introspect.AnnotatedClass;
 import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
 import com.fasterxml.jackson.databind.introspect.AnnotatedParameter;
 import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
@@ -94,11 +95,15 @@ import java.util.concurrent.ConcurrentHashMap;
  * its constraints are borrowed from the built type's field of the same name.
  *
  * <p>Two mechanisms are detected and refused rather than described, because a document describing
- * them would be false: a type whose deserializer is not a bean deserializer (a type-level
- * {@code @JsonDeserialize(using = ...)} or a module-registered deserializer) unless the profile
- * declares a schema override for it, and a type bound case-insensitively through the mapper, a
- * class-level or a member-level {@code @JsonFormat}. Both fail generation with a bounded diagnostic
- * naming the type and the remedy.
+ * them would be false: a <em>bean-like</em> type whose own class carries an explicit type-level
+ * {@code @JsonDeserialize(using = ...)} (or equivalent) unless the profile declares a schema override
+ * for it, and a type bound case-insensitively through the mapper, a class-level or a member-level
+ * {@code @JsonFormat}. Both fail generation with a bounded diagnostic naming the type and the remedy.
+ * A type whose deserializer is not a bean deserializer for any <em>other</em> reason — a module
+ * registered a plain deserializer for a foreign, opaque type that never had bean properties to begin
+ * with (a scalar, container, node, or Vert.x-style wrapper such as {@code JsonObject}/{@code
+ * JsonArray}/{@code Buffer}) — is described as accepting any JSON value instead, since there is no
+ * field walk such a refusal could be protecting.
  *
  * <p>Registered after the annotation modules on purpose: the Jackson module's subtype resolver keeps
  * precedence for a {@code @JsonTypeInfo} root and consults this provider for each concrete subtype;
@@ -115,7 +120,15 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
 
     private final ObjectMapper mapper;
     private final boolean strictSpellings;
-    private final ConstraintSource constraintSource;
+
+    /**
+     * The optional Bean Validation metadata supplement, consulted <em>on top of</em> the always-active
+     * floor — the schema library's own Jakarta Validation module for a scoped field or getter, {@link
+     * WalkConstraintSource} for a creator parameter, setter, or builder method — never in its place.
+     * {@code null} when no {@link jakarta.validation.Validator} was supplied to the generator, in which
+     * case the floor alone drives generation, unchanged from before this abstraction existed.
+     */
+    private final ConstraintSource supplement;
 
     /** The introspected ignored names per type, the one fact the deserializer does not carry. */
     private final Map<JavaType, Set<String>> ignoredNamesByType = new ConcurrentHashMap<>();
@@ -133,20 +146,20 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * @param strictSpellings whether the profile forbids several spellings of one property
      */
     InputPropertyDescriber(ObjectMapper mapper, boolean strictSpellings) {
-        this(mapper, strictSpellings, WalkConstraintSource.INSTANCE);
+        this(mapper, strictSpellings, null);
     }
 
     /**
-     * @param mapper           the profile's mapper, which the binder parses a body with
-     * @param strictSpellings  whether the profile forbids several spellings of one property
-     * @param constraintSource the source of value-schema constraints for every bound property; {@link
-     *                         WalkConstraintSource#INSTANCE} unless the generator was built with a
-     *                         {@link jakarta.validation.Validator}
+     * @param mapper          the profile's mapper, which the binder parses a body with
+     * @param strictSpellings whether the profile forbids several spellings of one property
+     * @param supplement      the Bean Validation metadata supplement consulted on top of the
+     *                        always-active floor, or {@code null} when the generator was built
+     *                        without a {@link jakarta.validation.Validator}
      */
-    InputPropertyDescriber(ObjectMapper mapper, boolean strictSpellings, ConstraintSource constraintSource) {
+    InputPropertyDescriber(ObjectMapper mapper, boolean strictSpellings, ConstraintSource supplement) {
         this.mapper = mapper;
         this.strictSpellings = strictSpellings;
-        this.constraintSource = constraintSource;
+        this.supplement = supplement;
     }
 
     /** Clears the per-generation recursion state after an abnormal exit. */
@@ -201,6 +214,15 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             return describeMapLike(javaType, context);
         }
         if (!(deserializer instanceof BeanDeserializerBase bean)) {
+            if (!declaresOwnDeserializerOverride(javaType)) {
+                // A scalar, container, node, or Vert.x-style opaque wrapper: some module registered a
+                // plain (non-bean) deserializer for this *foreign* type, but the type's own class
+                // carries no explicit @JsonDeserialize(using = ...) — it never looked like a bean to
+                // begin with, so there is no field walk this description could be dropping. Describing
+                // it as accepting any JSON value (exactly like Object.class/JsonNode.class) is honest:
+                // it never rejects traffic the binder would accept, unlike refusing generation outright.
+                return unconstrained(context);
+            }
             throw Diagnostics.failure(
                     "JSON Schema generation failed for " + Diagnostics.typeIdentity(javaType.getRawClass())
                             + ": the profile's mapper deserializes it with "
@@ -238,6 +260,34 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 definition, javaType, resolved, bean, builderFor(javaType, bean), context, caseInsensitive);
         return new CustomDefinition(
                 definition, CustomDefinition.DefinitionType.STANDARD, CustomDefinition.AttributeInclusion.YES);
+    }
+
+    /**
+     * Whether {@code javaType}'s own class carries an explicit type-level deserializer override —
+     * {@code @JsonDeserialize(using = ...)}, or the equivalent read through a mix-in or module — as
+     * opposed to a plain {@link JsonDeserializer} some module registered for a foreign type that never
+     * looked like a bean in the first place.
+     *
+     * <p>This is the line between the two non-bean-deserializer cases {@link #describe} must tell
+     * apart: a type whose own author swapped its deserializer, which may be hiding real structure a
+     * field walk would otherwise have described (refused), and an opaque wrapper — a scalar,
+     * container, node, or Vert.x-style type such as {@code JsonObject}/{@code JsonArray}/{@code
+     * Buffer} — that a module deserializes directly and which never had bean properties to begin with
+     * (described as unconstrained).
+     *
+     * @param javaType the type being described
+     * @return {@code true} when the class itself declares its own deserializer
+     */
+    private boolean declaresOwnDeserializerOverride(JavaType javaType) {
+        AnnotatedClass classInfo = introspection(javaType).getClassInfo();
+        return introspector().findDeserializer(classInfo) != null;
+    }
+
+    /** A schema accepting any JSON value, for an opaque type this describer cannot know the shape of. */
+    private static CustomDefinition unconstrained(SchemaGenerationContext context) {
+        ObjectNode definition = context.getGeneratorConfig().createObjectNode();
+        return new CustomDefinition(
+                definition, CustomDefinition.DefinitionType.STANDARD, CustomDefinition.AttributeInclusion.NO);
     }
 
     /**
@@ -384,17 +434,45 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         if (extrasDescribed) {
             Set<String> reserved = reservedNames(javaType, bean, bound, published, aliasPlan);
             reserved.removeAll(excludedFromReservation);
-            if (!reserved.isEmpty()) {
+            if (caseInsensitive) {
+                // C1: always set, even when reserved is empty. Jackson folds a case-insensitively
+                // bound property name with String#toLowerCase() (no explicit Locale), and a non-ASCII
+                // code point can fold to an ASCII letter regardless of locale (U+212A KELVIN SIGN folds
+                // to ASCII 'k'). Such a key binds to the real, constrained member at the binder, but the
+                // ASCII-only patternProperties fold and the reserved-name pattern both miss it — so
+                // where extras are described, the key would otherwise fall through to
+                // additionalProperties (the extras bucket) in the schema's view, validating as a
+                // permissive extra instead of against the member's own constraint. Refusing any key
+                // carrying a non-ASCII code unit outright closes that gap.
+                definition.set("propertyNames", caseInsensitivePropertyNamesRule(reserved, builtClass));
+            } else if (!reserved.isEmpty()) {
                 ObjectNode rule = JsonNodeFactory.instance.objectNode();
-                if (caseInsensitive) {
-                    rule.putObject("not").put("pattern", combinedFoldPattern(reserved, builtClass));
-                } else {
-                    ArrayNode values = rule.putObject("not").putArray("enum");
-                    reserved.forEach(values::add);
-                }
+                ArrayNode values = rule.putObject("not").putArray("enum");
+                reserved.forEach(values::add);
                 definition.set("propertyNames", rule);
             }
         }
+    }
+
+    /**
+     * The {@code propertyNames} rule for a case-insensitively bound type with extras described:
+     * refuses a key matching one of {@code reserved}'s ASCII case folds (when any), and, unconditionally
+     * (C1), a key containing any non-ASCII code unit — combined as two alternatives of one regex, since
+     * a JSON Schema object carries at most one {@code not}. The reserved-name alternative keeps its own
+     * anchors (an exact-name match); the non-ASCII alternative is deliberately unanchored, since it must
+     * refuse a code unit occurring anywhere in the key, not only a key consisting of nothing else.
+     *
+     * @param reserved   the reserved names to fold-exclude, possibly empty
+     * @param builtClass the type being described, for the diagnostic a reserved name's own fold may throw
+     * @return the {@code propertyNames} rule
+     */
+    private static ObjectNode caseInsensitivePropertyNamesRule(Set<String> reserved, Class<?> builtClass) {
+        String nonAscii = "[^\\x00-\\x7F]";
+        String pattern =
+                reserved.isEmpty() ? nonAscii : "(?:" + combinedFoldPattern(reserved, builtClass) + ")|" + nonAscii;
+        ObjectNode rule = JsonNodeFactory.instance.objectNode();
+        rule.putObject("not").put("pattern", pattern);
+        return rule;
     }
 
     /** A primitive optional is bound by the Jdk8 module as the scalar or null; the library alone renders a bare object. */
@@ -566,7 +644,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             if (nullable) {
                 markNullable(schema);
             }
-            applyScopedConstraints(schema, builtClass, field.getName(), name, required);
+            applyScopedConstraints(schema, builtClass, field.getName(), field.getType(), name, required);
             return schema;
         }
         // A field the library's member resolution does not list (a static or synthetic one): by type.
@@ -574,28 +652,116 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     }
 
     /**
-     * When the constraint source is metadata-driven, applies its constraints and required-ness to a
-     * field or getter that a schema-library member scope already described — the generator disabled
-     * its own Jakarta Validation module for exactly this reason. A no-op for the annotation walk,
-     * which leaves a scoped member entirely to the library's own modules.
+     * When a Bean Validation {@link #supplement} is active, merges its constraints and required-ness
+     * onto a field or getter that a schema-library member scope — and therefore the always-active
+     * Jakarta Validation module — already described (C2, design correction): an addition only fills a
+     * keyword the module left unset, and a correction (#606: {@code @Range}, {@code @Length}, {@code
+     * @URL}, a {@code @Pattern} flag) replaces the module's own rendering unconditionally. A no-op when
+     * no supplement is active, leaving the module's own rendering exactly as it stood before this
+     * class existed.
      *
-     * @param schema     the schema the library produced for the member; may be a {@code $ref} wrapper,
-     *                   in which case its {@code type} is unavailable and the value kind falls back to
-     *                   {@link ConstraintValueKind#OTHER}
+     * @param schema     the schema the library produced for the member, already carrying whatever the
+     *                   always-active Jakarta Validation module rendered
      * @param builtClass the type the property is described on
      * @param javaName   the field's or getter's Java bean name
+     * @param javaType   the member's declared Java type, which selects the size/range keyword family
+     *                   (C2: derived from the Java type, never from the schema's own {@code type},
+     *                   which is absent for a map, a bean, or an {@code Optional} at this point)
      * @param wireName   the published property name, added to {@code required} when applicable
      * @param required   the object schema's required-property list
      */
     private void applyScopedConstraints(
-            ObjectNode schema, Class<?> builtClass, String javaName, String wireName, List<String> required) {
-        if (!constraintSource.disablesGeneratorJakartaModule()) {
+            ObjectNode schema,
+            Class<?> builtClass,
+            String javaName,
+            Class<?> javaType,
+            String wireName,
+            List<String> required) {
+        if (supplement == null) {
             return;
         }
-        ConstraintValueKind kind =
-                ConstraintValueKind.fromSchemaType(schema.path("type").asText());
-        ResolvedConstraints resolved = constraintSource.forScopedMember(builtClass, javaName, kind);
-        applyResolvedConstraints(schema, resolved, wireName, required);
+        ConstraintValueKind kind = ConstraintValueKind.fromJavaType(javaType);
+        ResolvedConstraints resolved = supplement.forScopedMember(builtClass, javaName, kind);
+        if (resolved.required() && !required.contains(wireName)) {
+            required.add(wireName);
+        }
+        if (resolved.additions().isEmpty() && resolved.corrections().isEmpty()) {
+            return;
+        }
+        // Deferred, not applied here and now (unlike the unscoped path): the schema library's own
+        // Jakarta Validation module does not finish writing every attribute — "pattern" under
+        // INCLUDE_PATTERN_EXPRESSIONS in particular — by the moment createStandardDefinitionReference
+        // returns this node. Measured: writing a "pattern" correction synchronously at this point made
+        // the module's own later write see a pre-existing, differing value and defensively wrap both
+        // into allOf instead of the one corrected value ever winning — a double-pattern, over-constrained
+        // document. The marker technique already proven for nullability and alias expansion in this
+        // file solves the same "must wait for the finished document" problem, so scoped corrections use
+        // it too: {@link AnnotationJsonSchemaGenerator#generateCanonical} applies and strips this marker
+        // right after the underlying generator call returns, before nullability and alias expansion run
+        // (so an alias copy, and a nullable wrap, both see the corrected value, never the module's own).
+        ObjectNode marker = schema.putObject(SCOPED_CONSTRAINTS_MARKER);
+        ObjectNode additionsNode = marker.putObject("additions");
+        if (resolved.additions().containsKey("items")) {
+            additionsNode.putObject("items");
+        }
+        resolved.additions().forEach((key, value) -> putKeyword(additionsNode, key, value));
+        ObjectNode correctionsNode = marker.putObject("corrections");
+        if (resolved.corrections().containsKey("items")) {
+            correctionsNode.putObject("items");
+        }
+        resolved.corrections().forEach((key, value) -> putKeyword(correctionsNode, key, value));
+    }
+
+    /**
+     * The generator-private keyword carrying a scoped member's deferred addition/correction plan — see
+     * {@link #applyScopedConstraints}. Applied and stripped by {@link
+     * #applyDeferredScopedConstraints(JsonNode)}, called once the underlying schema library has fully
+     * finished generating the document.
+     */
+    static final String SCOPED_CONSTRAINTS_MARKER = "x-vertique-scoped-constraints";
+
+    /**
+     * Applies every deferred scoped-member addition/correction plan the document carries, and strips
+     * the marker, once the underlying schema library has fully finished writing to every node —
+     * including whatever it defers past the point {@link #applyScopedConstraints} ran at.
+     *
+     * <p>An addition is applied only where the target schema does not already carry that keyword; a
+     * correction unconditionally, replacing whatever the schema library's own module wrote for it. The
+     * one keyword needing special handling is {@code "items"}: its value is itself a nested keyword
+     * object for a container-element position, merged into the schema's own {@code items} subschema —
+     * only when that subschema already exists as an inline object — rather than replacing it whole.
+     *
+     * @param document the generated document, before nullability and alias expansion — both of which
+     *                 must see the corrected values, not the schema library's own pre-correction ones
+     */
+    static void applyDeferredScopedConstraints(JsonNode document) {
+        AnnotationJsonSchemaGenerator.AliasExpansion.walkSchemaPositions(document, schema -> {
+            JsonNode marker = schema.remove(SCOPED_CONSTRAINTS_MARKER);
+            if (marker == null) {
+                return;
+            }
+            applyEncodedKeywords(schema, (ObjectNode) marker.get("additions"), false);
+            applyEncodedKeywords(schema, (ObjectNode) marker.get("corrections"), true);
+        });
+    }
+
+    /** Applies one encoded keyword set onto a finished schema node; see {@link #applyDeferredScopedConstraints}. */
+    private static void applyEncodedKeywords(ObjectNode schema, ObjectNode encoded, boolean overwrite) {
+        encoded.properties().forEach(entry -> {
+            String key = entry.getKey();
+            JsonNode value = entry.getValue();
+            if ("items".equals(key) && value.isObject() && schema.get("items") instanceof ObjectNode itemsObject) {
+                value.properties().forEach(inner -> {
+                    if (overwrite || !itemsObject.has(inner.getKey())) {
+                        itemsObject.set(inner.getKey(), inner.getValue());
+                    }
+                });
+                return;
+            }
+            if (overwrite || !schema.has(key)) {
+                schema.set(key, value);
+            }
+        });
     }
 
     private JsonNode methodSchema(
@@ -655,7 +821,13 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 if (nullable) {
                     markNullable(object);
                 }
-                applyScopedConstraints(object, builtClass, getterBeanName(method), property.getName(), required);
+                applyScopedConstraints(
+                        object,
+                        builtClass,
+                        getterBeanName(method),
+                        method.getReturnType(),
+                        property.getName(),
+                        required);
             }
             return schema;
         }
@@ -764,31 +936,48 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
 
     /**
      * The constraints a member without a library scope needs — a creator parameter, a setter, or a
-     * builder method — from {@link #constraintSource}: the annotation walk (Jackson's merged
-     * annotation map) unless the generator was built with a {@link jakarta.validation.Validator}, in
-     * which case Bean Validation metadata. The Swagger translation is source-independent and always
-     * applied.
+     * builder method. {@link WalkConstraintSource} — the floor, reading Jackson's merged annotation
+     * map directly — always runs first, whether or not a Bean Validation {@link #supplement} is also
+     * active: this is what keeps a static-factory creator parameter's own constraint from being
+     * silently dropped when a validator is supplied (C3), since Bean Validation itself can join a
+     * creator parameter only through a constructor. The supplement, when active, is merged on top —
+     * see {@link #mergeConstraints}. The Swagger translation is source-independent and always applied.
      */
     private void translateConstraints(
             AnnotatedMember member, Class<?> builtClass, ObjectNode schema, String name, List<String> required) {
         if (member == null) {
             return;
         }
-        ConstraintValueKind kind =
-                ConstraintValueKind.fromSchemaType(schema.path("type").asText());
+        ConstraintValueKind kind = ConstraintValueKind.fromJavaType(member.getRawType());
         String javaName = javaBeanName(member);
-        ResolvedConstraints resolved = constraintSource.forUnscopedMember(builtClass, javaName, kind, member);
-        applyResolvedConstraints(schema, resolved, name, required);
+        ResolvedConstraints floor = WalkConstraintSource.INSTANCE.forUnscopedMember(builtClass, javaName, kind, member);
+        mergeConstraints(schema, floor, name, required);
+        if (supplement != null) {
+            ResolvedConstraints resolved = supplement.forUnscopedMember(builtClass, javaName, kind, member);
+            mergeConstraints(schema, resolved, name, required);
+        }
         Schema swagger = member.getAnnotation(Schema.class);
         if (swagger != null) {
             translateSwagger(swagger, schema);
         }
     }
 
-    /** Merges a resolved constraint set onto a schema and its required-list entry. */
-    private static void applyResolvedConstraints(
+    /**
+     * Merges a resolved constraint set onto a schema and its required-list entry: an addition is
+     * applied only where the schema does not already carry that keyword, a correction unconditionally
+     * — see {@link ResolvedConstraints}. {@code "items"} is always applied regardless of whether the
+     * schema already carries the keyword: it names a nested keyword map for a container-element
+     * position, and {@link #putKeyword} itself merges only the individual nested keys that are unset,
+     * never overwriting the {@code items} subschema's own structural keywords ({@code type}, ...).
+     */
+    private static void mergeConstraints(
             ObjectNode schema, ResolvedConstraints resolved, String wireName, List<String> required) {
-        for (Map.Entry<String, Object> entry : resolved.keywords().entrySet()) {
+        for (Map.Entry<String, Object> entry : resolved.additions().entrySet()) {
+            if ("items".equals(entry.getKey()) || !schema.has(entry.getKey())) {
+                putKeyword(schema, entry.getKey(), entry.getValue());
+            }
+        }
+        for (Map.Entry<String, Object> entry : resolved.corrections().entrySet()) {
             putKeyword(schema, entry.getKey(), entry.getValue());
         }
         if (resolved.required() && !required.contains(wireName)) {

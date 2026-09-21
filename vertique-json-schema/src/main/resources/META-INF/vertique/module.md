@@ -60,44 +60,70 @@ overrides apply:
   `BOTH`-direction schema-type overrides apply. There is no validator-accepting overload for this
   direction: constraint sourcing applies to input generation only.
 
-All three modes install the Jackson module and the Swagger 2 module. The Jakarta Validation module
-(`NOT_NULLABLE_FIELD_IS_REQUIRED`, `INCLUDE_PATTERN_EXPRESSIONS`) is installed for every mode
-**except** a validator-backed input generator, which sources every member's constraints — scoped or
-not — from Bean Validation metadata instead and disables the Jakarta Validation module for the whole
-instance, so the two never double-emit or conflict.
+All three modes install the Jackson module, the Jakarta Validation module
+(`NOT_NULLABLE_FIELD_IS_REQUIRED`, `INCLUDE_PATTERN_EXPRESSIONS`), and the Swagger 2 module —
+**unconditionally, including a validator-backed input generator**. The Jakarta Validation module is
+the floor: whatever it renders for a scoped field or getter is rendered whether or not a `Validator`
+is supplied, so a document generated with a validator still renders every keyword a document
+generated without one would have. A supplied `Validator` only ever *supplements* that floor — see
+"Constraint sources" below — it never disables or replaces it.
 
-### Constraint sources: annotation walk vs. Bean Validation metadata
+### Constraint sources: the floor, and the Bean Validation supplement
 
 The input direction's value-schema constraints (`minLength`, `maximum`, `pattern`, `required`, ...)
-come from one of two sources, selected once per generator at construction:
+always start from a floor that is present whether or not a `Validator` is supplied, and gain a
+supplement on top when one is:
 
-- **The annotation walk** (default; used whenever no `Validator` is supplied). A field or getter with
-  a Victools member scope is described entirely by Victools' own Jackson and Jakarta Validation
-  modules. A creator parameter, setter, or builder method has no such scope; its constraints are
-  read directly from Jackson's merged annotation map (which already carries the same-named field's
-  and getter's annotations), and a builder method borrows the built type's same-named field.
-- **Bean Validation metadata** (`Validator.getConstraintsForClass`; used when a `Validator` is
-  supplied to `forInputProfile`). Unlike the walk, this source sees constraints the walk cannot join
-  by wire name at all: a constructor-parameter constraint on a type compiled without
-  `-parameters`, a `List`/array container-element constraint, a constraint inherited through a
-  superclass or an implemented interface, a composed constraint's leaves, and a constraint declared
-  entirely through an XML mapping.
+- **The floor.** A field or getter with a Victools member scope is described by Victools' own Jackson
+  and Jakarta Validation modules, unconditionally. A creator parameter, setter, or builder method has
+  no such scope; its constraints are read directly from Jackson's merged annotation map (which
+  already carries the same-named field's and getter's annotations), and a builder method borrows the
+  built type's same-named field — also unconditionally, whether or not a validator is supplied. This
+  is what keeps a `@JsonCreator` static-factory parameter's own constraint from being dropped even
+  under a validator: Bean Validation itself can join a creator parameter only through a constructor,
+  but the floor reads the parameter's own annotation directly and does not care which kind of creator
+  it belongs to.
+- **The Bean Validation supplement** (`Validator.getConstraintsForClass`; consulted only when a
+  `Validator` is supplied to `forInputProfile`, and only *in addition to* the floor above). Unlike
+  the floor, it sees constraints that cannot be joined by wire name or reflective annotation
+  presence at all: a constructor-parameter constraint on a type compiled without `-parameters`, a
+  `List`/array container-element constraint, a constraint inherited through a superclass or an
+  implemented interface, a composed constraint's leaves, and a constraint declared entirely through
+  an XML mapping. Every keyword it proposes is either an **addition** — merged onto the floor's own
+  rendering only where the floor left that keyword unset — or a **correction**, for the one named
+  set of shapes the floor is known to render incorrectly or not at all (`@Range`, `@Length`, `@URL`,
+  and a `@Pattern` flag — vertiquehq/vertique-dev#606): those replace the floor's rendering for that
+  keyword unconditionally. The supplement never removes a keyword the floor already rendered
+  correctly, including one declared in a non-`Default` Bean Validation group — the floor has no
+  notion of validation groups at all, so a `@NotNull(groups = Admin.class)` on a plain field still
+  renders `required`, exactly as generation without a validator would; only what the supplement
+  itself would *add* is filtered by group. A member the floor and the supplement both render the
+  same constraint for is expected to agree — see `SchemaCorpusMetadataCrossCheckTest`'s byte-identical
+  cross-check.
 
 **The join.** A field- or getter/setter-backed property joins to a `PropertyDescriptor` by the
 member's Java bean name — the field name, or the name a getter/setter implies by stripping its
 `get`/`is`/`set`/`with` prefix — **never** by the wire name; a builder method joins the same way, on
 the built type. A creator-parameter property joins to a `ParameterDescriptor` by its declaring
 constructor and parameter index (`SettableBeanProperty.getCreatorIndex()`), never by name; a
-static-factory creator's parameters join to nothing, because Bean Validation exposes constrained
-constructors only. Where a property matches nothing, it gets no constraints from the metadata —
-this is a silent no-op, not a failure. A `List`/array value's container-element constraints
+static-factory creator's parameters join to nothing in Bean Validation (constrained constructors
+only), which is exactly why the floor's own annotation read — not the supplement — is what renders
+that shape. Where a property matches nothing in the supplement, it contributes no addition and no
+correction — a silent no-op, not a failure. A `List`/array value's container-element constraints
 (`getConstrainedContainerElementTypes()`, type-argument index 0) merge onto the property's `items`
-subschema when that subschema is inline; a `Map` value's element position is not described by the
-generator at all today, so it is unaffected either way.
+subschema when that subschema is inline, as an addition; a `Map` value's element position is not
+described by the generator at all today, so it is unaffected either way.
+
+**The value-position kind** (`minLength` vs. `minItems` vs. `minProperties` for the same `@Size`
+shape) is derived from the member's **declared Java type**, never from the schema's own rendered
+`type` keyword — that keyword is unavailable at the point a `Map`, a bean, or an `Optional` value's
+constraints are applied. Deriving it from the schema's `type` instead was tried and reverted: it
+silently misrendered `@Size` on a `Map` as `maxLength`.
 
 **The group filter.** Only a constraint whose declared groups are empty or contain
-`jakarta.validation.groups.Default` is rendered. `@Valid` cascades are never consulted, because the
-generator already descends into nested types on its own.
+`jakarta.validation.groups.Default` is proposed by the supplement (as either an addition or a
+correction). `@Valid` cascades are never consulted, because the generator already descends into
+nested types on its own.
 
 **Rendering.** `@Size` renders `minLength`/`maxLength`, `minItems`/`maxItems`, or
 `minProperties`/`maxProperties` depending on the value's kind; `@Min`/`@Max`/`@DecimalMin`/
@@ -105,15 +131,24 @@ generator already descends into nested types on its own.
 `@NotNull`/`@NotBlank`/`@NotEmpty` mark the property `required` — matching Victools'
 `NOT_NULLABLE_FIELD_IS_REQUIRED` exactly, which treats all three identically; `@NotBlank`/
 `@NotEmpty` additionally floor the size keyword at 1; `@Email` renders `format: email`; Hibernate's
-`@Length`, `@Range`, and `@URL` render (recognized by annotation simple name alone, never by
-importing `hibernate-validator`'s constraint classes, so the metadata source stays usable with any
-Jakarta Validation provider). A `@Pattern`'s flags are embedded as an inline Java regex modifier
-group (`(?i:...)`, ...) — measured against the real `io.vertx.json.schema` 5.1.6 validator, which
-compiles the `pattern` keyword with plain `java.util.regex.Pattern` and honors this — except
-`CANON_EQ`, which has no embeddable modifier character and fails generation with a bounded
-diagnostic naming the property. An unrecognized constraint type is skipped with a `DEBUG`-level
-`System.Logger` log naming the type and the property (this module carries no logging-facade
-dependency; see "Dependencies").
+`@Length`, `@Range`, and `@URL` render as corrections (recognized by annotation simple name alone,
+never by importing `hibernate-validator`'s constraint classes, so the metadata source stays usable
+with any Jakarta Validation provider). A `@Pattern`'s flags are embedded as an inline Java regex
+modifier group (`(?i:...)`, ...) as a correction — measured against the real `io.vertx.json.schema`
+5.1.6 validator, which compiles the `pattern` keyword with plain `java.util.regex.Pattern` and honors
+this — except `CANON_EQ`, which has no embeddable modifier character and fails generation with a
+bounded diagnostic naming the property. An unrecognized constraint type is skipped with a
+`DEBUG`-level `System.Logger` log naming the type and the property (this module carries no
+logging-facade dependency; see "Dependencies").
+
+**Correction timing.** A correction is not applied at the moment Victools hands back a scoped
+member's schema: measured, the library's own Jakarta Validation module does not finish writing every
+attribute (`pattern` under `INCLUDE_PATTERN_EXPRESSIONS` in particular) by that point, and an
+immediate write there made the library's own later write treat the correction as a conflicting value
+and wrap both into `allOf` instead of the correction ever winning. Corrections and additions for a
+scoped member are therefore recorded and applied once the whole document is finished generating,
+before nullability and alias expansion run — the same "must wait for the finished document"
+technique this module already uses for nullability and alias expansion.
 
 **Bootstrapping a `Validator`.** `HibernateValidator.configure().messageInterpolator(new
 ParameterMessageInterpolator())` avoids an expression-language dependency; the default message
@@ -151,6 +186,16 @@ is not `WRITE_ONLY`, unchanged.
 This rule decides which walked properties are *described*; it does not make every key the binder
 accepts a described property. A key the schema does not describe is left to the binder and to Bean
 Validation.
+
+**A type whose resolved deserializer is not a bean deserializer** is refused with a bounded
+diagnostic only when the type's own class carries an explicit type-level
+`@JsonDeserialize(using = ...)` (or equivalent) — genuinely bean-like structure whose deserializer was
+swapped out, which may be hiding a field walk this description would otherwise have produced. A type
+some module registers a plain, non-bean deserializer for on its own — a scalar, container, node, or
+Vert.x-style opaque wrapper such as `JsonObject`, `JsonArray`, or `Buffer`, none of which ever had
+bean properties to begin with — is instead described as accepting any JSON value, exactly like
+`Object.class`/`JsonNode.class`, both at the root and nested as a member; there is no field walk such
+a refusal could be protecting there.
 
 ### How an any-setter's extra keys are described
 
@@ -205,6 +250,22 @@ be recovered — a `@JsonCreator` parameter renamed away from the field it popul
 keeps accepting the traffic it already accepted; constrain that shape with Bean Validation. An
 application-declared `propertyNames` is never displaced: the reserved set is combined with it under
 `allOf`.
+
+**Case-insensitive binding and Unicode code folding.** A type bound case-insensitively (mapper-wide,
+class-level, or member-level `@JsonFormat`) is described with `patternProperties` — one ASCII
+case-folding pattern per bound name (`name` folds to `^[nN][aA][mM][eE]$`), since Jackson's own
+case-insensitive lookup measurably uses `String#toLowerCase()`/`toUpperCase()` with no explicit
+`Locale`, which a fold pinned to any one locale could silently drift from. Where extras are also
+described, `propertyNames` additionally refuses any key containing a non-ASCII code unit,
+unconditionally — not only when a reserved name exists. This closes a real gap: a non-ASCII code
+point can fold to an ASCII letter under Java's locale-independent Unicode case mapping regardless of
+locale (U+212A KELVIN SIGN folds to ASCII `k`), so a key spelled with it binds at the *binder* to the
+same member an ASCII spelling would, while the ASCII-only `patternProperties` fold and the
+reserved-name pattern both miss it at the *schema* — without this rule such a key would fall through
+to `additionalProperties` and validate as a permissive extra instead of against the real member's own
+constraint. A closed type (no any-setter) at a REST gate relies on the MCP hardener or Bean
+Validation for closure, as it did before this rule existed; this rule covers only a type where extras
+are described.
 
 ### How an alias spelling is described
 

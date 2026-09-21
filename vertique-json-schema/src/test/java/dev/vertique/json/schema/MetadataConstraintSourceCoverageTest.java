@@ -202,14 +202,59 @@ class MetadataConstraintSourceCoverageTest {
     }
 
     @Test
-    @DisplayName("a non-default-group constraint is excluded from the default render")
-    void nonDefaultGroupExcluded() {
+    @DisplayName(
+            "design correction: a non-default-group constraint the floor already renders stays required, like main")
+    void nonDefaultGroupOnVisibleMemberStaysRequiredLikeMain() {
+        // The always-active floor — the schema library's own Jakarta Validation module for this scoped
+        // field — has no Bean Validation group concept at all: it renders NOT_NULLABLE_FIELD_IS_REQUIRED
+        // from the raw @NotNull annotation's presence alone, exactly as `main` (no validator) does. The
+        // metadata supplement never removes a keyword the floor already rendered, so the document stays
+        // required here even though the constraint's own group is non-Default — see the design
+        // correction: "never remove a keyword the module emitted, including constraints in non-default
+        // groups, which stay rendered as on main."
         Validator validator = MetadataTestValidators.plain();
-        JsonNode document = metadataDocument(MetadataFixtures.NonDefaultGroupDto.class, validator);
+        JsonNode withValidator = metadataDocument(MetadataFixtures.NonDefaultGroupDto.class, validator);
+        JsonNode withoutValidator = walkDocument(MetadataFixtures.NonDefaultGroupDto.class);
+
+        assertTrue(
+                textValues(List.of(withValidator), "required").contains("secret"),
+                "the floor's own group-blind rendering must survive the metadata supplement unchanged");
+        assertEquals(
+                textValues(List.of(withoutValidator), "required"),
+                textValues(List.of(withValidator), "required"),
+                "a validator must not change required-ness the floor alone already determined");
+    }
+
+    @Test
+    @DisplayName("the metadata supplement's own group filter still excludes what only it could ever add")
+    void nonDefaultGroupExcludedFromMetadataOnlyAddition() {
+        // "label" carries no reflective annotation at all — the floor structurally cannot see it — so
+        // whether it renders required depends entirely on the metadata supplement's own group filter,
+        // isolated from the floor's group-blindness proven above.
+        String mapping = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <constraint-mappings
+                        xmlns="https://jakarta.ee/xml/ns/validation/mapping"
+                        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                        xsi:schemaLocation="https://jakarta.ee/xml/ns/validation/mapping https://jakarta.ee/xml/ns/validation/mapping/validation-mapping-3.1.xsd"
+                        version="3.1">
+                    <bean class="dev.vertique.json.schema.MetadataFixtures$XmlMappedNonDefaultGroupDto" ignore-annotations="false">
+                        <field name="label">
+                            <constraint annotation="jakarta.validation.constraints.NotNull">
+                                <groups>
+                                    <value>dev.vertique.json.schema.MetadataFixtures$AdminGroup</value>
+                                </groups>
+                            </constraint>
+                        </field>
+                    </bean>
+                </constraint-mappings>
+                """;
+        Validator validator = MetadataTestValidators.withXmlMapping(mapping);
+        JsonNode document = metadataDocument(MetadataFixtures.XmlMappedNonDefaultGroupDto.class, validator);
 
         assertFalse(
-                textValues(List.of(document), "required").contains("secret"),
-                "a constraint declared only for a non-Default group must not make the property required");
+                textValues(List.of(document), "required").contains("label"),
+                "a constraint the metadata supplement is the sole source for must still respect its own group filter");
     }
 
     @Test

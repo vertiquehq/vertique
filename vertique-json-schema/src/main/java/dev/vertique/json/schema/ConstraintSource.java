@@ -6,45 +6,30 @@ package dev.vertique.json.schema;
 import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
 
 /**
- * Source of value-schema constraints for an input property, abstracting over where they come from.
+ * Source of value-schema constraints for an input property, on top of the floor that is always
+ * present: the schema library's own Jakarta Validation module for a field or getter that has a
+ * schema-library member scope, and {@link WalkConstraintSource}'s hand translation of Jackson's
+ * merged annotation map for a creator parameter, setter, or builder method, which has no such scope.
  *
- * <p>Two implementations. {@link WalkConstraintSource} is the pre-existing behavior: a field or
- * getter with a schema-library member scope is left entirely to the library's own Jackson and Jakarta
- * Validation modules, and a creator parameter, setter, or builder method — which has no such scope —
- * is hand-translated from Jackson's merged annotation map. It is used whenever no
- * {@link jakarta.validation.Validator} is supplied to the generator, so generation is unchanged from
- * before this abstraction existed.
+ * <p>{@link MetadataConstraintSource}, driven by Bean Validation metadata
+ * ({@link jakarta.validation.Validator#getConstraintsForClass}), is consulted <em>in addition to</em>
+ * the floor whenever a {@code Validator} is supplied to the generator — never in place of it. Because
+ * it can see constraints neither the schema library's own module nor the annotation walk can join by
+ * wire name (a constructor-parameter constraint without {@code -parameters}, an inherited or
+ * interface constraint, a composed constraint's leaves, an XML-mapped constraint), it adds what the
+ * floor cannot see, and corrects the small, named set of shapes the floor is known to render
+ * incorrectly ({@code @Range}, {@code @Length}, {@code @URL}, a {@code @Pattern} flag) — see
+ * {@link ResolvedConstraints}. It never removes a keyword the floor already rendered, including one
+ * in a non-{@code Default} group, which the schema library's own module does not filter by group.
  *
- * <p>{@link MetadataConstraintSource} is driven by Bean Validation metadata
- * ({@link jakarta.validation.Validator#getConstraintsForClass}) when a {@code Validator} is supplied.
- * Because it can see constraints the schema library's own walk cannot join by wire name (a
- * constructor-parameter constraint without {@code -parameters}, an inherited or interface constraint,
- * a composed constraint's leaves, an XML-mapped constraint), it drives constraints for every member
- * kind — scoped or not — and the generator disables its own Jakarta Validation module so the two
- * never double-emit or conflict.
- *
- * <p>Selected once per generator, at construction, by
- * {@link AnnotationJsonSchemaGenerator#forInputProfile(dev.vertique.core.json.JsonMapperProfile,
- * jakarta.validation.Validator)}.
+ * <p>When no {@code Validator} is supplied, no supplement runs at all, and the floor alone drives
+ * generation — unchanged from before this abstraction existed.
  */
 interface ConstraintSource {
 
     /**
-     * Whether this source drives value-schema constraints for a field or getter that already has a
-     * schema-library member scope, in which case the generator must not also install its own Jakarta
-     * Validation module (or the two would double-emit or conflict).
-     *
-     * @return {@code false} for {@link WalkConstraintSource}; {@code true} for
-     *     {@link MetadataConstraintSource}
-     */
-    boolean disablesGeneratorJakartaModule();
-
-    /**
-     * Constraints for a field or getter that has a schema-library member scope.
-     *
-     * <p>Only ever consulted when {@link #disablesGeneratorJakartaModule()} is {@code true} — when it
-     * is {@code false}, the schema library's own modules already applied everything this method could
-     * add, and the caller never calls it.
+     * Constraints to merge onto a field or getter that already has a schema-library member scope,
+     * on top of whatever the schema library's own Jakarta Validation module already wrote there.
      *
      * @param builtClass the type the property is described on — the leaf type, so inherited and
      *                   interface constraints join through it
@@ -55,8 +40,9 @@ interface ConstraintSource {
     ResolvedConstraints forScopedMember(Class<?> builtClass, String javaName, ConstraintValueKind kind);
 
     /**
-     * Constraints for a creator parameter, setter, or builder method — a member with no
-     * schema-library scope.
+     * Constraints to merge onto a creator parameter, setter, or builder method — a member with no
+     * schema-library scope — on top of {@link WalkConstraintSource}'s hand translation, which always
+     * runs first as the floor for this member kind.
      *
      * @param builtClass    the type the property is described on
      * @param javaName      the Java bean name to join by for a setter or builder method (the built

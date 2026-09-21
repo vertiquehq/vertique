@@ -24,22 +24,28 @@ import java.util.Set;
 
 /**
  * A {@link ConstraintSource} driven by Bean Validation metadata ({@link
- * Validator#getConstraintsForClass}), used whenever a {@link Validator} is supplied to the generator.
+ * Validator#getConstraintsForClass}), consulted <em>in addition to</em> the floor — the schema
+ * library's own Jakarta Validation module for a scoped field or getter, {@link WalkConstraintSource}
+ * for a creator parameter, setter, or builder method — whenever a {@link Validator} is supplied to
+ * the generator. It never runs in place of the floor; see {@link ResolvedConstraints}.
  *
  * <p><strong>Join.</strong> A field- or getter-backed property joins to a {@link PropertyDescriptor}
  * by the member's Java bean name, read from {@code builtClass}'s own {@link BeanDescriptor} — never
  * by the wire name, and never by walking the class hierarchy by hand: the metadata API already
  * aggregates inherited and interface constraints for the leaf class. A creator-parameter property
  * joins to a {@link ParameterDescriptor} by its declaring constructor and {@link
- * AnnotatedParameter#getIndex()}; a static-factory creator parameter joins to nothing; that shape is
- * outside what Bean Validation exposes ({@link BeanDescriptor#getConstraintsForConstructor} covers
- * constructors only). A setter or builder-method property is folded into the same property-name join
- * as a field or getter, matching the pre-existing borrow. Where a property matches nothing, it gets no
- * constraints from the metadata.
+ * AnnotatedParameter#getIndex()}; a static-factory creator parameter joins to nothing here — that
+ * shape is outside what Bean Validation exposes ({@link BeanDescriptor#getConstraintsForConstructor}
+ * covers constructors only) — but {@link WalkConstraintSource} still renders its own annotations
+ * directly as the floor, so the constraint is not lost (C3). A setter or builder-method property is
+ * folded into the same property-name join as a field or getter, matching the pre-existing borrow.
+ * Where a property matches nothing, it contributes no supplement.
  *
  * <p><strong>Group filter.</strong> Only a constraint whose {@link ConstraintDescriptor#getGroups()}
  * is empty or contains {@link Default} is rendered; {@code @Valid} cascades are never consulted here
- * (the generator already descends into nested types on its own).
+ * (the generator already descends into nested types on its own). A constraint in a non-{@code
+ * Default} group is therefore never proposed as a correction either, so the floor's own rendering of
+ * it (the schema library's module does not filter by group) is left standing.
  *
  * <p><strong>Composition.</strong> A composed constraint's own annotation type is essentially never
  * one this class knows how to render (it is normally an application-defined marker), so its {@link
@@ -49,9 +55,29 @@ import java.util.Set;
  * PropertyDescriptor#getConstrainedContainerElementTypes()}, type-argument index 0) merge onto the
  * property's {@code items} subschema when that subschema is an inline object; a {@code Map} value's
  * element position is not described by the generator today, so it is left unchanged, matching the
- * pre-existing gap.
+ * pre-existing gap. Rendered as an addition: an item-level correction is not a shape #606 covers.
+ *
+ * <p><strong>Additions vs. corrections.</strong> A rendered keyword is a <em>correction</em> — merged
+ * onto the schema unconditionally, replacing whatever the floor already wrote — exactly when it comes
+ * from one of the four shapes vertiquehq/vertique-dev#606 named as wrong: {@code @Range}, {@code
+ * @Length}, {@code @URL}, or a {@code @Pattern} carrying a flag the floor cannot embed. Every other
+ * rendered keyword is an <em>addition</em> — merged only where the floor left that keyword unset — so
+ * a constraint the floor already rendered correctly (the common case: {@code @Size}, {@code @Min},
+ * {@code @Max}, {@code @NotNull}, ...) is never disturbed by this source running a second time over
+ * the same member.
  */
 final class MetadataConstraintSource implements ConstraintSource {
+
+    /**
+     * The annotation types whose rendering is a <em>correction</em> (vertiquehq/vertique-dev#606):
+     * the floor — the schema library's Jakarta Validation module for a scoped member, or {@link
+     * WalkConstraintSource} for an unscoped one — either does not recognize these at all ({@code
+     * @Range}, {@code @Length}, {@code @URL}, which {@link WalkConstraintSource} never renders) or
+     * renders them incompletely ({@code @Pattern}'s flags, which neither the module nor the walk
+     * embeds into the {@code pattern} keyword). Every other recognized annotation type is rendered as
+     * an addition instead.
+     */
+    private static final Set<String> CORRECTING_ANNOTATION_TYPES = Set.of("Range", "Length", "URL", "Pattern");
 
     /**
      * JDK {@code System.Logger} rather than SLF4J: this module's own architecture rule (FR-JSON-070)
@@ -73,11 +99,6 @@ final class MetadataConstraintSource implements ConstraintSource {
 
     MetadataConstraintSource(Validator validator) {
         this.validator = Objects.requireNonNull(validator, "validator");
-    }
-
-    @Override
-    public boolean disablesGeneratorJakartaModule() {
-        return true;
     }
 
     @Override
@@ -104,7 +125,8 @@ final class MetadataConstraintSource implements ConstraintSource {
         String label = builtClass.getSimpleName() + "." + javaName;
         Rendered own = render(property.getConstraintDescriptors(), kind, label);
         Map<String, Object> items = itemConstraints(property, kind, label);
-        return new ResolvedConstraints(mergeItems(own.keywords, items), own.required);
+        Map<String, Object> additions = mergeItems(own.additions, items);
+        return new ResolvedConstraints(additions, own.corrections, own.required);
     }
 
     private ResolvedConstraints forParameter(
@@ -112,7 +134,9 @@ final class MetadataConstraintSource implements ConstraintSource {
         java.lang.reflect.Member owner =
                 parameter.getOwner() == null ? null : parameter.getOwner().getMember();
         if (!(owner instanceof Constructor<?> constructor)) {
-            // A static-factory creator: Bean Validation exposes constrained constructors only.
+            // A static-factory creator: Bean Validation exposes constrained constructors only. This
+            // contributes no supplement, but the floor — WalkConstraintSource, reading the parameter's
+            // own annotations directly — still renders its own constraint independently (C3).
             return ResolvedConstraints.NONE;
         }
         ConstructorDescriptor constructorDescriptor = validator
@@ -128,7 +152,7 @@ final class MetadataConstraintSource implements ConstraintSource {
         }
         String label = builtClass.getSimpleName() + "(param " + index + ")";
         Rendered rendered = render(parameters.get(index).getConstraintDescriptors(), kind, label);
-        return new ResolvedConstraints(rendered.keywords, rendered.required);
+        return new ResolvedConstraints(rendered.additions, rendered.corrections, rendered.required);
     }
 
     /** Container-element (list/array item) constraints, merged only onto an inline {@code items} object. */
@@ -141,41 +165,56 @@ final class MetadataConstraintSource implements ConstraintSource {
                 continue;
             }
             Rendered rendered = render(element.getConstraintDescriptors(), ConstraintValueKind.OTHER, label + "[item]");
-            if (!rendered.keywords.isEmpty()) {
-                return rendered.keywords;
+            // Item-level shapes are always additions: #606 names no item-level correction, and the
+            // floor never describes a Map value position's or a List/array item's own constraints at
+            // all, so there is nothing here for a correction to unconditionally replace.
+            Map<String, Object> combined = rendered.additions;
+            if (!rendered.corrections.isEmpty()) {
+                combined = new LinkedHashMap<>(combined);
+                combined.putAll(rendered.corrections);
+            }
+            if (!combined.isEmpty()) {
+                return combined;
             }
         }
         return Map.of();
     }
 
-    private static Map<String, Object> mergeItems(Map<String, Object> keywords, Map<String, Object> items) {
+    private static Map<String, Object> mergeItems(Map<String, Object> additions, Map<String, Object> items) {
         if (items.isEmpty()) {
-            return keywords;
+            return additions;
         }
-        Map<String, Object> merged = new LinkedHashMap<>(keywords);
+        Map<String, Object> merged = new LinkedHashMap<>(additions);
         merged.put("items", items);
         return merged;
     }
 
-    /** One property's, parameter's, or container element's group-filtered, composition-flattened render. */
-    private record Rendered(Map<String, Object> keywords, boolean required) {}
+    /**
+     * One property's, parameter's, or container element's group-filtered, composition-flattened,
+     * addition/correction-split render.
+     */
+    private record Rendered(Map<String, Object> additions, Map<String, Object> corrections, boolean required) {}
 
     private static Rendered render(Set<ConstraintDescriptor<?>> descriptors, ConstraintValueKind kind, String label) {
-        Map<String, Object> keywords = new LinkedHashMap<>();
+        Map<String, Object> additions = new LinkedHashMap<>();
+        Map<String, Object> corrections = new LinkedHashMap<>();
         boolean[] required = {false};
         for (ConstraintDescriptor<?> descriptor : descriptors) {
-            renderOne(descriptor, kind, label, keywords, required);
+            renderOne(descriptor, kind, label, additions, corrections, required);
         }
-        return new Rendered(keywords, required[0]);
+        return new Rendered(additions, corrections, required[0]);
     }
 
     private static void renderOne(
             ConstraintDescriptor<?> descriptor,
             ConstraintValueKind kind,
             String label,
-            Map<String, Object> keywords,
+            Map<String, Object> additions,
+            Map<String, Object> corrections,
             boolean[] required) {
         if (!appliesInDefaultGroup(descriptor)) {
+            // Never proposed as a correction either: the floor does not filter by group, so its own
+            // rendering of a non-Default-group constraint (if it renders one at all) stays standing.
             return;
         }
         if (!descriptor.getComposingConstraints().isEmpty()) {
@@ -183,13 +222,17 @@ final class MetadataConstraintSource implements ConstraintSource {
             // composing annotation itself is not one of the keyword-bearing types below, so descend
             // into its leaves instead, recursively.
             for (ConstraintDescriptor<?> leaf : descriptor.getComposingConstraints()) {
-                renderOne(leaf, kind, label, keywords, required);
+                renderOne(leaf, kind, label, additions, corrections, required);
             }
         }
         String simpleName = descriptor.getAnnotation().annotationType().getSimpleName();
         Map<String, Object> attributes = descriptor.getAttributes();
         boolean array = kind == ConstraintValueKind.ARRAY;
         boolean map = kind == ConstraintValueKind.MAP;
+        // #606: the floor either cannot recognize this annotation at all, or renders it incompletely,
+        // so its keyword replaces the floor's unconditionally; every other keyword below only fills a
+        // gap the floor left.
+        Map<String, Object> keywords = CORRECTING_ANNOTATION_TYPES.contains(simpleName) ? corrections : additions;
         switch (simpleName) {
             case "NotNull" -> required[0] = true;
             case "NotEmpty", "NotBlank" -> {

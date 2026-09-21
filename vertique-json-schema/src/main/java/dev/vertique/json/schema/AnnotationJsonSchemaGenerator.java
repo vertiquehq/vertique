@@ -420,22 +420,22 @@ public final class AnnotationJsonSchemaGenerator {
         }
         InputPropertyDescriber describer = null;
         OutputPropertyNameResolver outputNames = null;
-        // Bean Validation metadata drives constraints for the input direction only: it is the direction
+        // Bean Validation metadata supplements the input direction only: it is the direction
         // InputPropertyDescriber already owns the join for, and the output direction's own
-        // OutputPropertyNameResolver has no equivalent join to a Validator's property descriptors.
-        ConstraintSource constraintSource = direction == Direction.INPUT && validator != null
-                ? new MetadataConstraintSource(validator)
-                : WalkConstraintSource.INSTANCE;
+        // OutputPropertyNameResolver has no equivalent join to a Validator's property descriptors. The
+        // Jakarta Validation module is always installed as the floor regardless (see build() below);
+        // null here means "no supplement", not "no constraints".
+        ConstraintSource supplement =
+                direction == Direction.INPUT && validator != null ? new MetadataConstraintSource(validator) : null;
         if (direction == Direction.INPUT) {
             // Read once, from the profile's own mapper instance: the same one that parses a body at the
             // REST gate, so the published rule and the binder's parse decision cannot disagree.
             boolean strict = validated.mapper().getFactory().isEnabled(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
-            describer = new InputPropertyDescriber(validated.mapper(), strict, constraintSource);
+            describer = new InputPropertyDescriber(validated.mapper(), strict, supplement);
         } else {
             outputNames = new OutputPropertyNameResolver(validated.mapper());
         }
-        return new AnnotationJsonSchemaGenerator(
-                build(builder, describer, outputNames, constraintSource), hasOverrides, describer);
+        return new AnnotationJsonSchemaGenerator(build(builder, describer, outputNames), hasOverrides, describer);
     }
 
     /**
@@ -451,7 +451,7 @@ public final class AnnotationJsonSchemaGenerator {
      * @return the configured Victools generator
      */
     private static SchemaGenerator build(SchemaGeneratorConfigBuilder builder) {
-        return build(builder, null, null, WalkConstraintSource.INSTANCE);
+        return build(builder, null, null);
     }
 
     /**
@@ -467,28 +467,24 @@ public final class AnnotationJsonSchemaGenerator {
      * it through {@link OutputPropertyNameResolver}, because Victools' Jackson module reads annotations
      * but not an {@link ObjectMapper}-level naming strategy.
      *
-     * <p>The Jakarta Validation module ({@code NOT_NULLABLE_FIELD_IS_REQUIRED},
-     * {@code INCLUDE_PATTERN_EXPRESSIONS}) is installed unless {@code constraintSource} is a
-     * {@link MetadataConstraintSource}, in which case it is omitted entirely: that source drives
-     * constraints for every member itself, scoped or not, and reproduces both options' effects, so the
-     * two never double-emit or conflict.
+     * <p>The Jakarta Validation module ({@code NOT_NULLABLE_FIELD_IS_REQUIRED}, {@code
+     * INCLUDE_PATTERN_EXPRESSIONS}) is installed <strong>unconditionally, in every mode</strong> — it
+     * is the floor: whatever it renders for a scoped field or getter is rendered whether or not a
+     * {@link jakarta.validation.Validator} is supplied. A {@link MetadataConstraintSource} supplement,
+     * present only when a {@code Validator} is supplied, is consulted on top of that floor by {@link
+     * InputPropertyDescriber} — never in place of it — so a document generated with a validator still
+     * renders every keyword {@code main} (no validator) would have rendered; see {@link
+     * ConstraintSource} and {@link ResolvedConstraints} for the addition/correction split that keeps
+     * the two from conflicting.
      */
     private static SchemaGenerator build(
             SchemaGeneratorConfigBuilder builder,
             InputPropertyDescriber describer,
-            OutputPropertyNameResolver outputNames,
-            ConstraintSource constraintSource) {
+            OutputPropertyNameResolver outputNames) {
         builder.with(new JacksonModule());
-        if (!constraintSource.disablesGeneratorJakartaModule()) {
-            builder.with(new JakartaValidationModule(
-                    JakartaValidationOption.NOT_NULLABLE_FIELD_IS_REQUIRED,
-                    JakartaValidationOption.INCLUDE_PATTERN_EXPRESSIONS));
-        }
-        // Both options only ever affected a scoped field or getter's required-ness and its @Pattern
-        // rendering; MetadataConstraintSource.forScopedMember reproduces both effects itself (required
-        // from a group-filtered @NotNull/@NotBlank/@NotEmpty — matching victools' own isNullable()
-        // check exactly — and the same pattern keyword the module would have emitted), so disabling the
-        // module here loses nothing it would otherwise have contributed.
+        builder.with(new JakartaValidationModule(
+                JakartaValidationOption.NOT_NULLABLE_FIELD_IS_REQUIRED,
+                JakartaValidationOption.INCLUDE_PATTERN_EXPRESSIONS));
         builder.with(new Swagger2Module());
         if (describer != null) {
             builder.forTypesInGeneral().withCustomDefinitionProvider(describer);
@@ -713,7 +709,14 @@ public final class AnnotationJsonSchemaGenerator {
             ObjectNode generated;
             try {
                 generated = generator.generateSchema(type);
-                // Applied first, so an alias copy of a property schema is taken after its nullability
+                // Applied first of the three post-generation passes, once the underlying schema library
+                // has fully finished writing to every node (a scoped-member correction — "pattern" under
+                // INCLUDE_PATTERN_EXPRESSIONS in particular — cannot be applied any earlier without the
+                // library's own later write treating it as a conflicting value; see
+                // InputPropertyDescriber#applyScopedConstraints). A no-op in every mode but the input
+                // direction with an active Bean Validation supplement, which alone writes the marker.
+                InputPropertyDescriber.applyDeferredScopedConstraints(generated);
+                // Applied next, so an alias copy of a property schema is taken after its nullability
                 // is final; a no-op in every mode but the input direction, which alone writes the mark.
                 InputPropertyDescriber.applyNullability(generated);
                 // Refused before expansion strips the key, and in every construction mode, because
@@ -944,7 +947,9 @@ public final class AnnotationJsonSchemaGenerator {
                     fragment,
                     false,
                     newVisitedSet(),
-                    schema -> found[0] |= schema.has(MARKER) || schema.has(InputPropertyDescriber.NULLABLE_MARKER));
+                    schema -> found[0] |= schema.has(MARKER)
+                            || schema.has(InputPropertyDescriber.NULLABLE_MARKER)
+                            || schema.has(InputPropertyDescriber.SCOPED_CONSTRAINTS_MARKER));
             return found[0];
         }
 

@@ -19,29 +19,14 @@ enum ConstraintValueKind {
     OTHER;
 
     /**
-     * Derives the kind from the generated schema's own {@code type} keyword, already resolved by the
-     * schema library or by the property's declared type.
+     * Derives the kind from a member's declared Java type.
      *
-     * @param jsonSchemaType the schema's {@code type} value ({@code "array"}, {@code "object"}, ...),
-     *                       or {@code null} when the schema carries no {@code type} keyword
-     * @return the corresponding kind, or {@link #OTHER} for anything unrecognized
-     */
-    static ConstraintValueKind fromSchemaType(String jsonSchemaType) {
-        if (jsonSchemaType == null) {
-            return OTHER;
-        }
-        return switch (jsonSchemaType) {
-            case "array" -> ARRAY;
-            case "object" -> MAP;
-            case "integer", "number" -> NUMBER;
-            case "string" -> STRING;
-            default -> OTHER;
-        };
-    }
-
-    /**
-     * Derives the kind from a member's declared Java type, for a position the schema does not (yet)
-     * carry a {@code type} keyword for.
+     * <p>Deriving from the generated schema's own {@code type} keyword was tried and abandoned (C2):
+     * that keyword is absent at the point constraints are applied for a map, a bean, or an {@code
+     * Optional} value position (the schema is still a bare {@code $ref} wrapper, or the member has no
+     * schema-library member scope at all), so a {@code @Size} on a {@code Map} rendered {@code
+     * maxLength} instead of {@code maxProperties}. The declared Java type is always available,
+     * regardless of what the schema looks like at the moment a constraint is being applied.
      *
      * @param javaType the declared Java type
      * @return the corresponding kind

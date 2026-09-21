@@ -18,26 +18,22 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * The default {@link ConstraintSource}: the pre-existing hand translation from Jackson's merged
+ * The floor {@link ConstraintSource}: the pre-existing hand translation from Jackson's merged
  * annotation map, unchanged in behavior from before this abstraction existed.
  *
- * <p>A field or getter with a schema-library member scope is left to the library's own Jackson and
- * Jakarta Validation modules — {@link #forScopedMember} is therefore never invoked, since
- * {@link #disablesGeneratorJakartaModule()} is {@code false} and the caller only consults that method
- * when it is {@code true}. A creator parameter, setter, or builder method has no such scope; its
- * constraints are read directly from {@code jacksonMember.getAnnotation(...)}, which already carries
- * the same-named field's and getter's merged annotations.
+ * <p>A field or getter with a schema-library member scope is left entirely to the library's own
+ * Jackson and Jakarta Validation modules, which now run unconditionally — {@link #forScopedMember} is
+ * therefore always {@link ResolvedConstraints#NONE}; nothing here would ever add to what the module
+ * already wrote. A creator parameter, setter, or builder method has no such scope; its constraints are
+ * read directly from {@code jacksonMember.getAnnotation(...)}, which already carries the same-named
+ * field's and getter's merged annotations. {@link #INSTANCE} is called unconditionally as the floor
+ * for that member kind, whether or not a {@link MetadataConstraintSource} supplement is also active.
  */
 final class WalkConstraintSource implements ConstraintSource {
 
     static final WalkConstraintSource INSTANCE = new WalkConstraintSource();
 
     private WalkConstraintSource() {}
-
-    @Override
-    public boolean disablesGeneratorJakartaModule() {
-        return false;
-    }
 
     @Override
     public ResolvedConstraints forScopedMember(Class<?> builtClass, String javaName, ConstraintValueKind kind) {
@@ -92,6 +88,8 @@ final class WalkConstraintSource implements ConstraintSource {
             keywords.putIfAbsent(minKeyword, 1);
         }
         boolean required = jacksonMember.getAnnotation(NotNull.class) != null || notBlank != null || notEmpty != null;
-        return new ResolvedConstraints(keywords, required);
+        // Nothing precedes the floor for an unscoped member, so every keyword it renders is an
+        // "addition" in name only; there is nothing yet on the schema for it to be conditional against.
+        return new ResolvedConstraints(keywords, Map.of(), required);
     }
 }

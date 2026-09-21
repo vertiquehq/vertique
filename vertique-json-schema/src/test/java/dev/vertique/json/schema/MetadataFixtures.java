@@ -140,7 +140,13 @@ final class MetadataFixtures {
 
     interface AdminGroup {}
 
-    /** A constraint declared with a non-default group; must be excluded from the default render. */
+    /**
+     * A constraint declared with a non-default group, on a plain, reflectively visible field: the
+     * always-active floor (the schema library's own Jakarta Validation module, group-blind by
+     * construction — a schema generator has no Bean Validation group concept) renders it required
+     * regardless, matching {@code main}; only the metadata supplement's own contribution is filtered
+     * by group.
+     */
     static final class NonDefaultGroupDto {
         @NotNull(groups = AdminGroup.class)
         public String secret;
@@ -148,6 +154,15 @@ final class MetadataFixtures {
 
     /** No annotations: "label"'s constraints come entirely from an XML constraint mapping. */
     static class XmlMappedDto {
+        public String label;
+    }
+
+    /**
+     * No annotations: "label" is constrained purely by an XML mapping, in a non-Default group — a
+     * shape the floor cannot see at all (no reflective annotation exists), so whether it renders
+     * depends entirely on the metadata supplement's own group filter.
+     */
+    static class XmlMappedNonDefaultGroupDto {
         public String label;
     }
 
