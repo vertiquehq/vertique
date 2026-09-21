@@ -1402,8 +1402,13 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
          * <p>When a keyword and constraint args are successfully resolved, a safe canonical
          * {@code detail} message is generated from the keyword and constraint value — the raw
          * vertx-json-schema error message is intentionally not used because it may echo the submitted
-         * request value (e.g. "500 is greater than 100"). For keywords without resolved args, the raw
-         * message is used as a fallback.
+         * request value (e.g. "500 is greater than 100"). For a resolved keyword without resolved args,
+         * the raw message is used as a fallback. An error in the multi-error loop below whose keyword
+         * location resolves to no keyword at all — absent or empty, rather than naming a structural
+         * traversal keyword — never reaches that fallback (W4, spike/deserializer-driven-schema round 4
+         * ruling): it produces a value-free detail instead, since the raw fallback is not reviewed for
+         * that shape and could otherwise echo the submitted value the same way it can for an enriched
+         * keyword.
          *
          * <p>When {@code failFast} is {@code true}, only the first non-structural error is added to
          * {@code failures} and then this method returns immediately.
@@ -1457,6 +1462,22 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                 String keyword = extractKeywordFor(error);
                 // Skip structural traversal wrapper errors (e.g. "#/properties" intermediate error)
                 if (keyword == null && isStructuralError(error.getKeywordLocation())) {
+                    continue;
+                }
+                if (keyword == null) {
+                    // W4 (spike/deserializer-driven-schema round 4 ruling): the keyword location is
+                    // absent (or empty) rather than structural — extractKeywordFor still yields null, but
+                    // there is no resolved keyword to render a canonical message from, and falling
+                    // through to safeDetail's own raw-message fallback would return vertx-json-schema's
+                    // own message unfiltered, exactly the class of leak FR-018/#598 removed for every
+                    // other keyword (it may itself echo the submitted value). A value-free detail is
+                    // produced instead, named at this error's own reported instance location, the same
+                    // way the "every error was structural" branch below produces one when the loop itself
+                    // adds nothing.
+                    failures.add(valueFreeDetail(error.getInstanceLocation(), fallbackPath, location, schema));
+                    if (failFast) {
+                        return;
+                    }
                     continue;
                 }
                 Map<String, Object> args = resolveConstraintArgs(keyword, error.getKeywordLocation(), schema);
@@ -1783,8 +1804,12 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
          * vertx-json-schema error message — which may echo the submitted value (e.g.
          * {@code "500 is greater than 100"}) — is never used for enriched keywords.
          *
-         * <p>For keywords without resolved args (where args contain only {@code {keyword: true}}),
-         * the raw error message is used as a fallback since no submitted-value risk is evident.
+         * <p>For a resolved keyword without resolved args (where args contain only
+         * {@code {keyword: true}}), the raw error message is used as a fallback since no
+         * submitted-value risk is evident. The multi-error loop in {@link #collectFailures} never calls
+         * this method with a {@code null} keyword for a non-structural error (W4,
+         * spike/deserializer-driven-schema round 4 ruling): it produces a value-free detail for that
+         * shape instead, since this fallback is not reviewed for it.
          *
          * @param keyword    the failed keyword, or {@code null} when not resolvable
          * @param args       the resolved constraint args map (empty when keyword is unknown)
