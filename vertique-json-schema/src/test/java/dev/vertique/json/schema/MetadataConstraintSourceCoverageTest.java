@@ -159,6 +159,33 @@ class MetadataConstraintSourceCoverageTest {
     }
 
     @Test
+    @DisplayName("owner ruling: a hand-written builder reproducing the Lombok shape also joins under a validator"
+            + " — the supplement's own builder gate must resolve it the same way the floor does")
+    void handWrittenLombokShapedBuilderAlsoJoinsUnderAValidator() {
+        // The builder gate is checked on both borrow sites (3264cff9): InputPropertyDescriber (the
+        // floor, pinned without a validator by BuilderWireNameJoinTest
+        // .handWrittenLombokShapedBuilderAlsoBorrows) and this class (the Bean Validation supplement).
+        // Both must agree a hand-written builder that reproduces @Jacksonized's exact shape by hand —
+        // a static nested class named in the Lombok convention, the same @JsonDeserialize/
+        // @JsonPOJOBuilder annotation values, a build() returning the built type, and a one-argument
+        // setter whose name and parameter type both match the field exactly — may still resolve, since
+        // BuilderBorrowDetector cannot tell it apart from a real Lombok builder.
+        Validator validator = MetadataTestValidators.plain();
+        JsonNode document =
+                metadataDocument(BuilderWireNameJoinTest.HandWrittenLombokShapedDto.class, validator);
+        JsonNode amount = document.at("/properties/amount");
+
+        assertFalse(amount.isMissingNode(), "amount must be published: the builder method binds it");
+        assertEquals(
+                10,
+                amount.at("/maximum").asInt(),
+                "MetadataConstraintSource's own builder gate must resolve this shape the same way the floor"
+                        + " does under BuilderWireNameJoinTest.handWrittenLombokShapedBuilderAlsoBorrows: a"
+                        + " hand-written builder that reproduces @Jacksonized's exact shape may still borrow"
+                        + " the built field's constraint, even under a validator; document: " + document);
+    }
+
+    @Test
     @DisplayName("a creator parameter without -parameters joins by constructor + index, not by name")
     void creatorParameterWithoutParametersJoinsByIndex() {
         Validator validator = MetadataTestValidators.plain();
