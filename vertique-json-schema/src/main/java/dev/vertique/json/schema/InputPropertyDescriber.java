@@ -115,6 +115,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
 
     private final ObjectMapper mapper;
     private final boolean strictSpellings;
+    private final ConstraintSource constraintSource;
 
     /** The introspected ignored names per type, the one fact the deserializer does not carry. */
     private final Map<JavaType, Set<String>> ignoredNamesByType = new ConcurrentHashMap<>();
@@ -132,8 +133,20 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * @param strictSpellings whether the profile forbids several spellings of one property
      */
     InputPropertyDescriber(ObjectMapper mapper, boolean strictSpellings) {
+        this(mapper, strictSpellings, WalkConstraintSource.INSTANCE);
+    }
+
+    /**
+     * @param mapper           the profile's mapper, which the binder parses a body with
+     * @param strictSpellings  whether the profile forbids several spellings of one property
+     * @param constraintSource the source of value-schema constraints for every bound property; {@link
+     *                         WalkConstraintSource#INSTANCE} unless the generator was built with a
+     *                         {@link jakarta.validation.Validator}
+     */
+    InputPropertyDescriber(ObjectMapper mapper, boolean strictSpellings, ConstraintSource constraintSource) {
         this.mapper = mapper;
         this.strictSpellings = strictSpellings;
+        this.constraintSource = constraintSource;
     }
 
     /** Clears the per-generation recursion state after an abnormal exit. */
@@ -476,7 +489,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                     context,
                     true);
             if (member != null) {
-                translateConstraints(member, inline, property.getName(), required);
+                translateConstraints(member, builtClass, inline, property.getName(), required);
             }
             return inline;
         }
@@ -487,12 +500,12 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             JsonNode schema = context.createDefinitionReference(
                     context.getTypeContext().resolve(converting.getDelegatee().handledType()));
             if (member != null) {
-                translateConstraints(member, (ObjectNode) schema, property.getName(), required);
+                translateConstraints(member, builtClass, (ObjectNode) schema, property.getName(), required);
             }
             return schema;
         }
         if (raw instanceof Field field) {
-            return fieldSchema(field, resolved, property.getName(), context, required);
+            return fieldSchema(field, builtClass, resolved, property.getName(), context, required);
         }
         if (raw instanceof Method method) {
             return methodSchema(method, property, builtClass, resolved, context, required);
@@ -500,9 +513,9 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         if (member instanceof AnnotatedParameter parameter) {
             Field backing = backingField(builtClass, parameter, property.getName());
             if (backing != null) {
-                JsonNode schema = fieldSchema(backing, resolved, property.getName(), context, required);
+                JsonNode schema = fieldSchema(backing, builtClass, resolved, property.getName(), context, required);
                 if (schema != null && member != null) {
-                    translateConstraints(member, (ObjectNode) schema, property.getName(), required);
+                    translateConstraints(member, builtClass, (ObjectNode) schema, property.getName(), required);
                 }
                 return schema;
             }
@@ -511,7 +524,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         // constraints from Jackson's merged annotation map.
         ObjectNode schema = context.createDefinitionReference(resolve(context, property.getType()));
         if (member != null) {
-            translateConstraints(member, schema, property.getName(), required);
+            translateConstraints(member, builtClass, schema, property.getName(), required);
         }
         boolean objectId = property instanceof com.fasterxml.jackson.databind.deser.impl.ObjectIdValueProperty;
         if (!objectId
@@ -523,7 +536,12 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     }
 
     private JsonNode fieldSchema(
-            Field field, ResolvedType resolved, String name, SchemaGenerationContext context, List<String> required) {
+            Field field,
+            Class<?> builtClass,
+            ResolvedType resolved,
+            String name,
+            SchemaGenerationContext context,
+            List<String> required) {
         TypeContext typeContext = context.getTypeContext();
         SchemaGeneratorConfig config = context.getGeneratorConfig();
         ResolvedTypeWithMembers members = membersOf(typeContext, resolved, field.getDeclaringClass());
@@ -548,10 +566,36 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             if (nullable) {
                 markNullable(schema);
             }
+            applyScopedConstraints(schema, builtClass, field.getName(), name, required);
             return schema;
         }
         // A field the library's member resolution does not list (a static or synthetic one): by type.
         return context.createDefinitionReference(typeContext.resolve(field.getGenericType()));
+    }
+
+    /**
+     * When the constraint source is metadata-driven, applies its constraints and required-ness to a
+     * field or getter that a schema-library member scope already described — the generator disabled
+     * its own Jakarta Validation module for exactly this reason. A no-op for the annotation walk,
+     * which leaves a scoped member entirely to the library's own modules.
+     *
+     * @param schema     the schema the library produced for the member; may be a {@code $ref} wrapper,
+     *                   in which case its {@code type} is unavailable and the value kind falls back to
+     *                   {@link ConstraintValueKind#OTHER}
+     * @param builtClass the type the property is described on
+     * @param javaName   the field's or getter's Java bean name
+     * @param wireName   the published property name, added to {@code required} when applicable
+     * @param required   the object schema's required-property list
+     */
+    private void applyScopedConstraints(
+            ObjectNode schema, Class<?> builtClass, String javaName, String wireName, List<String> required) {
+        if (!constraintSource.disablesGeneratorJakartaModule()) {
+            return;
+        }
+        ConstraintValueKind kind =
+                ConstraintValueKind.fromSchemaType(schema.path("type").asText());
+        ResolvedConstraints resolved = constraintSource.forScopedMember(builtClass, javaName, kind);
+        applyResolvedConstraints(schema, resolved, wireName, required);
     }
 
     private JsonNode methodSchema(
@@ -570,7 +614,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             // returns the builder. The value type comes from the deserializer, the constraints from
             // Jackson's merged annotation map, and a builder method borrows the built type's field.
             ObjectNode schema = context.createDefinitionReference(resolve(context, property.getType()));
-            translateConstraints(member, schema, property.getName(), required);
+            translateConstraints(member, builtClass, schema, property.getName(), required);
             if (method.getDeclaringClass() != builtClass
                     && !method.getDeclaringClass().isAssignableFrom(builtClass)) {
                 // a builder method: the constraints live on the built type's field of the same name
@@ -607,13 +651,16 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 scope = scope.withOverriddenType(overrides.get(0));
             }
             JsonNode schema = context.createStandardDefinitionReference(scope, null);
-            if (nullable && schema instanceof ObjectNode object) {
-                markNullable(object);
+            if (schema instanceof ObjectNode object) {
+                if (nullable) {
+                    markNullable(object);
+                }
+                applyScopedConstraints(object, builtClass, getterBeanName(method), property.getName(), required);
             }
             return schema;
         }
         ObjectNode schema = context.createDefinitionReference(resolve(context, property.getType()));
-        translateConstraints(member, schema, property.getName(), required);
+        translateConstraints(member, builtClass, schema, property.getName(), required);
         return schema;
     }
 
@@ -715,61 +762,104 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         return null;
     }
 
-    /** The translation a member without a library scope needs, read from Jackson's merged annotation map. */
-    private static void translateConstraints(
-            AnnotatedMember member, ObjectNode schema, String name, List<String> required) {
+    /**
+     * The constraints a member without a library scope needs — a creator parameter, a setter, or a
+     * builder method — from {@link #constraintSource}: the annotation walk (Jackson's merged
+     * annotation map) unless the generator was built with a {@link jakarta.validation.Validator}, in
+     * which case Bean Validation metadata. The Swagger translation is source-independent and always
+     * applied.
+     */
+    private void translateConstraints(
+            AnnotatedMember member, Class<?> builtClass, ObjectNode schema, String name, List<String> required) {
         if (member == null) {
             return;
         }
-        boolean array = "array".equals(schema.path("type").asText());
-        boolean object = "object".equals(schema.path("type").asText());
-        Max max = member.getAnnotation(Max.class);
-        if (max != null) {
-            schema.put("maximum", max.value());
-        }
-        Min min = member.getAnnotation(Min.class);
-        if (min != null) {
-            schema.put("minimum", min.value());
-        }
-        DecimalMax decimalMax = member.getAnnotation(DecimalMax.class);
-        if (decimalMax != null) {
-            schema.put(decimalMax.inclusive() ? "maximum" : "exclusiveMaximum", new BigDecimal(decimalMax.value()));
-        }
-        DecimalMin decimalMin = member.getAnnotation(DecimalMin.class);
-        if (decimalMin != null) {
-            schema.put(decimalMin.inclusive() ? "minimum" : "exclusiveMinimum", new BigDecimal(decimalMin.value()));
-        }
-        Size size = member.getAnnotation(Size.class);
-        if (size != null) {
-            String maxKeyword = array ? "maxItems" : object ? "maxProperties" : "maxLength";
-            String minKeyword = array ? "minItems" : object ? "minProperties" : "minLength";
-            if (size.max() != Integer.MAX_VALUE) {
-                schema.put(maxKeyword, size.max());
-            }
-            if (size.min() > 0) {
-                schema.put(minKeyword, size.min());
-            }
-        }
-        Pattern pattern = member.getAnnotation(Pattern.class);
-        if (pattern != null) {
-            schema.put("pattern", pattern.regexp());
-        }
-        NotBlank notBlank = member.getAnnotation(NotBlank.class);
-        NotEmpty notEmpty = member.getAnnotation(NotEmpty.class);
-        if (notBlank != null || notEmpty != null) {
-            String minKeyword = array ? "minItems" : object ? "minProperties" : "minLength";
-            if (!schema.has(minKeyword)) {
-                schema.put(minKeyword, 1);
-            }
-        }
-        if ((member.getAnnotation(NotNull.class) != null || notBlank != null || notEmpty != null)
-                && !required.contains(name)) {
-            required.add(name);
-        }
+        ConstraintValueKind kind =
+                ConstraintValueKind.fromSchemaType(schema.path("type").asText());
+        String javaName = javaBeanName(member);
+        ResolvedConstraints resolved = constraintSource.forUnscopedMember(builtClass, javaName, kind, member);
+        applyResolvedConstraints(schema, resolved, name, required);
         Schema swagger = member.getAnnotation(Schema.class);
         if (swagger != null) {
             translateSwagger(swagger, schema);
         }
+    }
+
+    /** Merges a resolved constraint set onto a schema and its required-list entry. */
+    private static void applyResolvedConstraints(
+            ObjectNode schema, ResolvedConstraints resolved, String wireName, List<String> required) {
+        for (Map.Entry<String, Object> entry : resolved.keywords().entrySet()) {
+            putKeyword(schema, entry.getKey(), entry.getValue());
+        }
+        if (resolved.required() && !required.contains(wireName)) {
+            required.add(wireName);
+        }
+    }
+
+    /**
+     * Applies one constraint-source keyword to a schema, preserving the exact value type the
+     * pre-existing hand translation used ({@link Long}/{@link Integer} for an integral bound,
+     * {@link BigDecimal} for a decimal bound, {@link String} for a pattern) so a document's numeric
+     * formatting is unaffected by which source produced it.
+     *
+     * <p>{@code "items"} is special: its value is itself a keyword map for a {@code List}/array value
+     * position's container-element constraints, merged onto the schema's own {@code items} subschema
+     * when that subschema is an inline object — a {@code $ref}'d items subschema is left unchanged,
+     * the same gap the generator already accepts for a {@code Map} value position.
+     */
+    @SuppressWarnings("unchecked")
+    private static void putKeyword(ObjectNode schema, String key, Object value) {
+        if ("items".equals(key) && value instanceof Map<?, ?> itemKeywords) {
+            if (schema.get("items") instanceof ObjectNode itemsObject) {
+                for (Map.Entry<String, Object> entry : ((Map<String, Object>) itemKeywords).entrySet()) {
+                    putKeyword(itemsObject, entry.getKey(), entry.getValue());
+                }
+            }
+            return;
+        }
+        if (value instanceof Long l) {
+            schema.put(key, (long) l);
+        } else if (value instanceof Integer i) {
+            schema.put(key, (int) i);
+        } else if (value instanceof BigDecimal decimal) {
+            schema.put(key, decimal);
+        } else if (value instanceof String s) {
+            schema.put(key, s);
+        } else {
+            throw new IllegalStateException("unsupported constraint keyword value type for '" + key + "': "
+                    + (value == null ? "null" : value.getClass()));
+        }
+    }
+
+    /**
+     * The Java bean name a member joins Bean Validation metadata by: a field's own name, or the name a
+     * getter or setter implies by stripping its {@code get}/{@code is}/{@code set}/{@code with} prefix.
+     * A creator parameter has no such name here — {@link MetadataConstraintSource} joins it by
+     * constructor and index instead, read from the {@link AnnotatedParameter} itself — so this method
+     * returns {@code null} for one, which the metadata source's parameter branch never consults.
+     */
+    private static String javaBeanName(AnnotatedMember member) {
+        Member raw = member.getMember();
+        if (raw instanceof Field field) {
+            return field.getName();
+        }
+        if (raw instanceof Method method) {
+            boolean setterLike = method.getReturnType() == void.class || method.getParameterCount() > 0;
+            return setterLike ? impliedFieldName(method) : getterBeanName(method);
+        }
+        return null;
+    }
+
+    /** The field a getter implies by its name: {@code getLevel}/{@code isActive} imply {@code level}/{@code active}. */
+    private static String getterBeanName(Method method) {
+        String name = method.getName();
+        for (String prefix : List.of("get", "is")) {
+            if (name.length() > prefix.length() && name.startsWith(prefix)) {
+                String rest = name.substring(prefix.length());
+                return Character.toLowerCase(rest.charAt(0)) + rest.substring(1);
+            }
+        }
+        return name;
     }
 
     /** The Swagger metadata a creator parameter or setter carries; a field or getter keeps the module's own handling. */

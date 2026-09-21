@@ -49,15 +49,76 @@ overrides apply:
   naming strategies, and write-only/read-only access are honored, so read-only properties are not
   advertised as accepted input; only the profile's `INPUT`- and `BOTH`-direction schema-type
   overrides apply.
+- `forInputProfile(JsonMapperProfile, jakarta.validation.Validator)` — identical to
+  `forInputProfile(JsonMapperProfile)`, except that value-schema constraints are sourced from Bean
+  Validation metadata instead of the annotation walk. See "Constraint sources" below. Pass `null`
+  (or use the single-argument overload) when no `Validator` is available; a `null` validator is
+  exactly the single-argument overload's behavior, not a degraded mode.
 - `forOutputProfile(JsonMapperProfile)` — property discovery and external property names use the
   output-direction Jackson introspection of `profile.mapper()`; the same mapper metadata applies,
   so write-only properties are not advertised as emitted output; only the profile's `OUTPUT`- and
-  `BOTH`-direction schema-type overrides apply.
+  `BOTH`-direction schema-type overrides apply. There is no validator-accepting overload for this
+  direction: constraint sourcing applies to input generation only.
 
-All three modes install the same Victools modules and options — the Jackson module, the Jakarta
-Validation module with `NOT_NULLABLE_FIELD_IS_REQUIRED` and `INCLUDE_PATTERN_EXPRESSIONS`, and the
-Swagger 2 module — so only the mapper source and the selected profile overrides differ between
-modes.
+All three modes install the Jackson module and the Swagger 2 module. The Jakarta Validation module
+(`NOT_NULLABLE_FIELD_IS_REQUIRED`, `INCLUDE_PATTERN_EXPRESSIONS`) is installed for every mode
+**except** a validator-backed input generator, which sources every member's constraints — scoped or
+not — from Bean Validation metadata instead and disables the Jakarta Validation module for the whole
+instance, so the two never double-emit or conflict.
+
+### Constraint sources: annotation walk vs. Bean Validation metadata
+
+The input direction's value-schema constraints (`minLength`, `maximum`, `pattern`, `required`, ...)
+come from one of two sources, selected once per generator at construction:
+
+- **The annotation walk** (default; used whenever no `Validator` is supplied). A field or getter with
+  a Victools member scope is described entirely by Victools' own Jackson and Jakarta Validation
+  modules. A creator parameter, setter, or builder method has no such scope; its constraints are
+  read directly from Jackson's merged annotation map (which already carries the same-named field's
+  and getter's annotations), and a builder method borrows the built type's same-named field.
+- **Bean Validation metadata** (`Validator.getConstraintsForClass`; used when a `Validator` is
+  supplied to `forInputProfile`). Unlike the walk, this source sees constraints the walk cannot join
+  by wire name at all: a constructor-parameter constraint on a type compiled without
+  `-parameters`, a `List`/array container-element constraint, a constraint inherited through a
+  superclass or an implemented interface, a composed constraint's leaves, and a constraint declared
+  entirely through an XML mapping.
+
+**The join.** A field- or getter/setter-backed property joins to a `PropertyDescriptor` by the
+member's Java bean name — the field name, or the name a getter/setter implies by stripping its
+`get`/`is`/`set`/`with` prefix — **never** by the wire name; a builder method joins the same way, on
+the built type. A creator-parameter property joins to a `ParameterDescriptor` by its declaring
+constructor and parameter index (`SettableBeanProperty.getCreatorIndex()`), never by name; a
+static-factory creator's parameters join to nothing, because Bean Validation exposes constrained
+constructors only. Where a property matches nothing, it gets no constraints from the metadata —
+this is a silent no-op, not a failure. A `List`/array value's container-element constraints
+(`getConstrainedContainerElementTypes()`, type-argument index 0) merge onto the property's `items`
+subschema when that subschema is inline; a `Map` value's element position is not described by the
+generator at all today, so it is unaffected either way.
+
+**The group filter.** Only a constraint whose declared groups are empty or contain
+`jakarta.validation.groups.Default` is rendered. `@Valid` cascades are never consulted, because the
+generator already descends into nested types on its own.
+
+**Rendering.** `@Size` renders `minLength`/`maxLength`, `minItems`/`maxItems`, or
+`minProperties`/`maxProperties` depending on the value's kind; `@Min`/`@Max`/`@DecimalMin`/
+`@DecimalMax` (respecting `inclusive`), `@Positive`/`@PositiveOrZero`/`@Negative`/`@NegativeOrZero`;
+`@NotNull`/`@NotBlank`/`@NotEmpty` mark the property `required` — matching Victools'
+`NOT_NULLABLE_FIELD_IS_REQUIRED` exactly, which treats all three identically; `@NotBlank`/
+`@NotEmpty` additionally floor the size keyword at 1; `@Email` renders `format: email`; Hibernate's
+`@Length`, `@Range`, and `@URL` render (recognized by annotation simple name alone, never by
+importing `hibernate-validator`'s constraint classes, so the metadata source stays usable with any
+Jakarta Validation provider). A `@Pattern`'s flags are embedded as an inline Java regex modifier
+group (`(?i:...)`, ...) — measured against the real `io.vertx.json.schema` 5.1.6 validator, which
+compiles the `pattern` keyword with plain `java.util.regex.Pattern` and honors this — except
+`CANON_EQ`, which has no embeddable modifier character and fails generation with a bounded
+diagnostic naming the property. An unrecognized constraint type is skipped with a `DEBUG`-level
+`System.Logger` log naming the type and the property (this module carries no logging-facade
+dependency; see "Dependencies").
+
+**Bootstrapping a `Validator`.** `HibernateValidator.configure().messageInterpolator(new
+ParameterMessageInterpolator())` avoids an expression-language dependency; the default message
+interpolator does not. This module never constructs a `Validator` itself
+(`Validation.byDefaultProvider()` is never called here) — the caller always supplies one.
 
 ### Which properties the input direction describes
 
@@ -438,7 +499,7 @@ modes consume.
 |----------|-------|---------|
 | `dev.vertique:vertique-core` | compile | `JsonMapperProfile`, `JsonSchemaFragment`, `JsonSchemaTypeOverride` — the stable JSON profile contracts this module consumes |
 | `com.fasterxml.jackson.core:jackson-databind` | compile | `ObjectMapper` property discovery that Victools' Jackson module introspects |
-| `jakarta.validation:jakarta.validation-api` | compile | Jakarta Validation constraint annotations Victools' Jakarta Validation module introspects |
+| `jakarta.validation:jakarta.validation-api` | compile | Jakarta Validation constraint annotations Victools' Jakarta Validation module introspects; also the `Validator`/constraint-metadata types `forInputProfile(profile, Validator)`'s metadata constraint source reads. No `hibernate-validator` (or any other provider implementation) dependency — Hibernate's `@Length`/`@Range`/`@URL` are recognized by annotation simple name alone, keeping this module provider-agnostic |
 | `io.swagger.core.v3:swagger-annotations-jakarta` | compile | `@Schema` / `@ArraySchema` annotations Victools' Swagger 2 module introspects |
 | `com.github.victools:jsonschema-generator` | compile | The Draft 2020-12 schema generation engine |
 | `com.github.victools:jsonschema-module-jackson` | compile | Jackson property discovery module |

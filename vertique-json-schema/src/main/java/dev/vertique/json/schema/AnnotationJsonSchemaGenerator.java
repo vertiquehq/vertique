@@ -30,6 +30,7 @@ import com.github.victools.jsonschema.module.jakarta.validation.JakartaValidatio
 import com.github.victools.jsonschema.module.swagger2.Swagger2Module;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonSchemaTypeOverride.Direction;
+import jakarta.validation.Validator;
 import java.lang.reflect.Field;
 import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.Member;
@@ -339,7 +340,36 @@ public final class AnnotationJsonSchemaGenerator {
      *                                        for this direction
      */
     public static AnnotationJsonSchemaGenerator forInputProfile(JsonMapperProfile profile) {
-        return forProfile(profile, Direction.INPUT);
+        return forProfile(profile, Direction.INPUT, null);
+    }
+
+    /**
+     * Constructs an input-direction generator exactly as {@link #forInputProfile(JsonMapperProfile)}
+     * does, except that value-schema constraints are read from Bean Validation metadata
+     * ({@code validator.getConstraintsForClass}) instead of the annotation walk, whenever a non-null
+     * {@code validator} is supplied.
+     *
+     * <p>Bean Validation is an optional dependency: an application without a {@link Validator}
+     * available passes {@code null} (or calls the single-argument overload), and generation is
+     * unchanged from before this overload existed. When a validator is supplied, the generator
+     * disables its own Jakarta Validation module for the whole instance, so the two never double-emit
+     * or conflict — see {@code ConstraintSource} for the join rules and the group filter.
+     *
+     * @param profile   the resolved JSON mapper profile whose mapper and input-applicable overrides
+     *                  drive generation; must not be {@code null}
+     * @param validator the Bean Validation validator to source constraints from, or {@code null} to
+     *                  use the annotation walk
+     * @return a generator configured for the profile's input direction
+     * @throws NullPointerException          if {@code profile} is {@code null}
+     * @throws JsonSchemaGenerationException if the profile's id, mapper, override list, or an
+     *                                        override declaration is invalid, if a fragment applying
+     *                                        in this direction carries the generator's reserved
+     *                                        alias-expansion keyword on a schema object, or if the
+     *                                        profile declares a duplicate effective override mapping
+     *                                        for this direction
+     */
+    public static AnnotationJsonSchemaGenerator forInputProfile(JsonMapperProfile profile, Validator validator) {
+        return forProfile(profile, Direction.INPUT, validator);
     }
 
     /**
@@ -359,7 +389,7 @@ public final class AnnotationJsonSchemaGenerator {
      *                                        for this direction
      */
     public static AnnotationJsonSchemaGenerator forOutputProfile(JsonMapperProfile profile) {
-        return forProfile(profile, Direction.OUTPUT);
+        return forProfile(profile, Direction.OUTPUT, null);
     }
 
     /**
@@ -373,7 +403,8 @@ public final class AnnotationJsonSchemaGenerator {
      * @throws NullPointerException          if {@code profile} is {@code null}
      * @throws JsonSchemaGenerationException if the profile's declarations are invalid
      */
-    private static AnnotationJsonSchemaGenerator forProfile(JsonMapperProfile profile, Direction direction) {
+    private static AnnotationJsonSchemaGenerator forProfile(
+            JsonMapperProfile profile, Direction direction, Validator validator) {
         Objects.requireNonNull(profile, "profile");
         ValidatedProfile validated = ValidatedProfile.forDirection(profile, direction);
 
@@ -389,15 +420,22 @@ public final class AnnotationJsonSchemaGenerator {
         }
         InputPropertyDescriber describer = null;
         OutputPropertyNameResolver outputNames = null;
+        // Bean Validation metadata drives constraints for the input direction only: it is the direction
+        // InputPropertyDescriber already owns the join for, and the output direction's own
+        // OutputPropertyNameResolver has no equivalent join to a Validator's property descriptors.
+        ConstraintSource constraintSource = direction == Direction.INPUT && validator != null
+                ? new MetadataConstraintSource(validator)
+                : WalkConstraintSource.INSTANCE;
         if (direction == Direction.INPUT) {
             // Read once, from the profile's own mapper instance: the same one that parses a body at the
             // REST gate, so the published rule and the binder's parse decision cannot disagree.
             boolean strict = validated.mapper().getFactory().isEnabled(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
-            describer = new InputPropertyDescriber(validated.mapper(), strict);
+            describer = new InputPropertyDescriber(validated.mapper(), strict, constraintSource);
         } else {
             outputNames = new OutputPropertyNameResolver(validated.mapper());
         }
-        return new AnnotationJsonSchemaGenerator(build(builder, describer, outputNames), hasOverrides, describer);
+        return new AnnotationJsonSchemaGenerator(
+                build(builder, describer, outputNames, constraintSource), hasOverrides, describer);
     }
 
     /**
@@ -413,7 +451,7 @@ public final class AnnotationJsonSchemaGenerator {
      * @return the configured Victools generator
      */
     private static SchemaGenerator build(SchemaGeneratorConfigBuilder builder) {
-        return build(builder, null, null);
+        return build(builder, null, null, WalkConstraintSource.INSTANCE);
     }
 
     /**
@@ -428,16 +466,30 @@ public final class AnnotationJsonSchemaGenerator {
      * schema library's own walk and only projects the mapper's serialization names and visibility onto
      * it through {@link OutputPropertyNameResolver}, because Victools' Jackson module reads annotations
      * but not an {@link ObjectMapper}-level naming strategy.
+     *
+     * <p>The Jakarta Validation module ({@code NOT_NULLABLE_FIELD_IS_REQUIRED},
+     * {@code INCLUDE_PATTERN_EXPRESSIONS}) is installed unless {@code constraintSource} is a
+     * {@link MetadataConstraintSource}, in which case it is omitted entirely: that source drives
+     * constraints for every member itself, scoped or not, and reproduces both options' effects, so the
+     * two never double-emit or conflict.
      */
     private static SchemaGenerator build(
             SchemaGeneratorConfigBuilder builder,
             InputPropertyDescriber describer,
-            OutputPropertyNameResolver outputNames) {
-        builder.with(new JacksonModule())
-                .with(new JakartaValidationModule(
-                        JakartaValidationOption.NOT_NULLABLE_FIELD_IS_REQUIRED,
-                        JakartaValidationOption.INCLUDE_PATTERN_EXPRESSIONS))
-                .with(new Swagger2Module());
+            OutputPropertyNameResolver outputNames,
+            ConstraintSource constraintSource) {
+        builder.with(new JacksonModule());
+        if (!constraintSource.disablesGeneratorJakartaModule()) {
+            builder.with(new JakartaValidationModule(
+                    JakartaValidationOption.NOT_NULLABLE_FIELD_IS_REQUIRED,
+                    JakartaValidationOption.INCLUDE_PATTERN_EXPRESSIONS));
+        }
+        // Both options only ever affected a scoped field or getter's required-ness and its @Pattern
+        // rendering; MetadataConstraintSource.forScopedMember reproduces both effects itself (required
+        // from a group-filtered @NotNull/@NotBlank/@NotEmpty — matching victools' own isNullable()
+        // check exactly — and the same pattern keyword the module would have emitted), so disabling the
+        // module here loses nothing it would otherwise have contributed.
+        builder.with(new Swagger2Module());
         if (describer != null) {
             builder.forTypesInGeneral().withCustomDefinitionProvider(describer);
         }
