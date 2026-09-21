@@ -267,4 +267,23 @@ final class MetadataFixtures {
             }
         }
     }
+
+    /**
+     * D4: a generic holder whose type variable is bound to {@code Integer} by the member that embeds
+     * it. {@code GenericHolderBase<T>.value}'s reflected {@link java.lang.reflect.Field#getType()} is
+     * the type variable's erasure ({@code Object}, unbounded) regardless of what any holder binds
+     * {@code T} to; only the resolved {@link com.fasterxml.jackson.databind.JavaType} Jackson computes
+     * for {@code GenericHolderBoundIntDto.boxed}'s own parameterization says {@code Integer}. {@code
+     * @Size} has no keyword family for a number, so a correct resolution renders nothing for it either
+     * way — matching {@code adv-d D4-generic-holder-bound-int} in the deserializer-driven-schema
+     * validation harness.
+     */
+    static final class GenericHolderBase<T> {
+        @Size(max = 3)
+        public T value;
+    }
+
+    static final class GenericHolderBoundIntDto {
+        public GenericHolderBase<Integer> boxed;
+    }
 }

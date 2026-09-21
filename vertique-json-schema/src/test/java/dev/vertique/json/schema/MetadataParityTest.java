@@ -22,13 +22,14 @@ import org.junit.jupiter.api.Test;
 
 /**
  * C4: per-shape parity proof that the design's floor-plus-supplement architecture holds — generating
- * with a {@link Validator} supplied produces byte-identical output to generating without one, for five
+ * with a {@link Validator} supplied produces byte-identical output to generating without one, for six
  * shapes chosen to each exercise a different corner: a scoped boolean the schema library's own module
  * alone renders, a container-element (type-argument) constraint, a renamed setter whose method name
- * matches neither the field nor a name-derived convention, a custom-prefixed builder method, and a
- * non-{@code Default}-group constraint. The one shape that is <em>not</em> asserted here as a parity
- * case (two {@code @Pattern} constraints, S5) is intentionally documented as a real divergence in
- * {@link MetadataConstraintSourceCoverageTest#twoPatternsUnderTheWalkAloneRenderNeitherPattern()}.
+ * matches neither the field nor a name-derived convention, a custom-prefixed builder method, a
+ * non-{@code Default}-group constraint, and a generic holder's type variable bound to a member type the
+ * constraint's keyword family does not cover (D4). The one shape that is <em>not</em> asserted here as
+ * a parity case (two {@code @Pattern} constraints, S5) is intentionally documented as a real divergence
+ * in {@link MetadataConstraintSourceCoverageTest#twoPatternsUnderTheWalkAloneRenderNeitherPattern()}.
  */
 class MetadataParityTest {
 
@@ -117,5 +118,18 @@ class MetadataParityTest {
                 textValues(List.of(document), "required").contains("secret"),
                 "the schema must render this non-Default-group constraint as required, stricter than actual"
                         + " enforcement; document: " + document);
+    }
+
+    @Test
+    @DisplayName("D4: a generic holder's @Size member bound to Integer renders identically either way (nothing)")
+    void genericHolderBoundIntRendersIdenticallyEitherWay() {
+        // The walk never runs at all for a scoped member (WalkConstraintSource#forScopedMember is
+        // unconditionally NONE), so "identical either way" here means "nothing either way" — the
+        // honest floor for this assertion. See MetadataConstraintSourceCoverageTest
+        // .genericHolderBoundIntMemberRendersNoSizeKeyword for the positive assertion that the
+        // resolved kind is NUMBER (type: integer) and no maxLength/minLength/maxItems/etc. keyword
+        // ever lands on it.
+        Validator validator = MetadataTestValidators.plain();
+        assertParity(MetadataFixtures.GenericHolderBoundIntDto.class, validator);
     }
 }

@@ -429,6 +429,55 @@ class MetadataConstraintSourceCoverageTest {
         assertFalse(property.has("allOf"), "the walk alone has no allOf-composition mechanism; was: " + property);
     }
 
+    // --- D4 ---
+
+    @Test
+    @DisplayName("D4: a generic holder's @Size member bound to Integer renders type:integer with no size keyword")
+    void genericHolderBoundIntMemberRendersNoSizeKeyword() {
+        // GenericHolderBase<T>.value's reflected java.lang.reflect.Field#getType() is the type
+        // variable's erasure (Object, unbounded) regardless of what any holder binds T to; only the
+        // Jackson-resolved JavaType for GenericHolderBoundIntDto.boxed's own parameterization says
+        // Integer. ConstraintValueKind.fromJavaType must be given that resolved type, not the field's
+        // raw reflected one, so the kind is NUMBER here — and @Size has no keyword family for a number,
+        // so the correct render is nothing at all: no minLength/maxLength (the wrong, pre-fix kind's
+        // fallback), and no minItems/maxItems/minProperties/maxProperties either.
+        Validator validator = MetadataTestValidators.plain();
+        JsonNode document = metadataDocument(MetadataFixtures.GenericHolderBoundIntDto.class, validator);
+
+        List<JsonNode> boxedClosure = propertyClosure(document, "boxed");
+        List<JsonNode> valueClosure = nestedPropertyClosure(document, boxedClosure, "value");
+
+        assertEquals(
+                List.of("integer"),
+                textValues(valueClosure, "type"),
+                "sanity: the schema library's own resolution must already describe \"value\" as an integer for"
+                        + " GenericHolderBoundIntDto's own parameterization; document: " + document);
+        for (String keyword :
+                List.of("maxLength", "minLength", "maxItems", "minItems", "maxProperties", "minProperties")) {
+            assertTrue(
+                    keywordValues(valueClosure, keyword).isEmpty(),
+                    "@Size has no \"" + keyword + "\" family for a number-kind member; document: " + document);
+        }
+    }
+
+    /** Like {@link SchemaAssertions#propertyClosure}, but rooted at an already-resolved container's closure. */
+    private static List<JsonNode> nestedPropertyClosure(
+            JsonNode document, List<JsonNode> containerClosure, String property) {
+        List<JsonNode> collected = new java.util.ArrayList<>();
+        for (JsonNode root : containerClosure) {
+            JsonNode properties = root.get("properties");
+            if (properties == null || !properties.isObject()) {
+                continue;
+            }
+            JsonNode declared = properties.get(property);
+            if (declared != null) {
+                collected.addAll(SchemaAssertions.conjunctiveClosure(document, declared));
+            }
+        }
+        assertFalse(collected.isEmpty(), "no schema node was found for nested property '" + property + "'");
+        return collected;
+    }
+
     // --- Fallback ---
 
     @Test
