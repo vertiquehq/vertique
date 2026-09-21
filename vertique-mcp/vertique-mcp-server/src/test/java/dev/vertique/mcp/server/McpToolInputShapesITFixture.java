@@ -50,6 +50,7 @@ import jakarta.annotation.Nullable;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Size;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -89,6 +90,7 @@ final class McpToolInputShapesITFixture {
     static final String BUILDER_TOOL = "shapes.builder";
     static final String GETTER_ONLY_LIST_TOOL = "shapes.getterOnlyList";
     static final String GETTER_ONLY_MAP_TOOL = "shapes.getterOnlyMap";
+    static final String GETTER_ONLY_COLLECTION_NO_BACKING_FIELD_TOOL = "shapes.getterOnlyCollectionNoBackingField";
     static final String NESTED_PRIVATE_DATE_TOOL = "shapes.nestedPrivateDate";
     static final String ANY_SETTER_NAMED_TOOL = "shapes.anySetterWithNamedProperties";
     static final String ANY_SETTER_ONLY_TOOL = "shapes.anySetterOnly";
@@ -129,6 +131,12 @@ final class McpToolInputShapesITFixture {
         register(tools, factory, BUILDER_TOOL, BuilderPayload.class, null);
         register(tools, factory, GETTER_ONLY_LIST_TOOL, GetterOnlyListPayload.class, null);
         register(tools, factory, GETTER_ONLY_MAP_TOOL, GetterOnlyMapPayload.class, null);
+        register(
+                tools,
+                factory,
+                GETTER_ONLY_COLLECTION_NO_BACKING_FIELD_TOOL,
+                GetterOnlyCollectionNoBackingFieldPayload.class,
+                null);
         register(tools, factory, NESTED_PRIVATE_DATE_TOOL, NestedPrivateDatePayload.class, null);
         register(tools, factory, ANY_SETTER_NAMED_TOOL, AnySetterNamedPayload.class, null);
         register(tools, factory, ANY_SETTER_ONLY_TOOL, AnySetterOnlyPayload.class, null);
@@ -390,6 +398,9 @@ final class McpToolInputShapesITFixture {
 
     record GetterOnlyMapPayload(@JsonProperty("payload") GetterOnlyMapDto argument0) {}
 
+    record GetterOnlyCollectionNoBackingFieldPayload(
+            @JsonProperty("payload") GetterOnlyCollectionNoBackingFieldDto argument0) {}
+
     record NestedPrivateDatePayload(@JsonProperty("payload") NestedPrivateDateDto argument0) {}
 
     record AnySetterNamedPayload(@JsonProperty("payload") FieldAnySetterOverStrings argument0) {}
@@ -484,6 +495,25 @@ final class McpToolInputShapesITFixture {
          */
         public Map<String, String> getLabels() {
             return labels;
+        }
+    }
+
+    /**
+     * H4: a getter-only {@code List<Integer>} with no backing field named {@code items} at all — its
+     * only storage is {@link #internal}, an unrelated field name Jackson populates in place through
+     * the getter (no setter is declared).
+     */
+    static final class GetterOnlyCollectionNoBackingFieldDto {
+
+        private final List<Integer> internal = new ArrayList<>();
+
+        /**
+         * Returns the live, mutable backing list.
+         *
+         * @return the items
+         */
+        public List<Integer> getItems() {
+            return internal;
         }
     }
 

@@ -332,6 +332,48 @@ public class ProfiledSchemaSynthesisIT {
         assertEquals(1, resource.invocations.get(), "the accepted body must reach the resource exactly once");
     }
 
+    // --- H4: getter-only collection with no backing field ---
+
+    /**
+     * The gate-level half of the H4 proof. {@link GetterOnlyCollectionNoBackingFieldBody#getItems()}
+     * has no backing field named {@code items} at all — the property's only storage is a private field
+     * named {@code internal}, populated in place through the getter, which is how Jackson binds a
+     * getter-only mutable collection with no setter. The unit-level half (that the property is
+     * published with its item schema) is {@code
+     * dev.vertique.json.schema.GetterOnlyCollectionDescriptionTest
+     * .getterOnlyCollectionWithNoBackingFieldPublishesItsItemSchema} in {@code vertique-json-schema}.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("H4: the gate rejects a wrong-typed item and accepts a valid body for a getter-only collection"
+            + " with no backing field")
+    void getterOnlyCollectionWithNoBackingFieldGateRejectsWrongTypedItemsAndAcceptsValidBody() throws Exception {
+        GetterOnlyCollectionResource resource = new GetterOnlyCollectionResource();
+        int gatePort = start(gateMount(), Set.of(resource));
+
+        HttpResponse<Buffer> rejected = post(gatePort, "/getter-only-collection/items", "{\"items\":[\"x\"]}");
+        HttpResponse<Buffer> accepted = post(gatePort, "/getter-only-collection/items", "{\"items\":[1,2,3]}");
+
+        assertEquals(
+                400,
+                rejected.statusCode(),
+                "a string item must be rejected against the published items schema (type: integer); body: "
+                        + rejected.bodyAsString());
+        assertEquals(
+                200,
+                accepted.statusCode(),
+                "a well-typed body must be accepted; body: " + accepted.bodyAsString());
+        assertEquals(
+                "items=[1, 2, 3]",
+                accepted.bodyAsString(),
+                "the accepted body must bind through the getter-only mutable-collection property");
+        assertEquals(
+                1,
+                resource.invocations.get(),
+                "only the well-typed body may have reached the resource; the rejected one must not");
+    }
+
     // --- TP-010: enum protection and the property-model negatives ---
 
     /**
@@ -1610,6 +1652,56 @@ public class ProfiledSchemaSynthesisIT {
         public String echo(TransformingBuilderBody body) {
             invocations.incrementAndGet();
             return "amount=" + body.amount;
+        }
+    }
+
+    /**
+     * H4: a getter-only {@code List<Integer>} with no backing field named {@code items} at all — its
+     * only storage is {@link #internal}, an unrelated field name Jackson populates in place through
+     * the getter (no setter is declared). The generator's scoped-member describe path must still find
+     * and describe this property through the schema library's own method scope, the same as any other
+     * getter, publishing an {@code items} keyword with the element type — not fall back to an opaque,
+     * unscoped description.
+     */
+    public static class GetterOnlyCollectionNoBackingFieldBody {
+
+        private final List<Integer> internal = new ArrayList<>();
+
+        /**
+         * Returns the live, mutable backing list.
+         *
+         * @return the items
+         */
+        public List<Integer> getItems() {
+            return internal;
+        }
+    }
+
+    /**
+     * The resource on the {@code vertique} floor for {@link GetterOnlyCollectionNoBackingFieldBody}: it
+     * carries no {@code @JsonProfile}, so the gate schema is generated from the unannotated floor
+     * profile.
+     */
+    @Path("/getter-only-collection")
+    public static class GetterOnlyCollectionResource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the bound items.
+         *
+         * @param body the getter-only-collection-with-no-backing-field fixture body
+         * @return the echoed items
+         */
+        @POST
+        @Path("/items")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "getterOnlyCollectionItemsEcho")
+        public String echo(GetterOnlyCollectionNoBackingFieldBody body) {
+            invocations.incrementAndGet();
+            return "items=" + body.getItems();
         }
     }
 

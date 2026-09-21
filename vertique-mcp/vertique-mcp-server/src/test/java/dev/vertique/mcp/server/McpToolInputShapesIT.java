@@ -122,6 +122,35 @@ class McpToolInputShapesIT {
         }
     }
 
+    // --- H4: getter-only collection with no backing field ---
+
+    /**
+     * The MCP-level half of the H4 proof. {@code GetterOnlyCollectionNoBackingFieldDto.getItems()} has
+     * no backing field named {@code items} at all — the property's only storage is a private field
+     * named {@code internal}, populated in place through the getter, which is how Jackson binds a
+     * getter-only mutable collection with no setter. The REST-level half is {@code
+     * ProfiledSchemaSynthesisIT
+     * .getterOnlyCollectionWithNoBackingFieldGateRejectsWrongTypedItemsAndAcceptsValidBody}; the
+     * unit-level half (that the property is published with its item schema) is {@code
+     * dev.vertique.json.schema.GetterOnlyCollectionDescriptionTest
+     * .getterOnlyCollectionWithNoBackingFieldPublishesItsItemSchema} in {@code vertique-json-schema}.
+     */
+    @Test
+    @DisplayName("H4: a wrong-typed item on a getter-only collection with no backing field is INPUT_VALIDATION,"
+            + " a well-typed body reaches the handler")
+    void getterOnlyCollectionWithNoBackingFieldRejectsWrongTypedItemsAndAcceptsValidBody() throws Exception {
+        startServer();
+
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.GETTER_ONLY_COLLECTION_NO_BACKING_FIELD_TOOL,
+                new JsonObject().put("items", new JsonArray().add("x")),
+                "a string item must be rejected against the published items schema (type: integer)");
+        assertAccepted(
+                McpToolInputShapesITFixture.GETTER_ONLY_COLLECTION_NO_BACKING_FIELD_TOOL,
+                new JsonObject().put("items", new JsonArray().add(1).add(2).add(3)),
+                "a well-typed body must reach the handler");
+    }
+
     // --- TP-004: any-setter types ---
 
     @Test
