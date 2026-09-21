@@ -286,4 +286,29 @@ final class MetadataFixtures {
     static final class GenericHolderBoundIntDto {
         public GenericHolderBase<Integer> boxed;
     }
+
+    /**
+     * C3: a static-factory {@code @JsonCreator} with a constraint on its parameter. Bean Validation
+     * exposes constrained constructors only ({@code BeanDescriptor#getConstraintsForConstructor}), so
+     * {@link MetadataConstraintSource#forUnscopedMember} contributes nothing for this parameter's owner
+     * (a static {@link Method}, never a {@link java.lang.reflect.Constructor}) — the constraint must
+     * still render through {@link WalkConstraintSource}, the floor, which reads Jackson's merged
+     * annotation map directly and runs unconditionally, whether or not a validator is supplied.
+     */
+    static final class StaticFactoryDto {
+        private final String code;
+
+        private StaticFactoryDto(String code) {
+            this.code = code;
+        }
+
+        @JsonCreator
+        public static StaticFactoryDto of(@JsonProperty("code") @Size(max = 3) String code) {
+            return new StaticFactoryDto(code);
+        }
+
+        public String getCode() {
+            return code;
+        }
+    }
 }

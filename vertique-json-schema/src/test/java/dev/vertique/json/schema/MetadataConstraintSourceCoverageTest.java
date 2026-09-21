@@ -460,6 +460,31 @@ class MetadataConstraintSourceCoverageTest {
         assertFalse(property.has("allOf"), "the walk alone has no allOf-composition mechanism; was: " + property);
     }
 
+    // --- C3 ---
+
+    @Test
+    @DisplayName("C3: a static-factory @JsonCreator parameter's constraint still renders through the walk under a"
+            + " validator, even though Bean Validation cannot see static factories")
+    void staticFactoryCreatorParameterConstraintRendersUnderAValidator() {
+        // MetadataConstraintSource#forParameter contributes nothing here: the parameter's owner is a
+        // static Method, never a Constructor, and BeanDescriptor#getConstraintsForConstructor covers
+        // constructors only — Bean Validation exposes no metadata for a static factory at all. The
+        // constraint is not lost, though: WalkConstraintSource (the floor) reads
+        // jacksonMember.getAnnotation(Size.class) directly from the parameter's own Jackson-merged
+        // annotation map, and it always runs first regardless of whether a Validator is supplied.
+        Validator validator = MetadataTestValidators.plain();
+        JsonNode document = metadataDocument(MetadataFixtures.StaticFactoryDto.class, validator);
+
+        JsonNode code = document.at("/properties/code");
+        assertFalse(code.isMissingNode(), "code must be published: the static factory parameter binds it");
+        assertEquals(
+                3,
+                code.at("/maxLength").asInt(),
+                "a static-factory parameter's own @Size(max = 3) must still render through the walk even with a"
+                        + " validator supplied, since the metadata supplement cannot see it at all; document: "
+                        + document);
+    }
+
     // --- D4 ---
 
     @Test
