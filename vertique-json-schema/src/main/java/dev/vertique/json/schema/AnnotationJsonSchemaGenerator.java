@@ -433,7 +433,7 @@ public final class AnnotationJsonSchemaGenerator {
             // Read once, from the profile's own mapper instance: the same one that parses a body at the
             // REST gate, so the published rule and the binder's parse decision cannot disagree.
             boolean strict = validated.mapper().getFactory().isEnabled(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
-            describer = new InputPropertyDescriber(validated.mapper(), strict, supplement);
+            describer = new InputPropertyDescriber(validated.mapper(), strict, supplement, validated);
         } else {
             outputNames = new OutputPropertyNameResolver(validated.mapper());
         }

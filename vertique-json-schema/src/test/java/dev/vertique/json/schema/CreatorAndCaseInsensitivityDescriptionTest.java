@@ -268,6 +268,44 @@ class CreatorAndCaseInsensitivityDescriptionTest {
                 "an ordinary sibling property must be unaffected; document: " + document);
     }
 
+    // ================================================================== F4: member-level CI inline refusals
+
+    @Test
+    @DisplayName(
+            "F4: a delegating creator behind a member-level case-insensitive @JsonFormat is refused, not"
+                    + " described inline (the same refusal describe() runs for the type at any other position)")
+    void memberLevelCaseInsensitiveDelegatingChildIsRefused() {
+        JsonSchemaGenerationException failure =
+                assertThrows(JsonSchemaGenerationException.class, () -> inputDocument(CI6Holder.class));
+
+        assertTrue(
+                failure.getMessage().contains(CI6DelegatingChild.class.getSimpleName()),
+                "was: " + failure.getMessage());
+        assertTrue(
+                failure.getMessage().contains("JsonSchemaTypeOverride"),
+                "the message must name the remedy — a profile override; was: " + failure.getMessage());
+    }
+
+    @Test
+    @DisplayName(
+            "F4: a profile override declared for the case-insensitive child's type is honored at that"
+                    + " position, not silently ignored by the inline path")
+    void memberLevelCaseInsensitiveOverrideIsHonored() {
+        String marker = "ci-delegating-override-marker";
+        JsonMapperProfile overridden = profile(
+                new ObjectMapper(),
+                List.of(JsonSchemaTypeOverride.input(
+                        CI6DelegatingChild.class, HardeningFixtures.markerFragment(marker))));
+
+        String document =
+                AnnotationJsonSchemaGenerator.forInputProfile(overridden).generateCanonical(CI6Holder.class);
+
+        assertTrue(
+                document.contains(marker),
+                "the override must apply at the case-insensitive member position exactly as it would at any"
+                        + " other position, never be bypassed by the inline description; document: " + document);
+    }
+
     // ================================================================== W1: array-delegating creators
 
     @Test
@@ -561,6 +599,25 @@ class CreatorAndCaseInsensitivityDescriptionTest {
     static final class CI5WithAlias {
         @JsonAlias("nm")
         public String name;
+    }
+
+    /** F4: a delegating creator, the same shape as {@link DC1Delegating} minus the any-setter. */
+    static final class CI6DelegatingChild {
+        @jakarta.validation.constraints.Size(max = 3)
+        public String name;
+
+        @JsonCreator(mode = JsonCreator.Mode.DELEGATING)
+        CI6DelegatingChild(Map<String, Object> body) {
+            this.name = String.valueOf(body.get("nm"));
+        }
+    }
+
+    /** F4: the delegating child is bound case-insensitively only through this member's own @JsonFormat. */
+    static final class CI6Holder {
+        public String label;
+
+        @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
+        public CI6DelegatingChild child;
     }
 
     // --- Fixtures: W1 ---

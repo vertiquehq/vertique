@@ -141,6 +141,16 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      */
     private final ConstraintSource supplement;
 
+    /**
+     * The validated, direction-filtered profile view this generator was built for, consulted only by
+     * the member-level case-insensitive inline path (F4, security review round 1): that path builds a
+     * schema by hand instead of asking Victools for the member's type, so it must consult the same
+     * profile override a normal type-level lookup would have reached through {@link
+     * ProfileOverrideDefinitionProvider}. {@code null} only for the legacy two-argument constructor,
+     * which no production call site uses.
+     */
+    private final ValidatedProfile validatedProfile;
+
     /** The introspected ignored names per type, the one fact the deserializer does not carry. */
     private final Map<JavaType, Set<String>> ignoredNamesByType = new ConcurrentHashMap<>();
 
@@ -157,20 +167,25 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * @param strictSpellings whether the profile forbids several spellings of one property
      */
     InputPropertyDescriber(ObjectMapper mapper, boolean strictSpellings) {
-        this(mapper, strictSpellings, null);
+        this(mapper, strictSpellings, null, null);
     }
 
     /**
-     * @param mapper          the profile's mapper, which the binder parses a body with
-     * @param strictSpellings whether the profile forbids several spellings of one property
-     * @param supplement      the Bean Validation metadata supplement consulted on top of the
-     *                        always-active floor, or {@code null} when the generator was built
-     *                        without a {@link jakarta.validation.Validator}
+     * @param mapper           the profile's mapper, which the binder parses a body with
+     * @param strictSpellings  whether the profile forbids several spellings of one property
+     * @param supplement       the Bean Validation metadata supplement consulted on top of the
+     *                         always-active floor, or {@code null} when the generator was built
+     *                         without a {@link jakarta.validation.Validator}
+     * @param validatedProfile the validated, direction-filtered profile view, consulted by the
+     *                         member-level case-insensitive inline path so a declared override still
+     *                         applies there; {@code null} is treated as "no overrides declared"
      */
-    InputPropertyDescriber(ObjectMapper mapper, boolean strictSpellings, ConstraintSource supplement) {
+    InputPropertyDescriber(
+            ObjectMapper mapper, boolean strictSpellings, ConstraintSource supplement, ValidatedProfile validatedProfile) {
         this.mapper = mapper;
         this.strictSpellings = strictSpellings;
         this.supplement = supplement;
+        this.validatedProfile = validatedProfile;
     }
 
     /** Clears the per-generation recursion state after an abnormal exit. */
@@ -255,21 +270,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         }
         ObjectNode definition = context.getGeneratorConfig().createObjectNode();
         ValueInstantiator instantiator = bean.getValueInstantiator();
-        if (instantiator.canCreateUsingDelegate()) {
-            // Treated exactly like a type-level custom deserializer (below): the whole object is bound
-            // through a delegate type, so no named property is ever read from this type's own wire
-            // shape, and a document describing the delegate's shape honestly would open the boundary to
-            // keys main never accepted and leave any constraint on this type's own fields dead on input.
-            throw refuseDelegatingCreator(javaType, "a delegating @JsonCreator");
-        }
-        if (instantiator.canCreateUsingArrayDelegate()) {
-            // Same shape, same remedy, an array-shaped delegate instead of an object-shaped one (W1): a
-            // single-argument delegating creator whose declared parameter type is array-like (a
-            // Collection or an array) reads no named property of its own either — its wire shape is a
-            // JSON array, which a schema's properties cannot describe any more than the object-delegate
-            // case above could.
-            throw refuseDelegatingCreator(javaType, "an array-delegating @JsonCreator");
-        }
+        requireNotDelegating(javaType, instantiator);
         String scalar = scalarCreator(instantiator);
         if (scalar != null && !instantiator.canCreateFromObjectWith() && !instantiator.canCreateUsingDefault()) {
             definition.put("type", scalar);
@@ -324,6 +325,36 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                         + " which a schema's properties cannot describe; declare a JsonSchemaTypeOverride"
                         + " for the type on the profile, or bind it through a property-based creator",
                 null);
+    }
+
+    /**
+     * Refuses a delegating or array-delegating creator (W1), shared between the root/nested-reference
+     * path in {@link #describe} and the member-level case-insensitive inline path in {@link
+     * #propertySchema} (F4, security review round 1): the inline path builds its schema by hand
+     * instead of asking Victools for the member's type, so before this fix it never ran this check at
+     * all, silently describing a delegating creator's own fields instead of refusing generation.
+     *
+     * @param javaType     the type being described
+     * @param instantiator the type's value instantiator
+     * @throws JsonSchemaGenerationException when the type binds through a delegating or
+     *     array-delegating {@code @JsonCreator}
+     */
+    private static void requireNotDelegating(JavaType javaType, ValueInstantiator instantiator) {
+        if (instantiator.canCreateUsingDelegate()) {
+            // Treated exactly like a type-level custom deserializer: the whole object is bound
+            // through a delegate type, so no named property is ever read from this type's own wire
+            // shape, and a document describing the delegate's shape honestly would open the boundary to
+            // keys main never accepted and leave any constraint on this type's own fields dead on input.
+            throw refuseDelegatingCreator(javaType, "a delegating @JsonCreator");
+        }
+        if (instantiator.canCreateUsingArrayDelegate()) {
+            // Same shape, same remedy, an array-shaped delegate instead of an object-shaped one (W1): a
+            // single-argument delegating creator whose declared parameter type is array-like (a
+            // Collection or an array) reads no named property of its own either — its wire shape is a
+            // JSON array, which a schema's properties cannot describe any more than the object-delegate
+            // case above could.
+            throw refuseDelegatingCreator(javaType, "an array-delegating @JsonCreator");
+        }
     }
 
     /** A schema accepting any JSON value, for an opaque type this describer cannot know the shape of. */
@@ -605,6 +636,26 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             // it the same way): the type's ordinary, case-sensitive shared definition would misdescribe
             // it here, so it is described inline instead of by reference to that shared definition.
             JavaType memberType = property.getType();
+            // F4 (security review round 1, MEDIUM): this inline path builds the schema by hand instead
+            // of asking Victools for the member's type, so it must let a declared profile override win
+            // exactly as it would at any other position, and — only once no override applies — run the
+            // same refusal {@link #describe} would have run for the member's own type. Both were skipped
+            // before this fix. The override check runs first: an override is the developer's own
+            // statement of the type's wire shape, so it must not be shadowed by a refusal that exists
+            // only to protect a description this path would otherwise have had to build unsupervised.
+            if (validatedProfile != null && validatedProfile.fragmentFor(memberType.getRawClass()) != null) {
+                // Delegate to the ordinary reference path: it re-enters the full provider chain, where
+                // ProfileOverrideDefinitionProvider — registered ahead of this describer — applies the
+                // override exactly as it would for any other position, instead of this inline path
+                // silently building its own case-insensitive description over it.
+                JsonNode schema = context.createDefinitionReference(resolve(context, memberType));
+                if (member != null) {
+                    translateConstraints(
+                            member, builtClass, (ObjectNode) schema, property.getName(), property.getType(), required);
+                }
+                return schema;
+            }
+            requireNotDelegating(memberType, nestedBean.getValueInstantiator());
             ObjectNode inline = context.getGeneratorConfig().createObjectNode();
             populateObjectSchema(
                     inline,
