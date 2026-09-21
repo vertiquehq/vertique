@@ -752,6 +752,17 @@ Dagger graph per verticle instance in this framework's stateless multi-instance 
 yields exactly that. No validator instance is ever shared across two contexts, and no schema
 compilation occurs on the request path.
 
+**A published `inputSchema`'s `pattern` keyword may embed an inline ECMA-262 modifier group** (for
+example `(?i:...)`) when a constrained member carries a `@Pattern` flag such as
+`CASE_INSENSITIVE` — see `vertique-json-schema`'s module document, "Rendering". This server's own
+`vertx-json-schema`-backed validator honors that inline form (measured), and it stays authoritative
+for every tool call regardless of what an external client does with the published document. A client
+that independently validates a tool call's arguments against the published `inputSchema` with its own
+ECMA-262 engine may not support an inline modifier group — support for this construct is not
+universal across JSON Schema validator implementations — so such a client should not treat its own
+pre-flight `pattern` check as a substitute for the server's own validation; only the server's
+validation determines whether a call is accepted.
+
 ### Mandatory input-processing binding
 
 Every `McpServerModule` composition requires a direct, non-`Optional`
