@@ -146,10 +146,10 @@ as it gets no borrow from the floor. **Setter-only field-borrow fallback (owner 
 `spike/deserializer-driven-schema`).** The floor itself joins a setter to its backing field through
 Jackson's own `BeanPropertyDefinition#getField()` — the field Jackson associates with the same
 wire-named property, guaranteed by construction to be the one the setter's value corresponds to. That
-accessor is `null` in two shapes: the only accessor Jackson associates with the property is the setter
-itself — a private field with a setter and no getter, no public field either — or the field is
-`transient`, which Jackson's property definition carries no field member for regardless of whether a
-getter is also present. Bounded to exactly "no field member" (the getter's own presence or absence is
+accessor is `null` whenever Jackson's property definition carries no field member at all — for
+example a private field with a setter and no getter and no public field, or a `transient` field
+regardless of whether a getter is also present; other mapper settings can produce the same absence.
+Bounded to exactly "no field member" (the getter's own presence or absence is
 irrelevant — a transient field with both a getter and a setter still has no `getField()` to join
 through, so it falls back the same as the getter-less shape; a *non*-transient field with a getter
 still joins through `getField()` normally and never reaches this fallback), the floor falls back to
@@ -318,13 +318,27 @@ exempts from: a third-party type with a settable property whose deserializer a p
 directly (`SimpleModule.addDeserializer(...)`, or a `BeanDeserializerModifier` that returns something
 other than a pure-forwarding `DelegatingDeserializer` wrapping the original bean deserializer) is not a
 `DelegatingDeserializer` chain to unwrap, and stays refused exactly as described above — the remedy for
-that shape is still a `JsonSchemaTypeOverride`. **An `@JsonUnwrapped` child is now refused, not
-silently skipped, when its own root deserializer still does not resolve to a bean deserializer after
-that unwrap** (C-1, round 6 finding): before this fix the unwrapped-child loop's own `instanceof
-BeanDeserializerBase` check simply `continue`d past such a child, publishing neither its property nor
-its constraint and — for a case-insensitively bound child — never even reaching the case-sensitivity
-refusal below. It now throws the same bounded custom-deserializer diagnostic the root seat throws for
-the identical shape.
+that shape is still a `JsonSchemaTypeOverride`. **An `@JsonUnwrapped` child's own
+`unwrappingDeserializer(...)` result decides its fate, matching Jackson's own bound (C-1, round 7
+finding).** When that call returns the very same deserializer instance back, that is Jackson's own
+documented signal that the deserializer does not support unwrapping at all — `MapDeserializer`, the
+abstract-type-id-resolving deserializer, the untyped-`Object`/`JsonNode` deserializers,
+`OptionalDeserializer`, and others all take this path — and `BeanDeserializerBase.resolve()` then
+leaves the member bound as an ordinary nested property, which the describer's own first
+(non-unwrapped) property loop already publishes under the member's own name; the unwrapped-child loop
+leaves it there rather than refusing it. Only when the call returns a *different* instance that does
+not resolve to a bean deserializer — a genuine custom deserializer changing the wire shape, not
+Jackson declining to unwrap — is the member refused, with the same bounded custom-deserializer
+diagnostic the root seam throws, naming the unwrapped member alongside its type so a parent with
+several unwrapped members can tell which one was refused. This bound is deliberately narrower than the
+root seam's own refusal shape immediately above: the root seam separately describes a map-like type,
+returns nothing for a polymorphic base (left to the Jackson module's own subtype resolver), and
+describes an opaque foreign type as unconstrained — none of which the unwrapped-child loop repeats,
+since the parent's own first property loop already publishes any of those shapes left un-unwrapped as
+an ordinary nested property, and repeating them here would duplicate rather than protect that path. A
+prior round 6 fix (C-1) refused every such child outright regardless of which of the two instances
+`unwrappingDeserializer(...)` returned, which silently broke every DTO with an unwrapped `Map`,
+abstract `@JsonTypeInfo` base, `Object`, `JsonNode`, or `Optional` member; this is the corrected bound.
 
 **A case-insensitively bound `@JsonUnwrapped` child is refused, at every seam a wrapper can hide it
 behind.** `requireCaseSensitive` runs immediately once an unwrapped child resolves to a bean
