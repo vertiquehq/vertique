@@ -133,6 +133,28 @@ class MetadataConstraintSourceCoverageTest {
     }
 
     @Test
+    @DisplayName("owner ruling: a hand-written builder method's property does not join even under a validator —"
+            + " the supplement must not silently reintroduce the constraint the floor stopped borrowing")
+    void handWrittenBuilderDoesNotJoinEvenUnderAValidator() {
+        // Without BuilderBorrowDetector gating this class's own join too, this class's direct
+        // reflection over the built class (validator.getConstraintsForClass(TransformingBuilderDto
+        // .class).getConstraintsForProperty("amount")) would find the field's real, class-level
+        // @Max(10) — Bean Validation does not care how the value got there — and render it as an
+        // addition, since the floor no longer sets "maximum" for this property. That would make
+        // generation depend on whether a Validator happens to be supplied, silently reversing the
+        // owner ruling for exactly the callers who supply one.
+        Validator validator = MetadataTestValidators.plain();
+        JsonNode document = metadataDocument(BuilderWireNameJoinTest.TransformingBuilderDto.class, validator);
+        JsonNode amount = document.at("/properties/amount");
+
+        assertFalse(amount.isMissingNode(), "amount must still be published: the builder method binds it");
+        assertTrue(
+                amount.at("/maximum").isMissingNode(),
+                "the hand-written builder's property must carry no borrowed maximum even with a validator"
+                        + " supplied; document: " + document);
+    }
+
+    @Test
     @DisplayName("a creator parameter without -parameters joins by constructor + index, not by name")
     void creatorParameterWithoutParametersJoinsByIndex() {
         Validator validator = MetadataTestValidators.plain();

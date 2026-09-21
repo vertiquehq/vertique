@@ -17,6 +17,8 @@ import com.fasterxml.jackson.annotation.JsonEnumDefaultValue;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.fasterxml.jackson.databind.annotation.JsonPOJOBuilder;
 import dev.vertique.core.json.JsonProfile;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.VertiqueJson;
@@ -283,6 +285,50 @@ public class ProfiledSchemaSynthesisIT {
                 response.bodyAsString(),
                 "the accepted body must bind through the constructor's own transform, not the field's"
                         + " raw wire value");
+        assertEquals(1, resource.invocations.get(), "the accepted body must reach the resource exactly once");
+    }
+
+    // --- deserializer-driven-schema spike: the bounded hand-written-builder borrow ---
+
+    /**
+     * The gate-level half of the owner ruling's fix proof for {@code InputPropertyDescriber}'s
+     * builder-method borrow ({@code BuilderBorrowDetector}). {@link TransformingBuilderBody}'s
+     * hand-written builder method divides the incoming value by 100 before assigning it to the built
+     * field of the same wire name — the same shape {@link
+     * dev.vertique.json.schema.BuilderWireNameJoinTest.TransformingBuilderDto} pins at the schema level
+     * — and its builder class is named plainly rather than in the Lombok {@code <Type>Builder}
+     * convention, so it matches neither {@code @lombok.Generated} nor the fallback shape.
+     *
+     * <p>Behavior-change: red at {@code 3802ff0f} (the task's baseline commit, with the borrow still
+     * unconditional) — a 400, never reaching the resource, because the schema published the built
+     * field's {@code @Max(10)} onto the wire property {@code amount}. Green after the fix — a 200,
+     * bound through the builder's own transform: {@code amount=500} divides to {@code amount = 5}, well
+     * under the field's own ceiling, which the gate no longer rejects because the property is now
+     * published by type only.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("The gate accepts a hand-written builder's transformed value, not a borrowed field constraint"
+            + " (owner ruling: hand-written builders go unresolved)")
+    void transformingBuilderMethodAcceptsValueTheFieldsConstraintWouldHaveRejected() throws Exception {
+        TransformingBuilderResource resource = new TransformingBuilderResource();
+        int gatePort = start(gateMount(), Set.of(resource));
+
+        HttpResponse<Buffer> response = post(gatePort, "/transforming-builder/amount", "{\"amount\":500}");
+
+        assertEquals(
+                200,
+                response.statusCode(),
+                "the gate must accept amount=500: an unbounded builder borrow used to publish the built"
+                        + " field's @Max(10) onto the wire property amount and reject this body even though"
+                        + " the hand-written builder turns it into amount = 5, well under 10; body: "
+                        + response.bodyAsString());
+        assertEquals(
+                "amount=5",
+                response.bodyAsString(),
+                "the accepted body must bind through the builder's own transform, not a borrowed field"
+                        + " constraint");
         assertEquals(1, resource.invocations.get(), "the accepted body must reach the resource exactly once");
     }
 
@@ -1501,6 +1547,67 @@ public class ProfiledSchemaSynthesisIT {
         @Produces(MediaType.TEXT_PLAIN)
         @Operation(operationId = "transformingConstructorAmountEcho")
         public String echo(TransformingConstructorBody body) {
+            invocations.incrementAndGet();
+            return "amount=" + body.amount;
+        }
+    }
+
+    /**
+     * deserializer-driven-schema spike: a hand-written (non-Lombok) builder whose setter divides the
+     * incoming value by 100 before assigning it to the built field of the same wire name — the
+     * gate-level counterpart to {@link
+     * dev.vertique.json.schema.BuilderWireNameJoinTest.TransformingBuilderDto}. The builder class is
+     * named plainly ({@code Builder}), not in the Lombok {@code TransformingBuilderBodyBuilder}
+     * convention, so {@code BuilderBorrowDetector} matches neither {@code @lombok.Generated} nor its
+     * fallback shape for it.
+     */
+    @JsonDeserialize(builder = TransformingBuilderBody.Builder.class)
+    public static class TransformingBuilderBody {
+
+        @Max(10)
+        private final int amount;
+
+        private TransformingBuilderBody(int amount) {
+            this.amount = amount;
+        }
+
+        @JsonPOJOBuilder(withPrefix = "")
+        public static final class Builder {
+            private int amount;
+
+            public Builder amount(int amountCents) {
+                this.amount = amountCents / 100;
+                return this;
+            }
+
+            public TransformingBuilderBody build() {
+                return new TransformingBuilderBody(amount);
+            }
+        }
+    }
+
+    /**
+     * The resource on the {@code vertique} floor for {@link TransformingBuilderBody}: it carries no
+     * {@code @JsonProfile}, so the gate schema is generated from the unannotated floor profile.
+     */
+    @Path("/transforming-builder")
+    public static class TransformingBuilderResource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the bound (already-transformed) amount.
+         *
+         * @param body the transforming-builder fixture body
+         * @return the echoed amount
+         */
+        @POST
+        @Path("/amount")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "transformingBuilderAmountEcho")
+        public String echo(TransformingBuilderBody body) {
             invocations.incrementAndGet();
             return "amount=" + body.amount;
         }
