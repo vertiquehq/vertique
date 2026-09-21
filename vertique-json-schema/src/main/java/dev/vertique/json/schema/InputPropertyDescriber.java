@@ -239,14 +239,15 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             // through a delegate type, so no named property is ever read from this type's own wire
             // shape, and a document describing the delegate's shape honestly would open the boundary to
             // keys main never accepted and leave any constraint on this type's own fields dead on input.
-            throw Diagnostics.failure(
-                    "JSON Schema generation failed for " + Diagnostics.typeIdentity(javaType.getRawClass())
-                            + ": the type binds through a delegating @JsonCreator, which reads no named"
-                            + " property of its own — its wire shape is whatever the delegate type's"
-                            + " deserializer accepts, which a schema's properties cannot describe; declare a"
-                            + " JsonSchemaTypeOverride for the type on the profile, or bind it through a"
-                            + " property-based creator",
-                    null);
+            throw refuseDelegatingCreator(javaType, "a delegating @JsonCreator");
+        }
+        if (instantiator.canCreateUsingArrayDelegate()) {
+            // Same shape, same remedy, an array-shaped delegate instead of an object-shaped one (W1): a
+            // single-argument delegating creator whose declared parameter type is array-like (a
+            // Collection or an array) reads no named property of its own either — its wire shape is a
+            // JSON array, which a schema's properties cannot describe any more than the object-delegate
+            // case above could.
+            throw refuseDelegatingCreator(javaType, "an array-delegating @JsonCreator");
         }
         String scalar = scalarCreator(instantiator);
         if (scalar != null && !instantiator.canCreateFromObjectWith() && !instantiator.canCreateUsingDefault()) {
@@ -281,6 +282,27 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     private boolean declaresOwnDeserializerOverride(JavaType javaType) {
         AnnotatedClass classInfo = introspection(javaType).getClassInfo();
         return introspector().findDeserializer(classInfo) != null;
+    }
+
+    /**
+     * The shared diagnostic for a delegating creator (W1: both the object- and the array-delegating
+     * shape) — neither reads a named property of its own, so a document describing either delegate's
+     * shape honestly would open the boundary to keys {@code main} never accepted and leave any
+     * constraint on this type's own fields dead on input.
+     *
+     * @param javaType the type being described
+     * @param kind     the delegating-creator kind, named in the message ("a delegating @JsonCreator" or
+     *                 "an array-delegating @JsonCreator")
+     * @return the bounded diagnostic to throw
+     */
+    private static JsonSchemaGenerationException refuseDelegatingCreator(JavaType javaType, String kind) {
+        return Diagnostics.failure(
+                "JSON Schema generation failed for " + Diagnostics.typeIdentity(javaType.getRawClass())
+                        + ": the type binds through " + kind + ", which reads no named property of its"
+                        + " own — its wire shape is whatever the delegate type's deserializer accepts,"
+                        + " which a schema's properties cannot describe; declare a JsonSchemaTypeOverride"
+                        + " for the type on the profile, or bind it through a property-based creator",
+                null);
     }
 
     /** A schema accepting any JSON value, for an opaque type this describer cannot know the shape of. */
@@ -887,14 +909,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
 
     /** The field a setter implies by its name: {@code setLevel} implies {@code level}. */
     private static String impliedFieldName(Method method) {
-        String name = method.getName();
-        for (String prefix : List.of("set", "with")) {
-            if (name.length() > prefix.length() && name.startsWith(prefix)) {
-                String rest = name.substring(prefix.length());
-                return Character.toLowerCase(rest.charAt(0)) + rest.substring(1);
-            }
-        }
-        return name;
+        return stripAccessorPrefix(method.getName(), SETTER_PREFIXES);
     }
 
     /** The field behind a creator parameter: the record component's field, or the field named like the property. */
@@ -995,6 +1010,11 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * position's container-element constraints, merged onto the schema's own {@code items} subschema
      * when that subschema is an inline object — a {@code $ref}'d items subschema is left unchanged,
      * the same gap the generator already accepts for a {@code Map} value position.
+     *
+     * <p>{@code "allOf"} is also special (S5): its value is a {@link List} of pattern strings, rendered
+     * as an {@code allOf} array of single-keyword {@code {"pattern": ...}} objects — the shape two
+     * {@code @Pattern} constraints in the default group on one member need, since the schema's
+     * {@code pattern} keyword itself can only ever hold one regular expression.
      */
     @SuppressWarnings("unchecked")
     private static void putKeyword(ObjectNode schema, String key, Object value) {
@@ -1003,6 +1023,13 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 for (Map.Entry<String, Object> entry : ((Map<String, Object>) itemKeywords).entrySet()) {
                     putKeyword(itemsObject, entry.getKey(), entry.getValue());
                 }
+            }
+            return;
+        }
+        if ("allOf".equals(key) && value instanceof List<?> patterns) {
+            ArrayNode allOf = schema.putArray("allOf");
+            for (Object pattern : patterns) {
+                allOf.addObject().put("pattern", (String) pattern);
             }
             return;
         }
@@ -1041,14 +1068,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
 
     /** The field a getter implies by its name: {@code getLevel}/{@code isActive} imply {@code level}/{@code active}. */
     private static String getterBeanName(Method method) {
-        String name = method.getName();
-        for (String prefix : List.of("get", "is")) {
-            if (name.length() > prefix.length() && name.startsWith(prefix)) {
-                String rest = name.substring(prefix.length());
-                return Character.toLowerCase(rest.charAt(0)) + rest.substring(1);
-            }
-        }
-        return name;
+        return stripAccessorPrefix(method.getName(), GETTER_PREFIXES);
     }
 
     /** The Swagger metadata a creator parameter or setter carries; a field or getter keeps the module's own handling. */
@@ -1471,8 +1491,36 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
 
     /** The property name a getter, setter, or builder-style {@code with} method implies from its own name. */
     private static String impliedAccessorName(Method method) {
-        String name = method.getName();
-        for (String prefix : List.of("get", "set", "with", "is")) {
+        return stripAccessorPrefix(method.getName(), ACCESSOR_PREFIXES);
+    }
+
+    /** Prefixes {@link #impliedFieldName} strips: a setter or builder-style {@code with} method. */
+    private static final List<String> SETTER_PREFIXES = List.of("set", "with");
+
+    /** Prefixes {@link #getterBeanName} strips: a getter. */
+    private static final List<String> GETTER_PREFIXES = List.of("get", "is");
+
+    /** Prefixes {@link #impliedAccessorName} strips: any getter, setter, or builder-style {@code with} method. */
+    private static final List<String> ACCESSOR_PREFIXES = List.of("get", "set", "with", "is");
+
+    /**
+     * The single accessor-prefix-stripping helper (S4), used everywhere a method name is reduced to
+     * the property name it implies: {@link #impliedFieldName}, {@link #getterBeanName}, and
+     * {@link #impliedAccessorName} each call this with their own prefix list.
+     *
+     * <p>A prefix is stripped only when the character immediately following it is uppercase — the
+     * JavaBean convention a real accessor follows ({@code getName} implies {@code name}) and an
+     * ordinary method that merely starts with the same letters does not ({@code issue} is not {@code
+     * is} + {@code sue}; {@code settle} is not {@code set} + {@code tle}). Without this check, an
+     * ordinary method whose name happens to start with a prefix is silently mistaken for an accessor
+     * of a property that does not exist, which can wrongly join or exclude an unrelated member.
+     *
+     * @param name     the method's own name
+     * @param prefixes the accessor prefixes to try, in order
+     * @return the implied property name, or {@code name} unchanged when no prefix qualifies
+     */
+    private static String stripAccessorPrefix(String name, List<String> prefixes) {
+        for (String prefix : prefixes) {
             if (name.length() > prefix.length()
                     && name.startsWith(prefix)
                     && Character.isUpperCase(name.charAt(prefix.length()))) {
@@ -1491,7 +1539,14 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     /**
      * An ASCII case-folding regular expression for a property name, anchored at both ends: each ASCII
      * letter becomes a two-character class of its lower- and upper-case form — {@code name} folds to
-     * {@code ^[nN][aA][mM][eE]$} — and every other character is escaped literally.
+     * {@code ^[nN][aA][mM][eE]\z} — and every other character is escaped literally.
+     *
+     * <p>Anchored with {@code \z} rather than {@code $} (S2): {@code io.vertx.json.schema} 5.1.6
+     * compiles the {@code pattern} keyword with plain {@code java.util.regex.Pattern} (see {@code
+     * PatternFlagRenderingTest}), whose {@code $} — without {@code Pattern.MULTILINE} — still matches
+     * immediately before a single trailing line terminator, not only at the true end of input. A key
+     * ending in a newline would therefore wrongly match this fold under {@code $}; {@code \z} matches
+     * only the absolute end of the input, with no such exception.
      *
      * <p>The fold is ASCII-only by design, not a locale-aware one: {@code String#toLowerCase()} and
      * {@code String#toUpperCase()} without an explicit {@link java.util.Locale} — which is what Jackson
@@ -1532,7 +1587,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 pattern.append(letter);
             }
         }
-        return pattern.append('$').toString();
+        return pattern.append("\\z").toString();
     }
 
     /**
@@ -1593,9 +1648,11 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                         null);
             }
             // Strip the per-name anchors: every alternative shares one pair of anchors around the group.
-            alternatives.add(pattern.substring(1, pattern.length() - 1));
+            // The leading anchor is the single character '^'; the trailing one is the two-character
+            // "\z" (S2), not "$".
+            alternatives.add(pattern.substring(1, pattern.length() - 2));
         }
-        return "^(?:" + String.join("|", alternatives) + ")$";
+        return "^(?:" + String.join("|", alternatives) + ")\\z";
     }
 
     // ---------------------------------------------------------------- Jackson plumbing, public API only
@@ -1647,24 +1704,29 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         JavaType key = bean instanceof BuilderBasedDeserializer ? mapper.constructType(bean.getBeanClass()) : type;
         BeanDeserializerBuilder builder = builders.get(key);
         if (builder == null) {
-            ObjectMapper copy = capturing;
-            if (copy == null) {
-                copy = mapper.copy();
-                SimpleModule module = new SimpleModule("vertique-json-schema-capture");
-                module.setDeserializerModifier(new BeanDeserializerModifier() {
-                    @Override
-                    public BeanDeserializerBuilder updateBuilder(
-                            DeserializationConfig config,
-                            BeanDescription description,
-                            BeanDeserializerBuilder captured) {
-                        builders.put(description.getType(), captured);
-                        return captured;
-                    }
-                });
-                copy.registerModule(module);
-                capturing = copy;
-            }
             try {
+                // S1: mapper.copy() (and the capturing module's own setup) now runs inside this guarded
+                // block too, alongside the deserializer resolution that follows it — a mapper subclass
+                // that refuses to copy itself (overrides copy() to throw) previously escaped as a raw
+                // exception straight out of this method instead of the bounded generation diagnostic
+                // every other failure here produces.
+                ObjectMapper copy = capturing;
+                if (copy == null) {
+                    copy = mapper.copy();
+                    SimpleModule module = new SimpleModule("vertique-json-schema-capture");
+                    module.setDeserializerModifier(new BeanDeserializerModifier() {
+                        @Override
+                        public BeanDeserializerBuilder updateBuilder(
+                                DeserializationConfig config,
+                                BeanDescription description,
+                                BeanDeserializerBuilder captured) {
+                            builders.put(description.getType(), captured);
+                            return captured;
+                        }
+                    });
+                    copy.registerModule(module);
+                    capturing = copy;
+                }
                 DefaultDeserializationContext blueprint =
                         (DefaultDeserializationContext) copy.getDeserializationContext();
                 try (JsonParser parser = copy.createParser("{}")) {

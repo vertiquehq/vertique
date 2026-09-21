@@ -16,6 +16,7 @@ import jakarta.validation.metadata.PropertyDescriptor;
 import java.lang.System.Logger.Level;
 import java.lang.reflect.Constructor;
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -68,16 +69,39 @@ import java.util.Set;
  */
 final class MetadataConstraintSource implements ConstraintSource {
 
+    // W3: every recognized constraint type is matched by its fully-qualified annotation class name,
+    // never by annotation-type simple name alone — an application-defined constraint whose simple name
+    // collides with one of these (e.g. its own "@Size" composing "@Pattern") must never be mistaken for
+    // the real jakarta.validation/Hibernate Validator type merely because the name happens to match.
+    private static final String C_NOT_NULL = "jakarta.validation.constraints.NotNull";
+    private static final String C_NOT_EMPTY = "jakarta.validation.constraints.NotEmpty";
+    private static final String C_NOT_BLANK = "jakarta.validation.constraints.NotBlank";
+    private static final String C_SIZE = "jakarta.validation.constraints.Size";
+    private static final String C_MIN = "jakarta.validation.constraints.Min";
+    private static final String C_MAX = "jakarta.validation.constraints.Max";
+    private static final String C_DECIMAL_MIN = "jakarta.validation.constraints.DecimalMin";
+    private static final String C_DECIMAL_MAX = "jakarta.validation.constraints.DecimalMax";
+    private static final String C_POSITIVE = "jakarta.validation.constraints.Positive";
+    private static final String C_POSITIVE_OR_ZERO = "jakarta.validation.constraints.PositiveOrZero";
+    private static final String C_NEGATIVE = "jakarta.validation.constraints.Negative";
+    private static final String C_NEGATIVE_OR_ZERO = "jakarta.validation.constraints.NegativeOrZero";
+    private static final String C_PATTERN = "jakarta.validation.constraints.Pattern";
+    private static final String C_EMAIL = "jakarta.validation.constraints.Email";
+    private static final String C_LENGTH = "org.hibernate.validator.constraints.Length";
+    private static final String C_RANGE = "org.hibernate.validator.constraints.Range";
+    private static final String C_URL = "org.hibernate.validator.constraints.URL";
+
     /**
-     * The annotation types whose rendering is a <em>correction</em> (vertiquehq/vertique-dev#606):
-     * the floor — the schema library's Jakarta Validation module for a scoped member, or {@link
-     * WalkConstraintSource} for an unscoped one — either does not recognize these at all ({@code
-     * @Range}, {@code @Length}, {@code @URL}, which {@link WalkConstraintSource} never renders) or
-     * renders them incompletely ({@code @Pattern}'s flags, which neither the module nor the walk
-     * embeds into the {@code pattern} keyword). Every other recognized annotation type is rendered as
-     * an addition instead.
+     * The annotation types (by fully-qualified class name, W3) whose rendering is a <em>correction</em>
+     * (vertiquehq/vertique-dev#606): the floor — the schema library's Jakarta Validation module for a
+     * scoped member, or {@link WalkConstraintSource} for an unscoped one — either does not recognize
+     * these at all ({@code @Range}, {@code @Length}, {@code @URL}, which {@link WalkConstraintSource}
+     * never renders) or renders them incompletely ({@code @Pattern}'s flags, which neither the module
+     * nor the walk embeds into the {@code pattern} keyword; a second {@code @Pattern} on the same
+     * member, S5, which neither can express as more than one {@code pattern} keyword at all). Every
+     * other recognized annotation type is rendered as an addition instead.
      */
-    private static final Set<String> CORRECTING_ANNOTATION_TYPES = Set.of("Range", "Length", "URL", "Pattern");
+    private static final Set<String> CORRECTING_ANNOTATION_TYPES = Set.of(C_RANGE, C_LENGTH, C_URL, C_PATTERN);
 
     /**
      * JDK {@code System.Logger} rather than SLF4J: this module's own architecture rule (FR-JSON-070)
@@ -198,9 +222,22 @@ final class MetadataConstraintSource implements ConstraintSource {
     private static Rendered render(Set<ConstraintDescriptor<?>> descriptors, ConstraintValueKind kind, String label) {
         Map<String, Object> additions = new LinkedHashMap<>();
         Map<String, Object> corrections = new LinkedHashMap<>();
+        List<String> patterns = new ArrayList<>();
         boolean[] required = {false};
         for (ConstraintDescriptor<?> descriptor : descriptors) {
-            renderOne(descriptor, kind, label, additions, corrections, required);
+            renderOne(descriptor, kind, label, additions, corrections, patterns, required);
+        }
+        if (patterns.size() == 1) {
+            corrections.put("pattern", patterns.get(0));
+        } else if (patterns.size() > 1) {
+            // S5: two (or more) @Pattern constraints in the default group on one member — the schema's
+            // "pattern" keyword can only ever hold one regular expression, so multiple render as an
+            // allOf of single-pattern subschemas instead of the second silently overwriting the first.
+            // Sorted for deterministic output: ConstraintDescriptor#getComposingConstraints() and the
+            // constraint Set Bean Validation hands back for a repeated annotation carry no guaranteed
+            // iteration order.
+            patterns.sort(null);
+            corrections.put("allOf", List.copyOf(patterns));
         }
         return new Rendered(additions, corrections, required[0]);
     }
@@ -211,6 +248,7 @@ final class MetadataConstraintSource implements ConstraintSource {
             String label,
             Map<String, Object> additions,
             Map<String, Object> corrections,
+            List<String> patterns,
             boolean[] required) {
         if (!appliesInDefaultGroup(descriptor)) {
             // Never proposed as a correction either: the floor does not filter by group, so its own
@@ -218,24 +256,31 @@ final class MetadataConstraintSource implements ConstraintSource {
             return;
         }
         if (!descriptor.getComposingConstraints().isEmpty()) {
-            // A composed constraint (e.g. a custom @Code meta-annotated with @Size + @Pattern): the
-            // composing annotation itself is not one of the keyword-bearing types below, so descend
-            // into its leaves instead, recursively.
+            // A composed constraint's own leaves render too, recursively — Hibernate Validator's own
+            // built-in @Range and @URL are themselves implemented by composition (@Range composes
+            // @Min + @Max with the same bounds; confirmed by disassembly/instrumentation), so their
+            // leaves must still render, on top of — never instead of — the composing annotation's own
+            // case below. What actually guards against misreading an unrelated shape is fully-qualified
+            // matching (W3), not skipping the switch: an application-defined constraint whose simple
+            // name collides with a recognized type (an app "@Size" composing "@Pattern") has a
+            // different fully-qualified class name than jakarta.validation/Hibernate Validator's own
+            // annotation, so it can never match one of the cases below and falls to the default branch
+            // regardless of whether it also composes other constraints.
             for (ConstraintDescriptor<?> leaf : descriptor.getComposingConstraints()) {
-                renderOne(leaf, kind, label, additions, corrections, required);
+                renderOne(leaf, kind, label, additions, corrections, patterns, required);
             }
         }
-        String simpleName = descriptor.getAnnotation().annotationType().getSimpleName();
+        String fqcn = descriptor.getAnnotation().annotationType().getName();
         Map<String, Object> attributes = descriptor.getAttributes();
         boolean array = kind == ConstraintValueKind.ARRAY;
         boolean map = kind == ConstraintValueKind.MAP;
         // #606: the floor either cannot recognize this annotation at all, or renders it incompletely,
         // so its keyword replaces the floor's unconditionally; every other keyword below only fills a
         // gap the floor left.
-        Map<String, Object> keywords = CORRECTING_ANNOTATION_TYPES.contains(simpleName) ? corrections : additions;
-        switch (simpleName) {
-            case "NotNull" -> required[0] = true;
-            case "NotEmpty", "NotBlank" -> {
+        Map<String, Object> keywords = CORRECTING_ANNOTATION_TYPES.contains(fqcn) ? corrections : additions;
+        switch (fqcn) {
+            case C_NOT_NULL -> required[0] = true;
+            case C_NOT_EMPTY, C_NOT_BLANK -> {
                 // Matches victools' own isNullable() exactly (confirmed by disassembly): @NotNull,
                 // @NotBlank, and @NotEmpty are treated identically — any one of the three is
                 // sufficient for NOT_NULLABLE_FIELD_IS_REQUIRED to mark the property required.
@@ -243,7 +288,7 @@ final class MetadataConstraintSource implements ConstraintSource {
                 String minKeyword = array ? "minItems" : map ? "minProperties" : "minLength";
                 keywords.putIfAbsent(minKeyword, 1);
             }
-            case "Size" -> {
+            case C_SIZE -> {
                 Integer min = (Integer) attributes.get("min");
                 Integer max = (Integer) attributes.get("max");
                 String maxKeyword = array ? "maxItems" : map ? "maxProperties" : "maxLength";
@@ -255,25 +300,25 @@ final class MetadataConstraintSource implements ConstraintSource {
                     keywords.put(maxKeyword, max);
                 }
             }
-            case "Min" -> keywords.put("minimum", (Long) attributes.get("value"));
-            case "Max" -> keywords.put("maximum", (Long) attributes.get("value"));
-            case "DecimalMin" -> {
+            case C_MIN -> keywords.put("minimum", (Long) attributes.get("value"));
+            case C_MAX -> keywords.put("maximum", (Long) attributes.get("value"));
+            case C_DECIMAL_MIN -> {
                 boolean inclusive = (Boolean) attributes.getOrDefault("inclusive", Boolean.TRUE);
                 keywords.put(
                         inclusive ? "minimum" : "exclusiveMinimum", new BigDecimal((String) attributes.get("value")));
             }
-            case "DecimalMax" -> {
+            case C_DECIMAL_MAX -> {
                 boolean inclusive = (Boolean) attributes.getOrDefault("inclusive", Boolean.TRUE);
                 keywords.put(
                         inclusive ? "maximum" : "exclusiveMaximum", new BigDecimal((String) attributes.get("value")));
             }
-            case "Positive" -> keywords.put("exclusiveMinimum", BigDecimal.ZERO);
-            case "PositiveOrZero" -> keywords.put("minimum", BigDecimal.ZERO);
-            case "Negative" -> keywords.put("exclusiveMaximum", BigDecimal.ZERO);
-            case "NegativeOrZero" -> keywords.put("maximum", BigDecimal.ZERO);
-            case "Pattern" -> keywords.put("pattern", renderPattern(attributes, label));
-            case "Email" -> keywords.put("format", "email");
-            case "Length" -> {
+            case C_POSITIVE -> keywords.put("exclusiveMinimum", BigDecimal.ZERO);
+            case C_POSITIVE_OR_ZERO -> keywords.put("minimum", BigDecimal.ZERO);
+            case C_NEGATIVE -> keywords.put("exclusiveMaximum", BigDecimal.ZERO);
+            case C_NEGATIVE_OR_ZERO -> keywords.put("maximum", BigDecimal.ZERO);
+            case C_PATTERN -> patterns.add(renderPattern(attributes, label));
+            case C_EMAIL -> keywords.put("format", "email");
+            case C_LENGTH -> {
                 Long min = asLong(attributes.get("min"));
                 Long max = asLong(attributes.get("max"));
                 if (min != null && min != 0) {
@@ -283,7 +328,7 @@ final class MetadataConstraintSource implements ConstraintSource {
                     keywords.put("maxLength", max);
                 }
             }
-            case "Range" -> {
+            case C_RANGE -> {
                 Long min = asLong(attributes.get("min"));
                 Long max = asLong(attributes.get("max"));
                 if (min != null) {
@@ -293,16 +338,13 @@ final class MetadataConstraintSource implements ConstraintSource {
                     keywords.put("maximum", BigDecimal.valueOf(max));
                 }
             }
-            case "URL" -> keywords.put("format", "uri");
-            default -> {
-                if (descriptor.getComposingConstraints().isEmpty()) {
-                    LOG.log(
-                            Level.DEBUG,
-                            "Bean Validation constraint @{0} on {1} has no JSON Schema rendering; skipped",
-                            simpleName,
-                            label);
-                }
-            }
+            case C_URL -> keywords.put("format", "uri");
+            default ->
+                LOG.log(
+                        Level.DEBUG,
+                        "Bean Validation constraint @{0} on {1} has no JSON Schema rendering; skipped",
+                        descriptor.getAnnotation().annotationType().getSimpleName(),
+                        label);
         }
     }
 

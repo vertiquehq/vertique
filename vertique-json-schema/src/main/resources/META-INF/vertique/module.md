@@ -66,7 +66,10 @@ All three modes install the Jackson module, the Jakarta Validation module
 the floor: whatever it renders for a scoped field or getter is rendered whether or not a `Validator`
 is supplied, so a document generated with a validator still renders every keyword a document
 generated without one would have. A supplied `Validator` only ever *supplements* that floor — see
-"Constraint sources" below — it never disables or replaces it.
+"Constraint sources" below — it never disables or replaces it. The one documented exception is
+several `@Pattern` constraints in the default group on one member (see "Rendering" below): the
+annotation walk cannot see more than one of them at all, so a supplied `Validator` there changes what
+is rendered rather than only adding to or correcting it.
 
 ### Constraint sources: the floor, and the Bean Validation supplement
 
@@ -131,15 +134,26 @@ nested types on its own.
 `@NotNull`/`@NotBlank`/`@NotEmpty` mark the property `required` — matching Victools'
 `NOT_NULLABLE_FIELD_IS_REQUIRED` exactly, which treats all three identically; `@NotBlank`/
 `@NotEmpty` additionally floor the size keyword at 1; `@Email` renders `format: email`; Hibernate's
-`@Length`, `@Range`, and `@URL` render as corrections (recognized by annotation simple name alone,
+`@Length`, `@Range`, and `@URL` render as corrections (recognized by fully-qualified annotation class
+name — never by simple name alone, so an application-defined constraint whose own simple name happens
+to collide with one of these, or with a plain Jakarta Validation type, is never mistaken for it — and
 never by importing `hibernate-validator`'s constraint classes, so the metadata source stays usable
 with any Jakarta Validation provider). A `@Pattern`'s flags are embedded as an inline Java regex
 modifier group (`(?i:...)`, ...) as a correction — measured against the real `io.vertx.json.schema`
 5.1.6 validator, which compiles the `pattern` keyword with plain `java.util.regex.Pattern` and honors
 this — except `CANON_EQ`, which has no embeddable modifier character and fails generation with a
-bounded diagnostic naming the property. An unrecognized constraint type is skipped with a
+bounded diagnostic naming the property. Two or more `@Pattern` constraints in the default group on one
+member — Jakarta Validation's own `@Pattern.List` repetition — render as an `allOf` of one
+single-`pattern` subschema per constraint, sorted for deterministic output, rather than the second
+silently overwriting the first; a composed constraint's own leaves render the same way as if declared
+directly, recursively, *in addition to* — never instead of — the composing annotation's own rendering
+when it is itself a recognized type (Hibernate's `@Range` is itself composed of `@Min` + `@Max` with
+the same bounds, confirmed by disassembly). An unrecognized constraint type is skipped with a
 `DEBUG`-level `System.Logger` log naming the type and the property (this module carries no
-logging-facade dependency; see "Dependencies").
+logging-facade dependency; see "Dependencies"). Without a `Validator` supplied, the annotation walk
+does not see a repeated `@Pattern` at all — the member's actual reflective annotation is the
+`@Pattern.List` container, not a repeated `@Pattern` — so this shape is one of the few where a
+validator changes the rendered document rather than only supplementing it silently.
 
 **Correction timing.** A correction is not applied at the moment Victools hands back a scoped
 member's schema: measured, the library's own Jakarta Validation module does not finish writing every
@@ -197,6 +211,16 @@ bean properties to begin with — is instead described as accepting any JSON val
 `Object.class`/`JsonNode.class`, both at the root and nested as a member; there is no field walk such
 a refusal could be protecting there.
 
+**A delegating `@JsonCreator`** — object-delegating (`Mode.DELEGATING` over a single non-array-like
+parameter) or array-delegating (the same mode over a `List`/array-shaped parameter) — is refused with
+a bounded diagnostic, in either shape: the whole value is bound through the delegate type, so no named
+property of the creator's own type is ever read from the wire, and a document describing the delegate
+type's shape honestly would open the boundary to keys the binder never accepted through a named
+property and leave any constraint on the creator's own type's fields dead on input. Declare a
+`JsonSchemaTypeOverride` for the type on the profile, or bind it through a property-based creator.
+
+
+
 ### How an any-setter's extra keys are described
 
 A type with a `@JsonAnySetter` describes its extra keys through `additionalProperties`, typed by the
@@ -253,9 +277,13 @@ application-declared `propertyNames` is never displaced: the reserved set is com
 
 **Case-insensitive binding and Unicode code folding.** A type bound case-insensitively (mapper-wide,
 class-level, or member-level `@JsonFormat`) is described with `patternProperties` — one ASCII
-case-folding pattern per bound name (`name` folds to `^[nN][aA][mM][eE]$`), since Jackson's own
+case-folding pattern per bound name (`name` folds to `^[nN][aA][mM][eE]\z`), since Jackson's own
 case-insensitive lookup measurably uses `String#toLowerCase()`/`toUpperCase()` with no explicit
-`Locale`, which a fold pinned to any one locale could silently drift from. Where extras are also
+`Locale`, which a fold pinned to any one locale could silently drift from. The fold is anchored with
+`\z`, not `$`: `io.vertx.json.schema` 5.1.6 compiles the `pattern` keyword with plain
+`java.util.regex.Pattern`, whose `$` — without `Pattern.MULTILINE` — still matches immediately before
+a single trailing line terminator, not only at the true end of input; a key ending in a newline would
+otherwise wrongly match the fold. Where extras are also
 described, `propertyNames` additionally refuses any key containing a non-ASCII code unit,
 unconditionally — not only when a reserved name exists. This closes a real gap: a non-ASCII code
 point can fold to an ASCII letter under Java's locale-independent Unicode case mapping regardless of
