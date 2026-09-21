@@ -517,10 +517,13 @@ deliberately leaves open (it only closes an object that already declares a non-e
 and as an unconstrained body member at REST. Construction fails with a bounded diagnostic instead.
 "Bean-like" is decided the same way the custom-deserializer refusal decides it (a settable property
 by the mapper's own reflective introspection, with the same `java.`/`javax.`/`jakarta.`/
-`com.fasterxml.jackson.`/`io.vertx.` package exclusions), and a fragment that replaces the type
-wholesale with a declared non-`object` type is exempt — it is fully constrained by that type, with
-no property position for an unconstrained extra key to hide in. OUTPUT-direction overrides are
-unaffected.
+`com.fasterxml.jackson.`/`io.vertx.` package exclusions), and a fragment that fully constrains its
+own wire shape some other way is exempt — it carries no open-object risk this rule exists to catch
+even though it declares neither `properties` nor `additionalProperties`. Exempt shapes: a `type`
+that wholesale replaces the object shape — a single non-`object` string, or an array not containing
+`"object"`; an `enum`; a `const`; and a `oneOf`/`anyOf`/`allOf` whose every branch itself qualifies
+by this same rule, recursively. A bare `{"type":"object"}` satisfies none of these and still fails
+construction. OUTPUT-direction overrides are unaffected.
 
 A constraint that does not apply to the substituted wire type is not published as if it did. The
 numeric-domain keywords `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, and
