@@ -1810,7 +1810,25 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                     case "pattern" -> "must match pattern: " + constraintValue;
                     case "required" -> rawMessage != null ? rawMessage : "is missing a required field";
                     case "type" -> typeDetail(constraintValue);
-                    default -> rawMessage != null ? rawMessage : keyword + " constraint violated";
+                    // F5 (security review round 1, MEDIUM): propertyNames and patternProperties are the
+                    // two keywords this package itself extends beyond vertx-json-schema's own generated
+                    // rules — a caseInsensitivePropertyNamesRule refusal or a folded patternProperties
+                    // entry always resolves the client's own submitted key into the vertx-json-schema
+                    // wrapper message ("Property name \"<key>\" does not match schema", "Property
+                    // \"<key>\" matches pattern \"<generated-regex>\" but does not match associated
+                    // schema"). Both are given fixed, value-free messages so the client-chosen key (and,
+                    // for patternProperties, the generated regex) can never reach detail through them —
+                    // the exact class of reflected-client-text leak FR-018/#598 removed for every other
+                    // keyword.
+                    case "propertyNames" -> "contains a property name the schema does not allow";
+                    case "patternProperties" -> VALUE_FREE_DETAIL_MESSAGE;
+                    // F5: the default branch is the catch-all for every keyword this method does not
+                    // special-case above — including a future one. It must never fall back to the raw
+                    // vertx-json-schema message: that message's own recipe is not reviewed here and may
+                    // itself echo the submitted value (as propertyNames' and patternProperties' did), so
+                    // "unknown keyword" and "known to echo the client's value" must render identically —
+                    // fail closed rather than fail open on an unreviewed keyword.
+                    default -> keyword + " constraint violated";
                 };
             }
             // For keywords with boolean fallback args or no args, use the raw message

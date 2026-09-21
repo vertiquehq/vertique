@@ -469,6 +469,112 @@ public class ProfiledSchemaSynthesisIT {
                                 + rejectionBody));
     }
 
+    // --- F5 (security review round 1, MEDIUM): propertyNames/patternProperties must not echo the client ---
+
+    /**
+     * F5: {@code propertyNames} and {@code patternProperties} are the two keywords this package
+     * extends beyond vertx-json-schema's own generated rules, and both had fallen to {@code
+     * WebValidationStrategy}'s default {@code detail} branch, which returned the raw validator message
+     * verbatim — that message names the client's own submitted key (both keywords) and, for {@code
+     * patternProperties}, the generated regex too. Reuses AC-005.2's own fixtures: the confusable
+     * U+212A-folded key must be refused with neither the raw key text nor the generated {@code
+     * propertyNames} pattern reaching the response.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName(
+            "F5: a propertyNames rejection echoes neither the submitted key nor the generated pattern")
+    void f5PropertyNamesRejectionDoesNotEchoTheKeyOrPattern() throws Exception {
+        Ac005Resource resource = new Ac005Resource();
+        int gatePort = start(gateMount(), Set.of(resource));
+
+        HttpResponse<Buffer> rejected = post(gatePort, "/ac005/case-insensitive", AC005_KELVIN_KEY_BODY);
+        String rejectionBody = rejected.bodyAsString();
+
+        assertAll(
+                () -> assertEquals(400, rejected.statusCode(), "body: " + rejectionBody),
+                () -> assertFalse(
+                        rejectionBody.contains(AC005_KELVIN_SIGN + "ey"),
+                        "the submitted key spelling must never be echoed; body: " + rejectionBody),
+                () -> assertFalse(
+                        rejectionBody.contains("does not match schema"),
+                        "the raw vertx-json-schema propertyNames message must never reach detail; body: "
+                                + rejectionBody),
+                () -> assertFalse(
+                        rejectionBody.contains("x00-\\x7F") || rejectionBody.contains("x00-x7F"),
+                        "the generated non-ASCII fold pattern must never be echoed; body: " + rejectionBody));
+    }
+
+    /**
+     * F5's {@code patternProperties} half: a case-insensitively bound, <em>closed</em> type (no
+     * any-setter) whose only member carries a {@code @Size} bound. A folded key ({@code "NAME"}) whose
+     * value fails that bound is rejected by {@code patternProperties}, whose vertx-json-schema wrapper
+     * message ("Property \"NAME\" matches pattern \"...\" but does not match associated schema") names
+     * both the submitted key and the generated regex.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("F5: a patternProperties rejection echoes neither the submitted key nor the generated pattern")
+    void f5PatternPropertiesRejectionDoesNotEchoTheKeyOrPattern() throws Exception {
+        F5PatternPropertiesResource resource = new F5PatternPropertiesResource();
+        int gatePort = start(gateMount(), Set.of(resource));
+
+        HttpResponse<Buffer> rejected = post(gatePort, "/f5/case-insensitive", "{\"NAME\":\"toolong\"}");
+        String rejectionBody = rejected.bodyAsString();
+
+        assertAll(
+                () -> assertEquals(400, rejected.statusCode(), "body: " + rejectionBody),
+                () -> assertEquals(
+                        0, resource.invocations.get(), "an oversized folded key must never reach the resource"),
+                () -> assertFalse(
+                        rejectionBody.contains("\"NAME\""),
+                        "the submitted key spelling must never be echoed; body: " + rejectionBody),
+                () -> assertFalse(
+                        rejectionBody.contains("toolong"),
+                        "the submitted value must never be echoed; body: " + rejectionBody),
+                () -> assertFalse(
+                        rejectionBody.contains("matches pattern"),
+                        "the raw vertx-json-schema patternProperties message must never reach detail; body: "
+                                + rejectionBody),
+                () -> assertFalse(
+                        rejectionBody.contains("[nN][aA][mM][eE]"),
+                        "the generated case-fold pattern must never be echoed; body: " + rejectionBody));
+    }
+
+    /** F5: case-insensitively bound, closed (no any-setter) — the patternProperties-only shape. */
+    @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
+    public static class F5CaseInsensitiveClosedBody {
+
+        @Size(max = 3)
+        public String name;
+    }
+
+    /** The resource for {@link F5CaseInsensitiveClosedBody}, on the unannotated floor profile. */
+    @Path("/f5")
+    public static class F5PatternPropertiesResource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the bound name.
+         *
+         * @param body the F5 fixture body
+         * @return the echoed name
+         */
+        @POST
+        @Path("/case-insensitive")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "f5CaseInsensitiveEcho")
+        public String echo(F5CaseInsensitiveClosedBody body) {
+            invocations.incrementAndGet();
+            return "name=" + body.name;
+        }
+    }
+
     // --- TP-010: enum protection and the property-model negatives ---
 
     /**
