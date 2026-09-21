@@ -757,16 +757,31 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 }
                 return schema;
             }
-            requireNotDelegating(memberType, nestedBean.getValueInstantiator());
+            ValueInstantiator nestedInstantiator = nestedBean.getValueInstantiator();
+            requireNotDelegating(memberType, nestedInstantiator);
             ObjectNode inline = context.getGeneratorConfig().createObjectNode();
-            populateObjectSchema(
-                    inline,
-                    memberType,
-                    resolve(context, memberType),
-                    nestedBean,
-                    builderFor(memberType, nestedBean),
-                    context,
-                    true);
+            // S2 (spike/deserializer-driven-schema round 4 ruling): describe()'s own root path checks
+            // scalarCreator(instantiator) before ever building an object schema, so a from-string
+            // scalar-creator type is described as {"type":"string"} (or "number"/"integer") wherever it
+            // is referenced by $ref. This inline path built its schema unconditionally through
+            // populateObjectSchema instead, describing a scalar-creator type reached only through this
+            // member-level case-insensitive position as an object — applied here identically, mirroring
+            // describe()'s own branch, before populating an object schema.
+            String scalar = scalarCreator(nestedInstantiator);
+            if (scalar != null
+                    && !nestedInstantiator.canCreateFromObjectWith()
+                    && !nestedInstantiator.canCreateUsingDefault()) {
+                inline.put("type", scalar);
+            } else {
+                populateObjectSchema(
+                        inline,
+                        memberType,
+                        resolve(context, memberType),
+                        nestedBean,
+                        builderFor(memberType, nestedBean),
+                        context,
+                        true);
+            }
             if (member != null) {
                 translateConstraints(member, builtClass, inline, property.getName(), property.getType(), required);
             }
