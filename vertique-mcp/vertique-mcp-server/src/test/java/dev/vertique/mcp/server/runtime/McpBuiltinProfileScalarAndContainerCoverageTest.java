@@ -41,7 +41,7 @@ import org.junit.jupiter.api.Test;
  * / {@code JsonArrayDeserializer} / {@code BufferDeserializer} — none of which extend a bean
  * deserializer — so a DTO carrying any of the three Vert.x members failed generation outright.
  */
-class W4BuiltinProfileScalarAndContainerCoverageTest {
+class McpBuiltinProfileScalarAndContainerCoverageTest {
 
     enum Color {
         RED,
