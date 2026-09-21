@@ -474,26 +474,31 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         }
 
         boolean extrasDescribed = describeExtras(definition, anySetter, builtClass, context);
+        Set<String> reserved;
         if (extrasDescribed) {
-            Set<String> reserved = reservedNames(javaType, bean, bound, published, aliasPlan);
+            reserved = reservedNames(javaType, bean, bound, published, aliasPlan);
             reserved.removeAll(excludedFromReservation);
-            if (caseInsensitive) {
-                // C1: always set, even when reserved is empty. Jackson folds a case-insensitively
-                // bound property name with String#toLowerCase() (no explicit Locale), and a non-ASCII
-                // code point can fold to an ASCII letter regardless of locale (U+212A KELVIN SIGN folds
-                // to ASCII 'k'). Such a key binds to the real, constrained member at the binder, but the
-                // ASCII-only patternProperties fold and the reserved-name pattern both miss it — so
-                // where extras are described, the key would otherwise fall through to
-                // additionalProperties (the extras bucket) in the schema's view, validating as a
-                // permissive extra instead of against the member's own constraint. Refusing any key
-                // carrying a non-ASCII code unit outright closes that gap.
-                definition.set("propertyNames", caseInsensitivePropertyNamesRule(reserved, builtClass));
-            } else if (!reserved.isEmpty()) {
-                ObjectNode rule = JsonNodeFactory.instance.objectNode();
-                ArrayNode values = rule.putObject("not").putArray("enum");
-                reserved.forEach(values::add);
-                definition.set("propertyNames", rule);
-            }
+        } else {
+            reserved = Set.of();
+        }
+        if (caseInsensitive) {
+            // F3 (security review round 1, HIGH): emitted unconditionally, not only where extras are
+            // described (C1's own premise). Jackson folds a case-insensitively bound property name with
+            // String#toLowerCase() (no explicit Locale), and a non-ASCII code point can fold to an ASCII
+            // letter regardless of locale (U+212A KELVIN SIGN folds to ASCII 'k'). Such a key binds to
+            // the real, constrained member at the binder. A *closed* CI type (no any-setter) at REST has
+            // no other closure at all — no additionalProperties: false, since REST has no hardener — so
+            // without this rule the key is simply accepted and bound, exactly the bypass C1 was measured
+            // against; where extras are also described, the ASCII-only patternProperties fold and the
+            // reserved-name pattern both miss it, so the key falls through to additionalProperties (the
+            // extras bucket) instead of the member's own constraint. Refusing any key carrying a
+            // non-ASCII code unit outright, always, closes both gaps the same way.
+            definition.set("propertyNames", caseInsensitivePropertyNamesRule(reserved, builtClass));
+        } else if (extrasDescribed && !reserved.isEmpty()) {
+            ObjectNode rule = JsonNodeFactory.instance.objectNode();
+            ArrayNode values = rule.putObject("not").putArray("enum");
+            reserved.forEach(values::add);
+            definition.set("propertyNames", rule);
         }
     }
 

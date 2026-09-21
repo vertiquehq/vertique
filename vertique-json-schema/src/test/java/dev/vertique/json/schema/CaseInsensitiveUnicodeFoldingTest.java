@@ -52,6 +52,13 @@ class CaseInsensitiveUnicodeFoldingTest {
         private final Map<String, Object> extras = new LinkedHashMap<>();
     }
 
+    /** F3 (security review round 1, HIGH): closed — no any-setter, so extras are never described. */
+    @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
+    static final class ClosedCaseInsensitive {
+        @Size(max = 3)
+        public String key;
+    }
+
     private static JsonMapperProfile caseInsensitiveProfile() {
         ObjectMapper mapper = new ObjectMapper();
         return JsonMapperProfiles.of(JsonProfileId.of("ci-unicode-fold-test"), mapper);
@@ -91,5 +98,30 @@ class CaseInsensitiveUnicodeFoldingTest {
                 pattern.matcher(KELVIN_SIGN + "ey").find(),
                 () -> "the confusable spelling must match the refusal pattern " + rule.asText());
         assertFalse(pattern.matcher("key").find(), "the canonical ASCII spelling must not be refused by the same rule");
+    }
+
+    @Test
+    @DisplayName(
+            "F3: a *closed* case-insensitive type (no any-setter, no extras) still carries a propertyNames"
+                    + " non-ASCII fold refusal — REST has no additionalProperties closure to fall back on")
+    void closedCaseInsensitiveTypeStillRefusesNonAsciiKey() throws Exception {
+        JsonNode document = inputDocument(ClosedCaseInsensitive.class);
+        JsonNode rule = document.path("propertyNames").path("not").path("pattern");
+        assertFalse(
+                rule.isMissingNode(),
+                "a closed case-insensitive type must still carry a propertyNames rule (C1 applies unconditionally)");
+        Pattern pattern = Pattern.compile(rule.asText());
+        assertTrue(
+                pattern.matcher(KELVIN_SIGN + "ey").find(),
+                () -> "the confusable spelling must match the refusal pattern " + rule.asText());
+        assertFalse(pattern.matcher("key").find(), "the canonical ASCII spelling must not be refused by the same rule");
+
+        // The binder-level premise, mirrored for the closed type: the confusable spelling still binds to
+        // the real, constrained member — there is no extras bucket for it to fall into instead.
+        ObjectMapper mapper = new ObjectMapper()
+                .configure(com.fasterxml.jackson.databind.MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, true);
+        ClosedCaseInsensitive bound =
+                mapper.readValue("{\"" + KELVIN_SIGN + "ey\":\"abcd\"}", ClosedCaseInsensitive.class);
+        assertTrue(bound.key != null, "the confusable spelling must bind to the real, constrained member");
     }
 }
