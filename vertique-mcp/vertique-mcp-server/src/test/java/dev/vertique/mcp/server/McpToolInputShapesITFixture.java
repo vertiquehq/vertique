@@ -96,6 +96,7 @@ final class McpToolInputShapesITFixture {
     static final String GETTER_ONLY_MAP_TOOL = "shapes.getterOnlyMap";
     static final String GETTER_ONLY_COLLECTION_NO_BACKING_FIELD_TOOL = "shapes.getterOnlyCollectionNoBackingField";
     static final String BG1_TOOL = "shapes.bg1LombokBuilderNoGetter";
+    static final String AC005_TOOL = "shapes.ac005CaseInsensitiveAnySetter";
     static final String NESTED_PRIVATE_DATE_TOOL = "shapes.nestedPrivateDate";
     static final String ANY_SETTER_NAMED_TOOL = "shapes.anySetterWithNamedProperties";
     static final String ANY_SETTER_ONLY_TOOL = "shapes.anySetterOnly";
@@ -173,6 +174,7 @@ final class McpToolInputShapesITFixture {
         register(tools, factory, SPELLING_NAMES_HIDDEN_CLOSED_TOOL, SpellingNamesHiddenMemberClosedPayload.class, null);
         register(tools, factory, CASE_INSENSITIVE_TOOL, CaseInsensitivePayload.class, null);
         register(tools, factory, CASE_INSENSITIVE_CLOSED_TOOL, CaseInsensitiveClosedPayload.class, null);
+        register(tools, factory, AC005_TOOL, Ac005Payload.class, null);
         this.toolsByName = Map.copyOf(tools);
 
         McpToolRegistry registry = McpToolRegistry.build(Set.copyOf(tools.values()));
@@ -457,6 +459,8 @@ final class McpToolInputShapesITFixture {
 
     record CaseInsensitiveClosedPayload(
             @JsonProperty("payload") CaseInsensitiveClosedType argument0) {}
+
+    record Ac005Payload(@JsonProperty("payload") Ac005CaseInsensitiveAnySetterType argument0) {}
 
     // --- TP-003 shapes: the five AC-013.1 input-discovery shapes, as T004's corpus defines them ---
 
@@ -765,6 +769,26 @@ final class McpToolInputShapesITFixture {
         /** Published under "name" and every ASCII casing of it. */
         @Size(max = 3)
         public String name;
+    }
+
+    /**
+     * AC-005.2: a case-insensitively bound, extras-described (any-setter) type whose real member's
+     * name starts with 'k' — the MCP-level counterpart to {@code
+     * CaseInsensitiveUnicodeFoldingTest.CaseInsensitiveWithExtras} in {@code vertique-json-schema},
+     * whose own proof only matches the generated {@code propertyNames} regex against the confusable
+     * spelling, never a real tool call. U+212A KELVIN SIGN folds to ASCII {@code 'k'} under Jackson's
+     * locale-independent {@code String#toLowerCase()}, so the binder would route a key spelled with it
+     * straight into the real, constrained {@link #key} member; the {@code propertyNames} rule this
+     * type's document carries refuses any non-ASCII key outright instead.
+     */
+    @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
+    static final class Ac005CaseInsensitiveAnySetterType {
+
+        @Size(max = 3)
+        public String key;
+
+        @JsonAnySetter
+        public Map<String, Object> extras = new LinkedHashMap<>();
     }
 
     /** An any-setter type declaring one alias spelling on two properties (design proof v7, DA1/DA2). */

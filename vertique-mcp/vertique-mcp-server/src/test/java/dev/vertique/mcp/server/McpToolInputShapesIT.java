@@ -525,6 +525,29 @@ class McpToolInputShapesIT {
                         + " hardener's additionalProperties: false closure");
     }
 
+    /**
+     * AC-005.2: the MCP-level half of the proof. {@code
+     * dev.vertique.json.schema.CaseInsensitiveUnicodeFoldingTest.nonAsciiKeyRefusedByPropertyNames}
+     * only matches the generated {@code propertyNames} regex against the confusable spelling — nothing
+     * there exercises a real tool call. The REST-level half is {@code ProfiledSchemaSynthesisIT
+     * .ac005NonAsciiKeyRejectedAtTheGateWithAValueFreeDetail}. U+212A KELVIN SIGN folds to ASCII
+     * {@code 'k'} under Jackson's locale-independent case fold, so the binder's own case-insensitive
+     * lookup would route a key spelled with it straight into the real, constrained {@code key} member
+     * if the schema check did not refuse it first.
+     */
+    @Test
+    @DisplayName("AC-005.2: a U+212A-folded key on a case-insensitive any-setter type is INPUT_VALIDATION, the"
+            + " handler is never entered")
+    void ac005NonAsciiKeyRejectedAsInputValidation() throws Exception {
+        startServer();
+
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.AC005_TOOL,
+                new JsonObject().put("Key", "AC5"),
+                "the propertyNames rule must refuse the U+212A-folded key before the binder's own"
+                        + " case-insensitive lookup ever gets a chance to route it to the real \"key\" member");
+    }
+
     // --- Shared actions and assertions ---
 
     /**

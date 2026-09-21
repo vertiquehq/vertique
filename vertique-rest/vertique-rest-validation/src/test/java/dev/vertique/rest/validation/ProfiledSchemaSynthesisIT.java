@@ -14,6 +14,7 @@ import com.fasterxml.jackson.annotation.JsonAnyGetter;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonEnumDefaultValue;
+import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -412,6 +413,60 @@ public class ProfiledSchemaSynthesisIT {
                 1,
                 resource.invocations.get(),
                 "only the well-typed body may have reached the resource; the rejected one must not");
+    }
+
+    // --- AC-005.2: case-insensitive non-ASCII key at the gate ---
+
+    /**
+     * The gate-level half of the AC-005.2 proof: {@code
+     * dev.vertique.json.schema.CaseInsensitiveUnicodeFoldingTest.nonAsciiKeyRefusedByPropertyNames}
+     * only matches the generated {@code propertyNames} regex against the confusable spelling —
+     * nothing there exercises a real request. This sends the U+212A-folded key through a real HTTP
+     * round trip and asserts the gate's actual rejection: a 400 with exactly one value-free detail,
+     * never a 200 reaching the resource (which the binder's own case-insensitive lookup would
+     * otherwise produce, routing the key straight to the constrained {@code key} member).
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("AC-005.2: the gate rejects a U+212A-folded key on a case-insensitive any-setter type, with one"
+            + " value-free detail")
+    void ac005NonAsciiKeyRejectedAtTheGateWithAValueFreeDetail() throws Exception {
+        Ac005Resource resource = new Ac005Resource();
+        int gatePort = start(gateMount(), Set.of(resource));
+
+        HttpResponse<Buffer> rejected = post(gatePort, "/ac005/case-insensitive", AC005_KELVIN_KEY_BODY);
+
+        String rejectionBody = rejected.bodyAsString();
+        JsonArray errors = problemErrors(rejectionBody);
+
+        assertAll(
+                () -> assertEquals(
+                        400,
+                        rejected.statusCode(),
+                        "the propertyNames rule must refuse the U+212A-folded key; body: " + rejectionBody),
+                () -> assertEquals(
+                        0,
+                        resource.invocations.get(),
+                        "the binder's own case-insensitive lookup would route this key straight to the real"
+                                + " \"key\" member if the gate did not refuse it first — the resource must never"
+                                + " see it"),
+                () -> assertNotNull(
+                        errors,
+                        "the rejection must carry an RFC 9457 problem body with an 'errors' array; the response"
+                                + " body was: " + rejectionBody),
+                () -> assertEquals(
+                        1,
+                        errors == null ? -1 : errors.size(),
+                        "one structural rejection must contribute exactly one detail; body: " + rejectionBody),
+                () -> assertFalse(
+                        detail(errors).getString("path", "").isBlank(),
+                        "the value-free detail must still identify a failing location; detail: "
+                                + detail(errors).encode()),
+                () -> assertFalse(
+                        rejectionBody.contains(AC005_VALUE_MARKER),
+                        "the detail must be value-free: the submitted value must never be echoed; body: "
+                                + rejectionBody));
     }
 
     // --- TP-010: enum protection and the property-model negatives ---
@@ -1448,6 +1503,21 @@ public class ProfiledSchemaSynthesisIT {
 
     // --- Request bodies ---
 
+    /** AC-005.2: KELVIN SIGN, which folds to ASCII 'k' under Jackson's locale-independent case fold. */
+    private static final String AC005_KELVIN_SIGN = "K";
+
+    /**
+     * AC-005.2: the confusable spelling's value — deliberately within the real {@code key} member's own
+     * {@code @Size(max = 3)}, so a 400 here can only come from the {@code propertyNames} refusal, never
+     * a coincidental length violation on the member the binder's case-insensitive lookup would otherwise
+     * route it to. Distinctive enough that its absence from the response is still provable.
+     */
+    private static final String AC005_VALUE_MARKER = "AC5";
+
+    /** AC-005.2: a body spelling the constrained {@code key} member's name with the confusable Kelvin sign. */
+    private static final String AC005_KELVIN_KEY_BODY =
+            "{\"" + AC005_KELVIN_SIGN + "ey\":\"" + AC005_VALUE_MARKER + "\"}";
+
     /** The undeclared property's value: distinctive, so its absence from the response is provable. */
     private static final String UNDECLARED_MARKER = "MARKER-4711-MUST-NOT-ECHO";
 
@@ -1789,6 +1859,63 @@ public class ProfiledSchemaSynthesisIT {
         public String echo(Bg1NoGetterBody body) {
             invocations.incrementAndGet();
             return "name=" + body.name;
+        }
+    }
+
+    /**
+     * AC-005.2: a case-insensitively bound, extras-described (any-setter) type — the gate-level
+     * counterpart to {@code CaseInsensitiveUnicodeFoldingTest.CaseInsensitiveWithExtras} in {@code
+     * vertique-json-schema}, whose own proof only matches the generated {@code propertyNames} regex
+     * against the confusable spelling, never a real request. U+212A KELVIN SIGN folds to ASCII
+     * {@code 'k'} under Jackson's locale-independent {@code String#toLowerCase()}, so the binder would
+     * route a key spelled with it straight into the real, constrained {@link #key} member — the
+     * {@code propertyNames} rule this type's document carries refuses any non-ASCII key outright instead.
+     */
+    @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
+    public static class Ac005CaseInsensitiveAnySetterBody {
+
+        @Size(max = 3)
+        public String key;
+
+        private final Map<String, Object> extras = new LinkedHashMap<>();
+
+        /**
+         * Routes an undeclared property into {@link #extras}.
+         *
+         * @param name  the property name
+         * @param value the property value
+         */
+        @JsonAnySetter
+        public void put(String name, Object value) {
+            extras.put(name, value);
+        }
+    }
+
+    /**
+     * The resource on the {@code vertique} floor for {@link Ac005CaseInsensitiveAnySetterBody}: it
+     * carries no {@code @JsonProfile}, so the gate schema is generated from the unannotated floor
+     * profile.
+     */
+    @Path("/ac005")
+    public static class Ac005Resource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the bound key.
+         *
+         * @param body the AC-005.2 fixture body
+         * @return the echoed key
+         */
+        @POST
+        @Path("/case-insensitive")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "ac005CaseInsensitiveEcho")
+        public String echo(Ac005CaseInsensitiveAnySetterBody body) {
+            invocations.incrementAndGet();
+            return "key=" + body.key;
         }
     }
 
