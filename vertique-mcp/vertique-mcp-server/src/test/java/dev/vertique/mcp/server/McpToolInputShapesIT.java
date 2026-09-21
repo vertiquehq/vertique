@@ -408,6 +408,63 @@ class McpToolInputShapesIT {
                         + "cannot satisfy the two rows above");
     }
 
+    // --- TP-006: case-insensitive binding (Change 3) ---
+
+    @Test
+    @DisplayName("TP-006: a case-insensitively bound property is accepted under another ASCII casing")
+    void caseInsensitiveShapeAcceptsAnotherCasingOfAPublishedProperty() throws Exception {
+        startServer();
+
+        assertAccepted(
+                McpToolInputShapesITFixture.CASE_INSENSITIVE_TOOL,
+                new JsonObject().put("NAME", "ab"),
+                "the binder accepts \"NAME\" case-insensitively, and the schema must too — this is the"
+                        + " gap Change 3 closes: the generator used to refuse the whole type outright");
+    }
+
+    @Test
+    @DisplayName("TP-006: a reserved name is rejected under every ASCII casing, not just its own")
+    void caseInsensitiveShapeRejectsAReservedNameUnderAnotherCasing() throws Exception {
+        startServer();
+
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.CASE_INSENSITIVE_TOOL,
+                new JsonObject().put("SECRETKEY", "x"),
+                "the reserved name's folded pattern must exclude every ASCII casing, not only the"
+                        + " canonical spelling — a schema that reserved 'secretKey' by exact enum alone would"
+                        + " accept this key");
+    }
+
+    @Test
+    @DisplayName(
+            "TP-006: DECISIVE — the MCP hardener keeps accepting a patternProperties match on an otherwise-closed type")
+    void caseInsensitiveClosedShapeAcceptsAnotherCasingThroughTheHardenerClosure() throws Exception {
+        startServer();
+
+        // The type declares no any-setter, so InputPropertyDescriber leaves additionalProperties
+        // unset and the MCP hardener closes it with additionalProperties: false. Draft 2020-12
+        // semantics say that keyword governs only a key matched by neither properties nor
+        // patternProperties, so "NAME" — matched by the folded pattern — must still be accepted.
+        assertAccepted(
+                McpToolInputShapesITFixture.CASE_INSENSITIVE_CLOSED_TOOL,
+                new JsonObject().put("NAME", "ab"),
+                "a patternProperties match must still be accepted once the hardener has closed the"
+                        + " object with additionalProperties: false");
+    }
+
+    @Test
+    @DisplayName(
+            "TP-006: a case-insensitive, otherwise-closed shape still rejects a key that matches no folded pattern")
+    void caseInsensitiveClosedShapeStillRejectsATrulyUnknownKey() throws Exception {
+        startServer();
+
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.CASE_INSENSITIVE_CLOSED_TOOL,
+                new JsonObject().put("zzz", "unknown"),
+                "a key matching neither properties nor patternProperties must still be rejected by the"
+                        + " hardener's additionalProperties: false closure");
+    }
+
     // --- Shared actions and assertions ---
 
     /**

@@ -7,6 +7,7 @@ import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonAnyGetter;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonEnumDefaultValue;
+import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import dev.vertique.core.context.ContextHolder;
@@ -104,6 +105,8 @@ final class McpToolInputShapesITFixture {
     static final String HIDDEN_ALIAS_TOOL = "shapes.hiddenAliasedField";
     static final String SPELLING_NAMES_HIDDEN_ANY_TOOL = "shapes.spellingNamesHiddenMemberAnySetter";
     static final String SPELLING_NAMES_HIDDEN_CLOSED_TOOL = "shapes.spellingNamesHiddenMemberClosed";
+    static final String CASE_INSENSITIVE_TOOL = "shapes.caseInsensitive";
+    static final String CASE_INSENSITIVE_CLOSED_TOOL = "shapes.caseInsensitiveClosed";
 
     /** The profile T005 TP-005's strict row selects; every other tool takes the resolver's tail. */
     static final String STRICT_PROFILE = "vertique-strict";
@@ -142,6 +145,8 @@ final class McpToolInputShapesITFixture {
         register(tools, factory, HIDDEN_ALIAS_TOOL, HiddenAliasPayload.class, null);
         register(tools, factory, SPELLING_NAMES_HIDDEN_ANY_TOOL, SpellingNamesHiddenMemberAnyPayload.class, null);
         register(tools, factory, SPELLING_NAMES_HIDDEN_CLOSED_TOOL, SpellingNamesHiddenMemberClosedPayload.class, null);
+        register(tools, factory, CASE_INSENSITIVE_TOOL, CaseInsensitivePayload.class, null);
+        register(tools, factory, CASE_INSENSITIVE_CLOSED_TOOL, CaseInsensitiveClosedPayload.class, null);
         this.toolsByName = Map.copyOf(tools);
 
         McpToolRegistry registry = McpToolRegistry.build(Set.copyOf(tools.values()));
@@ -417,6 +422,11 @@ final class McpToolInputShapesITFixture {
     record SpellingNamesHiddenMemberClosedPayload(
             @JsonProperty("payload") SpellingNamesAHiddenProperty argument0) {}
 
+    record CaseInsensitivePayload(@JsonProperty("payload") CaseInsensitiveAnySetterType argument0) {}
+
+    record CaseInsensitiveClosedPayload(
+            @JsonProperty("payload") CaseInsensitiveClosedType argument0) {}
+
     // --- TP-003 shapes: the five AC-013.1 input-discovery shapes, as T004's corpus defines them ---
 
     /** A private field Jackson fills through reflection, reachable only through a getter. */
@@ -651,6 +661,45 @@ final class McpToolInputShapesITFixture {
         public Map<String, String> getExtras() {
             return extras;
         }
+    }
+
+    /**
+     * A class-level case-insensitively bound any-setter type with a reserved name (Change 3): {@code
+     * name} is published under both its canonical spelling and an ASCII case-folded
+     * {@code patternProperties} pattern, and {@code secretKey} is reserved by a folded pattern too, so
+     * a key under another casing must still route to the right place — accepted for {@code name},
+     * rejected for {@code secretKey} — while the MCP hardener's root closure still rejects a key that
+     * matches neither.
+     */
+    @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
+    static final class CaseInsensitiveAnySetterType {
+
+        /** Published under "name" and every ASCII casing of it. */
+        @Size(max = 3)
+        public String name;
+
+        /** Never bound by name, never published: reserved under every ASCII casing of "secretKey". */
+        @JsonIgnore
+        public String secretKey;
+
+        /** The any-setter's backing storage. */
+        @JsonAnySetter
+        public Map<String, Object> extras = new LinkedHashMap<>();
+    }
+
+    /**
+     * A case-insensitively bound, otherwise closed (no any-setter) type — the decisive shape for the
+     * MCP hardener requirement: since it declares no {@code additionalProperties} of its own, the
+     * hardener closes it with {@code additionalProperties: false}, and the requirement is that a key
+     * matching {@code patternProperties} must still be accepted through that closure while a key
+     * matching neither {@code properties} nor {@code patternProperties} is rejected.
+     */
+    @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
+    static final class CaseInsensitiveClosedType {
+
+        /** Published under "name" and every ASCII casing of it. */
+        @Size(max = 3)
+        public String name;
     }
 
     /** An any-setter type declaring one alias spelling on two properties (design proof v7, DA1/DA2). */
