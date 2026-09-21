@@ -9,6 +9,8 @@ import dev.vertique.json.DefaultJsonMapperProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.mcp.server.McpServerConfig;
 import jakarta.annotation.Nullable;
+import jakarta.validation.Validator;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -61,6 +63,25 @@ public final class McpToolRuntimeFactoryTestSupport {
                 .enabled(true)
                 .jsonProfile(mcpJsonProfile)
                 .build();
-        return new McpToolRuntimeFactory(registry, JsonConfig.defaults(), mcpConfig, java.util.Optional.empty());
+        return new McpToolRuntimeFactory(registry, JsonConfig.defaults(), mcpConfig, Optional.empty());
+    }
+
+    /**
+     * Builds a real {@link McpToolRuntimeFactory} with no application-registered profile or MCP
+     * boundary default (the same zero-config tail {@link #factory()} resolves), but with the given
+     * {@link Validator} bound — so every tool a caller registers through the returned factory generates
+     * its input schema through Bean Validation metadata (the {@code MetadataConstraintSource}
+     * supplement), not the annotation walk alone. Mirrors {@code McpServerModule}'s own {@code
+     * @BindsOptionalOf Validator}: this is the "present" case, the same pattern {@code
+     * vertique-rest-validation}'s {@code RestValidationModule} documents.
+     *
+     * @param validator the validator to bind present
+     * @return the composed, validator-backed factory
+     */
+    public static McpToolRuntimeFactory factoryWithValidator(Validator validator) {
+        JsonMapperProfileRegistry registry = new DefaultJsonMapperProfileRegistry(Set.of());
+        McpServerConfig mcpConfig =
+                McpServerConfig.builder().enabled(true).jsonProfile(null).build();
+        return new McpToolRuntimeFactory(registry, JsonConfig.defaults(), mcpConfig, Optional.of(validator));
     }
 }

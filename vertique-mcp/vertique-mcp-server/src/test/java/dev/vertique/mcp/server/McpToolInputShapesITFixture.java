@@ -47,6 +47,8 @@ import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.Router;
 import jakarta.annotation.Nullable;
+import jakarta.validation.Validation;
+import jakarta.validation.Validator;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Size;
 import java.time.LocalDate;
@@ -64,6 +66,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.extern.jackson.Jacksonized;
+import org.hibernate.validator.HibernateValidator;
+import org.hibernate.validator.messageinterpolation.ParameterMessageInterpolator;
 
 /**
  * Framework wiring and argument shapes for {@link McpToolInputShapesIT} (T005 TP-003 to TP-005).
@@ -91,6 +95,7 @@ final class McpToolInputShapesITFixture {
     static final String GETTER_ONLY_LIST_TOOL = "shapes.getterOnlyList";
     static final String GETTER_ONLY_MAP_TOOL = "shapes.getterOnlyMap";
     static final String GETTER_ONLY_COLLECTION_NO_BACKING_FIELD_TOOL = "shapes.getterOnlyCollectionNoBackingField";
+    static final String BG1_TOOL = "shapes.bg1LombokBuilderNoGetter";
     static final String NESTED_PRIVATE_DATE_TOOL = "shapes.nestedPrivateDate";
     static final String ANY_SETTER_NAMED_TOOL = "shapes.anySetterWithNamedProperties";
     static final String ANY_SETTER_ONLY_TOOL = "shapes.anySetterOnly";
@@ -136,6 +141,19 @@ final class McpToolInputShapesITFixture {
                 factory,
                 GETTER_ONLY_COLLECTION_NO_BACKING_FIELD_TOOL,
                 GetterOnlyCollectionNoBackingFieldPayload.class,
+                null);
+        // BG1: registered through a separate, validator-backed factory — every other tool above stays
+        // on the validator-less factory, so this is the sole validator-present row.
+        Validator bg1Validator = Validation.byProvider(HibernateValidator.class)
+                .configure()
+                .messageInterpolator(new ParameterMessageInterpolator())
+                .buildValidatorFactory()
+                .getValidator();
+        register(
+                tools,
+                McpToolRuntimeFactoryTestSupport.factoryWithValidator(bg1Validator),
+                BG1_TOOL,
+                Bg1Payload.class,
                 null);
         register(tools, factory, NESTED_PRIVATE_DATE_TOOL, NestedPrivateDatePayload.class, null);
         register(tools, factory, ANY_SETTER_NAMED_TOOL, AnySetterNamedPayload.class, null);
@@ -401,6 +419,8 @@ final class McpToolInputShapesITFixture {
     record GetterOnlyCollectionNoBackingFieldPayload(
             @JsonProperty("payload") GetterOnlyCollectionNoBackingFieldDto argument0) {}
 
+    record Bg1Payload(@JsonProperty("payload") Bg1Dto argument0) {}
+
     record NestedPrivateDatePayload(@JsonProperty("payload") NestedPrivateDateDto argument0) {}
 
     record AnySetterNamedPayload(@JsonProperty("payload") FieldAnySetterOverStrings argument0) {}
@@ -515,6 +535,21 @@ final class McpToolInputShapesITFixture {
         public List<Integer> getItems() {
             return internal;
         }
+    }
+
+    /**
+     * BG1: a Lombok {@code @Builder @Jacksonized} type with a constrained private field and
+     * deliberately no getter. Jackson's own introspection does not see {@code name} as a property at
+     * all without a public accessor, so the validator-less floor's builder-constraint borrow finds
+     * nothing to borrow; Bean Validation is unaffected, since it reads the constrained field directly
+     * by Java name. Registered only through the validator-backed factory ({@link #BG1_TOOL}).
+     */
+    @Builder
+    @Jacksonized
+    static final class Bg1Dto {
+
+        @Size(max = 5)
+        private final String name;
     }
 
     /** A type holding {@link PrivateDatePropertyDto}, so the nested position is covered too. */

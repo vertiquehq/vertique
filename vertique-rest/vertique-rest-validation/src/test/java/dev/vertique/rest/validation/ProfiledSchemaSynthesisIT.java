@@ -66,6 +66,8 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
+import lombok.Builder;
+import lombok.extern.jackson.Jacksonized;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -361,13 +363,51 @@ public class ProfiledSchemaSynthesisIT {
                 "a string item must be rejected against the published items schema (type: integer); body: "
                         + rejected.bodyAsString());
         assertEquals(
-                200,
-                accepted.statusCode(),
-                "a well-typed body must be accepted; body: " + accepted.bodyAsString());
+                200, accepted.statusCode(), "a well-typed body must be accepted; body: " + accepted.bodyAsString());
         assertEquals(
                 "items=[1, 2, 3]",
                 accepted.bodyAsString(),
                 "the accepted body must bind through the getter-only mutable-collection property");
+        assertEquals(
+                1,
+                resource.invocations.get(),
+                "only the well-typed body may have reached the resource; the rejected one must not");
+    }
+
+    // --- BG1: Lombok builder, constrained private field, no getter — validator-present case ---
+
+    /**
+     * The gate-level half of the BG1 proof, validator-present only: the unit-level half (type-only
+     * without a validator, {@code maxLength} with one) is {@code
+     * dev.vertique.json.schema.MetadataConstraintSourceCoverageTest
+     * .lombokBuilderNoGetterPropertyIsTypeOnlyWithoutAValidatorAndConstrainedWithOne} in {@code
+     * vertique-json-schema}. Only the validator-present case has a gate row: without a validator, the
+     * constraint is not enforced by the schema at all — nothing for a gate to reject — which is the
+     * package's per-mode behavior, not a gap this proof needs to re-demonstrate at the HTTP boundary.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("BG1: on the validator-backed mount, the gate rejects a too-long name and accepts a valid one for"
+            + " a Lombok builder's constrained, getter-less private field")
+    void bg1GateRejectsTooLongNameAndAcceptsValidNameUnderAValidator() throws Exception {
+        Bg1Resource resource = new Bg1Resource();
+        int gatePort = start(MountFixtures.validatorBackedMount(vertx, RestTestContributions.none()), Set.of(resource));
+
+        HttpResponse<Buffer> rejected = post(gatePort, "/bg1/name", "{\"name\":\"toolong\"}");
+        HttpResponse<Buffer> accepted = post(gatePort, "/bg1/name", "{\"name\":\"ada\"}");
+
+        assertEquals(
+                400,
+                rejected.statusCode(),
+                "a 7-character name must be rejected against the metadata-supplement-rendered maxLength: 5;" + " body: "
+                        + rejected.bodyAsString());
+        assertEquals(
+                200, accepted.statusCode(), "a 3-character name must be accepted; body: " + accepted.bodyAsString());
+        assertEquals(
+                "name=ada",
+                accepted.bodyAsString(),
+                "the accepted body must bind through the builder's own setter method");
         assertEquals(
                 1,
                 resource.invocations.get(),
@@ -1702,6 +1742,53 @@ public class ProfiledSchemaSynthesisIT {
         public String echo(GetterOnlyCollectionNoBackingFieldBody body) {
             invocations.incrementAndGet();
             return "items=" + body.getItems();
+        }
+    }
+
+    /**
+     * BG1: a Lombok {@code @Builder @Jacksonized} type with a constrained private field and
+     * deliberately no getter — {@code LombokBuilderDto} in {@code corpus}, this fixture's
+     * {@code @Getter}-carrying counterpart, stays out of reach here since the corpus set is frozen for
+     * byte-exact golden comparisons. Jackson's own introspection does not see {@code name} as a
+     * property at all without a public accessor, so the floor's builder-constraint borrow
+     * ({@code InputPropertyDescriber#borrowBuilderFieldAttributes}, which reads {@code
+     * BeanDescription#findProperties()}) has nothing to find; Bean Validation is unaffected, since it
+     * reads the constrained field directly by Java name.
+     */
+    @Builder
+    @Jacksonized
+    public static class Bg1NoGetterBody {
+
+        @Size(max = 5)
+        private final String name;
+    }
+
+    /**
+     * The resource on the {@code vertique} floor for {@link Bg1NoGetterBody}, mounted on {@link
+     * MountFixtures#validatorBackedMount}: it carries no {@code @JsonProfile}, so the gate schema is
+     * generated from the unannotated floor profile, and the mount's own graph supplies a real {@link
+     * jakarta.validation.Validator} so the metadata supplement is active.
+     */
+    @Path("/bg1")
+    public static class Bg1Resource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the bound name.
+         *
+         * @param body the BG1 fixture body
+         * @return the echoed name
+         */
+        @POST
+        @Path("/name")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "bg1NameEcho")
+        public String echo(Bg1NoGetterBody body) {
+            invocations.incrementAndGet();
+            return "name=" + body.name;
         }
     }
 

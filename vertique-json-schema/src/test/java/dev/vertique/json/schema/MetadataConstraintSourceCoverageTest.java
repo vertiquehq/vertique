@@ -171,8 +171,7 @@ class MetadataConstraintSourceCoverageTest {
         // setter whose name and parameter type both match the field exactly — may still resolve, since
         // BuilderBorrowDetector cannot tell it apart from a real Lombok builder.
         Validator validator = MetadataTestValidators.plain();
-        JsonNode document =
-                metadataDocument(BuilderWireNameJoinTest.HandWrittenLombokShapedDto.class, validator);
+        JsonNode document = metadataDocument(BuilderWireNameJoinTest.HandWrittenLombokShapedDto.class, validator);
         JsonNode amount = document.at("/properties/amount");
 
         assertFalse(amount.isMissingNode(), "amount must be published: the builder method binds it");
@@ -485,6 +484,49 @@ class MetadataConstraintSourceCoverageTest {
                         + document);
     }
 
+    // --- BG1 ---
+
+    @Test
+    @DisplayName("BG1: a Lombok builder's constrained private field with no getter is type-only without a"
+            + " validator and maxLength with one")
+    void lombokBuilderNoGetterPropertyIsTypeOnlyWithoutAValidatorAndConstrainedWithOne() {
+        // Without a validator, the constraint is not enforced by the generated schema at all — this is
+        // the package's per-mode behavior (floor alone / floor+supplement), not a bug: the floor's own
+        // builder borrow (InputPropertyDescriber#borrowBuilderFieldAttributes) goes through Jackson's
+        // own BeanDescription#findProperties() for the built class, which — with neither a public field
+        // nor a getter for "name" — does not surface it as a property at all, so there is nothing to
+        // borrow from. Bean Validation does not depend on Jackson's introspection: it reads the
+        // constrained field directly by Java name, so the metadata supplement still finds and renders
+        // the constraint once a validator is supplied.
+        JsonNode withoutValidator = walkDocument(MetadataFixtures.Bg1Dto.class);
+        JsonNode nameWithoutValidator = withoutValidator.at("/properties/name");
+
+        assertFalse(
+                nameWithoutValidator.isMissingNode(),
+                "the property must still be published: the builder method binds it; document: " + withoutValidator);
+        assertEquals(
+                "string",
+                nameWithoutValidator.at("/type").asText(),
+                "sanity: the property must be described by its Jackson-resolved type; document: " + withoutValidator);
+        assertTrue(
+                nameWithoutValidator.at("/maxLength").isMissingNode(),
+                "without a validator, the constraint on a getter-less Lombok builder field must not be"
+                        + " enforced by the schema at all — the floor's builder borrow has no Jackson-visible"
+                        + " property to borrow from; document: " + withoutValidator);
+
+        Validator validator = MetadataTestValidators.plain();
+        JsonNode withValidator = metadataDocument(MetadataFixtures.Bg1Dto.class, validator);
+        JsonNode nameWithValidator = withValidator.at("/properties/name");
+
+        assertEquals(
+                5,
+                nameWithValidator.at("/maxLength").asInt(),
+                "with a validator supplied, the metadata supplement must still find and render the"
+                        + " constraint: Validator#getConstraintsForClass reads the field directly by Java"
+                        + " name, unaffected by Jackson's own introspection having nothing to offer the"
+                        + " floor; document: " + withValidator);
+    }
+
     // --- D4 ---
 
     @Test
@@ -569,8 +611,8 @@ class MetadataConstraintSourceCoverageTest {
         // otherwise go unnoticed.
         String throughOverload =
                 AnnotationJsonSchemaGenerator.forInputProfile(vertiqueProfile()).generateCanonical(fixture);
-        String withNullValidator =
-                AnnotationJsonSchemaGenerator.forInputProfile(vertiqueProfile(), null).generateCanonical(fixture);
+        String withNullValidator = AnnotationJsonSchemaGenerator.forInputProfile(vertiqueProfile(), null)
+                .generateCanonical(fixture);
 
         assertEquals(
                 throughOverload,

@@ -151,6 +151,37 @@ class McpToolInputShapesIT {
                 "a well-typed body must reach the handler");
     }
 
+    // --- BG1: Lombok builder, constrained private field, no getter — validator-present case ---
+
+    /**
+     * The MCP-level half of the BG1 proof, validator-present only: {@code
+     * McpToolInputShapesITFixture.BG1_TOOL} is registered through a separate, validator-backed {@link
+     * dev.vertique.mcp.server.runtime.McpToolRuntimeFactory} — every other tool in this fixture stays
+     * on the validator-less one. The REST-level half is {@code ProfiledSchemaSynthesisIT
+     * .bg1GateRejectsTooLongNameAndAcceptsValidNameUnderAValidator}; the unit-level half (type-only
+     * without a validator, {@code maxLength} with one) is {@code
+     * dev.vertique.json.schema.MetadataConstraintSourceCoverageTest
+     * .lombokBuilderNoGetterPropertyIsTypeOnlyWithoutAValidatorAndConstrainedWithOne} in {@code
+     * vertique-json-schema}. Only the validator-present case has a row here: without a validator, the
+     * constraint is not enforced by the schema at all, which is the package's per-mode behavior, not a
+     * gap this proof needs to re-demonstrate at the MCP boundary.
+     */
+    @Test
+    @DisplayName("BG1: on the validator-backed tool, a too-long name is INPUT_VALIDATION and a valid name reaches"
+            + " the handler, for a Lombok builder's constrained, getter-less private field")
+    void bg1RejectsTooLongNameAndAcceptsValidNameUnderAValidator() throws Exception {
+        startServer();
+
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.BG1_TOOL,
+                new JsonObject().put("name", "toolong"),
+                "a 7-character name must be rejected against the metadata-supplement-rendered maxLength: 5");
+        assertAccepted(
+                McpToolInputShapesITFixture.BG1_TOOL,
+                new JsonObject().put("name", "ada"),
+                "a 3-character name must reach the handler");
+    }
+
     // --- TP-004: any-setter types ---
 
     @Test

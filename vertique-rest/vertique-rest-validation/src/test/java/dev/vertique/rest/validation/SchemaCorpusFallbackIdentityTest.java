@@ -39,8 +39,7 @@ class SchemaCorpusFallbackIdentityTest {
 
     static Stream<Arguments> corpusFixturesByProfile() {
         return SchemaCorpus.FIXTURES.stream().flatMap(fixture -> Stream.of("system", "vertique")
-                .map(profileId ->
-                        Arguments.of(Named.of(fixture.name() + " (" + profileId + ")", fixture), profileId)));
+                .map(profileId -> Arguments.of(Named.of(fixture.name() + " (" + profileId + ")", fixture), profileId)));
     }
 
     @ParameterizedTest

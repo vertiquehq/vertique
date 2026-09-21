@@ -311,4 +311,23 @@ final class MetadataFixtures {
             return code;
         }
     }
+
+    /**
+     * BG1: a Lombok {@code @Builder @Jacksonized} type with a constrained private field and
+     * deliberately <strong>no getter</strong> — unlike every other Lombok builder fixture in this
+     * class and {@link BuilderWireNameJoinTest}, which all carry {@code @Getter}. Jackson's own
+     * default introspection only auto-detects a <em>public</em> field or accessor; with neither here,
+     * the built class's {@code BeanDescription#findProperties()} — what {@code
+     * InputPropertyDescriber#borrowBuilderFieldAttributes} (the floor) borrows through — does not
+     * surface {@code name} as a property at all, so the floor's builder borrow has nothing to find.
+     * Bean Validation is unaffected by this: it reads the constrained field directly by Java name
+     * ({@code Validator#getConstraintsForClass}), never through Jackson's introspection, so the
+     * metadata supplement still finds and renders the constraint when a validator is supplied.
+     */
+    @Builder
+    @Jacksonized
+    static final class Bg1Dto {
+        @Size(max = 5)
+        private final String name;
+    }
 }

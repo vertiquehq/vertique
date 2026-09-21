@@ -53,13 +53,14 @@ class GetterOnlyCollectionDescriptionTest {
         JsonNode document = assertCanonicalForm(canonical);
 
         JsonNode items = document.at("/properties/items");
-        assertFalse(items.isMissingNode(), "the property must be published even with no backing field; document: "
-                + document);
+        assertFalse(
+                items.isMissingNode(),
+                "the property must be published even with no backing field; document: " + document);
         assertEquals(
                 "array",
                 items.at("/type").asText(),
-                "the property must describe an array, not fall back to an opaque, unscoped description;"
-                        + " document: " + document);
+                "the property must describe an array, not fall back to an opaque, unscoped description;" + " document: "
+                        + document);
         assertEquals(
                 "integer",
                 items.at("/items/type").asText(),
