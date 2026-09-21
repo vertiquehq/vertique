@@ -197,16 +197,21 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                             + " the type on the profile, or deserialize it as a bean",
                     null);
         }
-        requireCaseSensitive(bean, javaType.getRawClass(), "the type");
-
         ObjectNode definition = context.getGeneratorConfig().createObjectNode();
         ValueInstantiator instantiator = bean.getValueInstantiator();
         if (instantiator.canCreateUsingDelegate()) {
-            // The whole object is bound as the delegate type; no named property is read.
-            JavaType delegate = instantiator.getDelegateType(mapper.getDeserializationConfig());
-            definition.putArray("allOf").add(context.createDefinitionReference(resolve(context, delegate)));
-            return new CustomDefinition(
-                    definition, CustomDefinition.DefinitionType.STANDARD, CustomDefinition.AttributeInclusion.NO);
+            // Treated exactly like a type-level custom deserializer (below): the whole object is bound
+            // through a delegate type, so no named property is ever read from this type's own wire
+            // shape, and a document describing the delegate's shape honestly would open the boundary to
+            // keys main never accepted and leave any constraint on this type's own fields dead on input.
+            throw Diagnostics.failure(
+                    "JSON Schema generation failed for " + Diagnostics.typeIdentity(javaType.getRawClass())
+                            + ": the type binds through a delegating @JsonCreator, which reads no named"
+                            + " property of its own — its wire shape is whatever the delegate type's"
+                            + " deserializer accepts, which a schema's properties cannot describe; declare a"
+                            + " JsonSchemaTypeOverride for the type on the profile, or bind it through a"
+                            + " property-based creator",
+                    null);
         }
         String scalar = scalarCreator(instantiator);
         if (scalar != null && !instantiator.canCreateFromObjectWith() && !instantiator.canCreateUsingDefault()) {
@@ -215,15 +220,50 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                     definition, CustomDefinition.DefinitionType.STANDARD, CustomDefinition.AttributeInclusion.NO);
         }
 
+        boolean caseInsensitive = bean.isCaseInsensitive();
+        populateObjectSchema(
+                definition, javaType, resolved, bean, builderFor(javaType, bean), context, caseInsensitive);
+        return new CustomDefinition(
+                definition, CustomDefinition.DefinitionType.STANDARD, CustomDefinition.AttributeInclusion.YES);
+    }
+
+    /**
+     * Fills in an object schema's {@code properties}, {@code patternProperties}, {@code required},
+     * alias plan, extras and reserved names from a bean deserializer's bound properties.
+     *
+     * <p>Shared between the root type — described once per generation into the definition Victools
+     * asked for — and a nested member whose own type is bound case-insensitively only through that
+     * member's contextual {@code @JsonFormat(with = ACCEPT_CASE_INSENSITIVE_PROPERTIES)}: such a member
+     * cannot share the type's ordinary (case-sensitive) definition, since the same class used elsewhere
+     * without the annotation stays case-sensitive there, so it is described inline instead. See
+     * {@link #propertySchema}.
+     *
+     * @param definition      the object node to fill in; already carries no keyword this method writes
+     * @param javaType        the type being described
+     * @param resolved        the schema library's resolved type for {@code javaType}
+     * @param bean            the type's resolved bean deserializer
+     * @param builder         the captured builder the deserializer was assembled from, or {@code null}
+     * @param context         the active generation context
+     * @param caseInsensitive whether {@code bean} binds its properties case-insensitively
+     */
+    private void populateObjectSchema(
+            ObjectNode definition,
+            JavaType javaType,
+            ResolvedType resolved,
+            BeanDeserializerBase bean,
+            BeanDeserializerBuilder builder,
+            SchemaGenerationContext context,
+            boolean caseInsensitive) {
         definition.put("type", "object");
         ObjectNode properties = definition.putObject("properties");
         List<String> required = new ArrayList<>();
         Class<?> builtClass = javaType.getRawClass();
         Set<String> published = new LinkedHashSet<>();
-        BeanDeserializerBuilder builder = builderFor(javaType, bean);
+        Set<String> excludedFromReservation = new LinkedHashSet<>();
         List<SettableBeanProperty> bound = boundProperties(bean, builder);
         SettableAnyProperty anySetter = builder == null ? null : builder.getAnySetter();
         Set<Object> storage = storageMembers(javaType, anySetter);
+        ObjectNode[] patternProperties = new ObjectNode[1];
         for (SettableBeanProperty property : bound) {
             String name = property.getName();
             if (name.isEmpty() || published.contains(name)) {
@@ -232,13 +272,23 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             if (isStorage(storage, property.getMember())) {
                 continue; // an any-accessor's storage: reserved below, never published
             }
-            requireCaseSensitiveValue(property, builtClass);
+            if (isUnjoinableConstraintFreeCreatorParameter(property, builtClass)) {
+                // Renamed away from every member, with no constraint of its own: publishing it bare
+                // would invent a property main never had, and it must not be reserved either, since
+                // reserving it would reject the type's valid traffic that main's field walk accepted
+                // through no named property at all (design proof CR1c).
+                excludedFromReservation.add(name);
+                continue;
+            }
             JsonNode schema = propertySchema(property, builtClass, resolved, context, required);
             if (schema == null) {
                 continue; // hidden on purpose: reserved below, never published
             }
             properties.set(name, schema);
             published.add(name);
+            if (caseInsensitive) {
+                publishFolded(definition, patternProperties, name, schema, builtClass);
+            }
         }
 
         if (builder != null) {
@@ -267,6 +317,9 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                     if (schema != null) {
                         properties.set(name, schema);
                         published.add(name);
+                        if (caseInsensitive) {
+                            publishFolded(definition, patternProperties, name, schema, builtClass);
+                        }
                     }
                 }
                 if (anySetter == null) {
@@ -283,11 +336,28 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         }
         if (!required.isEmpty()) {
             ArrayNode node = definition.putArray("required");
+            // Presence under another casing is not enforced: `required` names only the canonical
+            // spelling, so a client sending the required value under a different casing that Jackson
+            // still binds is rejected by the schema even though the binder would accept it (measured,
+            // see the module report).
             new LinkedHashSet<>(required).forEach(node::add);
         }
 
         Map<String, List<String>> aliasPlan = aliasPlan(bean, bound, published);
         if (!aliasPlan.isEmpty()) {
+            if (caseInsensitive) {
+                // The alias-expansion post-pass rewrites `required`/`enum` branches keyed on exact wire
+                // spellings; folding those together with case-insensitive binding is not a bounded
+                // extension of that mechanism, so the combination is refused rather than described
+                // unsoundly.
+                throw Diagnostics.failure(
+                        "JSON Schema generation failed for " + Diagnostics.typeIdentity(builtClass)
+                                + ": the type is bound case-insensitively and declares an alias spelling,"
+                                + " which the generator cannot fold together; declare a"
+                                + " JsonSchemaTypeOverride for the type on the profile, or bind it"
+                                + " case-sensitively",
+                        null);
+            }
             ObjectNode marker = definition.putObject(AnnotationJsonSchemaGenerator.AliasExpansion.MARKER);
             marker.put(AnnotationJsonSchemaGenerator.AliasExpansion.STRICT, strictSpellings);
             ObjectNode byWireName = marker.putObject(AnnotationJsonSchemaGenerator.AliasExpansion.ALIASES);
@@ -300,15 +370,18 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         boolean extrasDescribed = describeExtras(definition, anySetter, builtClass, context);
         if (extrasDescribed) {
             Set<String> reserved = reservedNames(javaType, bean, bound, published, aliasPlan);
+            reserved.removeAll(excludedFromReservation);
             if (!reserved.isEmpty()) {
                 ObjectNode rule = JsonNodeFactory.instance.objectNode();
-                ArrayNode values = rule.putObject("not").putArray("enum");
-                reserved.forEach(values::add);
+                if (caseInsensitive) {
+                    rule.putObject("not").put("pattern", combinedFoldPattern(reserved, builtClass));
+                } else {
+                    ArrayNode values = rule.putObject("not").putArray("enum");
+                    reserved.forEach(values::add);
+                }
                 definition.set("propertyNames", rule);
             }
         }
-        return new CustomDefinition(
-                definition, CustomDefinition.DefinitionType.STANDARD, CustomDefinition.AttributeInclusion.YES);
     }
 
     /** A primitive optional is bound by the Jdk8 module as the scalar or null; the library alone renders a bare object. */
@@ -387,6 +460,26 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         Member raw = member == null ? null : member.getMember();
         JsonDeserializer<?> valueDeserializer =
                 property.hasValueDeserializer() ? unwrap(property.getValueDeserializer()) : null;
+        if (valueDeserializer instanceof BeanDeserializerBase nestedBean && nestedBean.isCaseInsensitive()) {
+            // Case-insensitive only through this member's own contextual
+            // @JsonFormat(with = ACCEPT_CASE_INSENSITIVE_PROPERTIES) (or a mapper-wide feature reaching
+            // it the same way): the type's ordinary, case-sensitive shared definition would misdescribe
+            // it here, so it is described inline instead of by reference to that shared definition.
+            JavaType memberType = property.getType();
+            ObjectNode inline = context.getGeneratorConfig().createObjectNode();
+            populateObjectSchema(
+                    inline,
+                    memberType,
+                    resolve(context, memberType),
+                    nestedBean,
+                    builderFor(memberType, nestedBean),
+                    context,
+                    true);
+            if (member != null) {
+                translateConstraints(member, inline, property.getName(), required);
+            }
+            return inline;
+        }
         if (valueDeserializer instanceof StdDelegatingDeserializer<?> converting
                 && converting.getDelegatee() != null
                 && converting.getDelegatee().handledType() != null) {
@@ -1013,16 +1106,6 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         }
     }
 
-    private static void requireCaseSensitiveValue(SettableBeanProperty property, Class<?> declaring) {
-        if (!property.hasValueDeserializer()) {
-            return;
-        }
-        JsonDeserializer<?> value = unwrap(property.getValueDeserializer());
-        if (value instanceof BeanDeserializerBase bean) {
-            requireCaseSensitive(bean, declaring, "the member " + property.getName());
-        }
-    }
-
     private static String scalarCreator(ValueInstantiator instantiator) {
         if (instantiator.canCreateFromInt()
                 || instantiator.canCreateFromLong()
@@ -1039,6 +1122,201 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             return "boolean";
         }
         return null;
+    }
+
+    // ---------------------------------------------------------------- creator parameters with no member
+
+    /**
+     * Whether a creator parameter's wire name has no member to publish it faithfully with: no field it
+     * joins to — by the wire name, or, when the class was compiled with {@code javac -parameters}, by
+     * the compiled parameter name — no getter- or setter-derived property of the same name either, and
+     * no constraint annotation of its own.
+     *
+     * <p>Publishing such a parameter would either invent a property main's field walk never had, or
+     * silently drop a constraint written on a member the join cannot reach — the type is a closed
+     * boundary either way, and this gap is the one that let a constrained field's limit be bypassed
+     * through its renamed creator parameter (design proof CR1c). The caller excludes the property from
+     * publication and, on an any-setter type, from the reserved-name set as well: main described no
+     * property by this name and reserved none either, since it has nothing to key a refusal on.
+     *
+     * @param property   the bound property to test
+     * @param builtClass the type being described
+     * @return whether the property must be excluded entirely
+     */
+    private static boolean isUnjoinableConstraintFreeCreatorParameter(
+            SettableBeanProperty property, Class<?> builtClass) {
+        AnnotatedMember member = property.getMember();
+        if (!(member instanceof AnnotatedParameter parameter)) {
+            return false;
+        }
+        if (backingField(builtClass, parameter, property.getName()) != null) {
+            return false;
+        }
+        if (carriesConstraintAnnotation(parameter)) {
+            return false;
+        }
+        return !hasAccessorDerivedProperty(builtClass, property.getName());
+    }
+
+    /** Whether a member carries any of the constraint annotations {@link #translateConstraints} reads. */
+    private static boolean carriesConstraintAnnotation(AnnotatedMember member) {
+        return member.getAnnotation(Max.class) != null
+                || member.getAnnotation(Min.class) != null
+                || member.getAnnotation(DecimalMax.class) != null
+                || member.getAnnotation(DecimalMin.class) != null
+                || member.getAnnotation(Size.class) != null
+                || member.getAnnotation(Pattern.class) != null
+                || member.getAnnotation(NotBlank.class) != null
+                || member.getAnnotation(NotEmpty.class) != null
+                || member.getAnnotation(NotNull.class) != null;
+    }
+
+    /** Whether a getter, setter, or builder-style {@code with} method elsewhere implies the wire name. */
+    private static boolean hasAccessorDerivedProperty(Class<?> builtClass, String wireName) {
+        for (Class<?> current = builtClass;
+                current != null && current != Object.class;
+                current = current.getSuperclass()) {
+            for (Method method : current.getDeclaredMethods()) {
+                if (Modifier.isStatic(method.getModifiers()) || method.isSynthetic()) {
+                    continue;
+                }
+                boolean getter = method.getParameterCount() == 0 && method.getReturnType() != void.class;
+                boolean setter = method.getParameterCount() == 1;
+                if ((getter || setter) && impliedAccessorName(method).equals(wireName)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** The property name a getter, setter, or builder-style {@code with} method implies from its own name. */
+    private static String impliedAccessorName(Method method) {
+        String name = method.getName();
+        for (String prefix : List.of("get", "set", "with", "is")) {
+            if (name.length() > prefix.length()
+                    && name.startsWith(prefix)
+                    && Character.isUpperCase(name.charAt(prefix.length()))) {
+                String rest = name.substring(prefix.length());
+                return Character.toLowerCase(rest.charAt(0)) + rest.substring(1);
+            }
+        }
+        return name;
+    }
+
+    // ---------------------------------------------------------------- case-insensitive folding
+
+    /** The regular-expression metacharacters {@link #asciiFoldPattern} escapes in a literal segment. */
+    private static final String REGEX_METACHARACTERS = ".^$|?*+()[]{}\\";
+
+    /**
+     * An ASCII case-folding regular expression for a property name, anchored at both ends: each ASCII
+     * letter becomes a two-character class of its lower- and upper-case form — {@code name} folds to
+     * {@code ^[nN][aA][mM][eE]$} — and every other character is escaped literally.
+     *
+     * <p>The fold is ASCII-only by design, not a locale-aware one: {@code String#toLowerCase()} and
+     * {@code String#toUpperCase()} without an explicit {@link java.util.Locale} — which is what Jackson
+     * itself measurably uses for its own case-insensitive property lookup — fold differently under a
+     * non-root default locale (the Turkish {@code I}/{@code ı}/{@code İ}/{@code i} pairing is the
+     * classic case), so a schema fold pinned to the JVM's default locale would silently drift from the
+     * binder's under a locale change. Anchoring on the fixed ASCII pairing keeps the schema's fold
+     * independent of the server's default locale entirely, at the cost of refusing a name the fold does
+     * not cover.
+     *
+     * @param name the property's canonical wire name
+     * @return the anchored pattern, or {@code null} when the name is empty or carries a non-ASCII
+     *     letter, which this fold does not cover
+     */
+    private static String asciiFoldPattern(String name) {
+        if (name.isEmpty()) {
+            return null;
+        }
+        StringBuilder pattern = new StringBuilder(name.length() * 4 + 2).append('^');
+        for (int index = 0; index < name.length(); index++) {
+            char letter = name.charAt(index);
+            if (letter > 0x7E) {
+                return null;
+            }
+            if ((letter >= 'a' && letter <= 'z') || (letter >= 'A' && letter <= 'Z')) {
+                pattern.append('[')
+                        .append(Character.toLowerCase(letter))
+                        .append(Character.toUpperCase(letter))
+                        .append(']');
+            } else if (Character.isLetter(letter)) {
+                // No ASCII code point besides a-zA-Z is itself a letter; fail closed rather than emit
+                // an unfolded literal for one this fold was not designed to reach.
+                return null;
+            } else {
+                if (REGEX_METACHARACTERS.indexOf(letter) >= 0) {
+                    pattern.append('\\');
+                }
+                pattern.append(letter);
+            }
+        }
+        return pattern.append('$').toString();
+    }
+
+    /**
+     * Publishes a bound property's schema a second time under {@code patternProperties}, keyed by its
+     * ASCII case-folding pattern, for a case-insensitively bound type — beside the canonical-name entry
+     * already published under {@code properties}.
+     *
+     * @param definition               the object schema being built
+     * @param patternPropertiesHolder  a one-element holder for the lazily created {@code
+     *     patternProperties} object, shared across every call for the same definition
+     * @param name                     the property's canonical wire name
+     * @param schema                   the property's already-built schema
+     * @param type                     the type being described, for the diagnostic
+     * @throws JsonSchemaGenerationException when the name carries a non-ASCII letter this fold does not
+     *     cover
+     */
+    private static void publishFolded(
+            ObjectNode definition, ObjectNode[] patternPropertiesHolder, String name, JsonNode schema, Class<?> type) {
+        String pattern = asciiFoldPattern(name);
+        if (pattern == null) {
+            throw Diagnostics.failure(
+                    "JSON Schema generation failed for " + Diagnostics.typeIdentity(type)
+                            + ": the case-insensitively bound property \""
+                            + Diagnostics.truncate(name, Diagnostics.MAX_SHORT_IDENTITY_LENGTH)
+                            + "\" carries a non-ASCII letter, which this generator's ASCII case folding"
+                            + " does not cover; declare a JsonSchemaTypeOverride for the type on the"
+                            + " profile, or bind it case-sensitively",
+                    null);
+        }
+        if (patternPropertiesHolder[0] == null) {
+            patternPropertiesHolder[0] = definition.putObject("patternProperties");
+        }
+        patternPropertiesHolder[0].set(pattern, schema.deepCopy());
+    }
+
+    /**
+     * One combined ASCII case-folding pattern excluding every reserved name, for {@code
+     * propertyNames: {"not": {"pattern": ...}}} on a case-insensitively bound type.
+     *
+     * @param names the reserved names to fold together
+     * @param type  the type being described, for the diagnostic
+     * @return the combined, anchored alternation pattern
+     * @throws JsonSchemaGenerationException when a name carries a non-ASCII letter this fold does not
+     *     cover
+     */
+    private static String combinedFoldPattern(Set<String> names, Class<?> type) {
+        List<String> alternatives = new ArrayList<>();
+        for (String name : names) {
+            String pattern = asciiFoldPattern(name);
+            if (pattern == null) {
+                throw Diagnostics.failure(
+                        "JSON Schema generation failed for " + Diagnostics.typeIdentity(type)
+                                + ": the case-insensitively bound reserved name \""
+                                + Diagnostics.truncate(name, Diagnostics.MAX_SHORT_IDENTITY_LENGTH)
+                                + "\" carries a non-ASCII letter, which this generator's ASCII case folding"
+                                + " does not cover; declare a JsonSchemaTypeOverride for the type on the"
+                                + " profile, or bind it case-sensitively",
+                        null);
+            }
+            // Strip the per-name anchors: every alternative shares one pair of anchors around the group.
+            alternatives.add(pattern.substring(1, pattern.length() - 1));
+        }
+        return "^(?:" + String.join("|", alternatives) + ")$";
     }
 
     // ---------------------------------------------------------------- Jackson plumbing, public API only
