@@ -268,6 +268,49 @@ class CreatorAndCaseInsensitivityDescriptionTest {
                 "an ordinary sibling property must be unaffected; document: " + document);
     }
 
+    // ================================================================== W1: array-delegating creators
+
+    @Test
+    @DisplayName("W1: an array-delegating creator is refused exactly like an object-delegating one")
+    void arrayDelegatingCreatorIsRefusedWithoutAnOverride() {
+        JsonSchemaGenerationException failure = assertThrows(
+                JsonSchemaGenerationException.class,
+                () -> inputDocument(W1ArrayDelegating.class),
+                "an array-delegating creator must be refused: its wire shape is a JSON array, which a"
+                        + " schema's properties cannot describe any more than an object delegate's shape could");
+
+        String message = failure.getMessage();
+        assertNotNull(message, "the refusal must carry a message");
+        assertTrue(
+                message.contains(W1ArrayDelegating.class.getSimpleName()),
+                "the message must name the refused type; was: " + message);
+        assertTrue(
+                message.contains("JsonSchemaTypeOverride"),
+                "the message must name the remedy — a profile override; was: " + message);
+        assertTrue(
+                message.length() <= Diagnostics.MAX_MESSAGE_LENGTH,
+                "the message must stay within " + Diagnostics.MAX_MESSAGE_LENGTH + " code units; was "
+                        + message.length());
+    }
+
+    @Test
+    @DisplayName("W1: a profile override remedies the array-delegating-creator refusal")
+    void arrayDelegatingCreatorGeneratesWithAnOverride() {
+        String marker = "array-delegating-override-marker";
+        JsonMapperProfile overridden = profile(
+                new ObjectMapper(),
+                List.of(JsonSchemaTypeOverride.input(
+                        W1ArrayDelegating.class, HardeningFixtures.markerFragment(marker))));
+
+        String document =
+                AnnotationJsonSchemaGenerator.forInputProfile(overridden).generateCanonical(W1ArrayDelegating.class);
+
+        assertTrue(
+                document.contains(marker),
+                "an overridden array-delegating-creator type must use the profile's fragment, never reach"
+                        + " InputPropertyDescriber's own refusal; document: " + document);
+    }
+
     @Test
     @DisplayName("A reserved name on a case-insensitive type is excluded by a folded pattern, not an enum")
     void reservedNameOnCaseInsensitiveTypeUsesAFoldedPattern() {
@@ -518,5 +561,21 @@ class CreatorAndCaseInsensitivityDescriptionTest {
     static final class CI5WithAlias {
         @JsonAlias("nm")
         public String name;
+    }
+
+    // --- Fixtures: W1 ---
+
+    /** W1: a single-argument delegating creator whose parameter type is array-like (a List). */
+    static final class W1ArrayDelegating {
+        private final List<String> items;
+
+        @JsonCreator(mode = JsonCreator.Mode.DELEGATING)
+        W1ArrayDelegating(List<String> items) {
+            this.items = items;
+        }
+
+        public List<String> getItems() {
+            return items;
+        }
     }
 }

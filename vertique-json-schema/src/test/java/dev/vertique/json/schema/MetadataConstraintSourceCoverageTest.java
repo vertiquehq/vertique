@@ -346,6 +346,67 @@ class MetadataConstraintSourceCoverageTest {
                                 .decimalValue()));
     }
 
+    // --- W3: fully-qualified constraint-type matching ---
+
+    @Test
+    @DisplayName(
+            "W3: an app-defined @Size in another package that composes @Pattern renders the pattern, not the Size case")
+    void applicationDefinedSizeCollisionRendersOnlyItsComposedPattern() {
+        Validator validator = MetadataTestValidators.plain();
+        JsonNode document = metadataDocument(MetadataFixtures.AppDefinedSizeCollisionDto.class, validator);
+
+        List<JsonNode> closure = propertyClosure(document, "code");
+        assertEquals(
+                List.of("[A-Z]+"),
+                textValues(closure, "pattern"),
+                "the composed @Pattern leaf must render; document: " + document);
+        assertTrue(
+                keywordValues(closure, "minLength").isEmpty()
+                        && keywordValues(closure, "maxLength").isEmpty(),
+                "the app-defined @Size's own (String-typed) min/max must never be read as if they were"
+                        + " jakarta.validation.constraints.Size's (int-typed) min/max — matching by simple"
+                        + " name alone risked exactly that misread; document: " + document);
+    }
+
+    // --- S5: two @Pattern constraints in the default group on one member render as allOf ---
+
+    @Test
+    @DisplayName("S5: two @Pattern constraints in the default group render as an allOf of both patterns")
+    void twoPatternsRenderAsAllOf() {
+        Validator validator = MetadataTestValidators.plain();
+        JsonNode document = metadataDocument(MetadataFixtures.TwoPatternsDto.class, validator);
+
+        JsonNode property = document.at("/properties/code");
+        assertTrue(
+                property.has("allOf"), "two default-group @Pattern constraints must render as allOf; was: " + property);
+        List<String> patterns = new java.util.ArrayList<>();
+        property.get("allOf")
+                .forEach(branch -> patterns.add(branch.path("pattern").asText()));
+        assertEquals(
+                List.of(".*[0-9]$", "^[A-Z].*"),
+                patterns.stream().sorted().toList(),
+                "both patterns must render, each as its own allOf branch; document: " + document);
+        assertFalse(
+                property.has("pattern"), "a single top-level \"pattern\" keyword cannot hold two regular expressions");
+    }
+
+    @Test
+    @DisplayName("S5 (honest parity check): without a validator, the walk silently renders neither @Pattern at all")
+    void twoPatternsUnderTheWalkAloneRenderNeitherPattern() {
+        // Documents the real, pre-existing gap S5 does not fix: WalkConstraintSource joins a single
+        // @Pattern by jacksonMember.getAnnotation(Pattern.class), which returns null once two @Pattern
+        // annotations collapse into one @Pattern.List container — the annotation actually present on
+        // the member is the container, not a repeated Pattern. So without a validator, this shape's
+        // patterns are dropped entirely, silently: this test proves that current, known behavior, so a
+        // general with/without-validator parity assertion for other shapes is not mistakenly extended
+        // to cover this one too.
+        JsonNode document = walkDocument(MetadataFixtures.TwoPatternsDto.class);
+
+        JsonNode property = document.at("/properties/code");
+        assertFalse(property.has("pattern"), "the walk alone must not render either pattern; was: " + property);
+        assertFalse(property.has("allOf"), "the walk alone has no allOf-composition mechanism; was: " + property);
+    }
+
     // --- Fallback ---
 
     @Test
