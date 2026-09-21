@@ -399,6 +399,28 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * @param context         the active generation context
      * @param caseInsensitive whether {@code bean} binds its properties case-insensitively
      */
+    /**
+     * One {@code @JsonUnwrapped} sibling's own resolution, captured up front (C1, spike round 4
+     * CRITICAL) so whether extras will be described can be computed over every sibling before any one
+     * of them is processed — see the C1 comment in {@link #populateObjectSchema}.
+     *
+     * @param memberName    the parent's own member name carrying this unwrapped child, named in a
+     *                      nested-unwrap diagnostic
+     * @param transformer   the unwrapping name transformer Jackson resolved for this child
+     * @param childClass    the unwrapped child's own raw type
+     * @param childBuilder  the child's own captured builder, or {@code null} when it declares no
+     *                      builder-visible property at all
+     * @param childResolved the schema library's resolved type for the child
+     * @param childBound    the child's own bound properties, read from the transformed deserializer
+     */
+    private record UnwrappedChild(
+            String memberName,
+            NameTransformer transformer,
+            Class<?> childClass,
+            BeanDeserializerBuilder childBuilder,
+            ResolvedType childResolved,
+            List<SettableBeanProperty> childBound) {}
+
     private void populateObjectSchema(
             ObjectNode definition,
             JavaType javaType,
@@ -450,6 +472,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         }
 
         if (builder != null) {
+            List<UnwrappedChild> unwrappedChildren = new ArrayList<>();
             Iterator<SettableBeanProperty> it = builder.getProperties();
             while (it.hasNext()) {
                 SettableBeanProperty property = it.next();
@@ -465,9 +488,27 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 Class<?> childClass = property.getType().getRawClass();
                 requireCaseSensitive(unwrapped, childClass, "the unwrapped member " + property.getName());
                 BeanDeserializerBuilder childBuilder = builderFor(property.getType(), unwrapped);
-                boolean anySetterType =
-                        anySetter != null || (childBuilder != null && childBuilder.getAnySetter() != null);
-                if (anySetterType) {
+                ResolvedType childResolved = resolve(context, property.getType());
+                List<SettableBeanProperty> childBound = boundProperties(unwrapped, null);
+                unwrappedChildren.add(new UnwrappedChild(
+                        property.getName(), transformer, childClass, childBuilder, childResolved, childBound));
+            }
+
+            // C1 (spike/deserializer-driven-schema round 4, CRITICAL): whether extras will be described
+            // is computed once, over the parent's own any-setter and EVERY unwrapped sibling's own
+            // builder, before any sibling is processed — not incrementally discovered while looping
+            // sibling by sibling. Before this fix, a sibling processed before the one that actually
+            // declares @JsonAnySetter saw the loop's own "so far" signal still false and skipped its own
+            // fold entirely: {@code Parent { @JsonUnwrapped A a; @JsonUnwrapped B b }} with the
+            // any-setter on B alone still left A's own alias and hidden member unfolded when A was
+            // processed first, regardless of the fact that the type as a whole is any-setter-shaped.
+            boolean extrasWillBeDescribed = anySetter != null
+                    || unwrappedChildren.stream()
+                            .anyMatch(sibling -> sibling.childBuilder() != null
+                                    && sibling.childBuilder().getAnySetter() != null);
+
+            for (UnwrappedChild sibling : unwrappedChildren) {
+                if (extrasWillBeDescribed) {
                     // F2 (security review round 1, HIGH): a nested @JsonUnwrapped chain (this unwrapped
                     // child itself declares another unwrapped member) is refused rather than folded
                     // unsoundly on an any-setter type — the same posture #{@link #requireCaseSensitive}
@@ -476,16 +517,15 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                     // introspection and bound-property list directly, which does not itself descend into
                     // a grandchild's own unwrapped member, so a grandchild's alias or hidden member could
                     // otherwise bind through the extras bucket unconstrained exactly like F2's own probe.
-                    requireNoNestedUnwrapping(childBuilder, childClass, property.getName());
+                    requireNoNestedUnwrapping(sibling.childBuilder(), sibling.childClass(), sibling.memberName());
                 }
-                ResolvedType childResolved = resolve(context, property.getType());
-                List<SettableBeanProperty> childBound = boundProperties(unwrapped, null);
-                for (SettableBeanProperty childProperty : childBound) {
+                for (SettableBeanProperty childProperty : sibling.childBound()) {
                     String name = childProperty.getName();
                     if (name.isEmpty() || published.contains(name)) {
                         continue;
                     }
-                    JsonNode schema = propertySchema(childProperty, childClass, childResolved, context, required);
+                    JsonNode schema = propertySchema(
+                            childProperty, sibling.childClass(), sibling.childResolved(), context, required);
                     if (schema != null) {
                         properties.set(name, schema);
                         published.add(name);
@@ -494,15 +534,22 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                         }
                     }
                 }
-                if (anySetter == null && childBuilder != null) {
-                    anySetter = childBuilder.getAnySetter();
+                if (anySetter == null && sibling.childBuilder() != null) {
+                    anySetter = sibling.childBuilder().getAnySetter();
                 }
-                if (anySetterType) {
+                if (extrasWillBeDescribed) {
                     // Fold this child's own alias spellings and hidden/ignored names into the parent's
                     // plan and reservation, keyed by the child's wire names with the unwrapping prefix or
-                    // suffix applied — see the F2 comment above and this method's own class Javadoc.
+                    // suffix applied — see the F2 comment above and this method's own class Javadoc. Runs
+                    // for every sibling once extrasWillBeDescribed is known, regardless of which sibling
+                    // this one is processed relative to the one that actually declares the any-setter.
                     foldUnwrappedChildIntoParentPlan(
-                            transformer, childClass, childBound, published, unwrappedAliasPlan, unwrappedReservedSeed);
+                            sibling.transformer(),
+                            sibling.childClass(),
+                            sibling.childBound(),
+                            published,
+                            unwrappedAliasPlan,
+                            unwrappedReservedSeed);
                 }
             }
         }
