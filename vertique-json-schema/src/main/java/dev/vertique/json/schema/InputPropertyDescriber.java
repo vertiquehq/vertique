@@ -32,6 +32,7 @@ import com.fasterxml.jackson.databind.deser.impl.TypeWrappedDeserializer;
 import com.fasterxml.jackson.databind.deser.std.MapDeserializer;
 import com.fasterxml.jackson.databind.deser.std.StdDelegatingDeserializer;
 import com.fasterxml.jackson.databind.introspect.AnnotatedClass;
+import com.fasterxml.jackson.databind.introspect.AnnotatedField;
 import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
 import com.fasterxml.jackson.databind.introspect.AnnotatedParameter;
 import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
@@ -92,7 +93,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * unchanged. Two member kinds have no library scope — a creator parameter and a setter — and their
  * constraints are translated by hand from Jackson's merged annotation map, which already carries the
  * same-named field's and getter's annotations. A builder method carries no constraint of its own:
- * its constraints are borrowed from the built type's field of the same name.
+ * its constraints are borrowed from the built type's Jackson-introspected property of the same wire
+ * name, on the assumption — guaranteed by construction for a Lombok {@code @Builder}, not provable in
+ * general — that the method sets that property; see the module's packaged {@code module.md} for the
+ * documented consequence for a hand-written, value-transforming builder.
  *
  * <p>Two mechanisms are detected and refused rather than described, because a document describing
  * them would be false: a <em>bean-like</em> type whose own class carries an explicit type-level
@@ -805,8 +809,12 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             translateConstraints(member, builtClass, schema, property.getName(), required);
             if (method.getDeclaringClass() != builtClass
                     && !method.getDeclaringClass().isAssignableFrom(builtClass)) {
-                // a builder method: the constraints live on the built type's field of the same name
-                borrowFieldAttributes(builtClass, method.getName(), property.getName(), schema, context, required);
+                // a builder method: the constraints are borrowed from the built type's own Jackson
+                // property of the same wire name, as introspected — never a raw field-name scan — since
+                // Jackson's own introspection is the only guarantee available here: it says which field a
+                // property of that wire name means, never what the builder method's own body does with
+                // the value before storing it. See module.md for the documented consequence.
+                borrowBuilderFieldAttributes(builtClass, property.getName(), schema, context, required);
             } else {
                 // a setter: the field it implies by name — transient, private, or renamed on the wire —
                 // still carries the constraints the developer wrote for the value
@@ -859,8 +867,9 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     }
 
     /**
-     * The built type's field of the given name, whose attributes a builder method borrows: the
-     * constraints a developer writes on a builder type live on the built type's fields.
+     * The built type's field of the given name, whose attributes a setter borrows: the constraints a
+     * developer writes on a setter's implied field — transient, private, or renamed on the wire — still
+     * carry the constraints the developer wrote for the value.
      */
     private static void borrowFieldAttributes(
             Class<?> builtClass,
@@ -869,30 +878,73 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             ObjectNode schema,
             SchemaGenerationContext context,
             List<String> required) {
-        TypeContext typeContext = context.getTypeContext();
         for (Class<?> current = builtClass;
                 current != null && current != Object.class;
                 current = current.getSuperclass()) {
             for (Field field : current.getDeclaredFields()) {
-                if (Modifier.isStatic(field.getModifiers())
-                        || field.isSynthetic()
-                        || !(field.getName().equals(memberName)
+                if (!Modifier.isStatic(field.getModifiers())
+                        && !field.isSynthetic()
+                        && (field.getName().equals(memberName)
                                 || field.getName().equals(wireName))) {
-                    continue;
+                    applyFieldScopeAttributes(field, current, wireName, schema, context, required);
+                    return;
                 }
-                ResolvedTypeWithMembers members = typeContext.resolveWithMembers(typeContext.resolve(current));
-                for (ResolvedField candidate : members.getMemberFields()) {
-                    if (candidate.getRawMember().equals(field)) {
-                        FieldScope scope = typeContext.createFieldScope(
-                                candidate, new MemberScope.DeclarationDetails(candidate.getDeclaringType(), members));
-                        AttributeCollector.mergeMissingAttributes(
-                                schema, AttributeCollector.collectFieldAttributes(scope, context));
-                        if (context.getGeneratorConfig().isRequired(scope)) {
-                            required.add(wireName);
-                        }
-                        return;
-                    }
+            }
+        }
+    }
+
+    /**
+     * The built type's <em>Jackson-introspected</em> property of the given wire name, whose attributes
+     * a builder method borrows — never a raw field-name scan, unlike {@link #borrowFieldAttributes}: a
+     * Lombok {@code @Builder} setter is guaranteed by construction to set the built field of that same
+     * property, so borrowing through Jackson's own introspected wire name renders identically to the
+     * raw scan this replaces for that guaranteed shape. A hand-written builder that transforms the
+     * value before assigning it carries no such guarantee — Jackson's introspection still finds the
+     * field, and this still borrows its constraints, which is the documented, accepted gap {@code
+     * module.md} names: such a type's published schema can be stricter than what the binder actually
+     * accepts, the same shape of assumption the field walk always made for a builder, now made
+     * explicit rather than silent.
+     */
+    private void borrowBuilderFieldAttributes(
+            Class<?> builtClass,
+            String wireName,
+            ObjectNode schema,
+            SchemaGenerationContext context,
+            List<String> required) {
+        BeanDescription description = introspection(mapper.getTypeFactory().constructType(builtClass));
+        for (BeanPropertyDefinition candidate : description.findProperties()) {
+            if (!candidate.getName().equals(wireName)) {
+                continue;
+            }
+            AnnotatedField field = candidate.getField();
+            if (field != null) {
+                applyFieldScopeAttributes(
+                        field.getAnnotated(), field.getDeclaringClass(), wireName, schema, context, required);
+            }
+            return;
+        }
+    }
+
+    /** Merges one field's schema-library attributes onto {@code schema}, shared by both borrow paths above. */
+    private static void applyFieldScopeAttributes(
+            Field field,
+            Class<?> declaringClass,
+            String wireName,
+            ObjectNode schema,
+            SchemaGenerationContext context,
+            List<String> required) {
+        TypeContext typeContext = context.getTypeContext();
+        ResolvedTypeWithMembers members = typeContext.resolveWithMembers(typeContext.resolve(declaringClass));
+        for (ResolvedField candidate : members.getMemberFields()) {
+            if (candidate.getRawMember().equals(field)) {
+                FieldScope scope = typeContext.createFieldScope(
+                        candidate, new MemberScope.DeclarationDetails(candidate.getDeclaringType(), members));
+                AttributeCollector.mergeMissingAttributes(
+                        schema, AttributeCollector.collectFieldAttributes(scope, context));
+                if (context.getGeneratorConfig().isRequired(scope)) {
+                    required.add(wireName);
                 }
+                return;
             }
         }
     }
@@ -912,7 +964,17 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         return stripAccessorPrefix(method.getName(), SETTER_PREFIXES);
     }
 
-    /** The field behind a creator parameter: the record component's field, or the field named like the property. */
+    /**
+     * The field behind a creator parameter: the record component's field — exact, because component
+     * {@code i} is parameter {@code i} by language definition — or, for every other creator, the field
+     * of the same wire name, which is Jackson's own statement that the two are one logical property
+     * (Jackson merges a field and a creator parameter into one {@code BeanPropertyDefinition} only when
+     * they share a name). A field whose own Java name merely coincides with the parameter's compiled
+     * name is never a candidate: a compiled parameter name says nothing about which field, if any, a
+     * constructor assigns it to, and joining on it borrowed an unrelated field's constraint onto a
+     * transforming constructor's parameter (a value-changing assignment, or a coincidental field-name
+     * match), rejecting or accepting traffic the binder itself would not.
+     */
     private static Field backingField(Class<?> builtClass, AnnotatedParameter parameter, String wireName) {
         if (builtClass.isRecord()) {
             RecordComponent[] components = builtClass.getRecordComponents();
@@ -925,23 +987,13 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 }
             }
         }
-        Set<String> candidates = new LinkedHashSet<>();
-        candidates.add(wireName);
-        if (parameter.getOwner() != null
-                && parameter.getOwner().getMember() instanceof java.lang.reflect.Executable executable) {
-            java.lang.reflect.Parameter[] parameters = executable.getParameters();
-            int index = parameter.getIndex();
-            if (index >= 0 && index < parameters.length && parameters[index].isNamePresent()) {
-                candidates.add(parameters[index].getName()); // needs javac -parameters; absent otherwise
-            }
-        }
         for (Class<?> current = builtClass;
                 current != null && current != Object.class;
                 current = current.getSuperclass()) {
             for (Field field : current.getDeclaredFields()) {
                 if (!Modifier.isStatic(field.getModifiers())
                         && !field.isSynthetic()
-                        && candidates.contains(field.getName())) {
+                        && field.getName().equals(wireName)) {
                     return field;
                 }
             }
@@ -1426,10 +1478,10 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     // ---------------------------------------------------------------- creator parameters with no member
 
     /**
-     * Whether a creator parameter's wire name has no member to publish it faithfully with: no field it
-     * joins to — by the wire name, or, when the class was compiled with {@code javac -parameters}, by
-     * the compiled parameter name — no getter- or setter-derived property of the same name either, and
-     * no constraint annotation of its own.
+     * Whether a creator parameter's wire name has no member to publish it faithfully with: no field of
+     * the same wire name to join to (Jackson's own statement that field and parameter are one logical
+     * property), no getter- or setter-derived property of the same name either, and no constraint
+     * annotation of its own.
      *
      * <p>Publishing such a parameter would either invent a property main's field walk never had, or
      * silently drop a constraint written on a member the join cannot reach — the type is a closed

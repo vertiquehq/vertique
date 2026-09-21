@@ -80,16 +80,28 @@ supplement on top when one is:
 - **The floor.** A field or getter with a Victools member scope is described by Victools' own Jackson
   and Jakarta Validation modules, unconditionally. A creator parameter, setter, or builder method has
   no such scope; its constraints are read directly from Jackson's merged annotation map (which
-  already carries the same-named field's and getter's annotations), and a builder method borrows the
-  built type's same-named field — also unconditionally, whether or not a validator is supplied. This
-  is what keeps a `@JsonCreator` static-factory parameter's own constraint from being dropped even
-  under a validator: Bean Validation itself can join a creator parameter only through a constructor,
-  but the floor reads the parameter's own annotation directly and does not care which kind of creator
-  it belongs to.
+  already carries the same-named field's and getter's annotations — Jackson's own statement that they
+  are one logical property, never a name coincidence the walk goes looking for), and a builder method
+  borrows the built type's Jackson-introspected property of that same wire name — also
+  unconditionally, whether or not a validator is supplied. **Builder borrow assumption.** A builder
+  method is assumed to set the built property of that same wire name: guaranteed by construction for a
+  Lombok `@Builder @Jacksonized` type, but not provable for a hand-written builder whose method
+  transforms the value before assigning it — the walk has no way to read a method body. Such a type's
+  published schema can therefore be stricter than what the binder actually accepts; this is a
+  documented, accepted gap (a fixture pins it), not a defect the walk can close, since closing it would
+  require reading source. A creator parameter's own equivalent — the compiled Java *parameter* name
+  coinciding with an unrelated field's name — is not this kind of assumption and is never joined on: a
+  creator parameter joins a field only by wire name, which is Jackson's own statement that the two are
+  one logical property; nothing here reads a constructor body either, so nothing here is ever
+  "guaranteed by construction" for a creator the way a Lombok builder's setters are. This is what keeps
+  a `@JsonCreator` static-factory parameter's own constraint from being dropped even under a validator:
+  Bean Validation itself can join a creator parameter only through a constructor, but the floor reads
+  the parameter's own annotation directly and does not care which kind of creator it belongs to.
 - **The Bean Validation supplement** (`Validator.getConstraintsForClass`; consulted only when a
   `Validator` is supplied to `forInputProfile`, and only *in addition to* the floor above). Unlike
   the floor, it sees constraints that cannot be joined by wire name or reflective annotation
-  presence at all: a constructor-parameter constraint on a type compiled without `-parameters`, a
+  presence at all: a constructor-parameter constraint whose wire name differs from every field's Java
+  name (the floor never joins a creator parameter to a field except by that exact wire-name match), a
   `List`/array container-element constraint, a constraint inherited through a superclass or an
   implemented interface, a composed constraint's leaves, and a constraint declared entirely through
   an XML mapping. Every keyword it proposes is either an **addition** — merged onto the floor's own

@@ -15,9 +15,9 @@ import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
  * ({@link jakarta.validation.Validator#getConstraintsForClass}), is consulted <em>in addition to</em>
  * the floor whenever a {@code Validator} is supplied to the generator — never in place of it. Because
  * it can see constraints neither the schema library's own module nor the annotation walk can join by
- * wire name (a constructor-parameter constraint without {@code -parameters}, an inherited or
- * interface constraint, a composed constraint's leaves, an XML-mapped constraint), it adds what the
- * floor cannot see, and corrects the small, named set of shapes the floor is known to render
+ * wire name (a constructor-parameter constraint whose wire name differs from every field's own name,
+ * an inherited or interface constraint, a composed constraint's leaves, an XML-mapped constraint), it
+ * adds what the floor cannot see, and corrects the small, named set of shapes the floor is known to render
  * incorrectly ({@code @Range}, {@code @Length}, {@code @URL}, a {@code @Pattern} flag) — see
  * {@link ResolvedConstraints}. It never removes a keyword the floor already rendered, including one
  * in a non-{@code Default} group, which the schema library's own module does not filter by group.
