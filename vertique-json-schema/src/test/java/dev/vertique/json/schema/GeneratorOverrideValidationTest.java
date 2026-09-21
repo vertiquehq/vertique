@@ -3,6 +3,7 @@
 
 package dev.vertique.json.schema;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -263,6 +264,80 @@ class GeneratorOverrideValidationTest {
                 List.of(JsonSchemaTypeOverride.output(
                         HardeningFixtures.Money.class, JsonSchemaFragment.parse("{\"type\":\"object\"}"))));
         AnnotationJsonSchemaGenerator.forOutputProfile(outputOverride); // must not throw
+    }
+
+    // --- W3 (spike/deserializer-driven-schema round 4 ruling): over-refused bean-like overrides ---
+
+    /**
+     * W3: an override whose {@code type} is an array not containing {@code "object"}, or which carries
+     * {@code enum}/{@code const}, or whose every {@code oneOf} branch itself satisfies the rule, fully
+     * constrains a bean-like type's wire shape with no property-level position an unconstrained extra
+     * key could hide in — the same open-object risk {@link #requireClosedOrDeclaredForBeanLikeType} (F6)
+     * exists to catch is simply absent from these shapes. The current check only exempts a fragment
+     * whose {@code type} is a single non-"object" string, so each of these four shapes is refused today.
+     *
+     * <p>The owner ruling records the fix direction but this class only authors the proof, never the
+     * production change.
+     */
+    @Test
+    @DisplayName("W3: a nullable-string type array, an enum, a const, and an all-scalar oneOf must each be"
+            + " accepted for a bean-like type at INPUT, not refused as an open object")
+    void nonObjectShapedOverridesForBeanLikeTypeAreAccepted() {
+        // assertAll so every one of the four shapes is checked and reported independently, rather than
+        // the first refusal hiding whether the other three are refused too.
+        assertAll(
+                () -> assertOverrideAccepted(
+                        "{\"type\":[\"string\",\"null\"]}",
+                        "a type array not containing \"object\" fully constrains the wire shape, exactly"
+                                + " like a single non-object type string"),
+                () -> assertOverrideAccepted(
+                        "{\"enum\":[\"a\",\"b\"]}", "an enum fully constrains the wire shape to its listed constants"),
+                () -> assertOverrideAccepted(
+                        "{\"const\":\"x\"}", "a const fully constrains the wire shape to one value"),
+                () -> assertOverrideAccepted(
+                        "{\"oneOf\":[{\"type\":\"string\"},{\"type\":\"integer\"}]}",
+                        "a oneOf whose every branch is itself a scalar type carries no open-object risk either"));
+    }
+
+    @Test
+    @DisplayName("W3 control: a bare {\"type\":\"object\"} override for a bean-like type stays refused")
+    void plainObjectOverrideForBeanLikeTypeStaysRefused() {
+        // The existing F6 regression guard (openObjectOverrideForBeanLikeTypeAtInputIsRefused) already
+        // pins this; restated here beside the four W3 shapes so the four accepted forms and this one
+        // refused form are read together as one contrast.
+        JsonMapperProfile profile = HardeningFixtures.profile(
+                PROFILE_ID,
+                List.of(JsonSchemaTypeOverride.input(
+                        HardeningFixtures.Money.class, JsonSchemaFragment.parse("{\"type\":\"object\"}"))));
+
+        assertThrows(
+                JsonSchemaGenerationException.class,
+                () -> AnnotationJsonSchemaGenerator.forInputProfile(profile),
+                "a bare {\"type\":\"object\"} override must stay refused: it declares neither properties nor"
+                        + " additionalProperties and carries no other keyword that fully constrains the shape");
+    }
+
+    /**
+     * Asserts that an INPUT override for {@link HardeningFixtures#Money}, carrying {@code fragmentJson},
+     * is accepted at construction (must not throw).
+     *
+     * @param fragmentJson the override fragment's canonical JSON text
+     * @param why           why this shape carries no open-object risk
+     */
+    private static void assertOverrideAccepted(String fragmentJson, String why) {
+        JsonMapperProfile profile = HardeningFixtures.profile(
+                PROFILE_ID,
+                List.of(JsonSchemaTypeOverride.input(
+                        HardeningFixtures.Money.class, JsonSchemaFragment.parse(fragmentJson))));
+
+        try {
+            AnnotationJsonSchemaGenerator.forInputProfile(profile);
+        } catch (JsonSchemaGenerationException refused) {
+            throw new AssertionError(
+                    "W3 DECISIVE: " + fragmentJson + " must be accepted at construction (" + why + "); was refused: "
+                            + refused.getMessage(),
+                    refused);
+        }
     }
 
     /** No introspected properties: a private final field with no getter, no setter. */

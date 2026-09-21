@@ -10,6 +10,7 @@ import com.fasterxml.jackson.annotation.JsonEnumDefaultValue;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonUnwrapped;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
 import dev.vertique.core.json.JsonProfileId;
@@ -115,6 +116,7 @@ final class McpToolInputShapesITFixture {
     static final String SPELLING_NAMES_HIDDEN_CLOSED_TOOL = "shapes.spellingNamesHiddenMemberClosed";
     static final String CASE_INSENSITIVE_TOOL = "shapes.caseInsensitive";
     static final String CASE_INSENSITIVE_CLOSED_TOOL = "shapes.caseInsensitiveClosed";
+    static final String SIBLING_UNWRAPPED_TOOL = "shapes.siblingUnwrappedPair";
 
     /** The profile T005 TP-005's strict row selects; every other tool takes the resolver's tail. */
     static final String STRICT_PROFILE = "vertique-strict";
@@ -175,6 +177,7 @@ final class McpToolInputShapesITFixture {
         register(tools, factory, CASE_INSENSITIVE_TOOL, CaseInsensitivePayload.class, null);
         register(tools, factory, CASE_INSENSITIVE_CLOSED_TOOL, CaseInsensitiveClosedPayload.class, null);
         register(tools, factory, AC005_TOOL, Ac005Payload.class, null);
+        register(tools, factory, SIBLING_UNWRAPPED_TOOL, SiblingUnwrappedPayload.class, null);
         this.toolsByName = Map.copyOf(tools);
 
         McpToolRegistry registry = McpToolRegistry.build(Set.copyOf(tools.values()));
@@ -461,6 +464,8 @@ final class McpToolInputShapesITFixture {
             @JsonProperty("payload") CaseInsensitiveClosedType argument0) {}
 
     record Ac005Payload(@JsonProperty("payload") Ac005CaseInsensitiveAnySetterType argument0) {}
+
+    record SiblingUnwrappedPayload(@JsonProperty("payload") SiblingUnwrappedParent argument0) {}
 
     // --- TP-003 shapes: the five AC-013.1 input-discovery shapes, as T004's corpus defines them ---
 
@@ -885,5 +890,40 @@ final class McpToolInputShapesITFixture {
         @Schema(hidden = true)
         @Max(3)
         public Integer secret;
+    }
+
+    /**
+     * C1 (spike/deserializer-driven-schema round 4, CRITICAL): the first unwrapped sibling, carrying no
+     * any-setter of its own — an aliased, constrained member and a hidden, constrained member, so a key
+     * spelling either the alias or the hidden member is either published nowhere or reserved nowhere
+     * when {@code foldUnwrappedChildIntoParentPlan}'s own any-setter-type signal has not yet been set at
+     * the time this sibling is processed.
+     */
+    static final class SiblingUnwrappedA {
+        @JsonAlias("ak")
+        @Size(max = 3)
+        public String aname;
+
+        @Schema(hidden = true)
+        @Size(max = 3)
+        public String secret;
+    }
+
+    /** The second unwrapped sibling: the any-setter lives here, not on {@link SiblingUnwrappedA}. */
+    static final class SiblingUnwrappedB {
+        @JsonAnySetter
+        private final Map<String, Object> extras = new LinkedHashMap<>();
+    }
+
+    /**
+     * C1: two {@code @JsonUnwrapped} siblings, in this order, where only the *second*
+     * ({@link SiblingUnwrappedB}) carries the {@code @JsonAnySetter}.
+     */
+    static final class SiblingUnwrappedParent {
+        @JsonUnwrapped
+        public SiblingUnwrappedA a;
+
+        @JsonUnwrapped
+        public SiblingUnwrappedB b;
     }
 }

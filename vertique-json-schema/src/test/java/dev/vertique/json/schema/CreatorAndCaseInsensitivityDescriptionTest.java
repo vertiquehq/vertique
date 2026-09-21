@@ -304,6 +304,39 @@ class CreatorAndCaseInsensitivityDescriptionTest {
                         + " other position, never be bypassed by the inline description; document: " + document);
     }
 
+    // ============================================ S2: scalar creator on the member-level CI inline path
+
+    /**
+     * S2 (spike/deserializer-driven-schema round 4 ruling): {@code describe()}'s own root path checks
+     * {@code scalarCreator(instantiator)} before ever building an object schema, so a from-string
+     * scalar-creator type is described as {@code {"type":"string"}} wherever it is referenced by
+     * {@code $ref}. The member-level case-insensitive inline path ({@code propertySchema}, F4) builds its
+     * schema by hand instead of asking Victools for the member's type, and never runs that same
+     * {@code scalarCreator} check — it calls {@code populateObjectSchema} unconditionally — so a
+     * scalar-creator type reached only through this inline path is described as an object instead.
+     *
+     * <p>The owner ruling records the fix direction (apply the scalar-creator branch on the inline path
+     * too) but this class only authors the proof, never the production change.
+     */
+    @Test
+    @DisplayName("S2: a from-string scalar-creator type bound case-insensitively at member level is described"
+            + " as a string, not an object")
+    void memberLevelCaseInsensitiveScalarCreatorTypeIsDescribedAsAString() {
+        JsonNode document = inputDocument(S2Holder.class);
+        JsonNode child = properties(document).path("child");
+
+        assertEquals(
+                "string",
+                child.path("type").asText(null),
+                "S2 DECISIVE: a from-string scalar-creator type must be described as {\"type\":\"string\"}"
+                        + " at the member-level case-insensitive inline position, exactly as describe()'s own"
+                        + " root path already describes it wherever it is referenced by $ref (scalarCreator),"
+                        + " rather than as an object; document: " + document);
+        assertFalse(
+                child.has("properties"),
+                "a scalar-creator type carries no properties of its own to publish; document: " + document);
+    }
+
     // ================================================================== W1: array-delegating creators
 
     @Test
@@ -616,6 +649,26 @@ class CreatorAndCaseInsensitivityDescriptionTest {
 
         @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
         public CI6DelegatingChild child;
+    }
+
+    // --- Fixtures: S2 ---
+
+    /** S2: a from-string scalar-creator type — no properties, just a delegating creator over String. */
+    static final class S2ScalarCreatorChild {
+        final String value;
+
+        @JsonCreator
+        S2ScalarCreatorChild(String value) {
+            this.value = value;
+        }
+    }
+
+    /** S2: the scalar-creator child is bound case-insensitively only through this member's own @JsonFormat. */
+    static final class S2Holder {
+        public String label;
+
+        @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
+        public S2ScalarCreatorChild child;
     }
 
     // --- Fixtures: W1 ---

@@ -2446,6 +2446,95 @@ public class ProfiledSchemaSynthesisIT {
         }
     }
 
+    // --- C1 (spike/deserializer-driven-schema round 4, CRITICAL): sibling-ordered unwrapped pair ---
+
+    /**
+     * The first unwrapped sibling, carrying no any-setter of its own: an aliased, constrained member and
+     * a hidden, constrained member.
+     */
+    public static class SiblingUnwrappedA {
+        @JsonAlias("ak")
+        @Size(max = 3)
+        public String aname;
+
+        @Schema(hidden = true)
+        @Size(max = 3)
+        public String secret;
+    }
+
+    /** The second unwrapped sibling: the any-setter lives here, not on {@link SiblingUnwrappedA}. */
+    public static class SiblingUnwrappedB {
+        @JsonAnySetter
+        private final Map<String, Object> extras = new LinkedHashMap<>();
+    }
+
+    /**
+     * C1: two {@code @JsonUnwrapped} siblings, in this order, where only the *second* sibling carries the
+     * {@code @JsonAnySetter}.
+     */
+    public static class SiblingUnwrappedParent {
+        @com.fasterxml.jackson.annotation.JsonUnwrapped
+        public SiblingUnwrappedA a;
+
+        @com.fasterxml.jackson.annotation.JsonUnwrapped
+        public SiblingUnwrappedB b;
+    }
+
+    /** The C1 resource: a single route accepting the sibling-ordered unwrapped pair. */
+    @Path("/sibling-unwrapped")
+    public static class SiblingUnwrappedResource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Accepts a sibling-unwrapped body.
+         *
+         * @param body the body
+         * @return a fixed marker
+         */
+        @POST
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "siblingUnwrappedEcho")
+        public String echo(SiblingUnwrappedParent body) {
+            invocations.incrementAndGet();
+            return "ok";
+        }
+    }
+
+    @Test
+    @DisplayName("C1: a sibling unwrapped child's hidden member is rejected at the gate even though the"
+            + " any-setter is declared on a different sibling, processed later")
+    void siblingOrderedUnwrappedHiddenMemberIsRejectedAtTheGate() throws Exception {
+        SiblingUnwrappedResource resource = new SiblingUnwrappedResource();
+        int gatePort = start(gateMount(), Set.of(resource));
+
+        int aliasOversized =
+                post(gatePort, "/sibling-unwrapped", "{\"ak\":\"abcdefgh\"}").statusCode();
+        int hiddenMemberKey =
+                post(gatePort, "/sibling-unwrapped", "{\"secret\":5}").statusCode();
+        int validCanonical =
+                post(gatePort, "/sibling-unwrapped", "{\"aname\":\"abc\"}").statusCode();
+
+        assertAll(
+                () -> assertEquals(
+                        400,
+                        aliasOversized,
+                        "the first sibling's alias \"ak\" carries its own @Size(max = 3), so an over-long"
+                                + " value must be rejected"),
+                () -> assertEquals(
+                        400,
+                        hiddenMemberKey,
+                        "C1 DECISIVE: the first-processed unwrapped sibling's hidden member \"secret\" must"
+                                + " be rejected at the gate rather than reaching the resource through the"
+                                + " extras bucket unconstrained, even though the any-setter is declared on the"
+                                + " second sibling, processed later"),
+                () -> assertEquals(200, validCanonical, "the first sibling's own canonical property must be admitted"),
+                () -> assertEquals(
+                        1, resource.invocations.get(), "only the one valid body may have reached the resource"));
+    }
+
     // --- vertique-dev#598 nested-path fixtures ---
 
     /** A nested object with one constrained name and string extras. */

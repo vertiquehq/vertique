@@ -422,6 +422,38 @@ class McpToolInputShapesIT {
                 .isEqualTo(shape.getJsonObject("properties").getJsonObject(claimant));
     }
 
+    // --- C1 (spike/deserializer-driven-schema round 4, CRITICAL): sibling-ordered unwrapped pair ---
+
+    /**
+     * C1: {@code SiblingUnwrappedParent} declares two {@code @JsonUnwrapped} siblings, in this order,
+     * where only the *second* sibling ({@code SiblingUnwrappedB}) carries the {@code @JsonAnySetter}.
+     * The *first* sibling ({@code SiblingUnwrappedA}) carries an aliased, constrained member
+     * ({@code @JsonAlias("ak")}) and a hidden, constrained member — the exact shape T010's own hidden
+     * -member probe uses, just moved onto a sibling processed before the any-setter is known.
+     */
+    @Test
+    @DisplayName("C1: a sibling unwrapped child's alias key is rejected at the gate whatever sibling carries"
+            + " the any-setter, and its hidden member's spelling is refused rather than reaching the handler")
+    void siblingOrderedUnwrappedChildKeysAreRejectedAsInputValidation() throws Exception {
+        startServer();
+
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.SIBLING_UNWRAPPED_TOOL,
+                new JsonObject().put("ak", "abcdefgh"),
+                "C1: the first-processed unwrapped sibling's alias \"ak\" carries its own @Size(max = 3),"
+                        + " so an over-long value must be refused before it reaches the handler");
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.SIBLING_UNWRAPPED_TOOL,
+                new JsonObject().put("secret", 5),
+                "C1 DECISIVE: the first-processed unwrapped sibling's hidden member \"secret\" must be"
+                        + " refused rather than reaching the handler through the extras bucket unconstrained,"
+                        + " even though the any-setter is declared on the second sibling, processed later");
+        assertAccepted(
+                McpToolInputShapesITFixture.SIBLING_UNWRAPPED_TOOL,
+                new JsonObject().put("aname", "abc"),
+                "the first sibling's own canonical property must still be admitted");
+    }
+
     // --- T010 TP-002: an alias spelling naming a member the document never publishes ---
 
     @Test
