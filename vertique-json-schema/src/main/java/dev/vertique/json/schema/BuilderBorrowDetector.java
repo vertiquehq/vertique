@@ -5,6 +5,7 @@ package dev.vertique.json.schema;
 
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.annotation.JsonPOJOBuilder;
+import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -52,6 +53,22 @@ final class BuilderBorrowDetector {
      */
     static boolean isSoundBorrow(Method builderMethod, Class<?> builtClass, Field field) {
         return matchesLombokBuilderShape(builderMethod, builderMethod.getDeclaringClass(), builtClass, field);
+    }
+
+    /**
+     * Whether {@code candidate} is the getter-backed shape both borrow call sites — {@link
+     * InputPropertyDescriber#borrowBuilderFieldAttributes} and {@link
+     * MetadataConstraintSource#forUnscopedMember} — join unconditionally, for any builder, without
+     * consulting {@link #isSoundBorrow}: the built type's Jackson-introspected property for the wire
+     * name in question has both a backing field ({@link BeanPropertyDefinition#getField()}) and a
+     * getter ({@link BeanPropertyDefinition#getGetter()}). A property missing either is left to {@link
+     * #isSoundBorrow}.
+     *
+     * @param candidate the built type's Jackson-introspected property for the wire name in question
+     * @return {@code true} when the property is getter-backed
+     */
+    static boolean isGetterBacked(BeanPropertyDefinition candidate) {
+        return candidate.getField() != null && candidate.getGetter() != null;
     }
 
     private static boolean matchesLombokBuilderShape(

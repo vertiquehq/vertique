@@ -3,8 +3,11 @@
 
 package dev.vertique.json.schema;
 
+import com.fasterxml.jackson.databind.BeanDescription;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
 import com.fasterxml.jackson.databind.introspect.AnnotatedParameter;
+import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
 import jakarta.validation.Validator;
 import jakarta.validation.groups.Default;
 import jakarta.validation.metadata.BeanDescriptor;
@@ -43,17 +46,20 @@ import java.util.Set;
  * shape is outside what Bean Validation exposes ({@link BeanDescriptor#getConstraintsForConstructor}
  * covers constructors only) — but {@link WalkConstraintSource} still renders its own annotations
  * directly as the floor, so the constraint is not lost (C3). A setter property is folded into the
- * same property-name join as a field or getter. A builder-method property joins here only when
- * {@link BuilderBorrowDetector} judges the join sound (a Lombok builder, or the exact Lombok builder
- * shape) — otherwise it contributes no supplement either. This class's own gate is unconditional on
- * getter presence, unlike {@link InputPropertyDescriber}'s own floor-side borrow (round 2, which
- * borrows a getter-backed property for any builder): for a getter-less builder property the two
- * agree, so this class's own reflection over {@code builtClass} does not find and re-add a
- * hand-written builder's borrowed constraint even after the floor stopped rendering it, silently
- * reintroducing the over-strict schema the owner ruling removed whenever a {@code Validator} happens
- * to be supplied; a getter-backed builder property is unaffected by this class's own gate, since the
- * floor already publishes it regardless. Where a property matches nothing, it contributes no
- * supplement.
+ * same property-name join as a field or getter. A builder-method property follows the same
+ * two-branch rule {@link InputPropertyDescriber}'s own floor-side borrow does (round 2): when the
+ * built type's Jackson-introspected property for that wire name has a getter and a backing field,
+ * this class joins unconditionally, exactly as the floor does — so a constraint invisible to every
+ * annotation-reflection path (an XML-mapped one, an inherited or interface one, a composed
+ * constraint's leaf) still supplements a getter-backed builder property once a {@code Validator} is
+ * supplied, the same as it already does for a field or getter with a schema-library member scope.
+ * Only for the getter-less property does this class still require {@link BuilderBorrowDetector} to
+ * judge the join sound (a Lombok builder, or the exact Lombok builder shape) — otherwise it
+ * contributes no supplement either, matching the floor's own refusal to borrow, so this class's own
+ * reflection over {@code builtClass} does not find and re-add a hand-written builder's borrowed
+ * constraint even after the floor stopped rendering it, silently reintroducing the over-strict schema
+ * the owner ruling removed whenever a {@code Validator} happens to be supplied. Where a property
+ * matches nothing, it contributes no supplement.
  *
  * <p><strong>Group filter.</strong> Only a constraint whose {@link ConstraintDescriptor#getGroups()}
  * is empty or contains {@link Default} is rendered; {@code @Valid} cascades are never consulted here
@@ -134,8 +140,18 @@ final class MetadataConstraintSource implements ConstraintSource {
 
     private final Validator validator;
 
-    MetadataConstraintSource(Validator validator) {
+    /**
+     * The profile's mapper, consulted only to find the built type's Jackson-introspected property for
+     * a builder method's wire name — the same {@link BeanPropertyDefinition} {@link
+     * InputPropertyDescriber#borrowBuilderFieldAttributes} itself introspects — so this class's own
+     * builder-method join can tell a getter-backed property from a getter-less one (round 2 correction,
+     * C1).
+     */
+    private final ObjectMapper mapper;
+
+    MetadataConstraintSource(Validator validator, ObjectMapper mapper) {
         this.validator = Objects.requireNonNull(validator, "validator");
+        this.mapper = Objects.requireNonNull(mapper, "mapper");
     }
 
     @Override
@@ -153,18 +169,38 @@ final class MetadataConstraintSource implements ConstraintSource {
         if (raw instanceof Method method
                 && method.getDeclaringClass() != builtClass
                 && !method.getDeclaringClass().isAssignableFrom(builtClass)) {
-            // A builder method: the same built-type property-name join a field or getter uses, but
-            // only when the borrow is sound — see the class Javadoc's "Join" section. An unsound
-            // builder's property contributes no supplement, matching the floor's own refusal to
-            // borrow, so a Validator supplied to the generator cannot silently reintroduce the
-            // over-strict constraint the floor stopped publishing.
-            Field field = declaredField(builtClass, javaName);
-            if (field == null || !BuilderBorrowDetector.isSoundBorrow(method, builtClass, field)) {
-                return ResolvedConstraints.NONE;
+            // A builder method: the same two-branch rule the floor's own borrow follows (round 2) —
+            // see the class Javadoc's "Join" section. A getter-backed built property joins
+            // unconditionally; a getter-less one still needs BuilderBorrowDetector's soundness check,
+            // matching the floor's own refusal to borrow, so a Validator supplied to the generator
+            // cannot silently reintroduce the over-strict constraint the floor stopped publishing.
+            BeanPropertyDefinition builtProperty = builtProperty(builtClass, javaName);
+            if (builtProperty == null || !BuilderBorrowDetector.isGetterBacked(builtProperty)) {
+                Field field = declaredField(builtClass, javaName);
+                if (field == null || !BuilderBorrowDetector.isSoundBorrow(method, builtClass, field)) {
+                    return ResolvedConstraints.NONE;
+                }
             }
         }
         // A setter, or a sound builder method: the same join a field or getter uses, on the built type.
         return renderProperty(builtClass, javaName, kind);
+    }
+
+    /**
+     * The built type's Jackson-introspected property for the given wire name — the same {@link
+     * BeanPropertyDefinition} {@link InputPropertyDescriber#borrowBuilderFieldAttributes} itself
+     * introspects — or {@code null} when Jackson's own introspection reports no property of that name
+     * for the built type at all.
+     */
+    private BeanPropertyDefinition builtProperty(Class<?> builtClass, String wireName) {
+        BeanDescription description = mapper.getDeserializationConfig()
+                .introspect(mapper.getTypeFactory().constructType(builtClass));
+        for (BeanPropertyDefinition candidate : description.findProperties()) {
+            if (candidate.getName().equals(wireName)) {
+                return candidate;
+            }
+        }
+        return null;
     }
 
     /** The built type's own declared field of the given Java bean name, walking its superclass chain. */

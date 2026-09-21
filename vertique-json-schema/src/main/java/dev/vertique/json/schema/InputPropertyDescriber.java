@@ -100,12 +100,16 @@ import java.util.concurrent.ConcurrentHashMap;
  * same-named field's and getter's annotations. A builder method carries no constraint of its own: its
  * constraints are borrowed from the built type's Jackson-introspected property of the same wire name,
  * on the assumption — guaranteed by construction for a Lombok {@code @Builder}, not provable in
- * general — that the method sets that property; {@link BuilderBorrowDetector} bounds the borrow to
- * the shape that assumption actually holds for (the exact shape {@code @Builder @Jacksonized}
- * generates, read through {@code java.lang.reflect} over Jackson's own runtime-visible annotations),
- * and every other builder's property is published by type only — see the module's packaged {@code
- * module.md} for the ruling and the documented consequence for a hand-written builder that goes
- * unresolved.
+ * general — that the method sets that property. When that property has a getter and a backing field,
+ * the borrow is published unconditionally, for any builder — exactly what {@code main}'s field walk
+ * always did, since a getter-backed field's constraints were always published regardless of what any
+ * builder method's body did with the value before assigning it. Only when the property has no getter
+ * (the private, getter-less case {@code main}'s field walk never published either) does {@link
+ * BuilderBorrowDetector} bound the borrow to the shape that assumption actually holds for (the exact
+ * shape {@code @Builder @Jacksonized} generates, read through {@code java.lang.reflect} over Jackson's
+ * own runtime-visible annotations), and every other builder's getter-less property is published by
+ * type only — see the module's packaged {@code module.md} for the ruling and the documented
+ * consequence for a hand-written builder that goes unresolved.
  *
  * <p>Two mechanisms are detected and refused rather than described, because a document describing
  * them would be false: a <em>bean-like</em> type — one whose own class carries an explicit type-level
@@ -1225,8 +1229,8 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * The built type's <em>Jackson-introspected</em> property of the given wire name, whose attributes
      * a builder method borrows — never a raw field-name scan, unlike {@link #borrowFieldAttributes}.
      *
-     * <p>Round 2 (this task's owner ruling): when the property has a getter, the borrow is published
-     * unconditionally, for any builder — exactly what {@code main}'s field walk did, since a
+     * <p>Round 2 (this task's owner ruling): when the property has a getter and a backing field, the
+     * borrow is published unconditionally, for any builder — exactly what {@code main}'s field walk did, since a
      * getter-backed field's constraints were always published there regardless of what any builder
      * method's body did with the value before assigning it. Only when the property has no getter (the
      * private, getter-less case {@code main}'s field walk never published either) does the borrow stay
@@ -1251,7 +1255,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             }
             AnnotatedField field = candidate.getField();
             if (field != null
-                    && (candidate.getGetter() != null
+                    && (BuilderBorrowDetector.isGetterBacked(candidate)
                             || BuilderBorrowDetector.isSoundBorrow(builderMethod, builtClass, field.getAnnotated()))) {
                 applyFieldScopeAttributes(
                         field.getAnnotated(), field.getDeclaringClass(), wireName, schema, context, required);

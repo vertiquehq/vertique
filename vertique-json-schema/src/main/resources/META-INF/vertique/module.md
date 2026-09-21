@@ -114,12 +114,18 @@ supplement on top when one is:
     unresolved, not that it must; one that does not reproduce it gets no borrowed constraint at all,
     and its property is published by type only.
 
-  `BuilderBorrowDetector`'s soundness check is unaffected by round 2 and still gates the Bean
-  Validation supplement's own, independent join for a builder method (`MetadataConstraintSource`
-  reflects over the built class directly, so without this it would silently re-add a hand-written
-  builder's constraint whenever a `Validator` happens to be supplied, even though the floor no longer
-  does) — an ordinary setter's join is unaffected either way, since a setter's own field is never in
-  question the way a builder's built-type field is. A creator parameter's own equivalent — the
+  The Bean Validation supplement's own, independent join for a builder method follows this same
+  two-branch rule (round 2 correction): when the built type's Jackson-introspected property for that
+  wire name has a getter and a backing field, `MetadataConstraintSource` joins unconditionally, exactly
+  as the floor does — so a constraint invisible to every annotation-reflection path (an XML-mapped one,
+  an inherited or interface one, a composed constraint's leaf) still supplements a getter-backed
+  builder property once a `Validator` is supplied, the same as it already does for a field or getter
+  with a schema-library member scope. Only for the getter-less property does the supplement still
+  consult `BuilderBorrowDetector`'s soundness check (`MetadataConstraintSource` reflects over the built
+  class directly, so without this gate it would silently re-add a hand-written builder's constraint the
+  floor never publishes for that shape, whenever a `Validator` happens to be supplied) — an ordinary
+  setter's join is unaffected either way, since a setter's own field is never in question the way a
+  builder's built-type field is. A creator parameter's own equivalent — the
   compiled Java *parameter* name coinciding with an unrelated field's name — is not this kind of
   assumption and is never joined on: a creator parameter joins a field only by wire name, which is
   Jackson's own statement that the two are one logical property; nothing here reads a constructor body
@@ -150,15 +156,18 @@ supplement on top when one is:
 **The join.** A field- or getter/setter-backed property joins to a `PropertyDescriptor` by the
 member's Java bean name — the field name, or the name a getter/setter implies by stripping its
 `get`/`is`/`set`/`with` prefix — **never** by the wire name; a builder method joins the same way, on
-the built type, but only when `BuilderBorrowDetector` judges the join sound (see "Builder borrow
-assumption" above) — the supplement's own builder gate is unaffected by round 2 and stays bounded to
-that shape check regardless of a getter. For the getter-less shape this matches the floor exactly: an
-unresolved hand-written builder's property contributes no supplement, exactly as it gets no borrow
-from the floor. For a getter-backed shape that fails the shape check, the two diverge on purpose: the
-floor already borrows the constraint unconditionally (see "Builder borrow assumption" above), so the
-supplement contributes nothing further there either — its own addition/correction merge only ever
-fills a keyword the floor left unset, and the floor never leaves one unset for a getter-backed
-property. **Setter-only field-borrow fallback (owner ruling,
+the built type, following the same two-branch rule as the floor's own borrow (see "Builder borrow
+assumption" above): when the built type's Jackson-introspected property for that wire name has a
+getter and a backing field, the supplement joins unconditionally; only for the getter-less property
+does it still require `BuilderBorrowDetector` to judge the join sound. For the getter-less shape this
+matches the floor exactly: an unresolved hand-written builder's property contributes no supplement,
+exactly as it gets no borrow from the floor. For a getter-backed shape, the two sources both join, but
+they are not redundant: the floor's own borrow only ever sees what the schema library's own Jakarta
+Validation module can reach reflectively, so the supplement's own addition/correction merge over that
+same property still adds a constraint invisible to every annotation-reflection path — inherited
+through an interface, composed, or declared entirely through an XML mapping — once a `Validator` is
+supplied, exactly as it already does for a field or getter with a schema-library member scope.
+**Setter-only field-borrow fallback (owner ruling,
 `spike/deserializer-driven-schema`).** The floor itself joins a setter to its backing field through
 Jackson's own `BeanPropertyDefinition#getField()` — the field Jackson associates with the same
 wire-named property, guaranteed by construction to be the one the setter's value corresponds to. That

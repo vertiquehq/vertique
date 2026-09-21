@@ -12,6 +12,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.fasterxml.jackson.databind.annotation.JsonPOJOBuilder;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.json.DefaultJsonMapperProfileRegistry;
@@ -202,6 +204,172 @@ class MetadataConstraintSourceCoverageTest {
                 withoutValidator.at("/properties/amount/maximum").asInt(-1),
                 "the getter-backed hand-written builder's property must carry the borrowed maximum without a"
                         + " validator too; document: " + withoutValidator);
+    }
+
+    // --- XML-mapped constraint under a hand-written, non-Lombok-shaped builder ---
+
+    /**
+     * The getter-backed shape the finding targets: the same hand-written, non-Lombok-shaped builder as
+     * {@link BuilderWireNameJoinTest.TransformingBuilderDto} — nested class named plainly {@code Builder}
+     * with {@code @JsonPOJOBuilder(withPrefix = "with")}, failing both {@link BuilderBorrowDetector}'s
+     * name convention ({@code <Type>Builder}) and its {@code withPrefix = ""} requirement — but {@code
+     * amount} carries no annotation at all: its only constraint is declared entirely by an XML constraint
+     * mapping supplied to the {@link Validator} in the test below (see {@link
+     * MetadataTestValidators#withXmlMapping}, "a shape no annotation walk can ever see"), unlike {@code
+     * TransformingBuilderDto}'s directly reflectable {@code @Max(10)}. A composed-constraint leaf was
+     * tried first and rejected as a fixture here: victools' own {@code AnnotationHelper.resolveAnnotation}
+     * already walks meta-annotations for a scoped field/getter, so it would have rendered the leaf through
+     * the floor alone, without a validator, masking the gate bug this class exists to expose.
+     */
+    @JsonDeserialize(builder = HandWrittenBuilderXmlMappedDto.Builder.class)
+    static final class HandWrittenBuilderXmlMappedDto {
+        private final int amount;
+
+        private HandWrittenBuilderXmlMappedDto(int amount) {
+            this.amount = amount;
+        }
+
+        public int getAmount() {
+            return amount;
+        }
+
+        @JsonPOJOBuilder(withPrefix = "with")
+        static final class Builder {
+            private int amount;
+
+            Builder withAmount(int amount) {
+                this.amount = amount;
+                return this;
+            }
+
+            HandWrittenBuilderXmlMappedDto build() {
+                return new HandWrittenBuilderXmlMappedDto(amount);
+            }
+        }
+    }
+
+    /**
+     * The getter-less control twin of {@link HandWrittenBuilderXmlMappedDto}: same hand-written,
+     * non-Lombok-shaped builder, no annotation on {@code amount} either, mapped by the same XML mapping's
+     * own bean entry in the test below. The Lombok-shape rule still governs this shape — {@code main}
+     * never published a getter-less field's constraint either — so it must stay unresolved with or without
+     * a validator, unaffected by the finding above.
+     */
+    @JsonDeserialize(builder = HandWrittenBuilderXmlMappedNoGetterDto.Builder.class)
+    static final class HandWrittenBuilderXmlMappedNoGetterDto {
+        private final int amount;
+
+        private HandWrittenBuilderXmlMappedNoGetterDto(int amount) {
+            this.amount = amount;
+        }
+
+        @JsonPOJOBuilder(withPrefix = "with")
+        static final class Builder {
+            private int amount;
+
+            Builder withAmount(int amount) {
+                this.amount = amount;
+                return this;
+            }
+
+            HandWrittenBuilderXmlMappedNoGetterDto build() {
+                return new HandWrittenBuilderXmlMappedNoGetterDto(amount);
+            }
+        }
+    }
+
+    private static final String XML_MAPPED_BUILDER_MAPPING = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <constraint-mappings
+                    xmlns="https://jakarta.ee/xml/ns/validation/mapping"
+                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                    xsi:schemaLocation="https://jakarta.ee/xml/ns/validation/mapping https://jakarta.ee/xml/ns/validation/mapping/validation-mapping-3.1.xsd"
+                    version="3.1">
+                <bean class="dev.vertique.json.schema.MetadataConstraintSourceCoverageTest$HandWrittenBuilderXmlMappedDto" ignore-annotations="false">
+                    <field name="amount">
+                        <constraint annotation="jakarta.validation.constraints.Max">
+                            <element name="value">10</element>
+                        </constraint>
+                    </field>
+                </bean>
+                <bean class="dev.vertique.json.schema.MetadataConstraintSourceCoverageTest$HandWrittenBuilderXmlMappedNoGetterDto" ignore-annotations="false">
+                    <field name="amount">
+                        <constraint annotation="jakarta.validation.constraints.Max">
+                            <element name="value">10</element>
+                        </constraint>
+                    </field>
+                </bean>
+            </constraint-mappings>
+            """;
+
+    /**
+     * A composed constraint is not a valid red here: victools resolves meta-annotations itself ({@code
+     * AnnotationHelper.resolveAnnotation}), so an XML mapping is the floor-blind constraint this test needs.
+     */
+    @Test
+    @DisplayName("finding: a hand-written builder's getter-backed property joins an XML-mapped constraint under"
+            + " a validator — the supplement must follow the floor's own getter-first rule, not gate every"
+            + " builder join on BuilderBorrowDetector.isSoundBorrow regardless of getter presence")
+    void handWrittenBuilderWithGetterJoinsAnXmlMappedConstraintUnderAValidator() {
+        // handWrittenBuilderWithGetterJoinsWithOrWithoutAValidator above does not catch the gate bug:
+        // TransformingBuilderDto's plain @Max(10) is directly reflectable, so victools' own Jakarta
+        // Validation module — the floor for the getter-backed field-scope borrow, InputPropertyDescriber
+        // .borrowBuilderFieldAttributes's own AttributeCollector.collectFieldAttributes call — renders
+        // "maximum" on its own, with no help from the supplement, regardless of Validator. That masks that
+        // MetadataConstraintSource#forUnscopedMember (147-168) still requires BuilderBorrowDetector
+        // .isSoundBorrow for every builder-method join, getter or not, unlike the floor's own builder
+        // borrow, which joins unconditionally once the built property has a getter (round 2). An
+        // XML-mapped constraint is invisible to every annotation-reflection path — the floor included, not
+        // only WalkConstraintSource — so it exposes the gate cleanly: expected red, "maximum" absent even
+        // with a Validator supplied.
+        Validator validator = MetadataTestValidators.withXmlMapping(XML_MAPPED_BUILDER_MAPPING);
+        JsonNode withoutValidator = walkDocument(HandWrittenBuilderXmlMappedDto.class);
+        JsonNode withValidator = metadataDocument(HandWrittenBuilderXmlMappedDto.class, validator);
+
+        JsonNode amountWithoutValidator = withoutValidator.at("/properties/amount");
+        JsonNode amountWithValidator = withValidator.at("/properties/amount");
+
+        assertFalse(
+                amountWithoutValidator.isMissingNode(),
+                "amount must still be published without a validator: the builder method binds it; document: "
+                        + withoutValidator);
+        assertTrue(
+                amountWithoutValidator.at("/maximum").isMissingNode(),
+                "without a validator, no annotation walk can ever see an XML-mapped constraint — expected and"
+                        + " unchanged; document: " + withoutValidator);
+        assertFalse(
+                amountWithValidator.isMissingNode(),
+                "amount must still be published with a validator: the builder method binds it; document: "
+                        + withValidator);
+        assertEquals(
+                10,
+                amountWithValidator.at("/maximum").asInt(-1),
+                "the getter-backed hand-written builder's property must carry the XML-mapped constraint once"
+                        + " a validator is supplied, exactly as the floor's own getter-first rule (round 2)"
+                        + " already governs InputPropertyDescriber.borrowBuilderFieldAttributes — the"
+                        + " supplement must follow the same two-branch rule (getter -> join, no getter ->"
+                        + " Lombok-shape rule), not gate every builder join on"
+                        + " BuilderBorrowDetector.isSoundBorrow regardless of getter presence; document: "
+                        + withValidator);
+    }
+
+    @Test
+    @DisplayName("control: a hand-written builder's getter-less property does not join an XML-mapped constraint"
+            + " even under a validator — the Lombok-shape rule still governs the getter-less case")
+    void handWrittenBuilderWithNoGetterDoesNotJoinAnXmlMappedConstraintUnderAValidator() {
+        Validator validator = MetadataTestValidators.withXmlMapping(XML_MAPPED_BUILDER_MAPPING);
+        JsonNode withoutValidator = walkDocument(HandWrittenBuilderXmlMappedNoGetterDto.class);
+        JsonNode withValidator = metadataDocument(HandWrittenBuilderXmlMappedNoGetterDto.class, validator);
+
+        assertTrue(
+                withoutValidator.at("/properties/amount/maximum").isMissingNode(),
+                "without a validator, no annotation walk can ever see an XML-mapped constraint; document: "
+                        + withoutValidator);
+        assertTrue(
+                withValidator.at("/properties/amount/maximum").isMissingNode(),
+                "the getter-less hand-written builder's property must carry no borrowed maximum even with a"
+                        + " validator supplied — the Lombok-shape rule still governs this getter-less shape,"
+                        + " unaffected by the finding above; document: " + withValidator);
     }
 
     @Test

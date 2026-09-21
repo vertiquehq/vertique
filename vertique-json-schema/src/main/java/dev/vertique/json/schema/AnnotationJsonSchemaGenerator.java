@@ -81,10 +81,12 @@ import java.util.function.Consumer;
  * property mutators — its default, and the setting every built-in profile leaves alone — so a
  * getter-only property with a field behind it is bound and is described. A builder type is filled
  * through its builder rather than through the field: a builder method's own constraint is borrowed
- * from the built type's Jackson-introspected property of the same wire name when {@link
- * BuilderBorrowDetector} judges the borrow sound (a Lombok {@code @Builder @Jacksonized} type, or the
- * exact shape it generates); a property Jackson's introspection reports no accessor for at all — a
- * Lombok {@code @Builder} type's constrained private field with no {@code @Getter} (BG1) — still
+ * from the built type's Jackson-introspected property of the same wire name — unconditionally, for
+ * any builder, when that property has a getter and a backing field; only when it has no getter does
+ * the borrow require {@link BuilderBorrowDetector} to judge it sound (a Lombok {@code @Builder
+ * @Jacksonized} type, or the exact shape it generates). A property Jackson's introspection reports no
+ * accessor for at all — a Lombok {@code @Builder} type's constrained private field with no {@code
+ * @Getter} (BG1) — still
  * publishes by type, with no borrowed constraint, since the floor has nothing to join it by; a {@link
  * jakarta.validation.Validator} supplement, when one is active, still renders the constraint for that
  * one property by its own field-name join, independent of the floor's own borrow. The backing storage
@@ -433,8 +435,9 @@ public final class AnnotationJsonSchemaGenerator {
         // OutputPropertyNameResolver has no equivalent join to a Validator's property descriptors. The
         // Jakarta Validation module is always installed as the floor regardless (see build() below);
         // null here means "no supplement", not "no constraints".
-        ConstraintSource supplement =
-                direction == Direction.INPUT && validator != null ? new MetadataConstraintSource(validator) : null;
+        ConstraintSource supplement = direction == Direction.INPUT && validator != null
+                ? new MetadataConstraintSource(validator, validated.mapper())
+                : null;
         if (direction == Direction.INPUT) {
             // Read once, from the profile's own mapper instance: the same one that parses a body at the
             // REST gate, so the published rule and the binder's parse decision cannot disagree.
