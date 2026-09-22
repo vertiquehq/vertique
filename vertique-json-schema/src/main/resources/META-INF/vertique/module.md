@@ -268,6 +268,19 @@ rendering: when the correction's pattern is exactly the floor's own regexp wrapp
 modifier group, it is the *same* `@Pattern` annotation rendered twice at different fidelity, not two
 annotations in conflict, and the flag-aware rendering still replaces the floor's outright.
 
+**`@Schema` metadata on a creator parameter or setter follows the same rule.** For that unscoped
+member shape, `pattern`, `minLength`, `maxLength`, `minimum`/`exclusiveMinimum`, and
+`maximum`/`exclusiveMaximum` from `@Schema` are applied through this same correction path, so a
+differing `@Schema(pattern = ...)` composes as an `allOf` with a constraint-source `@Pattern` rather
+than dropping it, and a `@Schema` bound never loosens a stricter constraint-source bound the floor
+already wrote; `@Schema`'s `description`, `title`, `format`, `enum`, and `nullable` keep the
+pre-existing unconditional-overwrite behavior. A `@Schema` bound of the *other* exclusivity than the
+constraint source's own — `exclusiveMinimum` beside a floor `minimum`, or `exclusiveMaximum` beside a
+floor `maximum` (and symmetrically) — writes a different keyword, so it is never compared against or
+dropped for the floor's bound; both are kept, published together as a conjunction the binder must
+satisfy. An any-setter map's `@Schema(minProperties`/`maxProperties)` and a `@Size`-derived bound on
+the same map follow the identical stricter-wins rule.
+
 **Bootstrapping a `Validator`.** `HibernateValidator.configure().messageInterpolator(new
 ParameterMessageInterpolator())` avoids an expression-language dependency; the default message
 interpolator does not. This module never constructs a `Validator` itself
