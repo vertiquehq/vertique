@@ -1062,6 +1062,19 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * pattern} is combined with the existing one as an {@code allOf} instead of replacing it. An
      * addition ({@code overwrite == false}) is unaffected: it is still applied only where the schema
      * does not already carry that keyword.
+     *
+     * <p>S2 (CO-001, the rest-021 package's carried obligation): an {@code "allOf"} correction — the
+     * encoded form of a scoped member's own two-{@code @Pattern} rendering, see {@link
+     * MetadataConstraintSource}'s {@code render} — is appended onto the schema's existing {@code allOf}
+     * array through {@link #appendAllOfPatterns}, the same helper {@link #putKeyword}'s own {@code
+     * "allOf"} branch calls, rather than falling through to the unconditional {@code schema.set(key,
+     * value)} below and replacing whatever {@code allOf} the schema already carried. Mirrors {@link
+     * #putKeyword} rather than being covered by its own direct test: this method is {@code private}, and
+     * the schema-generation walk never itself produces a scoped member whose encoded corrections already
+     * carry a two-pattern {@code allOf} alongside a pre-existing {@code allOf} on the target schema, so
+     * there is no reachable path a test could drive through the public generator to exercise this branch;
+     * the fix is proven correct by construction, identical to the {@link #putKeyword} composition {@link
+     * KeywordCompositionTest} proves directly.
      */
     private static void applyEncodedKeywords(ObjectNode schema, ObjectNode encoded, boolean overwrite) {
         encoded.properties().forEach(entry -> {
@@ -1083,6 +1096,10 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             }
             if ("pattern".equals(key) && value.isTextual() && schema.get("pattern") instanceof TextNode existing) {
                 mergePatternAsAllOf(schema, existing.asText(), value.asText());
+                return;
+            }
+            if ("allOf".equals(key) && value instanceof ArrayNode incoming) {
+                appendAllOfPatterns(schema, List.copyOf(allOfPatterns(incoming)));
                 return;
             }
             if ((MIN_BOUND_KEYWORDS.contains(key) || MAX_BOUND_KEYWORDS.contains(key))
@@ -1559,6 +1576,41 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     }
 
     /**
+     * The {@code pattern} text every existing single-{@code pattern} branch of an {@code allOf} array
+     * carries, in encounter order — the set a new pattern is checked against so a composition never
+     * appends a duplicate. A branch with no textual {@code pattern} keyword (not this method's own
+     * shape) contributes nothing.
+     */
+    private static Set<String> allOfPatterns(ArrayNode allOf) {
+        Set<String> patterns = new LinkedHashSet<>();
+        for (JsonNode branch : allOf) {
+            if (branch.get("pattern") instanceof TextNode pattern) {
+                patterns.add(pattern.asText());
+            }
+        }
+        return patterns;
+    }
+
+    /**
+     * Appends every pattern in {@code patterns} as a new single-{@code pattern} {@code allOf} branch,
+     * skipping one whose text a branch already present in the schema's own {@code allOf} array carries
+     * (FR-009: a constraint keyword is never removed, and a composition never duplicates a branch) — the
+     * shared merge both {@link #putKeyword}'s {@code "allOf"} branch and {@link #applyEncodedKeywords}'s
+     * scoped-member {@code "allOf"} correction call, so an {@code allOf} the schema already carries is
+     * always appended to, never replaced whole.
+     */
+    private static void appendAllOfPatterns(ObjectNode schema, List<String> patterns) {
+        ArrayNode allOf =
+                schema.get("allOf") instanceof ArrayNode existingAllOf ? existingAllOf : schema.putArray("allOf");
+        Set<String> seenPatterns = allOfPatterns(allOf);
+        for (String patternText : patterns) {
+            if (seenPatterns.add(patternText)) {
+                allOf.addObject().put("pattern", patternText);
+            }
+        }
+    }
+
+    /**
      * Whether {@code flagged} is exactly {@code plainRegexp} wrapped in an inline Java regex modifier
      * group — {@code "(?" + modifiers + ":" + plainRegexp + ")"}, {@link
      * MetadataConstraintSource#renderPattern}'s own shape for a single {@code @Pattern}'s embedded
@@ -1582,9 +1634,13 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * the same gap the generator already accepts for a {@code Map} value position.
      *
      * <p>{@code "allOf"} is also special (S5): its value is a {@link List} of pattern strings, rendered
-     * as an {@code allOf} array of single-keyword {@code {"pattern": ...}} objects — the shape two
+     * as {@code allOf} branches of single-keyword {@code {"pattern": ...}} objects — the shape two
      * {@code @Pattern} constraints in the default group on one member need, since the schema's
-     * {@code pattern} keyword itself can only ever hold one regular expression.
+     * {@code pattern} keyword itself can only ever hold one regular expression. This follows the same
+     * rule the supplement's corrections follow (FR-009 of the rest-021 package: a constraint keyword is
+     * never removed): an existing {@code allOf} array is appended to, never replaced, and a pattern
+     * already carried by one of its branches is skipped rather than duplicated — the same composition
+     * {@link #mergePatternAsAllOf} already performs for a {@code "pattern"} correction.
      */
     @SuppressWarnings("unchecked")
     private static void putKeyword(ObjectNode schema, String key, Object value) {
@@ -1597,10 +1653,8 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             return;
         }
         if ("allOf".equals(key) && value instanceof List<?> patterns) {
-            ArrayNode allOf = schema.putArray("allOf");
-            for (Object pattern : patterns) {
-                allOf.addObject().put("pattern", (String) pattern);
-            }
+            appendAllOfPatterns(
+                    schema, patterns.stream().map(pattern -> (String) pattern).toList());
             return;
         }
         if (value instanceof Long l) {
@@ -1642,7 +1696,21 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         return stripAccessorPrefix(method.getName(), GETTER_PREFIXES);
     }
 
-    /** The Swagger metadata a creator parameter or setter carries; a field or getter keeps the module's own handling. */
+    /**
+     * The Swagger metadata a creator parameter or setter carries; a field or getter keeps the module's
+     * own handling.
+     *
+     * <p>{@code pattern}, {@code minLength}, {@code maxLength}, {@code minimum}/{@code exclusiveMinimum},
+     * and {@code maximum}/{@code exclusiveMaximum} go through {@link #applyCorrection} — the same rule
+     * the supplement's corrections follow (FR-009 of the rest-021 package: a constraint keyword is never
+     * removed) — so {@code @Schema} metadata on an unscoped member never
+     * loosens or drops a bound the always-active {@link WalkConstraintSource} floor already wrote from a
+     * Bean Validation annotation on the same member: a differing pattern composes as an {@code allOf}
+     * instead of replacing the floor's, and a bound keyword keeps whichever of the two values is
+     * stricter. {@code description}, {@code title}, {@code format}, {@code enum} ({@code
+     * allowableValues}), and {@code nullable} carry no constraint-source counterpart and keep the
+     * pre-existing unconditional-overwrite behavior.
+     */
     private static void translateSwagger(Schema swagger, ObjectNode schema) {
         if (!swagger.description().isEmpty()) {
             schema.put("description", swagger.description());
@@ -1654,19 +1722,25 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             schema.put("format", swagger.format());
         }
         if (!swagger.pattern().isEmpty()) {
-            schema.put("pattern", swagger.pattern());
+            applyCorrection(schema, "pattern", swagger.pattern());
         }
         if (swagger.minLength() != 0) {
-            schema.put("minLength", swagger.minLength());
+            applyCorrection(schema, "minLength", swagger.minLength());
         }
         if (swagger.maxLength() != Integer.MAX_VALUE) {
-            schema.put("maxLength", swagger.maxLength());
+            applyCorrection(schema, "maxLength", swagger.maxLength());
         }
         if (!swagger.minimum().isEmpty()) {
-            schema.put(swagger.exclusiveMinimum() ? "exclusiveMinimum" : "minimum", new BigDecimal(swagger.minimum()));
+            applyCorrection(
+                    schema,
+                    swagger.exclusiveMinimum() ? "exclusiveMinimum" : "minimum",
+                    new BigDecimal(swagger.minimum()));
         }
         if (!swagger.maximum().isEmpty()) {
-            schema.put(swagger.exclusiveMaximum() ? "exclusiveMaximum" : "maximum", new BigDecimal(swagger.maximum()));
+            applyCorrection(
+                    schema,
+                    swagger.exclusiveMaximum() ? "exclusiveMaximum" : "maximum",
+                    new BigDecimal(swagger.maximum()));
         }
         if (swagger.allowableValues().length > 0) {
             ArrayNode values = schema.putArray("enum");
@@ -1712,7 +1786,11 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             definition.set("additionalProperties", context.createDefinitionReference(resolve(context, valueType)));
         }
         // A bound on the any-setter's map itself — @Size on the field, @Schema(minProperties/maxProperties)
-        // on the member — is a bound on the object's key count.
+        // on the member — is a bound on the object's key count. The @Size-derived value is the
+        // constraint-source floor, written first with a plain put(...); the Swagger value is routed
+        // through applyCorrection (S1, the same rule the supplement's corrections follow — FR-009 of
+        // the rest-021 package) so a looser @Schema(minProperties/maxProperties) never overwrites a
+        // stricter @Size bound already written for the same keyword.
         AnnotatedMember member =
                 anySetter.getProperty() == null ? null : anySetter.getProperty().getMember();
         if (member != null) {
@@ -1728,10 +1806,10 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             Schema swagger = member.getAnnotation(Schema.class);
             if (swagger != null) {
                 if (swagger.maxProperties() != 0) {
-                    definition.put("maxProperties", swagger.maxProperties());
+                    applyCorrection(definition, "maxProperties", swagger.maxProperties());
                 }
                 if (swagger.minProperties() != 0) {
-                    definition.put("minProperties", swagger.minProperties());
+                    applyCorrection(definition, "minProperties", swagger.minProperties());
                 }
             }
         }
