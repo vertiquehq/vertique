@@ -14,8 +14,8 @@ import java.util.Map;
  * field or getter, or {@link WalkConstraintSource}'s hand translation for a creator parameter,
  * setter, or builder method — is never overridden by an {@code addition}: a caller merges those only
  * where the schema does not already carry the keyword, so a source that runs after the floor can see
- * more than the floor ever could (a constructor-parameter constraint, a composed constraint's leaf, an
- * inherited or interface constraint, an XML-mapped constraint) without ever taking back what the floor
+ * more than the floor ever could (a constraint declared through an XML mapping, or on a member Jackson
+ * does not merge annotations for) without ever taking back what the floor
  * already stated correctly. A {@code correction} is merged unconditionally, because it targets one of
  * the small, named set of shapes the floor is known to render incorrectly for that constraint
  * (vertiquehq/vertique-dev#606: {@code @Range}, {@code @Length}, {@code @URL}, and a {@code @Pattern}

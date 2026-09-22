@@ -276,10 +276,11 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             // Jackson's introspection reports as a property regardless — findProperties().isEmpty()
             // alone would misclassify it as bean-like and wrongly refuse it, exactly the false positive
             // D005 calls out by name. Vert.x's io.vertx.* family (JsonObject, JsonArray, Buffer, ...) is
-            // additionally excluded outright: JsonArray#getList() is itself a mutable-collection getter
-            // Jackson's own "fill in place" fallback treats as settable, so couldDeserialize() alone is
-            // not a safe signal for this specific, well-known opaque-wrapper family either — the same
-            // family this method's own class Javadoc and D005 name by example. A type with neither a
+            // additionally excluded outright: JsonObject#getMap() and JsonArray#getList() are themselves
+            // mutable-collection getters Jackson's own "fill in place" fallback treats as settable, so
+            // couldDeserialize() alone is not a safe signal for this specific, well-known opaque-wrapper
+            // family either — the same family this method's own class Javadoc and D005 name by example.
+            // A type with neither a
             // settable property nor an io.vertx.* package (a scalar, a container, a node) never had a
             // field walk to protect and stays described as unconstrained. S5 (spike/deserializer-driven
             // -schema round 4 ruling): this decision is the shared BeanLikeTypes.beanLike check, the one
@@ -1618,7 +1619,8 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
 
     /**
      * The Java bean name a member joins Bean Validation metadata by: a field's own name, or the name a
-     * getter or setter implies by stripping its {@code get}/{@code is}/{@code set}/{@code with} prefix.
+     * getter implies by stripping its {@code get}/{@code is} prefix, or a setter implies by stripping
+     * its {@code set}/{@code with} prefix.
      * A creator parameter has no such name here — {@link MetadataConstraintSource} joins it by
      * constructor and index instead, read from the {@link AnnotatedParameter} itself — so this method
      * returns {@code null} for one, which the metadata source's parameter branch never consults.
