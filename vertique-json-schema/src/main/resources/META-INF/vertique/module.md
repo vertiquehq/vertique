@@ -114,13 +114,14 @@ supplement on top when one is:
     unresolved, not that it must; one that does not reproduce it gets no borrowed constraint at all,
     and its property is published by type only.
 
-  The Bean Validation supplement's own, independent join for a builder method follows this same
-  two-branch rule (round 2 correction): when the built type's Jackson-introspected property for that
-  wire name has a getter and a backing field, `MetadataConstraintSource` joins unconditionally, exactly
-  as the floor does — so a constraint invisible to every annotation-reflection path (an XML-mapped one,
-  an inherited or interface one, a composed constraint's leaf) still supplements a getter-backed
-  builder property once a `Validator` is supplied, the same as it already does for a field or getter
-  with a schema-library member scope. Only for the getter-less property does the supplement still
+  The Bean Validation supplement's join for a builder method follows this same two-branch rule (round 2
+  correction), evaluated against the same resolved built-type property the floor's own borrow shares
+  (see "The join" below): when the built type's Jackson-introspected property for that wire name has a
+  getter and a backing field, `MetadataConstraintSource` joins unconditionally, exactly as the floor
+  does — so a constraint declared through an XML mapping, or on a member Jackson does not merge
+  annotations for, still supplements a getter-backed builder property once a `Validator` is supplied,
+  the same as it already does for a field or getter with a schema-library member scope. Only for the
+  getter-less property does the supplement still
   consult `BuilderBorrowDetector`'s soundness check (`MetadataConstraintSource` reflects over the built
   class directly, so without this gate it would silently re-add a hand-written builder's constraint the
   floor never publishes for that shape, whenever a `Validator` happens to be supplied) — an ordinary
@@ -136,12 +137,12 @@ supplement on top when one is:
   of creator it belongs to.
 - **The Bean Validation supplement** (`Validator.getConstraintsForClass`; consulted only when a
   `Validator` is supplied to `forInputProfile`, and only *in addition to* the floor above). Unlike
-  the floor, it sees constraints that cannot be joined by wire name or reflective annotation
-  presence at all: a constructor-parameter constraint whose wire name differs from every field's Java
-  name (the floor never joins a creator parameter to a field except by that exact wire-name match), a
-  `List`/array container-element constraint, a constraint inherited through a superclass or an
-  implemented interface, a composed constraint's leaves, and a constraint declared entirely through
-  an XML mapping. Every keyword it proposes is either an **addition** — merged onto the floor's own
+  the floor, it sees a constraint declared entirely through an XML mapping, a constraint on a member
+  Jackson does not merge annotations for, and a `List`/array container-element constraint. A
+  constructor-parameter constraint is not one of these: the floor's own creator-parameter translation
+  already reads it directly from the parameter's own annotations, so the supplement's equivalent join
+  — by constructor and parameter index — only ever contributes an addition, where the floor's own read
+  left something unset. Every keyword it proposes is either an **addition** — merged onto the floor's own
   rendering only where the floor left that keyword unset — or a **correction**, for the one named
   set of shapes the floor is known to render incorrectly or not at all (`@Range`, `@Length`, `@URL`,
   and a `@Pattern` flag — vertiquehq/vertique-dev#606): those replace the floor's rendering for that
@@ -154,18 +155,18 @@ supplement on top when one is:
   cross-check.
 
 **The join.** A field- or getter/setter-backed property joins to a `PropertyDescriptor` by the
-member's Java bean name — the field name, or the name a getter/setter implies by stripping its
-`get`/`is`/`set`/`with` prefix — **never** by the wire name; a builder method joins the same way, on
-the built type, following the same two-branch rule as the floor's own borrow (see "Builder borrow
-assumption" above): when the built type's Jackson-introspected property for that wire name has a
-getter and a backing field, the supplement joins unconditionally; only for the getter-less property
-does it still require `BuilderBorrowDetector` to judge the join sound. For the getter-less shape this
-matches the floor exactly: an unresolved hand-written builder's property contributes no supplement,
-exactly as it gets no borrow from the floor. For a getter-backed shape, the two sources both join, but
-they are not redundant: the floor's own borrow only ever sees what the schema library's own Jakarta
-Validation module can reach reflectively, so the supplement's own addition/correction merge over that
-same property still adds a constraint invisible to every annotation-reflection path — inherited
-through an interface, composed, or declared entirely through an XML mapping — once a `Validator` is
+member's Java bean name — the field name, or the name a getter implies by stripping its `get`/`is`
+prefix, or a setter implies by stripping its `set`/`with` prefix — **never** by the wire name; a
+builder method joins the same way, on the built type, following the same two-branch rule as the
+floor's own borrow (see "Builder borrow assumption" above): when the built type's Jackson-introspected
+property for that wire name has a getter and a backing field, the supplement joins unconditionally;
+only for the getter-less property does it still require `BuilderBorrowDetector` to judge the join
+sound. For the getter-less shape this matches the floor exactly: an unresolved hand-written builder's
+property contributes no supplement, exactly as it gets no borrow from the floor. For a getter-backed
+shape, the two sources both join, but they are not redundant: the floor's own borrow only ever sees
+what the schema library's own Jakarta Validation module can reach reflectively, so the supplement's own
+addition/correction merge over that same property still adds a constraint declared through an XML
+mapping, or on a member Jackson does not merge annotations for, once a `Validator` is
 supplied, exactly as it already does for a field or getter with a schema-library member scope. The
 wire-name join is resolved once, by both sources together: `InputPropertyDescriber` looks up the
 built type's Jackson-introspected property for the member's wire name a single time and shares that

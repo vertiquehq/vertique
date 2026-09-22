@@ -61,8 +61,8 @@ import java.util.Set;
  * Jackson accessor is the setter itself). A builder-method property follows the same two-branch rule
  * {@link InputPropertyDescriber}'s own floor-side borrow does (round 2), evaluated against that same
  * resolved definition: when it has a getter and a backing field, this class joins unconditionally,
- * exactly as the floor does — so a constraint invisible to every annotation-reflection path (an
- * XML-mapped one, an inherited or interface one, a composed constraint's leaf) still supplements a
+ * exactly as the floor does — so a constraint declared through an XML mapping, or on a member Jackson
+ * does not merge annotations for, still supplements a
  * getter-backed builder property once a {@code Validator} is supplied, the same as it already does for
  * a field or getter with a schema-library member scope. Only for the getter-less property (including
  * when no definition was resolved for the member's wire name at all — BG1, or the inverse-rename shape

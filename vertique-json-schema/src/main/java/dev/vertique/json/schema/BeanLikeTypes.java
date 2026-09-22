@@ -25,9 +25,9 @@ final class BeanLikeTypes {
      * introspection happens to enumerate some property-shaped accessor on it — and the {@code
      * io.vertx.*} family, which is excluded the same way {@link InputPropertyDescriber}'s own F1
      * refusal excludes it: a no-argument getter such as {@code Buffer#getBytes()} or a
-     * mutable-collection getter such as {@code JsonArray#getList()} makes plain reflective
-     * introspection report a property for these well-known wrapper types even though neither is ever
-     * bound as a bean. Otherwise, "settable" ({@link BeanPropertyDefinition#couldDeserialize()}), not
+     * mutable-collection getter such as {@code JsonObject#getMap()}/{@code JsonArray#getList()} makes
+     * plain reflective introspection report a property for these well-known wrapper types even though
+     * neither is ever bound as a bean. Otherwise, "settable" ({@link BeanPropertyDefinition#couldDeserialize()}), not
      * merely known: a getter-only property is not a field walk either caller's check protects.
      *
      * @param mapper   the mapper whose reflective introspection decides bean-likeness
