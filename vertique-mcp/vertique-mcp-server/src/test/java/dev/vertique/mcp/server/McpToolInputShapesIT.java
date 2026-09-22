@@ -122,6 +122,66 @@ class McpToolInputShapesIT {
         }
     }
 
+    // --- H4: getter-only collection with no backing field ---
+
+    /**
+     * The MCP-level half of the H4 proof. {@code GetterOnlyCollectionNoBackingFieldDto.getItems()} has
+     * no backing field named {@code items} at all — the property's only storage is a private field
+     * named {@code internal}, populated in place through the getter, which is how Jackson binds a
+     * getter-only mutable collection with no setter. The REST-level half is {@code
+     * ProfiledSchemaSynthesisIT
+     * .getterOnlyCollectionWithNoBackingFieldGateRejectsWrongTypedItemsAndAcceptsValidBody}; the
+     * unit-level half (that the property is published with its item schema) is {@code
+     * dev.vertique.json.schema.GetterOnlyCollectionDescriptionTest
+     * .getterOnlyCollectionWithNoBackingFieldPublishesItsItemSchema} in {@code vertique-json-schema}.
+     */
+    @Test
+    @DisplayName("H4: a wrong-typed item on a getter-only collection with no backing field is INPUT_VALIDATION,"
+            + " a well-typed body reaches the handler")
+    void getterOnlyCollectionWithNoBackingFieldRejectsWrongTypedItemsAndAcceptsValidBody() throws Exception {
+        startServer();
+
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.GETTER_ONLY_COLLECTION_NO_BACKING_FIELD_TOOL,
+                new JsonObject().put("items", new JsonArray().add("x")),
+                "a string item must be rejected against the published items schema (type: integer)");
+        assertAccepted(
+                McpToolInputShapesITFixture.GETTER_ONLY_COLLECTION_NO_BACKING_FIELD_TOOL,
+                new JsonObject().put("items", new JsonArray().add(1).add(2).add(3)),
+                "a well-typed body must reach the handler");
+    }
+
+    // --- BG1: Lombok builder, constrained private field, no getter — validator-present case ---
+
+    /**
+     * The MCP-level half of the BG1 proof, validator-present only: {@code
+     * McpToolInputShapesITFixture.BG1_TOOL} is registered through a separate, validator-backed {@link
+     * dev.vertique.mcp.server.runtime.McpToolRuntimeFactory} — every other tool in this fixture stays
+     * on the validator-less one. The REST-level half is {@code ProfiledSchemaSynthesisIT
+     * .bg1GateRejectsTooLongNameAndAcceptsValidNameUnderAValidator}; the unit-level half (type-only
+     * without a validator, {@code maxLength} with one) is {@code
+     * dev.vertique.json.schema.MetadataConstraintSourceCoverageTest
+     * .lombokBuilderNoGetterPropertyIsTypeOnlyWithoutAValidatorAndConstrainedWithOne} in {@code
+     * vertique-json-schema}. Only the validator-present case has a row here: without a validator, the
+     * constraint is not enforced by the schema at all, which is the package's per-mode behavior, not a
+     * gap this proof needs to re-demonstrate at the MCP boundary.
+     */
+    @Test
+    @DisplayName("BG1: on the validator-backed tool, a too-long name is INPUT_VALIDATION and a valid name reaches"
+            + " the handler, for a Lombok builder's constrained, getter-less private field")
+    void bg1RejectsTooLongNameAndAcceptsValidNameUnderAValidator() throws Exception {
+        startServer();
+
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.BG1_TOOL,
+                new JsonObject().put("name", "toolong"),
+                "a 7-character name must be rejected against the metadata-supplement-rendered maxLength: 5");
+        assertAccepted(
+                McpToolInputShapesITFixture.BG1_TOOL,
+                new JsonObject().put("name", "ada"),
+                "a 3-character name must reach the handler");
+    }
+
     // --- TP-004: any-setter types ---
 
     @Test
@@ -235,15 +295,20 @@ class McpToolInputShapesIT {
     }
 
     @Test
-    @DisplayName("TP-004: a map subclass with an any-setter keeps its released verdict")
-    void mapSubclassWithAnAnySetterKeepsItsReleasedVerdict() throws Exception {
+    @DisplayName("TP-004: a map subclass with an any-setter is described as the map the binder fills")
+    void mapSubclassWithAnAnySetterIsDescribedAsAMap() throws Exception {
         startServer();
 
-        assertSchemaRejection(
+        // Jackson binds the type as a map: its field is never filled and its any-setter never invoked
+        // (measured), so the document describes its entries and the hardener leaves the object open.
+        assertAccepted(
                 McpToolInputShapesITFixture.MAP_SUBCLASS_TOOL,
                 new JsonObject().put("empty", "x"),
-                "a map-like type is described as if it declared no any-setter, so the hardener closes its "
-                        + "object and stage 1 rejects the entry, exactly as in 0.2.0");
+                "a legal map entry is what the binder accepts, so the gate accepts it too");
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.MAP_SUBCLASS_TOOL,
+                new JsonObject().put("empty", 5),
+                "the entries are described with the map's value type, so a wrong-typed entry is refused");
     }
 
     // --- TP-005: aliases, reserved names, and storage names ---
@@ -319,13 +384,19 @@ class McpToolInputShapesIT {
         assertSchemaRejection(
                 McpToolInputShapesITFixture.SHARED_ALIAS_TOOL,
                 new JsonObject().put("x", "TOOLONG"),
-                "a spelling two properties claim is published nowhere, so it cannot reach the @Size(max = 3) "
-                        + "claimant unconstrained (design proof v7, DA1 and DA2)");
-        assertSchemaRejection(
+                "a spelling two properties claim is published with the claimant the binder routes it to, "
+                        + "the @Size(max = 3) property, so an over-long value is refused before it reaches it "
+                        + "(design proof v7, DA1 and DA2)");
+        assertAccepted(
                 McpToolInputShapesITFixture.SETTER_ONLY_TOOL,
                 new JsonObject().put("admin", true),
-                "a name bound only through a setter is never published, so it must not set the real member "
-                        + "through the extras (design proof v7, SO1)");
+                "a name bound only through a setter is described with the setter's parameter type, so a "
+                        + "well-typed value reaches the member (design proof v7, SO1)");
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.SETTER_ONLY_TOOL,
+                new JsonObject().put("admin", "yes"),
+                "a name bound only through a setter is described with the setter's parameter type, so a "
+                        + "wrong-typed value never reaches the member (design proof v7, SO1)");
         assertSchemaRejection(
                 McpToolInputShapesITFixture.HIDDEN_ALIAS_TOOL,
                 new JsonObject().put("lvl", 999),
@@ -336,13 +407,51 @@ class McpToolInputShapesIT {
                 fixture.tool(McpToolInputShapesITFixture.SHARED_ALIAS_TOOL).inputSchema();
         JsonObject shape =
                 new JsonObject(publishedSchema).getJsonObject("properties").getJsonObject("payload");
-        assertThat(shape.getJsonObject("properties").fieldNames())
-                .as("the contested spelling must not be published under properties")
-                .doesNotContain("x");
-        assertThat(shape.encode())
-                .as("the contested spelling must appear in no alias rule either; the only place 'x' may "
-                        + "appear is the reserved-name set")
-                .doesNotContain("\"required\":[\"x\"]");
+        // The binder's own routing decides which claimant a contested spelling reaches; the published
+        // schema under the spelling must be that claimant's, so the gate checks what the binder binds.
+        McpToolInputShapesITFixture.ContestedSpellingWithAnySetter bound =
+                new com.fasterxml.jackson.databind.ObjectMapper()
+                        .readValue("{\"x\":\"abc\"}", McpToolInputShapesITFixture.ContestedSpellingWithAnySetter.class);
+        String claimant = "abc".equals(bound.b) ? "b" : "abc".equals(bound.a) ? "a" : null;
+        assertThat(claimant)
+                .as("the binder must route the contested spelling to one claimant")
+                .isNotNull();
+        assertThat(shape.getJsonObject("properties").getJsonObject("x"))
+                .as("the contested spelling must be published with the schema of the claimant the binder"
+                        + " routes it to")
+                .isEqualTo(shape.getJsonObject("properties").getJsonObject(claimant));
+    }
+
+    // --- C1 (spike/deserializer-driven-schema round 4, CRITICAL): sibling-ordered unwrapped pair ---
+
+    /**
+     * C1: {@code SiblingUnwrappedParent} declares two {@code @JsonUnwrapped} siblings, in this order,
+     * where only the *second* sibling ({@code SiblingUnwrappedB}) carries the {@code @JsonAnySetter}.
+     * The *first* sibling ({@code SiblingUnwrappedA}) carries an aliased, constrained member
+     * ({@code @JsonAlias("ak")}) and a hidden, constrained member — the exact shape T010's own hidden
+     * -member probe uses, just moved onto a sibling processed before the any-setter is known.
+     */
+    @Test
+    @DisplayName("C1: a sibling unwrapped child's alias key is rejected at the gate whatever sibling carries"
+            + " the any-setter, and its hidden member's spelling is refused rather than reaching the handler")
+    void siblingOrderedUnwrappedChildKeysAreRejectedAsInputValidation() throws Exception {
+        startServer();
+
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.SIBLING_UNWRAPPED_TOOL,
+                new JsonObject().put("ak", "abcdefgh"),
+                "C1: the first-processed unwrapped sibling's alias \"ak\" carries its own @Size(max = 3),"
+                        + " so an over-long value must be refused before it reaches the handler");
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.SIBLING_UNWRAPPED_TOOL,
+                new JsonObject().put("secret", 5),
+                "C1 DECISIVE: the first-processed unwrapped sibling's hidden member \"secret\" must be"
+                        + " refused rather than reaching the handler through the extras bucket unconstrained,"
+                        + " even though the any-setter is declared on the second sibling, processed later");
+        assertAccepted(
+                McpToolInputShapesITFixture.SIBLING_UNWRAPPED_TOOL,
+                new JsonObject().put("aname", "abc"),
+                "the first sibling's own canonical property must still be admitted");
     }
 
     // --- T010 TP-002: an alias spelling naming a member the document never publishes ---
@@ -389,6 +498,86 @@ class McpToolInputShapesIT {
                 new JsonObject().put("level", 5),
                 "the aliasing property itself is untouched by the collision rule, so a blanket refusal "
                         + "cannot satisfy the two rows above");
+    }
+
+    // --- TP-006: case-insensitive binding (Change 3) ---
+
+    @Test
+    @DisplayName("TP-006: a case-insensitively bound property is accepted under another ASCII casing")
+    void caseInsensitiveShapeAcceptsAnotherCasingOfAPublishedProperty() throws Exception {
+        startServer();
+
+        assertAccepted(
+                McpToolInputShapesITFixture.CASE_INSENSITIVE_TOOL,
+                new JsonObject().put("NAME", "ab"),
+                "the binder accepts \"NAME\" case-insensitively, and the schema must too — this is the"
+                        + " gap Change 3 closes: the generator used to refuse the whole type outright");
+    }
+
+    @Test
+    @DisplayName("TP-006: a reserved name is rejected under every ASCII casing, not just its own")
+    void caseInsensitiveShapeRejectsAReservedNameUnderAnotherCasing() throws Exception {
+        startServer();
+
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.CASE_INSENSITIVE_TOOL,
+                new JsonObject().put("SECRETKEY", "x"),
+                "the reserved name's folded pattern must exclude every ASCII casing, not only the"
+                        + " canonical spelling — a schema that reserved 'secretKey' by exact enum alone would"
+                        + " accept this key");
+    }
+
+    @Test
+    @DisplayName(
+            "TP-006: DECISIVE — the MCP hardener keeps accepting a patternProperties match on an otherwise-closed type")
+    void caseInsensitiveClosedShapeAcceptsAnotherCasingThroughTheHardenerClosure() throws Exception {
+        startServer();
+
+        // The type declares no any-setter, so InputPropertyDescriber leaves additionalProperties
+        // unset and the MCP hardener closes it with additionalProperties: false. Draft 2020-12
+        // semantics say that keyword governs only a key matched by neither properties nor
+        // patternProperties, so "NAME" — matched by the folded pattern — must still be accepted.
+        assertAccepted(
+                McpToolInputShapesITFixture.CASE_INSENSITIVE_CLOSED_TOOL,
+                new JsonObject().put("NAME", "ab"),
+                "a patternProperties match must still be accepted once the hardener has closed the"
+                        + " object with additionalProperties: false");
+    }
+
+    @Test
+    @DisplayName(
+            "TP-006: a case-insensitive, otherwise-closed shape still rejects a key that matches no folded pattern")
+    void caseInsensitiveClosedShapeStillRejectsATrulyUnknownKey() throws Exception {
+        startServer();
+
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.CASE_INSENSITIVE_CLOSED_TOOL,
+                new JsonObject().put("zzz", "unknown"),
+                "a key matching neither properties nor patternProperties must still be rejected by the"
+                        + " hardener's additionalProperties: false closure");
+    }
+
+    /**
+     * AC-005.2: the MCP-level half of the proof. {@code
+     * dev.vertique.json.schema.CaseInsensitiveUnicodeFoldingTest.nonAsciiKeyRefusedByPropertyNames}
+     * only matches the generated {@code propertyNames} regex against the confusable spelling — nothing
+     * there exercises a real tool call. The REST-level half is {@code ProfiledSchemaSynthesisIT
+     * .ac005NonAsciiKeyRejectedAtTheGateWithAValueFreeDetail}. U+212A KELVIN SIGN folds to ASCII
+     * {@code 'k'} under Jackson's locale-independent case fold, so the binder's own case-insensitive
+     * lookup would route a key spelled with it straight into the real, constrained {@code key} member
+     * if the schema check did not refuse it first.
+     */
+    @Test
+    @DisplayName("AC-005.2: a U+212A-folded key on a case-insensitive any-setter type is INPUT_VALIDATION, the"
+            + " handler is never entered")
+    void ac005NonAsciiKeyRejectedAsInputValidation() throws Exception {
+        startServer();
+
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.AC005_TOOL,
+                new JsonObject().put("Key", "AC5"),
+                "the propertyNames rule must refuse the U+212A-folded key before the binder's own"
+                        + " case-insensitive lookup ever gets a chance to route it to the real \"key\" member");
     }
 
     // --- Shared actions and assertions ---

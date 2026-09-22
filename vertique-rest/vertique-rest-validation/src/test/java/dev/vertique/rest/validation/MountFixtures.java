@@ -56,4 +56,20 @@ final class MountFixtures {
     static RestTestMount mount(Vertx vertx, RestTestContributions contributions) {
         return mount(vertx, new JsonObject(), contributions);
     }
+
+    /**
+     * Builds a mount handle from {@link ValidatorBackedValidationMountComponent} — BG1's
+     * validator-present graph — with an empty configuration, so every {@code jaxrs}/{@code http}
+     * setting stays at its framework default. {@link AnnotationSchemaSource} generates body schemas
+     * through Bean Validation metadata on this mount, unlike {@link #mount(Vertx, RestTestContributions)}.
+     *
+     * @param vertx         the Vert.x instance
+     * @param contributions the additive test contributions
+     * @return the real, validator-backed mount handle
+     */
+    static RestTestMount validatorBackedMount(Vertx vertx, RestTestContributions contributions) {
+        return DaggerValidatorBackedValidationMountComponent.factory()
+                .create(vertx, new JsonObject(), contributions)
+                .testMount();
+    }
 }

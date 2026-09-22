@@ -4,10 +4,12 @@
 package dev.vertique.rest.validation;
 
 import dagger.Binds;
+import dagger.BindsOptionalOf;
 import dagger.Module;
 import dagger.multibindings.IntoSet;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
 import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
+import jakarta.validation.Validator;
 
 /**
  * Dagger module for the default annotation-driven request-validation strategy ({@code web-validation}).
@@ -42,4 +44,16 @@ public abstract class RestValidationModule {
      */
     @Binds
     abstract OperationSchemaSource operationSchemaSource(AnnotationSchemaSource source);
+
+    /**
+     * Declares the optional application-bound {@link Validator}: when present (an application depends
+     * on {@code vertique-validation}, or binds its own), {@link AnnotationSchemaSource} additionally
+     * sources body-schema value constraints from Bean Validation metadata — the annotation walk still
+     * runs first, as the floor every generation carries, and the metadata source only supplements or,
+     * for a bounded set of shapes, corrects it; when absent, generation is unchanged from before this
+     * binding existed. Mirrors the same {@code @BindsOptionalOf Validator} pattern {@code
+     * vertique-mcp-server}'s {@code McpServerModule} already uses for tool input validation.
+     */
+    @BindsOptionalOf
+    abstract Validator validator();
 }

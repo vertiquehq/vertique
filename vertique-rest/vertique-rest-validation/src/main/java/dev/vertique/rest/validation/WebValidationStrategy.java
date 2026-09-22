@@ -1402,8 +1402,18 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
          * <p>When a keyword and constraint args are successfully resolved, a safe canonical
          * {@code detail} message is generated from the keyword and constraint value — the raw
          * vertx-json-schema error message is intentionally not used because it may echo the submitted
-         * request value (e.g. "500 is greater than 100"). For keywords without resolved args, the raw
-         * message is used as a fallback.
+         * request value (e.g. "500 is greater than 100"). For a resolved keyword without resolved args,
+         * the raw message is used as a fallback. An error — in either the single-error branch below (a
+         * result with no {@code errors} list at all, e.g. a boolean {@code false} schema, whose Basic
+         * output reports only {@code {valid:false}} with no nested error; a scalar parameter's own
+         * constraint failure — {@code type}, {@code minimum}, ... — still populates a one-element
+         * {@code errors} list and is handled by the multi-error loop below instead) or the
+         * multi-error loop below — whose keyword location resolves to no keyword at all — absent or
+         * empty, rather than naming a structural traversal keyword — never reaches that fallback (W4,
+         * spike/deserializer-driven-schema round 4 ruling): it produces a value-free detail instead,
+         * since the raw fallback is not reviewed for that shape and could otherwise echo the submitted
+         * value the same way it can for an enriched keyword. {@code safeDetail} is therefore never
+         * invoked with a {@code null} keyword from this method.
          *
          * <p>When {@code failFast} is {@code true}, only the first non-structural error is added to
          * {@code failures} and then this method returns immediately.
@@ -1439,10 +1449,27 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
             int addedBefore = failures.size();
             List<OutputUnit> errors = result.getErrors();
             if (errors == null || errors.isEmpty()) {
-                // Single-error result (e.g. scalar param validated directly)
+                // Single-error result: no `errors` list at all (e.g. a boolean `false` schema, whose
+                // Basic output is only {valid:false}, with no nested error and no keyword location). A
+                // scalar parameter's own constraint failure is not this shape: it still populates a
+                // one-element `errors` list and falls through the multi-error loop below instead, exactly
+                // like every other keyword failure.
                 String keyword = extractKeywordFor(result);
                 // Skip structural wrapper errors (keyword is null and the location names a structural keyword)
-                if (keyword != null || !isStructuralError(result.getKeywordLocation())) {
+                if (keyword == null && isStructuralError(result.getKeywordLocation())) {
+                    // no concrete detail for a structural wrapper; falls through to the value-free
+                    // detail below via the addedBefore check
+                } else if (keyword == null) {
+                    // W4 (spike/deserializer-driven-schema round 4 ruling): same shape the multi-error
+                    // loop below was fixed for — the keyword location is absent (or empty) rather than
+                    // structural, so extractKeywordFor still yields null, but there is no resolved
+                    // keyword to render a canonical message from. Falling through to safeDetail's own
+                    // raw-message fallback would return vertx-json-schema's own message unfiltered, the
+                    // same class of leak FR-018/#598 removed for every other keyword (it may itself echo
+                    // the submitted value). A value-free detail is produced instead, never calling
+                    // safeDetail with a null keyword.
+                    failures.add(valueFreeDetail(result.getInstanceLocation(), fallbackPath, location, schema));
+                } else {
                     Map<String, Object> args = resolveConstraintArgs(keyword, result.getKeywordLocation(), schema);
                     String detail = safeDetail(keyword, args, result.getError());
                     failures.add(new ValidationErrorDetail(
@@ -1457,6 +1484,22 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                 String keyword = extractKeywordFor(error);
                 // Skip structural traversal wrapper errors (e.g. "#/properties" intermediate error)
                 if (keyword == null && isStructuralError(error.getKeywordLocation())) {
+                    continue;
+                }
+                if (keyword == null) {
+                    // W4 (spike/deserializer-driven-schema round 4 ruling): the keyword location is
+                    // absent (or empty) rather than structural — extractKeywordFor still yields null, but
+                    // there is no resolved keyword to render a canonical message from, and falling
+                    // through to safeDetail's own raw-message fallback would return vertx-json-schema's
+                    // own message unfiltered, exactly the class of leak FR-018/#598 removed for every
+                    // other keyword (it may itself echo the submitted value). A value-free detail is
+                    // produced instead, named at this error's own reported instance location, the same
+                    // way the "every error was structural" branch below produces one when the loop itself
+                    // adds nothing.
+                    failures.add(valueFreeDetail(error.getInstanceLocation(), fallbackPath, location, schema));
+                    if (failFast) {
+                        return;
+                    }
                     continue;
                 }
                 Map<String, Object> args = resolveConstraintArgs(keyword, error.getKeywordLocation(), schema);
@@ -1783,8 +1826,12 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
          * vertx-json-schema error message — which may echo the submitted value (e.g.
          * {@code "500 is greater than 100"}) — is never used for enriched keywords.
          *
-         * <p>For keywords without resolved args (where args contain only {@code {keyword: true}}),
-         * the raw error message is used as a fallback since no submitted-value risk is evident.
+         * <p>For a resolved keyword without resolved args (where args contain only
+         * {@code {keyword: true}}), the raw error message is used as a fallback since no
+         * submitted-value risk is evident. Neither the single-error branch nor the multi-error loop in
+         * {@link #collectFailures} calls this method with a {@code null} keyword for a non-structural
+         * error (W4, spike/deserializer-driven-schema round 4 ruling): each produces a value-free detail
+         * for that shape instead, since this fallback is not reviewed for it.
          *
          * @param keyword    the failed keyword, or {@code null} when not resolvable
          * @param args       the resolved constraint args map (empty when keyword is unknown)
@@ -1810,7 +1857,25 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                     case "pattern" -> "must match pattern: " + constraintValue;
                     case "required" -> rawMessage != null ? rawMessage : "is missing a required field";
                     case "type" -> typeDetail(constraintValue);
-                    default -> rawMessage != null ? rawMessage : keyword + " constraint violated";
+                    // F5 (security review round 1, MEDIUM): propertyNames and patternProperties are the
+                    // two keywords this package itself extends beyond vertx-json-schema's own generated
+                    // rules — a caseInsensitivePropertyNamesRule refusal or a folded patternProperties
+                    // entry always resolves the client's own submitted key into the vertx-json-schema
+                    // wrapper message ("Property name \"<key>\" does not match schema", "Property
+                    // \"<key>\" matches pattern \"<generated-regex>\" but does not match associated
+                    // schema"). Both are given fixed, value-free messages so the client-chosen key (and,
+                    // for patternProperties, the generated regex) can never reach detail through them —
+                    // the exact class of reflected-client-text leak FR-018/#598 removed for every other
+                    // keyword.
+                    case "propertyNames" -> "contains a property name the schema does not allow";
+                    case "patternProperties" -> VALUE_FREE_DETAIL_MESSAGE;
+                    // F5: the default branch is the catch-all for every keyword this method does not
+                    // special-case above — including a future one. It must never fall back to the raw
+                    // vertx-json-schema message: that message's own recipe is not reviewed here and may
+                    // itself echo the submitted value (as propertyNames' and patternProperties' did), so
+                    // "unknown keyword" and "known to echo the client's value" must render identically —
+                    // fail closed rather than fail open on an unreviewed keyword.
+                    default -> keyword + " constraint violated";
                 };
             }
             // For keywords with boolean fallback args or no args, use the raw message

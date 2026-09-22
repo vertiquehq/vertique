@@ -7,8 +7,10 @@ import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonAnyGetter;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonEnumDefaultValue;
+import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonUnwrapped;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
 import dev.vertique.core.json.JsonProfileId;
@@ -46,9 +48,12 @@ import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.Router;
 import jakarta.annotation.Nullable;
+import jakarta.validation.Validation;
+import jakarta.validation.Validator;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Size;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -62,6 +67,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.extern.jackson.Jacksonized;
+import org.hibernate.validator.HibernateValidator;
+import org.hibernate.validator.messageinterpolation.ParameterMessageInterpolator;
 
 /**
  * Framework wiring and argument shapes for {@link McpToolInputShapesIT} (T005 TP-003 to TP-005).
@@ -88,6 +95,9 @@ final class McpToolInputShapesITFixture {
     static final String BUILDER_TOOL = "shapes.builder";
     static final String GETTER_ONLY_LIST_TOOL = "shapes.getterOnlyList";
     static final String GETTER_ONLY_MAP_TOOL = "shapes.getterOnlyMap";
+    static final String GETTER_ONLY_COLLECTION_NO_BACKING_FIELD_TOOL = "shapes.getterOnlyCollectionNoBackingField";
+    static final String BG1_TOOL = "shapes.bg1LombokBuilderNoGetter";
+    static final String AC005_TOOL = "shapes.ac005CaseInsensitiveAnySetter";
     static final String NESTED_PRIVATE_DATE_TOOL = "shapes.nestedPrivateDate";
     static final String ANY_SETTER_NAMED_TOOL = "shapes.anySetterWithNamedProperties";
     static final String ANY_SETTER_ONLY_TOOL = "shapes.anySetterOnly";
@@ -104,6 +114,9 @@ final class McpToolInputShapesITFixture {
     static final String HIDDEN_ALIAS_TOOL = "shapes.hiddenAliasedField";
     static final String SPELLING_NAMES_HIDDEN_ANY_TOOL = "shapes.spellingNamesHiddenMemberAnySetter";
     static final String SPELLING_NAMES_HIDDEN_CLOSED_TOOL = "shapes.spellingNamesHiddenMemberClosed";
+    static final String CASE_INSENSITIVE_TOOL = "shapes.caseInsensitive";
+    static final String CASE_INSENSITIVE_CLOSED_TOOL = "shapes.caseInsensitiveClosed";
+    static final String SIBLING_UNWRAPPED_TOOL = "shapes.siblingUnwrappedPair";
 
     /** The profile T005 TP-005's strict row selects; every other tool takes the resolver's tail. */
     static final String STRICT_PROFILE = "vertique-strict";
@@ -126,6 +139,25 @@ final class McpToolInputShapesITFixture {
         register(tools, factory, BUILDER_TOOL, BuilderPayload.class, null);
         register(tools, factory, GETTER_ONLY_LIST_TOOL, GetterOnlyListPayload.class, null);
         register(tools, factory, GETTER_ONLY_MAP_TOOL, GetterOnlyMapPayload.class, null);
+        register(
+                tools,
+                factory,
+                GETTER_ONLY_COLLECTION_NO_BACKING_FIELD_TOOL,
+                GetterOnlyCollectionNoBackingFieldPayload.class,
+                null);
+        // BG1: registered through a separate, validator-backed factory — every other tool above stays
+        // on the validator-less factory, so this is the sole validator-present row.
+        Validator bg1Validator = Validation.byProvider(HibernateValidator.class)
+                .configure()
+                .messageInterpolator(new ParameterMessageInterpolator())
+                .buildValidatorFactory()
+                .getValidator();
+        register(
+                tools,
+                McpToolRuntimeFactoryTestSupport.factoryWithValidator(bg1Validator),
+                BG1_TOOL,
+                Bg1Payload.class,
+                null);
         register(tools, factory, NESTED_PRIVATE_DATE_TOOL, NestedPrivateDatePayload.class, null);
         register(tools, factory, ANY_SETTER_NAMED_TOOL, AnySetterNamedPayload.class, null);
         register(tools, factory, ANY_SETTER_ONLY_TOOL, AnySetterOnlyPayload.class, null);
@@ -142,6 +174,10 @@ final class McpToolInputShapesITFixture {
         register(tools, factory, HIDDEN_ALIAS_TOOL, HiddenAliasPayload.class, null);
         register(tools, factory, SPELLING_NAMES_HIDDEN_ANY_TOOL, SpellingNamesHiddenMemberAnyPayload.class, null);
         register(tools, factory, SPELLING_NAMES_HIDDEN_CLOSED_TOOL, SpellingNamesHiddenMemberClosedPayload.class, null);
+        register(tools, factory, CASE_INSENSITIVE_TOOL, CaseInsensitivePayload.class, null);
+        register(tools, factory, CASE_INSENSITIVE_CLOSED_TOOL, CaseInsensitiveClosedPayload.class, null);
+        register(tools, factory, AC005_TOOL, Ac005Payload.class, null);
+        register(tools, factory, SIBLING_UNWRAPPED_TOOL, SiblingUnwrappedPayload.class, null);
         this.toolsByName = Map.copyOf(tools);
 
         McpToolRegistry registry = McpToolRegistry.build(Set.copyOf(tools.values()));
@@ -385,6 +421,11 @@ final class McpToolInputShapesITFixture {
 
     record GetterOnlyMapPayload(@JsonProperty("payload") GetterOnlyMapDto argument0) {}
 
+    record GetterOnlyCollectionNoBackingFieldPayload(
+            @JsonProperty("payload") GetterOnlyCollectionNoBackingFieldDto argument0) {}
+
+    record Bg1Payload(@JsonProperty("payload") Bg1Dto argument0) {}
+
     record NestedPrivateDatePayload(@JsonProperty("payload") NestedPrivateDateDto argument0) {}
 
     record AnySetterNamedPayload(@JsonProperty("payload") FieldAnySetterOverStrings argument0) {}
@@ -416,6 +457,15 @@ final class McpToolInputShapesITFixture {
 
     record SpellingNamesHiddenMemberClosedPayload(
             @JsonProperty("payload") SpellingNamesAHiddenProperty argument0) {}
+
+    record CaseInsensitivePayload(@JsonProperty("payload") CaseInsensitiveAnySetterType argument0) {}
+
+    record CaseInsensitiveClosedPayload(
+            @JsonProperty("payload") CaseInsensitiveClosedType argument0) {}
+
+    record Ac005Payload(@JsonProperty("payload") Ac005CaseInsensitiveAnySetterType argument0) {}
+
+    record SiblingUnwrappedPayload(@JsonProperty("payload") SiblingUnwrappedParent argument0) {}
 
     // --- TP-003 shapes: the five AC-013.1 input-discovery shapes, as T004's corpus defines them ---
 
@@ -475,6 +525,40 @@ final class McpToolInputShapesITFixture {
         public Map<String, String> getLabels() {
             return labels;
         }
+    }
+
+    /**
+     * H4: a getter-only {@code List<Integer>} with no backing field named {@code items} at all — its
+     * only storage is {@link #internal}, an unrelated field name Jackson populates in place through
+     * the getter (no setter is declared).
+     */
+    static final class GetterOnlyCollectionNoBackingFieldDto {
+
+        private final List<Integer> internal = new ArrayList<>();
+
+        /**
+         * Returns the live, mutable backing list.
+         *
+         * @return the items
+         */
+        public List<Integer> getItems() {
+            return internal;
+        }
+    }
+
+    /**
+     * BG1: a Lombok {@code @Builder @Jacksonized} type with a constrained private field and
+     * deliberately no getter. Jackson's own introspection does not see {@code name} as a property at
+     * all without a public accessor, so the validator-less floor's builder-constraint borrow finds
+     * nothing to borrow; Bean Validation is unaffected, since it reads the constrained field directly
+     * by Java name. Registered only through the validator-backed factory ({@link #BG1_TOOL}).
+     */
+    @Builder
+    @Jacksonized
+    static final class Bg1Dto {
+
+        @Size(max = 5)
+        private final String name;
     }
 
     /** A type holding {@link PrivateDatePropertyDto}, so the nested position is covered too. */
@@ -653,6 +737,65 @@ final class McpToolInputShapesITFixture {
         }
     }
 
+    /**
+     * A class-level case-insensitively bound any-setter type with a reserved name (Change 3): {@code
+     * name} is published under both its canonical spelling and an ASCII case-folded
+     * {@code patternProperties} pattern, and {@code secretKey} is reserved by a folded pattern too, so
+     * a key under another casing must still route to the right place — accepted for {@code name},
+     * rejected for {@code secretKey} — while the MCP hardener's root closure still rejects a key that
+     * matches neither.
+     */
+    @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
+    static final class CaseInsensitiveAnySetterType {
+
+        /** Published under "name" and every ASCII casing of it. */
+        @Size(max = 3)
+        public String name;
+
+        /** Never bound by name, never published: reserved under every ASCII casing of "secretKey". */
+        @JsonIgnore
+        public String secretKey;
+
+        /** The any-setter's backing storage. */
+        @JsonAnySetter
+        public Map<String, Object> extras = new LinkedHashMap<>();
+    }
+
+    /**
+     * A case-insensitively bound, otherwise closed (no any-setter) type — the decisive shape for the
+     * MCP hardener requirement: since it declares no {@code additionalProperties} of its own, the
+     * hardener closes it with {@code additionalProperties: false}, and the requirement is that a key
+     * matching {@code patternProperties} must still be accepted through that closure while a key
+     * matching neither {@code properties} nor {@code patternProperties} is rejected.
+     */
+    @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
+    static final class CaseInsensitiveClosedType {
+
+        /** Published under "name" and every ASCII casing of it. */
+        @Size(max = 3)
+        public String name;
+    }
+
+    /**
+     * AC-005.2: a case-insensitively bound, extras-described (any-setter) type whose real member's
+     * name starts with 'k' — the MCP-level counterpart to {@code
+     * CaseInsensitiveUnicodeFoldingTest.CaseInsensitiveWithExtras} in {@code vertique-json-schema},
+     * whose own proof only matches the generated {@code propertyNames} regex against the confusable
+     * spelling, never a real tool call. U+212A KELVIN SIGN folds to ASCII {@code 'k'} under Jackson's
+     * locale-independent {@code String#toLowerCase()}, so the binder would route a key spelled with it
+     * straight into the real, constrained {@link #key} member; the {@code propertyNames} rule this
+     * type's document carries refuses any non-ASCII key outright instead.
+     */
+    @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
+    static final class Ac005CaseInsensitiveAnySetterType {
+
+        @Size(max = 3)
+        public String key;
+
+        @JsonAnySetter
+        public Map<String, Object> extras = new LinkedHashMap<>();
+    }
+
     /** An any-setter type declaring one alias spelling on two properties (design proof v7, DA1/DA2). */
     static final class ContestedSpellingWithAnySetter {
 
@@ -747,5 +890,40 @@ final class McpToolInputShapesITFixture {
         @Schema(hidden = true)
         @Max(3)
         public Integer secret;
+    }
+
+    /**
+     * C1 (spike/deserializer-driven-schema round 4, CRITICAL): the first unwrapped sibling, carrying no
+     * any-setter of its own — an aliased, constrained member and a hidden, constrained member, so a key
+     * spelling either the alias or the hidden member is either published nowhere or reserved nowhere
+     * when {@code foldUnwrappedChildIntoParentPlan}'s own any-setter-type signal has not yet been set at
+     * the time this sibling is processed.
+     */
+    static final class SiblingUnwrappedA {
+        @JsonAlias("ak")
+        @Size(max = 3)
+        public String aname;
+
+        @Schema(hidden = true)
+        @Size(max = 3)
+        public String secret;
+    }
+
+    /** The second unwrapped sibling: the any-setter lives here, not on {@link SiblingUnwrappedA}. */
+    static final class SiblingUnwrappedB {
+        @JsonAnySetter
+        private final Map<String, Object> extras = new LinkedHashMap<>();
+    }
+
+    /**
+     * C1: two {@code @JsonUnwrapped} siblings, in this order, where only the *second*
+     * ({@link SiblingUnwrappedB}) carries the {@code @JsonAnySetter}.
+     */
+    static final class SiblingUnwrappedParent {
+        @JsonUnwrapped
+        public SiblingUnwrappedA a;
+
+        @JsonUnwrapped
+        public SiblingUnwrappedB b;
     }
 }

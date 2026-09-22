@@ -673,10 +673,10 @@ class AliasDescriptionTest {
                             + " a record that drifts between calls changes what the document reserves"));
         }
         checks.add(() -> assertTrue(
-                freshFirst.get(MutuallyRecursiveA.class).split("\"propertyNames\"", -1).length - 1 >= 2,
-                "the mutually recursive pair must reserve its name in the root and in the inlined nested copy:"
-                        + " a reserved set that reached only the root leaves the nested position open;"
-                        + " document: " + freshFirst.get(MutuallyRecursiveA.class)));
+                freshFirst.get(MutuallyRecursiveA.class).split("\"level\":\\{\"maximum\":10", -1).length - 1 >= 2,
+                "the mutually recursive pair must describe its accessor-bound name in the root and in the"
+                        + " nested definition: a description that reached only the root leaves the nested"
+                        + " position open; document: " + freshFirst.get(MutuallyRecursiveA.class)));
         assertAll(checks);
     }
 
@@ -725,55 +725,58 @@ class AliasDescriptionTest {
     }
 
     @Test
-    @DisplayName("A spelling two properties claim is published nowhere and is reserved")
-    void aliasClaimedByTwoPropertiesIsNotListedAndIsReserved() {
+    @DisplayName("A spelling two properties claim is published with the claimant the binder routes it to")
+    void aContestedSpellingIsPublishedWithTheClaimantTheBinderRoutesItTo() {
         for (String profileId : List.of("vertique", "vertique-strict")) {
-            JsonNode constrainedFirst = inputDocument(ContestedSpellingConstrainedSortsFirst.class, profileId);
-            JsonNode constrainedLast = inputDocument(ContestedSpellingConstrainedSortsLast.class, profileId);
-            JsonNode withAnySetter = inputDocument(ContestedSpellingWithAnySetter.class, profileId);
-
-            // Each fixture is paired with the name of its constrained claimant, because the two
-            // declaration orders exist precisely so that the constrained claimant is not always the
-            // one an ordered map reaches first.
-            Map<String, JsonNode> byConstrainedClaimant = new LinkedHashMap<>();
-            byConstrainedClaimant.put("aa", constrainedFirst);
-            byConstrainedClaimant.put("zz", constrainedLast);
-
-            List<Executable> checks = new ArrayList<>();
-            byConstrainedClaimant.put("zz/any-setter", withAnySetter);
-            byConstrainedClaimant.forEach((claimant, document) -> {
-                String constrained = claimant.startsWith("zz") ? "zz" : "aa";
-                checks.add(() -> assertFalse(
-                        properties(document).has("x"),
-                        "a spelling more than one property claims must be published nowhere: published with one"
-                                + " claimant's schema, {\"x\":\"TOOLONG\"} reaches the other, constrained property"
-                                + " unvalidated (design proof v7, r8 rows DA1 and DA2), and which claimant wins"
-                                + " depends only on map ordering, under " + profileId + "; document: " + document));
-                checks.add(() -> assertEquals(
-                        List.of(),
-                        rules(document).stream()
-                                .map(AliasDescriptionTest::branchesOf)
-                                .toList(),
-                        "a contested spelling is named in no rule under " + profileId + "; document: " + document));
-                checks.add(() -> assertEquals(
-                        "{\"maxLength\":3,\"type\":\"string\"}",
-                        properties(document).path(constrained).toString(),
-                        "the constrained claimant's own schema must be unchanged under " + profileId + "; document: "
-                                + document));
-            });
-            checks.add(() -> assertEquals(
-                    List.of("x"),
-                    reservedNames(withAnySetter),
-                    "where extras are described, the contested spelling joins the reserved set: otherwise it"
-                            + " falls through to additionalProperties and binds the constrained member under "
-                            + profileId + "; document: " + withAnySetter));
-            assertAll(checks);
+            for (Class<?> type : List.of(
+                    ContestedSpellingConstrainedSortsFirst.class,
+                    ContestedSpellingConstrainedSortsLast.class,
+                    ContestedSpellingWithAnySetter.class)) {
+                JsonNode document = inputDocument(type, profileId);
+                // The deserializer, not an ordered map, decides which claimant a contested spelling
+                // reaches; the document is read from that same deserializer, so it must publish the
+                // spelling with exactly the claimant's schema — the property {"x": ...} binds into.
+                String claimant = claimantOf(type, "x", "abc");
+                assertAll(
+                        () -> assertTrue(
+                                claimant != null,
+                                "the binder must route the contested spelling to one of its claimants for "
+                                        + type.getSimpleName()),
+                        () -> assertEquals(
+                                properties(document).path(claimant).toString(),
+                                properties(document).path("x").toString(),
+                                "the contested spelling is published with the schema of the claimant the binder"
+                                        + " routes it to (" + claimant + ") under " + profileId + "; document: "
+                                        + document),
+                        () -> assertFalse(
+                                document.has("propertyNames"),
+                                "the spelling is published, so nothing is reserved under " + profileId + "; document: "
+                                        + document));
+            }
         }
     }
 
+    /**
+     * Binds a body carrying one key and returns the name of the public field that received the value:
+     * the binder's own answer to which member a spelling reaches.
+     */
+    private static String claimantOf(Class<?> type, String key, String value) {
+        Object bound = bind(type, "{\"" + key + "\":\"" + value + "\"}");
+        for (java.lang.reflect.Field field : type.getFields()) {
+            try {
+                if (value.equals(field.get(bound))) {
+                    return field.getName();
+                }
+            } catch (IllegalAccessException inaccessible) {
+                throw new AssertionError(inaccessible);
+            }
+        }
+        return null;
+    }
+
     @Test
-    @DisplayName("An alias of a property the document never publishes is not listed and stays reserved")
-    void aliasOfAnUnpublishedPropertyIsNotListedAndStaysReserved() {
+    @DisplayName("An alias of a hidden property stays reserved; an alias of an accessor pair is listed with it")
+    void aliasOfAHiddenPropertyStaysReservedAndAnAccessorPairAliasIsListed() {
         for (String profileId : List.of("vertique", "vertique-strict")) {
             JsonNode hidden = inputDocument(HiddenAliasedFieldOnAnySetterType.class, profileId);
             JsonNode accessorPair = inputDocument(AccessorPairAliasedNoFieldOnAnySetterType.class, profileId);
@@ -792,22 +795,28 @@ class AliasDescriptionTest {
                                     + " neither published nor reserved, and it binds the @Max(10) field past the"
                                     + " schema at REST and MCP (design proof v9, AH1) under " + profileId
                                     + "; document: " + hidden),
-                    () -> assertFalse(
-                            properties(accessorPair).has("lv"),
-                            "the accessor pair has no same-named field, so the document publishes no 'level' for"
-                                    + " its spelling to copy under " + profileId + "; document: " + accessorPair),
                     () -> assertEquals(
-                            List.of("level", "lv"),
-                            reservedNames(accessorPair),
-                            "the accessor pair's spelling stays reserved beside the bound name it escapes"
-                                    + " (design proof v9, AS3) under " + profileId + "; document: " + accessorPair));
+                            "{\"maximum\":10,\"type\":\"integer\"}",
+                            properties(accessorPair).path("level").toString(),
+                            "the accessor pair is bound through its setter, so 'level' is described with the"
+                                    + " getter's own constraint under " + profileId + "; document: " + accessorPair),
+                    () -> assertEquals(
+                            properties(accessorPair).path("level").toString(),
+                            properties(accessorPair).path("lv").toString(),
+                            "its spelling is listed with the same schema, so a key under either spelling is"
+                                    + " validated before it reaches the setter (design proof v9, AS3) under "
+                                    + profileId + "; document: " + accessorPair),
+                    () -> assertFalse(
+                            accessorPair.has("propertyNames"),
+                            "every bound name is published, so nothing is reserved under " + profileId + "; document: "
+                                    + accessorPair));
         }
     }
 
     // --- T010 TP-001: a spelling naming an unpublished property of the same type ---
 
     @Test
-    @DisplayName("A spelling naming an unpublished property is published nowhere and stays reserved")
+    @DisplayName("A spelling naming a hidden property stays reserved; one naming an accessor pair yields to it")
     void aSpellingNamingAnUnpublishedPropertyIsNeverPublishedAndStaysReserved() {
         for (String profileId : List.of("vertique", "vertique-strict")) {
             JsonNode hiddenAny = inputDocument(SpellingNamesAHiddenPropertyOnAnySetterType.class, profileId);
@@ -863,17 +872,18 @@ class AliasDescriptionTest {
                             + " reserved; this shape is guarded by the closed object alone, which is why"
                             + " publishing 'secret' on it reopens a key the MCP hardener refused in 0.2.0"
                             + " under " + profileId + "; document: " + hiddenClosed));
-            checks.add(() -> assertFalse(
-                    properties(accessorAny).has("level"),
-                    "SpellingNamesAnAccessorPairOnAnySetterType: 'level' is this type's own property name —"
-                            + " an accessor pair over a differently named field — so the spelling on 'amount'"
-                            + " is listed nowhere under " + profileId + "; document: " + accessorAny));
             checks.add(() -> assertEquals(
-                    List.of("level"),
-                    reservedNames(accessorAny),
-                    "SpellingNamesAnAccessorPairOnAnySetterType: the accessor pair's bound name stays"
-                            + " reserved; releasing it because 'amount' is published lets {\"level\":99} reach"
-                            + " the @Max(3) setter under " + profileId + "; document: " + accessorAny));
+                    "{\"maximum\":3,\"type\":\"integer\"}",
+                    properties(accessorAny).path("level").toString(),
+                    "SpellingNamesAnAccessorPairOnAnySetterType: 'level' is this type's own bound name — an"
+                            + " accessor pair over a differently named field — so it is described with the"
+                            + " getter's own @Max(3) and the spelling on 'amount' is listed nowhere: {\"level\":99}"
+                            + " is refused by the setter's own bound, never admitted through 'amount''s @Max(10)"
+                            + " under " + profileId + "; document: " + accessorAny));
+            checks.add(() -> assertFalse(
+                    accessorAny.has("propertyNames"),
+                    "SpellingNamesAnAccessorPairOnAnySetterType: every bound name is published, so nothing is"
+                            + " reserved under " + profileId + "; document: " + accessorAny));
             checks.add(() -> assertEquals(
                     "{\"maximum\":10,\"type\":\"integer\"}",
                     properties(accessorAny).path("amount").toString(),
@@ -917,8 +927,8 @@ class AliasDescriptionTest {
                 () -> assertEquals(
                         99,
                         boundAccessorPair.getLevel(),
-                        "the accessor pair's setter is the key's destination, so 'level' must be reserved"
-                                + " rather than published with 'amount''s schema"));
+                        "the accessor pair's setter is the key's destination, so 'level' must be described"
+                                + " with the setter's own constraint rather than with 'amount''s schema"));
     }
 
     // --- T010 TP-004: a spelling equal to the generator's expansion keyword ---

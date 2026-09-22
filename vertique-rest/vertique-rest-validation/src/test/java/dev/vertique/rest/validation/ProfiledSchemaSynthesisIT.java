@@ -12,13 +12,29 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonAnyGetter;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
+import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonEnumDefaultValue;
+import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonUnwrapped;
+import com.fasterxml.jackson.databind.BeanDescription;
+import com.fasterxml.jackson.databind.DeserializationConfig;
+import com.fasterxml.jackson.databind.JsonDeserializer;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.fasterxml.jackson.databind.annotation.JsonPOJOBuilder;
+import com.fasterxml.jackson.databind.deser.BeanDeserializerModifier;
+import com.fasterxml.jackson.databind.deser.std.DelegatingDeserializer;
+import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.databind.module.SimpleModule;
+import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfile;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.VertiqueJson;
+import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.VertxJsonSupport;
 import dev.vertique.rest.jaxrs.validation.NoneValidationStrategy;
 import dev.vertique.rest.test.RestTestContributions;
 import dev.vertique.rest.test.RestTestMount;
@@ -63,6 +79,8 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
+import lombok.Builder;
+import lombok.extern.jackson.Jacksonized;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -239,6 +257,416 @@ public class ProfiledSchemaSynthesisIT {
                 "a string with a trailing CRLF must be rejected, not silently trimmed");
 
         assertEquals(1, resource.invocations.get(), "no rejected body may reach the resource");
+    }
+
+    // --- rest-020-refresh: the removed compiled-parameter-name creator-parameter join ---
+
+    /**
+     * The gate-level half of the fix proof for {@code InputPropertyDescriber#backingField}'s removed
+     * compiled-parameter-name candidate. {@link TransformingConstructorBody}'s constructor parameter's
+     * <em>compiled Java name</em> ({@code "amount"}) coincides with an unrelated field's own name, but
+     * its wire name ({@code "amount_cents"}) does not, and the constructor divides the incoming value
+     * by 100 before storing it. Before the fix, the removed join borrowed the field's {@code @Max(10)}
+     * onto {@code amount_cents} and the gate rejected {@code {"amount_cents": 500}} — a body the
+     * constructor turns into {@code amount = 5}, well under the field's own ceiling.
+     *
+     * <p>Behavior-change: red at {@code fcc201cb} (the task's baseline commit, with the join still in
+     * place) — a 400, never reaching the resource. Green after the fix — a 200, bound through the
+     * constructor's own transform. The fixture needs its constructor parameter's compiled name present
+     * at runtime for the pre-fix join to have had anything to bite on; {@code pom.xml}'s test-only
+     * {@code default-testCompile} override compiles this module's test sources with {@code -parameters}
+     * for exactly that reason.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("The gate accepts a transforming constructor's wire value and binds through its transform,"
+            + " not a borrowed field constraint")
+    void transformingConstructorParameterAcceptsValueTheFieldsConstraintWouldHaveRejected() throws Exception {
+        TransformingConstructorResource resource = new TransformingConstructorResource();
+        int gatePort = start(gateMount(), Set.of(resource));
+
+        HttpResponse<Buffer> response = post(gatePort, "/transforming/amount", "{\"amount_cents\":500}");
+
+        assertEquals(
+                200,
+                response.statusCode(),
+                "the gate must accept amount_cents=500: the removed join used to borrow the field's"
+                        + " @Max(10) onto the wire name amount_cents and reject this body even though the"
+                        + " constructor turns it into amount = 5, well under 10; body: "
+                        + response.bodyAsString());
+        assertEquals(
+                "amount=5",
+                response.bodyAsString(),
+                "the accepted body must bind through the constructor's own transform, not the field's"
+                        + " raw wire value");
+        assertEquals(1, resource.invocations.get(), "the accepted body must reach the resource exactly once");
+    }
+
+    // --- deserializer-driven-schema spike: the bounded hand-written-builder borrow ---
+
+    /**
+     * The gate-level half of the owner ruling's fix proof for {@code InputPropertyDescriber}'s
+     * builder-method borrow ({@code BuilderBorrowDetector}). {@link TransformingBuilderBody} is
+     * deliberately getter-less — its {@code amount} field has no accessor — so it is the round-2 owner
+     * ruling's control: {@code main} never published a getter-less field's constraint either, so this
+     * shape must stay unresolved before and after the round-2 fix. (The round-1 fixture it was
+     * originally paired with, {@link dev.vertique.json.schema.BuilderWireNameJoinTest.TransformingBuilderDto},
+     * carries a getter and was repurposed for the round-2 characterization instead — see that class's
+     * Javadoc.) Its hand-written builder method divides the incoming value by 100 before assigning it
+     * to the built field of the same wire name, and its builder class is named plainly rather than in
+     * the Lombok {@code <Type>Builder} convention, so it matches neither {@code @lombok.Generated} nor
+     * the fallback shape.
+     *
+     * <p>Behavior-change: red at {@code 3802ff0f} (the task's baseline commit, with the borrow still
+     * unconditional) — a 400, never reaching the resource, because the schema published the built
+     * field's {@code @Max(10)} onto the wire property {@code amount}. Green after the fix — a 200,
+     * bound through the builder's own transform: {@code amount=500} divides to {@code amount = 5}, well
+     * under the field's own ceiling, which the gate no longer rejects because the property is now
+     * published by type only.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("The gate accepts a hand-written builder's transformed value, not a borrowed field constraint"
+            + " (owner ruling: hand-written builders go unresolved)")
+    void transformingBuilderMethodAcceptsValueTheFieldsConstraintWouldHaveRejected() throws Exception {
+        TransformingBuilderResource resource = new TransformingBuilderResource();
+        int gatePort = start(gateMount(), Set.of(resource));
+
+        HttpResponse<Buffer> response = post(gatePort, "/transforming-builder/amount", "{\"amount\":500}");
+
+        assertEquals(
+                200,
+                response.statusCode(),
+                "the gate must accept amount=500: an unbounded builder borrow used to publish the built"
+                        + " field's @Max(10) onto the wire property amount and reject this body even though"
+                        + " the hand-written builder turns it into amount = 5, well under 10; body: "
+                        + response.bodyAsString());
+        assertEquals(
+                "amount=5",
+                response.bodyAsString(),
+                "the accepted body must bind through the builder's own transform, not a borrowed field"
+                        + " constraint");
+        assertEquals(1, resource.invocations.get(), "the accepted body must reach the resource exactly once");
+    }
+
+    // --- Round 2 (this task's owner ruling): a getter-backed built property borrows for any builder ---
+
+    /**
+     * The gate-level half of the round-2 owner ruling's fix proof. A package review found that {@code
+     * BuilderBorrowDetector}'s Lombok-shape gate loosens the gate against {@code main} for a
+     * hand-written builder whose built type has getters: {@code main}'s field walk published every
+     * getter-backed field's constraints regardless of the builder, but the shape gate drops them, so a
+     * value {@code main} would have rejected is silently accepted. {@link Round2WithPrefixBuilderBody},
+     * {@link Round2PlainBuilderClassBody}, and {@link Round2RenamedBuildMethodBody} each violate exactly
+     * one condition of {@code BuilderBorrowDetector}'s Lombok shape — a non-empty {@code withPrefix}, a
+     * builder class not named {@code <Type>Builder}, and a build method not named {@code build} — while
+     * both built properties ({@code name} and {@code level}) carry a getter, the schema-level unit
+     * counterparts of {@code
+     * dev.vertique.json.schema.BuilderWireNameJoinTest#withPrefixBuilderStillBorrowsThroughTheGetterBackedProperty},
+     * {@code
+     * dev.vertique.json.schema.BuilderWireNameJoinTest#plainlyNamedBuilderClassStillBorrowsThroughTheGetterBackedProperty},
+     * and {@code
+     * dev.vertique.json.schema.BuilderWireNameJoinTest#renamedBuildMethodStillBorrowsThroughTheGetterBackedProperty}.
+     *
+     * <p>Expected red now: production code still gates every builder on the Lombok shape regardless of
+     * a getter, so each property is published by type only and every out-of-bound value below is
+     * accepted with a 200 instead of rejected with a 400.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("Round 2 (owner ruling): the gate rejects an out-of-bound value for each getter-backed built"
+            + " property, whatever shape violation keeps the builder from matching the Lombok convention")
+    void round2GateRejectsOutOfBoundValuesForEachGetterBackedShapeViolation() throws Exception {
+        Round2WithPrefixBuilderResource withPrefix = new Round2WithPrefixBuilderResource();
+        Round2PlainBuilderClassResource plainClass = new Round2PlainBuilderClassResource();
+        Round2RenamedBuildMethodResource renamedMethod = new Round2RenamedBuildMethodResource();
+        int gatePort = start(gateMount(), Set.of(withPrefix, plainClass, renamedMethod));
+
+        assertAll(
+                () -> assertEquals(
+                        400,
+                        post(gatePort, "/round2-with-prefix/fields", "{\"level\":999}")
+                                .statusCode(),
+                        "ROUND-2 DECISIVE (expected red now): level has a getter, so its @Max(10) must be"
+                                + " borrowed regardless of the builder's non-empty withPrefix"),
+                () -> assertEquals(
+                        400,
+                        post(gatePort, "/round2-with-prefix/fields", "{\"name\":\"TOOLONG\"}")
+                                .statusCode(),
+                        "ROUND-2 DECISIVE (expected red now): name has a getter, so its @Size(max = 3) must be"
+                                + " borrowed regardless of the builder's non-empty withPrefix"),
+                () -> assertEquals(
+                        400,
+                        post(gatePort, "/round2-plain-class/fields", "{\"level\":999}")
+                                .statusCode(),
+                        "ROUND-2 DECISIVE (expected red now): level has a getter, so its @Max(10) must be"
+                                + " borrowed regardless of the builder class's plain name"),
+                () -> assertEquals(
+                        400,
+                        post(gatePort, "/round2-plain-class/fields", "{\"name\":\"TOOLONG\"}")
+                                .statusCode(),
+                        "ROUND-2 DECISIVE (expected red now): name has a getter, so its @Size(max = 3) must be"
+                                + " borrowed regardless of the builder class's plain name"),
+                () -> assertEquals(
+                        400,
+                        post(gatePort, "/round2-renamed-method/fields", "{\"level\":999}")
+                                .statusCode(),
+                        "ROUND-2 DECISIVE (expected red now): level has a getter, so its @Max(10) must be"
+                                + " borrowed regardless of the builder's renamed build method"),
+                () -> assertEquals(
+                        400,
+                        post(gatePort, "/round2-renamed-method/fields", "{\"name\":\"TOOLONG\"}")
+                                .statusCode(),
+                        "ROUND-2 DECISIVE (expected red now): name has a getter, so its @Size(max = 3) must be"
+                                + " borrowed regardless of the builder's renamed build method"),
+                () -> assertEquals(
+                        0, withPrefix.invocations.get(), "no rejected body may reach the resource under the gate"),
+                () -> assertEquals(
+                        0, plainClass.invocations.get(), "no rejected body may reach the resource under the gate"),
+                () -> assertEquals(
+                        0, renamedMethod.invocations.get(), "no rejected body may reach the resource under the gate"));
+    }
+
+    // --- H4: getter-only collection with no backing field ---
+
+    /**
+     * The gate-level half of the H4 proof. {@link GetterOnlyCollectionNoBackingFieldBody#getItems()}
+     * has no backing field named {@code items} at all — the property's only storage is a private field
+     * named {@code internal}, populated in place through the getter, which is how Jackson binds a
+     * getter-only mutable collection with no setter. The unit-level half (that the property is
+     * published with its item schema) is {@code
+     * dev.vertique.json.schema.GetterOnlyCollectionDescriptionTest
+     * .getterOnlyCollectionWithNoBackingFieldPublishesItsItemSchema} in {@code vertique-json-schema}.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("H4: the gate rejects a wrong-typed item and accepts a valid body for a getter-only collection"
+            + " with no backing field")
+    void getterOnlyCollectionWithNoBackingFieldGateRejectsWrongTypedItemsAndAcceptsValidBody() throws Exception {
+        GetterOnlyCollectionResource resource = new GetterOnlyCollectionResource();
+        int gatePort = start(gateMount(), Set.of(resource));
+
+        HttpResponse<Buffer> rejected = post(gatePort, "/getter-only-collection/items", "{\"items\":[\"x\"]}");
+        HttpResponse<Buffer> accepted = post(gatePort, "/getter-only-collection/items", "{\"items\":[1,2,3]}");
+
+        assertEquals(
+                400,
+                rejected.statusCode(),
+                "a string item must be rejected against the published items schema (type: integer); body: "
+                        + rejected.bodyAsString());
+        assertEquals(
+                200, accepted.statusCode(), "a well-typed body must be accepted; body: " + accepted.bodyAsString());
+        assertEquals(
+                "items=[1, 2, 3]",
+                accepted.bodyAsString(),
+                "the accepted body must bind through the getter-only mutable-collection property");
+        assertEquals(
+                1,
+                resource.invocations.get(),
+                "only the well-typed body may have reached the resource; the rejected one must not");
+    }
+
+    // --- BG1: Lombok builder, constrained private field, no getter — validator-present case ---
+
+    /**
+     * The gate-level half of the BG1 proof, validator-present only: the unit-level half (type-only
+     * without a validator, {@code maxLength} with one) is {@code
+     * dev.vertique.json.schema.MetadataConstraintSourceCoverageTest
+     * .lombokBuilderNoGetterPropertyIsTypeOnlyWithoutAValidatorAndConstrainedWithOne} in {@code
+     * vertique-json-schema}. Only the validator-present case has a gate row: without a validator, the
+     * constraint is not enforced by the schema at all — nothing for a gate to reject — which is the
+     * package's per-mode behavior, not a gap this proof needs to re-demonstrate at the HTTP boundary.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("BG1: on the validator-backed mount, the gate rejects a too-long name and accepts a valid one for"
+            + " a Lombok builder's constrained, getter-less private field")
+    void bg1GateRejectsTooLongNameAndAcceptsValidNameUnderAValidator() throws Exception {
+        Bg1Resource resource = new Bg1Resource();
+        int gatePort = start(MountFixtures.validatorBackedMount(vertx, RestTestContributions.none()), Set.of(resource));
+
+        HttpResponse<Buffer> rejected = post(gatePort, "/bg1/name", "{\"name\":\"toolong\"}");
+        HttpResponse<Buffer> accepted = post(gatePort, "/bg1/name", "{\"name\":\"ada\"}");
+
+        assertEquals(
+                400,
+                rejected.statusCode(),
+                "a 7-character name must be rejected against the metadata-supplement-rendered maxLength: 5;" + " body: "
+                        + rejected.bodyAsString());
+        assertEquals(
+                200, accepted.statusCode(), "a 3-character name must be accepted; body: " + accepted.bodyAsString());
+        assertEquals(
+                "name=ada",
+                accepted.bodyAsString(),
+                "the accepted body must bind through the builder's own setter method");
+        assertEquals(
+                1,
+                resource.invocations.get(),
+                "only the well-typed body may have reached the resource; the rejected one must not");
+    }
+
+    // --- AC-005.2: case-insensitive non-ASCII key at the gate ---
+
+    /**
+     * The gate-level half of the AC-005.2 proof: {@code
+     * dev.vertique.json.schema.CaseInsensitiveUnicodeFoldingTest.nonAsciiKeyRefusedByPropertyNames}
+     * only matches the generated {@code propertyNames} regex against the confusable spelling —
+     * nothing there exercises a real request. This sends the U+212A-folded key through a real HTTP
+     * round trip and asserts the gate's actual rejection: a 400 with exactly one value-free detail,
+     * never a 200 reaching the resource (which the binder's own case-insensitive lookup would
+     * otherwise produce, routing the key straight to the constrained {@code key} member).
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("AC-005.2: the gate rejects a U+212A-folded key on a case-insensitive any-setter type, with one"
+            + " value-free detail")
+    void ac005NonAsciiKeyRejectedAtTheGateWithAValueFreeDetail() throws Exception {
+        Ac005Resource resource = new Ac005Resource();
+        int gatePort = start(gateMount(), Set.of(resource));
+
+        HttpResponse<Buffer> rejected = post(gatePort, "/ac005/case-insensitive", AC005_KELVIN_KEY_BODY);
+
+        String rejectionBody = rejected.bodyAsString();
+        JsonArray errors = problemErrors(rejectionBody);
+
+        assertAll(
+                () -> assertEquals(
+                        400,
+                        rejected.statusCode(),
+                        "the propertyNames rule must refuse the U+212A-folded key; body: " + rejectionBody),
+                () -> assertEquals(
+                        0,
+                        resource.invocations.get(),
+                        "the binder's own case-insensitive lookup would route this key straight to the real"
+                                + " \"key\" member if the gate did not refuse it first — the resource must never"
+                                + " see it"),
+                () -> assertNotNull(
+                        errors,
+                        "the rejection must carry an RFC 9457 problem body with an 'errors' array; the response"
+                                + " body was: " + rejectionBody),
+                () -> assertEquals(
+                        1,
+                        errors == null ? -1 : errors.size(),
+                        "one structural rejection must contribute exactly one detail; body: " + rejectionBody),
+                () -> assertFalse(
+                        detail(errors).getString("path", "").isBlank(),
+                        "the value-free detail must still identify a failing location; detail: "
+                                + detail(errors).encode()),
+                () -> assertFalse(
+                        rejectionBody.contains(AC005_VALUE_MARKER),
+                        "the detail must be value-free: the submitted value must never be echoed; body: "
+                                + rejectionBody));
+    }
+
+    // --- F5 (security review round 1, MEDIUM): propertyNames/patternProperties must not echo the client ---
+
+    /**
+     * F5: {@code propertyNames} and {@code patternProperties} are the two keywords this package
+     * extends beyond vertx-json-schema's own generated rules, and both had fallen to {@code
+     * WebValidationStrategy}'s default {@code detail} branch, which returned the raw validator message
+     * verbatim — that message names the client's own submitted key (both keywords) and, for {@code
+     * patternProperties}, the generated regex too. Reuses AC-005.2's own fixtures: the confusable
+     * U+212A-folded key must be refused with neither the raw key text nor the generated {@code
+     * propertyNames} pattern reaching the response.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("F5: a propertyNames rejection echoes neither the submitted key nor the generated pattern")
+    void f5PropertyNamesRejectionDoesNotEchoTheKeyOrPattern() throws Exception {
+        Ac005Resource resource = new Ac005Resource();
+        int gatePort = start(gateMount(), Set.of(resource));
+
+        HttpResponse<Buffer> rejected = post(gatePort, "/ac005/case-insensitive", AC005_KELVIN_KEY_BODY);
+        String rejectionBody = rejected.bodyAsString();
+
+        assertAll(
+                () -> assertEquals(400, rejected.statusCode(), "body: " + rejectionBody),
+                () -> assertFalse(
+                        rejectionBody.contains(AC005_KELVIN_SIGN + "ey"),
+                        "the submitted key spelling must never be echoed; body: " + rejectionBody),
+                () -> assertFalse(
+                        rejectionBody.contains("does not match schema"),
+                        "the raw vertx-json-schema propertyNames message must never reach detail; body: "
+                                + rejectionBody),
+                () -> assertFalse(
+                        rejectionBody.contains("x00-\\x7F") || rejectionBody.contains("x00-x7F"),
+                        "the generated non-ASCII fold pattern must never be echoed; body: " + rejectionBody));
+    }
+
+    /**
+     * F5's {@code patternProperties} half: a case-insensitively bound, <em>closed</em> type (no
+     * any-setter) whose only member carries a {@code @Size} bound. A folded key ({@code "NAME"}) whose
+     * value fails that bound is rejected by {@code patternProperties}, whose vertx-json-schema wrapper
+     * message ("Property \"NAME\" matches pattern \"...\" but does not match associated schema") names
+     * both the submitted key and the generated regex.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("F5: a patternProperties rejection echoes neither the submitted key nor the generated pattern")
+    void f5PatternPropertiesRejectionDoesNotEchoTheKeyOrPattern() throws Exception {
+        F5PatternPropertiesResource resource = new F5PatternPropertiesResource();
+        int gatePort = start(gateMount(), Set.of(resource));
+
+        HttpResponse<Buffer> rejected = post(gatePort, "/f5/case-insensitive", "{\"NAME\":\"toolong\"}");
+        String rejectionBody = rejected.bodyAsString();
+
+        assertAll(
+                () -> assertEquals(400, rejected.statusCode(), "body: " + rejectionBody),
+                () -> assertEquals(
+                        0, resource.invocations.get(), "an oversized folded key must never reach the resource"),
+                () -> assertFalse(
+                        rejectionBody.contains("\"NAME\""),
+                        "the submitted key spelling must never be echoed; body: " + rejectionBody),
+                () -> assertFalse(
+                        rejectionBody.contains("toolong"),
+                        "the submitted value must never be echoed; body: " + rejectionBody),
+                () -> assertFalse(
+                        rejectionBody.contains("matches pattern"),
+                        "the raw vertx-json-schema patternProperties message must never reach detail; body: "
+                                + rejectionBody),
+                () -> assertFalse(
+                        rejectionBody.contains("[nN][aA][mM][eE]"),
+                        "the generated case-fold pattern must never be echoed; body: " + rejectionBody));
+    }
+
+    /** F5: case-insensitively bound, closed (no any-setter) — the patternProperties-only shape. */
+    @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
+    public static class F5CaseInsensitiveClosedBody {
+
+        @Size(max = 3)
+        public String name;
+    }
+
+    /** The resource for {@link F5CaseInsensitiveClosedBody}, on the unannotated floor profile. */
+    @Path("/f5")
+    public static class F5PatternPropertiesResource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the bound name.
+         *
+         * @param body the F5 fixture body
+         * @return the echoed name
+         */
+        @POST
+        @Path("/case-insensitive")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "f5CaseInsensitiveEcho")
+        public String echo(F5CaseInsensitiveClosedBody body) {
+            invocations.incrementAndGet();
+            return "name=" + body.name;
+        }
     }
 
     // --- TP-010: enum protection and the property-model negatives ---
@@ -1275,6 +1703,21 @@ public class ProfiledSchemaSynthesisIT {
 
     // --- Request bodies ---
 
+    /** AC-005.2: KELVIN SIGN, which folds to ASCII 'k' under Jackson's locale-independent case fold. */
+    private static final String AC005_KELVIN_SIGN = "K";
+
+    /**
+     * AC-005.2: the confusable spelling's value — deliberately within the real {@code key} member's own
+     * {@code @Size(max = 3)}, so a 400 here can only come from the {@code propertyNames} refusal, never
+     * a coincidental length violation on the member the binder's case-insensitive lookup would otherwise
+     * route it to. Distinctive enough that its absence from the response is still provable.
+     */
+    private static final String AC005_VALUE_MARKER = "AC5";
+
+    /** AC-005.2: a body spelling the constrained {@code key} member's name with the confusable Kelvin sign. */
+    private static final String AC005_KELVIN_KEY_BODY =
+            "{\"" + AC005_KELVIN_SIGN + "ey\":\"" + AC005_VALUE_MARKER + "\"}";
+
     /** The undeclared property's value: distinctive, so its absence from the response is provable. */
     private static final String UNDECLARED_MARKER = "MARKER-4711-MUST-NOT-ECHO";
 
@@ -1412,6 +1855,515 @@ public class ProfiledSchemaSynthesisIT {
         public String echo(Payment payment) {
             invocations.incrementAndGet();
             return "amount=" + payment.amount;
+        }
+    }
+
+    /**
+     * rest-020-refresh: a transforming constructor whose parameter's compiled Java name coincides with
+     * an unrelated field's own name. No getter is declared on purpose: a public getter here would let
+     * Jackson pair the private field with a getter-implied property of its own name — a second,
+     * genuinely field-backed property this fixture does not intend to exercise. The resource below
+     * reads {@link #amount} directly; both classes are nested in this same top-level type, so the
+     * private field is accessible to it.
+     */
+    public static class TransformingConstructorBody {
+
+        @Max(10)
+        private final int amount;
+
+        @JsonCreator
+        public TransformingConstructorBody(@JsonProperty("amount_cents") int amount) {
+            this.amount = amount / 100;
+        }
+    }
+
+    /**
+     * The resource on the {@code vertique} floor for {@link TransformingConstructorBody}: it carries no
+     * {@code @JsonProfile}, so the gate schema is generated from the unannotated floor profile.
+     */
+    @Path("/transforming")
+    public static class TransformingConstructorResource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the bound (already-transformed) amount.
+         *
+         * @param body the transforming-constructor fixture body
+         * @return the echoed amount
+         */
+        @POST
+        @Path("/amount")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "transformingConstructorAmountEcho")
+        public String echo(TransformingConstructorBody body) {
+            invocations.incrementAndGet();
+            return "amount=" + body.amount;
+        }
+    }
+
+    /**
+     * deserializer-driven-schema spike: a hand-written (non-Lombok) builder whose setter divides the
+     * incoming value by 100 before assigning it to the built field of the same wire name — the
+     * gate-level counterpart to {@link
+     * dev.vertique.json.schema.BuilderWireNameJoinTest.TransformingBuilderDto}. The builder class is
+     * named plainly ({@code Builder}), not in the Lombok {@code TransformingBuilderBodyBuilder}
+     * convention, so {@code BuilderBorrowDetector} matches neither {@code @lombok.Generated} nor its
+     * fallback shape for it.
+     */
+    @JsonDeserialize(builder = TransformingBuilderBody.Builder.class)
+    public static class TransformingBuilderBody {
+
+        @Max(10)
+        private final int amount;
+
+        private TransformingBuilderBody(int amount) {
+            this.amount = amount;
+        }
+
+        @JsonPOJOBuilder(withPrefix = "")
+        public static final class Builder {
+            private int amount;
+
+            public Builder amount(int amountCents) {
+                this.amount = amountCents / 100;
+                return this;
+            }
+
+            public TransformingBuilderBody build() {
+                return new TransformingBuilderBody(amount);
+            }
+        }
+    }
+
+    /**
+     * The resource on the {@code vertique} floor for {@link TransformingBuilderBody}: it carries no
+     * {@code @JsonProfile}, so the gate schema is generated from the unannotated floor profile.
+     */
+    @Path("/transforming-builder")
+    public static class TransformingBuilderResource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the bound (already-transformed) amount.
+         *
+         * @param body the transforming-builder fixture body
+         * @return the echoed amount
+         */
+        @POST
+        @Path("/amount")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "transformingBuilderAmountEcho")
+        public String echo(TransformingBuilderBody body) {
+            invocations.incrementAndGet();
+            return "amount=" + body.amount;
+        }
+    }
+
+    /**
+     * Round 2: a hand-written builder whose {@code @JsonPOJOBuilder} carries a non-empty
+     * {@code withPrefix} ({@code "with"}, never the empty string {@code @Jacksonized} always emits)
+     * fails {@code BuilderBorrowDetector}'s shape match on that condition alone. Both built properties
+     * carry a getter, so under the round-2 owner ruling the borrow no longer depends on the shape at
+     * all.
+     */
+    @JsonDeserialize(builder = Round2WithPrefixBuilderBody.Builder.class)
+    public static class Round2WithPrefixBuilderBody {
+
+        @Size(max = 3)
+        private final String name;
+
+        @Max(10)
+        private final int level;
+
+        private Round2WithPrefixBuilderBody(String name, int level) {
+            this.name = name;
+            this.level = level;
+        }
+
+        /**
+         * Returns the built name.
+         *
+         * @return the name
+         */
+        public String getName() {
+            return name;
+        }
+
+        /**
+         * Returns the built level.
+         *
+         * @return the level
+         */
+        public int getLevel() {
+            return level;
+        }
+
+        @JsonPOJOBuilder(withPrefix = "with", buildMethodName = "build")
+        public static final class Builder {
+            private String name;
+            private int level;
+
+            public Builder withName(String name) {
+                this.name = name;
+                return this;
+            }
+
+            public Builder withLevel(int level) {
+                this.level = level;
+                return this;
+            }
+
+            public Round2WithPrefixBuilderBody build() {
+                return new Round2WithPrefixBuilderBody(name, level);
+            }
+        }
+    }
+
+    /** The resource for {@link Round2WithPrefixBuilderBody}, on the unannotated floor profile. */
+    @Path("/round2-with-prefix")
+    public static class Round2WithPrefixBuilderResource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the bound name and level.
+         *
+         * @param body the round-2 with-prefix fixture body
+         * @return the echoed name and level
+         */
+        @POST
+        @Path("/fields")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "round2WithPrefixFieldsEcho")
+        public String echo(Round2WithPrefixBuilderBody body) {
+            invocations.incrementAndGet();
+            return "name=" + body.getName() + " level=" + body.getLevel();
+        }
+    }
+
+    /**
+     * Round 2: a hand-written builder class named plainly ({@code Factory}), not in the Lombok
+     * {@code <Type>Builder} convention, fails {@code BuilderBorrowDetector}'s naming condition alone.
+     * Both built properties carry a getter.
+     */
+    @JsonDeserialize(builder = Round2PlainBuilderClassBody.Factory.class)
+    public static class Round2PlainBuilderClassBody {
+
+        @Size(max = 3)
+        private final String name;
+
+        @Max(10)
+        private final int level;
+
+        private Round2PlainBuilderClassBody(String name, int level) {
+            this.name = name;
+            this.level = level;
+        }
+
+        /**
+         * Returns the built name.
+         *
+         * @return the name
+         */
+        public String getName() {
+            return name;
+        }
+
+        /**
+         * Returns the built level.
+         *
+         * @return the level
+         */
+        public int getLevel() {
+            return level;
+        }
+
+        @JsonPOJOBuilder(withPrefix = "", buildMethodName = "build")
+        public static final class Factory {
+            private String name;
+            private int level;
+
+            public Factory name(String name) {
+                this.name = name;
+                return this;
+            }
+
+            public Factory level(int level) {
+                this.level = level;
+                return this;
+            }
+
+            public Round2PlainBuilderClassBody build() {
+                return new Round2PlainBuilderClassBody(name, level);
+            }
+        }
+    }
+
+    /** The resource for {@link Round2PlainBuilderClassBody}, on the unannotated floor profile. */
+    @Path("/round2-plain-class")
+    public static class Round2PlainBuilderClassResource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the bound name and level.
+         *
+         * @param body the round-2 plain-builder-class fixture body
+         * @return the echoed name and level
+         */
+        @POST
+        @Path("/fields")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "round2PlainClassFieldsEcho")
+        public String echo(Round2PlainBuilderClassBody body) {
+            invocations.incrementAndGet();
+            return "name=" + body.getName() + " level=" + body.getLevel();
+        }
+    }
+
+    /**
+     * Round 2: a hand-written builder whose build method is named {@code create}, not {@code build},
+     * fails {@code BuilderBorrowDetector}'s build-method-name condition alone. Both built properties
+     * carry a getter.
+     */
+    @JsonDeserialize(builder = Round2RenamedBuildMethodBody.Builder.class)
+    public static class Round2RenamedBuildMethodBody {
+
+        @Size(max = 3)
+        private final String name;
+
+        @Max(10)
+        private final int level;
+
+        private Round2RenamedBuildMethodBody(String name, int level) {
+            this.name = name;
+            this.level = level;
+        }
+
+        /**
+         * Returns the built name.
+         *
+         * @return the name
+         */
+        public String getName() {
+            return name;
+        }
+
+        /**
+         * Returns the built level.
+         *
+         * @return the level
+         */
+        public int getLevel() {
+            return level;
+        }
+
+        @JsonPOJOBuilder(withPrefix = "", buildMethodName = "create")
+        public static final class Builder {
+            private String name;
+            private int level;
+
+            public Builder name(String name) {
+                this.name = name;
+                return this;
+            }
+
+            public Builder level(int level) {
+                this.level = level;
+                return this;
+            }
+
+            public Round2RenamedBuildMethodBody create() {
+                return new Round2RenamedBuildMethodBody(name, level);
+            }
+        }
+    }
+
+    /** The resource for {@link Round2RenamedBuildMethodBody}, on the unannotated floor profile. */
+    @Path("/round2-renamed-method")
+    public static class Round2RenamedBuildMethodResource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the bound name and level.
+         *
+         * @param body the round-2 renamed-build-method fixture body
+         * @return the echoed name and level
+         */
+        @POST
+        @Path("/fields")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "round2RenamedMethodFieldsEcho")
+        public String echo(Round2RenamedBuildMethodBody body) {
+            invocations.incrementAndGet();
+            return "name=" + body.getName() + " level=" + body.getLevel();
+        }
+    }
+
+    /**
+     * H4: a getter-only {@code List<Integer>} with no backing field named {@code items} at all — its
+     * only storage is {@link #internal}, an unrelated field name Jackson populates in place through
+     * the getter (no setter is declared). The generator's scoped-member describe path must still find
+     * and describe this property through the schema library's own method scope, the same as any other
+     * getter, publishing an {@code items} keyword with the element type — not fall back to an opaque,
+     * unscoped description.
+     */
+    public static class GetterOnlyCollectionNoBackingFieldBody {
+
+        private final List<Integer> internal = new ArrayList<>();
+
+        /**
+         * Returns the live, mutable backing list.
+         *
+         * @return the items
+         */
+        public List<Integer> getItems() {
+            return internal;
+        }
+    }
+
+    /**
+     * The resource on the {@code vertique} floor for {@link GetterOnlyCollectionNoBackingFieldBody}: it
+     * carries no {@code @JsonProfile}, so the gate schema is generated from the unannotated floor
+     * profile.
+     */
+    @Path("/getter-only-collection")
+    public static class GetterOnlyCollectionResource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the bound items.
+         *
+         * @param body the getter-only-collection-with-no-backing-field fixture body
+         * @return the echoed items
+         */
+        @POST
+        @Path("/items")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "getterOnlyCollectionItemsEcho")
+        public String echo(GetterOnlyCollectionNoBackingFieldBody body) {
+            invocations.incrementAndGet();
+            return "items=" + body.getItems();
+        }
+    }
+
+    /**
+     * BG1: a Lombok {@code @Builder @Jacksonized} type with a constrained private field and
+     * deliberately no getter — {@code LombokBuilderDto} in {@code corpus}, this fixture's
+     * {@code @Getter}-carrying counterpart, stays out of reach here since the corpus set is frozen for
+     * byte-exact golden comparisons. Jackson's own introspection does not see {@code name} as a
+     * property at all without a public accessor, so the floor's builder-constraint borrow
+     * ({@code InputPropertyDescriber#borrowBuilderFieldAttributes}, which reads {@code
+     * BeanDescription#findProperties()}) has nothing to find; Bean Validation is unaffected, since it
+     * reads the constrained field directly by Java name.
+     */
+    @Builder
+    @Jacksonized
+    public static class Bg1NoGetterBody {
+
+        @Size(max = 5)
+        private final String name;
+    }
+
+    /**
+     * The resource on the {@code vertique} floor for {@link Bg1NoGetterBody}, mounted on {@link
+     * MountFixtures#validatorBackedMount}: it carries no {@code @JsonProfile}, so the gate schema is
+     * generated from the unannotated floor profile, and the mount's own graph supplies a real {@link
+     * jakarta.validation.Validator} so the metadata supplement is active.
+     */
+    @Path("/bg1")
+    public static class Bg1Resource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the bound name.
+         *
+         * @param body the BG1 fixture body
+         * @return the echoed name
+         */
+        @POST
+        @Path("/name")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "bg1NameEcho")
+        public String echo(Bg1NoGetterBody body) {
+            invocations.incrementAndGet();
+            return "name=" + body.name;
+        }
+    }
+
+    /**
+     * AC-005.2: a case-insensitively bound, extras-described (any-setter) type — the gate-level
+     * counterpart to {@code CaseInsensitiveUnicodeFoldingTest.CaseInsensitiveWithExtras} in {@code
+     * vertique-json-schema}, whose own proof only matches the generated {@code propertyNames} regex
+     * against the confusable spelling, never a real request. U+212A KELVIN SIGN folds to ASCII
+     * {@code 'k'} under Jackson's locale-independent {@code String#toLowerCase()}, so the binder would
+     * route a key spelled with it straight into the real, constrained {@link #key} member — the
+     * {@code propertyNames} rule this type's document carries refuses any non-ASCII key outright instead.
+     */
+    @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
+    public static class Ac005CaseInsensitiveAnySetterBody {
+
+        @Size(max = 3)
+        public String key;
+
+        private final Map<String, Object> extras = new LinkedHashMap<>();
+
+        /**
+         * Routes an undeclared property into {@link #extras}.
+         *
+         * @param name  the property name
+         * @param value the property value
+         */
+        @JsonAnySetter
+        public void put(String name, Object value) {
+            extras.put(name, value);
+        }
+    }
+
+    /**
+     * The resource on the {@code vertique} floor for {@link Ac005CaseInsensitiveAnySetterBody}: it
+     * carries no {@code @JsonProfile}, so the gate schema is generated from the unannotated floor
+     * profile.
+     */
+    @Path("/ac005")
+    public static class Ac005Resource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the bound key.
+         *
+         * @param body the AC-005.2 fixture body
+         * @return the echoed key
+         */
+        @POST
+        @Path("/case-insensitive")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "ac005CaseInsensitiveEcho")
+        public String echo(Ac005CaseInsensitiveAnySetterBody body) {
+            invocations.incrementAndGet();
+            return "key=" + body.key;
         }
     }
 
@@ -1835,6 +2787,95 @@ public class ProfiledSchemaSynthesisIT {
             invocations.incrementAndGet();
             return "extras=" + body.getExtras();
         }
+    }
+
+    // --- C1 (spike/deserializer-driven-schema round 4, CRITICAL): sibling-ordered unwrapped pair ---
+
+    /**
+     * The first unwrapped sibling, carrying no any-setter of its own: an aliased, constrained member and
+     * a hidden, constrained member.
+     */
+    public static class SiblingUnwrappedA {
+        @JsonAlias("ak")
+        @Size(max = 3)
+        public String aname;
+
+        @Schema(hidden = true)
+        @Size(max = 3)
+        public String secret;
+    }
+
+    /** The second unwrapped sibling: the any-setter lives here, not on {@link SiblingUnwrappedA}. */
+    public static class SiblingUnwrappedB {
+        @JsonAnySetter
+        private final Map<String, Object> extras = new LinkedHashMap<>();
+    }
+
+    /**
+     * C1: two {@code @JsonUnwrapped} siblings, in this order, where only the *second* sibling carries the
+     * {@code @JsonAnySetter}.
+     */
+    public static class SiblingUnwrappedParent {
+        @com.fasterxml.jackson.annotation.JsonUnwrapped
+        public SiblingUnwrappedA a;
+
+        @com.fasterxml.jackson.annotation.JsonUnwrapped
+        public SiblingUnwrappedB b;
+    }
+
+    /** The C1 resource: a single route accepting the sibling-ordered unwrapped pair. */
+    @Path("/sibling-unwrapped")
+    public static class SiblingUnwrappedResource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Accepts a sibling-unwrapped body.
+         *
+         * @param body the body
+         * @return a fixed marker
+         */
+        @POST
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "siblingUnwrappedEcho")
+        public String echo(SiblingUnwrappedParent body) {
+            invocations.incrementAndGet();
+            return "ok";
+        }
+    }
+
+    @Test
+    @DisplayName("C1: a sibling unwrapped child's hidden member is rejected at the gate even though the"
+            + " any-setter is declared on a different sibling, processed later")
+    void siblingOrderedUnwrappedHiddenMemberIsRejectedAtTheGate() throws Exception {
+        SiblingUnwrappedResource resource = new SiblingUnwrappedResource();
+        int gatePort = start(gateMount(), Set.of(resource));
+
+        int aliasOversized =
+                post(gatePort, "/sibling-unwrapped", "{\"ak\":\"abcdefgh\"}").statusCode();
+        int hiddenMemberKey =
+                post(gatePort, "/sibling-unwrapped", "{\"secret\":5}").statusCode();
+        int validCanonical =
+                post(gatePort, "/sibling-unwrapped", "{\"aname\":\"abc\"}").statusCode();
+
+        assertAll(
+                () -> assertEquals(
+                        400,
+                        aliasOversized,
+                        "the first sibling's alias \"ak\" carries its own @Size(max = 3), so an over-long"
+                                + " value must be rejected"),
+                () -> assertEquals(
+                        400,
+                        hiddenMemberKey,
+                        "C1 DECISIVE: the first-processed unwrapped sibling's hidden member \"secret\" must"
+                                + " be rejected at the gate rather than reaching the resource through the"
+                                + " extras bucket unconstrained, even though the any-setter is declared on the"
+                                + " second sibling, processed later"),
+                () -> assertEquals(200, validCanonical, "the first sibling's own canonical property must be admitted"),
+                () -> assertEquals(
+                        1, resource.invocations.get(), "only the one valid body may have reached the resource"));
     }
 
     // --- vertique-dev#598 nested-path fixtures ---
@@ -2282,6 +3323,310 @@ public class ProfiledSchemaSynthesisIT {
             invocations.incrementAndGet();
             return "quantity=" + body.quantity;
         }
+    }
+
+    // --- C-1 (round 5 review finding, spike/deserializer-driven-schema): the gate-level half ---
+
+    /**
+     * Forwards every operation to the delegate, exactly as a bean-preserving wrapper module would —
+     * mirrors {@code DelegatingDeserializerWrapperTest.ForwardingDelegatingDeserializer} in {@code
+     * vertique-json-schema}, duplicated here since that fixture is package-private in a sibling
+     * module and this class needs its own mapper-wide {@link BeanDeserializerModifier}.
+     */
+    static final class C1ForwardingDelegatingDeserializer extends DelegatingDeserializer {
+        C1ForwardingDelegatingDeserializer(JsonDeserializer<?> delegate) {
+            super(delegate);
+        }
+
+        @Override
+        protected JsonDeserializer<?> newDelegatingInstance(JsonDeserializer<?> newDelegatee) {
+            return new C1ForwardingDelegatingDeserializer(newDelegatee);
+        }
+    }
+
+    /** An ordinary constrained member, unwrapped onto the parent rather than published as its own object. */
+    static final class C1Child {
+        @Size(max = 3)
+        public String name;
+    }
+
+    /** Carries {@link C1Child} through {@code @JsonUnwrapped}, under the mapper-wide wrapper profile below. */
+    static final class C1Parent {
+        @JsonUnwrapped
+        public C1Child child;
+    }
+
+    /**
+     * Builds the test-scope profile a {@code @JsonProfile("c1-delegating-wrapper")} route selects: a
+     * plain mapper whose {@link BeanDeserializerModifier} wraps every bean deserializer in a
+     * forwarding {@link DelegatingDeserializer}, the same mapper-wide shape {@code
+     * DelegatingDeserializerWrapperTest} exercises at the unit level.
+     *
+     * @return the wrapper profile, registered through {@link RestTestContributions}
+     */
+    private static JsonMapperProfile c1DelegatingWrapperProfile() {
+        // Vert.x JSON support: the registry probes a contributed mapper with a JsonObject round trip.
+        ObjectMapper mapper =
+                JsonMapper.builder().addModule(VertxJsonSupport.module()).build();
+        mapper.registerModule(new SimpleModule() {
+            @Override
+            public void setupModule(SetupContext context) {
+                super.setupModule(context);
+                context.addBeanDeserializerModifier(new BeanDeserializerModifier() {
+                    @Override
+                    public JsonDeserializer<?> modifyDeserializer(
+                            DeserializationConfig config, BeanDescription beanDesc, JsonDeserializer<?> deserializer) {
+                        return new C1ForwardingDelegatingDeserializer(deserializer);
+                    }
+                });
+            }
+        });
+        return JsonMapperProfiles.of(JsonProfileId.of("c1-delegating-wrapper"), mapper);
+    }
+
+    /**
+     * The resource for {@link C1Parent}, mounted under the {@code c1-delegating-wrapper} profile.
+     */
+    @Path("/c1")
+    @JsonProfile("c1-delegating-wrapper")
+    public static class C1Resource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the unwrapped child's name, so an accepted body is observable as more than a status code.
+         *
+         * @param body the request body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/unwrapped")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "c1UnwrappedEcho")
+        public String echo(C1Parent body) {
+            invocations.incrementAndGet();
+            return "name=" + (body.child == null ? null : body.child.name);
+        }
+    }
+
+    /**
+     * C-1 (independent review, by-reading finding). Under a mapper-wide {@code
+     * BeanDeserializerModifier} that wraps every bean deserializer in a forwarding {@code
+     * DelegatingDeserializer}, the review's premise was that {@code InputPropertyDescriber}'s
+     * unwrapped-child loop silently skips an {@code @JsonUnwrapped} child, publishing neither its
+     * property nor its {@code @Size(max = 3)} constraint — so the gate would accept an oversized value.
+     *
+     * <p>CORRECTED (round 6 finding): this row never actually characterized the loop, and was never red.
+     * {@link C1Child}'s {@code name} member is an ordinary, plain property — not hidden, not an alias,
+     * not on an any-setter type — and the schema library's own generation independently publishes a bare
+     * {@code @JsonUnwrapped} member's plain properties onto the parent regardless of whether this
+     * describer's own loop processes the child at all (measured directly, mirroring {@code
+     * DelegatingDeserializerWrapperTest.unwrappedChildUnderMapperWideDelegatingWrapperIsDescribed}'s own
+     * corrected Javadoc: forcing the loop to unconditionally skip every unwrapped child still leaves
+     * {@code "name"} published with its {@code @Size(max = 3)}). This row is kept as a positive
+     * regression guard for that already-independent library behavior, never as the loop's own
+     * discriminating proof — the loop's own bug is discriminating only for a shape the library's own
+     * flattening does not cover on its own, which the C-2 row below exercises instead.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("C-1: under a mapper-wide DelegatingDeserializer wrapper, the gate rejects an oversized"
+            + " unwrapped child value")
+    void c1UnwrappedChildUnderDelegatingWrapperIsRejectedAtTheGate() throws Exception {
+        C1Resource resource = new C1Resource();
+        RestTestContributions contributions = RestTestContributions.builder()
+                .addJsonMapperProfile(c1DelegatingWrapperProfile())
+                .build();
+        int port = start(MountFixtures.mount(vertx, new JsonObject(), contributions), Set.of(resource));
+
+        HttpResponse<Buffer> rejected = post(port, "/c1/unwrapped", "{\"name\":\"abcdef\"}");
+
+        assertEquals(
+                400,
+                rejected.statusCode(),
+                "C-1 DECISIVE: the unwrapped child's own @Size(max = 3) must reject a 6-character value under"
+                        + " the mapper-wide DelegatingDeserializer wrapper profile; body: "
+                        + rejected.bodyAsString());
+        assertEquals(
+                0,
+                resource.invocations.get(),
+                "a rejected body must never reach the resource — this row characterizes the schema library's"
+                        + " own independent flattening of a plain unwrapped property (see the corrected"
+                        + " Javadoc above), not the unwrapped-child loop's own fix");
+    }
+
+    // --- Reopened finding: a transient field with a getter and setter loses its constraint (no validator) ---
+
+    /**
+     * A private, {@code transient}, {@code @Max}-constrained numeric field bound through both a getter
+     * and a setter — the same shape {@code
+     * dev.vertique.json.schema.SetterOnlyFieldBorrowTest.TransientNumericField} pins at the unit level.
+     * {@code BeanPropertyDefinition#getField()} is {@code null} for a transient field, and the
+     * write-only fallback W1 added only fires when there is also no getter, so neither path currently
+     * borrows the field's own {@code @Max(10)} onto the published property without a validator.
+     */
+    static final class TransientNumericFieldBody {
+        @Max(10)
+        private transient int level;
+
+        public int getLevel() {
+            return level;
+        }
+
+        public void setLevel(int level) {
+            this.level = level;
+        }
+    }
+
+    /** The resource for {@link TransientNumericFieldBody}, on the unannotated floor profile. */
+    @Path("/transient-numeric")
+    public static class TransientNumericFieldResource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the bound level.
+         *
+         * @param body the transient-field fixture body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/level")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "transientNumericFieldLevelEcho")
+        public String echo(TransientNumericFieldBody body) {
+            invocations.incrementAndGet();
+            return "level=" + body.getLevel();
+        }
+    }
+
+    /**
+     * The gate-level half of the reopened W1 proof, no-validator mode. {@link
+     * dev.vertique.json.schema.SetterOnlyFieldBorrowTest} carries the unit-level halves: the two
+     * decisive no-validator proofs and the validator-backed control that the same shape's constraint is
+     * still published under a validator (unaffected by this gap).
+     *
+     * <p>Expected red now: the gate accepts {@code {"level":999}} with a 200, because the published
+     * property carries no {@code maximum} keyword at all.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("REOPENED: the gate rejects an out-of-range value for a transient numeric field with a getter"
+            + " and setter, without a validator")
+    void transientNumericFieldWithGetterAndSetterIsRejectedAtTheGateWithoutAValidator() throws Exception {
+        TransientNumericFieldResource resource = new TransientNumericFieldResource();
+        int gatePort = start(gateMount(), Set.of(resource));
+
+        HttpResponse<Buffer> rejected = post(gatePort, "/transient-numeric/level", "{\"level\":999}");
+
+        assertEquals(
+                400,
+                rejected.statusCode(),
+                "REOPENED DECISIVE (expected red now): a transient field's own @Max(10) must still be"
+                        + " borrowed onto the published property even though the property also carries a"
+                        + " getter, without a validator; body: " + rejected.bodyAsString());
+        assertEquals(0, resource.invocations.get(), "a rejected body must never reach the resource");
+    }
+
+    // --- C-2 (reopened, round 6 finding): a hidden member on an unwrapped child of an any-setter parent ---
+
+    /**
+     * A {@code @Schema(hidden = true)}-constrained unwrapped member on an any-setter parent — the same
+     * shape {@code
+     * dev.vertique.json.schema.DelegatingDeserializerWrapperTest.hiddenUnwrappedChildMemberIsReservedUnderMapperWideDelegatingWrapper}
+     * pins at the unit level. Unlike {@link C1Child}'s plain property, a hidden member is never
+     * published by the type's own class-level members — it can only reach the document through the
+     * unwrapped-child loop's own alias/reservation fold, which the mapper-wide wrapper causes the loop to
+     * skip entirely, so this shape genuinely discriminates the loop's own bug.
+     */
+    static final class C2HiddenChild {
+        @Schema(hidden = true)
+        @Size(max = 3)
+        public String token;
+    }
+
+    /** Carries {@link C2HiddenChild} through {@code @JsonUnwrapped} on an any-setter type. */
+    static final class C2AnySetterParent {
+        @JsonUnwrapped
+        public C2HiddenChild child;
+
+        @JsonAnySetter
+        private final Map<String, Object> extras = new LinkedHashMap<>();
+    }
+
+    /** The resource for {@link C2AnySetterParent}, mounted under the {@code c1-delegating-wrapper} profile. */
+    @Path("/c2")
+    @JsonProfile("c1-delegating-wrapper")
+    public static class C2Resource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the unwrapped child's hidden token, so an accepted body is observable as more than a
+         * status code.
+         *
+         * @param body the C-2 fixture body
+         * @return the echoed value
+         */
+        @POST
+        @Path("/hidden-unwrapped")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "c2HiddenUnwrappedEcho")
+        public String echo(C2AnySetterParent body) {
+            invocations.incrementAndGet();
+            return "token=" + (body.child == null ? null : body.child.token);
+        }
+    }
+
+    /**
+     * C-2 (reopened, round 6 finding). Under the same mapper-wide {@code DelegatingDeserializer} wrapper
+     * as C-1, the unwrapped-child loop skips {@link C2HiddenChild} for the same reason C-1's own Javadoc
+     * explains — but unlike C-1's plain property, {@code "token"} is hidden, so it can only be reserved
+     * through {@code foldUnwrappedChildIntoParentPlan}, which never runs when the loop skips the child.
+     * The real Jackson binder still routes {@code "token"} straight into {@code child.token} regardless
+     * of the wrapper (the wrapper only forwards, it does not change how the binder's own unwrapped
+     * -property machinery works), so an unreserved, unpublished {@code "token"} is a genuine constraint
+     * bypass at the gate, not only a description gap — the REST-level counterpart of
+     * {@code UnwrappedAnySetterFoldingTest.jacksonBinderRoutesTheHiddenKeyIntoTheConstrainedField}.
+     *
+     * <p>Expected red now: the gate accepts {@code {"token":"abcdefghijkl"}} (12 characters, over the
+     * child's own {@code @Size(max = 3)}) with a 200.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("C-2: under a mapper-wide DelegatingDeserializer wrapper, the gate rejects an unwrapped any"
+            + "-setter parent's hidden child value spelling the hidden member's own key")
+    void c2HiddenUnwrappedChildUnderDelegatingWrapperIsRejectedAtTheGate() throws Exception {
+        C2Resource resource = new C2Resource();
+        RestTestContributions contributions = RestTestContributions.builder()
+                .addJsonMapperProfile(c1DelegatingWrapperProfile())
+                .build();
+        int port = start(MountFixtures.mount(vertx, new JsonObject(), contributions), Set.of(resource));
+
+        HttpResponse<Buffer> rejected = post(port, "/c2/hidden-unwrapped", "{\"token\":\"abcdefghijkl\"}");
+
+        assertEquals(
+                400,
+                rejected.statusCode(),
+                "C-2 DECISIVE (expected red now): the unwrapped child's hidden @Size(max = 3) member must be"
+                        + " reserved under the mapper-wide wrapper profile on an any-setter parent, refusing"
+                        + " the key outright rather than letting it fall through to the extras bucket"
+                        + " unconstrained; body: " + rejected.bodyAsString());
+        assertEquals(
+                0,
+                resource.invocations.get(),
+                "a rejected body must never reach the resource; a green pre-fix run here would mean the"
+                        + " oversized value reached the resource through the extras bucket because the hidden"
+                        + " member was never reserved at all");
     }
 
     // --- Mounts and helpers ---

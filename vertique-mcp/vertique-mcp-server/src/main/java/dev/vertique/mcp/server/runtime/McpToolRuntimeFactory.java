@@ -17,12 +17,14 @@ import dev.vertique.mcp.tool.McpToolInvoker;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
+import jakarta.validation.Validator;
 import java.lang.reflect.Type;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
@@ -54,6 +56,13 @@ import java.util.concurrent.ConcurrentHashMap;
  * JSON-005 generates it, since output is server-produced and carries no argument-object boundary to
  * close. None of this happens on the request path: it runs exactly once per tool, here, during
  * composition.
+ *
+ * <p>The input-direction generator additionally sources its value-schema constraints from Bean
+ * Validation metadata whenever the same optional {@code Validator}
+ * {@link dev.vertique.mcp.server.McpServerModule} declares for generated invokers' runtime
+ * validation is present on the graph — the annotation walk still runs first, as the floor every
+ * generation mode shares, and the metadata source only supplements or, for a bounded set of shapes,
+ * corrects it; when absent, generation is unchanged.
  */
 @Singleton
 public final class McpToolRuntimeFactory {
@@ -72,15 +81,33 @@ public final class McpToolRuntimeFactory {
             new ConcurrentHashMap<>();
 
     /**
+     * The same optional application-bound {@link Validator} {@link McpServerModule} already declares
+     * {@code @BindsOptionalOf} for generated tool invokers' runtime Bean Validation. When present,
+     * every input-direction generator this factory builds also additionally sources its value-schema
+     * constraints from Bean Validation metadata — the annotation walk still runs first, as the floor
+     * every generator carries, and the metadata source only supplements or, for a bounded set of
+     * shapes, corrects it — see {@code ConstraintSource} in {@code vertique-json-schema}. The output
+     * direction is unaffected: it has no validator-accepting overload.
+     */
+    private final Optional<Validator> validator;
+
+    /**
      * Binds the factory to the registries and configuration that select an effective profile.
      *
      * @param profiles the registry of every discovered JSON mapper profile
      * @param jsonConfig the global JSON configuration carrying {@code json.jsonProfile}
      * @param mcpConfig the MCP server configuration carrying {@code mcp.jsonProfile}
+     * @param validator the application's optional Bean Validation validator, declared
+     *                  {@code @BindsOptionalOf} in {@code McpServerModule}
      */
     @Inject
-    McpToolRuntimeFactory(JsonMapperProfileRegistry profiles, JsonConfig jsonConfig, McpServerConfig mcpConfig) {
+    McpToolRuntimeFactory(
+            JsonMapperProfileRegistry profiles,
+            JsonConfig jsonConfig,
+            McpServerConfig mcpConfig,
+            Optional<Validator> validator) {
         this.profileResolver = new McpJsonProfileResolver(profiles, jsonConfig, mcpConfig);
+        this.validator = validator;
     }
 
     /**
@@ -145,7 +172,8 @@ public final class McpToolRuntimeFactory {
      */
     private AnnotationJsonSchemaGenerator inputGeneratorFor(JsonMapperProfile profile) {
         return inputGeneratorsByProfile.computeIfAbsent(
-                profile.id(), unusedId -> AnnotationJsonSchemaGenerator.forInputProfile(profile));
+                profile.id(),
+                unusedId -> AnnotationJsonSchemaGenerator.forInputProfile(profile, validator.orElse(null)));
     }
 
     /**

@@ -96,5 +96,45 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertx-json-schema</artifactId>
             <scope>test</scope>
         </dependency>
+        <!--
+          Test scope only: exercises MetadataConstraintSource against a real Bean Validation
+          implementation. Production code recognizes Hibernate's @Length/@Range/@URL by annotation
+          simple name alone, never by importing hibernate-validator's constraint classes, so the
+          metadata source stays usable with any Jakarta Validation provider.
+        -->
+        <dependency>
+            <groupId>org.hibernate.validator</groupId>
+            <artifactId>hibernate-validator</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.glassfish.expressly</groupId>
+            <artifactId>expressly</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <executions>
+                    <!--
+                      Test sources only: the red-first proof that the removed compiled-parameter-name
+                      join (InputPropertyDescriber#backingField) was unsound needs a fixture whose
+                      constructor parameter carries a compiled Java name, which javac only emits under
+                      -parameters. Main sources are unaffected — this execution id names the test
+                      compilation goal alone.
+                    -->
+                    <execution>
+                        <id>default-testCompile</id>
+                        <configuration>
+                            <parameters>true</parameters>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>
