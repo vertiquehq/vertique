@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.core.JsonParser;
@@ -32,6 +33,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Supplier;
 import java.util.logging.Handler;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
@@ -404,6 +406,193 @@ class MapValueDescriptionTest {
                         + " {\"type\":\"string\"}, unaffected by the nested-map fixture; document: " + document);
     }
 
+    // --- P01 gate security review (CWE-674 hypothesis, REFUTED): a self-referential Map subclass's own
+    // value type recurses back to itself, and ValuePositionRenderer.hasOverlayAnywhere(JavaType,
+    // AnnotatedType) (~:297) walks that content type with no visited set. The hypothesis was that this
+    // never terminates and overflows the stack. It does not manifest: Jackson's own TypeFactory represents
+    // the self-referential value slot as a "[recursive type; ...]" placeholder, which is not map-like, so
+    // hasOverlayAnywhere stops after one level; and the describer's own inProgress guard resolves the
+    // type-level cycle as a $ref back to the describer's OWN $defs entry (or to the root), exactly as it
+    // already does for a self-referential bean at a named position. A recursive map DTO is therefore a
+    // legitimate, bounded schema, not a defect; D005's inline-re-entry refusal does not apply to a
+    // type-level $ref cycle. The four tests below pin this bounded behaviour as a regression guard: a
+    // change to either mechanism (the placeholder or the inProgress guard) that reintroduced unbounded
+    // recursion, or that silently substituted a reflection-built shape for the describer-driven $ref cycle,
+    // must turn one of them red. ---
+
+    /**
+     * P01 gate security review (CWE-674 hypothesis, REFUTED): a self-referential {@link RecursiveMap} at a
+     * named property position does not overflow the stack. Jackson's {@code TypeFactory} resolves the
+     * value slot to a {@code [recursive type; ...]} placeholder rather than re-entering the map-like
+     * content type, so {@code ValuePositionRenderer.hasOverlayAnywhere} stops after one level; the
+     * describer's own {@code inProgress} guard then renders the type-level cycle as a {@code $ref} back to
+     * {@link RecursiveMap}'s own {@code $defs} entry. A change to either the placeholder representation or
+     * the {@code inProgress} guard that reintroduced unbounded recursion, or that silently substituted a
+     * reflection-built shape for the describer-driven cycle, would turn this test red.
+     */
+    @Test
+    @DisplayName("Security review (CWE-674, REFUTED): a self-referential Map subclass as a property renders"
+            + " a bounded $ref cycle, never a StackOverflowError")
+    void selfReferentialMapSubclassAsAPropertyRendersABoundedRefCycle() {
+        JsonNode document = assertNoStackOverflow(() -> inputDocument(RecursiveMapHolder.class));
+
+        assertEquals(
+                "{\"$defs\":{\"RecursiveMap\":{\"additionalProperties\":{\"$ref\":\"#/$defs/RecursiveMap\"},"
+                        + "\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\","
+                        + "\"properties\":{\"tree\":{\"$ref\":\"#/$defs/RecursiveMap\"}},\"type\":\"object\"}",
+                document.toString(),
+                "tree must resolve to the describer's own RecursiveMap $defs entry, whose own"
+                        + " additionalProperties is a $ref back to itself — a bounded type-level cycle, not a"
+                        + " reflection-built or inline shape; document: " + document);
+    }
+
+    /**
+     * P01 gate security review (CWE-674 hypothesis, REFUTED): {@link RecursiveMap} as the document's own
+     * root type does not overflow the stack. The same placeholder-plus-inProgress-guard mechanism resolves
+     * the cycle back to the document root itself ({@code {"$ref":"#"}}), since the root has no named {@code
+     * $defs} entry of its own. A change to either mechanism would turn this test red.
+     */
+    @Test
+    @DisplayName("Security review (CWE-674, REFUTED): a self-referential Map subclass as the root renders a"
+            + " bounded $ref cycle, never a StackOverflowError")
+    void selfReferentialMapSubclassAsTheRootRendersABoundedRefCycle() {
+        JsonNode document = assertNoStackOverflow(() -> inputDocument(RecursiveMap.class));
+
+        assertEquals(
+                "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\","
+                        + "\"additionalProperties\":{\"$ref\":\"#\"},\"type\":\"object\"}",
+                document.toString(),
+                "the root's own additionalProperties must be a $ref back to the document root (\"#\"), the"
+                        + " root-position analogue of the $defs cycle; document: " + document);
+    }
+
+    /**
+     * P01 gate security review (CWE-674 hypothesis, REFUTED): mutually recursive {@link MapA}/{@link MapB}
+     * (a two-map cycle) do not overflow the stack: Jackson's recursive-type placeholder stops the
+     * renderer's overlay pre-check after one level and the provider's own inProgress guard closes the
+     * type-level cycle as a {@code $ref}. Which of the two types receives the named {@code $defs} entry,
+     * and whether the other is inlined once inside it, is the schema library's own definition-naming
+     * choice (a type referenced once is inlined), so this test asserts the cycle structurally rather
+     * than pinning that layout: the property resolves to a named entry, every level on the way is a
+     * described object, and the chain closes back to that same entry. A change that let the cycle
+     * unroll, overflow, or fall back to a reflection-built definition would turn this test red.
+     */
+    @Test
+    @DisplayName("Security review (CWE-674, REFUTED): mutually recursive Map subclasses (a two-map cycle)"
+            + " render a bounded $ref cycle, never a StackOverflowError")
+    void mutuallyRecursiveMapSubclassesRenderABoundedRefCycle() {
+        JsonNode document = assertNoStackOverflow(() -> inputDocument(MapAHolder.class));
+
+        String reference = document.path("properties").path("a").path("$ref").asText();
+        assertTrue(reference.startsWith("#/$defs/"), "a must resolve to a named $defs entry; document: " + document);
+        JsonNode entry = document.at(reference.substring(1));
+        assertEquals(
+                "object", entry.path("type").asText(), "the named entry is a described object; document: " + document);
+        JsonNode level = entry;
+        boolean closed = false;
+        for (int depth = 0; depth < 4 && !closed; depth++) {
+            JsonNode value = level.path("additionalProperties");
+            assertFalse(value.isMissingNode(), "every level describes its map value; document: " + document);
+            if (value.has("$ref")) {
+                assertEquals(
+                        reference,
+                        value.path("$ref").asText(),
+                        "the cycle closes back to the named entry; document: " + document);
+                closed = true;
+            } else {
+                assertEquals(
+                        "object",
+                        value.path("type").asText(),
+                        "an inlined level is a described object; document: " + document);
+                level = value;
+            }
+        }
+        assertTrue(closed, "the two-map cycle must close within four levels; document: " + document);
+    }
+
+    /**
+     * P01 gate security review (CWE-674 hypothesis, REFUTED): a self-referential {@link RecursiveMap} as an
+     * any-setter's own extras value does not overflow the stack, through the same placeholder-plus-
+     * inProgress-guard mechanism as the named-property case (T003 TP-008's own shared renderer). A change
+     * to either mechanism would turn this test red.
+     */
+    @Test
+    @DisplayName("Security review (CWE-674, REFUTED): a self-referential Map subclass as an any-setter's"
+            + " own value renders a bounded $ref cycle, never a StackOverflowError")
+    void selfReferentialMapSubclassAsAnAnySetterValueRendersABoundedRefCycle() {
+        JsonNode document = assertNoStackOverflow(() -> inputDocument(RecursiveMapAnySetterHolder.class));
+
+        assertEquals(
+                "{\"$defs\":{\"RecursiveMap\":{\"additionalProperties\":{\"$ref\":\"#/$defs/RecursiveMap\"},"
+                        + "\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\","
+                        + "\"additionalProperties\":{\"$ref\":\"#/$defs/RecursiveMap\"},\"type\":\"object\"}",
+                document.toString(),
+                "the outer extras must resolve to the describer's own RecursiveMap $defs entry, whose own"
+                        + " additionalProperties is a $ref back to itself; document: " + document);
+    }
+
+    @Test
+    @DisplayName("Control: a nested but finite Map subclass chain still renders (must stay green)")
+    void nestedButFiniteMapSubclassChainStillRenders() {
+        JsonNode document = inputDocument(OuterHolder.class);
+        JsonNode outer = additionalProperties(document, property(document, "o"), "OuterHolder.o");
+        JsonNode inner = additionalProperties(document, outer, "OuterHolder.o (Outer's own additionalProperties)");
+
+        assertEquals(
+                3,
+                inner.path("maxLength").asInt(-1),
+                "o.additionalProperties.additionalProperties must describe Inner's own value type's"
+                        + " maxLength: 3 — a nested but finite Map subclass chain must still render, proving"
+                        + " the self-referential refusal above is scoped to a genuine cycle, not every nested"
+                        + " Map subclass; document: " + document);
+    }
+
+    // --- Fixtures: security review (HIGH, CWE-674) — self-referential and mutually recursive Map subclasses ---
+
+    /** A Map subclass whose own value type is itself: a direct self-reference (CWE-674). */
+    static class RecursiveMap extends HashMap<String, RecursiveMap> {}
+
+    /** A body type describing {@link RecursiveMap} at a named property position. */
+    static final class RecursiveMapHolder {
+
+        /** The self-referential map value under test. */
+        public RecursiveMap tree;
+    }
+
+    /** The first half of a two-map cycle: {@code MapA}'s own value type is {@link MapB}. */
+    static class MapA extends HashMap<String, MapB> {}
+
+    /** The second half of a two-map cycle: {@code MapB}'s own value type is {@link MapA}. */
+    static class MapB extends HashMap<String, MapA> {}
+
+    /** A body type describing {@link MapA} at a named property position. */
+    static final class MapAHolder {
+
+        /** The mutually recursive map value under test. */
+        public MapA a;
+    }
+
+    /** An any-setter whose own extras value is the self-referential {@link RecursiveMap}. */
+    static final class RecursiveMapAnySetterHolder {
+
+        /** The any-setter's backing storage: a self-referential map value. */
+        @JsonAnySetter
+        public Map<String, RecursiveMap> extras = new LinkedHashMap<>();
+    }
+
+    /** A finite (non-recursive) Map subclass whose own value type carries a type-use constraint. */
+    static class Inner extends HashMap<String, @Size(max = 3) String> {}
+
+    /** A further, still-finite Map subclass whose own value type is {@link Inner}. */
+    static class Outer extends HashMap<String, Inner> {}
+
+    /** A body type describing {@link Outer} at a named property position — the finite-chain control. */
+    static final class OuterHolder {
+
+        /** The nested-but-finite map value under test. */
+        public Outer o;
+    }
+
     // --- Review fix (Critical): a Map subclass that reorders its own type parameters must resolve the
     // value slot through the type-parameter binding Jackson itself resolves, not through the fixed
     // positional index [1] of the declaration site's own type arguments; see
@@ -561,6 +750,31 @@ class MapValueDescriptionTest {
         } finally {
             logger.setLevel(previousLevel);
             logger.removeHandler(handler);
+        }
+    }
+
+    // --- Bounded-cycle helper (P01 gate security review, CWE-674 hypothesis, REFUTED: a self-referential
+    // Map subclass resolves to a bounded $ref cycle through Jackson's own recursive-type placeholder and
+    // the describer's inProgress guard, not through unbounded recursion) ---
+
+    /**
+     * Runs {@code generation}, turning a {@link StackOverflowError} into an actionable, distinguishing
+     * failure rather than letting it propagate as a raw JVM error — since the whole point of these
+     * characterization tests is to fail loudly, not pass silently, if the placeholder-plus-inProgress-guard
+     * mechanism that bounds a self-referential map's own recursion ever regresses.
+     *
+     * @param generation the generation action under test
+     * @return the document {@code generation} returned
+     */
+    private static JsonNode assertNoStackOverflow(Supplier<JsonNode> generation) {
+        try {
+            return generation.get();
+        } catch (StackOverflowError overflow) {
+            return fail("generation overflowed the stack (StackOverflowError) instead of resolving the"
+                    + " self-referential map through Jackson's own recursive-type placeholder and the"
+                    + " describer's inProgress guard — the P01 gate's CWE-674 hypothesis would no longer be"
+                    + " refuted; see ValuePositionRenderer.hasOverlayAnywhere and the describer's own"
+                    + " cycle-closing $ref logic");
         }
     }
 
