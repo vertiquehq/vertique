@@ -9,6 +9,7 @@ import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonEnumDefaultValue;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonUnwrapped;
 import dev.vertique.core.context.ContextHolder;
@@ -120,6 +121,8 @@ final class McpToolInputShapesITFixture {
     static final String OPTIONAL_EXTRAS_TOOL = "shapes.optionalExtrasNullAdmission";
     static final String MAP_VALUE_SHAPES_TOOL = "shapes.mapValueShapes";
     static final String SINGLE_ANY_SETTER_TYPE_USE_TOOL = "shapes.singleAnySetterTypeUse";
+    static final String SHARED_ANY_SETTER_CONJUNCTION_TOOL = "shapes.sharedAnySetterConjunction";
+    static final String OBJECT_VALUED_ANY_SETTER_PAIR_TOOL = "shapes.objectValuedAnySetterPair";
 
     /** The profile T005 TP-005's strict row selects; every other tool takes the resolver's tail. */
     static final String STRICT_PROFILE = "vertique-strict";
@@ -184,6 +187,8 @@ final class McpToolInputShapesITFixture {
         register(tools, factory, OPTIONAL_EXTRAS_TOOL, OptionalAnySetterExtrasPayload.class, null);
         register(tools, factory, MAP_VALUE_SHAPES_TOOL, MapValueShapesPayload.class, null);
         register(tools, factory, SINGLE_ANY_SETTER_TYPE_USE_TOOL, SingleAnySetterTypeUsePayload.class, null);
+        register(tools, factory, SHARED_ANY_SETTER_CONJUNCTION_TOOL, SharedAnySetterConjunctionPayload.class, null);
+        register(tools, factory, OBJECT_VALUED_ANY_SETTER_PAIR_TOOL, ObjectValuedAnySetterPairPayload.class, null);
         this.toolsByName = Map.copyOf(tools);
 
         McpToolRegistry registry = McpToolRegistry.build(Set.copyOf(tools.values()));
@@ -480,6 +485,12 @@ final class McpToolInputShapesITFixture {
 
     record SingleAnySetterTypeUsePayload(
             @JsonProperty("payload") SingleAnySetterTypeUseDto argument0) {}
+
+    record SharedAnySetterConjunctionPayload(
+            @JsonProperty("payload") SharedAnySetterConjunctionDto argument0) {}
+
+    record ObjectValuedAnySetterPairPayload(
+            @JsonProperty("payload") ObjectValuedAnySetterPairDto argument0) {}
 
     // --- TP-003 shapes: the five AC-013.1 input-discovery shapes, as T004's corpus defines them ---
 
@@ -994,5 +1005,65 @@ final class McpToolInputShapesITFixture {
         /** The any-setter's backing storage: the type-use-constrained value position under test. */
         @JsonAnySetter
         public Map<String, @Size(max = 3) String> extras = new LinkedHashMap<>();
+    }
+
+    // --- rest-023 T004 (D004): TP-002, several any-setters sharing a wire key ---
+
+    /** UW-2AS child: a type-use-constrained any-setter, sharing its wire key with the parent's own. */
+    static final class SharedAnySetterConjunctionChild {
+
+        /** The child's own any-setter, type-use-constrained (N16 shape). */
+        @JsonAnySetter
+        public Map<String, @Size(max = 3) String> extras = new LinkedHashMap<>();
+    }
+
+    /** UW-2AS parent: its own any-setter, plus the unwrapped child's own, sharing every wire key. */
+    static final class SharedAnySetterConjunctionDto {
+
+        /** The unwrapped child, declaring its own any-setter. */
+        @JsonUnwrapped
+        public SharedAnySetterConjunctionChild inner;
+
+        /** The parent's own any-setter, unconstrained. */
+        @JsonAnySetter
+        public Map<String, Object> extras = new LinkedHashMap<>();
+    }
+
+    /** The parent's own any-setter value type: a bean with its own constraint. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    static final class ConjunctionLeft {
+
+        /** The constraint this value type's own subschema must carry once inlined. */
+        @Size(max = 3)
+        public String label;
+    }
+
+    /** The unwrapped child's own any-setter value type: a bean with its own, different constraint. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    static final class ConjunctionRight {
+
+        /** The constraint this value type's own subschema must carry once inlined. */
+        @Size(max = 2)
+        public String code;
+    }
+
+    /** The unwrapped child, declaring its own bean-valued any-setter. */
+    static final class ObjectValuedAnySetterPairChild {
+
+        /** The child's own any-setter, bean-valued. */
+        @JsonAnySetter
+        public Map<String, ConjunctionRight> extras = new LinkedHashMap<>();
+    }
+
+    /** An object-valued two-any-setter pair: both value types are beans, each with its own constraint. */
+    static final class ObjectValuedAnySetterPairDto {
+
+        /** The unwrapped child, declaring its own bean-valued any-setter. */
+        @JsonUnwrapped
+        public ObjectValuedAnySetterPairChild inner;
+
+        /** The parent's own any-setter, bean-valued. */
+        @JsonAnySetter
+        public Map<String, ConjunctionLeft> extras = new LinkedHashMap<>();
     }
 }

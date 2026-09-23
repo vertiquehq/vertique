@@ -188,6 +188,19 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     private final Set<JavaType> inProgress = new HashSet<>();
 
     /**
+     * The bean value types currently being populated <em>inline</em> at a value position — D004's own
+     * conjunction inline rule (C5) and D005's own member-level inline path (S1) both register here for
+     * the duration of their own {@link #populateObjectSchema} call, distinct from {@link #inProgress}
+     * (security round-3 MEDIUM; {@code decisions/D005-…md} § Recursion bound). {@link #inlineBeanSchema}
+     * refuses re-entry when a type is already in this set <em>or</em> in {@link #inProgress}; {@link
+     * #provideCustomSchemaDefinition} itself refuses — never silently falls back to a standard,
+     * reflection-built {@code $defs} entry via its own pre-existing "return {@code null} on re-entry"
+     * branch — for a type already in this set, closing the round-3 MEDIUM's own silent-misdescription
+     * class.
+     */
+    private final Set<JavaType> inlineInProgress = new HashSet<>();
+
+    /**
      * @param mapper          the profile's mapper, which the binder parses a body with
      * @param strictSpellings whether the profile forbids several spellings of one property
      */
@@ -220,6 +233,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     /** Clears the per-generation recursion state after an abnormal exit. */
     void resetAfterAbortedGeneration() {
         inProgress.clear();
+        inlineInProgress.clear();
     }
 
     @Override
@@ -254,6 +268,20 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         JavaType javaType = toJavaType(resolved);
         if (!mapLike && (javaType.isEnumType() || javaType.isReferenceType() || javaType.isCollectionLikeType())) {
             return null;
+        }
+        // D004/D005 § Recursion bound (security round-3 MEDIUM): a type already being populated
+        // inline at a value position is refused here, before the ordinary inProgress guard below ever
+        // runs — otherwise a non-inline re-entry of an inline-registered type (a plain $ref reached
+        // from elsewhere in the same document while the inline population is still on the stack) would
+        // fall through to the inProgress guard's own "return null on re-entry" branch, and the library
+        // would silently hand back its own standard, reflection-built $defs entry instead of the
+        // bounded diagnostic this class relies on everywhere else.
+        if (inlineInProgress.contains(javaType)) {
+            throw Diagnostics.failure(
+                    Diagnostics.typeIdentity(javaType.getRawClass())
+                            + " is referenced by $ref while being described inline; declare a"
+                            + " JsonSchemaTypeOverride or close it at the type",
+                    null);
         }
         if (!inProgress.add(javaType)) {
             // A self-reference inside the definition being built: the library resolves it as a
@@ -524,6 +552,14 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         List<SettableBeanProperty> bound = boundProperties(bean, builder);
         SettableAnyProperty anySetter = builder == null ? null : builder.getAnySetter();
         Set<Object> storage = storageMembers(javaType, anySetter);
+        // D004: every any-setter feeding the shared extras position, parent first — the parent's own,
+        // when it declares one, then each unwrapped sibling's own, in declaration order (below). One
+        // entry behaves byte-identically to the pre-T004 single-slot rule; more than one is described
+        // as their conjunction (describeExtras, ValuePositionRenderer#renderConjunction).
+        List<SettableAnyProperty> anySetters = new ArrayList<>();
+        if (anySetter != null) {
+            anySetters.add(anySetter);
+        }
         ObjectNode[] patternProperties = new ObjectNode[1];
         // F2 (security review round 1, HIGH): every unwrapped child's alias spellings and hidden/ignored
         // names, folded into the parent's own alias plan and reserved-name seed below, keyed by the
@@ -642,8 +678,15 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                         }
                     }
                 }
-                if (anySetter == null && sibling.childBuilder() != null) {
-                    anySetter = sibling.childBuilder().getAnySetter();
+                if (sibling.childBuilder() != null) {
+                    // D004: collect this sibling's own any-setter too (not only the first found), so
+                    // the shared key describes the conjunction of every any-setter in the set — the
+                    // pre-T004 single-slot rule stopped at the first sibling with one.
+                    SettableAnyProperty siblingAnySetter =
+                            sibling.childBuilder().getAnySetter();
+                    if (siblingAnySetter != null) {
+                        anySetters.add(siblingAnySetter);
+                    }
                 }
                 if (extrasWillBeDescribed) {
                     // Fold this child's own alias spellings and hidden/ignored names into the parent's
@@ -700,7 +743,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             });
         }
 
-        boolean extrasDescribed = describeExtras(definition, anySetter, builtClass, context);
+        boolean extrasDescribed = describeExtras(definition, anySetters, builtClass, context);
         Set<String> reserved;
         if (extrasDescribed) {
             reserved = reservedNames(javaType, bean, bound, published, aliasPlan);
@@ -1926,60 +1969,94 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     // ---------------------------------------------------------------- extras, aliases, reserved names
 
     /**
-     * Publishes the any-setter's extras beside the named properties, unless the class declares
-     * {@code @Schema(additionalProperties = FALSE)}, whose restriction the Swagger module then
-     * publishes unopposed.
+     * Publishes the conjunction of every any-setter's own extras beside the named properties (D004),
+     * unless the class declares {@code @Schema(additionalProperties = FALSE)}, whose restriction the
+     * Swagger module then publishes unopposed.
+     *
+     * <p>One any-setter renders byte-identically to before this task (the shared renderer's own plain
+     * value schema, per {@link ValuePositionRenderer#renderConjunction}); more than one — the parent's
+     * own plus every unwrapped sibling's own (D004) — renders their conjunction, {@code {"allOf": [...]}}
+     * of each any-setter's own value schema, including its own type-use overlay. The key-count bound
+     * (below) takes the strictest {@code @Size}/{@code @Schema(minProperties/maxProperties)} across
+     * every any-setter in the set, never an {@code allOf} of {@code maxProperties} values.
      *
      * @return whether extras are described
      */
     private boolean describeExtras(
             ObjectNode definition,
-            SettableAnyProperty anySetter,
+            List<SettableAnyProperty> anySetters,
             Class<?> builtClass,
             SchemaGenerationContext context) {
-        if (anySetter == null) {
+        if (anySetters.isEmpty()) {
             return false;
         }
         Schema schema = builtClass.getAnnotation(Schema.class);
         if (schema != null && schema.additionalProperties() == Schema.AdditionalPropertiesValue.FALSE) {
             return false;
         }
-        JavaType valueType = anySetter.getType();
-        // rest-023 T003 (D001, N16/N9): the any-setter's own value position's AnnotatedType, read off
-        // its own backing field/method's declared Map<K,V> type through the type-parameter binding
-        // (ValuePositionRenderer.mapValueSlotOfMember), so a type-use constraint on V (N16) — and,
-        // recursively, on a nested map's own V (N9) — overlays the extras value's own schema through the
-        // shared renderer, exactly like a named member's own map position (T001 left this null; T003
-        // wires the real AnnotatedType through, see ValuePositionRenderer's own class Javadoc). An open
-        // position (valueType == null, or one of the renderer's own unconstrained value types) writes an
-        // explicit empty additionalProperties object, exactly as before this extraction.
-        AnnotatedMember member =
-                anySetter.getProperty() == null ? null : anySetter.getProperty().getMember();
-        AnnotatedType extrasAnnotatedType = member == null || member.getMember() == null
-                ? null
-                : ValuePositionRenderer.mapValueSlotOfMember(member.getMember());
-        JsonNode valueSchema = valuePositionRenderer.renderValueSchema(
-                context, new ValuePositionRenderer.ValuePosition(valueType, extrasAnnotatedType, null));
+        List<ValuePositionRenderer.ValuePosition> positions = new ArrayList<>(anySetters.size());
+        List<AnnotatedMember> members = new ArrayList<>(anySetters.size());
+        for (SettableAnyProperty anySetter : anySetters) {
+            JavaType valueType = anySetter.getType();
+            // rest-023 T003 (D001, N16/N9): the any-setter's own value position's AnnotatedType, read
+            // off its own backing field/method's declared Map<K,V> type through the type-parameter
+            // binding (ValuePositionRenderer.mapValueSlotOfMember), so a type-use constraint on V (N16)
+            // — and, recursively, on a nested map's own V (N9) — overlays that any-setter's own value
+            // schema through the shared renderer, exactly like a named member's own map position (T001
+            // left this null; T003 wires the real AnnotatedType through, see ValuePositionRenderer's own
+            // class Javadoc).
+            AnnotatedMember member = anySetter.getProperty() == null
+                    ? null
+                    : anySetter.getProperty().getMember();
+            AnnotatedType extrasAnnotatedType = member == null || member.getMember() == null
+                    ? null
+                    : ValuePositionRenderer.mapValueSlotOfMember(member.getMember());
+            String memberName = member != null ? member.getName() : "extras";
+            positions.add(new ValuePositionRenderer.ValuePosition(valueType, extrasAnnotatedType, memberName));
+            members.add(member);
+        }
+        // An open position (valueType == null, or one of the renderer's own unconstrained value types)
+        // writes an explicit empty additionalProperties object, exactly as before this extraction —
+        // ValuePositionRenderer#renderConjunction returns null for the same reason renderValueSchema did.
+        JsonNode valueSchema = valuePositionRenderer.renderConjunction(context, positions);
         if (valueSchema == null) {
             definition.putObject("additionalProperties");
         } else {
             definition.set("additionalProperties", valueSchema);
         }
-        // A bound on the any-setter's map itself — @Size on the field, @Schema(minProperties/maxProperties)
-        // on the member — is a bound on the object's key count. The @Size-derived value is the
-        // constraint-source floor, written first with a plain put(...); the Swagger value is routed
-        // through applyCorrection (S1, the same rule the supplement's corrections follow — FR-009 of
-        // the rest-021 package) so a looser @Schema(minProperties/maxProperties) never overwrites a
-        // stricter @Size bound already written for the same keyword.
-        if (member != null) {
+        // A bound on an any-setter's own map itself — @Size on the field, @Schema(minProperties/
+        // maxProperties) on the member — is a bound on the shared object's key count. D004: the
+        // stricter @Size-derived value across every any-setter in the set is the constraint-source
+        // floor, written first with a plain put(...); the Swagger value from any member is then routed
+        // through applyCorrection (S1, the same rule the supplement's corrections follow — FR-009 of the
+        // rest-021 package) so a looser @Schema(minProperties/maxProperties) never overwrites a stricter
+        // bound already written for the same keyword — one keyword each on the object, never an allOf of
+        // maxProperties/minProperties values.
+        Integer maxProperties = null;
+        Integer minProperties = null;
+        for (AnnotatedMember member : members) {
+            if (member == null) {
+                continue;
+            }
             Size size = member.getAnnotation(Size.class);
             if (size != null && member.getRawType() != null && Map.class.isAssignableFrom(member.getRawType())) {
                 if (size.max() != Integer.MAX_VALUE) {
-                    definition.put("maxProperties", size.max());
+                    maxProperties = maxProperties == null ? size.max() : Math.min(maxProperties, size.max());
                 }
                 if (size.min() > 0) {
-                    definition.put("minProperties", size.min());
+                    minProperties = minProperties == null ? size.min() : Math.max(minProperties, size.min());
                 }
+            }
+        }
+        if (maxProperties != null) {
+            definition.put("maxProperties", maxProperties);
+        }
+        if (minProperties != null) {
+            definition.put("minProperties", minProperties);
+        }
+        for (AnnotatedMember member : members) {
+            if (member == null) {
+                continue;
             }
             Schema swagger = member.getAnnotation(Schema.class);
             if (swagger != null) {
@@ -1996,23 +2073,96 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
 
     /**
      * The {@link ValuePositionRenderer.InlineComposer} supplied to {@link #valuePositionRenderer} at
-     * construction (rest-023 T001, C6). No pipeline step in this task calls it, so it is deliberately a
-     * fail-closed placeholder rather than an untested inline path: D004's own conjunction rule (T004)
-     * replaces its body, under its own red-first proof, with the population the member-level
-     * case-insensitive inline path already performs ({@link #propertySchema}), behind its own
-     * override-first check and its own {@code inlineInProgress} recursion bound (D004, D005
-     * § Recursion bound); D005's own member-level inline path (T005) reuses it.
+     * construction (rest-023 T001, C6). Called by {@link ValuePositionRenderer#renderConjunction} (D004,
+     * T004) for a conjunction position's own subschema whose value type is not profile-overridden (the
+     * override carve-out is applied by the renderer itself, before this callback is ever reached), and
+     * by D005's own member-level inline path (T005).
      *
-     * @param beanType the bean value type to inline
-     * @param context  the active generation context
-     * @return never; this task inlines nothing at a value position
-     * @throws JsonSchemaGenerationException always, until T004 supplies the inline population
+     * <p>Mirrors {@link #describe}'s own bean classification, so a non-bean value type — a JDK/foreign
+     * scalar, a {@code Map}-like type, a polymorphic base, or an opaque wrapper this class's own field
+     * walk never had to protect — renders exactly as it does outside a conjunction: this method returns
+     * {@code null}, and the renderer falls back to its own ordinary (non-inline) rendering for that
+     * position. Only a value type that <em>does</em> resolve to a {@link BeanDeserializerBase} is
+     * inlined; a type that looks bean-like yet resolves to a genuine custom deserializer is refused with
+     * the same bounded diagnostic {@link #describe} throws for the same shape (F1).
+     *
+     * <p>D004, D005 § Recursion bound (security round-3 MEDIUM): the bean type is registered in {@link
+     * #inlineInProgress} — a set distinct from {@link #inProgress} — for the duration of its own inline
+     * population, and re-entry (from either set) is refused with a bounded diagnostic naming the member
+     * and the remedy, never silently recursed and never left to the provider's own standard,
+     * reflection-built {@code $defs} fallback (see {@link #provideCustomSchemaDefinition}'s own added
+     * guard).
+     *
+     * @param beanType   the value type to inline, or render normally when it is not bean-like
+     * @param memberName the any-setter's own member name, or D005's own member name, for the recursion
+     *                   diagnostic
+     * @param context    the active generation context
+     * @return the inlined object (or scalar-creator) schema, or {@code null} when {@code beanType} is
+     *     not bean-like and must be rendered by the renderer's own ordinary path instead
+     * @throws JsonSchemaGenerationException when {@code beanType} resolves to a genuine custom
+     *     deserializer (F1), or re-enters a type already being described inline or by reference (D005
+     *     § Recursion bound)
      */
-    private JsonNode inlineBeanSchema(JavaType beanType, SchemaGenerationContext context) {
-        throw Diagnostics.failure(
-                "JSON Schema generation failed for " + Diagnostics.typeIdentity(beanType.getRawClass())
-                        + ": inlining a bean at a value position is not supported yet",
-                null);
+    private JsonNode inlineBeanSchema(JavaType beanType, String memberName, SchemaGenerationContext context) {
+        Class<?> erased = beanType.getRawClass();
+        // Mirrors provideCustomSchemaDefinition's own top-of-method exclusion (primitive/array/enum/
+        // annotation, and every JDK/Jakarta/Jackson namespace) so a JDK or foreign scalar at a
+        // conjunction position renders exactly as it does today, through the renderer's own ordinary
+        // path — never through this bean-only inline machinery.
+        if (erased.isPrimitive()
+                || erased.isArray()
+                || erased.isEnum()
+                || erased.isAnnotation()
+                || erased.getName().startsWith("java.")
+                || erased.getName().startsWith("javax.")
+                || erased.getName().startsWith("jakarta.")
+                || erased.getName().startsWith("com.fasterxml.jackson.")) {
+            return null;
+        }
+        JsonDeserializer<?> deserializer = unwrapDelegating(rootDeserializer(beanType));
+        if (deserializer == null
+                || deserializer instanceof AbstractDeserializer
+                || deserializer instanceof MapDeserializer) {
+            // A polymorphic base, or a Map-like value type: neither is a bean this method inlines;
+            // rendered by the renderer's own ordinary path instead (a $ref/overlay for the former is
+            // unreachable at this position since a conjunction value is never itself polymorphic here,
+            // and a Map-like value renders through the renderer's own nested-map treatment).
+            return null;
+        }
+        if (!(deserializer instanceof BeanDeserializerBase bean)) {
+            boolean beanLike = BeanLikeTypes.beanLike(mapper, erased);
+            if (!declaresOwnDeserializerOverride(beanType) && !beanLike) {
+                return null;
+            }
+            throw refuseCustomDeserializer(beanType, deserializer, memberName);
+        }
+        if (inProgress.contains(beanType) || !inlineInProgress.add(beanType)) {
+            throw Diagnostics.failure(
+                    "member \"" + memberName + "\" re-enters " + Diagnostics.typeIdentity(erased)
+                            + " inline; declare a JsonSchemaTypeOverride or close it at the type",
+                    null);
+        }
+        try {
+            ValueInstantiator instantiator = bean.getValueInstantiator();
+            requireNotDelegating(beanType, instantiator);
+            ObjectNode inline = context.getGeneratorConfig().createObjectNode();
+            String scalar = scalarCreator(instantiator);
+            if (scalar != null && !instantiator.canCreateFromObjectWith() && !instantiator.canCreateUsingDefault()) {
+                inline.put("type", scalar);
+                return inline;
+            }
+            populateObjectSchema(
+                    inline,
+                    beanType,
+                    resolve(context, beanType),
+                    bean,
+                    builderFor(beanType, bean),
+                    context,
+                    bean.isCaseInsensitive());
+            return inline;
+        } finally {
+            inlineInProgress.remove(beanType);
+        }
     }
 
     /**

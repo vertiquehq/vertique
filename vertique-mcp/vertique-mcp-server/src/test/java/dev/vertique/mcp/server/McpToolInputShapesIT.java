@@ -695,6 +695,56 @@ class McpToolInputShapesIT {
                         + " broken request path");
     }
 
+    // --- rest-023 T004 (D004): TP-002, several any-setters sharing a wire key ---
+
+    /**
+     * rest-023 T004 TP-002. An argument violating either any-setter's own constraint on a wire key both
+     * a parent's own and an unwrapped child's own any-setter share (UW-2AS) is rejected; a companion
+     * argument satisfying both is accepted. An object-valued two-any-setter pair (both value types are
+     * beans) is rejected when either bean's own constraint is violated, and accepted — with the handler
+     * running exactly once, the zero-false-reject proof — when both are satisfied.
+     *
+     * <p>Expected initial result: red for the object-valued pair's own conjunction (only one any-setter's
+     * own value schema is described today); the UW-2AS argument's own rejection may already be green —
+     * reported honestly against the actual baseline run, not assumed.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("A body violating either any-setter's own constraint on a shared key is rejected as"
+            + " INPUT_VALIDATION; an object-valued pair is accepted with zero false-reject when both"
+            + " beans' own constraints are satisfied")
+    void sharedAnySetterKeyRejectsAValueViolatingEitherAnySettersConstraint() throws Exception {
+        startServer();
+
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.SHARED_ANY_SETTER_CONJUNCTION_TOOL,
+                new JsonObject().put("x", "TOOLONG"),
+                "UW-2AS: a body violating the unwrapped child's own type-use constraint on the shared key"
+                        + " must be rejected");
+        assertAccepted(
+                McpToolInputShapesITFixture.SHARED_ANY_SETTER_CONJUNCTION_TOOL,
+                new JsonObject().put("x", "ab"),
+                "UW-2AS: a body satisfying both any-setters' own constraints on the shared key must stay"
+                        + " accepted, distinguishing the rejection from a broken request path");
+
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.OBJECT_VALUED_ANY_SETTER_PAIR_TOOL,
+                new JsonObject()
+                        .put("x", new JsonObject().put("label", "TOOLONGVALUE").put("code", "z")),
+                "the object-valued pair: a body violating the parent's own bean's constraint must be" + " rejected");
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.OBJECT_VALUED_ANY_SETTER_PAIR_TOOL,
+                new JsonObject().put("x", new JsonObject().put("label", "ab").put("code", "TOOLONGVALUE")),
+                "the object-valued pair: a body violating the unwrapped child's own bean's constraint must"
+                        + " be rejected");
+        assertAccepted(
+                McpToolInputShapesITFixture.OBJECT_VALUED_ANY_SETTER_PAIR_TOOL,
+                new JsonObject().put("x", new JsonObject().put("label", "ab").put("code", "z")),
+                "the object-valued pair: a body satisfying both beans' own constraints must be accepted"
+                        + " with the handler running exactly once — the zero-false-reject proof");
+    }
+
     // --- Shared actions and assertions ---
 
     /**
