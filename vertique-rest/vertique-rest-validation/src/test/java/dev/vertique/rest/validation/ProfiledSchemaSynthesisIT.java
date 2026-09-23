@@ -3043,6 +3043,54 @@ public class ProfiledSchemaSynthesisIT {
         }
     }
 
+    // --- rest-023 T005 (D005): TP-003, member-level closure ---
+
+    /** The value type both the FALSE-closed member and the unannotated open control member reference. */
+    public static class ClosedChild {
+
+        /** An ordinary constrained property, beside the any-setter. */
+        @Size(max = 3)
+        public String name;
+
+        /** The any-setter the member-level FALSE closes for the annotated member only. */
+        @JsonAnySetter
+        public Map<String, String> extras = new LinkedHashMap<>();
+    }
+
+    /** M10: a member-level FALSE-closed reference to {@link ClosedChild}, plus an unannotated control. */
+    public static class MemberLevelClosureDto {
+
+        /** The FALSE-closed member under test. */
+        @Schema(additionalProperties = Schema.AdditionalPropertiesValue.FALSE)
+        public ClosedChild child;
+
+        /** The unannotated control, referencing the same value type. */
+        public ClosedChild open;
+    }
+
+    /** The rest-023 T005 resource for the member-level closure shape. */
+    @Path("/member-level-closure")
+    public static class MemberLevelClosureResource {
+
+        /** Counts successful invocations, so a rejected body's non-entry can be asserted. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes acceptance.
+         *
+         * @param body the accepted body
+         * @return a fixed acknowledgement
+         */
+        @POST
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "memberLevelClosureEcho")
+        public String echo(MemberLevelClosureDto body) {
+            invocations.incrementAndGet();
+            return "ok";
+        }
+    }
+
     // --- C1 (spike/deserializer-driven-schema round 4, CRITICAL): sibling-ordered unwrapped pair ---
 
     /**
@@ -4111,6 +4159,54 @@ public class ProfiledSchemaSynthesisIT {
                         1,
                         pairResource.invocations.get(),
                         "the object-valued pair: only the satisfying body may have reached the resource"));
+    }
+
+    // --- rest-023 T005 (D005): TP-003, member-level closure ---
+
+    /**
+     * rest-023 T005 TP-003 (D005; M10). A body carrying an extra key under the member-level
+     * FALSE-closed member is rejected; the same extra-key shape under the unannotated control member
+     * is accepted, unaffected — distinguishing this task's own rule's scope from a global tightening. A
+     * companion body satisfying the closed member (no extra key) is accepted.
+     *
+     * <p>Expected initial result: red for the annotated member ({@code main} accepts it —
+     * {@code evidence/probe-report-327531b4.md} § M10); the control member's own acceptance is already
+     * green and stays green throughout.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("An extra key under a member-level FALSE-closed member is rejected; the same shape under"
+            + " an unannotated control member stays accepted")
+    void memberLevelClosureRejectsAnExtraKeyUnderThatMemberOnly() throws Exception {
+        MemberLevelClosureResource resource = new MemberLevelClosureResource();
+        int gatePort = start(gateMount(), Set.of(resource));
+
+        HttpResponse<Buffer> childRejected =
+                post(gatePort, "/member-level-closure", "{\"child\":{\"name\":\"a\",\"x\":\"1\"}}");
+        HttpResponse<Buffer> openAccepted =
+                post(gatePort, "/member-level-closure", "{\"open\":{\"name\":\"a\",\"x\":\"1\"}}");
+        HttpResponse<Buffer> childAccepted = post(gatePort, "/member-level-closure", "{\"child\":{\"name\":\"a\"}}");
+
+        assertAll(
+                () -> assertEquals(
+                        400,
+                        childRejected.statusCode(),
+                        "a body carrying an extra key under the FALSE-closed member must be rejected; body: "
+                                + childRejected.bodyAsString()),
+                () -> assertEquals(
+                        200,
+                        openAccepted.statusCode(),
+                        "the same extra-key shape under the unannotated control member must stay accepted,"
+                                + " proving this task's own rule is scoped to the annotated member; body: "
+                                + openAccepted.bodyAsString()),
+                () -> assertEquals(
+                        200,
+                        childAccepted.statusCode(),
+                        "a body satisfying the closed member (no extra key) must stay accepted; body: "
+                                + childAccepted.bodyAsString()),
+                () -> assertEquals(
+                        2, resource.invocations.get(), "only the two accepted bodies may have reached the resource"));
     }
 
     // --- Mounts and helpers ---

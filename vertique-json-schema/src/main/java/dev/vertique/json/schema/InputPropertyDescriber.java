@@ -363,7 +363,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
 
         boolean caseInsensitive = bean.isCaseInsensitive();
         populateObjectSchema(
-                definition, javaType, resolved, bean, builderFor(javaType, bean), context, caseInsensitive);
+                definition, javaType, resolved, bean, builderFor(javaType, bean), context, caseInsensitive, false);
         return new CustomDefinition(
                 definition, CustomDefinition.DefinitionType.STANDARD, CustomDefinition.AttributeInclusion.YES);
     }
@@ -510,8 +510,15 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * @param resolved        the schema library's resolved type for {@code javaType}
      * @param bean            the type's resolved bean deserializer
      * @param builder         the captured builder the deserializer was assembled from, or {@code null}
-     * @param context         the active generation context
-     * @param caseInsensitive whether {@code bean} binds its properties case-insensitively
+     * @param context          the active generation context
+     * @param caseInsensitive  whether {@code bean} binds its properties case-insensitively
+     * @param extrasSuppressed whether the type's own any-setter extras are suppressed (D005, T005): when
+     *                         {@code true}, {@link #describeExtras} is never consulted and {@code
+     *                         additionalProperties: false} is written directly instead — the member-level
+     *                         inline-closure rule's own effect, reused by {@link #inlineMemberSchema} for
+     *                         both the CI-plus-{@code FALSE} composition and the plain {@code FALSE}
+     *                         case; every other caller passes {@code false}, unchanged from before this
+     *                         parameter existed
      */
     /**
      * One {@code @JsonUnwrapped} sibling's own resolution, captured up front (C1, spike round 4
@@ -535,6 +542,51 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             ResolvedType childResolved,
             List<SettableBeanProperty> childBound) {}
 
+    /**
+     * Whether a type built from {@code builder} would itself describe extras on its own object schema:
+     * its own any-setter, or one declared by a {@code @JsonUnwrapped} member of its own (T005 round 2,
+     * MEDIUM). The one place this "would this type describe extras?" question is answered, so {@link
+     * #populateObjectSchema}'s own {@code extrasWillBeDescribed} computation and {@link #propertySchema}'s
+     * member-level {@code additionalProperties = FALSE} trigger never diverge — before this helper, the
+     * member-level trigger read only the value type's own builder any-setter and silently fell through to
+     * the open shared {@code $ref} when the any-setter was reachable only through the value type's own
+     * unwrapped child. Stops at one level of unwrapping, the same bound {@link #requireNoNestedUnwrapping}
+     * enforces once extras actually need describing — a grandchild's own any-setter is not consulted.
+     *
+     * @param builder the type's own captured builder, or {@code null} when it declares no builder-visible
+     *                property at all (never describes extras)
+     */
+    private boolean wouldDescribeExtras(BeanDeserializerBuilder builder) {
+        if (builder == null) {
+            return false;
+        }
+        if (builder.getAnySetter() != null) {
+            return true;
+        }
+        Iterator<SettableBeanProperty> it = builder.getProperties();
+        while (it.hasNext()) {
+            SettableBeanProperty property = it.next();
+            NameTransformer transformer = introspector().findUnwrappingNameTransformer(property.getMember());
+            if (transformer == null) {
+                continue;
+            }
+            JsonDeserializer<?> child = unwrapDelegating(rootDeserializer(property.getType()));
+            JsonDeserializer<?> renamed = child == null ? null : child.unwrappingDeserializer(transformer);
+            if (renamed == child || !(renamed instanceof BeanDeserializerBase unwrapped)) {
+                // Declined to unwrap, or a shape-changing custom deserializer: neither describes extras
+                // through this member. A genuinely refused custom deserializer surfaces its own bounded
+                // diagnostic later, when the type is actually described (populateObjectSchema's own
+                // unwrapped-child loop), not from this best-effort probe.
+                continue;
+            }
+            BeanDeserializerBuilder childBuilder = builderFor(property.getType(), unwrapped);
+            if (childBuilder != null && childBuilder.getAnySetter() != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private void populateObjectSchema(
             ObjectNode definition,
             JavaType javaType,
@@ -542,7 +594,8 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             BeanDeserializerBase bean,
             BeanDeserializerBuilder builder,
             SchemaGenerationContext context,
-            boolean caseInsensitive) {
+            boolean caseInsensitive,
+            boolean extrasSuppressed) {
         definition.put("type", "object");
         ObjectNode properties = definition.putObject("properties");
         List<String> required = new ArrayList<>();
@@ -646,10 +699,12 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             // fold entirely: {@code Parent { @JsonUnwrapped A a; @JsonUnwrapped B b }} with the
             // any-setter on B alone still left A's own alias and hidden member unfolded when A was
             // processed first, regardless of the fact that the type as a whole is any-setter-shaped.
-            boolean extrasWillBeDescribed = anySetter != null
-                    || unwrappedChildren.stream()
-                            .anyMatch(sibling -> sibling.childBuilder() != null
-                                    && sibling.childBuilder().getAnySetter() != null);
+            // T005 round 2: computed through the shared #wouldDescribeExtras(BeanDeserializerBuilder) helper
+            // so this "own or unwrapped sibling any-setter" question never diverges from propertySchema's
+            // own member-level FALSE trigger, and gated by extrasSuppressed so a member-level FALSE that
+            // closes this very type also suppresses the conjunction path here — no any-setter, own or
+            // unwrapped, is described once the type's own extras are already closed.
+            boolean extrasWillBeDescribed = !extrasSuppressed && wouldDescribeExtras(builder);
 
             for (UnwrappedChild sibling : unwrappedChildren) {
                 if (extrasWillBeDescribed) {
@@ -743,7 +798,18 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             });
         }
 
-        boolean extrasDescribed = describeExtras(definition, anySetters, builtClass, context);
+        // D005, T005: an extras-suppressed member-level inline description (a member-level FALSE, alone
+        // or composed with case-insensitivity) never consults describeExtras at all — additionalProperties
+        // is written as the literal false this hand-built inline node otherwise never receives, since it
+        // bypasses the standard CustomDefinition/AttributeInclusion path the Swagger module's own
+        // class-level FALSE handling relies on (describeExtras's own class-level check, just above).
+        boolean extrasDescribed;
+        if (extrasSuppressed) {
+            definition.put("additionalProperties", false);
+            extrasDescribed = false;
+        } else {
+            extrasDescribed = describeExtras(definition, anySetters, builtClass, context);
+        }
         Set<String> reserved;
         if (extrasDescribed) {
             reserved = reservedNames(javaType, bean, bound, published, aliasPlan);
@@ -893,60 +959,57 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         // already does).
         JsonDeserializer<?> valueDeserializer =
                 property.hasValueDeserializer() ? unwrapDelegating(unwrap(property.getValueDeserializer())) : null;
-        if (valueDeserializer instanceof BeanDeserializerBase nestedBean && nestedBean.isCaseInsensitive()) {
+        if (valueDeserializer instanceof BeanDeserializerBase nestedBean) {
             // Case-insensitive only through this member's own contextual
             // @JsonFormat(with = ACCEPT_CASE_INSENSITIVE_PROPERTIES) (or a mapper-wide feature reaching
             // it the same way): the type's ordinary, case-sensitive shared definition would misdescribe
             // it here, so it is described inline instead of by reference to that shared definition.
+            boolean caseInsensitiveInline = nestedBean.isCaseInsensitive();
+            // D005, T005: a member-level @Schema(additionalProperties = FALSE) closes this member's own
+            // extras when its resolved value type would describe extras — read from the resolved
+            // deserializer's own builder (never live reflection, which would inline a
+            // @JsonDeserialize(using=...) type's own internals past the F1 refusal this class relies on
+            // elsewhere). A Map-typed member never reaches this branch at all: its own deserializer
+            // resolves to a MapDeserializer, not a BeanDeserializerBase, so T003's own Q1 rule (the
+            // annotation stays ignored there) is untouched.
+            // Security review finding (T005 round 2, MEDIUM): "would describe extras" is not only the
+            // value type's own builder any-setter — an any-setter reachable only through the value type's
+            // own @JsonUnwrapped child (Y { @JsonUnwrapped Z z }, Z carrying the any-setter) closes the
+            // same way. wouldDescribeExtras(BeanDeserializerBuilder) below is the one place this question is
+            // answered, shared with populateObjectSchema's own extrasWillBeDescribed so the two triggers
+            // never diverge; it stops at one level of unwrapping, same as requireNoNestedUnwrapping does
+            // once extras actually need describing.
+            // Security review finding (T005 round 2): builderFor(memberType, nestedBean) is a first-touch
+            // capturing-mapper probe that can throw, so it must never run for a plain bean-valued member
+            // that carries no member-level FALSE at all — memberLevelAdditionalPropertiesFalse(member) is
+            // checked first and short-circuits the probe, keeping a plain member byte-identical to before
+            // this task (no probe, ordinary $ref).
             JavaType memberType = property.getType();
-            // F4 (security review round 1, MEDIUM): this inline path builds the schema by hand instead
-            // of asking Victools for the member's type, so it must let a declared profile override win
-            // exactly as it would at any other position, and — only once no override applies — run the
-            // same refusal {@link #describe} would have run for the member's own type. Both were skipped
-            // before this fix. The override check runs first: an override is the developer's own
-            // statement of the type's wire shape, so it must not be shadowed by a refusal that exists
-            // only to protect a description this path would otherwise have had to build unsupervised.
-            if (validatedProfile != null && validatedProfile.fragmentFor(memberType.getRawClass()) != null) {
-                // Delegate to the ordinary reference path: it re-enters the full provider chain, where
-                // ProfileOverrideDefinitionProvider — registered ahead of this describer — applies the
-                // override exactly as it would for any other position, instead of this inline path
-                // silently building its own case-insensitive description over it.
-                JsonNode schema = context.createDefinitionReference(resolve(context, memberType));
+            boolean extrasSuppressed = memberLevelAdditionalPropertiesFalse(member)
+                    && wouldDescribeExtras(builderFor(memberType, nestedBean));
+            if (caseInsensitiveInline || extrasSuppressed) {
+                // F4 (security review round 1, MEDIUM)/D005 (T005): the shared inline-description helper
+                // runs the override-first check, the distinct inlineInProgress recursion bound, the
+                // requireNotDelegating and scalar-creator checks, and populateObjectSchema itself — the
+                // same machinery T004's own any-setter-conjunction inline path (inlineBeanSchema) reuses,
+                // so both the CI-inline and CI-plus-FALSE (or plain-FALSE) branches are bounded the same
+                // way. A null return means a (non-extras-suppressed) profile override applies: the caller
+                // falls back to the ordinary reference path below, exactly as before this task.
+                JsonNode schema =
+                        inlineMemberSchema(memberType, nestedBean, property.getName(), extrasSuppressed, context);
+                if (schema == null) {
+                    // Delegate to the ordinary reference path: it re-enters the full provider chain, where
+                    // ProfileOverrideDefinitionProvider — registered ahead of this describer — applies the
+                    // override exactly as it would for any other position, instead of this inline path
+                    // silently building its own case-insensitive description over it.
+                    schema = context.createDefinitionReference(resolve(context, memberType));
+                }
                 if (member != null) {
                     translateConstraints(
                             member, builtClass, (ObjectNode) schema, property.getName(), property.getType(), required);
                 }
                 return schema;
             }
-            ValueInstantiator nestedInstantiator = nestedBean.getValueInstantiator();
-            requireNotDelegating(memberType, nestedInstantiator);
-            ObjectNode inline = context.getGeneratorConfig().createObjectNode();
-            // S2 (spike/deserializer-driven-schema round 4 ruling): describe()'s own root path checks
-            // scalarCreator(instantiator) before ever building an object schema, so a from-string
-            // scalar-creator type is described as {"type":"string"} (or "number"/"integer") wherever it
-            // is referenced by $ref. This inline path built its schema unconditionally through
-            // populateObjectSchema instead, describing a scalar-creator type reached only through this
-            // member-level case-insensitive position as an object — applied here identically, mirroring
-            // describe()'s own branch, before populating an object schema.
-            String scalar = scalarCreator(nestedInstantiator);
-            if (scalar != null
-                    && !nestedInstantiator.canCreateFromObjectWith()
-                    && !nestedInstantiator.canCreateUsingDefault()) {
-                inline.put("type", scalar);
-            } else {
-                populateObjectSchema(
-                        inline,
-                        memberType,
-                        resolve(context, memberType),
-                        nestedBean,
-                        builderFor(memberType, nestedBean),
-                        context,
-                        true);
-            }
-            if (member != null) {
-                translateConstraints(member, builtClass, inline, property.getName(), property.getType(), required);
-            }
-            return inline;
         }
         if (valueDeserializer instanceof StdDelegatingDeserializer<?> converting
                 && converting.getDelegatee() != null
@@ -1090,6 +1153,23 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 builtClass.getName() + "#" + wireName
                         + ": @Schema(additionalProperties) on a Map-typed member has no effect on the generated"
                         + " input schema");
+    }
+
+    /**
+     * Whether {@code member} itself carries {@code @Schema(additionalProperties = FALSE)} (D005, T005) —
+     * read through the same {@code member.getAnnotation(Schema.class)} lookup {@link
+     * #translateConstraints} and {@link #warnIfAdditionalPropertiesAnnotationIgnored} already use, never
+     * live reflection on the member's own value type.
+     *
+     * @param member the property's own Jackson member, possibly {@code null}
+     * @return {@code true} when the member declares {@code additionalProperties = FALSE}
+     */
+    private static boolean memberLevelAdditionalPropertiesFalse(AnnotatedMember member) {
+        if (member == null) {
+            return false;
+        }
+        Schema schema = member.getAnnotation(Schema.class);
+        return schema != null && schema.additionalProperties() == Schema.AdditionalPropertiesValue.FALSE;
     }
 
     private JsonNode fieldSchema(
@@ -2136,16 +2216,78 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             }
             throw refuseCustomDeserializer(beanType, deserializer, memberName);
         }
-        if (inProgress.contains(beanType) || !inlineInProgress.add(beanType)) {
+        // D005, T005: the registration/refusal/requireNotDelegating/scalar-creator/populateObjectSchema
+        // tail is shared with the member-level inline-closure branch in propertySchema, rather than
+        // re-implemented here — see inlineMemberSchema's own Javadoc. The renderer's own override carve-
+        // out (this method's own class Javadoc) means the override-first check inside inlineMemberSchema
+        // never actually fires from this call site; extrasSuppressed is always false here, since a
+        // conjunction position's own extras suppression belongs to D004's own scope, not D005's.
+        return inlineMemberSchema(beanType, bean, memberName, false, context);
+    }
+
+    /**
+     * The shared inline-description tail (D005, T005) reused by both {@link #inlineBeanSchema} (D004's
+     * own any-setter-conjunction composition) and the member-level case-insensitive/{@code FALSE} branch
+     * in {@link #propertySchema}: the override-first check, the distinct {@link #inlineInProgress}
+     * recursion bound (shared with {@link #inProgress}, refusing re-entry from either set), {@link
+     * #requireNotDelegating}, the scalar-creator check, and {@link #populateObjectSchema} itself — see
+     * {@code decisions/D005-...} § Recursion bound for the exact shape this method implements verbatim.
+     *
+     * <p>An override on {@code memberType} is handled differently depending on {@code extrasSuppressed}:
+     * a plain case-insensitive-inline member (extras not suppressed) keeps its override's own {@code
+     * $ref} exactly as before this task, signaled by a {@code null} return so the caller falls back to an
+     * ordinary reference; a member whose {@code FALSE} annotation would suppress extras cannot honor that
+     * annotation from an overridden value type at all, so generation refuses instead of silently dropping
+     * either the override or the {@code FALSE}.
+     *
+     * @param memberType       the value type to describe inline
+     * @param nestedBean       {@code memberType}'s own resolved bean deserializer
+     * @param memberName       the member's own wire name (or the any-setter's own member name, for {@link
+     *                         #inlineBeanSchema}'s own call), named in a recursion or override-precedence
+     *                         diagnostic
+     * @param extrasSuppressed whether the member's own extras are suppressed (D005): when {@code true},
+     *                         a profile override on {@code memberType} is refused rather than kept as a
+     *                         reference
+     * @param context          the active generation context
+     * @return the inline schema, or {@code null} when a non-extras-suppressed override applies and the
+     *     caller must fall back to an ordinary reference instead
+     * @throws JsonSchemaGenerationException when an extras-suppressed override applies, a delegating
+     *     creator is reached, or {@code memberType} is already being described inline or by reference
+     *     (D005 § Recursion bound)
+     */
+    private ObjectNode inlineMemberSchema(
+            JavaType memberType,
+            BeanDeserializerBase nestedBean,
+            String memberName,
+            boolean extrasSuppressed,
+            SchemaGenerationContext context) {
+        if (validatedProfile != null && validatedProfile.fragmentFor(memberType.getRawClass()) != null) {
+            if (extrasSuppressed) {
+                throw Diagnostics.failure(
+                        "member \"" + memberName + "\" cannot honor additionalProperties = false: "
+                                + Diagnostics.typeIdentity(memberType.getRawClass())
+                                + " carries a profile override, which wins; declare the closure inside the"
+                                + " override fragment instead of at the member",
+                        null);
+            }
+            return null;
+        }
+        if (inProgress.contains(memberType) || !inlineInProgress.add(memberType)) {
             throw Diagnostics.failure(
-                    "member \"" + memberName + "\" re-enters " + Diagnostics.typeIdentity(erased)
+                    "member \"" + memberName + "\" re-enters " + Diagnostics.typeIdentity(memberType.getRawClass())
                             + " inline; declare a JsonSchemaTypeOverride or close it at the type",
                     null);
         }
         try {
-            ValueInstantiator instantiator = bean.getValueInstantiator();
-            requireNotDelegating(beanType, instantiator);
+            ValueInstantiator instantiator = nestedBean.getValueInstantiator();
+            requireNotDelegating(memberType, instantiator);
             ObjectNode inline = context.getGeneratorConfig().createObjectNode();
+            // S2 (spike/deserializer-driven-schema round 4 ruling): describe()'s own root path checks
+            // scalarCreator(instantiator) before ever building an object schema, so a from-string
+            // scalar-creator type is described as {"type":"string"} (or "number"/"integer") wherever it
+            // is referenced by $ref. This inline path applies the same check before populating an object
+            // schema, mirroring describe()'s own branch, rather than describing a scalar-creator type
+            // reached only through an inline position as an object.
             String scalar = scalarCreator(instantiator);
             if (scalar != null && !instantiator.canCreateFromObjectWith() && !instantiator.canCreateUsingDefault()) {
                 inline.put("type", scalar);
@@ -2153,15 +2295,16 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             }
             populateObjectSchema(
                     inline,
-                    beanType,
-                    resolve(context, beanType),
-                    bean,
-                    builderFor(beanType, bean),
+                    memberType,
+                    resolve(context, memberType),
+                    nestedBean,
+                    builderFor(memberType, nestedBean),
                     context,
-                    bean.isCaseInsensitive());
+                    nestedBean.isCaseInsensitive(),
+                    extrasSuppressed);
             return inline;
         } finally {
-            inlineInProgress.remove(beanType);
+            inlineInProgress.remove(memberType);
         }
     }
 
