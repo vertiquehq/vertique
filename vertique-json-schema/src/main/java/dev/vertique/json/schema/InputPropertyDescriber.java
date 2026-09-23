@@ -34,10 +34,12 @@ import com.fasterxml.jackson.databind.deser.std.DelegatingDeserializer;
 import com.fasterxml.jackson.databind.deser.std.MapDeserializer;
 import com.fasterxml.jackson.databind.deser.std.StdDelegatingDeserializer;
 import com.fasterxml.jackson.databind.introspect.AnnotatedClass;
+import com.fasterxml.jackson.databind.introspect.AnnotatedConstructor;
 import com.fasterxml.jackson.databind.introspect.AnnotatedField;
 import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
 import com.fasterxml.jackson.databind.introspect.AnnotatedMethod;
 import com.fasterxml.jackson.databind.introspect.AnnotatedParameter;
+import com.fasterxml.jackson.databind.introspect.AnnotatedWithParams;
 import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
 import com.fasterxml.jackson.databind.jsontype.TypeDeserializer;
 import com.fasterxml.jackson.databind.module.SimpleModule;
@@ -1326,17 +1328,21 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
 
     /**
      * The field behind a creator parameter: the record component's field — exact, because component
-     * {@code i} is parameter {@code i} by language definition — or, for every other creator, the field
-     * of the same wire name, which is Jackson's own statement that the two are one logical property
-     * (Jackson merges a field and a creator parameter into one {@code BeanPropertyDefinition} only when
-     * they share a name). A field whose own Java name merely coincides with the parameter's compiled
-     * name is never a candidate: a compiled parameter name says nothing about which field, if any, a
-     * constructor assigns it to, and joining on it borrowed an unrelated field's constraint onto a
-     * transforming constructor's parameter (a value-changing assignment, or a coincidental field-name
-     * match), rejecting or accepting traffic the binder itself would not.
+     * {@code i} is parameter {@code i} by language definition only for the record's <em>canonical</em>
+     * constructor ({@link #isCanonicalRecordConstructor}) — or, for every other creator (including a
+     * non-canonical {@code @JsonCreator} constructor whose parameter order differs from the component
+     * order, and a record's {@code @JsonCreator} static factory, which is an {@code AnnotatedMethod} and
+     * so never reaches the by-index branch at all), the field of the same wire name, which is Jackson's
+     * own statement that the two are one logical property (Jackson merges a field and a creator
+     * parameter into one {@code BeanPropertyDefinition} only when they share a name). A field whose own
+     * Java name merely coincides with the parameter's compiled name is never a candidate: a compiled
+     * parameter name says nothing about which field, if any, a constructor assigns it to, and joining on
+     * it borrowed an unrelated field's constraint onto a transforming constructor's parameter (a
+     * value-changing assignment, or a coincidental field-name match), rejecting or accepting traffic the
+     * binder itself would not.
      */
     private static Field backingField(Class<?> builtClass, AnnotatedParameter parameter, String wireName) {
-        if (builtClass.isRecord()) {
+        if (builtClass.isRecord() && isCanonicalRecordConstructor(builtClass, parameter.getOwner())) {
             RecordComponent[] components = builtClass.getRecordComponents();
             int index = parameter.getIndex();
             if (index >= 0 && index < components.length) {
@@ -1348,6 +1354,31 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             }
         }
         return fieldNamed(builtClass, wireName);
+    }
+
+    /**
+     * Whether {@code owner} is {@code builtClass}'s canonical record constructor: an {@link
+     * AnnotatedConstructor} whose parameter types equal, in order, the record components' types
+     * ({@link RecordComponent#getType()}) and count. Only the canonical constructor guarantees that
+     * component {@code i} is parameter {@code i}; any other constructor — reachable through an explicit
+     * {@code @JsonCreator} whose parameter order differs from the component order — must instead be
+     * joined by wire name ({@link #fieldNamed}), or it borrows an unrelated component's type and
+     * constraints onto the wrong property.
+     */
+    private static boolean isCanonicalRecordConstructor(Class<?> builtClass, AnnotatedWithParams owner) {
+        if (!(owner instanceof AnnotatedConstructor)) {
+            return false;
+        }
+        RecordComponent[] components = builtClass.getRecordComponents();
+        if (owner.getParameterCount() != components.length) {
+            return false;
+        }
+        for (int i = 0; i < components.length; i++) {
+            if (!owner.getRawParameterType(i).equals(components[i].getType())) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
