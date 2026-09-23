@@ -131,7 +131,11 @@ supplement on top when one is:
   assumption and is never joined on: a creator parameter joins a field only by wire name, which is
   Jackson's own statement that the two are one logical property; nothing here reads a constructor body
   either, so nothing here is ever "guaranteed by construction" for a creator the way a Lombok builder's
-  setters are. This is what keeps a `@JsonCreator` static-factory parameter's own constraint from being
+  setters are. One exception is exact rather than assumed: a record's creator parameter joins its
+  record component by position, but only for the canonical constructor (where component *i* is
+  parameter *i* by language definition); any other creator — including a non-canonical `@JsonCreator`
+  constructor with a different parameter order, and a record's `@JsonCreator` static factory — joins by
+  wire name like every other creator. This is what keeps a `@JsonCreator` static-factory parameter's own constraint from being
   dropped even under a validator: Bean Validation itself can join a creator parameter only through a
   constructor, but the floor reads the parameter's own annotation directly and does not care which kind
   of creator it belongs to.
