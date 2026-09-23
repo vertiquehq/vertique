@@ -491,6 +491,20 @@ described from the library's own reflection. Where several such any-setters boun
 `@Size` or `@Schema(minProperties`/`maxProperties)`, the stricter bound wins across the conjunction. A
 key that is a named property of a child is described by that named property alone.
 
+A member-level `@Schema(additionalProperties = FALSE)` on a property whose value type declares its
+own any-setter, directly or through an unwrapped member of its own, closes that one member's own
+extras by describing the member inline — reusing the case-insensitive inline path's own
+override-first, `requireNotDelegating`, and scalar-creator machinery — while the same value type
+referenced elsewhere, without the annotation, keeps its own shared, open definition. A member that
+is both case-insensitive-inline and `FALSE` composes as one inline description, case-insensitive
+handling kept. A member whose value type carries a profile override cannot honor `FALSE` from the
+member: generation refuses with a bounded diagnostic naming the member and the remedy (declare the
+closure inside the override fragment instead). A self-referential member reached through the inline
+description, or through a plain reference to a type still being described inline, refuses the same
+way rather than overflowing the stack or falling back to a standard, reflection-built definition. A
+member-level `TRUE`, or the annotation's absence, never loosens a class-level `FALSE` already
+closing the value type.
+
 An unconstrained value type — `Object`, `JsonNode`, `TreeNode`, or a wildcard or raw form resolving
 to one — is described as the empty schema `{}`, which accepts every JSON value. A class-level
 `@Schema(additionalProperties = FALSE)`, declared or inherited, keeps the object closed and is never

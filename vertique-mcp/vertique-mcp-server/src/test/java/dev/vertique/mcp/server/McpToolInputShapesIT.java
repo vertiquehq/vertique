@@ -745,6 +745,41 @@ class McpToolInputShapesIT {
                         + " with the handler running exactly once — the zero-false-reject proof");
     }
 
+    // --- rest-023 T005 (D005): TP-003, member-level closure ---
+
+    /**
+     * rest-023 T005 TP-003 (D005; M10). An argument carrying an extra key under the member-level
+     * FALSE-closed member is rejected; the same extra-key shape under the unannotated control member is
+     * accepted, unaffected — distinguishing this task's own rule's scope from a global tightening. A
+     * companion argument satisfying the closed member (no extra key) is accepted.
+     *
+     * <p>Expected initial result: red for the annotated member ({@code main} accepts it —
+     * {@code evidence/probe-report-327531b4.md} § M10); the control member's own acceptance is already
+     * green and stays green throughout.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("An extra key under a member-level FALSE-closed member is rejected as INPUT_VALIDATION;"
+            + " the same shape under an unannotated control member stays accepted")
+    void memberLevelClosureRejectsAnExtraKeyUnderThatMemberOnly() throws Exception {
+        startServer();
+
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.MEMBER_LEVEL_CLOSURE_TOOL,
+                new JsonObject().put("child", new JsonObject().put("name", "a").put("x", "1")),
+                "a body carrying an extra key under the FALSE-closed member must be rejected");
+        assertAccepted(
+                McpToolInputShapesITFixture.MEMBER_LEVEL_CLOSURE_TOOL,
+                new JsonObject().put("open", new JsonObject().put("name", "a").put("x", "1")),
+                "the same extra-key shape under the unannotated control member must stay accepted,"
+                        + " proving this task's own rule is scoped to the annotated member");
+        assertAccepted(
+                McpToolInputShapesITFixture.MEMBER_LEVEL_CLOSURE_TOOL,
+                new JsonObject().put("child", new JsonObject().put("name", "a")),
+                "a body satisfying the closed member (no extra key) must stay accepted");
+    }
+
     // --- Shared actions and assertions ---
 
     /**

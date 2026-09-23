@@ -123,6 +123,7 @@ final class McpToolInputShapesITFixture {
     static final String SINGLE_ANY_SETTER_TYPE_USE_TOOL = "shapes.singleAnySetterTypeUse";
     static final String SHARED_ANY_SETTER_CONJUNCTION_TOOL = "shapes.sharedAnySetterConjunction";
     static final String OBJECT_VALUED_ANY_SETTER_PAIR_TOOL = "shapes.objectValuedAnySetterPair";
+    static final String MEMBER_LEVEL_CLOSURE_TOOL = "shapes.memberLevelClosure";
 
     /** The profile T005 TP-005's strict row selects; every other tool takes the resolver's tail. */
     static final String STRICT_PROFILE = "vertique-strict";
@@ -189,6 +190,7 @@ final class McpToolInputShapesITFixture {
         register(tools, factory, SINGLE_ANY_SETTER_TYPE_USE_TOOL, SingleAnySetterTypeUsePayload.class, null);
         register(tools, factory, SHARED_ANY_SETTER_CONJUNCTION_TOOL, SharedAnySetterConjunctionPayload.class, null);
         register(tools, factory, OBJECT_VALUED_ANY_SETTER_PAIR_TOOL, ObjectValuedAnySetterPairPayload.class, null);
+        register(tools, factory, MEMBER_LEVEL_CLOSURE_TOOL, MemberLevelClosurePayload.class, null);
         this.toolsByName = Map.copyOf(tools);
 
         McpToolRegistry registry = McpToolRegistry.build(Set.copyOf(tools.values()));
@@ -491,6 +493,9 @@ final class McpToolInputShapesITFixture {
 
     record ObjectValuedAnySetterPairPayload(
             @JsonProperty("payload") ObjectValuedAnySetterPairDto argument0) {}
+
+    record MemberLevelClosurePayload(
+            @JsonProperty("payload") MemberLevelClosureDto argument0) {}
 
     // --- TP-003 shapes: the five AC-013.1 input-discovery shapes, as T004's corpus defines them ---
 
@@ -1065,5 +1070,30 @@ final class McpToolInputShapesITFixture {
         /** The parent's own any-setter, bean-valued. */
         @JsonAnySetter
         public Map<String, ConjunctionLeft> extras = new LinkedHashMap<>();
+    }
+
+    // --- rest-023 T005 (D005): TP-003, member-level closure ---
+
+    /** The value type both the FALSE-closed member and the unannotated open control member reference. */
+    static final class ClosedChild {
+
+        /** An ordinary constrained property, beside the any-setter. */
+        @Size(max = 3)
+        public String name;
+
+        /** The any-setter the member-level FALSE closes for the annotated member only. */
+        @JsonAnySetter
+        public Map<String, String> extras = new LinkedHashMap<>();
+    }
+
+    /** M10: a member-level FALSE-closed reference to {@link ClosedChild}, plus an unannotated control. */
+    static final class MemberLevelClosureDto {
+
+        /** The FALSE-closed member under test. */
+        @Schema(additionalProperties = Schema.AdditionalPropertiesValue.FALSE)
+        public ClosedChild child;
+
+        /** The unannotated control, referencing the same value type. */
+        public ClosedChild open;
     }
 }
