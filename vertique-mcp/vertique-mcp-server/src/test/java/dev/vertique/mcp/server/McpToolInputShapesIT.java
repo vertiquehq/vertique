@@ -580,6 +580,40 @@ class McpToolInputShapesIT {
                         + " case-insensitive lookup ever gets a chance to route it to the real \"key\" member");
     }
 
+    // --- rest-023 T002 (D002): Optional-typed extras value ---
+
+    /**
+     * rest-023 T002 (D002; {@code evidence/probe-report-327531b4.md} § N14, § N14n). An any-setter
+     * extras value of declared type {@code Optional<Plain>} admits an explicit {@code null} (Jackson's
+     * own {@code Optional.empty()} mapping, closing N14n) and rejects a non-null value violating {@code
+     * Plain}'s own {@code @Size(max = 3)} constraint (closing N14), distinguished from a broken request
+     * path by a companion body that satisfies the constraint.
+     *
+     * <p>Expected initial result: red for both bodies — {@code main} rejects the {@code null} body and
+     * accepts the constraint-violating body (the undescribed gap).
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("An Optional-typed extras value accepts null and rejects a constraint violation")
+    void optionalExtrasValueAcceptsNullAndRejectsAConstraintViolation() throws Exception {
+        startServer();
+
+        assertAccepted(
+                McpToolInputShapesITFixture.OPTIONAL_EXTRAS_TOOL,
+                new JsonObject().put("label", "l").putNull("x"),
+                "N14n: an explicit null must bind to Optional.empty(), matching Jackson's own mapping");
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.OPTIONAL_EXTRAS_TOOL,
+                new JsonObject().put("label", "l").put("x", new JsonObject().put("name", "TOOLONG")),
+                "N14: a non-null value violating Plain's own @Size(max = 3) must now be rejected");
+        assertAccepted(
+                McpToolInputShapesITFixture.OPTIONAL_EXTRAS_TOOL,
+                new JsonObject().put("label", "l").put("x", new JsonObject().put("name", "ab")),
+                "sensitivity proof: a non-null value satisfying Plain's own constraint must stay accepted,"
+                        + " distinguishing the constraint rejection from a broken request path");
+    }
+
     // --- Shared actions and assertions ---
 
     /**

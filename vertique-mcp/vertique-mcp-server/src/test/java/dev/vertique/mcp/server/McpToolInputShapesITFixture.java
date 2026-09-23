@@ -117,6 +117,7 @@ final class McpToolInputShapesITFixture {
     static final String CASE_INSENSITIVE_TOOL = "shapes.caseInsensitive";
     static final String CASE_INSENSITIVE_CLOSED_TOOL = "shapes.caseInsensitiveClosed";
     static final String SIBLING_UNWRAPPED_TOOL = "shapes.siblingUnwrappedPair";
+    static final String OPTIONAL_EXTRAS_TOOL = "shapes.optionalExtrasNullAdmission";
 
     /** The profile T005 TP-005's strict row selects; every other tool takes the resolver's tail. */
     static final String STRICT_PROFILE = "vertique-strict";
@@ -178,6 +179,7 @@ final class McpToolInputShapesITFixture {
         register(tools, factory, CASE_INSENSITIVE_CLOSED_TOOL, CaseInsensitiveClosedPayload.class, null);
         register(tools, factory, AC005_TOOL, Ac005Payload.class, null);
         register(tools, factory, SIBLING_UNWRAPPED_TOOL, SiblingUnwrappedPayload.class, null);
+        register(tools, factory, OPTIONAL_EXTRAS_TOOL, OptionalAnySetterExtrasPayload.class, null);
         this.toolsByName = Map.copyOf(tools);
 
         McpToolRegistry registry = McpToolRegistry.build(Set.copyOf(tools.values()));
@@ -466,6 +468,9 @@ final class McpToolInputShapesITFixture {
     record Ac005Payload(@JsonProperty("payload") Ac005CaseInsensitiveAnySetterType argument0) {}
 
     record SiblingUnwrappedPayload(@JsonProperty("payload") SiblingUnwrappedParent argument0) {}
+
+    record OptionalAnySetterExtrasPayload(
+            @JsonProperty("payload") OptionalAnySetterExtrasDto argument0) {}
 
     // --- TP-003 shapes: the five AC-013.1 input-discovery shapes, as T004's corpus defines them ---
 
@@ -925,5 +930,26 @@ final class McpToolInputShapesITFixture {
 
         @JsonUnwrapped
         public SiblingUnwrappedB b;
+    }
+
+    // --- rest-023 T002 (D002, N14/N14n): Optional-typed extras value ---
+
+    /** A named property beside an any-setter whose extras value is {@code Optional<Plain>} (N14/N14n). */
+    static final class OptionalAnySetterExtrasDto {
+
+        /** An ordinary property. */
+        public String label;
+
+        /** The any-setter's backing storage, whose declared value type is {@code Optional<Plain>}. */
+        @JsonAnySetter
+        public Map<String, Optional<Plain>> extras = new LinkedHashMap<>();
+
+        /** {@code Plain}'s own schema is what a declared-{@code Optional} extras value must describe. */
+        static final class Plain {
+
+            /** The constraint an {@code Optional<Plain>} extras value must still describe (N14). */
+            @Size(max = 3)
+            public String name;
+        }
     }
 }

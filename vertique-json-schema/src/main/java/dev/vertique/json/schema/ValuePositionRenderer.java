@@ -6,24 +6,30 @@ package dev.vertique.json.schema;
 import com.fasterxml.jackson.core.TreeNode;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.victools.jsonschema.generator.SchemaGenerationContext;
 import java.lang.reflect.AnnotatedType;
+import java.util.Optional;
 import java.util.Set;
 
 /**
  * Renders the schema at a value position — a map value ({@link InputPropertyDescriber#describeMapLike}),
- * an any-setter extras value ({@link InputPropertyDescriber#describeExtras}), and, once a later task
- * activates it, {@code Optional<T>} content — through one shared four-step pipeline (rest-023 T001;
+ * an any-setter extras value ({@link InputPropertyDescriber#describeExtras}), and a declared {@code
+ * Optional<T>} content (T002, {@code D002}) — through one shared four-step pipeline (rest-023 T001;
  * {@code decisions/D001}, {@code D002}, {@code D004}):
  *
  * <ol>
  *   <li><strong>Profile override first</strong> (the F4 rule) — a declared {@code JsonSchemaTypeOverride}
  *       on the value type wins before its own reflective schema is ever built.
  *   <li><strong>The value's own schema</strong> — the value type's schema through {@code
- *       createDefinitionReference}, or, for an entry of {@link #UNCONSTRAINED_VALUE_TYPES} ({@code
- *       Object}, {@code JsonNode}, {@code TreeNode}) or a {@code null} value type, an open position (no
- *       schema written; each caller decides how to render "open" for its own shape, exactly as {@code
- *       main} does today).
+ *       createDefinitionReference}; for a declared {@code Optional<T>} position (T002, {@code D002}),
+ *       {@code T}'s own schema — not {@code Optional<T>}'s — so a profile override on {@code T} still
+ *       wins first and {@code T}'s own declared constraints render exactly as they do for a
+ *       non-{@code Optional} position; or, for an entry of {@link #UNCONSTRAINED_VALUE_TYPES} ({@code
+ *       Object}, {@code JsonNode}, {@code TreeNode}) or a {@code null} value type — including a declared
+ *       {@code Optional<T>} whose {@code T} is one of those types — an open position (no schema
+ *       written; each caller decides how to render "open" for its own shape, exactly as {@code main}
+ *       does today).
  *   <li><strong>Type-use constraint overlay</strong> — a hook that overlays a walk-vocabulary constraint
  *       declared on the position's own {@link AnnotatedType} (field, getter, creator parameter,
  *       any-setter), where one is supplied.
@@ -37,21 +43,25 @@ import java.util.Set;
  * provider chain, applies a declared override before this renderer (or {@link InputPropertyDescriber}
  * itself) is ever consulted for the value type — so step 1 needs no separate lookup here.
  *
- * <p><strong>This task (T001) wires steps 1–3, but only step 2 is ever behaviorally active.</strong>
- * Every caller in this task passes a {@code null} {@link AnnotatedType} (see {@link ValuePosition}), so
- * step 3's own overlay hook ({@link #overlayTypeUseConstraint}) is a no-op regardless of its input —
- * both {@link InputPropertyDescriber#describeMapLike} and {@link InputPropertyDescriber#describeExtras}
- * reproduce exactly the schema {@code main} rendered before this extraction (the behavior-preservation
- * proof, TP-001). Step 4 (nullability) is not reached from any T001 caller at all: neither {@code
- * describeMapLike} nor {@code describeExtras} detects an {@code Optional}-typed value in this task.
- * {@link InputPropertyDescriber#markNullable} is widened to package-private so T002 ({@code D002}) can
- * call it once it adds that detection here. T003 ({@code D001}) wires a real {@link AnnotatedType}
- * through for a named map position and for an any-setter's own value position (closing N16), and, for a
- * {@code describeMapLike}-handled {@code Map} subclass, an overlay source of {@code
- * Class.getAnnotatedSuperclass()}/{@code getAnnotatedInterfaces()} (security round-2 finding S4) rather
- * than a member-position {@link AnnotatedType}, which does not exist for that type-level reach. T004
- * ({@code D004}) is the first to invoke the {@link InlineComposer} callback this task stores but never
- * calls, to inline a bean-valued subschema at a conjunction position.
+ * <p><strong>T001 wired steps 1–3; T002 ({@code D002}) activates step 4.</strong> Every caller passes a
+ * {@code null} {@link AnnotatedType} (see {@link ValuePosition}), so step 3's own overlay hook ({@link
+ * #overlayTypeUseConstraint}) is still a no-op regardless of its input — neither {@link
+ * InputPropertyDescriber#describeMapLike} nor {@link InputPropertyDescriber#describeExtras} supplies a
+ * non-{@code null} one yet, so both reproduce exactly the schema {@code main} rendered before T001's own
+ * extraction for a non-{@code Optional} position (the behavior-preservation proof, TP-001). T002
+ * detects a declared {@code Optional<T>} value position here: step 2 renders {@code T} itself — not
+ * {@code Optional<T>} — through the same {@code createDefinitionReference} call, and step 4 then marks
+ * the rendered node nullable through {@link InputPropertyDescriber#markNullable}, because the declared
+ * type is nullable — null is admitted matching Jackson's own {@code Optional.empty()} binding. An
+ * {@code Optional<T>} whose {@code T} is one of {@link #UNCONSTRAINED_VALUE_TYPES} stays an open
+ * position (a {@code null} return), exactly like a non-{@code Optional} entry of one of those types.
+ * T003 ({@code D001}) wires a real {@link AnnotatedType} through for a named map position and for an
+ * any-setter's own value position (closing N16), and, for a {@code describeMapLike}-handled {@code Map}
+ * subclass, an overlay source of {@code Class.getAnnotatedSuperclass()}/{@code
+ * getAnnotatedInterfaces()} (security round-2 finding S4) rather than a member-position {@link
+ * AnnotatedType}, which does not exist for that type-level reach. T004 ({@code D004}) is the first to
+ * invoke the {@link InlineComposer} callback this task stores but never calls, to inline a bean-valued
+ * subschema at a conjunction position.
  *
  * <p><strong>Collaborators (architecture round-2 condition C6).</strong> The renderer takes its
  * collaborators at construction — a {@link ValidatedProfile} (possibly {@code null}, as in {@link
@@ -89,12 +99,13 @@ final class ValuePositionRenderer {
     }
 
     /**
-     * Renders {@code position}'s own value schema: steps 1–3 of the class-level pipeline. Returns {@code
-     * null} when the position is open (a {@code null} value type, or one of {@link
-     * #UNCONSTRAINED_VALUE_TYPES}) — the caller decides how to render an open position for its own
-     * shape ({@link InputPropertyDescriber#describeMapLike} omits the {@code additionalProperties}
-     * keyword entirely; {@link InputPropertyDescriber#describeExtras} writes an explicit empty object —
-     * both preserved byte-for-byte from before this extraction).
+     * Renders {@code position}'s own value schema: steps 1–4 of the class-level pipeline (step 4 only
+     * for a declared {@code Optional<T>} position; see class Javadoc). Returns {@code null} when the
+     * position is open (a {@code null} value type, one of {@link #UNCONSTRAINED_VALUE_TYPES}, or a
+     * declared {@code Optional<T>} whose {@code T} is one of those) — the caller decides how to render
+     * an open position for its own shape ({@link InputPropertyDescriber#describeMapLike} omits the
+     * {@code additionalProperties} keyword entirely; {@link InputPropertyDescriber#describeExtras}
+     * writes an explicit empty object — both preserved byte-for-byte from before this extraction).
      *
      * @param context  the active generation context
      * @param position the value position being rendered
@@ -105,12 +116,25 @@ final class ValuePositionRenderer {
         if (valueType == null || UNCONSTRAINED_VALUE_TYPES.contains(valueType.getRawClass())) {
             return null;
         }
+        // T002 (D002): a declared Optional<T> position renders T itself (not Optional<T>) through steps
+        // 1+2 below, and is marked nullable by step 4 at the end — null is admitted because the
+        // declared type is nullable, matching Jackson's own Optional.empty() binding (see class
+        // Javadoc). AtomicReference is not widened to this branch: D002 is about Optional specifically.
+        boolean optional = valueType.isReferenceType() && valueType.getRawClass() == Optional.class;
+        JavaType renderedType = optional ? valueType.getReferencedType() : valueType;
+        if (renderedType == null || UNCONSTRAINED_VALUE_TYPES.contains(renderedType.getRawClass())) {
+            return null;
+        }
         // Steps 1+2: reached together through createDefinitionReference (see class Javadoc).
-        JsonNode schema = context.createDefinitionReference(InputPropertyDescriber.resolve(context, valueType));
+        JsonNode schema = context.createDefinitionReference(InputPropertyDescriber.resolve(context, renderedType));
         // Step 3: the type-use constraint overlay hook. Extracted here, but inert in this task — every
         // T001 caller passes a null AnnotatedType, and overlayTypeUseConstraint below does nothing
         // regardless of its input until T003 implements the walk vocabulary (see class Javadoc).
         overlayTypeUseConstraint(schema, position.annotatedType());
+        // Step 4: nullability, active only for a declared Optional<T> position (T002, D002).
+        if (optional) {
+            InputPropertyDescriber.markNullable((ObjectNode) schema);
+        }
         return schema;
     }
 

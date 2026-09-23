@@ -75,6 +75,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -2789,6 +2790,73 @@ public class ProfiledSchemaSynthesisIT {
         }
     }
 
+    // --- rest-023 T002 (D002, N14/N14n): Optional-typed extras value ---
+
+    /** A named property beside an any-setter whose extras value is {@code Optional<Plain>} (N14/N14n). */
+    public static class OptionalAnySetterExtrasDto {
+
+        /** An ordinary property the document publishes. */
+        public String label;
+
+        /** The collected extras, whose declared value type is {@code Optional<Plain>}. */
+        private final Map<String, Optional<Plain>> extras = new LinkedHashMap<>();
+
+        /**
+         * Collects an extra key.
+         *
+         * @param key   the extra key
+         * @param value the extra value
+         */
+        @JsonAnySetter
+        public void putExtra(String key, Optional<Plain> value) {
+            extras.put(key, value);
+        }
+
+        /**
+         * Returns the collected extras.
+         *
+         * @return the collected extras
+         */
+        public Map<String, Optional<Plain>> collectedExtras() {
+            return extras;
+        }
+
+        /** {@code Plain}'s own schema is what a declared-{@code Optional} extras value must describe. */
+        public static class Plain {
+
+            /** The constraint an {@code Optional<Plain>} extras value must still describe (N14). */
+            @Size(max = 3)
+            public String name;
+        }
+    }
+
+    /** The rest-023 T002 resource: a single route accepting the {@code Optional}-typed extras body. */
+    @Path("/optional-extras")
+    public static class OptionalExtrasResource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the label and whether the extras value {@code x} was present, so an accepted body is
+         * observable as more than a status code.
+         *
+         * @param body the {@code Optional}-typed extras body
+         * @return the echoed value
+         */
+        @POST
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "optionalExtrasEcho")
+        public String echo(OptionalAnySetterExtrasDto body) {
+            invocations.incrementAndGet();
+            Optional<OptionalAnySetterExtrasDto.Plain> x =
+                    body.collectedExtras().get("x");
+            String rendered = x == null ? "absent" : x.map(plain -> plain.name).orElse("empty");
+            return "label=" + body.label + " x=" + rendered;
+        }
+    }
+
     // --- C1 (spike/deserializer-driven-schema round 4, CRITICAL): sibling-ordered unwrapped pair ---
 
     /**
@@ -3627,6 +3695,56 @@ public class ProfiledSchemaSynthesisIT {
                 "a rejected body must never reach the resource; a green pre-fix run here would mean the"
                         + " oversized value reached the resource through the extras bucket because the hidden"
                         + " member was never reserved at all");
+    }
+
+    // --- rest-023 T002 (D002): TP-002, Optional-typed extras value ---
+
+    /**
+     * rest-023 T002 TP-002 (D002; {@code evidence/probe-report-327531b4.md} § N14, § N14n). An
+     * any-setter extras value of declared type {@code Optional<Plain>} admits an explicit {@code null}
+     * (Jackson's own {@code Optional.empty()} mapping, closing N14n) and rejects a non-null value
+     * violating {@code Plain}'s own {@code @Size(max = 3)} constraint (closing N14), distinguished from
+     * a broken request path by a companion body that satisfies the constraint.
+     *
+     * <p>Expected initial result: red for both bodies — {@code main} rejects the {@code null} body with
+     * {@code type@#/x} (the false reject) and accepts the constraint-violating body (the undescribed
+     * gap).
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("An Optional-typed extras value accepts null and rejects a constraint violation")
+    void optionalExtrasValueAcceptsNullAndRejectsAConstraintViolation() throws Exception {
+        OptionalExtrasResource resource = new OptionalExtrasResource();
+        int gatePort = start(gateMount(), Set.of(resource));
+
+        HttpResponse<Buffer> nullValue = post(gatePort, "/optional-extras", "{\"label\":\"l\",\"x\":null}");
+        HttpResponse<Buffer> violating =
+                post(gatePort, "/optional-extras", "{\"label\":\"l\",\"x\":{\"name\":\"TOOLONG\"}}");
+        HttpResponse<Buffer> satisfying =
+                post(gatePort, "/optional-extras", "{\"label\":\"l\",\"x\":{\"name\":\"ab\"}}");
+
+        assertAll(
+                () -> assertEquals(
+                        200,
+                        nullValue.statusCode(),
+                        "N14n: an explicit null must bind to Optional.empty(), matching Jackson's own mapping;"
+                                + " body: " + nullValue.bodyAsString()),
+                () -> assertEquals(
+                        400,
+                        violating.statusCode(),
+                        "N14: a non-null value violating Plain's own @Size(max = 3) must now be rejected; body: "
+                                + violating.bodyAsString()),
+                () -> assertEquals(
+                        200,
+                        satisfying.statusCode(),
+                        "sensitivity proof: a non-null value satisfying Plain's own constraint must stay"
+                                + " accepted, distinguishing the constraint rejection from a broken request path;"
+                                + " body: " + satisfying.bodyAsString()),
+                () -> assertEquals(
+                        2,
+                        resource.invocations.get(),
+                        "only the null and constraint-satisfying bodies may have reached the resource"));
     }
 
     // --- Mounts and helpers ---

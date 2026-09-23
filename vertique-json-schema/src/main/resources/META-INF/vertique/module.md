@@ -429,6 +429,10 @@ named property — a `Map<String, LocalDate>` any-setter's extras carry `format:
 `vertique-strict` a `Map<String, BigDecimal>` any-setter's extras carry that profile's decimal
 fragment.
 
+An any-setter extras value (and, once map values are described, a map value) declared as
+`Optional<T>` is described as `T`'s own schema, constraints included, and admits an explicit `null`,
+matching Jackson's own `Optional.empty()` binding.
+
 An unconstrained value type — `Object`, `JsonNode`, `TreeNode`, or a wildcard or raw form resolving
 to one — is described as the empty schema `{}`, which accepts every JSON value. A class-level
 `@Schema(additionalProperties = FALSE)`, declared or inherited, keeps the object closed and is never
