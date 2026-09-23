@@ -28,8 +28,12 @@ import java.util.Objects;
  *       declared {@code additionalProperties} — a schema, {@code true}, or {@code false} — is never
  *       overwritten, so a type that publishes its typed extra keys keeps accepting them; the walk
  *       descends into that declared schema, closing the value type like any other subschema. A
- *       property-less non-root object — a resolved map included — stays open and
- *       schema-unconstrained for values.
+ *       property-less non-root object — a resolved map included — is never closed this way: the
+ *       hardener never treats a map's own absence of a {@code properties} member as
+ *       under-description. On the input direction (rest-023 T003) a resolved map already carries its
+ *       own {@code additionalProperties} — the value type's own schema, or an open schema for an
+ *       unconstrained value type — which the rule above respects and never overwrites, exactly like a
+ *       {@code @JsonAnySetter} type's own extras.
  *   <li>parameter descriptions are attached to root-carrier properties only, as a separate pass
  *       keyed on {@link McpToolParameterMetadata#externalName()}.
  * </ol>

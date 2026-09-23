@@ -204,8 +204,10 @@ only), which is exactly why the floor's own annotation read — not the suppleme
 that shape. Where a property matches nothing in the supplement, it contributes no addition and no
 correction — a silent no-op, not a failure. A `List`/array value's container-element constraints
 (`getConstrainedContainerElementTypes()`, type-argument index 0) merge onto the property's `items`
-subschema when that subschema is inline, as an addition; a `Map` value's element position is not
-described by the generator at all today, so it is unaffected either way.
+subschema when that subschema is inline, as an addition; a `Map` value's element position is now a
+described position on the input direction too (rest-023 T003 — see "How a `Map` value is described"),
+but this supplement's own container-element merge still targets a `List`/array's `items` subschema
+only, unaffected by that change — it does not merge onto a `Map`'s own `additionalProperties`.
 
 **The value-position kind** (`minLength` vs. `minItems` vs. `minProperties` for the same `@Size`
 shape) is derived from the member's **declared Java type**, never from the schema's own rendered
@@ -413,7 +415,51 @@ type's shape honestly would open the boundary to keys the binder never accepted 
 property and leave any constraint on the creator's own type's fields dead on input. Declare a
 `JsonSchemaTypeOverride` for the type on the profile, or bind it through a property-based creator.
 
+### How a `Map` value is described
 
+**On the input direction only** (rest-023 T003), a `Map<K,V>` position — a named property, a creator
+parameter, an any-setter's own extras value, a collection item, or a nested map — describes `V`'s own
+schema as its `additionalProperties`, through the same shared value-position renderer every other
+described value position uses: `V`'s own type (including a profile override on `V`, applied first),
+`V`'s own declared constraints, and a type-use constraint declared on `V` itself — `Map<String,
+@Size(max = 3) String>` publishes `additionalProperties: {"type":"string","maxLength":3}`. A `Map`
+*subclass* (`class Tags extends HashMap<String, @Size(max = 3) String>`) is described the same way,
+with the type-use overlay source read from the subclass's own supertype chain
+(`Class.getAnnotatedSuperclass()`/`getAnnotatedInterfaces()`) rather than a member position, since a
+type-level reach carries no member of its own — a further subclass declaring no type argument of its
+own still resolves to the nearest ancestor that does. `V` of `Object`, `JsonNode`, `TreeNode`, or
+another entry of the generator's own unconstrained-value-type list stays open, exactly like that same
+type at a named position. A `Map`-valued `Optional<T>` entry is described as `T`'s own schema, marked
+nullable, through the same `Optional`-null-and-constraint rendering a named `Optional<T>` member
+already gets; a `null` inside a **non**-`Optional` map value is rejected as wrong-typed once the
+value's own schema is described — a tightening relative to earlier behavior, where nothing was ever
+rejected there because nothing was described there.
+
+Because `V`'s schema is now built through the same override/refusal chain a named position already
+uses, every refusal already reachable at a named position — a custom or module deserializer, a
+delegating creator, a case-insensitive binding combined with an alias, nested `@JsonUnwrapped` on an
+any-setter-carrying type — becomes reachable through a map value's own value type too: router or tool
+schema construction now refuses at startup for an affected DTO where it previously published an
+undescribed `{"type":"object"}` and started. Declare a `JsonSchemaTypeOverride` for the offending
+value type to admit it.
+
+**An explicit `@Schema(additionalProperties = TRUE|FALSE)` on a `Map`-typed member or getter stays
+ignored**, exactly as at every earlier version — a map's entries are its own content, so there is
+nothing "additional" to forbid, and the renderer writes `V`'s own schema into `additionalProperties`
+regardless of the annotation's value. The only behavior this rule adds: when the annotation is present
+on a `Map`-typed member or getter, generation logs one `WARNING`-level line, through this module's own
+existing `System.Logger` facility (`System.getLogger(...)`, named after the emitting class — this
+module carries no logging-facade dependency of its own; see "Dependencies"), naming the member and
+stating the annotation has no effect on the generated input schema. An application routes that log
+line into SLF4J the same way it would any other JDK `System.Logger` output: by adding
+`org.slf4j:slf4j-jdk-platform-logging` to its own runtime classpath. Generation never fails over this
+annotation, and a class-level
+`@Schema(additionalProperties = FALSE)` on a *bean* value type (an any-setter's own closure rule,
+below) is unaffected — this rule is scoped to a `Map`-typed member or getter specifically.
+
+The output-direction generator, and `Option.MAP_VALUES_AS_ADDITIONAL_PROPERTIES`'s own per-builder
+default, are unaffected by any of the above: this renderer is reachable only from
+`forInputProfile`'s own provider chain.
 
 ### How an any-setter's extra keys are described
 
@@ -429,9 +475,9 @@ named property — a `Map<String, LocalDate>` any-setter's extras carry `format:
 `vertique-strict` a `Map<String, BigDecimal>` any-setter's extras carry that profile's decimal
 fragment.
 
-An any-setter extras value (and, once map values are described, a map value) declared as
-`Optional<T>` is described as `T`'s own schema, constraints included, and admits an explicit `null`,
-matching Jackson's own `Optional.empty()` binding.
+An any-setter extras value (and, rest-023 T003, a map value — see "How a `Map` value is described")
+declared as `Optional<T>` is described as `T`'s own schema, constraints included, and admits an
+explicit `null`, matching Jackson's own `Optional.empty()` binding.
 
 An unconstrained value type — `Object`, `JsonNode`, `TreeNode`, or a wildcard or raw form resolving
 to one — is described as the empty schema `{}`, which accepts every JSON value. A class-level

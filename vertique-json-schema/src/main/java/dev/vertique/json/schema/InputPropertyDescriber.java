@@ -67,6 +67,8 @@ import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+import java.lang.System.Logger.Level;
+import java.lang.reflect.AnnotatedType;
 import java.lang.reflect.Field;
 import java.lang.reflect.Member;
 import java.lang.reflect.Method;
@@ -135,6 +137,15 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
 
     /** Resolves a Jackson-resolved type into the schema library's type model. */
     private static final TypeResolver CLASSMATE = new TypeResolver();
+
+    /**
+     * JDK {@code System.Logger} rather than SLF4J: this module's own architecture rule (FR-JSON-070)
+     * freezes its compile dependencies to victools, Jackson, Jakarta Validation/Swagger annotations, and
+     * {@code vertique-core}, with no logging facade among them ({@link MetadataConstraintSource}'s own
+     * {@code LOG} field is the existing precedent this task follows for the same facility — rest-023 T003,
+     * {@code D001}, owner decision Q1).
+     */
+    private static final System.Logger LOG = System.getLogger(InputPropertyDescriber.class.getName());
 
     private final ObjectMapper mapper;
     private final boolean strictSpellings;
@@ -222,18 +233,26 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 || erased == java.util.OptionalDouble.class) {
             return primitiveOptional(erased, context);
         }
-        if (erased.isPrimitive()
-                || erased.isArray()
-                || erased.isEnum()
-                || erased.isAnnotation()
-                || erased.getName().startsWith("java.")
-                || erased.getName().startsWith("javax.")
-                || erased.getName().startsWith("jakarta.")
-                || erased.getName().startsWith("com.fasterxml.jackson.")) {
+        // rest-023 T003 (D001): a map-like position — java.util.Map, its JDK implementations, or a
+        // user-defined subclass — is carved out of the java.*/javax.*/jakarta.*/com.fasterxml.jackson.*
+        // exclusion below, ahead of it, so it still reaches describe() -> describeMapLike and is
+        // described with V's own schema as additionalProperties, at every reach (property, parameter,
+        // extras value, collection item, or nested map). Object/JsonNode/TreeNode are not Map-assignable,
+        // so they are unaffected and keep flowing through the ordinary opaque-type paths below.
+        boolean mapLike = Map.class.isAssignableFrom(erased);
+        if (!mapLike
+                && (erased.isPrimitive()
+                        || erased.isArray()
+                        || erased.isEnum()
+                        || erased.isAnnotation()
+                        || erased.getName().startsWith("java.")
+                        || erased.getName().startsWith("javax.")
+                        || erased.getName().startsWith("jakarta.")
+                        || erased.getName().startsWith("com.fasterxml.jackson."))) {
             return null;
         }
         JavaType javaType = toJavaType(resolved);
-        if (javaType.isEnumType() || javaType.isReferenceType() || javaType.isCollectionLikeType()) {
+        if (!mapLike && (javaType.isEnumType() || javaType.isReferenceType() || javaType.isCollectionLikeType())) {
             return null;
         }
         if (!inProgress.add(javaType)) {
@@ -745,18 +764,23 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 definition, CustomDefinition.DefinitionType.STANDARD, CustomDefinition.AttributeInclusion.NO);
     }
 
-    /** A map subclass is bound as a map: its fields are never filled, and its entries are its values. */
+    /** A map (or map subclass) is bound as a map: its fields are never filled, and its entries are its values. */
     private CustomDefinition describeMapLike(JavaType javaType, SchemaGenerationContext context) {
         ObjectNode definition = context.getGeneratorConfig().createObjectNode();
         definition.put("type", "object");
         JavaType content = javaType.getContentType();
-        // rest-023 T001 (C6): routed through the shared value-position renderer; a describeMapLike
-        // caller has no member-position AnnotatedType at all (a type-level reach from describe()), so
-        // it passes null here — an open position (content == null, or one of the renderer's own
+        // rest-023 T003 (D001, S4): a describeMapLike caller has no member-position AnnotatedType at all
+        // (a type-level reach from describe(), reached identically for every member referencing the
+        // type) — its own overlay source, if any, is the type's own supertype chain (a Map subclass such
+        // as `class Tags extends HashMap<String, @Size(max=3) String>`), which is intrinsic to the type
+        // and therefore identical, and safe to share, at every position referencing it. A plain
+        // java.util.Map (no user subclass) carries no such chain, so this resolves to null exactly as
+        // before T003 for that shape — an open position (content == null, or one of the renderer's own
         // unconstrained value types) omits the additionalProperties keyword entirely, exactly as before
         // this extraction.
+        AnnotatedType typeLevelOverlay = ValuePositionRenderer.mapValueSlotOfClass(javaType.getRawClass());
         JsonNode valueSchema = valuePositionRenderer.renderValueSchema(
-                context, new ValuePositionRenderer.ValuePosition(content, null, null));
+                context, new ValuePositionRenderer.ValuePosition(content, typeLevelOverlay, null));
         if (valueSchema != null) {
             definition.set("additionalProperties", valueSchema);
         }
@@ -893,6 +917,16 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             }
             return schema;
         }
+        // rest-023 T003 (D001): a Map-typed member is a distinct position — see mapMemberSchema's own
+        // Javadoc for the Q1 WARN and the N1 leakage control. Checked ahead of the Field/Method/Parameter
+        // dispatch below so it covers a field-, getter-, setter-, or creator-parameter-backed Map member
+        // uniformly, through one path.
+        if (property.getType().isMapLikeType()) {
+            JsonNode mapSchema = mapMemberSchema(property, member, raw, builtClass, context);
+            if (mapSchema != null) {
+                return mapSchema;
+            }
+        }
         if (raw instanceof Field field) {
             return fieldSchema(field, builtClass, resolved, property.getName(), property.getType(), context, required);
         }
@@ -924,6 +958,95 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             required.add(property.getName());
         }
         return schema;
+    }
+
+    /**
+     * Handles a {@code Map}-typed member as a distinct position (rest-023 T003, {@code D001}): emits the
+     * Q1 WARN when the member or its getter carries an {@code @Schema(additionalProperties = ...)}
+     * annotation (ignored either way — the map's entries are its own content, so there is nothing
+     * "additional" to forbid), and — only when the member's own value position carries a walk-vocabulary
+     * type-use overlay anywhere in its own, possibly nested, {@code Map} content (N1, N9) — renders the
+     * member's own schema entirely inline, never asking the schema library for a {@code FieldScope}/
+     * {@code MethodScope}-based definition at all for this member. This is the N1 leakage control: two
+     * members can share the exact same underlying {@code Map<K,V>} type while only one of them carries a
+     * type-use overlay on {@code V}, and {@link #provideCustomSchemaDefinition} receives only the
+     * resolved type, never the member — so a member-specific overlay can never safely be written into
+     * whatever definition the schema library might create or share for that type. Returns {@code null}
+     * when the member carries no overlay at all (including when it has no recognizable {@link
+     * AnnotatedType} of its own — a raw, non-parameterized {@code Map} declaration, or a member kind this
+     * method does not resolve one for), leaving the caller's own pre-existing field/method/parameter
+     * dispatch to render it exactly as before this task — now correctly reaching {@link #describeMapLike}
+     * for the base rendering, this task's own reachability fix.
+     *
+     * @param property   the property being described
+     * @param member     the property's own Jackson member, possibly {@code null}
+     * @param raw        the property's own raw {@link Field} or {@link Method}, possibly {@code null}
+     * @param builtClass the type being described, named in the WARN message
+     * @param context    the active generation context
+     * @return the member's own inline schema, or {@code null} when no overlay applies
+     */
+    private JsonNode mapMemberSchema(
+            SettableBeanProperty property,
+            AnnotatedMember member,
+            Member raw,
+            Class<?> builtClass,
+            SchemaGenerationContext context) {
+        warnIfAdditionalPropertiesAnnotationIgnored(member, builtClass, property.getName());
+        AnnotatedType annotatedType;
+        if (member instanceof AnnotatedParameter parameter) {
+            Member owner =
+                    parameter.getOwner() == null ? null : parameter.getOwner().getMember();
+            annotatedType = ValuePositionRenderer.mapValueSlotOfParameter(owner, parameter.getIndex());
+        } else if (raw != null) {
+            annotatedType = ValuePositionRenderer.mapValueSlotOfMember(raw);
+        } else {
+            annotatedType = null;
+        }
+        JavaType content = property.getType().getContentType();
+        if (annotatedType == null
+                || content == null
+                || !ValuePositionRenderer.hasOverlayAnywhere(content, annotatedType)) {
+            return null;
+        }
+        JsonNode valueSchema = valuePositionRenderer.renderValueSchema(
+                context, new ValuePositionRenderer.ValuePosition(content, annotatedType, property.getName()));
+        ObjectNode schema = context.getGeneratorConfig().createObjectNode();
+        schema.put("type", "object");
+        if (valueSchema != null) {
+            schema.set("additionalProperties", valueSchema);
+        }
+        return schema;
+    }
+
+    /**
+     * Emits the Q1 WARN (rest-023 T003, {@code D001}, owner decision Q1) exactly once, naming {@code
+     * member}'s own declaring class and name, when {@code member} (or its paired field/getter, through
+     * Jackson's own merged annotation resolution — the same {@code member.getAnnotation(Schema.class)}
+     * lookup {@link #translateConstraints} already uses) carries an {@code @Schema(additionalProperties =
+     * TRUE|FALSE)} declaration. The annotation has no effect on the generated input schema for a
+     * {@code Map}-typed member either way; this WARN is the only new behavior this rule adds. Never fails
+     * generation.
+     *
+     * @param member     the property's own Jackson member, possibly {@code null}
+     * @param builtClass the type being described, named in the message
+     * @param wireName   the property's own wire name, named in the message
+     */
+    private static void warnIfAdditionalPropertiesAnnotationIgnored(
+            AnnotatedMember member, Class<?> builtClass, String wireName) {
+        if (member == null) {
+            return;
+        }
+        Schema swagger = member.getAnnotation(Schema.class);
+        if (swagger == null
+                || swagger.additionalProperties()
+                        == Schema.AdditionalPropertiesValue.USE_ADDITIONAL_PROPERTIES_ANNOTATION) {
+            return;
+        }
+        LOG.log(
+                Level.WARNING,
+                builtClass.getName() + "#" + wireName
+                        + ": @Schema(additionalProperties) on a Map-typed member has no effect on the generated"
+                        + " input schema");
     }
 
     private JsonNode fieldSchema(
@@ -1822,14 +1945,21 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             return false;
         }
         JavaType valueType = anySetter.getType();
-        // rest-023 T001 (C6): routed through the shared value-position renderer. describeExtras passes
-        // annotatedType = null — anySetter.getType() is a bare JavaType, carrying no type-use
-        // annotations, both before and after this extraction; T003 wires a real AnnotatedType through
-        // for this position (closing N16) — see ValuePositionRenderer's own class Javadoc. An open
+        // rest-023 T003 (D001, N16/N9): the any-setter's own value position's AnnotatedType, read off
+        // its own backing field/method's declared Map<K,V> type through the type-parameter binding
+        // (ValuePositionRenderer.mapValueSlotOfMember), so a type-use constraint on V (N16) — and,
+        // recursively, on a nested map's own V (N9) — overlays the extras value's own schema through the
+        // shared renderer, exactly like a named member's own map position (T001 left this null; T003
+        // wires the real AnnotatedType through, see ValuePositionRenderer's own class Javadoc). An open
         // position (valueType == null, or one of the renderer's own unconstrained value types) writes an
         // explicit empty additionalProperties object, exactly as before this extraction.
+        AnnotatedMember member =
+                anySetter.getProperty() == null ? null : anySetter.getProperty().getMember();
+        AnnotatedType extrasAnnotatedType = member == null || member.getMember() == null
+                ? null
+                : ValuePositionRenderer.mapValueSlotOfMember(member.getMember());
         JsonNode valueSchema = valuePositionRenderer.renderValueSchema(
-                context, new ValuePositionRenderer.ValuePosition(valueType, null, null));
+                context, new ValuePositionRenderer.ValuePosition(valueType, extrasAnnotatedType, null));
         if (valueSchema == null) {
             definition.putObject("additionalProperties");
         } else {
@@ -1841,8 +1971,6 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         // through applyCorrection (S1, the same rule the supplement's corrections follow — FR-009 of
         // the rest-021 package) so a looser @Schema(minProperties/maxProperties) never overwrites a
         // stricter @Size bound already written for the same keyword.
-        AnnotatedMember member =
-                anySetter.getProperty() == null ? null : anySetter.getProperty().getMember();
         if (member != null) {
             Size size = member.getAnnotation(Size.class);
             if (size != null && member.getRawType() != null && Map.class.isAssignableFrom(member.getRawType())) {

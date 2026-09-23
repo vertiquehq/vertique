@@ -614,6 +614,87 @@ class McpToolInputShapesIT {
                         + " distinguishing the constraint rejection from a broken request path");
     }
 
+    // --- rest-023 T003 (D001): TP-004, map value shapes ---
+
+    /**
+     * rest-023 T003 TP-004 (D001; {@code evidence/probe-report-327531b4.md} §§ S2a, S2b, rest023b §
+     * S2d). Every {@code tags}/{@code labels}/{@code opts} argument is rejected, including a {@code
+     * null} inside the non-{@code Optional} {@code tags} map value (the explicit null rule); a
+     * companion {@code opts} argument carrying {@code null} is accepted, since {@code opts}'s own
+     * declared value type is {@code Optional<Plain>}; the {@code raw} argument stays accepted,
+     * unaffected.
+     *
+     * <p>Expected initial result: red for every {@code tags}/{@code labels}/{@code opts} argument —
+     * {@code main} accepts all of them; the {@code raw} argument's own acceptance is a characterization
+     * control, not a red.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("A wrong-typed or constraint-violating map value is rejected at both boundaries; a null in a"
+            + " non-Optional map value is rejected; JsonNode values stay open")
+    void mapValueRejectsAWrongTypedOrConstraintViolatingValueAtBothBoundaries() throws Exception {
+        startServer();
+
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.MAP_VALUE_SHAPES_TOOL,
+                new JsonObject().put("tags", new JsonObject().put("k", "TOOLONG")),
+                "tags: a constraint-violating value must be rejected");
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.MAP_VALUE_SHAPES_TOOL,
+                new JsonObject().put("tags", new JsonObject().putNull("k")),
+                "tags: a null inside a non-Optional map value must be rejected as wrong-typed (the explicit"
+                        + " null rule)");
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.MAP_VALUE_SHAPES_TOOL,
+                new JsonObject().put("tags", new JsonObject().put("k", 1)),
+                "tags: a wrong-typed value must be rejected");
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.MAP_VALUE_SHAPES_TOOL,
+                new JsonObject().put("labels", new JsonObject().put("k", new JsonObject().put("name", "TOOLONG"))),
+                "labels: a bean value's own constraint violation must be rejected");
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.MAP_VALUE_SHAPES_TOOL,
+                new JsonObject().put("opts", new JsonObject().put("k", new JsonObject().put("name", "TOOLONG"))),
+                "opts: a non-null Optional bean value's own constraint violation must be rejected");
+        assertAccepted(
+                McpToolInputShapesITFixture.MAP_VALUE_SHAPES_TOOL,
+                new JsonObject().put("opts", new JsonObject().putNull("k")),
+                "opts: null must be accepted — opts's own declared value type is Optional<Plain>");
+        assertAccepted(
+                McpToolInputShapesITFixture.MAP_VALUE_SHAPES_TOOL,
+                new JsonObject().put("raw", new JsonObject().put("k", new JsonObject().put("any", 1))),
+                "raw: an opaque JsonNode value must stay accepted, unaffected");
+    }
+
+    // --- rest-023 T003 (D001): TP-010, the single any-setter N16 shape ---
+
+    /**
+     * rest-023 T003 TP-010 (N16, architecture round-3 R1's own alternative, ruling X1). An argument
+     * violating the single any-setter's own type-use constraint is rejected; a companion argument
+     * satisfying the constraint is accepted, distinguishing the rejection from a broken request path.
+     *
+     * <p>Expected initial result: red — {@code main} accepts {@code {"k":"TOOLONG"}} (the any-setter's
+     * own extras value carries no maxLength today).
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("A body violating the single any-setter's own type-use constraint is rejected as INPUT_VALIDATION")
+    void singleAnySetterValueTypeUseConstraintRejectsAViolatingBody() throws Exception {
+        startServer();
+
+        assertSchemaRejection(
+                McpToolInputShapesITFixture.SINGLE_ANY_SETTER_TYPE_USE_TOOL,
+                new JsonObject().put("k", "TOOLONG"),
+                "a body violating the any-setter's own type-use constraint must be rejected");
+        assertAccepted(
+                McpToolInputShapesITFixture.SINGLE_ANY_SETTER_TYPE_USE_TOOL,
+                new JsonObject().put("k", "ab"),
+                "a body satisfying the constraint must stay accepted, distinguishing the rejection from a"
+                        + " broken request path");
+    }
+
     // --- Shared actions and assertions ---
 
     /**

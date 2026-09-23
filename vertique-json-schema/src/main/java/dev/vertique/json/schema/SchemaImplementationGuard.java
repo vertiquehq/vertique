@@ -82,10 +82,15 @@ import java.util.function.Supplier;
  * and it must not be narrowed to match it. This guard decides only whether an override <em>could</em>
  * be reachable under a redirect; being fail-closed, it prefers a false rejection, which a developer
  * sees and can resolve by declaring the wire shape once, over a silent drop, which nobody sees. That
- * posture also keeps the walk internally consistent: under the pinned option set an inherited
- * {@link Map} value is not a distinct schema position either (the generator does not enable
- * {@code Option.MAP_VALUES_AS_ADDITIONAL_PROPERTIES}), so narrowing one inherited descent while
- * keeping another would trade a coherent over-approximation for an arbitrary one.
+ * posture also keeps the walk internally consistent even though it is no longer uniform across
+ * directions (rest-023 T003, {@code D001}): an inherited {@link Map} value is now a described position
+ * on the input direction, through the shared value-position renderer, so this guard's own walk exactly
+ * matches what the input-direction generator actually describes there; the output direction still
+ * leaves it undescribed (the generator does not enable {@code Option.MAP_VALUES_AS_ADDITIONAL_PROPERTIES}
+ * there), so the walk stays a deliberate over-approximation for that direction alone. This guard's own
+ * walk is never narrowed to track that split: it has no way to know which direction is generating, so
+ * narrowing it to match the input direction only would silently reopen the drop this guard exists to
+ * prevent whenever it runs for the output direction instead.
  *
  * <p><strong>Closed enumeration of a declared-type-graph child</strong>, at the pinned Victools
  * version — a future reader can check completeness against this list by inspection rather than

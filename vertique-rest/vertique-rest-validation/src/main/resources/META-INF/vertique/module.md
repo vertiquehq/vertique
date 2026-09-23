@@ -208,8 +208,13 @@ its schema stays `{"type":"object"}` and nothing inside it is validated.
 A `@JsonAnySetter` or `@JsonAnyGetter` backing store is never described as a named property, because
 the keys it collects are extra keys rather than members of the body's property set. It is excluded
 by member, never by a name an accessor implies, so a real constrained property is never hidden
-because an any-setter's name happens to imply it. Values *inside* a described `Map` property are not
-themselves described; constrain them with Bean Validation.
+because an any-setter's name happens to imply it. **Values *inside* a described `Map` property are
+themselves described too** (rest-023 T003): the value type's own schema — including a type-use
+constraint declared on it — publishes as the `Map`'s `additionalProperties`, so the gate rejects a
+wrong-typed or constraint-violating value the same way it rejects one at a named position; a `null`
+inside a non-`Optional` map value is rejected as wrong-typed, and a `Map<String, Optional<T>>` entry
+admits an explicit `null`. An explicit `@Schema(additionalProperties = TRUE|FALSE)` on the `Map`-typed
+property itself has no effect on this rendering (`vertique-json-schema`'s own module reference).
 
 **How a `@JsonAnySetter` body is validated.** The extra keys such a body accepts *are* described, by
 the any-setter's value type, so the gate validates them: a body posting `{"x": 5}` to a
