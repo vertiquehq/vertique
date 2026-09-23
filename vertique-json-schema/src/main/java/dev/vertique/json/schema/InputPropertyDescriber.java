@@ -9,7 +9,6 @@ import com.fasterxml.classmate.TypeResolver;
 import com.fasterxml.classmate.members.ResolvedField;
 import com.fasterxml.classmate.members.ResolvedMethod;
 import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.core.TreeNode;
 import com.fasterxml.jackson.databind.AnnotationIntrospector;
 import com.fasterxml.jackson.databind.BeanDescription;
 import com.fasterxml.jackson.databind.DeserializationConfig;
@@ -134,9 +133,6 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
 
-    /** Value types that accept every JSON value, and are therefore published as the empty schema. */
-    private static final Set<Class<?>> UNCONSTRAINED_VALUE_TYPES = Set.of(Object.class, JsonNode.class, TreeNode.class);
-
     /** Resolves a Jackson-resolved type into the schema library's type model. */
     private static final TypeResolver CLASSMATE = new TypeResolver();
 
@@ -161,6 +157,13 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * which no production call site uses.
      */
     private final ValidatedProfile validatedProfile;
+
+    /**
+     * The shared value-position renderer (rest-023 T001; architecture round-2 condition C6) that
+     * {@link #describeMapLike} and {@link #describeExtras} route their own value-schema rendering
+     * through — see {@link ValuePositionRenderer}'s own class Javadoc for the pipeline this task wires.
+     */
+    private final ValuePositionRenderer valuePositionRenderer;
 
     /** The introspected ignored names per type, the one fact the deserializer does not carry. */
     private final Map<JavaType, Set<String>> ignoredNamesByType = new ConcurrentHashMap<>();
@@ -200,6 +203,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         this.strictSpellings = strictSpellings;
         this.supplement = supplement;
         this.validatedProfile = validatedProfile;
+        this.valuePositionRenderer = new ValuePositionRenderer(validatedProfile, supplement, this::inlineBeanSchema);
     }
 
     /** Clears the per-generation recursion state after an abnormal exit. */
@@ -746,8 +750,15 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         ObjectNode definition = context.getGeneratorConfig().createObjectNode();
         definition.put("type", "object");
         JavaType content = javaType.getContentType();
-        if (content != null && !UNCONSTRAINED_VALUE_TYPES.contains(content.getRawClass())) {
-            definition.set("additionalProperties", context.createDefinitionReference(resolve(context, content)));
+        // rest-023 T001 (C6): routed through the shared value-position renderer; a describeMapLike
+        // caller has no member-position AnnotatedType at all (a type-level reach from describe()), so
+        // it passes null here — an open position (content == null, or one of the renderer's own
+        // unconstrained value types) omits the additionalProperties keyword entirely, exactly as before
+        // this extraction.
+        JsonNode valueSchema = valuePositionRenderer.renderValueSchema(
+                context, new ValuePositionRenderer.ValuePosition(content, null, null));
+        if (valueSchema != null) {
+            definition.set("additionalProperties", valueSchema);
         }
         return new CustomDefinition(
                 definition, CustomDefinition.DefinitionType.STANDARD, CustomDefinition.AttributeInclusion.YES);
@@ -1811,10 +1822,18 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             return false;
         }
         JavaType valueType = anySetter.getType();
-        if (valueType == null || UNCONSTRAINED_VALUE_TYPES.contains(valueType.getRawClass())) {
+        // rest-023 T001 (C6): routed through the shared value-position renderer. describeExtras passes
+        // annotatedType = null — anySetter.getType() is a bare JavaType, carrying no type-use
+        // annotations, both before and after this extraction; T003 wires a real AnnotatedType through
+        // for this position (closing N16) — see ValuePositionRenderer's own class Javadoc. An open
+        // position (valueType == null, or one of the renderer's own unconstrained value types) writes an
+        // explicit empty additionalProperties object, exactly as before this extraction.
+        JsonNode valueSchema = valuePositionRenderer.renderValueSchema(
+                context, new ValuePositionRenderer.ValuePosition(valueType, null, null));
+        if (valueSchema == null) {
             definition.putObject("additionalProperties");
         } else {
-            definition.set("additionalProperties", context.createDefinitionReference(resolve(context, valueType)));
+            definition.set("additionalProperties", valueSchema);
         }
         // A bound on the any-setter's map itself — @Size on the field, @Schema(minProperties/maxProperties)
         // on the member — is a bound on the object's key count. The @Size-derived value is the
@@ -1845,6 +1864,27 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             }
         }
         return true;
+    }
+
+    /**
+     * The {@link ValuePositionRenderer.InlineComposer} supplied to {@link #valuePositionRenderer} at
+     * construction (rest-023 T001, C6). No pipeline step in this task calls it, so it is deliberately a
+     * fail-closed placeholder rather than an untested inline path: D004's own conjunction rule (T004)
+     * replaces its body, under its own red-first proof, with the population the member-level
+     * case-insensitive inline path already performs ({@link #propertySchema}), behind its own
+     * override-first check and its own {@code inlineInProgress} recursion bound (D004, D005
+     * § Recursion bound); D005's own member-level inline path (T005) reuses it.
+     *
+     * @param beanType the bean value type to inline
+     * @param context  the active generation context
+     * @return never; this task inlines nothing at a value position
+     * @throws JsonSchemaGenerationException always, until T004 supplies the inline population
+     */
+    private JsonNode inlineBeanSchema(JavaType beanType, SchemaGenerationContext context) {
+        throw Diagnostics.failure(
+                "JSON Schema generation failed for " + Diagnostics.typeIdentity(beanType.getRawClass())
+                        + ": inlining a bean at a value position is not supported yet",
+                null);
     }
 
     /**
@@ -2013,8 +2053,15 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * it decides before its final {@code allOf} cleanup; the shape at this moment is therefore
      * recorded with the mark, so the finished document renders exactly as the library's own walk
      * would.
+     *
+     * <p>Package-private (rest-023 T001, C6) so {@link ValuePositionRenderer}'s own nullability step
+     * can share it once a later task (T002, {@code D002}) activates that step for an {@code
+     * Optional}-typed value position; the two existing named-member callers here ({@code fieldSchema},
+     * {@code methodSchema}) are unchanged by this task. {@link #NULLABLE_MARKER} and {@link
+     * #WRAPPING_KEYWORDS} stay here, consulted only by this method and by {@link
+     * #applyNullability(JsonNode)}, the generator's own document-level post-pass — neither moves.
      */
-    private static void markNullable(ObjectNode schema) {
+    static void markNullable(ObjectNode schema) {
         boolean wrap = WRAPPING_KEYWORDS.stream().anyMatch(schema::has);
         schema.put(NULLABLE_MARKER, wrap ? "wrap" : "extend");
     }
@@ -2641,7 +2688,13 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         return typeContext.resolveWithMembers(typeContext.resolve(declaring));
     }
 
-    private static ResolvedType resolve(SchemaGenerationContext context, JavaType type) {
+    /**
+     * Resolves a Jackson-resolved type into the schema library's type model.
+     *
+     * <p>Package-private (rest-023 T001, C6) so {@link ValuePositionRenderer#renderValueSchema} can
+     * share it rather than duplicate it; every other call site in this class is unchanged by this task.
+     */
+    static ResolvedType resolve(SchemaGenerationContext context, JavaType type) {
         return context.getTypeContext().resolve(toResolvedType(type));
     }
 
