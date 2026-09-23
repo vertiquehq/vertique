@@ -135,7 +135,8 @@ supplement on top when one is:
   record component by position, but only for the canonical constructor (where component *i* is
   parameter *i* by language definition); any other creator — including a non-canonical `@JsonCreator`
   constructor with a different parameter order, and a record's `@JsonCreator` static factory — joins by
-  wire name like every other creator. This is what keeps a `@JsonCreator` static-factory parameter's own constraint from being
+  wire name like every other creator. This is what keeps a `@JsonCreator` static-factory parameter's
+  own constraint from being
   dropped even under a validator: Bean Validation itself can join a creator parameter only through a
   constructor, but the floor reads the parameter's own annotation directly and does not care which kind
   of creator it belongs to.

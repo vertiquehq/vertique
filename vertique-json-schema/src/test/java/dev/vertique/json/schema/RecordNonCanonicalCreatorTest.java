@@ -126,6 +126,22 @@ class RecordNonCanonicalCreatorTest {
         }
     }
 
+    /**
+     * Same component order and reversed wire order as {@link Holder}, but the creator is a static
+     * factory method rather than a constructor: {@code AnnotatedParameter#getOwner()} is an {@code
+     * AnnotatedMethod}, never an {@code AnnotatedConstructor}, so {@code isCanonicalRecordConstructor}
+     * must reject the by-index branch outright and fall back to the wire-name join — the same join a
+     * non-record creator always used. Before the fix, {@code backingField} took the by-index branch for
+     * any record regardless of what kind of member {@code parameter}'s owner was, so a record's own
+     * static factory was just as exposed as a reordered constructor.
+     */
+    record Holder2(Plain child, JsonNode raw) {
+        @JsonCreator
+        static Holder2 of(@JsonProperty("raw") JsonNode raw, @JsonProperty("child") Plain child) {
+            return new Holder2(child, raw);
+        }
+    }
+
     // --- (1) Document-shape proof ---
 
     @Test
@@ -210,5 +226,35 @@ class RecordNonCanonicalCreatorTest {
                 "\"b\" is bound to the PlainB component and must carry its own @Size(max=5), not the"
                         + " @Size(max=3) that only PlainA (the creator's own parameter index 1) declares;"
                         + " document: " + document);
+    }
+
+    // --- (5) A record's static @JsonCreator factory joins by wire name, never by position ---
+
+    @Test
+    @DisplayName("a record's static @JsonCreator factory method joins its parameters by wire name, not"
+            + " by the record's component index")
+    void staticFactoryOnARecordJoinsByWireName() {
+        JsonNode document = document(Holder2.class);
+        JsonNode child = resolve(document, document.at("/properties/child"));
+        JsonNode raw = resolve(document, document.at("/properties/raw"));
+
+        assertEquals(
+                3,
+                resolve(document, child.at("/properties/name")).at("/maxLength").asInt(),
+                "\"child\" (bound to the record's Plain component through the wire-name join) must carry"
+                        + " Plain.name's own @Size(max=3); document: " + document);
+        assertTrue(
+                resolve(document, raw.at("/properties/name")).at("/maxLength").isMissingNode(),
+                "\"raw\" must carry no borrowed maxLength: a static factory's parameter is never joined"
+                        + " by the record's component index; document: " + document);
+
+        JsonObject bypassBody = new JsonObject()
+                .put("raw", new JsonObject().put("name", "ab"))
+                .put("child", new JsonObject().put("name", "TOOLONG"));
+        assertFalse(
+                accepted(document, bypassBody),
+                "\"child\":{\"name\":\"TOOLONG\"} (7 characters) violates Plain.name's own"
+                        + " @Size(max=3) and must be rejected by the static-factory-joined document: "
+                        + document);
     }
 }
