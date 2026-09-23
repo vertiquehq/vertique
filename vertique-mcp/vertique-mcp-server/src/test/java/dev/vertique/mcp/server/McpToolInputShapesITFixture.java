@@ -118,6 +118,8 @@ final class McpToolInputShapesITFixture {
     static final String CASE_INSENSITIVE_CLOSED_TOOL = "shapes.caseInsensitiveClosed";
     static final String SIBLING_UNWRAPPED_TOOL = "shapes.siblingUnwrappedPair";
     static final String OPTIONAL_EXTRAS_TOOL = "shapes.optionalExtrasNullAdmission";
+    static final String MAP_VALUE_SHAPES_TOOL = "shapes.mapValueShapes";
+    static final String SINGLE_ANY_SETTER_TYPE_USE_TOOL = "shapes.singleAnySetterTypeUse";
 
     /** The profile T005 TP-005's strict row selects; every other tool takes the resolver's tail. */
     static final String STRICT_PROFILE = "vertique-strict";
@@ -180,6 +182,8 @@ final class McpToolInputShapesITFixture {
         register(tools, factory, AC005_TOOL, Ac005Payload.class, null);
         register(tools, factory, SIBLING_UNWRAPPED_TOOL, SiblingUnwrappedPayload.class, null);
         register(tools, factory, OPTIONAL_EXTRAS_TOOL, OptionalAnySetterExtrasPayload.class, null);
+        register(tools, factory, MAP_VALUE_SHAPES_TOOL, MapValueShapesPayload.class, null);
+        register(tools, factory, SINGLE_ANY_SETTER_TYPE_USE_TOOL, SingleAnySetterTypeUsePayload.class, null);
         this.toolsByName = Map.copyOf(tools);
 
         McpToolRegistry registry = McpToolRegistry.build(Set.copyOf(tools.values()));
@@ -471,6 +475,11 @@ final class McpToolInputShapesITFixture {
 
     record OptionalAnySetterExtrasPayload(
             @JsonProperty("payload") OptionalAnySetterExtrasDto argument0) {}
+
+    record MapValueShapesPayload(@JsonProperty("payload") MapValueShapesDto argument0) {}
+
+    record SingleAnySetterTypeUsePayload(
+            @JsonProperty("payload") SingleAnySetterTypeUseDto argument0) {}
 
     // --- TP-003 shapes: the five AC-013.1 input-discovery shapes, as T004's corpus defines them ---
 
@@ -951,5 +960,39 @@ final class McpToolInputShapesITFixture {
             @Size(max = 3)
             public String name;
         }
+    }
+
+    // --- rest-023 T003 (D001): map value shapes and the single any-setter N16 shape ---
+
+    /** S2a/S2b/S2c/S2d — one holder carrying every rest-023 T003 ordinary-map-property value shape. */
+    static final class MapValueShapesDto {
+
+        /** S2b — a type-use-constrained String value. */
+        public Map<String, @Size(max = 3) String> tags;
+
+        /** S2a — a bean value, whose own constraint must be described too. */
+        public Map<String, MapValuePlain> labels;
+
+        /** S2d — an Optional-wrapped bean value. */
+        public Map<String, Optional<MapValuePlain>> opts;
+
+        /** S2c — an opaque, unconstrained control value. */
+        public Map<String, com.fasterxml.jackson.databind.JsonNode> raw;
+    }
+
+    /** {@code Plain}'s own declared constraint, shared by {@code MapValueShapesDto}'s bean-valued maps. */
+    static final class MapValuePlain {
+
+        /** The constraint a map's bean value type must still describe. */
+        @Size(max = 3)
+        public String name;
+    }
+
+    /** N16 — a single, non-conjoined any-setter whose value type carries a type-use constraint. */
+    static final class SingleAnySetterTypeUseDto {
+
+        /** The any-setter's backing storage: the type-use-constrained value position under test. */
+        @JsonAnySetter
+        public Map<String, @Size(max = 3) String> extras = new LinkedHashMap<>();
     }
 }

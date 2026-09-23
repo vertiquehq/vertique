@@ -66,7 +66,7 @@ class McpJson005ConsumptionIT {
         McpToolDescriptor descriptor = runtime.descriptor();
 
         // --- Then: the input schema is hardened — root and the nested "addr" object are closed, and
-        // the resolved-map "counts" property stays a bare, open object ---
+        // the resolved-map "counts" property now describes its Integer value (rest-023 T003) ---
         JsonNode inputSchema = McpCanonicalJsonWriter.read(descriptor.inputSchema());
         assertThat(inputSchema.get("additionalProperties").asBoolean())
                 .as("the root carrier object must be closed")
@@ -77,9 +77,11 @@ class McpJson005ConsumptionIT {
         assertThat(inputSchema.at("/properties/addr/description").asText())
                 .as("the addr parameter's description must be attached")
                 .isEqualTo("The address.");
-        assertThat(inputSchema.at("/properties/counts/additionalProperties").isMissingNode())
-                .as("the bare resolved-map counts property must stay open")
-                .isTrue();
+        assertThat(inputSchema
+                        .at("/properties/counts/additionalProperties/type")
+                        .asText())
+                .as("the resolved-map counts property must describe its Integer value (rest-023 T003)")
+                .isEqualTo("integer");
 
         // --- Then: a declared structured-output type publishes JSON-005's canonical schema unchanged ---
         assertThat(descriptor.outputSchema())

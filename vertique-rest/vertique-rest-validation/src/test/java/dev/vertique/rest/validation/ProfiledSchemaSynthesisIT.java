@@ -2857,6 +2857,86 @@ public class ProfiledSchemaSynthesisIT {
         }
     }
 
+    // --- rest-023 T003 (D001): TP-004/TP-010, map value shapes and the single any-setter N16 shape ---
+
+    /** S2a/S2b/S2c/S2d — one holder carrying every rest-023 T003 ordinary-map-property value shape. */
+    public static class MapValueShapesDto {
+
+        /** S2b — a type-use-constrained String value. */
+        public Map<String, @Size(max = 3) String> tags;
+
+        /** S2a — a bean value, whose own constraint must be described too. */
+        public Map<String, Plain> labels;
+
+        /** S2d — an Optional-wrapped bean value. */
+        public Map<String, Optional<Plain>> opts;
+
+        /** S2c — an opaque, unconstrained control value. */
+        public Map<String, com.fasterxml.jackson.databind.JsonNode> raw;
+
+        /** {@code Plain}'s own declared constraint, shared by {@code labels} and {@code opts}. */
+        public static class Plain {
+
+            /** The constraint a map's bean value type must still describe. */
+            @Size(max = 3)
+            public String name;
+        }
+    }
+
+    /** The rest-023 T003 resource: a single route accepting the map value shapes body. */
+    @Path("/map-values")
+    public static class MapValuesResource {
+
+        /** Counts successful invocations, so a rejected body's non-entry can be asserted. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes acceptance.
+         *
+         * @param body the accepted body
+         * @return a fixed acknowledgement
+         */
+        @POST
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "mapValuesEcho")
+        public String echo(MapValueShapesDto body) {
+            invocations.incrementAndGet();
+            return "ok";
+        }
+    }
+
+    /** N16 — a single, non-conjoined any-setter whose value type carries a type-use constraint. */
+    public static class SingleAnySetterTypeUseDto {
+
+        /** The any-setter's backing storage: the type-use-constrained value position under test. */
+        @JsonAnySetter
+        public Map<String, @Size(max = 3) String> extras = new LinkedHashMap<>();
+    }
+
+    /** The rest-023 T003 resource: a single route accepting the single any-setter N16 body. */
+    @Path("/any-setter-type-use")
+    public static class AnySetterTypeUseResource {
+
+        /** Counts successful invocations, so a rejected body's non-entry can be asserted. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes acceptance.
+         *
+         * @param body the accepted body
+         * @return a fixed acknowledgement
+         */
+        @POST
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "anySetterTypeUseEcho")
+        public String echo(SingleAnySetterTypeUseDto body) {
+            invocations.incrementAndGet();
+            return "ok";
+        }
+    }
+
     // --- C1 (spike/deserializer-driven-schema round 4, CRITICAL): sibling-ordered unwrapped pair ---
 
     /**
@@ -3745,6 +3825,112 @@ public class ProfiledSchemaSynthesisIT {
                         2,
                         resource.invocations.get(),
                         "only the null and constraint-satisfying bodies may have reached the resource"));
+    }
+
+    // --- rest-023 T003 (D001): TP-004, map value shapes ---
+
+    /**
+     * rest-023 T003 TP-004 (D001; {@code evidence/probe-report-327531b4.md} §§ S2a, S2b, rest023b §
+     * S2d). Every {@code tags}/{@code labels}/{@code opts} body is rejected, including a {@code null}
+     * inside the non-{@code Optional} {@code tags} map value (the explicit null rule); a companion
+     * {@code opts} body carrying {@code null} is accepted, since {@code opts}'s own declared value type
+     * is {@code Optional<Plain>}; the {@code raw} body stays accepted, unaffected.
+     *
+     * <p>Expected initial result: red for every {@code tags}/{@code labels}/{@code opts} body —
+     * {@code main} accepts all of them; the {@code raw} body's own acceptance is a characterization
+     * control, not a red.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("A wrong-typed or constraint-violating map value is rejected at both boundaries; a null in a"
+            + " non-Optional map value is rejected; JsonNode values stay open")
+    void mapValueRejectsAWrongTypedOrConstraintViolatingValueAtBothBoundaries() throws Exception {
+        MapValuesResource resource = new MapValuesResource();
+        int gatePort = start(gateMount(), Set.of(resource));
+
+        HttpResponse<Buffer> tagsTooLong = post(gatePort, "/map-values", "{\"tags\":{\"k\":\"TOOLONG\"}}");
+        HttpResponse<Buffer> tagsNull = post(gatePort, "/map-values", "{\"tags\":{\"k\":null}}");
+        HttpResponse<Buffer> tagsWrongType = post(gatePort, "/map-values", "{\"tags\":{\"k\":1}}");
+        HttpResponse<Buffer> labelsTooLong =
+                post(gatePort, "/map-values", "{\"labels\":{\"k\":{\"name\":\"TOOLONG\"}}}");
+        HttpResponse<Buffer> optsTooLong = post(gatePort, "/map-values", "{\"opts\":{\"k\":{\"name\":\"TOOLONG\"}}}");
+        HttpResponse<Buffer> optsNull = post(gatePort, "/map-values", "{\"opts\":{\"k\":null}}");
+        HttpResponse<Buffer> raw = post(gatePort, "/map-values", "{\"raw\":{\"k\":{\"any\":1}}}");
+
+        assertAll(
+                () -> assertEquals(
+                        400,
+                        tagsTooLong.statusCode(),
+                        "tags: a constraint-violating value must be rejected; body: " + tagsTooLong.bodyAsString()),
+                () -> assertEquals(
+                        400,
+                        tagsNull.statusCode(),
+                        "tags: a null inside a non-Optional map value must be rejected as wrong-typed (the"
+                                + " explicit null rule); body: " + tagsNull.bodyAsString()),
+                () -> assertEquals(
+                        400,
+                        tagsWrongType.statusCode(),
+                        "tags: a wrong-typed value must be rejected; body: " + tagsWrongType.bodyAsString()),
+                () -> assertEquals(
+                        400,
+                        labelsTooLong.statusCode(),
+                        "labels: a bean value's own constraint violation must be rejected; body: "
+                                + labelsTooLong.bodyAsString()),
+                () -> assertEquals(
+                        400,
+                        optsTooLong.statusCode(),
+                        "opts: a non-null Optional bean value's own constraint violation must be rejected;" + " body: "
+                                + optsTooLong.bodyAsString()),
+                () -> assertEquals(
+                        200,
+                        optsNull.statusCode(),
+                        "opts: null must be accepted — opts's own declared value type is Optional<Plain>;" + " body: "
+                                + optsNull.bodyAsString()),
+                () -> assertEquals(
+                        200,
+                        raw.statusCode(),
+                        "raw: an opaque JsonNode value must stay accepted, unaffected; body: " + raw.bodyAsString()),
+                () -> assertEquals(
+                        2,
+                        resource.invocations.get(),
+                        "only the opts-null and raw bodies may have reached the resource"));
+    }
+
+    // --- rest-023 T003 (D001): TP-010, the single any-setter N16 shape ---
+
+    /**
+     * rest-023 T003 TP-010 (N16, architecture round-3 R1's own alternative, ruling X1). A body
+     * violating the single any-setter's own type-use constraint is rejected; a companion body
+     * satisfying the constraint is accepted, distinguishing the rejection from a broken request path.
+     *
+     * <p>Expected initial result: red — {@code main} accepts {@code {"k":"TOOLONG"}} (the any-setter's
+     * own extras value carries no maxLength today).
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("A body violating the single any-setter's own type-use constraint is rejected at the gate")
+    void singleAnySetterValueTypeUseConstraintRejectsAViolatingBody() throws Exception {
+        AnySetterTypeUseResource resource = new AnySetterTypeUseResource();
+        int gatePort = start(gateMount(), Set.of(resource));
+
+        HttpResponse<Buffer> violating = post(gatePort, "/any-setter-type-use", "{\"k\":\"TOOLONG\"}");
+        HttpResponse<Buffer> satisfying = post(gatePort, "/any-setter-type-use", "{\"k\":\"ab\"}");
+
+        assertAll(
+                () -> assertEquals(
+                        400,
+                        violating.statusCode(),
+                        "a body violating the any-setter's own type-use constraint must be rejected; body: "
+                                + violating.bodyAsString()),
+                () -> assertEquals(
+                        200,
+                        satisfying.statusCode(),
+                        "a body satisfying the constraint must stay accepted, distinguishing the rejection"
+                                + " from a broken request path; body: " + satisfying.bodyAsString()),
+                () -> assertEquals(
+                        1, resource.invocations.get(), "only the satisfying body may have reached the resource"));
     }
 
     // --- Mounts and helpers ---

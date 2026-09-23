@@ -725,7 +725,12 @@ and never type-graph-driven:
   `additionalProperties: false`, so a zero-arg tool rejects arbitrary arguments;
 - a non-root object schema is closed the same way exactly when it declares a non-empty `properties`
   member, no sibling `$ref`, and no `additionalProperties` member of its own; a property-less non-root
-  object — a resolved `Map<K,V>` included — stays open and schema-unconstrained for values;
+  object — a resolved `Map<K,V>` included — is never closed this way: the hardener never treats a
+  `Map`'s own absence of a `properties` member as under-description. On the input direction (rest-023
+  T003) a resolved `Map<K,V>` already carries its own `additionalProperties` — `V`'s own schema,
+  including a type-use constraint declared on it, or an open schema for an unconstrained `V` — which
+  the next rule below respects and never overwrites, exactly like a `@JsonAnySetter` type's own extras;
+
 - an `additionalProperties` the generated document already declares — a value schema, `true`, or
   `false` — is never overwritten, so a type whose extra keys the document publishes (a
   `@JsonAnySetter` type, or a type an application profile fragment describes) keeps accepting those

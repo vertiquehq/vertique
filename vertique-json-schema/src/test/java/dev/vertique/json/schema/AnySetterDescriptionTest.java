@@ -22,6 +22,7 @@ import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.json.DefaultJsonMapperProfileRegistry;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Size;
 import java.lang.reflect.Type;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -515,7 +516,52 @@ class AnySetterDescriptionTest {
                         + " both boundaries (design proof v7 to v8, 10 verdicts); document: " + document);
     }
 
+    // --- rest-023 T003 (TP-009, N16, architecture round-3 R1's own alternative, ruling X1) ---
+
+    /**
+     * TP-009: a single, non-conjoined {@code @JsonAnySetter Map<String, @Size(max = 3) String>} (N16 —
+     * no {@code @JsonUnwrapped} parent involved) has its extras {@code additionalProperties} schema
+     * carry the value type's own type-use constraint, through the any-setter's own value position's
+     * {@code AnnotatedType} wired into T001's own type-use-overlay hook (extracted inert by T001,
+     * activated here for the first time). {@code describeExtras} read only {@code anySetter.getType()}
+     * (a bare {@code JavaType}, no {@code AnnotatedType}) before this task.
+     */
+    @Test
+    @DisplayName("A single any-setter's own type-use-constrained value is described (N16)")
+    void anySetterValueTypeUseConstraintIsRendered() {
+        JsonNode document = inputDocument(TypeUseConstrainedAnySetter.class);
+
+        assertEquals(
+                "{\"maxLength\":3,\"type\":\"string\"}",
+                extras(document, document, "TypeUseConstrainedAnySetter").toString(),
+                "the extras additionalProperties schema must carry the any-setter's own value type-use"
+                        + " constraint maxLength: 3, not merely {\"type\":\"string\"}; document: " + document);
+    }
+
+    @Test
+    @DisplayName("Sensitivity proof: an any-setter extras value with no type-use constraint is unaffected")
+    void anySetterValueWithNoTypeUseConstraintIsUnaffected() {
+        JsonNode document = inputDocument(FieldAnySetterOverStrings.class);
+
+        assertEquals(
+                "{\"type\":\"string\"}",
+                extras(document, document, "FieldAnySetterOverStrings").toString(),
+                "a plain Map<String, String> any-setter extras value must render {\"type\":\"string\"},"
+                        + " unaffected by the N16 activation; document: " + document);
+    }
+
     // --- Fixtures: one per shape, named for it ---
+
+    /** N16 — a single, non-conjoined any-setter whose value type carries a type-use constraint. */
+    static final class TypeUseConstrainedAnySetter {
+
+        /** An ordinary property, so the extras schema is proven beside a published property set. */
+        public String name;
+
+        /** The any-setter's backing storage: the type-use-constrained value position under test. */
+        @JsonAnySetter
+        public Map<String, @Size(max = 3) String> extras = new LinkedHashMap<>();
+    }
 
     /** A named property beside a field-level any-setter over {@code String} values. */
     static final class FieldAnySetterOverStrings {

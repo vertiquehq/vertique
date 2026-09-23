@@ -162,19 +162,24 @@ class GeneratorOverrideValidationTest {
     }
 
     /**
-     * A map key position never receives a profile fragment, while an ordinary (non-key) type position
-     * does.
+     * A map key position never receives a profile fragment, while a map <em>value</em> position and an
+     * ordinary (non-key) type position both do.
      *
-     * <p>The non-key half is proven with a resolved {@code List<BigDecimal>} element rather than a map
-     * <em>value</em>: at the pinned Victools 4.38.0 {@code OptionPreset.PLAIN_JSON} configuration a
-     * resolved {@code Map} generates a bare {@code {"type":"object"}} with no {@code
-     * additionalProperties} or {@code patternProperties} member at all, so neither the key nor the
-     * value type is resolved into the document and a value-side fragment assertion would be
-     * unfalsifiable. That absence is asserted explicitly below so the test fails — rather than
-     * silently changing meaning — if a future version starts emitting map value schemas.
+     * <p><strong>Updated by rest-023 T003 ({@code D001}).</strong> Before T003, at the pinned Victools
+     * 4.38.0 {@code OptionPreset.PLAIN_JSON} configuration, a resolved {@code Map} generated a bare
+     * {@code {"type":"object"}} with no {@code additionalProperties} member at all, so neither the key
+     * nor the value type was resolved into the document and a value-side fragment assertion was
+     * unfalsifiable — that absence was asserted explicitly so the test would fail, rather than silently
+     * changing meaning, once a future version started emitting map value schemas. T003 is that version:
+     * a {@code Map<K,V>} value position is now described through the shared value-position renderer,
+     * whose override-first step ({@code createDefinitionReference}) applies a declared profile override
+     * on {@code V} exactly as it would for any other value position — so {@link
+     * HardeningFixtures#DecimalValuedMapDto}'s own {@code Map<String, BigDecimal>} value now receives
+     * the fragment, while {@link HardeningFixtures#DecimalKeyedMapDto}'s own key position still does not
+     * (D001's own map-key exclusion is unchanged).
      */
     @Test
-    @DisplayName("A map key position never receives a fragment, while a non-key position does")
+    @DisplayName("A map key position never receives a fragment, while a map value position and a non-key position do")
     void overrideNotAppliedToMapKeys() {
         // Given: an override declared for BigDecimal in both directions.
         JsonMapperProfile profile = HardeningFixtures.profile(
@@ -189,11 +194,12 @@ class GeneratorOverrideValidationTest {
                 keyed.contains(HardeningFixtures.MAP_POSITION_MARKER),
                 "a map key position must stay mapper-owned; was: " + keyed);
 
-        // When/Then: the pinned configuration resolves no map value type either — pinned explicitly.
+        // When/Then (T003): a Map<String, BigDecimal> value position now receives the fragment, through
+        // the shared renderer's own override-first step.
         String valued = generator.generateCanonical(HardeningFixtures.DecimalValuedMapDto.class);
-        assertFalse(
-                valued.contains("additionalProperties") || valued.contains("patternProperties"),
-                "the pinned configuration must still emit no map value schema; was: " + valued);
+        assertTrue(
+                valued.contains(HardeningFixtures.MAP_POSITION_MARKER),
+                "a map value position must receive the fragment (T003); was: " + valued);
 
         // When/Then: an ordinary non-key type position does receive the fragment.
         String element = generator.generateCanonical(ProofFixtures.LIST_OF_BIG_DECIMAL);
