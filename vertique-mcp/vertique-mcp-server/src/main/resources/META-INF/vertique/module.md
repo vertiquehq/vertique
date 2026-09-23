@@ -739,6 +739,25 @@ and never type-graph-driven:
 - each declared parameter's description is attached to its matching root-carrier property only, as a
   separate pass.
 
+Because a non-root object schema carrying a non-empty `properties` member is closed on its own,
+closing each `allOf` sibling separately would reject a property published only on another sibling —
+the shape Victools leaves for a polymorphic subtype whose discriminator is also a declared property,
+or for a `@JsonUnwrapped` child's own leftover `allOf` part. `vertique-json-schema`'s input direction
+folds such an unconsolidated `allOf` into one flat `properties` set before this hardening ever runs
+(see that module's document, "How an unconsolidated allOf is folded"), so an `inputSchema` this
+factory publishes carries a plain, foldable `allOf` part for the hardener to close in isolation only
+when the fold was refused (a `type` or `$ref` conflict, or an unsound new key), when it had no
+eligible target to begin with, or when it is a plain discriminator part sitting beside a sibling
+that carries its own `$ref` — for example `allOf: [{$ref}, {properties: {kind: {const}}}]`, which
+arises when the subtype's own schema is a `$defs` reference because the subtype is also used
+directly as a field. The `$ref`-carrying sibling is never itself a fold target, so the discriminator
+part becomes its own target and nothing folds into it. A part carrying its own `$ref` or its own
+`additionalProperties` is never closed by the hardener at all, in isolation or otherwise — the
+closure guard's own preconditions above already exclude it, independently of whether
+`vertique-json-schema` folded anything. The parts this hardening still closes individually are
+exactly three: a refused plain part, a targetless plain part, and a plain discriminator part left
+beside an unfoldable `$ref` sibling, each closed exactly as described above.
+
 After hardening, the document is re-serialized deterministically (recursive UTF-16 key ordering,
 compact encoding) through MCP's own package-private writer — never through JSON-005's canonicalizer,
 which is package-private inside `vertique-json-schema`, and never through a profile's payload mapper.
