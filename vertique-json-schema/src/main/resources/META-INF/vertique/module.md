@@ -566,6 +566,39 @@ data is exempt. The listing pass and the refusal never enter the value of `const
 "value": "ok"}}` is published exactly as written and still accepts only that object. A property whose
 own name is one of those keywords is a schema like any other and is still expanded.
 
+### How an unconsolidated allOf is folded (input direction)
+
+Victools sometimes leaves an object `allOf` unconsolidated — most visibly for a polymorphic
+subtype whose discriminator is also a declared property (the base part describes it with `type:
+"string"`, the discriminator part with `const: "<name>"`), and for a `@JsonUnwrapped` child whose
+definition provider leaves a single-part `allOf` beside the holder's own already-flattened
+`properties`. After every other post-generation pass, and only for a generator built through
+`forInputProfile(...)`, this module folds every plain part with an eligible target into one flat
+`properties` set, equivalent under the refusal conditions listed below, per Draft 2020-12
+conjunction semantics: a property both parts declare becomes `{"allOf": [...]}` of the two branches
+(or is left as one copy when they are already equal), a property only one part declares is added
+directly when the receiving schema constrains no key it does not name (or is conjoined with its
+`additionalProperties` schema, when it has one), `required` becomes the union of both parts', the
+receiving schema's `title`/`description` wins when it has one (otherwise the folded part's is
+copied), and a folded part's own `type: "object"` is copied onto the receiving schema when it
+declares no `type` of its own. The fold is refused — leaving the `allOf` exactly as generated —
+whenever the receiving schema's `additionalProperties: false`, `patternProperties`,
+`unevaluatedProperties`, or `propertyNames` could make adding an unnamed key unsound; whenever the
+receiving schema already declares a `type` other than the literal `"object"` and the folded part
+requires object-only; or whenever a local `$ref` elsewhere in the document points into the region
+the fold would rewrite. The result is that a subtype whose own schema is inline — not a `$defs`
+reference — and whose discriminator is also a declared property now publishes one flat property set
+with the discriminator present once, rather than split across sibling `allOf` parts — the shape an
+MCP-style hardener that closes a non-root object by provenance (`additionalProperties: false` on any
+object carrying non-empty `properties`, no `$ref`, no declared `additionalProperties` of its own)
+would otherwise close one part at a time, turning a property published only on a sibling part into a
+rejected "additional property". A subtype whose own schema *is* a `$defs` reference — because the
+subtype is also used directly as a field — keeps its discriminator part unfolded beside that `$ref`
+sibling instead: the `$ref` part is never itself a fold target, so the discriminator part has
+nothing eligible to fold into and is left for such a hardener to close on its own. The output
+direction is unaffected: this is a normalization of the input direction's own published document,
+wherever the fold applies. See `AllOfFold`'s class Javadoc for the full argument.
+
 ### Canonical output
 
 `generateCanonical(Type)` returns a fresh, compact JSON document with every object member whose

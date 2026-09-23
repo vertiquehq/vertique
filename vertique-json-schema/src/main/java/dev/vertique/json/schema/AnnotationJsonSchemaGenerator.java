@@ -763,6 +763,16 @@ public final class AnnotationJsonSchemaGenerator {
                     // must not be advertised against a wire type an override replaced with a non-number.
                     NumericDomainKeywordFilter.suppressInapplicableNumericKeywords(generated);
                 }
+                if (describer != null) {
+                    // Input direction only: a consumer such as the MCP hardener closes a non-root
+                    // object by provenance (non-empty properties, no $ref, no declared
+                    // additionalProperties of its own), and an allOf Victools left unconsolidated is
+                    // exactly that shape. Folding it into one flat properties set is a normalization
+                    // of the input direction's own document, never a semantic change to what either
+                    // direction's schema accepts — see AllOfFold's class Javadoc for the equivalence
+                    // argument and why the REST gate is indifferent to it.
+                    AllOfFold.fold(generated);
+                }
             } catch (JsonSchemaGenerationException alreadyBounded) {
                 throw alreadyBounded;
             } catch (RuntimeException failed) {
