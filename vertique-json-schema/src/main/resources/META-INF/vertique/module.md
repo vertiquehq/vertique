@@ -479,6 +479,18 @@ An any-setter extras value (and, rest-023 T003, a map value — see "How a `Map`
 declared as `Optional<T>` is described as `T`'s own schema, constraints included, and admits an
 explicit `null`, matching Jackson's own `Optional.empty()` binding.
 
+When an `@JsonUnwrapped` parent and one or more unwrapped children each declare an any-setter, Jackson
+feeds a shared extra key into every one of them, and the key's `additionalProperties` describes the
+conjunction of every any-setter's own value schema — composed as an `allOf` of each any-setter's own
+value description (a type-use constraint on a value included) and folded by the generator into one
+schema where the parts are plain, so a value violating any one any-setter's own constraint is rejected.
+A bean-valued part is described inline rather than by reference, unless its value type carries a
+profile override, which is kept as a reference; a self-referential bean-valued part fails generation
+with a bounded diagnostic naming the type and the `JsonSchemaTypeOverride` remedy rather than being
+described from the library's own reflection. Where several such any-setters bound their own map with
+`@Size` or `@Schema(minProperties`/`maxProperties)`, the stricter bound wins across the conjunction. A
+key that is a named property of a child is described by that named property alone.
+
 An unconstrained value type — `Object`, `JsonNode`, `TreeNode`, or a wildcard or raw form resolving
 to one — is described as the empty schema `{}`, which accepts every JSON value. A class-level
 `@Schema(additionalProperties = FALSE)`, declared or inherited, keeps the object closed and is never

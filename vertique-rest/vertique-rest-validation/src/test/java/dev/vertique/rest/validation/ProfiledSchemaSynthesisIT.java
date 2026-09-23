@@ -2937,6 +2937,112 @@ public class ProfiledSchemaSynthesisIT {
         }
     }
 
+    // --- rest-023 T004 (D004): TP-002, several any-setters sharing a wire key ---
+
+    /** UW-2AS child: a type-use-constrained any-setter, sharing its wire key with the parent's own. */
+    public static class SharedAnySetterConjunctionChild {
+
+        /** The child's own any-setter, type-use-constrained (N16 shape). */
+        @JsonAnySetter
+        public Map<String, @Size(max = 3) String> extras = new LinkedHashMap<>();
+    }
+
+    /** UW-2AS parent: its own any-setter, plus the unwrapped child's own, sharing every wire key. */
+    public static class SharedAnySetterConjunctionDto {
+
+        /** The unwrapped child, declaring its own any-setter. */
+        @JsonUnwrapped
+        public SharedAnySetterConjunctionChild inner;
+
+        /** The parent's own any-setter, unconstrained. */
+        @JsonAnySetter
+        public Map<String, Object> extras = new LinkedHashMap<>();
+    }
+
+    /** The rest-023 T004 resource for the UW-2AS shared-any-setter-key shape. */
+    @Path("/shared-any-setter-conjunction")
+    public static class SharedAnySetterConjunctionResource {
+
+        /** Counts successful invocations, so a rejected body's non-entry can be asserted. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes acceptance.
+         *
+         * @param body the accepted body
+         * @return a fixed acknowledgement
+         */
+        @POST
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "sharedAnySetterConjunctionEcho")
+        public String echo(SharedAnySetterConjunctionDto body) {
+            invocations.incrementAndGet();
+            return "ok";
+        }
+    }
+
+    /** The parent's own any-setter value type: a bean with its own constraint. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class ConjunctionLeft {
+
+        /** The constraint this value type's own subschema must carry once inlined. */
+        @Size(max = 3)
+        public String label;
+    }
+
+    /** The unwrapped child's own any-setter value type: a bean with its own, different constraint. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class ConjunctionRight {
+
+        /** The constraint this value type's own subschema must carry once inlined. */
+        @Size(max = 2)
+        public String code;
+    }
+
+    /** The unwrapped child, declaring its own bean-valued any-setter. */
+    public static class ObjectValuedAnySetterPairChild {
+
+        /** The child's own any-setter, bean-valued. */
+        @JsonAnySetter
+        public Map<String, ConjunctionRight> extras = new LinkedHashMap<>();
+    }
+
+    /** An object-valued two-any-setter pair: both value types are beans, each with its own constraint. */
+    public static class ObjectValuedAnySetterPairDto {
+
+        /** The unwrapped child, declaring its own bean-valued any-setter. */
+        @JsonUnwrapped
+        public ObjectValuedAnySetterPairChild inner;
+
+        /** The parent's own any-setter, bean-valued. */
+        @JsonAnySetter
+        public Map<String, ConjunctionLeft> extras = new LinkedHashMap<>();
+    }
+
+    /** The rest-023 T004 resource for the object-valued two-any-setter-pair shape. */
+    @Path("/object-valued-any-setter-pair")
+    public static class ObjectValuedAnySetterPairResource {
+
+        /** Counts successful invocations, so a rejected body's non-entry can be asserted. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes acceptance.
+         *
+         * @param body the accepted body
+         * @return a fixed acknowledgement
+         */
+        @POST
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "objectValuedAnySetterPairEcho")
+        public String echo(ObjectValuedAnySetterPairDto body) {
+            invocations.incrementAndGet();
+            return "ok";
+        }
+    }
+
     // --- C1 (spike/deserializer-driven-schema round 4, CRITICAL): sibling-ordered unwrapped pair ---
 
     /**
@@ -3931,6 +4037,80 @@ public class ProfiledSchemaSynthesisIT {
                                 + " from a broken request path; body: " + satisfying.bodyAsString()),
                 () -> assertEquals(
                         1, resource.invocations.get(), "only the satisfying body may have reached the resource"));
+    }
+
+    // --- rest-023 T004 (D004): TP-002, several any-setters sharing a wire key ---
+
+    /**
+     * rest-023 T004 TP-002. A body violating either any-setter's own constraint on a wire key both a
+     * parent's own and an unwrapped child's own any-setter share (UW-2AS) is rejected; a companion body
+     * satisfying both is accepted. An object-valued two-any-setter pair (both value types are beans) is
+     * rejected when either bean's own constraint is violated, and accepted (zero false-reject) when both
+     * are satisfied.
+     *
+     * <p>Expected initial result: red for the object-valued pair's own conjunction (only one any-setter's
+     * own value schema is described today, so a violation of the other-side bean's own constraint is not
+     * rejected); the UW-2AS body's own rejection may already be green — rest-023 T003 activated the
+     * type-use overlay for a single any-setter's own value position, and UW-2AS's own child value is
+     * exactly that shape, so {@code "TOOLONG"} may already be rejected before this task even though the
+     * document still describes only one any-setter's own value schema, not the conjunction — reported
+     * honestly against the actual baseline run, not assumed.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("A body violating either any-setter's own constraint on a shared key is rejected; an"
+            + " object-valued pair is rejected on either bean's own violation and accepted otherwise")
+    void sharedAnySetterKeyRejectsAValueViolatingEitherAnySettersConstraint() throws Exception {
+        SharedAnySetterConjunctionResource sharedResource = new SharedAnySetterConjunctionResource();
+        ObjectValuedAnySetterPairResource pairResource = new ObjectValuedAnySetterPairResource();
+        int gatePort = start(gateMount(), Set.of(sharedResource, pairResource));
+
+        HttpResponse<Buffer> sharedViolating = post(gatePort, "/shared-any-setter-conjunction", "{\"x\":\"TOOLONG\"}");
+        HttpResponse<Buffer> sharedSatisfying = post(gatePort, "/shared-any-setter-conjunction", "{\"x\":\"ab\"}");
+        HttpResponse<Buffer> pairSatisfying =
+                post(gatePort, "/object-valued-any-setter-pair", "{\"x\":{\"label\":\"ab\",\"code\":\"z\"}}");
+        HttpResponse<Buffer> pairLeftViolating =
+                post(gatePort, "/object-valued-any-setter-pair", "{\"x\":{\"label\":\"TOOLONGVALUE\",\"code\":\"z\"}}");
+        HttpResponse<Buffer> pairRightViolating = post(
+                gatePort, "/object-valued-any-setter-pair", "{\"x\":{\"label\":\"ab\",\"code\":\"TOOLONGVALUE\"}}");
+
+        assertAll(
+                () -> assertEquals(
+                        400,
+                        sharedViolating.statusCode(),
+                        "UW-2AS: a body violating the unwrapped child's own type-use constraint on the"
+                                + " shared key must be rejected; body: " + sharedViolating.bodyAsString()),
+                () -> assertEquals(
+                        200,
+                        sharedSatisfying.statusCode(),
+                        "UW-2AS: a body satisfying both any-setters' own constraints on the shared key"
+                                + " must stay accepted, distinguishing the rejection from a broken request"
+                                + " path; body: " + sharedSatisfying.bodyAsString()),
+                () -> assertEquals(
+                        200,
+                        pairSatisfying.statusCode(),
+                        "the object-valued pair: a body satisfying both beans' own constraints must be"
+                                + " accepted — the zero-false-reject proof; body: "
+                                + pairSatisfying.bodyAsString()),
+                () -> assertEquals(
+                        400,
+                        pairLeftViolating.statusCode(),
+                        "the object-valued pair: a body violating the parent's own bean's constraint must"
+                                + " be rejected; body: " + pairLeftViolating.bodyAsString()),
+                () -> assertEquals(
+                        400,
+                        pairRightViolating.statusCode(),
+                        "the object-valued pair: a body violating the unwrapped child's own bean's"
+                                + " constraint must be rejected; body: " + pairRightViolating.bodyAsString()),
+                () -> assertEquals(
+                        1,
+                        sharedResource.invocations.get(),
+                        "UW-2AS: only the satisfying body may have reached the resource"),
+                () -> assertEquals(
+                        1,
+                        pairResource.invocations.get(),
+                        "the object-valued pair: only the satisfying body may have reached the resource"));
     }
 
     // --- Mounts and helpers ---

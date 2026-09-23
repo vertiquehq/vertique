@@ -6,6 +6,7 @@ package dev.vertique.json.schema;
 import com.fasterxml.jackson.core.TreeNode;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.victools.jsonschema.generator.SchemaGenerationContext;
 import java.lang.reflect.AnnotatedParameterizedType;
@@ -15,6 +16,7 @@ import java.lang.reflect.Executable;
 import java.lang.reflect.Field;
 import java.lang.reflect.Member;
 import java.lang.reflect.Method;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -93,8 +95,15 @@ import java.util.Set;
  * LinkedHashMap<K, V>} binds {@code V} at index 0, not 1). A nested map value (N9) is
  * handled by {@link #renderValueSchema} recursing into its own content when the rendered type is itself
  * map-like and its own nested content carries an overlay. T004 ({@code D004}) is the first to invoke the
- * {@link InlineComposer} callback this task stores but never calls, to inline a bean-valued subschema at
- * a conjunction position.
+ * {@link InlineComposer} callback this class stores: {@link #renderConjunction} composes {@code {"allOf":
+ * [...]}} of every any-setter's own value position feeding a shared, {@code @JsonUnwrapped}-conjoined
+ * wire key (T004's own caller, {@code InputPropertyDescriber#describeExtras}, supplies the positions),
+ * and {@link #renderConjunctionMember} offers each non-overridden member's own value type to the {@link
+ * InlineComposer} first — the unconditional inline rule (architecture round-2 condition C5, corrected
+ * round-3 R4) — falling back to the same reference-or-overlay rendering {@link #renderValueSchema} uses
+ * when the callback answers {@code null} (a non-bean value type). {@link #renderValueSchema} itself is
+ * unaffected: a single any-setter (no conjunction) never reaches the {@link InlineComposer}, and renders
+ * byte-identically to before this task.
  *
  * <p><strong>Collaborators (architecture round-2 condition C6).</strong> The renderer takes its
  * collaborators at construction — a {@link ValidatedProfile} (possibly {@code null}, as in {@link
@@ -114,15 +123,18 @@ final class ValuePositionRenderer {
 
     /**
      * @param validatedProfile the validated, direction-filtered profile view, or {@code null} when none
-     *                          was supplied to the generator; not yet consulted directly by this task —
-     *                          the override step is already reached through {@code
-     *                          createDefinitionReference} (see class Javadoc)
+     *                          was supplied to the generator; consulted directly by {@link
+     *                          #renderConjunctionMember} (T004, D004's own override-first carve-out) —
+     *                          {@link #renderValueSchema} itself still reaches the override step only
+     *                          through {@code createDefinitionReference} (see class Javadoc)
      * @param supplement        the Bean Validation metadata supplement, or {@code null} when no {@link
      *                          jakarta.validation.Validator} was supplied to the generator; not yet
      *                          consulted by this task's own pipeline steps
      * @param inlineComposer    the describer-supplied callback that inlines a bean value type's own
-     *                          object schema at a position, stored for T004/T005's own conjunction and
-     *                          inline paths; not yet called by this task's own pipeline steps
+     *                          object schema at a conjunction position, called by {@link
+     *                          #renderConjunctionMember} (T004); D005's own member-level inline path
+     *                          (T005) reuses the same describer-side helper independently of this
+     *                          renderer
      */
     ValuePositionRenderer(
             ValidatedProfile validatedProfile, ConstraintSource supplement, InlineComposer inlineComposer) {
@@ -164,14 +176,114 @@ final class ValuePositionRenderer {
         // the overlay is never written into a node the schema library could share across positions; a
         // position with no overlay anywhere renders through createDefinitionReference exactly as T001
         // left it, so every existing golden with no overlay stays byte-identical.
-        JsonNode schema = hasOverlayAnywhere(renderedType, annotatedType)
-                ? renderInlineWithOverlay(context, renderedType, annotatedType)
-                : context.createDefinitionReference(InputPropertyDescriber.resolve(context, renderedType));
+        JsonNode schema = renderReferenceOrOverlay(context, renderedType, annotatedType);
         // Step 4: nullability, active only for a declared Optional<T> position (T002, D002).
         if (optional) {
             InputPropertyDescriber.markNullable((ObjectNode) schema);
         }
         return schema;
+    }
+
+    /**
+     * Renders {@code positions}' own conjunction (D004): one any-setter's own value position renders
+     * byte-identically to {@link #renderValueSchema} (the pre-T004 single-slot shape, unchanged); more
+     * than one composes {@code {"allOf": [...]}} of every position's own value schema, in the order
+     * supplied — the parent's own any-setter first, then every unwrapped sibling's own (T004's own
+     * caller, {@link InputPropertyDescriber#describeExtras}, supplies that order). An open position
+     * contributes the empty schema {@code {}} rather than being omitted, so {@code AllOfFold} still sees
+     * every any-setter in the set once it folds the conjunction (D004, architecture round-2 condition
+     * C5).
+     *
+     * <p>At a conjunction position (more than one entry), each subschema whose own value type is a bean
+     * <strong>without</strong> a profile override is rendered inline instead of referenced — the
+     * unconditional inline rule (C5, corrected round-3 R4) — through the describer-supplied {@link
+     * InlineComposer}, never a separate, introspection-built inline copy. A profile-overridden value
+     * type keeps its {@code $ref} (the override-first carve-out, F4): the {@link InlineComposer} is
+     * never reached for it. A non-bean value type (a scalar, a {@code Map}-like type, ...) renders
+     * exactly as a single, non-conjunction position would (the {@link InlineComposer} answers {@code
+     * null} for it; see its own class Javadoc).
+     *
+     * @param context   the active generation context
+     * @param positions every any-setter's own value position feeding the shared key
+     * @return the sole position's own value schema when {@code positions} has one entry; {@code
+     *     {"allOf": [...]}} of every position's own subschema when it has more than one; {@code null}
+     *     only when {@code positions} is empty (a caller error T004's own callers never make)
+     */
+    JsonNode renderConjunction(SchemaGenerationContext context, List<ValuePosition> positions) {
+        if (positions.size() == 1) {
+            return renderValueSchema(context, positions.get(0));
+        }
+        if (positions.isEmpty()) {
+            return null;
+        }
+        ObjectNode wrapper = context.getGeneratorConfig().createObjectNode();
+        ArrayNode allOf = wrapper.putArray("allOf");
+        for (ValuePosition position : positions) {
+            JsonNode member = renderConjunctionMember(context, position);
+            allOf.add(member == null ? context.getGeneratorConfig().createObjectNode() : member);
+        }
+        return wrapper;
+    }
+
+    /**
+     * Renders one member of a conjunction (D004): the same steps {@link #renderValueSchema} applies,
+     * except that a non-overridden value type is offered to the describer-supplied {@link
+     * InlineComposer} first (C5's own unconditional inline rule) — a bean value type is inlined; a
+     * non-bean value type (the {@link InlineComposer} answering {@code null}) falls back to the same
+     * reference-or-overlay rendering {@link #renderValueSchema} uses.
+     *
+     * @param context  the active generation context
+     * @param position the conjunction member's own value position
+     * @return the member's own schema, or {@code null} for an open position (the caller substitutes the
+     *     empty schema {@code {}})
+     */
+    private JsonNode renderConjunctionMember(SchemaGenerationContext context, ValuePosition position) {
+        JavaType valueType = position.valueType();
+        if (valueType == null || UNCONSTRAINED_VALUE_TYPES.contains(valueType.getRawClass())) {
+            return null;
+        }
+        boolean optional = valueType.isReferenceType() && valueType.getRawClass() == Optional.class;
+        JavaType renderedType = optional ? valueType.getReferencedType() : valueType;
+        if (renderedType == null || UNCONSTRAINED_VALUE_TYPES.contains(renderedType.getRawClass())) {
+            return null;
+        }
+        boolean overridden =
+                validatedProfile != null && validatedProfile.fragmentFor(renderedType.getRawClass()) != null;
+        JsonNode schema;
+        if (overridden) {
+            // F4 override-first (security round-2 MEDIUM, "D004's inline rule"): the override wins
+            // before the InlineComposer is ever consulted, exactly like every other position — never
+            // inlined from a reflection-built bean description, which would silently drop the override.
+            schema = context.createDefinitionReference(InputPropertyDescriber.resolve(context, renderedType));
+        } else {
+            JsonNode inlined = inlineComposer.inline(renderedType, position.memberName(), context);
+            schema = inlined != null
+                    ? inlined
+                    : renderReferenceOrOverlay(context, renderedType, position.annotatedType());
+        }
+        if (optional) {
+            InputPropertyDescriber.markNullable((ObjectNode) schema);
+        }
+        return schema;
+    }
+
+    /**
+     * Steps 1(no-op here, applied by the caller)+2+3: the value's own schema, through the context's own
+     * inline definition creation when {@code renderedType}'s own position carries a type-use overlay
+     * anywhere (N1), or through {@code createDefinitionReference} otherwise — shared by {@link
+     * #renderValueSchema} and, for a non-bean conjunction member, {@link #renderConjunctionMember}.
+     *
+     * @param context       the active generation context
+     * @param renderedType  the position's own value type (already unwrapped from a declared {@code
+     *                      Optional<T>}, where applicable)
+     * @param annotatedType the position's own {@link AnnotatedType}, possibly {@code null}
+     * @return the rendered schema
+     */
+    private JsonNode renderReferenceOrOverlay(
+            SchemaGenerationContext context, JavaType renderedType, AnnotatedType annotatedType) {
+        return hasOverlayAnywhere(renderedType, annotatedType)
+                ? renderInlineWithOverlay(context, renderedType, annotatedType)
+                : context.createDefinitionReference(InputPropertyDescriber.resolve(context, renderedType));
     }
 
     /**
@@ -434,25 +546,29 @@ final class ValuePositionRenderer {
 
     /**
      * Inlines a bean value type's own object schema at a value position, in place of a {@code $ref} —
-     * the mechanism D004's own conjunction rule and D005's own member-level inline path share. Not
-     * called by any pipeline step in this task; see class Javadoc.
+     * the mechanism D004's own conjunction rule ({@link #renderConjunctionMember}) and D005's own
+     * member-level inline path share (C6: the callback, inside {@code InputPropertyDescriber}, does the
+     * bean classification, the {@code inlineInProgress} registration, and the refusal; this renderer
+     * only ever calls it and never inspects that state itself).
      */
     @FunctionalInterface
     interface InlineComposer {
 
         /**
-         * @param beanType the bean value type to inline
-         * @param context  the active generation context
-         * @return the inlined object schema
+         * @param beanType   the value type to inline, or render normally when it is not bean-like
+         * @param memberName the position's own member name, for the callback's own recursion diagnostic
+         * @param context    the active generation context
+         * @return the inlined schema, or {@code null} when {@code beanType} is not bean-like — the
+         *     caller then falls back to its own ordinary (reference-or-overlay) rendering
          */
-        JsonNode inline(JavaType beanType, SchemaGenerationContext context);
+        JsonNode inline(JavaType beanType, String memberName, SchemaGenerationContext context);
     }
 
     /**
      * One value position: the value's declared type, its own {@link AnnotatedType} where one exists
      * (field, getter, creator parameter, any-setter, or a {@code Map} subclass's own supertype chain —
-     * {@code null} otherwise), and the position's own member name, carried for a future diagnostic (not
-     * read by this task's own pipeline steps).
+     * {@code null} otherwise), and the position's own member name — read by {@link
+     * #renderConjunctionMember} as the {@link InlineComposer}'s own recursion-diagnostic subject.
      *
      * @param valueType     the value's declared {@link JavaType}, or {@code null} when the position has
      *                      none (an undeclared map content type)
