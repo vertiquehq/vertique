@@ -182,6 +182,100 @@ class McpToolInputShapesIT {
                 "a 3-character name must reach the handler");
     }
 
+    // --- T006 TP-002: the Positive/Negative family — C3p and C3c parity, both validator modes ---
+
+    /**
+     * rest-023 T006 TP-002. {@code PositiveFamilyStaticFactoryDto} (C3p: a {@code @JsonCreator} static
+     * factory) and {@code PositiveFamilyConstructorDto} (C3c: a {@code @JsonCreator} constructor), each
+     * carrying {@code @Positive} directly on the creator parameter, each registered twice — on the
+     * validator-less factory every other tool in this fixture uses, and on the same validator-backed
+     * factory {@link #bg1RejectsTooLongNameAndAcceptsValidNameUnderAValidator} uses. The unit-level
+     * halves of the same fixtures are {@code
+     * dev.vertique.json.schema.StaticFactoryConstraintParityTest
+     * .staticFactoryCreatorParameterRendersThePositiveFamily} and {@code
+     * .constructorCreatorParameterRendersThePositiveFamily} in {@code vertique-json-schema}; the
+     * REST-level half is {@code
+     * ProfiledSchemaSynthesisIT.positiveFamilyRejectsAViolatingValueAtBothBoundaries}.
+     *
+     * <p>Expected initial result (baseline, unmodified floor): C3p is {@code INPUT_VALIDATION} at
+     * neither {@code amount=-5} nor {@code amount=0} in <em>either</em> mode — red — since neither the
+     * floor nor the metadata supplement (Bean Validation exposes no metadata for a static factory at
+     * all) can see this constraint yet. C3c is not rejected on the validator-less tool — red — but
+     * already rejected on the validator-backed tool — a CHARACTERIZATION CONTROL, not a red: Bean
+     * Validation exposes a constrained constructor's own parameters directly. Every {@code amount=5}
+     * case is the sensitivity control, accepted (reaches the handler) in every mode/fixture combination.
+     */
+    @Test
+    @DisplayName("T006 TP-002: a violating value at a static-factory or constructor parameter is rejected at both"
+            + " boundaries, in both validator modes as measured")
+    void positiveFamilyRejectsAViolatingValueAtBothBoundaries() throws Exception {
+        startServer();
+
+        // Every row is asserted through assertAll, so every mode/fixture combination's own verdict is
+        // recorded in one run rather than stopping at the first failure (assertSchemaRejection and
+        // assertAccepted are otherwise sequential, direct assertions elsewhere in this class).
+        assertAll(
+                // C3p, no validator: expected red now — the floor renders no Positive-family keyword yet.
+                () -> assertSchemaRejection(
+                        McpToolInputShapesITFixture.POSITIVE_FAMILY_STATIC_FACTORY_TOOL,
+                        new JsonObject().put("amount", -5),
+                        "amount=-5 must be rejected once the floor renders exclusiveMinimum: 0"),
+                () -> assertSchemaRejection(
+                        McpToolInputShapesITFixture.POSITIVE_FAMILY_STATIC_FACTORY_TOOL,
+                        new JsonObject().put("amount", 0),
+                        "amount=0 must be rejected (exclusiveMinimum, not minimum)"),
+                () -> assertAccepted(
+                        McpToolInputShapesITFixture.POSITIVE_FAMILY_STATIC_FACTORY_TOOL,
+                        new JsonObject().put("amount", 5),
+                        "sensitivity control: amount=5 must reach the handler"),
+
+                // C3p, validator-backed: expected red now too — Bean Validation exposes no metadata for
+                // a static factory at all, so only the floor (once widened) closes this.
+                () -> assertSchemaRejection(
+                        McpToolInputShapesITFixture.POSITIVE_FAMILY_STATIC_FACTORY_VALIDATOR_TOOL,
+                        new JsonObject().put("amount", -5),
+                        "amount=-5 must be rejected once the floor renders exclusiveMinimum: 0 (the"
+                                + " metadata supplement alone cannot see a static factory)"),
+                () -> assertSchemaRejection(
+                        McpToolInputShapesITFixture.POSITIVE_FAMILY_STATIC_FACTORY_VALIDATOR_TOOL,
+                        new JsonObject().put("amount", 0),
+                        "amount=0 must be rejected (exclusiveMinimum, not minimum)"),
+                () -> assertAccepted(
+                        McpToolInputShapesITFixture.POSITIVE_FAMILY_STATIC_FACTORY_VALIDATOR_TOOL,
+                        new JsonObject().put("amount", 5),
+                        "sensitivity control: amount=5 must reach the handler"),
+
+                // C3c, no validator: expected red now — the floor renders no Positive-family keyword yet.
+                () -> assertSchemaRejection(
+                        McpToolInputShapesITFixture.POSITIVE_FAMILY_CONSTRUCTOR_TOOL,
+                        new JsonObject().put("amount", -5),
+                        "amount=-5 must be rejected once the floor renders exclusiveMinimum: 0"),
+                () -> assertSchemaRejection(
+                        McpToolInputShapesITFixture.POSITIVE_FAMILY_CONSTRUCTOR_TOOL,
+                        new JsonObject().put("amount", 0),
+                        "amount=0 must be rejected (exclusiveMinimum, not minimum)"),
+                () -> assertAccepted(
+                        McpToolInputShapesITFixture.POSITIVE_FAMILY_CONSTRUCTOR_TOOL,
+                        new JsonObject().put("amount", 5),
+                        "sensitivity control: amount=5 must reach the handler"),
+
+                // C3c, validator-backed: CHARACTERIZATION CONTROL — already green at main. Bean
+                // Validation exposes a constrained constructor's own parameters directly.
+                () -> assertSchemaRejection(
+                        McpToolInputShapesITFixture.POSITIVE_FAMILY_CONSTRUCTOR_VALIDATOR_TOOL,
+                        new JsonObject().put("amount", -5),
+                        "CHARACTERIZATION CONTROL (already green at main): the metadata supplement already"
+                                + " renders exclusiveMinimum for a constructor parameter"),
+                () -> assertSchemaRejection(
+                        McpToolInputShapesITFixture.POSITIVE_FAMILY_CONSTRUCTOR_VALIDATOR_TOOL,
+                        new JsonObject().put("amount", 0),
+                        "CHARACTERIZATION CONTROL (already green at main)"),
+                () -> assertAccepted(
+                        McpToolInputShapesITFixture.POSITIVE_FAMILY_CONSTRUCTOR_VALIDATOR_TOOL,
+                        new JsonObject().put("amount", 5),
+                        "sensitivity control: amount=5 must reach the handler"));
+    }
+
     // --- TP-004: any-setter types ---
 
     @Test

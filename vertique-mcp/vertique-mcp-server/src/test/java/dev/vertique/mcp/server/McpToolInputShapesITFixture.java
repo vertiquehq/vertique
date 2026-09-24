@@ -6,6 +6,7 @@ package dev.vertique.mcp.server;
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonAnyGetter;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
+import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonEnumDefaultValue;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonIgnore;
@@ -52,6 +53,7 @@ import jakarta.annotation.Nullable;
 import jakarta.validation.Validation;
 import jakarta.validation.Validator;
 import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -124,6 +126,10 @@ final class McpToolInputShapesITFixture {
     static final String SHARED_ANY_SETTER_CONJUNCTION_TOOL = "shapes.sharedAnySetterConjunction";
     static final String OBJECT_VALUED_ANY_SETTER_PAIR_TOOL = "shapes.objectValuedAnySetterPair";
     static final String MEMBER_LEVEL_CLOSURE_TOOL = "shapes.memberLevelClosure";
+    static final String POSITIVE_FAMILY_STATIC_FACTORY_TOOL = "shapes.positiveFamilyStaticFactory";
+    static final String POSITIVE_FAMILY_STATIC_FACTORY_VALIDATOR_TOOL = "shapes.positiveFamilyStaticFactoryValidator";
+    static final String POSITIVE_FAMILY_CONSTRUCTOR_TOOL = "shapes.positiveFamilyConstructor";
+    static final String POSITIVE_FAMILY_CONSTRUCTOR_VALIDATOR_TOOL = "shapes.positiveFamilyConstructorValidator";
 
     /** The profile T005 TP-005's strict row selects; every other tool takes the resolver's tail. */
     static final String STRICT_PROFILE = "vertique-strict";
@@ -191,6 +197,23 @@ final class McpToolInputShapesITFixture {
         register(tools, factory, SHARED_ANY_SETTER_CONJUNCTION_TOOL, SharedAnySetterConjunctionPayload.class, null);
         register(tools, factory, OBJECT_VALUED_ANY_SETTER_PAIR_TOOL, ObjectValuedAnySetterPairPayload.class, null);
         register(tools, factory, MEMBER_LEVEL_CLOSURE_TOOL, MemberLevelClosurePayload.class, null);
+        // T006 TP-002: the Positive/Negative family — C3p and C3c, each registered on both the
+        // validator-less factory (every other tool above) and the same validator-backed factory BG1
+        // uses, so the fixture carries both constraint-source modes for each shape.
+        register(tools, factory, POSITIVE_FAMILY_STATIC_FACTORY_TOOL, PositiveFamilyStaticFactoryPayload.class, null);
+        register(
+                tools,
+                McpToolRuntimeFactoryTestSupport.factoryWithValidator(bg1Validator),
+                POSITIVE_FAMILY_STATIC_FACTORY_VALIDATOR_TOOL,
+                PositiveFamilyStaticFactoryPayload.class,
+                null);
+        register(tools, factory, POSITIVE_FAMILY_CONSTRUCTOR_TOOL, PositiveFamilyConstructorPayload.class, null);
+        register(
+                tools,
+                McpToolRuntimeFactoryTestSupport.factoryWithValidator(bg1Validator),
+                POSITIVE_FAMILY_CONSTRUCTOR_VALIDATOR_TOOL,
+                PositiveFamilyConstructorPayload.class,
+                null);
         this.toolsByName = Map.copyOf(tools);
 
         McpToolRegistry registry = McpToolRegistry.build(Set.copyOf(tools.values()));
@@ -497,6 +520,14 @@ final class McpToolInputShapesITFixture {
     record MemberLevelClosurePayload(
             @JsonProperty("payload") MemberLevelClosureDto argument0) {}
 
+    // --- T006 TP-002: the Positive/Negative family ---
+
+    record PositiveFamilyStaticFactoryPayload(
+            @JsonProperty("payload") PositiveFamilyStaticFactoryDto argument0) {}
+
+    record PositiveFamilyConstructorPayload(
+            @JsonProperty("payload") PositiveFamilyConstructorDto argument0) {}
+
     // --- TP-003 shapes: the five AC-013.1 input-discovery shapes, as T004's corpus defines them ---
 
     /** A private field Jackson fills through reflection, reachable only through a getter. */
@@ -589,6 +620,45 @@ final class McpToolInputShapesITFixture {
 
         @Size(max = 5)
         private final String name;
+    }
+
+    /**
+     * T006 C3p: a static-factory {@code @JsonCreator} with {@code @Positive} directly on its own
+     * parameter. Bean Validation exposes constrained constructors only, so the metadata supplement
+     * contributes nothing for this parameter's owner (a static method, never a constructor); only the
+     * floor — reading the parameter's own merged annotation map directly — can ever close this shape.
+     * Registered on both {@link #POSITIVE_FAMILY_STATIC_FACTORY_TOOL} (no validator) and {@link
+     * #POSITIVE_FAMILY_STATIC_FACTORY_VALIDATOR_TOOL} (validator-backed).
+     */
+    static final class PositiveFamilyStaticFactoryDto {
+
+        private final int amount;
+
+        private PositiveFamilyStaticFactoryDto(int amount) {
+            this.amount = amount;
+        }
+
+        @JsonCreator
+        static PositiveFamilyStaticFactoryDto of(@JsonProperty("amount") @Positive int amount) {
+            return new PositiveFamilyStaticFactoryDto(amount);
+        }
+    }
+
+    /**
+     * T006 C3c: a constructor {@code @JsonCreator} with {@code @Positive} directly on its own
+     * parameter. Bean Validation exposes a constrained constructor's own parameters directly, so the
+     * metadata supplement already renders {@code exclusiveMinimum: 0} for this shape today — {@link
+     * #POSITIVE_FAMILY_CONSTRUCTOR_VALIDATOR_TOOL}'s own characterization control; {@link
+     * #POSITIVE_FAMILY_CONSTRUCTOR_TOOL} (no validator) is the red-until-the-floor-is-widened row.
+     */
+    static final class PositiveFamilyConstructorDto {
+
+        private final int amount;
+
+        @JsonCreator
+        PositiveFamilyConstructorDto(@JsonProperty("amount") @Positive int amount) {
+            this.amount = amount;
+        }
     }
 
     /** A type holding {@link PrivateDatePropertyDto}, so the nested position is covered too. */

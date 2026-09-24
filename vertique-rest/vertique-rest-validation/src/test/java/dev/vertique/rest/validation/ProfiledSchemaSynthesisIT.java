@@ -62,6 +62,7 @@ import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.POST;
@@ -302,6 +303,139 @@ public class ProfiledSchemaSynthesisIT {
                 "the accepted body must bind through the constructor's own transform, not the field's"
                         + " raw wire value");
         assertEquals(1, resource.invocations.get(), "the accepted body must reach the resource exactly once");
+    }
+
+    // --- T006 TP-002: the Positive/Negative family — C3p and C3c parity, both validator modes ---
+
+    /**
+     * rest-023 T006 TP-002. {@link PositiveFamilyStaticFactoryBody} (C3p: a {@code @JsonCreator} static
+     * factory) and {@link PositiveFamilyConstructorBody} (C3c: a {@code @JsonCreator} constructor), each
+     * carrying {@code @Positive} directly on the creator parameter, mounted on both the gate ({@link
+     * #gateMount()}, no validator) and the validator-backed mount ({@link
+     * MountFixtures#validatorBackedMount}) — the unit-level halves of the same fixtures are {@code
+     * dev.vertique.json.schema.StaticFactoryConstraintParityTest
+     * .staticFactoryCreatorParameterRendersThePositiveFamily} and {@code
+     * .constructorCreatorParameterRendersThePositiveFamily} in {@code vertique-json-schema}.
+     *
+     * <p>Expected initial result (baseline, unmodified floor): C3p is accepted at {@code amount=-5} and
+     * {@code amount=0} in <em>both</em> modes — red — since neither the floor nor the metadata
+     * supplement (Bean Validation exposes no metadata for a static factory at all) can see this
+     * constraint yet. C3c is accepted at {@code amount=-5} and {@code amount=0} on the gate (no
+     * validator) — red — but already rejected on the validator-backed mount — a CHARACTERIZATION
+     * CONTROL, not a red: Bean Validation exposes a constrained constructor's own parameters directly,
+     * so the metadata supplement already renders {@code exclusiveMinimum: 0} for this shape today. Every
+     * {@code amount=5} case is the sensitivity control, accepted in every mode/fixture combination.
+     *
+     * @throws Exception when a round trip fails or times out
+     */
+    @Test
+    @DisplayName("T006 TP-002: a violating value at a static-factory or constructor parameter is rejected at both"
+            + " boundaries, in both validator modes as measured")
+    void positiveFamilyRejectsAViolatingValueAtBothBoundaries() throws Exception {
+        PositiveFamilyStaticFactoryResource staticFactoryOnGate = new PositiveFamilyStaticFactoryResource();
+        PositiveFamilyConstructorResource constructorOnGate = new PositiveFamilyConstructorResource();
+        int gatePort = start(gateMount(), Set.of(staticFactoryOnGate, constructorOnGate));
+
+        PositiveFamilyStaticFactoryResource staticFactoryOnValidatorMount = new PositiveFamilyStaticFactoryResource();
+        PositiveFamilyConstructorResource constructorOnValidatorMount = new PositiveFamilyConstructorResource();
+        int validatorPort = start(
+                MountFixtures.validatorBackedMount(vertx, RestTestContributions.none()),
+                Set.of(staticFactoryOnValidatorMount, constructorOnValidatorMount));
+
+        assertAll(
+                // C3p, gate (no validator): expected red now — the floor renders no Positive-family
+                // keyword yet.
+                () -> assertEquals(
+                        400,
+                        post(gatePort, "/positive-family/static-factory", "{\"amount\":-5}")
+                                .statusCode(),
+                        "C3p, no validator: amount=-5 must be rejected once the floor renders"
+                                + " exclusiveMinimum: 0"),
+                () -> assertEquals(
+                        400,
+                        post(gatePort, "/positive-family/static-factory", "{\"amount\":0}")
+                                .statusCode(),
+                        "C3p, no validator: amount=0 must be rejected (exclusiveMinimum, not minimum)"),
+                () -> assertEquals(
+                        200,
+                        post(gatePort, "/positive-family/static-factory", "{\"amount\":5}")
+                                .statusCode(),
+                        "sensitivity control: amount=5 must be accepted"),
+
+                // C3p, validator-backed mount: expected red now too — Bean Validation exposes no
+                // metadata for a static factory at all, so only the floor (once widened) closes this.
+                () -> assertEquals(
+                        400,
+                        post(validatorPort, "/positive-family/static-factory", "{\"amount\":-5}")
+                                .statusCode(),
+                        "C3p, validator-backed: amount=-5 must be rejected once the floor renders"
+                                + " exclusiveMinimum: 0 (the metadata supplement alone cannot see a static"
+                                + " factory)"),
+                () -> assertEquals(
+                        400,
+                        post(validatorPort, "/positive-family/static-factory", "{\"amount\":0}")
+                                .statusCode(),
+                        "C3p, validator-backed: amount=0 must be rejected (exclusiveMinimum, not minimum)"),
+                () -> assertEquals(
+                        200,
+                        post(validatorPort, "/positive-family/static-factory", "{\"amount\":5}")
+                                .statusCode(),
+                        "sensitivity control: amount=5 must be accepted"),
+
+                // C3c, gate (no validator): expected red now — the floor renders no Positive-family
+                // keyword yet.
+                () -> assertEquals(
+                        400,
+                        post(gatePort, "/positive-family/constructor", "{\"amount\":-5}")
+                                .statusCode(),
+                        "C3c, no validator: amount=-5 must be rejected once the floor renders"
+                                + " exclusiveMinimum: 0"),
+                () -> assertEquals(
+                        400,
+                        post(gatePort, "/positive-family/constructor", "{\"amount\":0}")
+                                .statusCode(),
+                        "C3c, no validator: amount=0 must be rejected (exclusiveMinimum, not minimum)"),
+                () -> assertEquals(
+                        200,
+                        post(gatePort, "/positive-family/constructor", "{\"amount\":5}")
+                                .statusCode(),
+                        "sensitivity control: amount=5 must be accepted"),
+
+                // C3c, validator-backed mount: CHARACTERIZATION CONTROL — already green at main. Bean
+                // Validation exposes a constrained constructor's own parameters directly.
+                () -> assertEquals(
+                        400,
+                        post(validatorPort, "/positive-family/constructor", "{\"amount\":-5}")
+                                .statusCode(),
+                        "CHARACTERIZATION CONTROL (already green at main): the metadata supplement already"
+                                + " renders exclusiveMinimum for a constructor parameter"),
+                () -> assertEquals(
+                        400,
+                        post(validatorPort, "/positive-family/constructor", "{\"amount\":0}")
+                                .statusCode(),
+                        "CHARACTERIZATION CONTROL (already green at main)"),
+                () -> assertEquals(
+                        200,
+                        post(validatorPort, "/positive-family/constructor", "{\"amount\":5}")
+                                .statusCode(),
+                        "sensitivity control: amount=5 must be accepted"));
+
+        assertEquals(
+                1,
+                staticFactoryOnGate.invocations.get(),
+                "only the accepted (amount=5) body may have reached the resource on the gate");
+        assertEquals(
+                1,
+                staticFactoryOnValidatorMount.invocations.get(),
+                "only the accepted (amount=5) body may have reached the resource on the validator-backed" + " mount");
+        assertEquals(
+                1,
+                constructorOnGate.invocations.get(),
+                "only the accepted (amount=5) body may have reached the resource on the gate");
+        assertEquals(
+                1,
+                constructorOnValidatorMount.invocations.get(),
+                "only the accepted (amount=5) body may have reached the resource on the validator-backed" + " mount");
     }
 
     // --- deserializer-driven-schema spike: the bounded hand-written-builder borrow ---
@@ -1900,6 +2034,95 @@ public class ProfiledSchemaSynthesisIT {
         @Produces(MediaType.TEXT_PLAIN)
         @Operation(operationId = "transformingConstructorAmountEcho")
         public String echo(TransformingConstructorBody body) {
+            invocations.incrementAndGet();
+            return "amount=" + body.amount;
+        }
+    }
+
+    // --- T006 TP-002: the Positive/Negative family fixtures ---
+
+    /**
+     * C3p: a static-factory {@code @JsonCreator} with {@code @Positive} directly on its own parameter.
+     * Bean Validation exposes constrained constructors only ({@code
+     * BeanDescriptor#getConstraintsForConstructor}), so the metadata supplement contributes nothing for
+     * this parameter's owner (a static {@link java.lang.reflect.Method}, never a
+     * {@link java.lang.reflect.Constructor});
+     * only the floor — reading the parameter's own merged annotation map directly — can ever close this
+     * shape.
+     */
+    public static class PositiveFamilyStaticFactoryBody {
+
+        private final int amount;
+
+        private PositiveFamilyStaticFactoryBody(int amount) {
+            this.amount = amount;
+        }
+
+        @JsonCreator
+        public static PositiveFamilyStaticFactoryBody of(@JsonProperty("amount") @Positive int amount) {
+            return new PositiveFamilyStaticFactoryBody(amount);
+        }
+    }
+
+    /** The gate-level resource for {@link PositiveFamilyStaticFactoryBody}. */
+    @Path("/positive-family")
+    public static class PositiveFamilyStaticFactoryResource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the bound amount.
+         *
+         * @param body the static-factory fixture body
+         * @return the echoed amount
+         */
+        @POST
+        @Path("/static-factory")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "positiveFamilyStaticFactoryAmountEcho")
+        public String echo(PositiveFamilyStaticFactoryBody body) {
+            invocations.incrementAndGet();
+            return "amount=" + body.amount;
+        }
+    }
+
+    /**
+     * C3c: a constructor {@code @JsonCreator} with {@code @Positive} directly on its own parameter. Bean
+     * Validation exposes a constrained constructor's own parameters directly, so the metadata supplement
+     * already renders {@code exclusiveMinimum: 0} for this shape today — the validator-backed row's own
+     * characterization control.
+     */
+    public static class PositiveFamilyConstructorBody {
+
+        private final int amount;
+
+        @JsonCreator
+        public PositiveFamilyConstructorBody(@JsonProperty("amount") @Positive int amount) {
+            this.amount = amount;
+        }
+    }
+
+    /** The gate-level resource for {@link PositiveFamilyConstructorBody}. */
+    @Path("/positive-family")
+    public static class PositiveFamilyConstructorResource {
+
+        /** Counts terminal invocations. */
+        public final AtomicInteger invocations = new AtomicInteger();
+
+        /**
+         * Echoes the bound amount.
+         *
+         * @param body the constructor fixture body
+         * @return the echoed amount
+         */
+        @POST
+        @Path("/constructor")
+        @Consumes(MediaType.APPLICATION_JSON)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "positiveFamilyConstructorAmountEcho")
+        public String echo(PositiveFamilyConstructorBody body) {
             invocations.incrementAndGet();
             return "amount=" + body.amount;
         }

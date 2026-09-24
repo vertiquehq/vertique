@@ -85,7 +85,12 @@ supplement on top when one is:
   already carries the same-named field's and getter's annotations — Jackson's own statement that they
   are one logical property, never a name coincidence the walk goes looking for), and a builder method
   borrows the built type's Jackson-introspected property of that same wire name — also
-  unconditionally, whether or not a validator is supplied — **when the borrow is sound**. **Builder
+  unconditionally, whether or not a validator is supplied — **when the borrow is sound**. The floor's
+  own translation renders the `@Positive`/`@PositiveOrZero`/`@Negative`/`@NegativeOrZero` family for
+  every unscoped member (creator parameters of both kinds, setters, builder methods) and for a
+  type-use constraint on a value type, matching what the scoped Jakarta module renders for a field or
+  getter; `@Email` and Hibernate-only constraints stay untranslated by the floor. A family keyword
+  never loosens a stricter `@Min`/`@Max`/`@DecimalMin`/`@DecimalMax` bound declared on the same member. **Builder
   borrow assumption (owner ruling, `spike/deserializer-driven-schema`, round 2).** A builder method is
   assumed to set the built property of that same wire name. The borrow now splits on whether that
   built-type property has a getter:
