@@ -87,10 +87,14 @@ supplement on top when one is:
   borrows the built type's Jackson-introspected property of that same wire name — also
   unconditionally, whether or not a validator is supplied — **when the borrow is sound**. The floor's
   own translation renders the `@Positive`/`@PositiveOrZero`/`@Negative`/`@NegativeOrZero` family for
-  every unscoped member (creator parameters of both kinds, setters, builder methods) and for a
-  type-use constraint on a value type, matching what the scoped Jakarta module renders for a field or
-  getter; `@Email` and Hibernate-only constraints stay untranslated by the floor. A family keyword
-  never loosens a stricter `@Min`/`@Max`/`@DecimalMin`/`@DecimalMax` bound declared on the same member. **Builder
+  every unscoped member — a creator parameter of either kind (read from Jackson's merged annotation
+  map, which already carries the same-named field's annotations), a builder method (read from the
+  method's own annotations), and a setter through its backing field (a `void` setter method cannot
+  itself carry a Bean Validation constraint, and an annotation on a setter's or builder method's
+  parameter is not read) — and for a type-use constraint on a value type, matching what the scoped
+  Jakarta module renders for a field or getter; `@Email` and Hibernate-only constraints stay
+  untranslated by the floor. A family keyword never loosens a stricter
+  `@Min`/`@Max`/`@DecimalMin`/`@DecimalMax` bound declared on the same member. **Builder
   borrow assumption (owner ruling, `spike/deserializer-driven-schema`, round 2).** A builder method is
   assumed to set the built property of that same wire name. The borrow now splits on whether that
   built-type property has a getter:
