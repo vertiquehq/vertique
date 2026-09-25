@@ -177,7 +177,24 @@ static GeneratedJaxRsApplicationRegistration managementApplicationRegistration(
 
 `A::new` is the factory argument when `A` has no `@Inject` constructor, as shown above. When `A` has exactly one `@Inject` constructor (`jakarta` or `javax`) instead, the method additionally takes a `Provider<A>` parameter and passes it as the factory argument in place of `A::new`.
 
-The path argument is `A`'s `@ApplicationPath` value, read from `A` itself or the nearest superclass that carries it (an interface is never read), then normalized at compile time: an empty value, or one with no leading `/`, is anchored to `/`; one terminal `/*` and every trailing `/` are then removed — so `/api/public/` and `/api/public/*` both normalize to `/api/public`, and a value of `/` or `/*` normalizes to `/`. The condition argument follows the same `PropertyCondition.matchesAll(config, …_CONDITIONS)` rule as a resource binding, or `true` when `A` carries no `@ConditionalOnProperty`.
+The path argument is `A`'s `@ApplicationPath` value, read from `A` itself or the nearest superclass that carries it (an interface is never read), then normalized at compile time: an empty value, or one with no leading `/`, is anchored to `/`; one terminal `/*` and every trailing `/` are then removed — so `/api/public/` and `/api/public/*` both normalize to `/api/public`, and a value of `/` or `/*` normalizes to `/`.
+
+The normalized path must then consist only of `/` and the RFC 3986 unreserved characters (`A-Z a-z 0-9 . _ ~ -`), or compilation fails with the first matching rule, in this order:
+
+| Rule | Rejects |
+|---|---|
+| `wildcard` | contains `*` |
+| `router pattern` | contains `:`, `{`, or `}` |
+| `query` | contains `?` |
+| `fragment` | contains `#` |
+| `repeated separator` | contains `//` |
+| `dot segment` | a `/`-separated segment equal to `.` or `..` |
+| `encoded separator` | contains `%2F`, `%2f`, `%5C`, or `%5c` |
+| `unsupported character` | any character other than `/` outside the unreserved set, including any other `%` |
+
+A `.` inside a segment (`v1.0`) is fine — only a segment consisting solely of `.` or `..` is a dot segment.
+
+The condition argument follows the same `PropertyCondition.matchesAll(config, …_CONDITIONS)` rule as a resource binding, or `true` when `A` carries no `@ConditionalOnProperty`.
 
 **Naming.** A registration method's base name is `A`'s decapitalized simple name plus `Registration`. When two eligible applications in one unit share a simple name (in different enclosing scopes), the processor appends `_2`, `_3`, and so on to the later ones, in fully-qualified-name order.
 
@@ -191,12 +208,13 @@ The path argument is `A`'s `@ApplicationPath` value, read from `A` itself or the
 | `@NoAutoWire` warning | `{Application} is annotated @NoAutoWire, so it is not registered or validated; its resources fall back to the default mount.` |
 | `autoWire=false` warning | `{Application} is not auto-wired because -Avertique.codegen.autoWire=false is set; its resources are exposed through the default @JaxRsResources mount.` |
 | Missing `@ApplicationPath` (error) | `{Application} declares no @ApplicationPath on itself or any superclass; declare @ApplicationPath("/") for a root application.` |
+| Invalid `@ApplicationPath` value (error) | `{Application} has an invalid @ApplicationPath value "{value}" (rule: {rule}); an application path may contain only '/' and the characters A-Z a-z 0-9 . _ ~ -` |
 | No usable constructor (error) | `{Application} has no usable constructor for application registration: it needs exactly one @Inject constructor, or an accessible no-arg constructor.` |
 | Inaccessible class (error) | `{Application} is not accessible from the generated module's package '{package}'; make it public, or package-private in that same package.` |
 | Non-static inner class (error) | `{Application} must be a top-level or static nested class to be an auto-wired JAX-RS application.` |
 | Missing `vertique-rest-jaxrs` dependency (error) | `An eligible JAX-RS application was found, but 'vertique-rest-jaxrs' is not on the compile classpath; add it as a dependency to generate application registrations.` |
 
-Every eligible application is validated regardless of `-Avertique.codegen.autoWire=false` — accessibility, construction, and the required `@ApplicationPath` still fail the build when violated; only the module write itself is skipped under that option (see "Extension Points" below).
+Every eligible application is validated regardless of `-Avertique.codegen.autoWire=false` — accessibility, construction, the required `@ApplicationPath`, and its path grammar (see "Application Registrations" above) all still fail the build when violated; only the module write itself is skipped under that option (see "Extension Points" below).
 
 **Accessibility reaches enclosing types.** The inaccessible-class diagnostic above is not satisfied by the application class alone: the application *and every one of its enclosing types* must each be accessible from the generated module's package — public, or non-private and declared in that same package. A class nested inside an inaccessible enclosing type is unreachable from outside that type's package even when the nested class itself is `public`, so it fails this check too.
 
@@ -210,7 +228,7 @@ Two compilation units whose classes resolve to the same package both write `<pac
 
 ### Upgrading an Existing `Application` Subclass
 
-A concrete `jakarta.ws.rs.core.Application` subclass that this processor previously ignored now becomes an eligible application on upgrade: it is registered, and the deployment switches from the implicit default mount into discovery or explicit mode for that composition. Such a class must carry `@ApplicationPath` on itself or a superclass — even under `-Avertique.codegen.autoWire=false`, which still validates every eligible application. Annotate the class `@NoAutoWire` to opt back out: it exempts the class from registration and from this validation, keeps the legacy default `@JaxRsResources` mount for its resources, and produces the `@NoAutoWire` warning above instead of a registration note.
+A concrete `jakarta.ws.rs.core.Application` subclass that this processor previously ignored now becomes an eligible application on upgrade: it is registered, and the deployment switches from the implicit default mount into discovery or explicit mode for that composition. Such a class must carry `@ApplicationPath` on itself or a superclass, and that value must satisfy the path grammar (see "Application Registrations" above) — both checks apply even under `-Avertique.codegen.autoWire=false`, which still validates every eligible application. Annotate the class `@NoAutoWire` to opt back out: it exempts the class from registration, from this validation, and from the path grammar, keeps the legacy default `@JaxRsResources` mount for its resources, and produces the `@NoAutoWire` warning above instead of a registration note.
 
 ---
 
@@ -324,7 +342,7 @@ The large observed ratios are directional measurements over a hot JVM loop with 
 
 ### `-Avertique.codegen.autoWire=false` — global disable
 
-Suppresses **only the generated `GeneratedJaxRsResourcesModule`**: no resource binding, catalog entry, or application registration is written for any unit in the build. Descriptor, bean-param model, and execution-plan companions are still emitted; only the DI module is skipped. Every eligible `jakarta.ws.rs.core.Application` is still validated — accessibility, construction, and the required `@ApplicationPath` still fail the build when violated — and each eligible, non-`@NoAutoWire` application gets one `autoWire=false` warning naming it and stating that its resources are exposed through the default `@JaxRsResources` mount instead. Useful when you manage resource bindings manually or want to test companions without the generated module.
+Suppresses **only the generated `GeneratedJaxRsResourcesModule`**: no resource binding, catalog entry, or application registration is written for any unit in the build. Descriptor, bean-param model, and execution-plan companions are still emitted; only the DI module is skipped. Every eligible `jakarta.ws.rs.core.Application` is still validated — accessibility, construction, the required `@ApplicationPath`, and its path grammar (see "Application Registrations" above) all still fail the build when violated — and each eligible, non-`@NoAutoWire` application gets one `autoWire=false` warning naming it and stating that its resources are exposed through the default `@JaxRsResources` mount instead. Useful when you manage resource bindings manually or want to test companions without the generated module.
 
 **Package resolution does not fail the build.** Because no module is written under this option, the processor still resolves a package to validate against, without emitting `PackageResolver`'s disjoint-packages error: the `-Avertique.codegen.package` override when set, otherwise the longest common package prefix of the unit's DI-eligible resources (or, in an applications-only unit, of its eligible applications), otherwise no package at all. When no package resolves, accessibility and no-arg-constructor validation fall back to public-only — an application, an enclosing type, or a no-arg constructor that is merely package-private has no package left to match against and fails the build.
 
@@ -336,7 +354,7 @@ Overrides `PackageResolver`'s LCP computation. Required when annotated types liv
 
 Place on any `@Path`-annotated type to exclude it from Dagger module emission; validation and descriptor emission still apply, and only its `GeneratedJaxRsResourcesModule` binding is suppressed.
 
-Place on a `jakarta.ws.rs.core.Application` subtype instead, and it is inert: the class is neither registered nor validated (it is not checked for `@ApplicationPath`, a usable constructor, or accessibility), it keeps the legacy default `@JaxRsResources` mount for its resources, and it gets the `@NoAutoWire` warning above instead of a registration note or an error.
+Place on a `jakarta.ws.rs.core.Application` subtype instead, and it is inert: the class is neither registered nor validated (it is not checked for `@ApplicationPath`, its path grammar, a usable constructor, or accessibility), it keeps the legacy default `@JaxRsResources` mount for its resources, and it gets the `@NoAutoWire` warning above instead of a registration note or an error.
 
 ---
 

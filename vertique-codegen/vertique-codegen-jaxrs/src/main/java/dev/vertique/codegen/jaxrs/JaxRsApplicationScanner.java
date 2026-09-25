@@ -32,8 +32,9 @@ import javax.lang.model.util.Types;
  *       {@code vertique-rest-jaxrs} dependency compile error, and returns the remaining
  *       structurally-eligible candidates in fully-qualified-name order.</li>
  *   <li>{@link #validate(List, String, boolean, CodegenContext)} checks each candidate's
- *       accessibility, construction, and {@code @ApplicationPath} (steps 0 to 2, via
- *       {@link ApplicationPathGrammar}), reports the corresponding compile errors, and emits one
+ *       accessibility, construction, and {@code @ApplicationPath} (all four compile-time steps
+ *       of the application path grammar, via {@link ApplicationPathGrammar}), reports the
+ *       corresponding compile errors, and emits one
  *       registration NOTE (auto-wiring enabled) or one {@code autoWire=false} WARNING (auto-wiring
  *       disabled) per successfully validated application.</li>
  * </ol>
@@ -158,8 +159,10 @@ public final class JaxRsApplicationScanner {
 
     /**
      * Validates each structurally-eligible candidate against its construction and accessibility
-     * rules and the {@code @ApplicationPath} grammar's steps 0 to 2, reporting a compile error
-     * naming the class for the first rule a candidate fails and excluding it from the result.
+     * rules and the application path grammar's steps 0 to 3 (required, normalized, and well-formed
+     * {@code @ApplicationPath}), reporting a compile error naming the class for the first rule a
+     * candidate fails and excluding it from the result. A malformed value (step 3) is reported by
+     * step 4: one compile error naming the class, the value as written, and the violated rule.
      *
      * <p>Every successfully validated application gets exactly one diagnostic: a registration NOTE
      * naming its class and normalized path when {@code autoWireDisabled} is {@code false}, or a
@@ -210,6 +213,19 @@ public final class JaxRsApplicationScanner {
                                 "%s declares no @ApplicationPath on itself or any superclass; declare"
                                         + " @ApplicationPath(\"/\") for a root application.",
                                 candidate.getSimpleName());
+                continue;
+            }
+
+            String violatedRule = ApplicationPathGrammar.violatedRule(normalizedPath);
+            if (violatedRule != null) {
+                ctx.diagnostics()
+                        .error(
+                                candidate,
+                                "%s has an invalid @ApplicationPath value \"%s\" (rule: %s); an application"
+                                        + " path may contain only '/' and the characters A-Z a-z 0-9 . _ ~ -",
+                                candidate.getSimpleName(),
+                                ApplicationPathGrammar.originalValue(candidate, ctx),
+                                violatedRule);
                 continue;
             }
 
