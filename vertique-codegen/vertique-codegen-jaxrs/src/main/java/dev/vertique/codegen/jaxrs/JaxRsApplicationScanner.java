@@ -184,14 +184,9 @@ public final class JaxRsApplicationScanner {
         List<Registration> result = new ArrayList<>();
         for (TypeElement candidate : eligible) {
             String candidatePackage = ctx.packageNameOf(candidate);
-            if (!isTypeAccessible(candidate, candidatePackage, modulePackage)) {
-                ctx.diagnostics()
-                        .error(
-                                candidate,
-                                "%s is not accessible from the generated module's package '%s'; make it"
-                                        + " public, or package-private in that same package.",
-                                candidate.getSimpleName(),
-                                modulePackage);
+            TypeElement inaccessibleType = firstInaccessibleEnclosingType(candidate, candidatePackage, modulePackage);
+            if (inaccessibleType != null) {
+                ctx.diagnostics().error(candidate, inaccessibleMessage(candidate, inaccessibleType, modulePackage));
                 continue;
             }
 
@@ -307,16 +302,60 @@ public final class JaxRsApplicationScanner {
      * String)}. A class nested inside an inaccessible enclosing type is itself unreachable from
      * outside the enclosing type's package, even when the nested class is declared {@code public} —
      * a caller outside that package cannot even name it.
+     *
+     * @return the first inaccessible type found, walking from {@code type} itself outward through
+     *     its enclosing types; {@code null} when {@code type} and every enclosing type are
+     *     accessible. The returned type is {@code type} itself when {@code type}'s own modifiers are
+     *     the problem, or a distinct enclosing type when {@code type} is accessible but one of its
+     *     enclosing types is not — the two cases get different diagnostic wording; see
+     *     {@link #inaccessibleMessage}.
      */
-    private static boolean isTypeAccessible(TypeElement type, String typePackage, String targetPackage) {
+    private static TypeElement firstInaccessibleEnclosingType(
+            TypeElement type, String typePackage, String targetPackage) {
         Element current = type;
         while (current instanceof TypeElement enclosingType) {
             if (!isAccessible(enclosingType, typePackage, targetPackage)) {
-                return false;
+                return enclosingType;
             }
             current = enclosingType.getEnclosingElement();
         }
-        return true;
+        return null;
+    }
+
+    /**
+     * Builds the inaccessible-application diagnostic message, naming {@code candidate} by simple
+     * name and distinguishing three cases: {@code candidate} itself is the inaccessible type;
+     * {@code candidate} is accessible but an enclosing type is not, which is named too; or no
+     * generated-module package could be resolved at all ({@code targetPackage} is {@code null},
+     * under {@code -Avertique.codegen.autoWire=false} with disjoint origin packages and no
+     * override), in which case the message never echoes the literal {@code null} and instead states
+     * that {@code candidate} and its enclosing types must be public.
+     *
+     * @param candidate     the application candidate under validation
+     * @param inaccessible  the first inaccessible type {@link #firstInaccessibleEnclosingType}
+     *                      found; either {@code candidate} itself or one of its enclosing types
+     * @param targetPackage the generated module's resolved package, or {@code null} when none could
+     *                      be resolved
+     * @return the formatted diagnostic message
+     */
+    private static String inaccessibleMessage(TypeElement candidate, TypeElement inaccessible, String targetPackage) {
+        if (targetPackage == null) {
+            return ("%s is not accessible: no generated-module package could be resolved, so the application"
+                            + " and its enclosing types must be public.")
+                    .formatted(candidate.getSimpleName());
+        }
+        if (inaccessible.equals(candidate)) {
+            return ("%s is not accessible from the generated module's package '%s'; make it public, or"
+                            + " package-private in that same package.")
+                    .formatted(candidate.getSimpleName(), targetPackage);
+        }
+        return ("%s is not accessible from the generated module's package '%s': its enclosing type %s is not"
+                        + " public; make %s public, or package-private in that same package.")
+                .formatted(
+                        candidate.getSimpleName(),
+                        targetPackage,
+                        inaccessible.getQualifiedName(),
+                        inaccessible.getSimpleName());
     }
 
     /**

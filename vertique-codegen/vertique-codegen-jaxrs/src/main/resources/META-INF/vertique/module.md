@@ -198,6 +198,8 @@ The path argument is `A`'s `@ApplicationPath` value, read from `A` itself or the
 
 Every eligible application is validated regardless of `-Avertique.codegen.autoWire=false` — accessibility, construction, and the required `@ApplicationPath` still fail the build when violated; only the module write itself is skipped under that option (see "Extension Points" below).
 
+**Accessibility reaches enclosing types.** The inaccessible-class diagnostic above is not satisfied by the application class alone: the application *and every one of its enclosing types* must each be accessible from the generated module's package — public, or non-private and declared in that same package. A class nested inside an inaccessible enclosing type is unreachable from outside that type's package even when the nested class itself is `public`, so it fails this check too.
+
 ### Components Must Also List `RestModule`
 
 Each presence-gated resource binding consumes the `Set<GeneratedJaxRsApplicationRegistration>` multibinding that `RestModule` declares. A Dagger component that lists a generated `GeneratedJaxRsResourcesModule` must therefore also list `RestModule`, or that set is unsatisfied and the component fails to compile.
@@ -324,9 +326,11 @@ The large observed ratios are directional measurements over a hot JVM loop with 
 
 Suppresses **only the generated `GeneratedJaxRsResourcesModule`**: no resource binding, catalog entry, or application registration is written for any unit in the build. Descriptor, bean-param model, and execution-plan companions are still emitted; only the DI module is skipped. Every eligible `jakarta.ws.rs.core.Application` is still validated — accessibility, construction, and the required `@ApplicationPath` still fail the build when violated — and each eligible, non-`@NoAutoWire` application gets one `autoWire=false` warning naming it and stating that its resources are exposed through the default `@JaxRsResources` mount instead. Useful when you manage resource bindings manually or want to test companions without the generated module.
 
+**Package resolution does not fail the build.** Because no module is written under this option, the processor still resolves a package to validate against, without emitting `PackageResolver`'s disjoint-packages error: the `-Avertique.codegen.package` override when set, otherwise the longest common package prefix of the unit's DI-eligible resources (or, in an applications-only unit, of its eligible applications), otherwise no package at all. When no package resolves, accessibility and no-arg-constructor validation fall back to public-only — an application, an enclosing type, or a no-arg constructor that is merely package-private has no package left to match against and fails the build.
+
 ### `-Avertique.codegen.package=...` — output package override
 
-Overrides `PackageResolver`'s LCP computation. Required when annotated types live in disjoint packages, and also forces two compilation units' generated modules apart when they would otherwise resolve to the same package (see "Distinct-Package Rule" above).
+Overrides `PackageResolver`'s LCP computation. Required when annotated types live in disjoint packages **and auto-wiring is enabled**, because a module must be written in that case and `PackageResolver.resolve` fails the build rather than guess a package. With `-Avertique.codegen.autoWire=false`, no module is written, so disjoint origin packages resolve without that failure instead — to this override when set, otherwise to the origins' longest common package prefix, otherwise to no package at all — and no error is raised. Also forces two compilation units' generated modules apart when they would otherwise resolve to the same package (see "Distinct-Package Rule" above).
 
 ### `@NoAutoWire` opt-out
 

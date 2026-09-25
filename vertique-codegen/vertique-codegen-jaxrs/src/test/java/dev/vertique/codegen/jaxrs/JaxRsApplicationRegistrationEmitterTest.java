@@ -1202,13 +1202,33 @@ class JaxRsApplicationRegistrationEmitterTest {
             }
             """);
 
+    /**
+     * S-1 (TP-010 (c)): a package-private application, with a public no-arg constructor, in the
+     * same disjoint-package setup — the resolved module package is {@code null} (no common prefix
+     * between {@code com.acme.api} and {@code org.partner.api}, and no override), so the
+     * package-private branch of the accessibility check can never match and {@code Api} must be
+     * rejected as inaccessible.
+     */
+    private static final JavaFileObject TP010_PACKAGE_PRIVATE_APPLICATION = SourceFiles.inline("com.acme.app.Api", """
+            package com.acme.app;
+
+            import jakarta.ws.rs.ApplicationPath;
+            import jakarta.ws.rs.core.Application;
+
+            @ApplicationPath("/api")
+            class Api extends Application {
+                public Api() {}
+            }
+            """);
+
     @Test
     @DisplayName("TP-010 — autoWire=false must resolve disjoint packages without failing, and must still validate")
     void autoWireDisabledResolvesDisjointPackagesWithoutFailing() {
         assertAll(
-                "TP-010 (a) and (b)",
+                "TP-010 (a), (b), and (c)",
                 () -> tp010DisjointPackagesValidApplication(),
-                () -> tp010DisjointPackagesInvalidConstructor());
+                () -> tp010DisjointPackagesInvalidConstructor(),
+                () -> tp010DisjointPackagesPackagePrivateApplication());
     }
 
     private void tp010DisjointPackagesValidApplication() {
@@ -1249,6 +1269,17 @@ class JaxRsApplicationRegistrationEmitterTest {
                 TP010_PRIVATE_CONSTRUCTOR_APPLICATION);
         logDiagnostics("TP-010 (b) disjoint packages, invalid constructor", result);
         assertFailsWithProcessorDiagnostic(result, "Api", "has no usable constructor for application registration");
+    }
+
+    private void tp010DisjointPackagesPackagePrivateApplication() {
+        var result = ProcessorTestHarness.run(
+                new JaxRsPipelineProcessor(),
+                Map.of("vertique.codegen.autoWire", "false"),
+                TP010_ACME_RESOURCE,
+                TP010_PARTNER_RESOURCE,
+                TP010_PACKAGE_PRIVATE_APPLICATION);
+        logDiagnostics("TP-010 (c) disjoint packages, package-private application", result);
+        assertFailsWithProcessorDiagnostic(result, "Api", "is not accessible");
     }
 
     // -----------------------------------------------------------------------------------------
