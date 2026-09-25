@@ -54,9 +54,10 @@ import lombok.extern.slf4j.Slf4j;
  *   <li>Resolves the manual resource contributions once, then constructs each active application.
  *       A {@link RuntimeException} or {@link LinkageError} escaping construction or membership
  *       resolution is rethrown as a {@link RestConfigurationException} naming the application; a
- *       composition already running on this thread is detected and named instead of recursing; a
- *       constructed instance that does not satisfy its own registration's declared type fails
- *       immediately.
+ *       composition already running on this thread — including one re-entered through a manually
+ *       contributed resource's or a catalog entry's own construction, not only through an
+ *       application's — is detected and named instead of recursing; a constructed instance that
+ *       does not satisfy its own registration's declared type fails immediately.
  *   <li>A sole active discovery-style registration selects every enabled catalog entry and every
  *       manual resource.
  *   <li>An overriding registration's {@code getClasses()} decides its own membership, matched
@@ -78,16 +79,63 @@ final class JaxRsApplicationComposer {
     private static final String DEFAULT_BASE_PATH = "/*";
 
     /**
-     * Marks the registration whose construction is in progress on this thread, so that a
-     * composition re-entering on the same thread (for example, an {@code Application} whose
-     * constructor depends on {@code Set<RouterMount>}) is detected and named instead of recursing
-     * until the stack overflows. Set only around the registration currently under construction, and
-     * always cleared in that call's {@code finally} block, so only the outermost composition ever
-     * holds it.
+     * Marks that a composition is already running on this thread, so a manually contributed
+     * resource, a catalog entry, or an {@code Application} whose own construction or member
+     * evaluation resolves {@code Set<RouterMount>} again is detected and named instead of recursing
+     * until the stack overflows. Set once, by {@link #enterComposition()}, and always cleared by the
+     * matching {@link #exitComposition()} in the same caller's {@code finally} block; a nested,
+     * rejected call never sets it, because {@link #enterComposition()} throws before returning, so
+     * only the outermost {@code RestModule.jaxRsRouterMount} call ever holds — or clears — it.
+     */
+    private static final ThreadLocal<Boolean> COMPOSING = new ThreadLocal<>();
+
+    /**
+     * Marks the registration whose construction or member evaluation is in progress on this thread,
+     * so that a re-entry happening while an application is being evaluated still names that
+     * application, not only the generic composition-in-progress message. Set only around the
+     * registration currently under evaluation, and always cleared in that call's {@code finally}
+     * block.
      */
     private static final ThreadLocal<GeneratedJaxRsApplicationRegistration> IN_PROGRESS = new ThreadLocal<>();
 
     private JaxRsApplicationComposer() {}
+
+    /**
+     * Detects a composition already running on this thread and marks a new one starting. Called
+     * once by {@code RestModule.jaxRsRouterMount}, before either its zero-declaration body or
+     * {@link #compose} runs, so the guard covers both branches — the mistake a manually contributed
+     * resource, a catalog entry, or an {@code Application} can make by depending on
+     * {@code Set<RouterMount>}. A matching {@link #exitComposition()} in the caller's {@code finally}
+     * block always follows a successful call.
+     *
+     * @throws RestConfigurationException when a composition is already running on this thread,
+     *     naming the application under construction when one is known, or the offending dependency
+     *     otherwise
+     */
+    static void enterComposition() {
+        if (Boolean.TRUE.equals(COMPOSING.get())) {
+            GeneratedJaxRsApplicationRegistration reentered = IN_PROGRESS.get();
+            String subject = reentered != null
+                    ? appContext(reentered)
+                    : "A manually contributed resource or generated resource catalog entry";
+            throw new RestConfigurationException(subject
+                    + " re-entered JAX-RS application composition while Set<RouterMount> was still being resolved"
+                    + " on this thread; an Application constructor, its getClasses()/getSingletons(), or a"
+                    + " manually contributed resource's or catalog entry's own construction must not depend on"
+                    + " Set<RouterMount>");
+        }
+        COMPOSING.set(Boolean.TRUE);
+    }
+
+    /**
+     * Clears the composition-in-progress marker {@link #enterComposition()} set. Must run only in
+     * the {@code finally} block of the same call that successfully called
+     * {@link #enterComposition()}; a nested, rejected call never reaches its own {@code finally}, so
+     * only the outermost composition ever clears the flag.
+     */
+    static void exitComposition() {
+        COMPOSING.remove();
+    }
 
     /**
      * Composes {@code applications} into one mount per active application.
@@ -107,13 +155,9 @@ final class JaxRsApplicationComposer {
             Provider<Set<Object>> resources,
             Provider<Set<GeneratedJaxRsResourceEntry>> catalog,
             JaxRsConfig config) {
-        GeneratedJaxRsApplicationRegistration reentered = IN_PROGRESS.get();
-        if (reentered != null) {
-            throw new RestConfigurationException(appContext(reentered)
-                    + " re-entered JAX-RS application composition while its own construction was still in"
-                    + " progress; an Application constructor or getClasses()/getSingletons() must not depend on"
-                    + " Set<RouterMount>");
-        }
+        // Re-entry is detected by RestModule.jaxRsRouterMount's composition-wide guard
+        // (enterComposition()/exitComposition()), which wraps this call and the zero-declaration
+        // body alike, so it is not repeated here.
 
         // --- Step 1: registration checks (no application code runs yet) ---
 
@@ -122,7 +166,7 @@ final class JaxRsApplicationComposer {
                         .thenComparing(r -> r.type().getName()))
                 .toList();
         String registrationSummary = sortedRegistrations.stream()
-                .map(r -> r.type().getSimpleName() + " (" + r.path() + ", active=" + r.active() + ")")
+                .map(r -> r.type().getName() + " (" + r.path() + ", active=" + r.active() + ")")
                 .collect(Collectors.joining(", "));
 
         Map<Class<?>, GeneratedJaxRsResourceEntry> entriesByType = new HashMap<>();
@@ -141,13 +185,13 @@ final class JaxRsApplicationComposer {
         }
         byType.forEach((type, registrationsOfType) -> {
             if (registrationsOfType.size() > 1) {
-                stepOneViolations.add("Two or more registrations declare application " + type.getSimpleName()
+                stepOneViolations.add("Two or more registrations declare application " + type.getName()
                         + "; declared registrations: " + registrationSummary);
             }
         });
         duplicateEntryTypes.forEach(
                 type -> stepOneViolations.add("Two or more generated resource catalog entries exist for "
-                        + type.getSimpleName() + "; declared registrations: " + registrationSummary));
+                        + type.getName() + "; declared registrations: " + registrationSummary));
 
         List<GeneratedJaxRsApplicationRegistration> discoveryRegistrations =
                 sortedRegistrations.stream().filter(r -> !overrides(r.type())).toList();
@@ -186,7 +230,7 @@ final class JaxRsApplicationComposer {
         if (activeRegistrations.isEmpty()) {
             String enabledNames = entriesByType.values().stream()
                     .filter(GeneratedJaxRsResourceEntry::enabled)
-                    .map(entry -> entry.type().getSimpleName())
+                    .map(entry -> entry.type().getName())
                     .sorted()
                     .collect(Collectors.joining(", "));
             log.warn(
@@ -233,8 +277,9 @@ final class JaxRsApplicationComposer {
      * {@code getSingletons()}, or {@code getClasses()} is wrapped, naming this application; a
      * composition already in progress on this thread (including this application's own, re-entrant
      * construction) surfaces as a wrapped, nested {@link RestConfigurationException} this way too, so
-     * it is never returned to the caller unwrapped. Only this method's own type-check diagnostic,
-     * thrown after construction succeeds, is never wrapped.
+     * it is never returned to the caller unwrapped. Only this method's own diagnostics — a
+     * {@code null} instance from {@code create()}, and the type-check failure — thrown after
+     * construction returns, are never wrapped.
      *
      * @param registration    the registration to evaluate
      * @param entriesByType   the generated resource catalog, keyed by declared type
@@ -257,12 +302,17 @@ final class JaxRsApplicationComposer {
                 throw wrap(registration, e);
             }
 
-            // The type check is this method's own diagnostic, not application code, so it is thrown
-            // unwrapped: it must not be re-caught and re-wrapped by either catch above or below.
+            // The type check (and the null check below) are this method's own diagnostics, not
+            // application code, so they are thrown unwrapped: neither must be re-caught and
+            // re-wrapped by either catch above or below.
+            if (application == null) {
+                throw new RestConfigurationException(
+                        appContext(registration) + " registration returned null instead of an instance");
+            }
             if (!registration.type().isInstance(application)) {
                 throw new RestConfigurationException(appContext(registration) + " registration constructed an"
-                        + " instance of " + application.getClass().getSimpleName() + ", which is not an instance"
-                        + " of " + registration.type().getSimpleName());
+                        + " instance of " + application.getClass().getName() + ", which is not an instance"
+                        + " of " + registration.type().getName());
             }
 
             if (!overrides(registration.type())) {
@@ -337,13 +387,13 @@ final class JaxRsApplicationComposer {
             return;
         }
         if (isUnsupportedProviderOrFeature(listed)) {
-            violations.add(appContext(registration) + " lists " + listed.getSimpleName() + " in getClasses(),"
+            violations.add(appContext(registration) + " lists " + listed.getName() + " in getClasses(),"
                     + " which is a JAX-RS provider or feature type (@Provider, Feature, or DynamicFeature) and is"
                     + " not a supported resource member");
             return;
         }
         if (listed.isInterface() || Modifier.isAbstract(listed.getModifiers()) || !hasEffectivePath(listed)) {
-            violations.add(appContext(registration) + " lists " + listed.getSimpleName() + " in getClasses(),"
+            violations.add(appContext(registration) + " lists " + listed.getName() + " in getClasses(),"
                     + " which is not a concrete JAX-RS root resource (interface, abstract, or missing an"
                     + " effective @Path)");
             return;
@@ -364,18 +414,18 @@ final class JaxRsApplicationComposer {
         if (matchCount == 0) {
             if (nonMatchingSubclasses.size() == 1) {
                 Class<?> subclass = nonMatchingSubclasses.get(0).getClass();
-                violations.add(appContext(registration) + " lists " + listed.getSimpleName() + " in getClasses(),"
-                        + " but its only bound instance is " + subclass.getSimpleName() + ", a subclass with a"
-                        + " different resource surface; list " + subclass.getSimpleName() + " explicitly");
+                violations.add(appContext(registration) + " lists " + listed.getName() + " in getClasses(),"
+                        + " but its only bound instance is " + subclass.getName() + ", a subclass with a"
+                        + " different resource surface; list " + subclass.getName() + " explicitly");
             } else {
-                violations.add(appContext(registration) + " lists " + listed.getSimpleName() + " in getClasses(),"
+                violations.add(appContext(registration) + " lists " + listed.getName() + " in getClasses(),"
                         + " but no generated resource entry or manual @JaxRsResources instance of that class is"
                         + " bound");
             }
             return;
         }
         if (matchCount > 1) {
-            violations.add(appContext(registration) + " lists " + listed.getSimpleName() + " in getClasses(),"
+            violations.add(appContext(registration) + " lists " + listed.getName() + " in getClasses(),"
                     + " which matches more than one bound resource (a generated catalog entry and a manual"
                     + " contribution, or two or more manual contributions)");
             return;
@@ -401,8 +451,8 @@ final class JaxRsApplicationComposer {
      * @param selectedEntryTypes  every resolved catalog entry's declared type accumulates here
      * @param selectedManualOut   every selected manual instance accumulates here
      * @return one mount per application, in mounting order
-     * @throws RestConfigurationException when a resolved catalog instance does not keep its entry's
-     *     declared resource surface
+     * @throws RestConfigurationException when a resolved catalog instance is {@code null}, or does
+     *     not keep its entry's declared resource surface
      */
     private static Set<RouterMount> resolveAndMount(
             JaxRsRouterMount.Factory factory,
@@ -420,11 +470,15 @@ final class JaxRsApplicationComposer {
                     instance = resolved.get(entry);
                 } else {
                     instance = entry.get();
+                    if (instance == null) {
+                        throw new RestConfigurationException("Generated resource entry for "
+                                + entry.type().getName() + " returned null instead of an instance");
+                    }
                     if (!sameSurface(entry.type(), instance.getClass())) {
                         throw new RestConfigurationException("Generated resource entry for "
-                                + entry.type().getSimpleName() + " resolved to an instance of "
-                                + instance.getClass().getSimpleName() + ", which does not have the same resource"
-                                + " surface as " + entry.type().getSimpleName());
+                                + entry.type().getName() + " resolved to an instance of "
+                                + instance.getClass().getName() + ", which does not have the same resource"
+                                + " surface as " + entry.type().getName());
                     }
                     resolved.put(entry, instance);
                 }
@@ -448,10 +502,10 @@ final class JaxRsApplicationComposer {
 
             log.info(
                     "Mounted JAX-RS application {} at {} with resources: {}",
-                    selection.registration().type().getSimpleName(),
+                    selection.registration().type().getName(),
                     mountPath,
                     ordered.stream()
-                            .map(resource -> resource.getClass().getSimpleName())
+                            .map(resource -> resource.getClass().getName())
                             .toList());
         }
         return mounts;
@@ -476,11 +530,11 @@ final class JaxRsApplicationComposer {
         entriesByType.values().stream()
                 .filter(GeneratedJaxRsResourceEntry::enabled)
                 .filter(entry -> !selectedEntryTypes.contains(entry.type()))
-                .map(entry -> entry.type().getSimpleName())
+                .map(entry -> entry.type().getName())
                 .forEach(unselected::add);
         manualResources.stream()
                 .filter(instance -> !selectedManual.contains(instance))
-                .map(instance -> instance.getClass().getSimpleName())
+                .map(instance -> instance.getClass().getName())
                 .forEach(unselected::add);
         if (!unselected.isEmpty()) {
             log.warn(
@@ -599,7 +653,7 @@ final class JaxRsApplicationComposer {
      * @return {@code "Application <simple name> at <path>"}
      */
     private static String appContext(GeneratedJaxRsApplicationRegistration registration) {
-        return "Application " + registration.type().getSimpleName() + " at " + registration.path();
+        return "Application " + registration.type().getName() + " at " + registration.path();
     }
 
     /**
@@ -608,12 +662,16 @@ final class JaxRsApplicationComposer {
      *
      * @param registration the registration under evaluation
      * @param cause        the original throwable
-     * @return the wrapping exception, naming {@code registration} and carrying {@code cause}
+     * @return the wrapping exception, naming {@code registration} and {@code cause}'s class — never
+     *     {@code cause}'s own message, which may carry a configuration value — and carrying
+     *     {@code cause} as its own cause, so the original message survives only there
      */
     private static RestConfigurationException wrap(
             GeneratedJaxRsApplicationRegistration registration, Throwable cause) {
         return new RestConfigurationException(
-                appContext(registration) + " failed during composition: " + cause.getMessage(), cause);
+                appContext(registration) + " failed during composition: "
+                        + cause.getClass().getName(),
+                cause);
     }
 
     /**

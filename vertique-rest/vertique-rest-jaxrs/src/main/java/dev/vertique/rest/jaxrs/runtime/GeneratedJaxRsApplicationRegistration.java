@@ -62,9 +62,9 @@ public final class GeneratedJaxRsApplicationRegistration {
         Objects.requireNonNull(path, "path must not be null");
         Objects.requireNonNull(factory, "factory must not be null");
         if (!isNormalizedPath(path)) {
-            throw new IllegalArgumentException("Application " + type.getSimpleName() + "'s registration path '"
-                    + path + "' is not in the normalized form the JAX-RS application path grammar requires: '/',"
-                    + " or one or more '/segment' parts, each matching [A-Za-z0-9._~-]+ and neither '.' nor '..'");
+            throw new IllegalArgumentException("Application " + type.getName() + "'s registration path '" + path
+                    + "' is not in the normalized form the JAX-RS application path grammar requires: '/', or one"
+                    + " or more '/segment' parts, each matching [A-Za-z0-9._~-]+ and neither '.' nor '..'");
         }
         return new GeneratedJaxRsApplicationRegistration(type, path, active, factory);
     }

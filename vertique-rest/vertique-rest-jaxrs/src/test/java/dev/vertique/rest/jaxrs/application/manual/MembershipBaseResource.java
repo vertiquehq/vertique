@@ -9,11 +9,11 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * TP-005 (cases 15, 17 to 20) and TP-018's listed base resource. Carries no catalog entry: its only
- * possible membership path is a manual {@code @JaxRsResources} instance whose class satisfies
- * {@code sameSurface(MembershipBaseResource.class, instance.getClass())}. Never itself contributed
- * manually — every case contributes exactly one subclass instance, in its own module, so C-COMPOSE
- * step 6.6's "the only candidate" naming applies:
+ * TP-005 (cases 15, 17 to 20, 23, 24) and TP-018's listed base resource. Carries no catalog entry:
+ * its only possible membership path is a manual {@code @JaxRsResources} instance whose class
+ * satisfies {@code sameSurface(MembershipBaseResource.class, instance.getClass())}. Never itself
+ * contributed manually — every case contributes exactly one subclass instance, in its own module,
+ * so C-COMPOSE step 6.6's "the only candidate" naming applies:
  *
  * <ul>
  *   <li>{@link MembershipAopProxyResource} — the AOP-proxy shape (TP-018, matches);
@@ -23,7 +23,11 @@ import jakarta.ws.rs.core.MediaType;
  *       (case 18);
  *   <li>{@link MembershipGrandchildResource} — a grandchild, not a direct subclass (case 19);
  *   <li>{@link MembershipRolesAllowedResource} — an override carrying {@code @RolesAllowed} (case
- *       20).
+ *       20);
+ *   <li>{@link MembershipClassLevelPermitAllResource} — a class-level {@code @PermitAll} and no
+ *       other annotation (case 23, G-03);
+ *   <li>{@link MembershipParamAnnotationOnlyResource} — an override whose only annotation sits on a
+ *       parameter (case 24, G-03).
  * </ul>
  */
 @Path("/membership-base")
@@ -42,5 +46,20 @@ public class MembershipBaseResource {
     @Produces(MediaType.TEXT_PLAIN)
     public String membershipBase() {
         return "membershipBase";
+    }
+
+    /**
+     * Handles {@code GET /membership-base/filtered}, taking one unannotated parameter.
+     * {@link MembershipParamAnnotationOnlyResource} (case 24, G-03) overrides this method, adding a
+     * runtime-retained annotation only to the override's own parameter, never to the method itself.
+     *
+     * @param filter an unannotated parameter on this declaration
+     * @return the fixed body {@code "membershipBaseFiltered:" + filter}
+     */
+    @GET
+    @Path("/filtered")
+    @Produces(MediaType.TEXT_PLAIN)
+    public String membershipBaseFiltered(String filter) {
+        return "membershipBaseFiltered:" + filter;
     }
 }

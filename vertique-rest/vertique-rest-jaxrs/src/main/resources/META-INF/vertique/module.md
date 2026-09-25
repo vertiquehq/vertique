@@ -1009,7 +1009,7 @@ own order.
 | `getSingletons()` | Not supported: a non-empty return fails startup, naming the application. |
 | `getProperties()` | Never called. |
 | Providers/features | A listed type annotated `@jakarta.ws.rs.ext.Provider`, or assignable to `Feature` or `DynamicFeature`, fails startup as an unsupported resource member. |
-| Evaluation | Each declared, active application is constructed and evaluated once per `HttpVerticle` composition — never once for the whole process. |
+| Evaluation | Each declared, active application is constructed and evaluated once per `HttpVerticle` composition — never once for the whole process. Every resolution of `Set<RouterMount>` composes again: a component accessor that returns `Set<RouterMount>` constructs every active application and every selected unscoped resource again and repeats the informational and warning lines each composition logs — do not resolve that set outside the verticle. |
 | Failure | An evaluation failure fails the deployment before the server starts listening, naming the application class and its `@ApplicationPath`. |
 
 ### Threading

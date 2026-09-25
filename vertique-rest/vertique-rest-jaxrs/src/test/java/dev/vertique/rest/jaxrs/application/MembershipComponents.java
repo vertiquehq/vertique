@@ -9,10 +9,12 @@ import dev.vertique.core.VertxConfig;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.jaxrs.RestModule;
 import dev.vertique.rest.jaxrs.application.manual.MembershipAopProxyResourceModule;
+import dev.vertique.rest.jaxrs.application.manual.MembershipClassLevelPermitAllResourceModule;
 import dev.vertique.rest.jaxrs.application.manual.MembershipClassPathResourceModule;
 import dev.vertique.rest.jaxrs.application.manual.MembershipGrandchildResourceModule;
 import dev.vertique.rest.jaxrs.application.manual.MembershipNewInterfaceResourceModule;
 import dev.vertique.rest.jaxrs.application.manual.MembershipOwnMethodResourceModule;
+import dev.vertique.rest.jaxrs.application.manual.MembershipParamAnnotationOnlyResourceModule;
 import dev.vertique.rest.jaxrs.application.manual.MembershipRolesAllowedResourceModule;
 import dev.vertique.rest.jaxrs.application.manual.membership.AmbiguousResourceManualModule;
 import dev.vertique.rest.jaxrs.application.manual.membership.DuplicateManualResourceModuleA;
@@ -23,10 +25,12 @@ import dev.vertique.rest.jaxrs.application.unita.membership.Case21SubstitutionMo
 import dev.vertique.rest.jaxrs.application.unita.membership.Case22HandWrittenEntryModule;
 import dev.vertique.rest.jaxrs.application.unita.membership.DuplicateCatalogEntryModuleA;
 import dev.vertique.rest.jaxrs.application.unita.membership.DuplicateCatalogEntryModuleB;
+import dev.vertique.rest.jaxrs.application.unita.membership.NullCatalogEntryModule;
 import dev.vertique.rest.jaxrs.application.unitb.membership.MembershipCaseApplicationRegistrationModule;
 import dev.vertique.rest.jaxrs.application.unitb.membership.MembershipDuplicateRegistrationModuleA;
 import dev.vertique.rest.jaxrs.application.unitb.membership.MembershipDuplicateRegistrationModuleB;
 import dev.vertique.rest.jaxrs.application.unitb.membership.MembershipMismatchedFactoryRegistrationModule;
+import dev.vertique.rest.jaxrs.application.unitb.membership.MembershipNullFactoryRegistrationModule;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 import java.util.Set;
@@ -405,6 +409,118 @@ public final class MembershipComponents {
              * @return the constructed component
              */
             AopProxyMatchComponent create(@BindsInstance @VertxConfig JsonObject config);
+        }
+    }
+
+    /**
+     * TP-005 case 23 (G-03): the standard single {@code MembershipCaseApplication} registration,
+     * plus the sole manual candidate {@code MembershipClassLevelPermitAllResource}.
+     */
+    @Singleton
+    @Component(
+            modules = {
+                RestModule.class,
+                ApplicationTestSupportModule.class,
+                MembershipCaseApplicationRegistrationModule.class,
+                MembershipClassLevelPermitAllResourceModule.class
+            })
+    public interface SubclassClassLevelPermitAllComponent extends Provisions {
+
+        /** Factory taking the application configuration. */
+        @Component.Factory
+        interface Factory {
+
+            /**
+             * Creates the component bound to the given configuration.
+             *
+             * @param config the application configuration
+             * @return the constructed component
+             */
+            SubclassClassLevelPermitAllComponent create(@BindsInstance @VertxConfig JsonObject config);
+        }
+    }
+
+    /**
+     * TP-005 case 24 (G-03): the standard single {@code MembershipCaseApplication} registration,
+     * plus the sole manual candidate {@code MembershipParamAnnotationOnlyResource}.
+     */
+    @Singleton
+    @Component(
+            modules = {
+                RestModule.class,
+                ApplicationTestSupportModule.class,
+                MembershipCaseApplicationRegistrationModule.class,
+                MembershipParamAnnotationOnlyResourceModule.class
+            })
+    public interface SubclassParamAnnotationOnlyComponent extends Provisions {
+
+        /** Factory taking the application configuration. */
+        @Component.Factory
+        interface Factory {
+
+            /**
+             * Creates the component bound to the given configuration.
+             *
+             * @param config the application configuration
+             * @return the constructed component
+             */
+            SubclassParamAnnotationOnlyComponent create(@BindsInstance @VertxConfig JsonObject config);
+        }
+    }
+
+    /**
+     * G-07 (a): only {@link MembershipNullFactoryRegistrationModule}, whose registration's factory
+     * always returns {@code null}.
+     */
+    @Singleton
+    @Component(
+            modules = {
+                RestModule.class,
+                ApplicationTestSupportModule.class,
+                MembershipNullFactoryRegistrationModule.class
+            })
+    public interface NullFactoryComponent extends Provisions {
+
+        /** Factory taking the application configuration. */
+        @Component.Factory
+        interface Factory {
+
+            /**
+             * Creates the component bound to the given configuration.
+             *
+             * @param config the application configuration
+             * @return the constructed component
+             */
+            NullFactoryComponent create(@BindsInstance @VertxConfig JsonObject config);
+        }
+    }
+
+    /**
+     * G-07 (b): the standard single {@code MembershipCaseApplication} registration, plus
+     * {@link NullCatalogEntryModule}, whose hand-written catalog entry's provider always returns
+     * {@code null}.
+     */
+    @Singleton
+    @Component(
+            modules = {
+                RestModule.class,
+                ApplicationTestSupportModule.class,
+                MembershipCaseApplicationRegistrationModule.class,
+                NullCatalogEntryModule.class
+            })
+    public interface NullCatalogEntryComponent extends Provisions {
+
+        /** Factory taking the application configuration. */
+        @Component.Factory
+        interface Factory {
+
+            /**
+             * Creates the component bound to the given configuration.
+             *
+             * @param config the application configuration
+             * @return the constructed component
+             */
+            NullCatalogEntryComponent create(@BindsInstance @VertxConfig JsonObject config);
         }
     }
 }

@@ -14,6 +14,7 @@ import jakarta.ws.rs.core.Application;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.slf4j.Logger;
@@ -191,5 +192,21 @@ class GeneratedJaxRsApplicationRegistrationTest {
                     "a null factory must throw NullPointerException");
             LOG.info("TP-017 null factory: {}", ex.getMessage());
         });
+    }
+
+    @Test
+    @DisplayName(
+            "G-08 (e): the registration factory's IllegalArgumentException names the application by fully qualified name, not only simple name")
+    void rejectedPathMessageNamesApplicationByFullyQualifiedName() {
+        CountingFactory factory = new CountingFactory();
+        IllegalArgumentException ex = assertThrows(
+                IllegalArgumentException.class,
+                () -> GeneratedJaxRsApplicationRegistration.of(APPLICATION_TYPE, "api", true, factory),
+                "a non-normalized path must be rejected");
+        LOG.info("G-08 (e) failure: {}", ex.getMessage());
+        assertTrue(
+                ex.getMessage().contains(APPLICATION_TYPE.getName()),
+                () -> "message must name the application class by fully qualified name: " + ex.getMessage());
+        assertEquals(0, factory.calls(), "of(...) must never invoke the factory");
     }
 }

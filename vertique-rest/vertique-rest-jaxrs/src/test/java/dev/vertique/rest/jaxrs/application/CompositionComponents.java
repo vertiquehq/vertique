@@ -10,6 +10,7 @@ import dev.vertique.rest.core.dagger.JaxRsResources;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.jaxrs.RestModule;
 import dev.vertique.rest.jaxrs.application.manual.ManualResourceModule;
+import dev.vertique.rest.jaxrs.application.manual.ReentrantResourceModule;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 import java.util.Set;
@@ -261,6 +262,185 @@ public final class CompositionComponents {
              * @return the constructed component
              */
             ThreeRegistrationsComponent create(@BindsInstance @VertxConfig JsonObject config);
+        }
+    }
+
+    /**
+     * G-02 (a) and (b): only the single-proof
+     * {@link dev.vertique.rest.jaxrs.application.unitb.ThrowingConstructorRegistrationModule
+     * ThrowingConstructorRegistrationModule}, so
+     * {@link dev.vertique.rest.jaxrs.application.unitb.ThrowingConstructorApplication
+     * ThrowingConstructorApplication} is the sole registration.
+     */
+    @Singleton
+    @Component(
+            modules = {
+                RestModule.class,
+                ApplicationTestSupportModule.class,
+                dev.vertique.rest.jaxrs.application.unitb.ThrowingConstructorRegistrationModule.class
+            })
+    public interface ThrowingConstructorComponent extends Provisions {
+
+        /** Factory taking the application configuration. */
+        @Component.Factory
+        interface Factory {
+
+            /**
+             * Creates the component bound to the given configuration.
+             *
+             * @param config the application configuration
+             * @return the constructed component
+             */
+            ThrowingConstructorComponent create(@BindsInstance @VertxConfig JsonObject config);
+        }
+    }
+
+    /**
+     * G-02 (c) and (d): only the single-proof
+     * {@link dev.vertique.rest.jaxrs.application.unitb.ThrowingGetSingletonsRegistrationModule
+     * ThrowingGetSingletonsRegistrationModule}, so
+     * {@link dev.vertique.rest.jaxrs.application.unitb.ThrowingGetSingletonsApplication
+     * ThrowingGetSingletonsApplication} is the sole registration.
+     */
+    @Singleton
+    @Component(
+            modules = {
+                RestModule.class,
+                ApplicationTestSupportModule.class,
+                dev.vertique.rest.jaxrs.application.unitb.ThrowingGetSingletonsRegistrationModule.class
+            })
+    public interface ThrowingGetSingletonsComponent extends Provisions {
+
+        /** Factory taking the application configuration. */
+        @Component.Factory
+        interface Factory {
+
+            /**
+             * Creates the component bound to the given configuration.
+             *
+             * @param config the application configuration
+             * @return the constructed component
+             */
+            ThrowingGetSingletonsComponent create(@BindsInstance @VertxConfig JsonObject config);
+        }
+    }
+
+    /**
+     * G-04 (a): {@code unita} (for {@link dev.vertique.rest.jaxrs.application.unita.CatalogResource
+     * CatalogResource} and {@link dev.vertique.rest.jaxrs.application.unita.ExtraResource
+     * ExtraResource}'s catalog entries) plus the single-proof
+     * {@link dev.vertique.rest.jaxrs.application.unitb.InheritingApplicationRegistrationModule
+     * InheritingApplicationRegistrationModule}, so
+     * {@link dev.vertique.rest.jaxrs.application.unitb.InheritingApplication InheritingApplication}
+     * is the sole registration: if it were misclassified as discovery, both catalog entries would be
+     * selected instead of only the one its inherited {@code getClasses()} lists.
+     */
+    @Singleton
+    @Component(
+            modules = {
+                RestModule.class,
+                ApplicationTestSupportModule.class,
+                dev.vertique.rest.jaxrs.application.unita.GeneratedJaxRsResourcesModule.class,
+                dev.vertique.rest.jaxrs.application.unitb.InheritingApplicationRegistrationModule.class
+            })
+    public interface InheritingApplicationComponent extends Provisions {
+
+        /** Factory taking the application configuration. */
+        @Component.Factory
+        interface Factory {
+
+            /**
+             * Creates the component bound to the given configuration.
+             *
+             * @param config the application configuration
+             * @return the constructed component
+             */
+            InheritingApplicationComponent create(@BindsInstance @VertxConfig JsonObject config);
+        }
+    }
+
+    /**
+     * G-04 (b): only the single-proof
+     * {@link dev.vertique.rest.jaxrs.application.unitb.SingletonsOnlyOverridingRegistrationModule
+     * SingletonsOnlyOverridingRegistrationModule}, so
+     * {@link dev.vertique.rest.jaxrs.application.unitb.SingletonsOnlyOverridingApplication
+     * SingletonsOnlyOverridingApplication} is the sole registration.
+     */
+    @Singleton
+    @Component(
+            modules = {
+                RestModule.class,
+                ApplicationTestSupportModule.class,
+                dev.vertique.rest.jaxrs.application.unitb.SingletonsOnlyOverridingRegistrationModule.class
+            })
+    public interface SingletonsOnlyComponent extends Provisions {
+
+        /** Factory taking the application configuration. */
+        @Component.Factory
+        interface Factory {
+
+            /**
+             * Creates the component bound to the given configuration.
+             *
+             * @param config the application configuration
+             * @return the constructed component
+             */
+            SingletonsOnlyComponent create(@BindsInstance @VertxConfig JsonObject config);
+        }
+    }
+
+    /**
+     * G-06 (a): zero declarations (no registration module at all) plus the single-proof
+     * {@link ReentrantResourceModule}, so {@code RestModule.jaxRsRouterMount} runs its
+     * zero-declaration body directly (never {@code JaxRsApplicationComposer}), which has no
+     * re-entry guard at all.
+     */
+    @Singleton
+    @Component(modules = {RestModule.class, ApplicationTestSupportModule.class, ReentrantResourceModule.class})
+    public interface ReentrantResourceZeroDeclarationComponent extends Provisions {
+
+        /** Factory taking the application configuration. */
+        @Component.Factory
+        interface Factory {
+
+            /**
+             * Creates the component bound to the given configuration.
+             *
+             * @param config the application configuration
+             * @return the constructed component
+             */
+            ReentrantResourceZeroDeclarationComponent create(@BindsInstance @VertxConfig JsonObject config);
+        }
+    }
+
+    /**
+     * G-06 (b): {@code unitb} (for
+     * {@link dev.vertique.rest.jaxrs.application.unitb.PublicApplication PublicApplication}, whose
+     * configurable {@code getClasses()} lists {@link ReentrantResourceModule}'s resource) plus the
+     * single-proof {@link ReentrantResourceModule}, so the composer's step 4 manual-resource
+     * resolution (not the zero-declaration body) is the one that re-enters.
+     */
+    @Singleton
+    @Component(
+            modules = {
+                RestModule.class,
+                ApplicationTestSupportModule.class,
+                dev.vertique.rest.jaxrs.application.unitb.GeneratedJaxRsResourcesModule.class,
+                ReentrantResourceModule.class
+            })
+    public interface ReentrantResourceExplicitComponent extends Provisions {
+
+        /** Factory taking the application configuration. */
+        @Component.Factory
+        interface Factory {
+
+            /**
+             * Creates the component bound to the given configuration.
+             *
+             * @param config the application configuration
+             * @return the constructed component
+             */
+            ReentrantResourceExplicitComponent create(@BindsInstance @VertxConfig JsonObject config);
         }
     }
 }

@@ -39,6 +39,16 @@ public class PublicApplication extends Application {
     /** {@link #MODE_CONFIG_KEY} value: {@link #getClasses()} returns an empty set. */
     public static final String MODE_EMPTY = "empty";
 
+    /**
+     * {@link #MODE_CONFIG_KEY} value: {@link #getClasses()} throws {@link RuntimeException} with
+     * {@link #SECRET_MESSAGE} (G-09) — the composer's own wrapping message must name the cause's
+     * class, never echo this message.
+     */
+    public static final String MODE_THROW_SECRET_MESSAGE = "throwSecretMessage";
+
+    /** The configuration-value-shaped message {@link #MODE_THROW_SECRET_MESSAGE} throws (G-09). */
+    public static final String SECRET_MESSAGE = "secret-config-value-42";
+
     /** Number of {@link #getClasses()} calls; reset before every test via {@link #reset()}. */
     public static final AtomicInteger GET_CLASSES_CALLS = new AtomicInteger();
 
@@ -72,6 +82,9 @@ public class PublicApplication extends Application {
         }
         if (MODE_THROW_NO_CLASS_DEF_FOUND_ERROR.equals(mode)) {
             throw new NoClassDefFoundError("PublicApplication.getClasses() configured to throw NoClassDefFoundError");
+        }
+        if (MODE_THROW_SECRET_MESSAGE.equals(mode)) {
+            throw new RuntimeException(SECRET_MESSAGE);
         }
         if (MODE_EMPTY.equals(mode)) {
             return Set.of();

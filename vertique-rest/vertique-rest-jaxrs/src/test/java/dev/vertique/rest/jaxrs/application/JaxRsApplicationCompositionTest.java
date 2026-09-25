@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -20,31 +22,44 @@ import dev.vertique.rest.jaxrs.ApplicationMountTestAccess;
 import dev.vertique.rest.jaxrs.JaxRsRouterMount;
 import dev.vertique.rest.jaxrs.application.CompositionComponents.DiscoveryComponent;
 import dev.vertique.rest.jaxrs.application.CompositionComponents.DiscoverySoloComponent;
+import dev.vertique.rest.jaxrs.application.CompositionComponents.InheritingApplicationComponent;
 import dev.vertique.rest.jaxrs.application.CompositionComponents.LazinessComponent;
 import dev.vertique.rest.jaxrs.application.CompositionComponents.ReentrantComponent;
+import dev.vertique.rest.jaxrs.application.CompositionComponents.ReentrantResourceExplicitComponent;
+import dev.vertique.rest.jaxrs.application.CompositionComponents.ReentrantResourceZeroDeclarationComponent;
+import dev.vertique.rest.jaxrs.application.CompositionComponents.SingletonsOnlyComponent;
 import dev.vertique.rest.jaxrs.application.CompositionComponents.StandardComponent;
 import dev.vertique.rest.jaxrs.application.CompositionComponents.ThreeRegistrationsComponent;
+import dev.vertique.rest.jaxrs.application.CompositionComponents.ThrowingConstructorComponent;
+import dev.vertique.rest.jaxrs.application.CompositionComponents.ThrowingGetSingletonsComponent;
 import dev.vertique.rest.jaxrs.application.CompositionComponents.ZeroDeclarationComponent;
 import dev.vertique.rest.jaxrs.application.MembershipComponents.AopProxyMatchComponent;
 import dev.vertique.rest.jaxrs.application.MembershipComponents.DuplicateCatalogEntryComponent;
 import dev.vertique.rest.jaxrs.application.MembershipComponents.DuplicateRegistrationComponent;
 import dev.vertique.rest.jaxrs.application.MembershipComponents.HandWrittenEntryComponent;
 import dev.vertique.rest.jaxrs.application.MembershipComponents.MismatchedFactoryComponent;
+import dev.vertique.rest.jaxrs.application.MembershipComponents.NullCatalogEntryComponent;
+import dev.vertique.rest.jaxrs.application.MembershipComponents.NullFactoryComponent;
 import dev.vertique.rest.jaxrs.application.MembershipComponents.StandardViolationComponent;
+import dev.vertique.rest.jaxrs.application.MembershipComponents.SubclassClassLevelPermitAllComponent;
 import dev.vertique.rest.jaxrs.application.MembershipComponents.SubclassClassPathComponent;
 import dev.vertique.rest.jaxrs.application.MembershipComponents.SubclassGrandchildComponent;
 import dev.vertique.rest.jaxrs.application.MembershipComponents.SubclassNewInterfaceComponent;
 import dev.vertique.rest.jaxrs.application.MembershipComponents.SubclassOwnMethodComponent;
+import dev.vertique.rest.jaxrs.application.MembershipComponents.SubclassParamAnnotationOnlyComponent;
 import dev.vertique.rest.jaxrs.application.MembershipComponents.SubclassRolesAllowedComponent;
 import dev.vertique.rest.jaxrs.application.MembershipComponents.SubstitutedBindingComponent;
 import dev.vertique.rest.jaxrs.application.manual.BlobLikeResource;
 import dev.vertique.rest.jaxrs.application.manual.MembershipAopProxyResource;
 import dev.vertique.rest.jaxrs.application.manual.MembershipBaseResource;
+import dev.vertique.rest.jaxrs.application.manual.MembershipClassLevelPermitAllResource;
 import dev.vertique.rest.jaxrs.application.manual.MembershipClassPathResource;
 import dev.vertique.rest.jaxrs.application.manual.MembershipGrandchildResource;
 import dev.vertique.rest.jaxrs.application.manual.MembershipNewInterfaceResource;
 import dev.vertique.rest.jaxrs.application.manual.MembershipOwnMethodResource;
+import dev.vertique.rest.jaxrs.application.manual.MembershipParamAnnotationOnlyResource;
 import dev.vertique.rest.jaxrs.application.manual.MembershipRolesAllowedResource;
+import dev.vertique.rest.jaxrs.application.manual.ReentrantResource;
 import dev.vertique.rest.jaxrs.application.manual.membership.DuplicateManualResource;
 import dev.vertique.rest.jaxrs.application.unita.CatalogResource;
 import dev.vertique.rest.jaxrs.application.unita.DisabledResource;
@@ -59,7 +74,10 @@ import dev.vertique.rest.jaxrs.application.unita.scoped.ScopedResource;
 import dev.vertique.rest.jaxrs.application.unitb.ManagementApplication;
 import dev.vertique.rest.jaxrs.application.unitb.PublicApplication;
 import dev.vertique.rest.jaxrs.application.unitb.ReentrantApplication;
+import dev.vertique.rest.jaxrs.application.unitb.SingletonsOnlyOverridingApplication;
 import dev.vertique.rest.jaxrs.application.unitb.ThirdOverridingApplication;
+import dev.vertique.rest.jaxrs.application.unitb.ThrowingConstructorApplication;
+import dev.vertique.rest.jaxrs.application.unitb.ThrowingGetSingletonsApplication;
 import dev.vertique.rest.jaxrs.application.unitb.membership.MembershipCaseApplication;
 import dev.vertique.rest.jaxrs.application.unitb.membership.MembershipDeclaredApplication;
 import dev.vertique.rest.jaxrs.application.unitb.membership.MembershipWrongTypeApplication;
@@ -124,6 +142,8 @@ class JaxRsApplicationCompositionTest {
         MembershipCaseApplication.reset();
         MembershipDeclaredApplication.reset();
         AmbiguousResource.reset();
+        ThrowingConstructorApplication.reset();
+        ThrowingGetSingletonsApplication.reset();
     }
 
     @BeforeEach
@@ -787,6 +807,32 @@ class JaxRsApplicationCompositionTest {
                             return handWrittenEntryComponent(config()).routerMounts();
                         },
                         List.of(Case22Resource.class.getSimpleName(), Case22UnrelatedResource.class.getSimpleName()),
+                        false),
+                new MembershipCase(
+                        "case 23 (G-03): the only manual instance carries a class-level @PermitAll and nothing else",
+                        () -> {
+                            MembershipCaseApplication.classesSupplier = () -> Set.of(MembershipBaseResource.class);
+                            return subclassClassLevelPermitAllComponent(config())
+                                    .routerMounts();
+                        },
+                        List.of(
+                                MembershipCaseApplication.class.getSimpleName(),
+                                MEMBERSHIP_PATH,
+                                MembershipBaseResource.class.getSimpleName(),
+                                MembershipClassLevelPermitAllResource.class.getSimpleName()),
+                        false),
+                new MembershipCase(
+                        "case 24 (G-03): the only manual instance's override carries an annotation only on a parameter",
+                        () -> {
+                            MembershipCaseApplication.classesSupplier = () -> Set.of(MembershipBaseResource.class);
+                            return subclassParamAnnotationOnlyComponent(config())
+                                    .routerMounts();
+                        },
+                        List.of(
+                                MembershipCaseApplication.class.getSimpleName(),
+                                MEMBERSHIP_PATH,
+                                MembershipBaseResource.class.getSimpleName(),
+                                MembershipParamAnnotationOnlyResource.class.getSimpleName()),
                         false));
     }
 
@@ -845,6 +891,388 @@ class JaxRsApplicationCompositionTest {
         assertTrue(unselectedWarnings.isEmpty(), "the AOP-proxy-shaped instance must not be reported as unselected");
     }
 
+    // --- G-02: wrapping on every path (create(), getClasses(), getSingletons()) ---
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("wrappingEveryPathCases")
+    @DisplayName(
+            "G-02: create(), getClasses(), and getSingletons() are all wrapped as RestConfigurationException naming the application (fully qualified, G-08) and its path, with the original throwable kept as the cause")
+    void everyConstructionAndMembershipPathIsWrapped(WrappingCase testCase) {
+        RestConfigurationException ex = assertThrows(
+                RestConfigurationException.class, testCase.action()::get, testCase.name() + " must fail wrapped");
+        LOG.info("G-02 {} failure: {}", testCase.name(), ex.getMessage());
+
+        assertEquals(
+                testCase.expectedCause(),
+                ex.getCause(),
+                testCase.name() + ": the cause must be the original throwable, not re-wrapped");
+        assertTrue(
+                ex.getMessage().contains(testCase.applicationFullyQualifiedName()),
+                () -> testCase.name() + ": message must name the application by fully qualified name (G-08): "
+                        + ex.getMessage());
+        assertTrue(
+                ex.getMessage().contains(testCase.path()),
+                () -> testCase.name() + ": message must name the application's path: " + ex.getMessage());
+    }
+
+    /**
+     * One G-02 case: a name, the composition action to run (which also configures the throwing
+     * fixture's static {@code toThrow} field before building its component), the exact throwable
+     * expected as the thrown exception's cause, the application's fully qualified name (G-08), and
+     * its registration path.
+     */
+    private record WrappingCase(
+            String name,
+            Supplier<Set<RouterMount>> action,
+            Throwable expectedCause,
+            String applicationFullyQualifiedName,
+            String path) {
+
+        @Override
+        public String toString() {
+            return name;
+        }
+    }
+
+    /**
+     * G-02's four cases: (a) and (b) make the {@code @Inject} constructor throw; (c) and (d) make
+     * {@code getSingletons()} throw. TP-011 already covers the {@code getClasses()} half; these
+     * cover the two paths M-1 found untested.
+     *
+     * @return the four G-02 cases
+     */
+    private static Stream<WrappingCase> wrappingEveryPathCases() {
+        RuntimeException constructorRuntimeException = new RuntimeException("G-02 (a) constructor RuntimeException");
+        NoClassDefFoundError constructorLinkageError =
+                new NoClassDefFoundError("G-02 (b) constructor NoClassDefFoundError");
+        RuntimeException singletonsRuntimeException = new RuntimeException("G-02 (c) getSingletons() RuntimeException");
+        NoClassDefFoundError singletonsLinkageError =
+                new NoClassDefFoundError("G-02 (d) getSingletons() NoClassDefFoundError");
+
+        return Stream.of(
+                new WrappingCase(
+                        "G-02 (a): @Inject constructor throws RuntimeException",
+                        () -> {
+                            ThrowingConstructorApplication.toThrow = constructorRuntimeException;
+                            return throwingConstructorComponent(config()).routerMounts();
+                        },
+                        constructorRuntimeException,
+                        ThrowingConstructorApplication.class.getName(),
+                        "/api/throwing-ctor"),
+                new WrappingCase(
+                        "G-02 (b): @Inject constructor throws NoClassDefFoundError",
+                        () -> {
+                            ThrowingConstructorApplication.toThrow = constructorLinkageError;
+                            return throwingConstructorComponent(config()).routerMounts();
+                        },
+                        constructorLinkageError,
+                        ThrowingConstructorApplication.class.getName(),
+                        "/api/throwing-ctor"),
+                new WrappingCase(
+                        "G-02 (c): getSingletons() throws RuntimeException",
+                        () -> {
+                            ThrowingGetSingletonsApplication.toThrow = singletonsRuntimeException;
+                            return throwingGetSingletonsComponent(config()).routerMounts();
+                        },
+                        singletonsRuntimeException,
+                        ThrowingGetSingletonsApplication.class.getName(),
+                        "/api/throwing-singletons"),
+                new WrappingCase(
+                        "G-02 (d): getSingletons() throws NoClassDefFoundError",
+                        () -> {
+                            ThrowingGetSingletonsApplication.toThrow = singletonsLinkageError;
+                            return throwingGetSingletonsComponent(config()).routerMounts();
+                        },
+                        singletonsLinkageError,
+                        ThrowingGetSingletonsApplication.class.getName(),
+                        "/api/throwing-singletons"));
+    }
+
+    // --- G-04: overriding classification ---
+
+    @Test
+    @DisplayName(
+            "G-04 (a): getClasses() declared on an abstract superclass still classifies the registration as overriding (EXPLICIT), mounting only the listed resource, not every enabled catalog entry")
+    void inheritedOverrideClassifiesAsExplicit() {
+        InheritingApplicationComponent component = inheritingApplicationComponent(config());
+        Map<String, JaxRsRouterMount> mounts = mountsByPath(component.routerMounts());
+        LOG.info("G-04 (a) mount paths: {}", mounts.keySet());
+
+        String inheritingPath = "/api/inheriting/*";
+        assertTrue(
+                mounts.containsKey(inheritingPath),
+                () -> "expected a mount at " + inheritingPath + " but found " + mounts.keySet());
+        assertEquals(
+                Set.of(CatalogResource.class),
+                mounts.get(inheritingPath).meta().resourceTypes(),
+                "only the resource the inherited getClasses() lists must be mounted; if the registration were"
+                        + " misclassified as discovery, every enabled catalog entry (Catalog and Extra) would be"
+                        + " selected instead");
+    }
+
+    @Test
+    @DisplayName(
+            "G-04 (b): overriding only getSingletons() (never getClasses()) still classifies the registration as overriding, so its inherited empty getClasses() fails instead of falling back to discovery")
+    void singletonsOnlyOverrideFailsOnEmptyGetClasses() {
+        SingletonsOnlyComponent component = singletonsOnlyComponent(config());
+        RestConfigurationException ex = assertThrows(
+                RestConfigurationException.class,
+                component::routerMounts,
+                "an application overriding only getSingletons() must still classify as overriding, so its"
+                        + " never-overridden, empty getClasses() must fail");
+        LOG.info("G-04 (b) failure: {}", ex.getMessage());
+
+        assertTrue(
+                chainContains(ex, SingletonsOnlyOverridingApplication.class.getSimpleName()),
+                () -> "expected the failure to name the application: " + ex.getMessage());
+        assertTrue(
+                chainContains(ex, "empty getClasses()"),
+                () -> "expected the failure to name the empty-getClasses() violation, not a discovery fallback: "
+                        + ex.getMessage());
+    }
+
+    // --- G-05: mount identity (applicationType() and priority()) ---
+
+    @Test
+    @DisplayName(
+            "G-05: an application mount's applicationType() returns the application class and priority() is 1000; the zero-declaration default mount's applicationType() is null")
+    void applicationTypeAndPriorityAreCorrect() {
+        JsonObject explicitConfig = config(
+                "unitb.publicApplication.active",
+                true,
+                "unitb.managementApplication.active",
+                true,
+                PublicApplication.CLASSES_CONFIG_KEY,
+                new JsonArray(List.of(CatalogResource.class.getName())));
+        Map<String, JaxRsRouterMount> mounts =
+                mountsByPath(standardComponent(explicitConfig).routerMounts());
+        LOG.info("G-05 application mount paths: {}", mounts.keySet());
+
+        JaxRsRouterMount publicMount = mounts.get("/api/public/*");
+        assertEquals(
+                PublicApplication.class,
+                ApplicationMountTestAccess.applicationType(publicMount),
+                "applicationType() must return the declared application class");
+        assertEquals(1000, publicMount.priority(), "an application mount uses the default priority 1000");
+
+        JaxRsRouterMount managementMount = mounts.get("/api/mgmt/*");
+        assertEquals(ManagementApplication.class, ApplicationMountTestAccess.applicationType(managementMount));
+        assertEquals(1000, managementMount.priority());
+
+        ZeroDeclarationComponent zero = zeroDeclarationComponent(config("jaxrs.basePath", "/api/*"));
+        Set<RouterMount> zeroMounts = zero.routerMounts();
+        assertEquals(1, zeroMounts.size(), "exactly one zero-declaration default mount");
+        JaxRsRouterMount defaultMount =
+                assertInstanceOf(JaxRsRouterMount.class, zeroMounts.iterator().next());
+        assertNull(
+                ApplicationMountTestAccess.applicationType(defaultMount),
+                "the zero-declaration default mount is not built from a declared application");
+    }
+
+    // --- G-06: re-entry through resource resolution (not through an application's own construction) ---
+
+    @Test
+    @DisplayName(
+            "G-06 (a): a manual resource depending on Set<RouterMount> in zero-declaration mode fails naming the re-entrant composition, never StackOverflowError, and a later composition on the same thread still succeeds")
+    void zeroDeclarationResourceReentryFailsNamed() {
+        ReentrantResourceZeroDeclarationComponent component = reentrantResourceZeroDeclarationComponent(config());
+
+        RestConfigurationException ex = assertThrows(
+                RestConfigurationException.class,
+                component::routerMounts,
+                "a manual resource depending on Set<RouterMount> in zero-declaration mode must fail named, not"
+                        + " overflow the stack");
+        LOG.info("G-06 (a) failure: {}", ex.getMessage());
+        assertTrue(
+                chainContains(ex, "re-entered") || chainContains(ex, "Set<RouterMount>"),
+                () -> "expected the failure to name the re-entrant composition: " + ex.getMessage());
+
+        JsonObject validConfig = config(
+                "unitb.publicApplication.active",
+                true,
+                "unitb.managementApplication.active",
+                true,
+                PublicApplication.CLASSES_CONFIG_KEY,
+                new JsonArray(List.of(CatalogResource.class.getName(), BlobLikeResource.class.getName())));
+        StandardComponent valid = standardComponent(validConfig);
+        assertDoesNotThrow(valid::routerMounts, "a valid composition must still succeed on the same thread afterward");
+    }
+
+    @Test
+    @DisplayName(
+            "G-06 (b): the same manual resource, selected by an active application's getClasses(), fails naming the re-entrant composition in explicit mode too, never StackOverflowError")
+    void explicitModeResourceReentryFailsNamed() {
+        JsonObject reentrantConfig = config(
+                "unitb.publicApplication.active",
+                true,
+                PublicApplication.CLASSES_CONFIG_KEY,
+                new JsonArray(List.of(ReentrantResource.class.getName())));
+        ReentrantResourceExplicitComponent component = reentrantResourceExplicitComponent(reentrantConfig);
+
+        RestConfigurationException ex = assertThrows(
+                RestConfigurationException.class,
+                component::routerMounts,
+                "an explicit-mode manual resource depending on Set<RouterMount> must fail named, not overflow the"
+                        + " stack");
+        LOG.info("G-06 (b) failure: {}", ex.getMessage());
+        assertTrue(
+                chainContains(ex, "re-entered") || chainContains(ex, "Set<RouterMount>"),
+                () -> "expected the failure to name the re-entrant composition: " + ex.getMessage());
+
+        JsonObject validConfig = config(
+                "unitb.publicApplication.active",
+                true,
+                "unitb.managementApplication.active",
+                true,
+                PublicApplication.CLASSES_CONFIG_KEY,
+                new JsonArray(List.of(CatalogResource.class.getName(), BlobLikeResource.class.getName())));
+        StandardComponent valid = standardComponent(validConfig);
+        assertDoesNotThrow(valid::routerMounts, "a valid composition must still succeed on the same thread afterward");
+    }
+
+    // --- G-07: null instances ---
+
+    @Test
+    @DisplayName(
+            "G-07 (a): a hand-written registration whose factory returns null fails naming the application, not NullPointerException")
+    void nullFactoryInstanceFailsNamingApplication() {
+        NullFactoryComponent component = nullFactoryComponent(config());
+
+        RestConfigurationException ex = assertThrows(
+                RestConfigurationException.class,
+                component::routerMounts,
+                "a null-returning registration factory must fail named, not throw NullPointerException");
+        LOG.info("G-07 (a) failure: {}", ex.getMessage());
+        assertTrue(
+                chainContains(ex, MembershipDeclaredApplication.class.getSimpleName()),
+                () -> "expected the failure to name the application: " + ex.getMessage());
+    }
+
+    @Test
+    @DisplayName(
+            "G-07 (b): a hand-written catalog entry whose provider returns null fails naming the entry type, not NullPointerException")
+    void nullCatalogEntryInstanceFailsNamingEntryType() {
+        MembershipCaseApplication.classesSupplier = () -> Set.of(Case22Resource.class);
+        NullCatalogEntryComponent component = nullCatalogEntryComponent(config());
+
+        RestConfigurationException ex = assertThrows(
+                RestConfigurationException.class,
+                component::routerMounts,
+                "a null-returning catalog entry provider must fail named, not throw NullPointerException");
+        LOG.info("G-07 (b) failure: {}", ex.getMessage());
+        assertTrue(
+                chainContains(ex, Case22Resource.class.getSimpleName()),
+                () -> "expected the failure to name the entry type: " + ex.getMessage());
+    }
+
+    // --- G-08: fully qualified names in diagnostics (a) to (d); (e) lives in GeneratedJaxRsApplicationRegistrationTest
+    // ---
+
+    @Test
+    @DisplayName(
+            "G-08: composer diagnostics name applications and resources by fully qualified class name, not only simple name")
+    void diagnosticsNameByFullyQualifiedName() {
+        // (a) and (b): the registration INFO line and the per-mount INFO line.
+        JsonObject activeConfig = config(
+                "unitb.publicApplication.active",
+                true,
+                "unitb.managementApplication.active",
+                true,
+                PublicApplication.CLASSES_CONFIG_KEY,
+                new JsonArray(List.of(CatalogResource.class.getName(), BlobLikeResource.class.getName())));
+        threeRegistrationsComponent(activeConfig).routerMounts();
+        List<String> infoLines = composerMessagesAt(Level.INFO);
+        LOG.info("G-08 (a)/(b) INFO lines: {}", infoLines);
+
+        boolean registrationLineHasFullyQualifiedName =
+                infoLines.stream().anyMatch(message -> message.contains(PublicApplication.class.getName()));
+        assertTrue(
+                registrationLineHasFullyQualifiedName,
+                () -> "G-08 (a): the registration INFO line must name the application by fully qualified name: "
+                        + infoLines);
+
+        boolean mountLineHasResourceFullyQualifiedNames = infoLines.stream()
+                .anyMatch(message -> message.contains("/api/public/*")
+                        && message.contains(CatalogResource.class.getName())
+                        && message.contains(BlobLikeResource.class.getName())
+                        && message.contains(PublicApplication.class.getName()));
+        assertTrue(
+                mountLineHasResourceFullyQualifiedNames,
+                () -> "G-08 (b): the per-mount INFO line must name the application and its resources by fully"
+                        + " qualified name: " + infoLines);
+
+        composerAppender.list.clear();
+
+        // (c): the unselected report names resources by fully qualified name.
+        JsonObject unselectedConfig = config(
+                "unitb.publicApplication.active",
+                true,
+                PublicApplication.CLASSES_CONFIG_KEY,
+                new JsonArray(List.of(CatalogResource.class.getName())));
+        standardComponent(unselectedConfig).routerMounts();
+        List<String> unselectedWarnings = composerMessagesAt(Level.WARN).stream()
+                .filter(message -> message.contains("not selected by any Application"))
+                .toList();
+        LOG.info("G-08 (c) unselected warnings: {}", unselectedWarnings);
+        assertEquals(1, unselectedWarnings.size(), "exactly one step-10 warning");
+        assertTrue(
+                unselectedWarnings.get(0).contains(BlobLikeResource.class.getName()),
+                () -> "G-08 (c): the unselected warning must name the resource by fully qualified name: "
+                        + unselectedWarnings.get(0));
+
+        // (d): a membership violation message names the application and the offending type by fully qualified name.
+        MembershipCaseApplication.classesSupplier = () -> Set.of(SampleProviderType.class);
+        RestConfigurationException ex =
+                assertThrows(RestConfigurationException.class, () -> standardViolationComponent(config())
+                        .routerMounts());
+        LOG.info("G-08 (d) failure: {}", ex.getMessage());
+        assertTrue(
+                chainContains(ex, MembershipCaseApplication.class.getName()),
+                () -> "G-08 (d): the message must name the application by fully qualified name: " + ex.getMessage());
+        assertTrue(
+                chainContains(ex, SampleProviderType.class.getName()),
+                () -> "G-08 (d): the message must name the offending type by fully qualified name: " + ex.getMessage());
+    }
+
+    // --- G-09: no cause-message echo ---
+
+    @Test
+    @DisplayName(
+            "G-09: the composer's own wrapping message never echoes the cause's message, only its class name; the original message survives only on getCause()")
+    void wrappedFailureDoesNotEchoCauseMessage() {
+        JsonObject secretConfig = config(
+                "unitb.publicApplication.active",
+                true,
+                "unitb.managementApplication.active",
+                true,
+                PublicApplication.MODE_CONFIG_KEY,
+                PublicApplication.MODE_THROW_SECRET_MESSAGE);
+        StandardComponent component = standardComponent(secretConfig);
+
+        RestConfigurationException ex = assertThrows(
+                RestConfigurationException.class, component::routerMounts, "getClasses() throwing must fail wrapped");
+        LOG.info("G-09 failure (own message must never carry the secret): {}", ex.getMessage());
+
+        assertFalse(
+                ex.getMessage().contains(PublicApplication.SECRET_MESSAGE),
+                () -> "the wrapping exception's OWN message must not echo the cause's message: " + ex.getMessage());
+        assertTrue(
+                ex.getMessage().contains(PublicApplication.class.getSimpleName()),
+                () -> "the wrapping message must name the application: " + ex.getMessage());
+        assertTrue(
+                ex.getMessage().contains("/api/public"),
+                () -> "the wrapping message must name the application's path: " + ex.getMessage());
+        assertTrue(
+                ex.getMessage().contains(RuntimeException.class.getName()),
+                () -> "the wrapping message must name the cause's class: " + ex.getMessage());
+
+        assertNotNull(ex.getCause(), "the original throwable must be kept as the cause");
+        assertEquals(
+                PublicApplication.SECRET_MESSAGE,
+                ex.getCause().getMessage(),
+                "the cause must keep the original, unredacted message");
+    }
+
     // --- Membership-suite component-building helpers ---
 
     private static StandardViolationComponent standardViolationComponent(JsonObject config) {
@@ -899,6 +1327,24 @@ class JaxRsApplicationCompositionTest {
         return DaggerMembershipComponents_AopProxyMatchComponent.factory().create(config);
     }
 
+    private static SubclassClassLevelPermitAllComponent subclassClassLevelPermitAllComponent(JsonObject config) {
+        return DaggerMembershipComponents_SubclassClassLevelPermitAllComponent.factory()
+                .create(config);
+    }
+
+    private static SubclassParamAnnotationOnlyComponent subclassParamAnnotationOnlyComponent(JsonObject config) {
+        return DaggerMembershipComponents_SubclassParamAnnotationOnlyComponent.factory()
+                .create(config);
+    }
+
+    private static NullFactoryComponent nullFactoryComponent(JsonObject config) {
+        return DaggerMembershipComponents_NullFactoryComponent.factory().create(config);
+    }
+
+    private static NullCatalogEntryComponent nullCatalogEntryComponent(JsonObject config) {
+        return DaggerMembershipComponents_NullCatalogEntryComponent.factory().create(config);
+    }
+
     // --- Component-building helpers ---
 
     private static StandardComponent standardComponent(JsonObject config) {
@@ -927,6 +1373,36 @@ class JaxRsApplicationCompositionTest {
 
     private static ThreeRegistrationsComponent threeRegistrationsComponent(JsonObject config) {
         return DaggerCompositionComponents_ThreeRegistrationsComponent.factory().create(config);
+    }
+
+    private static ThrowingConstructorComponent throwingConstructorComponent(JsonObject config) {
+        return DaggerCompositionComponents_ThrowingConstructorComponent.factory()
+                .create(config);
+    }
+
+    private static ThrowingGetSingletonsComponent throwingGetSingletonsComponent(JsonObject config) {
+        return DaggerCompositionComponents_ThrowingGetSingletonsComponent.factory()
+                .create(config);
+    }
+
+    private static InheritingApplicationComponent inheritingApplicationComponent(JsonObject config) {
+        return DaggerCompositionComponents_InheritingApplicationComponent.factory()
+                .create(config);
+    }
+
+    private static SingletonsOnlyComponent singletonsOnlyComponent(JsonObject config) {
+        return DaggerCompositionComponents_SingletonsOnlyComponent.factory().create(config);
+    }
+
+    private static ReentrantResourceZeroDeclarationComponent reentrantResourceZeroDeclarationComponent(
+            JsonObject config) {
+        return DaggerCompositionComponents_ReentrantResourceZeroDeclarationComponent.factory()
+                .create(config);
+    }
+
+    private static ReentrantResourceExplicitComponent reentrantResourceExplicitComponent(JsonObject config) {
+        return DaggerCompositionComponents_ReentrantResourceExplicitComponent.factory()
+                .create(config);
     }
 
     // --- Configuration-literal helper ---
