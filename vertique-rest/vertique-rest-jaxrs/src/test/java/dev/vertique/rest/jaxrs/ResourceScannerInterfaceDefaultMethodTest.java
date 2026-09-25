@@ -301,7 +301,9 @@ class ResourceScannerInterfaceDefaultMethodTest {
             assertTrue(
                     metas.stream().noneMatch(m -> m.method().getDeclaringClass() == GenericCrud.class),
                     "the class override (via its bridge) must shadow the default: " + metas);
-            assertTrue(metas.size() <= 1, metas.toString());
+            // Inherited annotations are matched by erased signature, so remove(String) inherits
+            // nothing from remove(I) and is not a route either (documented limitation).
+            assertEquals(0, metas.size(), metas.toString());
         }
 
         @Test

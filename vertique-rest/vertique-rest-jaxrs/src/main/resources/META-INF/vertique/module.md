@@ -71,7 +71,13 @@ override never adds a second route. The route takes the resource class's class-l
 (`@Path`, security, media types) together with the default method's merged method annotations.
 Inherited annotations are matched by erased signature, and type variables are not resolved against
 the implementing class: a generic interface method (`Crud<ID>`) overridden with a concrete parameter
-type inherits none of its annotations, so declare routed methods with concrete parameter types.
+type inherits none of its annotations, and a non-overridden generic default (or generic superclass
+method) binds a type-variable parameter as its erasure, so a path, query, header, cookie, or form
+parameter typed `ID` fails startup with `UNRESOLVABLE_PARAM_CONVERTER`. Declare routed methods with
+concrete parameter types. A default route's `operationId` is the same in every class that inherits
+it, and operationIds are unique per mount, so only one resource per mount can inherit a given
+default route; give the others their own route by overriding it with a distinct
+`@Operation(operationId = "…")`.
 
 `OperationHandlerContributor`s are sorted by the framework `OrderedExtension` comparator (phase →
 priority → `orderKey`); the invoker is always appended last. Every declaration problem found during
