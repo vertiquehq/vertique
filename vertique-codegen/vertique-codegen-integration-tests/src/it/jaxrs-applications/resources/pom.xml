@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+SPDX-License-Identifier: EUPL-1.2
+-->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.vertique</groupId>
+        <artifactId>codegen-it-jaxrs-applications</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>codegen-it-jaxrs-applications-resources</artifactId>
+
+    <!--
+    Resources-only compilation unit: every resource is DI-eligible (an @Inject constructor), so the
+    real processor writes this unit's own dev.vertique.it.apps.resources.GeneratedJaxRsResourcesModule.
+    No Application here, so the module's package is resolved from these resources (C-GEN "Package
+    resolution").
+    -->
+    <dependencies>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-rest-jaxrs</artifactId>
+        </dependency>
+        <!-- @ConditionalOnProperty: SOURCE-retention only, never reaches the runtime classpath. -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-codegen-core</artifactId>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+</project>

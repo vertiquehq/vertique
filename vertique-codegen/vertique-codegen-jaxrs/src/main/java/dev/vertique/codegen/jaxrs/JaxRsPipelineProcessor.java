@@ -45,17 +45,21 @@ import javax.lang.model.util.Elements;
  * <ol>
  *   <li><strong>Discover</strong> — {@link JaxRsCandidateScanner} walks
  *       {@link RoundEnvironment#getRootElements()} and collects concrete classes with an
- *       effective {@code @Path} (direct or via a transitively implemented interface).</li>
+ *       effective {@code @Path} (direct or via a transitively implemented interface).
+ *       {@link JaxRsApplicationScanner} separately walks the same root elements for concrete
+ *       {@code jakarta.ws.rs.core.Application} subtypes, top-level or static nested at any
+ *       depth.</li>
  *   <li><strong>Resolve</strong> — {@link EffectiveJaxRsContractResolver} builds the
  *       {@link EffectiveResourceContract} for each candidate using the precedence rule:
  *       direct annotations → superclass chain → BFS interfaces.</li>
- *   <li><strong>Validate</strong> — five validators run against each contract: the four CG-009
- *       validators plus {@link dev.vertique.codegen.jaxrs.processor.validate.ContextParamValidator}
- *       (CG-010 slice e), which mirrors the runtime {@code RouteValidator.addContextParamViolations}
- *       rules for {@code @Context} parameters (FR-REST-187/188/189).</li>
+ *   <li><strong>Validate</strong> — five validators run against each resource contract, plus
+ *       {@link JaxRsApplicationScanner#validate} checks every eligible application's construction,
+ *       accessibility, and required {@code @ApplicationPath} (via {@link ApplicationPathGrammar})
+ *       regardless of the auto-wire setting.</li>
  *   <li><strong>Emit</strong> — four emitters fire per build:
  *       {@link dev.vertique.codegen.jaxrs.processor.emit.GeneratedJaxRsResourcesModuleEmitter} writes the
- *       Dagger DI module (only when auto-wiring is enabled);
+ *       Dagger DI module — the presence-gated resource bindings, the lazy resource catalog, and the
+ *       validated application registrations — only when auto-wiring is enabled;
  *       {@link dev.vertique.codegen.jaxrs.processor.emit.JaxRsDescriptorEmitter} writes a per-resource
  *       {@code _JaxRsDescriptor};
  *       {@link dev.vertique.codegen.jaxrs.processor.emit.BeanParamModelEmitter} writes a per-bean
@@ -71,11 +75,20 @@ import javax.lang.model.util.Elements;
  * generation applies only to DI-emission candidates (those with an {@code @Inject} constructor that
  * are not annotated {@link dev.vertique.codegen.NoAutoWire}).
  *
+ * <p><strong>Module-writing condition and package resolution.</strong> The generated module is
+ * written when the unit has at least one DI-eligible resource or at least one eligible,
+ * successfully validated application. Its package is resolved from the resources when the unit has
+ * any, and from the applications only in an applications-only unit, so adding an
+ * {@code Application} never moves an existing module.
+ *
  * <p><strong>Single-shot emission:</strong> an {@code emitted} flag prevents re-emission on later
  * Dagger-triggered rounds. This mirrors {@code AutoWireProcessor}'s multi-round guard.
  *
  * <p><strong>Auto-wire kill switch:</strong> passing {@code -Avertique.codegen.autoWire=false}
- * suppresses DI module emission; validation still runs.
+ * suppresses DI module emission; validation still runs, including every eligible application's
+ * construction, accessibility, and required {@code @ApplicationPath}. One warning per eligible,
+ * non-{@code @NoAutoWire} application then names it and states that the default
+ * {@code @JaxRsResources} mount is used instead.
  *
  * <p>{@code @SupportedAnnotationTypes("*")} is required for the dep-JAR-interface case where
  * {@code @Path} lives on an interface in a dependency JAR and never appears in the current round's
@@ -106,6 +119,7 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
     private JaxRsDescriptorEmitter descriptorEmitter;
     private BeanParamModelEmitter beanParamEmitter;
     private ExecutionPlanEmitter executionPlanEmitter;
+    private PackageResolver packageResolver;
     private Elements elements;
 
     /** {@code true} when {@code -Avertique.codegen.autoWire=false} is set. */
@@ -130,7 +144,8 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
      * <p>Initialises the shared {@link CodegenContext}, the
      * {@link EffectiveJaxRsContractResolver}, all five validators (including
      * {@link dev.vertique.codegen.jaxrs.processor.validate.ContextParamValidator}), the
-     * {@link GeneratedJaxRsResourcesModuleEmitter}, the {@link JaxRsDescriptorEmitter},
+     * {@link GeneratedJaxRsResourcesModuleEmitter}, the {@link PackageResolver} it shares with
+     * {@link JaxRsApplicationScanner}'s validation, the {@link JaxRsDescriptorEmitter},
      * the {@link BeanParamModelEmitter}, the {@link ExecutionPlanEmitter}, and reads the
      * {@code vertique.codegen.autoWire} processor option.
      *
@@ -151,7 +166,8 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
         verbs = new HttpVerbValidator(ctx);
         path = new PathParamAlignmentValidator(ctx);
         bodyForm = new BodyFormValidator(ctx);
-        moduleEmitter = new GeneratedJaxRsResourcesModuleEmitter(ctx, new PackageResolver(env));
+        moduleEmitter = new GeneratedJaxRsResourcesModuleEmitter(ctx);
+        packageResolver = new PackageResolver(env);
         descriptorEmitter = new JaxRsDescriptorEmitter(ctx);
         beanParamEmitter = new BeanParamModelEmitter(ctx);
         executionPlanEmitter = new ExecutionPlanEmitter(ctx);
@@ -172,6 +188,13 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
      * when {@code -Avertique.codegen.autoWire=false} is set, but steps 1–3 and 4b–4d still execute
      * so validation errors are always reported. Step 4d runs before 4b so that the descriptor can
      * reference the emitted plan class names in its {@code describe()} body.
+     *
+     * <p>Within step 4a, {@link JaxRsApplicationScanner#scan} and
+     * {@link JaxRsApplicationScanner#validate} always run, so every eligible application's
+     * diagnostics (the registration note, the {@code @NoAutoWire} warning, the
+     * {@code autoWire=false} warning, and the construction, accessibility, and required-annotation
+     * errors) are reported regardless of the auto-wire setting; only the module write itself is
+     * skipped when {@code -Avertique.codegen.autoWire=false} is set.
      *
      * @param annotations the annotation types present in the round (not used; this processor
      *                    uses {@code @SupportedAnnotationTypes("*")} and scans root elements)
@@ -295,12 +318,40 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
         }
 
         // --- Step 4a: DI module emission ---
-        if (!autoWireDisabled) {
-            Set<TypeElement> diCandidates = JaxRsCandidateScanner.filterDiCandidates(semanticCandidates, elements);
-            moduleEmitter.emit(diCandidates);
-        }
+        Set<TypeElement> diCandidates = JaxRsCandidateScanner.filterDiCandidates(semanticCandidates, elements);
+        List<TypeElement> eligibleApplications = JaxRsApplicationScanner.scan(roundEnv, ctx);
+        emitModule(diCandidates, eligibleApplications);
 
         emitted = true;
         return false;
+    }
+
+    /**
+     * Resolves the generated module's package and writes it when the unit has at least one
+     * DI-eligible resource or at least one eligible application to register.
+     *
+     * <p>Validating every eligible application's construction, accessibility, and required
+     * {@code @ApplicationPath} happens here too, regardless of {@code autoWireDisabled} — only the
+     * module WRITE itself is skipped when {@code -Avertique.codegen.autoWire=false} is set,
+     * mirroring the pre-existing resource-binding behaviour.
+     */
+    private void emitModule(Set<TypeElement> diCandidates, List<TypeElement> eligibleApplications) {
+        boolean needsModulePackage = !eligibleApplications.isEmpty() || (!autoWireDisabled && !diCandidates.isEmpty());
+        if (!needsModulePackage) {
+            return;
+        }
+
+        List<TypeElement> packageOrigins = diCandidates.isEmpty() ? eligibleApplications : List.copyOf(diCandidates);
+        String modulePackage = packageResolver.resolve(packageOrigins, ctx);
+        if (modulePackage == null) {
+            return;
+        }
+
+        List<JaxRsApplicationScanner.Registration> registrations = eligibleApplications.isEmpty()
+                ? List.of()
+                : JaxRsApplicationScanner.validate(eligibleApplications, modulePackage, autoWireDisabled, ctx);
+        if (!autoWireDisabled && (!diCandidates.isEmpty() || !registrations.isEmpty())) {
+            moduleEmitter.emit(modulePackage, diCandidates, registrations);
+        }
     }
 }

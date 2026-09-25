@@ -90,7 +90,7 @@ Four artifact types are emitted for every semantic candidate:
 
 | Artifact | What it does |
 |---|---|
-| `GeneratedJaxRsResourcesModule` Dagger module | `@Provides @ElementsIntoSet @JaxRsResources Set<Object>` for each DI-eligible resource — see "Generated Binding Shape" below |
+| `GeneratedJaxRsResourcesModule` Dagger module | A presence-gated `@Provides @ElementsIntoSet @JaxRsResources Set<Object>` binding and a lazy `GeneratedJaxRsResourceEntry` catalog entry for each DI-eligible resource, plus a `GeneratedJaxRsApplicationRegistration` for each eligible `jakarta.ws.rs.core.Application` subtype — see "Generated Binding Shape" below |
 | `{Resource}_JaxRsDescriptor` | Precomputes `SecurityPolicy` constants and method/parameter metadata, eliminating the reflective `getDeclaredMethods()` walk at startup |
 | `{Bean}_BeanParamModel` | Static field-metadata list per `@BeanParam`/`@RequestParams` type, eliminating the reflective bean-field scan |
 | `{Resource}_{methodName}_{idx}_ExecutionPlan` | Precomputed `EffectiveInputPolicies` (`dev.vertique.input.processing`) constants plus a direct typed method call, eliminating `Method.invoke` from the request hot path. For `CONTEXT` parameters, emits a static `Class<?>` constant (`CTX{i}`) loaded once at class-initialization time and a `support.resolveContext(CTX{i}, ctx, "<declaringClassFqn>", "<method>")` call per parameter — no per-request reflection, no `ParamMeta`/policy entry for `CONTEXT` params |
@@ -101,39 +101,112 @@ Only the Dagger module row is gated by DI eligibility (see "Semantic vs. DI cand
 
 ## Generated Binding Shape
 
-All JAX-RS resource bindings use a uniform `@Provides @ElementsIntoSet @JaxRsResources Set<Object>` form. This enables conditional resources to return `Set.of()` at startup without contributing to the Dagger graph.
+Each compilation unit's `GeneratedJaxRsResourcesModule` keeps one name and stays a concrete Dagger module. It is written only when the unit has at least one DI-eligible resource or at least one eligible `jakarta.ws.rs.core.Application` subtype (see "Application Registrations" below); when neither is present, nothing is written. Its package is resolved from the unit's DI-eligible resources whenever it has any; only in an applications-only unit does the set of eligible applications decide the package instead — so adding an `Application` to a unit that already has resources never moves that unit's existing module.
 
-**Unconditional resource binding:**
+### Resource Bindings
+
+Every DI-eligible resource `R` gets two `@Provides` methods, both taking `@VertxConfig JsonObject config` whether or not `R` carries `@ConditionalOnProperty`:
+
+- a presence-gated `@Provides @ElementsIntoSet @JaxRsResources Set<Object>` binding, named by `R`'s decapitalized simple name plus `Binding`, that also takes `Set<GeneratedJaxRsApplicationRegistration> applications` and a `Provider<R>`, and contributes `R` only when `applications` is empty (no application is registered in this composition) and `R`'s own conditions, if any, are satisfied;
+- a lazy `@Provides @IntoSet GeneratedJaxRsResourceEntry` catalog entry, named by `R`'s decapitalized simple name plus `Entry`, carrying `R`'s class, its evaluated condition result, and its `Provider<R>` — it never calls the provider.
+
+**Unconditional resource binding** (`CatalogResource`, no `@ConditionalOnProperty`):
 
 ```java
 @Provides
 @ElementsIntoSet
 @JaxRsResources
-static Set<Object> helloResourceBinding(Provider<HelloResource> provider) {
-    return Set.of(provider.get());
+static Set<Object> catalogResourceBinding(@VertxConfig JsonObject config,
+        Set<GeneratedJaxRsApplicationRegistration> applications, Provider<CatalogResource> provider) {
+    return applications.isEmpty() ? Set.of(provider.get()) : Set.of();
+}
+
+@Provides
+@IntoSet
+static GeneratedJaxRsResourceEntry catalogResourceEntry(@VertxConfig JsonObject config,
+        Provider<CatalogResource> provider) {
+    return GeneratedJaxRsResourceEntry.of(CatalogResource.class, true, provider);
 }
 ```
 
-**Conditional resource binding** (`@ConditionalOnProperty(name = "adminApi.enabled")` on `AdminResource`):
+**Conditional resource binding** (`@ConditionalOnProperty(name = "resources.disabledResource.enabled")` on `DisabledResource`):
 
 ```java
-private static final PropertyCondition[] ADMIN_RESOURCE_CONDITIONS = new PropertyCondition[] {
-    new PropertyCondition("adminApi.enabled", "true", false)
+private static final PropertyCondition[] DISABLED_RESOURCE_BINDING_CONDITIONS = new PropertyCondition[] {
+    new PropertyCondition("resources.disabledResource.enabled", "true", false)
 };
 
 @Provides
 @ElementsIntoSet
 @JaxRsResources
-static Set<Object> adminResourceBinding(
-        @VertxConfig JsonObject config,
-        Provider<AdminResource> provider) {
-    return PropertyCondition.matchesAll(config, ADMIN_RESOURCE_CONDITIONS)
+static Set<Object> disabledResourceBinding(@VertxConfig JsonObject config,
+        Set<GeneratedJaxRsApplicationRegistration> applications,
+        Provider<DisabledResource> provider) {
+    return applications.isEmpty()
+            && PropertyCondition.matchesAll(config, DISABLED_RESOURCE_BINDING_CONDITIONS)
             ? Set.of(provider.get())
             : Set.of();
 }
+
+@Provides
+@IntoSet
+static GeneratedJaxRsResourceEntry disabledResourceEntry(@VertxConfig JsonObject config,
+        Provider<DisabledResource> provider) {
+    return GeneratedJaxRsResourceEntry.of(DisabledResource.class,
+            PropertyCondition.matchesAll(config, DISABLED_RESOURCE_BINDING_CONDITIONS), provider);
+}
 ```
 
-Inactive resources are never instantiated (lazy `Provider` injection). Descriptor, bean-param model, and execution-plan companions are still emitted for all semantic candidates — only the DI set contribution is empty.
+The condition constant's name is the binding method's own name upper-cased to `SCREAMING_SNAKE_CASE`, plus `_CONDITIONS` — `disabledResourceBinding` yields `DISABLED_RESOURCE_BINDING_CONDITIONS`. The catalog entry method reuses that same constant rather than declaring its own.
+
+Inactive resources are never instantiated (lazy `Provider` injection): the binding calls `provider.get()` only when it contributes, and the catalog entry only hands its `Provider` to the runtime, which calls it for a resource that a declared application selects and whose conditions match. Descriptor, bean-param model, and execution-plan companions are still emitted for all semantic candidates — only the DI set contribution and the catalog entry's condition flag follow the gate.
+
+### Application Registrations
+
+Every eligible `jakarta.ws.rs.core.Application` subtype `A` — concrete, top-level or static nested at any depth, and not annotated `@NoAutoWire` — gets one `@Provides @IntoSet GeneratedJaxRsApplicationRegistration` method, named by `A`'s decapitalized simple name plus `Registration`, taking `@VertxConfig JsonObject config`:
+
+```java
+@Provides
+@IntoSet
+static GeneratedJaxRsApplicationRegistration managementApplicationRegistration(
+        @VertxConfig JsonObject config) {
+    return GeneratedJaxRsApplicationRegistration.of(
+            ManagementApplication.class, "/api/mgmt", true, ManagementApplication::new);
+}
+```
+
+`A::new` is the factory argument when `A` has no `@Inject` constructor, as shown above. When `A` has exactly one `@Inject` constructor (`jakarta` or `javax`) instead, the method additionally takes a `Provider<A>` parameter and passes it as the factory argument in place of `A::new`.
+
+The path argument is `A`'s `@ApplicationPath` value, read from `A` itself or the nearest superclass that carries it (an interface is never read), then normalized at compile time: an empty value, or one with no leading `/`, is anchored to `/`; one terminal `/*` and every trailing `/` are then removed — so `/api/public/` and `/api/public/*` both normalize to `/api/public`, and a value of `/` or `/*` normalizes to `/`. The condition argument follows the same `PropertyCondition.matchesAll(config, …_CONDITIONS)` rule as a resource binding, or `true` when `A` carries no `@ConditionalOnProperty`.
+
+**Naming.** A registration method's base name is `A`'s decapitalized simple name plus `Registration`. When two eligible applications in one unit share a simple name (in different enclosing scopes), the processor appends `_2`, `_3`, and so on to the later ones, in fully-qualified-name order.
+
+### Diagnostics
+
+| Diagnostic | Text |
+| --- | --- |
+| Registration note | `Registered JAX-RS application {Application} at {normalized path}` |
+| `@NoAutoWire` warning | `{Application} is annotated @NoAutoWire, so it is not registered or validated; its resources fall back to the default mount.` |
+| `autoWire=false` warning | `{Application} is not auto-wired because -Avertique.codegen.autoWire=false is set; its resources are exposed through the default @JaxRsResources mount.` |
+| Missing `@ApplicationPath` (error) | `{Application} declares no @ApplicationPath on itself or any superclass; declare @ApplicationPath("/") for a root application.` |
+| No usable constructor (error) | `{Application} has no usable constructor for application registration: it needs exactly one @Inject constructor, or an accessible no-arg constructor.` |
+| Inaccessible class (error) | `{Application} is not accessible from the generated module's package '{package}'; make it public, or package-private in that same package.` |
+| Non-static inner class (error) | `{Application} must be a top-level or static nested class to be an auto-wired JAX-RS application.` |
+| Missing `vertique-rest-jaxrs` dependency (error) | `An eligible JAX-RS application was found, but 'vertique-rest-jaxrs' is not on the compile classpath; add it as a dependency to generate application registrations.` |
+
+Every eligible application is validated regardless of `-Avertique.codegen.autoWire=false` — accessibility, construction, and the required `@ApplicationPath` still fail the build when violated; only the module write itself is skipped under that option (see "Extension Points" below).
+
+### Components Must Also List `RestModule`
+
+Each presence-gated resource binding consumes the `Set<GeneratedJaxRsApplicationRegistration>` multibinding that `RestModule` declares. A Dagger component that lists a generated `GeneratedJaxRsResourcesModule` must therefore also list `RestModule`, or that set is unsatisfied and the component fails to compile.
+
+### Distinct-Package Rule
+
+Two compilation units whose classes resolve to the same package both write `<package>.GeneratedJaxRsResourcesModule`, and whichever copy lands first on the classpath wins silently — the processor cannot reliably tell a stale copy of a unit's own prior output from another unit's module, so it does not check for a collision. Each compilation unit must resolve a distinct package for its generated module, or set `-Avertique.codegen.package` to force one; otherwise one unit's bindings and registrations can silently never reach the component.
+
+### Upgrading an Existing `Application` Subclass
+
+A concrete `jakarta.ws.rs.core.Application` subclass that this processor previously ignored now becomes an eligible application on upgrade: it is registered, and the deployment switches from the implicit default mount into discovery or explicit mode for that composition. Such a class must carry `@ApplicationPath` on itself or a superclass — even under `-Avertique.codegen.autoWire=false`, which still validates every eligible application. Annotate the class `@NoAutoWire` to opt back out: it exempts the class from registration and from this validation, keeps the legacy default `@JaxRsResources` mount for its resources, and produces the `@NoAutoWire` warning above instead of a registration note.
 
 ---
 
@@ -247,21 +320,23 @@ The large observed ratios are directional measurements over a hot JVM loop with 
 
 ### `-Avertique.codegen.autoWire=false` — global disable
 
-Suppresses **only Dagger module emission** (`GeneratedJaxRsResourcesModule`). Descriptor, bean-param model, and execution-plan companions are still emitted when `autoWire=false`; only the DI binding that registers resources with the Dagger component is skipped. Useful when you manage resource bindings manually or want to test companions without the generated module.
+Suppresses **only the generated `GeneratedJaxRsResourcesModule`**: no resource binding, catalog entry, or application registration is written for any unit in the build. Descriptor, bean-param model, and execution-plan companions are still emitted; only the DI module is skipped. Every eligible `jakarta.ws.rs.core.Application` is still validated — accessibility, construction, and the required `@ApplicationPath` still fail the build when violated — and each eligible, non-`@NoAutoWire` application gets one `autoWire=false` warning naming it and stating that its resources are exposed through the default `@JaxRsResources` mount instead. Useful when you manage resource bindings manually or want to test companions without the generated module.
 
 ### `-Avertique.codegen.package=...` — output package override
 
-Overrides `PackageResolver`'s LCP computation. Required when annotated types live in disjoint packages.
+Overrides `PackageResolver`'s LCP computation. Required when annotated types live in disjoint packages, and also forces two compilation units' generated modules apart when they would otherwise resolve to the same package (see "Distinct-Package Rule" above).
 
 ### `@NoAutoWire` opt-out
 
-Place on any `@Path`-annotated type to exclude it from Dagger module emission. Validation and descriptor emission still apply; only the `GeneratedJaxRsResourcesModule` binding is suppressed.
+Place on any `@Path`-annotated type to exclude it from Dagger module emission; validation and descriptor emission still apply, and only its `GeneratedJaxRsResourcesModule` binding is suppressed.
+
+Place on a `jakarta.ws.rs.core.Application` subtype instead, and it is inert: the class is neither registered nor validated (it is not checked for `@ApplicationPath`, a usable constructor, or accessibility), it keeps the legacy default `@JaxRsResources` mount for its resources, and it gets the `@NoAutoWire` warning above instead of a registration note or an error.
 
 ---
 
 ## Module Dagger Bindings
 
-None at runtime. `vertique-codegen-jaxrs` is a compile-time annotation processor. It generates a `GeneratedJaxRsResourcesModule` for the consuming module's component.
+None at runtime. `vertique-codegen-jaxrs` is a compile-time annotation processor. It generates a `GeneratedJaxRsResourcesModule` for the consuming module's component, contributing to the `@JaxRsResources` multibinding set and, for each eligible application, to the `GeneratedJaxRsApplicationRegistration` set. A component that lists a generated module must also list `RestModule`, which declares that registration set (see "Components Must Also List `RestModule`" above).
 
 ---
 
