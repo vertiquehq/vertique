@@ -27,6 +27,12 @@ import java.lang.reflect.Method;
  * }
  * }</pre>
  *
+ * <p><strong>Caveat:</strong> {@code method().getDeclaringClass()} is the type that declares the
+ * method, which is not always the resource class. For a route backed by an inherited superclass
+ * method it is that superclass, and for a route backed by an inherited interface {@code default}
+ * method it is the interface, so a type-level annotation declared on the resource class itself is
+ * not visible through it. This record does not carry the resource class.
+ *
  * @param method        the reflected JAX-RS resource method being invoked; never {@code null}
  * @param operationId   the OpenAPI {@code operationId} declared on the resource method; never
  *                      {@code null}
