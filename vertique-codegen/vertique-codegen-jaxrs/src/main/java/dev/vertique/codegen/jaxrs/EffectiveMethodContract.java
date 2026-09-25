@@ -15,7 +15,9 @@ import javax.lang.model.type.TypeMirror;
  * superclass → BFS interfaces). All annotation data is derived from the effective source, not
  * directly from the concrete method.
  *
- * @param concreteMethod      the concrete method element; never {@code null}
+ * @param concreteMethod      the resource method element: declared along the resource's superclass
+ *                            chain, or an inherited interface {@code default} method that no class
+ *                            overrides (then enclosed by the interface); never {@code null}
  * @param httpMethod          the HTTP verb annotation FQN (e.g. {@code "jakarta.ws.rs.GET"}), or
  *                            {@code null} for sub-resource locators
  * @param methodPath          the value of the method-level {@code @Path}, or {@code null} if absent

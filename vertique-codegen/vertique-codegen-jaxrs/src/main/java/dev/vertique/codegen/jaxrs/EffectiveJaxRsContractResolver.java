@@ -146,7 +146,7 @@ public final class EffectiveJaxRsContractResolver {
         }
 
         // --- Method-level resolution ---
-        List<ExecutableElement> concreteMethods = JaxRsMethodDiscovery.collect(concreteClass, ctx.types());
+        List<ExecutableElement> concreteMethods = JaxRsMethodDiscovery.collect(ctx, concreteClass);
         List<EffectiveMethodContract> methods = new ArrayList<>();
         boolean classLevelConflict = isClassLevelConflict(concreteClass);
 
@@ -397,7 +397,8 @@ public final class EffectiveJaxRsContractResolver {
         }
 
         // Precedence 2: superclass chain — method already includes inherited declarations from
-        // JaxRsMethodDiscovery (the concrete method may itself be inherited)
+        // JaxRsMethodDiscovery (the concrete method may itself be inherited, from a superclass or
+        // as an interface default method)
         // The method element already IS the effective method from the chain; superclass is already
         // folded in via JaxRsMethodDiscovery. So we only need to check interfaces.
 
