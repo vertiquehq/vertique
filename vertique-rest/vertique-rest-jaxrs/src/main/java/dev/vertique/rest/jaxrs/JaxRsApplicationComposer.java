@@ -48,10 +48,16 @@ import lombok.extern.slf4j.Slf4j;
  *   <li>Validates every registration, active or inactive, without running any application code:
  *       rejects duplicate registrations of one application class, duplicate catalog entries of one
  *       resource class, a discovery-style registration (one that overrides neither
- *       {@code getClasses()} nor {@code getSingletons()}) that is not the sole registration, and a
- *       pair of active applications whose mount paths conflict ({@link JaxRsMountPaths}). Logs one
- *       informational line listing every registration. Any violation here aborts before any
- *       application is constructed or any resource is resolved.
+ *       {@code getClasses()} nor {@code getSingletons()}) that is not the sole registration, an
+ *       annotation outside {@link ApplicationAnnotationAllowList}'s allow list anywhere in the
+ *       registration's class hierarchy (the runtime backstop for the compile-time
+ *       {@code ApplicationAnnotationValidator}, re-checking every registration by reflection so one
+ *       the processor did not produce still fails startup), and a pair of active applications whose
+ *       mount paths conflict ({@link JaxRsMountPaths}). Logs one informational line listing every
+ *       registration. Any violation here aborts before any application is constructed or any
+ *       resource is resolved; each allow-list violation carries the compile-time validator's
+ *       message and is reported together with every other step-one problem under the aggregate
+ *       exception.
  *   <li>Warns once, without echoing the configured value, when the routing base path is non-default
  *       (it is never applied to an application mount).
  *   <li>With no active registration, resolves and warns about the enabled generated resource
@@ -237,8 +243,13 @@ final class JaxRsApplicationComposer {
                     + registrationSummary));
         }
 
-        // Step 1a: the annotation allow-list runtime backstop runs here, on each registration's
-        // type hierarchy. Not yet implemented; left as an explicit slot for a later task.
+        // Step 1a: the annotation allow-list runtime backstop re-checks every registration's class
+        // hierarchy by reflection, active or inactive, before any application is constructed. Each
+        // violation carries the compile-time validator's message and is reported with every other
+        // step-one problem.
+        for (GeneratedJaxRsApplicationRegistration registration : sortedRegistrations) {
+            stepOneViolations.addAll(ApplicationAnnotationAllowList.violations(registration.type()));
+        }
 
         log.info("Declared JAX-RS application registrations: {}", registrationSummary);
 

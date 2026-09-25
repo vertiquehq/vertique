@@ -10,6 +10,7 @@ import dev.vertique.codegen.jaxrs.processor.emit.BeanParamModelEmitter;
 import dev.vertique.codegen.jaxrs.processor.emit.ExecutionPlanEmitter;
 import dev.vertique.codegen.jaxrs.processor.emit.GeneratedJaxRsResourcesModuleEmitter;
 import dev.vertique.codegen.jaxrs.processor.emit.JaxRsDescriptorEmitter;
+import dev.vertique.codegen.jaxrs.processor.validate.ApplicationAnnotationValidator;
 import dev.vertique.codegen.jaxrs.processor.validate.BodyFormValidator;
 import dev.vertique.codegen.jaxrs.processor.validate.ContextParamValidator;
 import dev.vertique.codegen.jaxrs.processor.validate.HttpVerbValidator;
@@ -52,10 +53,12 @@ import javax.lang.model.util.Elements;
  *   <li><strong>Resolve</strong> — {@link EffectiveJaxRsContractResolver} builds the
  *       {@link EffectiveResourceContract} for each candidate using the precedence rule:
  *       direct annotations → superclass chain → BFS interfaces.</li>
- *   <li><strong>Validate</strong> — five validators run against each resource contract, plus
+ *   <li><strong>Validate</strong> — five validators run against each resource contract;
+ *       {@link ApplicationAnnotationValidator} checks every eligible application's annotation scope
+ *       against its allow list right after {@link JaxRsApplicationScanner#scan}; then
  *       {@link JaxRsApplicationScanner#validate} checks every eligible application's construction,
- *       accessibility, and required {@code @ApplicationPath} (via {@link ApplicationPathGrammar})
- *       regardless of the auto-wire setting.</li>
+ *       accessibility, and required {@code @ApplicationPath} (via {@link ApplicationPathGrammar}).
+ *       Both application checks run regardless of the auto-wire setting.</li>
  *   <li><strong>Emit</strong> — four emitters fire per build:
  *       {@link dev.vertique.codegen.jaxrs.processor.emit.GeneratedJaxRsResourcesModuleEmitter} writes the
  *       Dagger DI module — the presence-gated resource bindings, the lazy resource catalog, and the
@@ -86,9 +89,9 @@ import javax.lang.model.util.Elements;
  *
  * <p><strong>Auto-wire kill switch:</strong> passing {@code -Avertique.codegen.autoWire=false}
  * suppresses DI module emission; validation still runs, including every eligible application's
- * construction, accessibility, and required {@code @ApplicationPath}. One warning per eligible,
- * non-{@code @NoAutoWire} application then names it and states that the default
- * {@code @JaxRsResources} mount is used instead. Because no module is written in this mode, an
+ * annotation allow list, construction, accessibility, and required {@code @ApplicationPath}. One
+ * warning per eligible, non-{@code @NoAutoWire} application then names it and states that the
+ * default {@code @JaxRsResources} mount is used instead. Because no module is written in this mode, an
  * unresolvable package (origins spanning disjoint packages with no common prefix) is never a
  * compile error here, unlike when auto-wiring is enabled; validation still runs against every
  * eligible application, treating the candidate, its enclosing types, and its constructor as
@@ -119,6 +122,7 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
     private HttpVerbValidator verbs;
     private PathParamAlignmentValidator path;
     private BodyFormValidator bodyForm;
+    private ApplicationAnnotationValidator applicationAnnotations;
     private GeneratedJaxRsResourcesModuleEmitter moduleEmitter;
     private JaxRsDescriptorEmitter descriptorEmitter;
     private BeanParamModelEmitter beanParamEmitter;
@@ -146,12 +150,13 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
      * {@inheritDoc}
      *
      * <p>Initialises the shared {@link CodegenContext}, the
-     * {@link EffectiveJaxRsContractResolver}, all five validators (including
+     * {@link EffectiveJaxRsContractResolver}, all five resource-contract validators (including
      * {@link dev.vertique.codegen.jaxrs.processor.validate.ContextParamValidator}), the
-     * {@link GeneratedJaxRsResourcesModuleEmitter}, the {@link PackageResolver} it shares with
-     * {@link JaxRsApplicationScanner}'s validation, the {@link JaxRsDescriptorEmitter},
-     * the {@link BeanParamModelEmitter}, the {@link ExecutionPlanEmitter}, and reads the
-     * {@code vertique.codegen.autoWire} processor option.
+     * {@link ApplicationAnnotationValidator}, the {@link GeneratedJaxRsResourcesModuleEmitter}, the
+     * {@link PackageResolver} it shares with {@link JaxRsApplicationScanner}'s validation, the
+     * {@link JaxRsDescriptorEmitter}, the {@link BeanParamModelEmitter}, the
+     * {@link ExecutionPlanEmitter}, and reads the {@code vertique.codegen.autoWire} processor
+     * option.
      *
      * @param env the processing environment provided by the compiler
      */
@@ -170,6 +175,7 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
         verbs = new HttpVerbValidator(ctx);
         path = new PathParamAlignmentValidator(ctx);
         bodyForm = new BodyFormValidator(ctx);
+        applicationAnnotations = new ApplicationAnnotationValidator(ctx);
         moduleEmitter = new GeneratedJaxRsResourcesModuleEmitter(ctx);
         packageResolver = new PackageResolver(env);
         descriptorEmitter = new JaxRsDescriptorEmitter(ctx);
@@ -193,12 +199,16 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
      * so validation errors are always reported. Step 4d runs before 4b so that the descriptor can
      * reference the emitted plan class names in its {@code describe()} body.
      *
-     * <p>Within step 4a, {@link JaxRsApplicationScanner#scan} and
-     * {@link JaxRsApplicationScanner#validate} always run, so every eligible application's
-     * diagnostics (the registration note, the {@code @NoAutoWire} warning, the
-     * {@code autoWire=false} warning, and the construction, accessibility, and required-annotation
-     * errors) are reported regardless of the auto-wire setting; only the module write itself is
-     * skipped when {@code -Avertique.codegen.autoWire=false} is set.
+     * <p>Within step 4a, {@link JaxRsApplicationScanner#scan} runs first and returns the eligible
+     * applications (already excluding any {@code @NoAutoWire} class, which gets only its warning);
+     * {@link ApplicationAnnotationValidator} then checks every eligible application's annotation
+     * scope against its allow list, without filtering the list; and
+     * {@link JaxRsApplicationScanner#validate} checks the same list's construction, accessibility,
+     * and required {@code @ApplicationPath}. Every eligible application's diagnostics (the
+     * registration note, the {@code autoWire=false} warning, the allow-list errors, and the
+     * construction, accessibility, and required-annotation errors) are reported regardless of the
+     * auto-wire setting; only the module write itself is skipped when
+     * {@code -Avertique.codegen.autoWire=false} is set.
      *
      * @param annotations the annotation types present in the round (not used; this processor
      *                    uses {@code @SupportedAnnotationTypes("*")} and scans root elements)
@@ -324,6 +334,7 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
         // --- Step 4a: DI module emission ---
         Set<TypeElement> diCandidates = JaxRsCandidateScanner.filterDiCandidates(semanticCandidates, elements);
         List<TypeElement> eligibleApplications = JaxRsApplicationScanner.scan(roundEnv, ctx);
+        applicationAnnotations.validate(eligibleApplications);
         emitModule(diCandidates, eligibleApplications);
 
         emitted = true;

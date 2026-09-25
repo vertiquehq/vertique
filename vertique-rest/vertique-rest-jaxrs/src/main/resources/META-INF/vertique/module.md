@@ -1065,6 +1065,18 @@ registration path that is not in the application path grammar's normalized form 
 `IllegalArgumentException`, naming the application class and the rejected path — a fail-closed backstop
 for a registration the processor did not produce.
 
+At startup, before any application is constructed, every declared registration's class hierarchy — the
+application itself, every superclass strictly below `jakarta.ws.rs.core.Application`, and every
+interface any of them implements, transitively including superinterfaces — is re-checked by reflection
+against the same application annotation allow list the annotation processor enforces at compile time
+(`vertique-codegen-jaxrs`'s `module.md`, "Application Annotation Allow List"), whether or not the
+registration is active and whether it was generated or hand-written. Each violation carries the
+compile-time diagnostic's own message; when one or more are found, startup fails with a
+`RestConfigurationException` that lists every violation found across all registrations, one per line,
+under `Invalid JAX-RS application composition:`, together with any other composition problem found at
+that point. Like the normalized-form check above, it is a fail-closed backstop for a registration the
+processor did not produce.
+
 ### Mount conflicts
 
 Once any application is declared, two independent checks reject overlapping mounts before any route

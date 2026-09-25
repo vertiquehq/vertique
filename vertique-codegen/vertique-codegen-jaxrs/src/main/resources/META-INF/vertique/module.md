@@ -81,8 +81,9 @@ For a parameterized collection (`List<T>`, `Set<T>`, `SortedSet<T>`, `NavigableS
 | `HttpVerbValidator` | Tier-B guardrail: error on multiple HTTP verb annotations on a single method. |
 | `PathParamAlignmentValidator` | Bidirectional check between `@Path` placeholders and `@PathParam` declarations. Handles `@BeanParam` and `@RequestParams` composite types including record components. |
 | `BodyFormValidator` | Mirrors `RouteValidator.validateMethodParams`: at most one body parameter; body and form parameters mutually exclusive. |
+| `ApplicationAnnotationValidator` | Checks every eligible `jakarta.ws.rs.core.Application`'s annotation scope — the application, its superclasses strictly below `jakarta.ws.rs.core.Application`, and every interface any of them implements, transitively including superinterfaces — against the fixed application annotation allow list, right after `JaxRsApplicationScanner.scan` and before `JaxRsApplicationScanner.validate` runs; see "Application Annotation Allow List" below. |
 
-`ContextParamValidator` runs first, before the remaining four — see the short-circuit behavior noted under "Validation Rules" below. All five validators take `EffectiveResourceContract`.
+`ContextParamValidator` runs first, before the remaining four resource-contract validators — see the short-circuit behavior noted under "Validation Rules" below. Those five validators take `EffectiveResourceContract`; `ApplicationAnnotationValidator` instead validates an eligible application's annotation scope directly, against the list `JaxRsApplicationScanner.scan` produces.
 
 ### Generated Artifacts
 
@@ -200,6 +201,16 @@ The condition argument follows the same `PropertyCondition.matchesAll(config, �
 
 **Local and anonymous subclasses are invisible to the processor.** A `jakarta.ws.rs.core.Application` subclass declared inside a method body (a local class), or as an anonymous class expression, is not among the round's root elements the processor scans, so it is neither registered nor reported — no diagnostic names it. Declare every `Application` subclass as a top-level class, or a static nested class at any depth, so the processor can see it.
 
+### Application Annotation Allow List
+
+Every eligible application `A` is also checked against a fixed annotation allow list, across the same scope its registration and path resolution already use: `A` itself, every superclass of `A` strictly below `jakarta.ws.rs.core.Application` (nearest first), and every interface any of them implements, transitively including superinterfaces. Only annotations on the type declarations in that scope are checked — an annotation on a member, such as the `@Inject` constructor or an overriding method, has no effect on an application and is never inspected — and a repeatable container annotation (for example the compiler-synthesized `ConditionalOnProperties` when two or more `@ConditionalOnProperty` annotations appear on one type) is checked as an annotation in its own right, not unwrapped into its repeated elements.
+
+Every `RUNTIME`-retained type-declaration annotation in that scope must be one of: `@jakarta.ws.rs.ApplicationPath`, but not on an interface; a type meta-annotated with `jakarta.inject.Scope`, `jakarta.inject.Qualifier`, `javax.inject.Scope`, or `javax.inject.Qualifier`; a type in package `java.lang`; or `@io.swagger.v3.oas.annotations.OpenAPIDefinition` in which every element other than `info` equals its declared default. Any other `RUNTIME`-retained annotation fails the build (see "Diagnostics" below), because application classes carry no resource semantics — security, audit, and profile annotations belong on resources, not on the `Application` that assembles them.
+
+`@ConditionalOnProperty`, `@ConditionalOnProperties`, and `@NoAutoWire` are `SOURCE`-retained and honored only on `A` itself; found on any supertype compiled in the same build, each is a compile error instead, because the processor would otherwise ignore it there silently.
+
+A class annotated `@NoAutoWire` is exempt from all of this: it is inert, neither registered nor validated by the allow list or by the checks described under "Application Registrations" above, and it gets only the `@NoAutoWire` warning below instead.
+
 ### Diagnostics
 
 | Diagnostic | Text |
@@ -207,6 +218,8 @@ The condition argument follows the same `PropertyCondition.matchesAll(config, �
 | Registration note | `Registered JAX-RS application {Application} at {normalized path}` |
 | `@NoAutoWire` warning | `{Application} is annotated @NoAutoWire, so it is not registered or validated; its resources fall back to the default mount.` |
 | `autoWire=false` warning | `{Application} is not auto-wired because -Avertique.codegen.autoWire=false is set; its resources are exposed through the default @JaxRsResources mount.` |
+| Allow-list violation (error) | `Application {Application} carries @{annotation} on {declaring type}, which is not allowed: application classes carry no resource semantics` (appends `; only its info element may be set` when `{annotation}` is `@OpenAPIDefinition`) |
+| Source-retained annotation on a supertype (error) | `Application {Application} carries @{annotation} on supertype {declaring type}, which is honored only on the application class itself` |
 | Missing `@ApplicationPath` (error) | `{Application} declares no @ApplicationPath on itself or any superclass; declare @ApplicationPath("/") for a root application.` |
 | Invalid `@ApplicationPath` value (error) | `{Application} has an invalid @ApplicationPath value "{value}" (rule: {rule}); an application path may contain only '/' and the characters A-Z a-z 0-9 . _ ~ -` |
 | No usable constructor (error) | `{Application} has no usable constructor for application registration: it needs exactly one @Inject constructor, or an accessible no-arg constructor.` |
@@ -228,7 +241,7 @@ Two compilation units whose classes resolve to the same package both write `<pac
 
 ### Upgrading an Existing `Application` Subclass
 
-A concrete `jakarta.ws.rs.core.Application` subclass that this processor previously ignored now becomes an eligible application on upgrade: it is registered, and the deployment switches from the implicit default mount into discovery or explicit mode for that composition. Such a class must carry `@ApplicationPath` on itself or a superclass, and that value must satisfy the path grammar (see "Application Registrations" above) — both checks apply even under `-Avertique.codegen.autoWire=false`, which still validates every eligible application. Annotate the class `@NoAutoWire` to opt back out: it exempts the class from registration, from this validation, and from the path grammar, keeps the legacy default `@JaxRsResources` mount for its resources, and produces the `@NoAutoWire` warning above instead of a registration note.
+A concrete `jakarta.ws.rs.core.Application` subclass that this processor previously ignored now becomes an eligible application on upgrade: it is registered, and the deployment switches from the implicit default mount into discovery or explicit mode for that composition. Such a class must carry `@ApplicationPath` on itself or a superclass, that value must satisfy the path grammar, and neither it nor a superclass or implemented interface may carry an annotation outside the application annotation allow list (see "Application Registrations" and "Application Annotation Allow List" above) — all three checks apply even under `-Avertique.codegen.autoWire=false`, which still validates every eligible application. Annotate the class `@NoAutoWire` to opt back out of all three: it exempts the class from registration, from the allow list, and from the path grammar, keeps the legacy default `@JaxRsResources` mount for its resources, and produces the `@NoAutoWire` warning above instead of a registration note.
 
 ---
 
@@ -342,7 +355,7 @@ The large observed ratios are directional measurements over a hot JVM loop with 
 
 ### `-Avertique.codegen.autoWire=false` — global disable
 
-Suppresses **only the generated `GeneratedJaxRsResourcesModule`**: no resource binding, catalog entry, or application registration is written for any unit in the build. Descriptor, bean-param model, and execution-plan companions are still emitted; only the DI module is skipped. Every eligible `jakarta.ws.rs.core.Application` is still validated — accessibility, construction, the required `@ApplicationPath`, and its path grammar (see "Application Registrations" above) all still fail the build when violated — and each eligible, non-`@NoAutoWire` application gets one `autoWire=false` warning naming it and stating that its resources are exposed through the default `@JaxRsResources` mount instead. Useful when you manage resource bindings manually or want to test companions without the generated module.
+Suppresses **only the generated `GeneratedJaxRsResourcesModule`**: no resource binding, catalog entry, or application registration is written for any unit in the build. Descriptor, bean-param model, and execution-plan companions are still emitted; only the DI module is skipped. Every eligible `jakarta.ws.rs.core.Application` is still validated — accessibility, construction, the required `@ApplicationPath`, its path grammar, and the application annotation allow list (see "Application Registrations" and "Application Annotation Allow List" above) all still fail the build when violated — and each eligible, non-`@NoAutoWire` application gets one `autoWire=false` warning naming it and stating that its resources are exposed through the default `@JaxRsResources` mount instead. Useful when you manage resource bindings manually or want to test companions without the generated module.
 
 **Package resolution does not fail the build.** Because no module is written under this option, the processor still resolves a package to validate against, without emitting `PackageResolver`'s disjoint-packages error: the `-Avertique.codegen.package` override when set, otherwise the longest common package prefix of the unit's DI-eligible resources (or, in an applications-only unit, of its eligible applications), otherwise no package at all. When no package resolves, accessibility and no-arg-constructor validation fall back to public-only — an application, an enclosing type, or a no-arg constructor that is merely package-private has no package left to match against and fails the build.
 
@@ -354,7 +367,7 @@ Overrides `PackageResolver`'s LCP computation. Required when annotated types liv
 
 Place on any `@Path`-annotated type to exclude it from Dagger module emission; validation and descriptor emission still apply, and only its `GeneratedJaxRsResourcesModule` binding is suppressed.
 
-Place on a `jakarta.ws.rs.core.Application` subtype instead, and it is inert: the class is neither registered nor validated (it is not checked for `@ApplicationPath`, its path grammar, a usable constructor, or accessibility), it keeps the legacy default `@JaxRsResources` mount for its resources, and it gets the `@NoAutoWire` warning above instead of a registration note or an error.
+Place on a `jakarta.ws.rs.core.Application` subtype instead, and it is inert: the class is neither registered nor validated (it is not checked for `@ApplicationPath`, its path grammar, a usable constructor, accessibility, or its annotations against the application annotation allow list), it keeps the legacy default `@JaxRsResources` mount for its resources, and it gets the `@NoAutoWire` warning above instead of a registration note or an error.
 
 ---
 
