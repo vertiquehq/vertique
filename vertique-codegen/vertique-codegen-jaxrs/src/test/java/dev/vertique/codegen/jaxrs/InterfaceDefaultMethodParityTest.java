@@ -19,6 +19,7 @@ import jakarta.annotation.security.PermitAll;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.ws.rs.DELETE;
 import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import java.util.ArrayList;
@@ -161,6 +162,16 @@ class InterfaceDefaultMethodParityTest {
     @Path("/multi")
     static class MultiResource implements Fetchable, ReadApi {}
 
+    interface CreateApi<T> {
+        @POST
+        default String create(T body) {
+            return "created " + body;
+        }
+    }
+
+    @Path("/creates")
+    static class CreateResource implements CreateApi<String> {}
+
     interface VaultApi {
         @DELETE
         @Path("/{id}")
@@ -202,6 +213,7 @@ class InterfaceDefaultMethodParityTest {
                 import jakarta.annotation.security.RolesAllowed;
                 import jakarta.ws.rs.DELETE;
                 import jakarta.ws.rs.GET;
+                import jakarta.ws.rs.POST;
                 import jakarta.ws.rs.Path;
                 import jakarta.ws.rs.PathParam;
 
@@ -472,7 +484,25 @@ class InterfaceDefaultMethodParityTest {
                                         public class MultiResource implements Fetchable, ReadApi {}
                                         """)),
                                 1,
-                                List.of("ReadApi")))
+                                List.of("ReadApi")),
+                        new ParityCase(
+                                "generic default of a package-private interface dispatches reflectively",
+                                new CreateResource(),
+                                "CreateResource",
+                                List.of(src("CreateApi", """
+                                        interface CreateApi<T> {
+                                            @POST
+                                            default String create(T body) {
+                                                return "created " + body;
+                                            }
+                                        }
+                                        """), src("CreateResource", """
+                                        @Path("/creates")
+                                        public class CreateResource implements CreateApi<String> {}
+                                        """)),
+                                1,
+                                List.of("CreateApi"),
+                                false))
                 .map(Arguments::of);
     }
 

@@ -76,12 +76,15 @@ public final class JaxRsHierarchy {
     }
 
     /**
-     * Returns the interfaces a resource method inherits declarations from, in BFS order, mirroring
-     * the runtime {@code AnnotationResolver}, which walks from the method's declaring type.
+     * Returns the interfaces a resource method inherits declarations from, in BFS order.
      *
      * <p>For an inherited interface {@code default} method (enclosed by an interface) that is the
-     * default's own super-interface hierarchy: the methods it overrides. For a method declared by a
-     * class it is {@link #allInterfaces(CodegenContext, TypeElement)} of the resource class.
+     * default's own super-interface hierarchy — the methods it overrides — which is where the
+     * runtime {@code AnnotationResolver} starts, since it walks from the method's declaring type.
+     * For a method declared by a class it is {@link #allInterfaces(CodegenContext, TypeElement)} of
+     * the resource class. That is the runtime's walk only when the resource class declares the
+     * method; for a superclass-declared method the runtime walks from the superclass instead, a
+     * known divergence (vertiquehq/vertique-dev#636).
      *
      * @param ctx           the shared codegen context; must not be {@code null}
      * @param method        the resource method; must not be {@code null}
