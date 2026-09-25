@@ -232,9 +232,15 @@ public static class Factory {
 }
 ```
 
-`RestModule` contributes a default mount at `jaxrs.basePath` (default `/*`) with
-`jaxrs.openapiPath` (default `openapi.json`) via `@ElementsIntoSet`. The set is **empty** — no mount at
-all — when `@JaxRsResources` is empty. For a single API, changing the prefix is a config edit:
+There is no public factory overload for a Jakarta REST application's mount: once one or more
+`jakarta.ws.rs.core.Application` classes are declared, the framework's application composer creates one
+mount per active application instead of any hand-built call above — see
+[Jakarta REST Applications](#jakarta-rest-applications).
+
+With no `Application` declared (zero-declaration mode), `RestModule` contributes a default mount at
+`jaxrs.basePath` (default `/*`) with `jaxrs.openapiPath` (default `openapi.json`) via
+`@ElementsIntoSet`. The set is **empty** — no mount at all — when `@JaxRsResources` is empty. For a
+single API, changing the prefix is a config edit:
 
 ```json
 { "jaxrs": { "basePath": "/api/*" } }
@@ -930,6 +936,138 @@ public class DataResource {
 
 ---
 
+## Jakarta REST Applications
+
+An application may declare one or more `jakarta.ws.rs.core.Application` subclasses to group resources
+into independently mounted APIs, instead of the manual multi-API recipe under
+[`JaxRsRouterMount`](#jaxrsroutermount) above. With no `Application` declared, `RestModule` keeps the
+default mount described there unchanged.
+
+### Declaring applications
+
+```java
+@ApplicationPath("/api/public")
+public final class PublicApplication extends Application {
+    @Override
+    public Set<Class<?>> getClasses() {
+        return Set.of(CatalogResource.class, CheckoutResource.class);
+    }
+}
+
+@ApplicationPath("/api/mgmt")
+public final class ManagementApplication extends Application {
+    @Override
+    public Set<Class<?>> getClasses() {
+        return Set.of(ManagementResource.class);
+    }
+}
+```
+
+Declaring these two classes mounts `CatalogResource` and `CheckoutResource` under `/api/public/*`, and
+`ManagementResource` under `/api/mgmt/*`; no default mount is created. Each application's registration
+is produced by the annotation processor from its declaring compilation unit — this reference describes
+the declared behavior the generated registration produces, not the processor itself.
+
+### Membership
+
+Each declared application is classified by reflection into one of two membership modes:
+
+- **Explicit membership.** An application that overrides `getClasses()` (or `getSingletons()`) selects
+  exactly the classes `getClasses()` lists, read once. Each listed class must be a concrete resource
+  with an effective `@Path` and must resolve to exactly one generated resource or one manual
+  `@JaxRsResources` instance of that same class; zero or more than one match fails startup, naming the
+  application and the offending type.
+- **Discovery membership.** An application that overrides neither `getClasses()` nor `getSingletons()`
+  selects every enabled generated resource and every manual `@JaxRsResources` instance. Discovery is
+  allowed only when that application is the sole declared application, whether or not any other
+  declared application is currently active; declaring any other application beside it fails startup,
+  naming every declared application.
+
+For explicit membership, `getClasses()` may be computed from injected configuration, and every
+invocation — computed or fixed — is evaluated at startup. An empty selection fails startup, naming the
+application; it never falls back to discovery. A listed class whose generated resource is currently
+disabled by its `@ConditionalOnProperty` condition is excluded from the mount silently, without being
+instantiated; when every listed class is disabled this way, the application still mounts, with no
+resources and no fallback to the default mount.
+
+A manual `@JaxRsResources` instance matches a listed class when it is exactly that class, or a direct
+subclass that declares no runtime-retained annotation on itself, its methods, or their parameters, and
+adds no interface beyond what the listed class already implements — the shape the framework's own AOP
+proxy has. Any other subclass instance matches nothing and is reported by name, naming the subclass and
+asking for it to be listed explicitly instead. A resolved generated resource is checked against the
+same rule before it is mounted, so a Dagger-substituted instance that adds routes or annotations fails
+startup the same way.
+
+Resources within one mount are ordered by fully qualified class name, regardless of `getClasses()`'s
+own order.
+
+### Lifecycle and bounded Jakarta compatibility
+
+| Concern | Contract |
+| --- | --- |
+| `getClasses()` | Supported; read once per composition. A `null` return means empty. |
+| `getSingletons()` | Not supported: a non-empty return fails startup, naming the application. |
+| `getProperties()` | Never called. |
+| Providers/features | A listed type annotated `@jakarta.ws.rs.ext.Provider`, or assignable to `Feature` or `DynamicFeature`, fails startup as an unsupported resource member. |
+| Evaluation | Each declared, active application is constructed and evaluated once per `HttpVerticle` composition — never once for the whole process. |
+| Failure | An evaluation failure fails the deployment before the server starts listening, naming the application class and its `@ApplicationPath`. |
+
+### Threading
+
+`Application` constructors and `getClasses()` run during mount composition, possibly on a Vert.x
+event-loop thread, and must not block. An `Application` must not depend on `Set<RouterMount>` —
+constructing the mount set from inside an application whose own construction is still in progress fails
+startup naming that application, instead of recursing.
+
+### Framework and library modules never declare an application
+
+A framework or library module contributes resources through `@Provides @IntoSet @JaxRsResources`, the
+same seam a sibling framework module uses, but never declares a `jakarta.ws.rs.core.Application`.
+Declaring one is the deploying application's decision alone, because a single declaration switches the
+whole module into explicit mode for every consumer.
+
+### Explicit mode
+
+Once any application is declared — even when every declared application is currently disabled by its
+conditions — explicit mode replaces the default mount for the whole module:
+
+- No default mount is created at `jaxrs.basePath`, including when every declared application is
+  inactive.
+- `jaxrs.basePath` is not applied to any application mount; a non-default value logs one warning that
+  it is unused.
+- A manual `@JaxRsResources` contribution — including one contributed by a sibling framework module —
+  is routed only when an active application selects it.
+- With no active application, startup logs one warning naming the enabled generated resources and
+  stating that manual `@JaxRsResources` contributions were not resolved.
+- With at least one active application, startup logs one warning — only when the list is non-empty —
+  naming every enabled generated resource and manual instance that no active application selected,
+  worded "not selected by any Application".
+- Startup also logs one informational line listing every declared application (its class, its path,
+  and whether it is currently active), and one informational line per application mount naming its
+  resource classes in mount order.
+- Removing every declared application restores the default mount described under
+  [`JaxRsRouterMount`](#jaxrsroutermount) above.
+
+### Generated-code contract types
+
+`dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsApplicationRegistration` and
+`GeneratedJaxRsResourceEntry` are INTERNAL generated-code contract types the annotation processor
+emits; they are not for hand-written use. `GeneratedJaxRsApplicationRegistration.of(...)` rejects a
+registration path that is not in the application path grammar's normalized form with
+`IllegalArgumentException`, naming the application class and the rejected path — a fail-closed backstop
+for a registration the processor did not produce.
+
+### Migrating a root application
+
+An application declared at `@ApplicationPath("/")` mounts at `/*`, the whole path space. Because every
+other prefix is its descendant, a root application cannot coexist with any other application or JAX-RS
+mount. Adding a first application to a deployment that currently serves a legacy API at the root path
+therefore switches the whole module into explicit mode: the root API must move to a non-root path
+before any other application can be declared, and every resource that must stay reachable has to be
+selected by some declared application.
+
+---
+
 ## Configuration
 
 This module reads no configuration section of its own; `http` and `jaxrs` are declared and parsed in
@@ -1183,7 +1321,9 @@ Beyond what `RestCoreModule` and `JsonRuntimeModule` contribute:
 | `Set<RequestValidationStrategy>` | `@Multibinds` plus the built-in `none` strategy, so the set is never empty |
 | `Set<FileContentVerifier>` | `@Multibinds`, empty by default |
 | `Set<RestExceptionMapperCustomizer>` | `@Multibinds`, empty by default |
-| `Set<RouterMount>` | `@ElementsIntoSet`: the default `JaxRsRouterMount` at `jaxrs.basePath`; empty when `@JaxRsResources` is empty |
+| `Set<GeneratedJaxRsApplicationRegistration>` | `@Multibinds`; INTERNAL generated-code contract, populated by the annotation processor with one entry per declared `jakarta.ws.rs.core.Application`; empty by default |
+| `Set<GeneratedJaxRsResourceEntry>` | `@Multibinds`; INTERNAL generated-code contract, populated by the annotation processor with one entry per DI-eligible JAX-RS resource; empty by default |
+| `Set<RouterMount>` | `@ElementsIntoSet`: with no `Application` declared, the default `JaxRsRouterMount` at `jaxrs.basePath`, empty when `@JaxRsResources` is empty; once an `Application` is declared, one mount per active application instead — see [Jakarta REST Applications](#jakarta-rest-applications) |
 | `ComposeValidator` (`JaxRsDefaultProfileValidator`) | `@IntoSet`; fails the `VALIDATE` phase on an unknown `jaxrs.jsonProfile` (`json.systemProfile` is validated earlier, by the `CONFIGURE`-phase install step) |
 | `OperationSchemaSource`, `BeanValidator`, `InputObjectProcessor` (`dev.vertique.input.processing.InputObjectProcessor`), `ActionRegistry`, `Authorizer` | `@BindsOptionalOf`; satisfied by `rest-validation`, `validation`, `sanitization`, and `rest-security` respectively |
 

@@ -34,12 +34,15 @@ import dev.vertique.rest.core.response.ResponseBodyEncoder;
 import dev.vertique.rest.core.response.ResponseSerializer;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.core.sse.SseChannelFactory;
+import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsApplicationRegistration;
+import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsResourceEntry;
 import dev.vertique.rest.jaxrs.validation.FileContentVerifier;
 import dev.vertique.rest.jaxrs.validation.NoneValidationStrategy;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
 import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
 import dev.vertique.security.authz.ActionRegistry;
 import dev.vertique.security.authz.Authorizer;
+import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
 import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.core.Response;
@@ -107,6 +110,26 @@ public abstract class RestModule {
      */
     @Multibinds
     abstract Set<FileContentVerifier> fileContentVerifiers();
+
+    /**
+     * Declares the {@link GeneratedJaxRsApplicationRegistration} multibinding set. A generated
+     * module contributes one registration per eligible {@code jakarta.ws.rs.core.Application} via
+     * {@code @Provides @IntoSet}; the set stays empty in zero-declaration mode.
+     *
+     * @return the application registration set (populated by {@code @IntoSet} contributions)
+     */
+    @Multibinds
+    abstract Set<GeneratedJaxRsApplicationRegistration> generatedJaxRsApplicationRegistrations();
+
+    /**
+     * Declares the {@link GeneratedJaxRsResourceEntry} multibinding set. A generated module
+     * contributes one entry per DI-eligible JAX-RS resource via {@code @Provides @IntoSet};
+     * the set stays empty when no generated module is present.
+     *
+     * @return the generated resource catalog set (populated by {@code @IntoSet} contributions)
+     */
+    @Multibinds
+    abstract Set<GeneratedJaxRsResourceEntry> generatedJaxRsResourceEntries();
 
     /**
      * Contributes the {@code none} {@link RequestValidationStrategy} into the strategy multibinding so
@@ -567,26 +590,51 @@ public abstract class RestModule {
     }
 
     /**
-     * Registers a default {@link JaxRsRouterMount} using the {@link JaxRsResources}
-     * multibinding set. For single-API apps, resources are contributed via
-     * {@code @Provides @IntoSet @JaxRsResources} in the app's {@code ResourceModule}.
+     * Registers the JAX-RS router mount(s): a default mount built from the {@link JaxRsResources}
+     * multibinding set in zero-declaration mode, or one mount per active application, built by
+     * {@link JaxRsApplicationComposer}, when one or more {@code jakarta.ws.rs.core.Application}
+     * registrations are declared.
+     *
+     * <p>Reads {@code applications} before it resolves {@code resources} or {@code catalog}, so
+     * declaration presence is known before any generated resource provider runs. With an empty
+     * {@code applications} set, this provider keeps today's zero-declaration behavior unchanged: a
+     * single default mount is built directly from {@code @JaxRsResources}, at {@code jaxrs.basePath}.
+     * For single-API apps, resources are contributed via {@code @Provides @IntoSet @JaxRsResources}
+     * in the app's {@code ResourceModule}.
      *
      * <p>For multi-API apps that wire their own mounts via the factory, leave
      * {@code @JaxRsResources} empty — no default mount is contributed, avoiding
      * spurious overlap warnings and mount customizer invocations.
      *
+     * <p>With one or more registrations, this provider delegates entirely to
+     * {@link JaxRsApplicationComposer#compose}: the routing base path no longer applies to any
+     * mount, {@code @JaxRsResources} holds only the manual contributions no application selected,
+     * and disabling every declared application never falls back to the default mount.
+     *
      * @param factory      the JAX-RS router mount factory
-     * @param resources    the set of JAX-RS resource instances
-     * @param jaxRsConfig  the JAX-RS routing configuration (base path and OpenAPI spec location)
-     * @return a singleton set with the default mount, or empty set if no resources
+     * @param applications the generated application registration set (empty in zero-declaration
+     *                     mode)
+     * @param resources    the {@code @JaxRsResources} instances, resolved lazily
+     * @param catalog      the generated resource catalog, resolved lazily
+     * @param config       the JAX-RS routing configuration (base path and OpenAPI spec location)
+     * @return one mount per active application in explicit mode; otherwise a singleton set with the
+     *     default mount, or an empty set when there are no resources
      */
     @Provides
     @ElementsIntoSet
     static Set<RouterMount> jaxRsRouterMount(
-            JaxRsRouterMount.Factory factory, @JaxRsResources Set<Object> resources, JaxRsConfig jaxRsConfig) {
-        if (resources.isEmpty()) {
-            return Set.of();
+            JaxRsRouterMount.Factory factory,
+            Set<GeneratedJaxRsApplicationRegistration> applications,
+            @JaxRsResources Provider<Set<Object>> resources,
+            Provider<Set<GeneratedJaxRsResourceEntry>> catalog,
+            JaxRsConfig config) {
+        if (applications.isEmpty()) {
+            Set<Object> resolvedResources = resources.get();
+            if (resolvedResources.isEmpty()) {
+                return Set.of();
+            }
+            return Set.of(factory.create(config.basePath(), config.openapiPath(), resolvedResources));
         }
-        return Set.of(factory.create(jaxRsConfig.basePath(), jaxRsConfig.openapiPath(), resources));
+        return JaxRsApplicationComposer.compose(factory, applications, resources, catalog, config);
     }
 }

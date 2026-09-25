@@ -45,6 +45,7 @@ import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.handler.BodyHandler;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
+import jakarta.ws.rs.core.Application;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -79,6 +80,13 @@ import lombok.extern.slf4j.Slf4j;
  *     return factory.create(jaxRsConfig.basePath(), jaxRsConfig.openapiPath(), resources);
  * }
  * </pre>
+ *
+ * <p>This example describes zero-declaration mode, where an application contributes no
+ * {@code jakarta.ws.rs.core.Application} registration. When one or more registrations are declared,
+ * the package-private application composer owns mounting instead: it builds one mount per active
+ * application through {@link Factory#createApplicationMount}, and a hand-built call to
+ * {@link Factory#create} remains that mount's own responsibility, unrelated to any declared
+ * application.
  */
 @Slf4j
 public class JaxRsRouterMount implements RouterMount {
@@ -90,23 +98,33 @@ public class JaxRsRouterMount implements RouterMount {
     private final Set<Object> resources;
     private final int priority;
     private final Factory factory;
+    private final @Nullable Class<? extends Application> applicationType;
 
     /**
      * Creates a new mount. Only {@link Factory} should call this constructor.
      *
-     * @param mountPath    the path prefix where the sub-router is mounted
-     * @param openapiPath  classpath location of the OpenAPI spec
-     * @param resources    JAX-RS annotated resource instances
-     * @param priority     mount priority (lower values are mounted first)
-     * @param factory      shared services factory
+     * @param mountPath       the path prefix where the sub-router is mounted
+     * @param openapiPath     classpath location of the OpenAPI spec
+     * @param resources       JAX-RS annotated resource instances, in their given iteration order
+     * @param priority        mount priority (lower values are mounted first)
+     * @param factory         shared services factory
+     * @param applicationType the declared {@code jakarta.ws.rs.core.Application} this mount was
+     *                        built for, or {@code null} for a mount not built from a declared
+     *                        application
      */
     private JaxRsRouterMount(
-            String mountPath, String openapiPath, Set<Object> resources, int priority, Factory factory) {
+            String mountPath,
+            String openapiPath,
+            Set<Object> resources,
+            int priority,
+            Factory factory,
+            @Nullable Class<? extends Application> applicationType) {
         this.mountPath = mountPath;
         this.openapiPath = openapiPath;
         this.resources = resources;
         this.priority = priority;
         this.factory = factory;
+        this.applicationType = applicationType;
     }
 
     /** {@inheritDoc} */
@@ -132,6 +150,32 @@ public class JaxRsRouterMount implements RouterMount {
     public MountMeta meta() {
         Set<Class<?>> resourceTypes = resources.stream().map(Object::getClass).collect(Collectors.toUnmodifiableSet());
         return new MountMeta("jaxrs:" + mountPath, mountPath, openapiPath, resourceTypes);
+    }
+
+    /**
+     * Returns this mount's resources in their iteration order, for tests.
+     *
+     * <p>{@link #meta()}'s {@code resourceTypes} is an unordered {@link Set}, so order-sensitive
+     * assertions (resources within an application mount, ordered by class name) read this accessor
+     * instead. Package-private; the test-support accessor in this test package exposes it to the
+     * {@code dev.vertique.rest.jaxrs.application} test package.
+     *
+     * @return the stored resources, in their iteration order
+     */
+    List<Object> orderedResources() {
+        return List.copyOf(resources);
+    }
+
+    /**
+     * Returns the declared {@code jakarta.ws.rs.core.Application} this mount was built for, when the
+     * package-private application composer built it, or {@code null} for every other mount,
+     * including one built by {@link Factory#create}.
+     *
+     * @return the application type, or {@code null}
+     */
+    @Nullable
+    Class<? extends Application> applicationType() {
+        return applicationType;
     }
 
     /**
@@ -739,7 +783,7 @@ public class JaxRsRouterMount implements RouterMount {
          * @return a configured mount instance
          */
         public JaxRsRouterMount create(String mountPath, String openapiPath, Set<Object> resources) {
-            return new JaxRsRouterMount(mountPath, openapiPath, resources, 1000, this);
+            return new JaxRsRouterMount(mountPath, openapiPath, resources, 1000, this, null);
         }
 
         /**
@@ -752,7 +796,25 @@ public class JaxRsRouterMount implements RouterMount {
          * @return a configured mount instance
          */
         public JaxRsRouterMount create(String mountPath, String openapiPath, Set<Object> resources, int priority) {
-            return new JaxRsRouterMount(mountPath, openapiPath, resources, priority, this);
+            return new JaxRsRouterMount(mountPath, openapiPath, resources, priority, this, null);
+        }
+
+        /**
+         * Creates a new {@link JaxRsRouterMount} for a declared application, with the default
+         * priority of {@code 1000}. Only the package-private application composer calls this method;
+         * there is no public overload, because application mounts are created only through runtime
+         * composition, never by hand.
+         *
+         * @param mountPath   the application's mount path (e.g. {@code "/api/*"})
+         * @param openapiPath classpath location of the OpenAPI spec (e.g. {@code "openapi.json"})
+         * @param resources   the application's selected resource instances, in their given
+         *                    iteration order; this order is preserved, never re-sorted here
+         * @param type        the declared {@code jakarta.ws.rs.core.Application} type
+         * @return a configured application mount instance
+         */
+        JaxRsRouterMount createApplicationMount(
+                String mountPath, String openapiPath, Set<Object> resources, Class<? extends Application> type) {
+            return new JaxRsRouterMount(mountPath, openapiPath, resources, 1000, this, type);
         }
     }
 }

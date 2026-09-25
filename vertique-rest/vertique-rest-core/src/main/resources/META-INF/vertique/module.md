@@ -499,6 +499,11 @@ static Object itemResource(ItemResource resource) {
 }
 ```
 
+In `vertique-rest-jaxrs`, once any Jakarta REST `Application` is declared, this set holds only manually
+contributed resources — generated resource registration reaches its mounts through the declared
+applications that select it instead. With no `Application` declared, this set's content is unchanged:
+generated and hand-wired resources alike contribute into it exactly as before.
+
 ---
 
 ## Extension Points
@@ -1146,7 +1151,7 @@ When `enabled` is `false` (the default) no CORS handler is installed and every o
 
 | Key | Default | Constraint / notes |
 |---|---:|---|
-| `jaxrs.basePath` | `"/*"` | mount path of the JAX-RS sub-router |
+| `jaxrs.basePath` | `"/*"` | mount path of the JAX-RS sub-router; not applied when one or more Jakarta REST `Application` classes are declared — each is mounted at its own `@ApplicationPath` instead |
 | `jaxrs.openapiPath` | `"openapi.json"` | classpath spec; only used by the opt-in `openapi-contract` strategy |
 | `jaxrs.mediaTypeValidation` | `"WARN"` | `WARN`, `STRICT` (fails startup on the first mismatch), or `OFF` |
 | `jaxrs.validationStrategy` | `"web-validation"` | must match a registered strategy id — built-ins are `web-validation`, `none`, `openapi-contract`; an unknown id fails startup |
