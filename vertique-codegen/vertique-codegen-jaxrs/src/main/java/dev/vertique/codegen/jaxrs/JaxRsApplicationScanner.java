@@ -38,6 +38,13 @@ import javax.lang.model.util.Types;
  *       disabled) per successfully validated application.</li>
  * </ol>
  *
+ * <p><strong>No resolvable module package.</strong> When auto-wiring is disabled and no module is
+ * written, {@link JaxRsPipelineProcessor} may be unable to determine any package at all (for
+ * example, the eligible applications and DI-eligible resources span disjoint packages with no
+ * common prefix and no explicit override). Validation still runs in that case, with the candidate
+ * and every enclosing type, and its constructor, treated as reachable only if they are declared
+ * {@code public} — see {@link #validate}'s {@code modulePackage} parameter.
+ *
  * <p>Since {@code jakarta.ws.rs-api} and {@code vertique-rest-jaxrs} are test-scope dependencies of
  * this module, both {@code jakarta.ws.rs.core.Application} and
  * {@code dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsApplicationRegistration} are located by
@@ -162,7 +169,11 @@ public final class JaxRsApplicationScanner {
      *
      * @param eligible         the structurally-eligible candidates from {@link #scan}, in
      *                         fully-qualified-name order; must not be {@code null}
-     * @param modulePackage    the generated module's resolved package; must not be {@code null}
+     * @param modulePackage    the generated module's resolved package, or {@code null} when
+     *                         auto-wiring is disabled and no package could be determined (the
+     *                         candidate and every enclosing type, and its constructor, are then
+     *                         treated as reachable only if {@code public} — see
+     *                         {@link #isAccessible(Element, String, String)})
      * @param autoWireDisabled {@code true} when {@code -Avertique.codegen.autoWire=false} is set
      * @param ctx              the shared codegen context; must not be {@code null}
      * @return the successfully validated registrations, in the same order as {@code eligible};
@@ -173,7 +184,7 @@ public final class JaxRsApplicationScanner {
         List<Registration> result = new ArrayList<>();
         for (TypeElement candidate : eligible) {
             String candidatePackage = ctx.packageNameOf(candidate);
-            if (!isAccessible(candidate, candidatePackage, modulePackage)) {
+            if (!isTypeAccessible(candidate, candidatePackage, modulePackage)) {
                 ctx.diagnostics()
                         .error(
                                 candidate,
@@ -275,7 +286,9 @@ public final class JaxRsApplicationScanner {
 
     /**
      * Accessibility rule: public, or not private when {@code elementPackage} equals
-     * {@code targetPackage}.
+     * {@code targetPackage}. {@code targetPackage} may be {@code null} (no module package could be
+     * determined; see {@link #validate}'s {@code modulePackage} parameter), in which case the
+     * package-private branch never matches, so only a {@code public} element passes.
      */
     private static boolean isAccessible(Element element, String elementPackage, String targetPackage) {
         var modifiers = element.getModifiers();
@@ -285,7 +298,25 @@ public final class JaxRsApplicationScanner {
         if (modifiers.contains(Modifier.PRIVATE)) {
             return false;
         }
-        return elementPackage.equals(targetPackage);
+        return targetPackage != null && elementPackage.equals(targetPackage);
+    }
+
+    /**
+     * Accessibility rule for an application candidate: {@code type} itself and every one of its
+     * enclosing types (up to the top level) must each satisfy {@link #isAccessible(Element, String,
+     * String)}. A class nested inside an inaccessible enclosing type is itself unreachable from
+     * outside the enclosing type's package, even when the nested class is declared {@code public} —
+     * a caller outside that package cannot even name it.
+     */
+    private static boolean isTypeAccessible(TypeElement type, String typePackage, String targetPackage) {
+        Element current = type;
+        while (current instanceof TypeElement enclosingType) {
+            if (!isAccessible(enclosingType, typePackage, targetPackage)) {
+                return false;
+            }
+            current = enclosingType.getEnclosingElement();
+        }
+        return true;
     }
 
     /**

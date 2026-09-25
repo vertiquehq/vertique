@@ -181,6 +181,8 @@ The path argument is `A`'s `@ApplicationPath` value, read from `A` itself or the
 
 **Naming.** A registration method's base name is `A`'s decapitalized simple name plus `Registration`. When two eligible applications in one unit share a simple name (in different enclosing scopes), the processor appends `_2`, `_3`, and so on to the later ones, in fully-qualified-name order.
 
+**Local and anonymous subclasses are invisible to the processor.** A `jakarta.ws.rs.core.Application` subclass declared inside a method body (a local class), or as an anonymous class expression, is not among the round's root elements the processor scans, so it is neither registered nor reported — no diagnostic names it. Declare every `Application` subclass as a top-level class, or a static nested class at any depth, so the processor can see it.
+
 ### Diagnostics
 
 | Diagnostic | Text |

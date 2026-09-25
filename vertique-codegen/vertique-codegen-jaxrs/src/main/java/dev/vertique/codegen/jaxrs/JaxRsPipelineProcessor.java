@@ -88,7 +88,11 @@ import javax.lang.model.util.Elements;
  * suppresses DI module emission; validation still runs, including every eligible application's
  * construction, accessibility, and required {@code @ApplicationPath}. One warning per eligible,
  * non-{@code @NoAutoWire} application then names it and states that the default
- * {@code @JaxRsResources} mount is used instead.
+ * {@code @JaxRsResources} mount is used instead. Because no module is written in this mode, an
+ * unresolvable package (origins spanning disjoint packages with no common prefix) is never a
+ * compile error here, unlike when auto-wiring is enabled; validation still runs against every
+ * eligible application, treating the candidate, its enclosing types, and its constructor as
+ * reachable only if {@code public} when no package could be determined.
  *
  * <p>{@code @SupportedAnnotationTypes("*")} is required for the dep-JAR-interface case where
  * {@code @Path} lives on an interface in a dependency JAR and never appears in the current round's
@@ -334,6 +338,13 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
      * {@code @ApplicationPath} happens here too, regardless of {@code autoWireDisabled} — only the
      * module WRITE itself is skipped when {@code -Avertique.codegen.autoWire=false} is set,
      * mirroring the pre-existing resource-binding behaviour.
+     *
+     * <p>When auto-wiring is enabled, the package is resolved through {@link PackageResolver}
+     * exactly as before: disjoint origin packages with no common prefix and no override are a
+     * compile error, because a module must be written. When auto-wiring is disabled, no module is
+     * written, so the package is resolved without that failure mode instead (see
+     * {@link #resolvePackageWithoutFailing(List)}); validation still runs against whatever package
+     * (possibly none) that resolves to.
      */
     private void emitModule(Set<TypeElement> diCandidates, List<TypeElement> eligibleApplications) {
         boolean needsModulePackage = !eligibleApplications.isEmpty() || (!autoWireDisabled && !diCandidates.isEmpty());
@@ -342,9 +353,14 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
         }
 
         List<TypeElement> packageOrigins = diCandidates.isEmpty() ? eligibleApplications : List.copyOf(diCandidates);
-        String modulePackage = packageResolver.resolve(packageOrigins, ctx);
-        if (modulePackage == null) {
-            return;
+        String modulePackage;
+        if (autoWireDisabled) {
+            modulePackage = resolvePackageWithoutFailing(packageOrigins);
+        } else {
+            modulePackage = packageResolver.resolve(packageOrigins, ctx);
+            if (modulePackage == null) {
+                return;
+            }
         }
 
         List<JaxRsApplicationScanner.Registration> registrations = eligibleApplications.isEmpty()
@@ -353,5 +369,34 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
         if (!autoWireDisabled && (!diCandidates.isEmpty() || !registrations.isEmpty())) {
             moduleEmitter.emit(modulePackage, diCandidates, registrations);
         }
+    }
+
+    /**
+     * Resolves the generated module's package under {@code -Avertique.codegen.autoWire=false}
+     * without ever emitting the disjoint-packages compile error that {@link PackageResolver#resolve}
+     * reports, because no module is written in that mode: the {@code -Avertique.codegen.package}
+     * override when set; otherwise the origins' longest common package prefix, computed locally,
+     * when they share one; otherwise {@code null}.
+     *
+     * @param origins the DI-eligible resources, or (in an applications-only unit) the eligible
+     *                applications; must not be {@code null}
+     * @return the resolved package, or {@code null} when none could be determined
+     */
+    private String resolvePackageWithoutFailing(List<TypeElement> origins) {
+        if (origins.isEmpty()) {
+            return null;
+        }
+        String override = processingEnv.getOptions().get(CodegenContext.OPTION_OUTPUT_PACKAGE);
+        if (override != null && !override.isBlank()) {
+            return override;
+        }
+        String commonPrefix = null;
+        for (TypeElement origin : origins) {
+            String originPackage = ctx.packageNameOf(origin);
+            commonPrefix = commonPrefix == null
+                    ? originPackage
+                    : PackageResolver.longestCommonPrefix(commonPrefix, originPackage);
+        }
+        return (commonPrefix == null || commonPrefix.isEmpty()) ? null : commonPrefix;
     }
 }

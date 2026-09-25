@@ -350,38 +350,77 @@ class JaxRsApplicationRegistrationEmitterTest {
 
     /**
      * One TP-002 row: an application fixture (one or more source files) that must fail compilation
-     * naming {@code applicationSimpleName}, compiled with the given {@code -A} options.
+     * with the processor's OWN diagnostic — an ERROR whose message names
+     * {@code applicationSimpleName} AND contains {@code expectedMessagePhrase} in that SAME
+     * diagnostic — compiled with the given {@code -A} options.
+     *
+     * <p>G-10: asserting only that some error names the class (as {@link #assertFailsNamingClass}
+     * does) is insufficient here, because a downstream javac error in the generated module (e.g. an
+     * inaccessible-type error) can also happen to name the class without the processor ever
+     * reporting its own targeted diagnostic. {@link #assertFailsWithProcessorDiagnostic} isolates
+     * the processor's diagnostic instead.
      */
     private record ConstructorCase(
-            String label, List<JavaFileObject> sources, Map<String, String> options, String applicationSimpleName) {}
+            String label,
+            List<JavaFileObject> sources,
+            Map<String, String> options,
+            String applicationSimpleName,
+            String expectedMessagePhrase) {}
 
     private static Stream<Arguments> constructorCases() {
+        String noUsableConstructor = "has no usable constructor for application registration";
+        String notAccessible = "is not accessible from the generated module's package";
+        String notTopLevelOrStatic = "must be a top-level or static nested class";
         List<ConstructorCase> cases = List.of(
                 new ConstructorCase(
                         "(1) private constructor",
                         List.of(TP002_PRIVATE_CONSTRUCTOR_APPLICATION),
                         Map.of(),
-                        "PrivateConstructorApplication"),
+                        "PrivateConstructorApplication",
+                        noUsableConstructor),
                 new ConstructorCase(
                         "(1) private constructor, autoWire=false",
                         List.of(TP002_PRIVATE_CONSTRUCTOR_APPLICATION),
                         Map.of("vertique.codegen.autoWire", "false"),
-                        "PrivateConstructorApplication"),
+                        "PrivateConstructorApplication",
+                        noUsableConstructor),
                 new ConstructorCase(
                         "(2) parameterized constructor without @Inject",
                         List.of(TP002_PARAMETERIZED_CONSTRUCTOR_APPLICATION),
                         Map.of(),
-                        "ParameterizedConstructorApplication"),
+                        "ParameterizedConstructorApplication",
+                        noUsableConstructor),
+                new ConstructorCase(
+                        "(2) parameterized constructor without @Inject, autoWire=false",
+                        List.of(TP002_PARAMETERIZED_CONSTRUCTOR_APPLICATION),
+                        Map.of("vertique.codegen.autoWire", "false"),
+                        "ParameterizedConstructorApplication",
+                        noUsableConstructor),
                 new ConstructorCase(
                         "(3) non-public application in a package other than the generated module's",
                         List.of(TP002_INACCESSIBLE_RESOURCE, TP002_INACCESSIBLE_APPLICATION),
                         Map.of(),
-                        "InaccessibleApplication"),
+                        "InaccessibleApplication",
+                        notAccessible),
+                new ConstructorCase(
+                        "(3) non-public application in a package other than the generated module's,"
+                                + " autoWire=false",
+                        List.of(TP002_INACCESSIBLE_RESOURCE, TP002_INACCESSIBLE_APPLICATION),
+                        Map.of("vertique.codegen.autoWire", "false"),
+                        "InaccessibleApplication",
+                        notAccessible),
                 new ConstructorCase(
                         "(4) non-static inner application",
                         List.of(TP002_NON_STATIC_INNER_APPLICATION_HOLDER),
                         Map.of(),
-                        "InnerApplication"));
+                        "InnerApplication",
+                        notTopLevelOrStatic),
+                new ConstructorCase(
+                        "(4) non-static inner application, autoWire=false",
+                        List.of(TP002_NON_STATIC_INNER_APPLICATION_HOLDER),
+                        Map.of("vertique.codegen.autoWire", "false"),
+                        "InnerApplication",
+                        notTopLevelOrStatic));
         return cases.stream().map(c -> Arguments.of(c.label(), c));
     }
 
@@ -394,7 +433,7 @@ class JaxRsApplicationRegistrationEmitterTest {
                 testCase.options(),
                 testCase.sources().toArray(new JavaFileObject[0]));
         logDiagnostics("TP-002 " + label, result);
-        assertFailsNamingClass(result, testCase.applicationSimpleName());
+        assertFailsWithProcessorDiagnostic(result, testCase.applicationSimpleName(), testCase.expectedMessagePhrase());
     }
 
     // -----------------------------------------------------------------------------------------
@@ -1030,6 +1069,189 @@ class JaxRsApplicationRegistrationEmitterTest {
     }
 
     // -----------------------------------------------------------------------------------------
+    // TP-009 — the accessibility check must include enclosing types (G-11)
+    // -----------------------------------------------------------------------------------------
+
+    /**
+     * {@code Outer} is package-private, so {@code Api} — though itself {@code public} — is not
+     * reachable from a different package: a caller outside {@code com.acme.web} cannot even name
+     * {@code Outer.Api}. {@link JaxRsApplicationScanner#validate} must therefore inspect every
+     * enclosing type's accessibility, not just the candidate's own modifiers (G-11).
+     */
+    private static final JavaFileObject TP009_OUTER = SourceFiles.inline("com.acme.web.Outer", """
+            package com.acme.web;
+
+            import jakarta.ws.rs.ApplicationPath;
+            import jakarta.ws.rs.core.Application;
+
+            class Outer {
+
+                @ApplicationPath("/api")
+                public static class Api extends Application {
+                    public Api() {}
+                }
+            }
+            """);
+
+    /** A public DI-eligible resource that resolves the generated module's package to {@code com.acme.web.resources}. */
+    private static final JavaFileObject TP009_WEB_RESOURCE =
+            SourceFiles.inline("com.acme.web.resources.WebResource", """
+            package com.acme.web.resources;
+
+            import jakarta.inject.Inject;
+            import jakarta.ws.rs.GET;
+            import jakarta.ws.rs.Path;
+
+            @Path("/web")
+            public class WebResource {
+                @Inject
+                public WebResource() {}
+
+                @GET
+                public String get() { return ""; }
+            }
+            """);
+
+    @Test
+    @DisplayName("TP-009 — the accessibility check must include enclosing types")
+    void enclosingTypeMustBeAccessible() {
+        assertAll(
+                "TP-009 (a) and (b)",
+                () -> tp009EnclosingTypeIsInaccessible(),
+                () -> tp009EnclosingTypeIsInaccessibleAutoWireDisabled());
+    }
+
+    private void tp009EnclosingTypeIsInaccessible() {
+        var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), TP009_OUTER, TP009_WEB_RESOURCE);
+        logDiagnostics("TP-009 (a) enclosing type accessibility", result);
+        assertFailsWithProcessorDiagnostic(result, "Api", "is not accessible from the generated module's package");
+    }
+
+    private void tp009EnclosingTypeIsInaccessibleAutoWireDisabled() {
+        var result = ProcessorTestHarness.run(
+                new JaxRsPipelineProcessor(),
+                Map.of("vertique.codegen.autoWire", "false"),
+                TP009_OUTER,
+                TP009_WEB_RESOURCE);
+        logDiagnostics("TP-009 (b) enclosing type accessibility, autoWire=false", result);
+        assertFailsWithProcessorDiagnostic(result, "Api", "is not accessible from the generated module's package");
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // TP-010 — autoWire=false must resolve disjoint packages without failing, and must still
+    // validate (G-12)
+    // -----------------------------------------------------------------------------------------
+
+    private static final JavaFileObject TP010_ACME_RESOURCE = SourceFiles.inline("com.acme.api.AcmeResource", """
+            package com.acme.api;
+
+            import jakarta.inject.Inject;
+            import jakarta.ws.rs.GET;
+            import jakarta.ws.rs.Path;
+
+            @Path("/acme")
+            public class AcmeResource {
+                @Inject
+                public AcmeResource() {}
+
+                @GET
+                public String get() { return ""; }
+            }
+            """);
+
+    private static final JavaFileObject TP010_PARTNER_RESOURCE =
+            SourceFiles.inline("org.partner.api.PartnerResource", """
+            package org.partner.api;
+
+            import jakarta.inject.Inject;
+            import jakarta.ws.rs.GET;
+            import jakarta.ws.rs.Path;
+
+            @Path("/partner")
+            public class PartnerResource {
+                @Inject
+                public PartnerResource() {}
+
+                @GET
+                public String get() { return ""; }
+            }
+            """);
+
+    private static final JavaFileObject TP010_VALID_APPLICATION = SourceFiles.inline("com.acme.app.Api", """
+            package com.acme.app;
+
+            import jakarta.ws.rs.ApplicationPath;
+            import jakarta.ws.rs.core.Application;
+
+            @ApplicationPath("/api")
+            public class Api extends Application {
+                public Api() {}
+            }
+            """);
+
+    private static final JavaFileObject TP010_PRIVATE_CONSTRUCTOR_APPLICATION =
+            SourceFiles.inline("com.acme.app.Api", """
+            package com.acme.app;
+
+            import jakarta.ws.rs.ApplicationPath;
+            import jakarta.ws.rs.core.Application;
+
+            @ApplicationPath("/api")
+            public class Api extends Application {
+                private Api() {}
+            }
+            """);
+
+    @Test
+    @DisplayName("TP-010 — autoWire=false must resolve disjoint packages without failing, and must still validate")
+    void autoWireDisabledResolvesDisjointPackagesWithoutFailing() {
+        assertAll(
+                "TP-010 (a) and (b)",
+                () -> tp010DisjointPackagesValidApplication(),
+                () -> tp010DisjointPackagesInvalidConstructor());
+    }
+
+    private void tp010DisjointPackagesValidApplication() {
+        var result = ProcessorTestHarness.run(
+                new JaxRsPipelineProcessor(),
+                Map.of("vertique.codegen.autoWire", "false"),
+                TP010_ACME_RESOURCE,
+                TP010_PARTNER_RESOURCE,
+                TP010_VALID_APPLICATION);
+        logDiagnostics("TP-010 (a) disjoint packages, valid application", result);
+        result.assertSuccess();
+        assertTrue(
+                result.compilation().errors().isEmpty(),
+                () -> "Expected no error diagnostics under autoWire=false with disjoint packages."
+                        + diagnosticsSummary(result));
+        assertTrue(
+                messagesOf(result.compilation().diagnostics()).stream().noneMatch(m -> m.contains("disjoint packages")),
+                () -> "No diagnostic may report disjoint packages under autoWire=false." + diagnosticsSummary(result));
+        List<String> autoWireWarnings = messagesOf(result.compilation().warnings()).stream()
+                .filter(m -> m.contains("autoWire=false"))
+                .toList();
+        assertEquals(
+                1,
+                autoWireWarnings.size(),
+                () -> "Expected exactly one autoWire=false WARNING naming the application."
+                        + diagnosticsSummary(result));
+        assertTrue(
+                autoWireWarnings.stream().anyMatch(m -> m.contains("Api")),
+                () -> "Expected the autoWire=false WARNING to name Api." + diagnosticsSummary(result));
+    }
+
+    private void tp010DisjointPackagesInvalidConstructor() {
+        var result = ProcessorTestHarness.run(
+                new JaxRsPipelineProcessor(),
+                Map.of("vertique.codegen.autoWire", "false"),
+                TP010_ACME_RESOURCE,
+                TP010_PARTNER_RESOURCE,
+                TP010_PRIVATE_CONSTRUCTOR_APPLICATION);
+        logDiagnostics("TP-010 (b) disjoint packages, invalid constructor", result);
+        assertFailsWithProcessorDiagnostic(result, "Api", "has no usable constructor for application registration");
+    }
+
+    // -----------------------------------------------------------------------------------------
     // Shared helpers
     // -----------------------------------------------------------------------------------------
 
@@ -1146,6 +1368,31 @@ class JaxRsApplicationRegistrationEmitterTest {
     private static void assertFailsNamingClass(ProcessorTestHarness.Result result, String applicationSimpleName) {
         result.assertFailed();
         result.assertErrorMessage(applicationSimpleName);
+    }
+
+    /**
+     * Asserts that the compilation failed with the processor's OWN diagnostic: a single ERROR
+     * diagnostic whose message contains both {@code applicationSimpleName} and
+     * {@code expectedMessagePhrase} together (G-10).
+     *
+     * <p>This is stricter than {@link #assertFailsNamingClass}, which is satisfied by any error
+     * mentioning the class — including a downstream {@code javac} error in code the emitter
+     * generated, which would pass even if the processor's own validator never ran or never
+     * reported. Requiring both facts in the SAME diagnostic message isolates the processor's own
+     * validation from that false-positive path.
+     */
+    private static void assertFailsWithProcessorDiagnostic(
+            ProcessorTestHarness.Result result, String applicationSimpleName, String expectedMessagePhrase) {
+        result.assertFailed();
+        boolean found = result.compilation().errors().stream()
+                .map(d -> d.getMessage(null))
+                .filter(Objects::nonNull)
+                .anyMatch(msg -> msg.contains(applicationSimpleName) && msg.contains(expectedMessagePhrase));
+        assertTrue(
+                found,
+                () -> "Expected an ERROR diagnostic naming '" + applicationSimpleName + "' and containing '"
+                        + expectedMessagePhrase + "' in the SAME message, but none was found."
+                        + diagnosticsSummary(result));
     }
 
     private static void logDiagnostics(String label, ProcessorTestHarness.Result result) {
