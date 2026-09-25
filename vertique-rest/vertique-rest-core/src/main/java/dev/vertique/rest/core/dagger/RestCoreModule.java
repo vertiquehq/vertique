@@ -11,6 +11,7 @@ import dev.vertique.context.ContextRuntimeModule;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.config.JsonConfigPaths;
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.correlation.CorrelationContextModule;
 import dev.vertique.logging.LoggingContextModule;
 import dev.vertique.rest.core.capture.RestRequestCaptureCoordinator;
@@ -18,6 +19,7 @@ import dev.vertique.rest.core.capture.RestServerRequestEvidenceCapturer;
 import dev.vertique.rest.core.config.CorsConfig;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.config.JaxRsConfig;
+import dev.vertique.rest.core.config.JaxRsSecurityConfig;
 import dev.vertique.rest.core.context.RestContextModule;
 import dev.vertique.rest.core.convert.ParamConversionResolver;
 import dev.vertique.rest.core.convert.ParamConverterBinding;
@@ -54,7 +56,13 @@ import io.vertx.ext.web.handler.CorsHandler;
 import jakarta.inject.Singleton;
 import jakarta.ws.rs.ext.ExceptionMapper;
 import jakarta.ws.rs.ext.ParamConverterProvider;
+import java.lang.reflect.RecordComponent;
+import java.util.Arrays;
 import java.util.Set;
+import java.util.TreeSet;
+import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Dagger module providing core REST framework bindings: multibinding declarations,
@@ -73,6 +81,8 @@ import java.util.Set;
             RestContextModule.class
         })
 public abstract class RestCoreModule {
+
+    private static final Logger log = LoggerFactory.getLogger(RestCoreModule.class);
 
     // --- Multibinding declarations ---
 
@@ -210,19 +220,115 @@ public abstract class RestCoreModule {
     // --- Default bindings ---
 
     /**
+     * The {@link JaxRsSecurityConfig} record component names, derived by reflection so a future
+     * component cannot drift out of sync with the raw-key check below.
+     */
+    private static final Set<String> SECURITY_COMPONENT_NAMES = Arrays.stream(
+                    JaxRsSecurityConfig.class.getRecordComponents())
+            .map(RecordComponent::getName)
+            .collect(Collectors.toUnmodifiableSet());
+
+    /**
+     * INFO announcement for the {@code jaxrs.security.requireExplicitPolicy} opt-in, logged
+     * exactly once, after parsing, when the opt-in resolves to {@code true}.
+     */
+    private static final String REQUIRE_EXPLICIT_POLICY_ENABLED_MESSAGE =
+            "jaxrs.security.requireExplicitPolicy is enabled: "
+                    + "explicit security policies are required for every JAX-RS operation";
+
+    /**
      * Provides {@link JaxRsConfig} by deserializing the {@code "jaxrs"} section of the
      * application configuration. Missing fields fall back to {@link JaxRsConfig} defaults
      * (base path {@code "/*"}, OpenAPI path {@code "openapi.json"}, strict operationId
      * matching, and {@code WARN} media type validation).
      *
+     * <p>Before the section is parsed, a raw-key check on the {@code "jaxrs"} object rejects
+     * three shapes, naming only the offending key names — never a configuration value:
+     *
+     * <ul>
+     *   <li>a security-related key misplaced or miscased directly under {@code "jaxrs"} (for
+     *       example {@code "Security"} or a {@link JaxRsSecurityConfig} component name such as
+     *       {@code "requireExplicitPolicy"} appearing outside the {@code "security"}
+     *       subsection);
+     *   <li>a {@code "jaxrs.security"} value that is present but is not a JSON object, including
+     *       an explicit JSON {@code null};
+     *   <li>an unrecognized key under {@code "jaxrs.security"}, checked against
+     *       {@link JaxRsSecurityConfig}'s record component names.
+     * </ul>
+     *
+     * <p>After parsing, when {@link JaxRsSecurityConfig#requireExplicitPolicy()} resolves to
+     * {@code true}, exactly one INFO line announces the opt-in; a missing section or a
+     * {@code false} value logs nothing.
+     *
      * @param config the full application configuration
      * @param parser the injected config parser
      * @return the deserialized JAX-RS routing configuration
+     * @throws ConfigurationException when the raw-key check rejects the {@code "jaxrs"} or
+     *     {@code "jaxrs.security"} shape
      */
     @Provides
     @Singleton
     static JaxRsConfig jaxRsConfig(@VertxConfig JsonObject config, ConfigParser parser) {
-        return parser.parse(JsonConfigPaths.navigateObject(config, "jaxrs"), JaxRsConfig.class);
+        JsonObject jaxrs = JsonConfigPaths.navigateObject(config, "jaxrs");
+        checkSecurityKeys(jaxrs);
+        JaxRsConfig result = parser.parse(jaxrs, JaxRsConfig.class);
+        if (result.security().requireExplicitPolicy()) {
+            log.info(REQUIRE_EXPLICIT_POLICY_ENABLED_MESSAGE);
+        }
+        return result;
+    }
+
+    /**
+     * Rejects raw {@code "jaxrs"} keys that are misplaced or miscased security settings, and raw
+     * {@code "jaxrs.security"} keys that are not a {@link JaxRsSecurityConfig} record component.
+     * Only key names are read — no configuration value is inspected or echoed.
+     *
+     * @param jaxrs the {@code "jaxrs"} section, already navigated to a {@link JsonObject}
+     * @throws ConfigurationException when a security-related key is misplaced or miscased under
+     *     {@code "jaxrs"}, {@code "jaxrs.security"} is present but not a {@link JsonObject}, or
+     *     {@code "jaxrs.security"} contains an unknown key
+     */
+    private static void checkSecurityKeys(JsonObject jaxrs) {
+        Set<String> misplaced = new TreeSet<>();
+        for (String key : jaxrs.fieldNames()) {
+            boolean miscasedSectionName = key.equalsIgnoreCase("security") && !key.equals("security");
+            boolean securityComponentName = SECURITY_COMPONENT_NAMES.stream().anyMatch(key::equalsIgnoreCase);
+            if (miscasedSectionName || securityComponentName) {
+                misplaced.add(key);
+            }
+        }
+        if (!misplaced.isEmpty()) {
+            throw new ConfigurationException("Misplaced or miscased security keys under 'jaxrs': "
+                    + quoteJoin(misplaced)
+                    + "; security settings belong under 'jaxrs.security'");
+        }
+
+        if (!jaxrs.containsKey("security")) {
+            return;
+        }
+        if (!(jaxrs.getValue("security") instanceof JsonObject security)) {
+            throw new ConfigurationException("'jaxrs.security' must be a JSON object");
+        }
+        Set<String> unknown = new TreeSet<>();
+        for (String key : security.fieldNames()) {
+            if (!SECURITY_COMPONENT_NAMES.contains(key)) {
+                unknown.add(key);
+            }
+        }
+        if (!unknown.isEmpty()) {
+            throw new ConfigurationException("Unknown keys under 'jaxrs.security': " + quoteJoin(unknown));
+        }
+    }
+
+    /**
+     * Formats a sorted key set as single-quoted, comma-separated names for a
+     * {@link ConfigurationException} message.
+     *
+     * @param keys the sorted key names
+     * @return the formatted, single-quoted, comma-joined key list
+     */
+    private static String quoteJoin(Set<String> keys) {
+        return keys.stream().map(key -> "'" + key + "'").collect(Collectors.joining(", "));
     }
 
     /**

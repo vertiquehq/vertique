@@ -1088,13 +1088,18 @@ the documented request and failure behavior.
 Three top-level sections are parsed by `RestCoreModule` — `http`, `cors`, and `jaxrs` — plus
 `correlation.ingress` by `CorrelationIngressModule`. Every key is optional; omitted keys take the
 default below. Unknown keys are ignored except under `jaxrs.defaultHeaders`, where they become
-custom response headers.
+custom response headers, and except under `jaxrs.security`. That exception is a deliberate
+narrowing of this Stable module's "unknown keys are ignored" rule, limited to these reserved names:
+a non-object `jaxrs.security` value (including `null`), an unknown key under it, and — at the
+`jaxrs` level — a case variant of `security` or a misplaced `requireExplicitPolicy` (in any case)
+each fail startup with a `ConfigurationException` naming the offending keys, sorted, never their
+values.
 
 **The keys are the contract.** What this module freezes is the key names below, their types,
 defaults, and constraints. The record types the parser binds them to — `HttpConfig`, `SslConfig`,
-`SseConfig`, `CorsConfig`, `JaxRsConfig`, `DefaultHeadersConfig`, and `CorrelationIngressConfig` —
-are an implementation detail of that parse. An application writes configuration, not those types,
-and their shape can change while the keys stay as documented.
+`SseConfig`, `CorsConfig`, `JaxRsConfig`, `JaxRsSecurityConfig`, `DefaultHeadersConfig`, and
+`CorrelationIngressConfig` — are an implementation detail of that parse. An application writes
+configuration, not those types, and their shape can change while the keys stay as documented.
 
 ### `http`
 
@@ -1163,6 +1168,11 @@ When `enabled` is `false` (the default) no CORS handler is installed and every o
 | `jaxrs.validationMode` | `"aggregate"` | `aggregate` or `failFast` |
 | `jaxrs.autoEtag` | `false` | attach a weak ETag derived from the serialized body when none is set |
 | `jaxrs.jsonProfile` | *(none)* | must name a registered JSON mapper profile; resolution is method `@JsonProfile` → class `@JsonProfile` → this key → `json.jsonProfile` → the `vertique` floor |
+| `jaxrs.security.requireExplicitPolicy` | `false` | boolean; when `true`, every JAX-RS operation must declare an explicit security policy, else startup fails — details in the `vertique-rest-jaxrs` reference |
+
+When `jaxrs.security.requireExplicitPolicy` is `true`, `RestCoreModule` logs one INFO line:
+`jaxrs.security.requireExplicitPolicy is enabled: explicit security policies are required for
+every JAX-RS operation`. The default `false` logs nothing new.
 
 ### `jaxrs.defaultHeaders`
 

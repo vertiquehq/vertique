@@ -197,6 +197,16 @@ public record RouteRegistrationViolation(String operationId, ViolationType type,
          * it now reports every reason two same-name declarations cannot share one descriptor. It is a
          * public enum constant, so it is kept as-is rather than renamed.
          */
-        DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT
+        DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT,
+
+        /**
+         * An operation has no explicit security policy: it neither restricts callers ({@code
+         * DenyAll}/{@code AuthenticatedOnly}/{@code Constrained}, a non-empty, non-anonymous
+         * {@code securityRequirementSets()}, or a resolved required action) nor is declared public
+         * with {@code @PermitAll}. Reported only when {@code jaxrs.security.requireExplicitPolicy}
+         * is {@code true}; without the opt-in, such an operation only produces a warning on the
+         * owning application mount, and startup succeeds.
+         */
+        NO_EXPLICIT_SECURITY_POLICY
     }
 }

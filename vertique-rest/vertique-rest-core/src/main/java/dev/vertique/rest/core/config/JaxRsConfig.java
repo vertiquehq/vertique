@@ -137,6 +137,16 @@ public class JaxRsConfig {
     private final SseConfig sse = SseConfig.builder().build();
 
     /**
+     * Explicit-security-policy opt-in configuration, held under the {@code
+     * "jaxrs.security"} section (JSON key {@code jaxrs.security.requireExplicitPolicy}). When
+     * {@link JaxRsSecurityConfig#requireExplicitPolicy()} is {@code true}, a JAX-RS operation with
+     * no explicit security policy fails startup instead of only being warned about. Defaults to
+     * {@link JaxRsSecurityConfig#defaults()} (the opt-in off).
+     */
+    @Builder.Default
+    private final JaxRsSecurityConfig security = JaxRsSecurityConfig.defaults();
+
+    /**
      * Default JSON mapper profile id applied to request-body (de)serialization at every JAX-RS
      * resource method that does not select a profile of its own (config key {@code jaxrs.jsonProfile}).
      * The effective profile per method is resolved as method-level {@code @JsonProfile} &rarr;

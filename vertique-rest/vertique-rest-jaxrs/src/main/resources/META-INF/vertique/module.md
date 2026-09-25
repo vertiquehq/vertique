@@ -526,7 +526,10 @@ replacement must honor the same dual-channel contract, documented under `Respons
 Thrown at startup when route registration found violations. Extends `RestConfigurationException`
 (rest-core) and exposes `violations()` — a `List<RouteRegistrationViolation>` of
 `(operationId, ViolationType, message)`. Security-policy inconsistencies use the separate
-`SecurityPolicyViolationException` instead, and are thrown immediately rather than collected.
+`SecurityPolicyViolationException` instead, and are thrown immediately rather than collected. The
+`jaxrs.security.requireExplicitPolicy` opt-in adds its own collected violation type,
+`NO_EXPLICIT_SECURITY_POLICY` (see [Explicit security policy](#explicit-security-policy)), rather
+than a separate exception.
 
 ---
 
@@ -1088,6 +1091,50 @@ that runs no composition validator, refuses to create an application mount's rou
 application class and stating that `HttpVerticle` must come from Dagger so its composition validators
 run first.
 
+### Explicit security policy
+
+`JaxRsRouteRegistrar` classifies every operation's declared security posture at registration time,
+from the same effective `SecurityPolicy`, annotation-sourced security requirement sets, and
+resolved `@RequiresAction` that request-time enforcement already uses — the classification runs no
+second policy resolution.
+
+An operation **restricts callers** when any of these holds:
+
+- its effective policy is `DenyAll`, `AuthenticatedOnly`, or `Constrained` — the `SecurityPolicy`
+  variants `@DenyAll`, `@RolesAllowed`, and `@Authorized` (`dev.vertique:vertique-rest-core`)
+  resolve to; an `@Authorized` with no scopes resolves to `AuthenticatedOnly` (authentication
+  only), and one with scopes, or `@RolesAllowed`, resolves to `Constrained`;
+- it declares one or more `@SecurityRequirement`s and none of its alternatives is anonymous (an
+  empty requirement, which annotations cannot currently express); a scopeless
+  `@SecurityRequirement` still restricts callers;
+- it has a resolved `@RequiresAction`.
+
+An operation is the **public declaration** when it does not restrict callers and its effective
+policy is `PermitAll` (`@PermitAll`). A restricting declaration always takes precedence over
+`@PermitAll` on the same operation. Any other operation is **implicit** — no explicit security
+policy at all.
+
+**Warning, application mounts only.** An application mount whose registration left one or more
+operations implicit logs exactly one WARN per composition, naming the application class and every
+implicit operation, sorted by full path, then HTTP method, then operation id, in the shape
+`Application <FQN> at '<mount path>' has operations with no explicit security policy: <METHOD>
+<full path> (operationId '<id>'), …`. Each operation's full path is the mount prefix (the mount
+path without its trailing `*`) joined with the operation's own path — for example
+`GET /api/mgmt/status`. A mount with no implicit operation logs nothing, and a hand-built
+(non-application, including the legacy default) `JaxRsRouterMount` never logs this warning, however
+many of its operations are implicit.
+
+**Opt-in: `jaxrs.security.requireExplicitPolicy`.** When this `jaxrs` key (declared in
+`dev.vertique:vertique-rest-core`, default `false`) is `true`, every implicit operation on *any*
+`JaxRsRouterMount` — application or hand-built — fails startup with a `NO_EXPLICIT_SECURITY_POLICY`
+route violation instead of only being warned about, and the warning above is never logged in that
+case (see [Startup failures](#startup-failures)).
+
+**Without the opt-in**, an implicit operation on an application mount still starts after the
+warning — the application deploys, and request-time enforcement is unchanged either way. This check
+only decides what is warned about or what fails startup at registration; it never changes how a
+matched request is authenticated or authorized.
+
 ### Migrating a root application
 
 An application declared at `@ApplicationPath("/")` mounts at `/*`, the whole path space. Because every
@@ -1105,7 +1152,8 @@ application.
 
 This module reads no configuration section of its own; `http` and `jaxrs` are declared and parsed in
 `dev.vertique:vertique-rest-core`. The keys it acts on are `jaxrs.basePath`, `jaxrs.openapiPath`,
-`jaxrs.sse.*`, `jaxrs.validationStrategy`, and the JSON profile keys below.
+`jaxrs.sse.*`, `jaxrs.validationStrategy`, `jaxrs.security.requireExplicitPolicy` (see
+[Explicit security policy](#explicit-security-policy)), and the JSON profile keys below.
 
 ### JSON profile selection
 
@@ -1249,6 +1297,7 @@ gate.
 | `REQUIRES_ACTION_INVALID` | a `@RequiresAction` declaration is malformed |
 | `REQUIRES_ACTION_POLICY_CONFLICT` | a `@RequiresAction` declaration conflicts with the operation's resolved security policy |
 | `UNRESOLVABLE_PARAM_CONVERTER` | a path/query/header/cookie/form parameter type — or a collection's element type, or a convertible `@BeanParam` field — has no converter resolvable by the `ParamConversionResolver` chain |
+| `NO_EXPLICIT_SECURITY_POLICY` | `jaxrs.security.requireExplicitPolicy` is `true` and the operation is implicit (see [Explicit security policy](#explicit-security-policy)); message `<METHOD> <full path> has no explicit security policy, which jaxrs.security.requireExplicitPolicy requires`; fix by annotating the operation with `@PermitAll` or a restricting declaration |
 
 Once one or more `jakarta.ws.rs.core.Application` registrations are declared — even when none is
 active — `HttpVerticle` additionally rejects a duplicate operationId **across** mounts: two operations

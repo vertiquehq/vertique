@@ -47,6 +47,7 @@ import io.vertx.ext.web.handler.BodyHandler;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.core.Application;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -218,10 +219,19 @@ public class JaxRsRouterMount implements RouterMount {
      *   <li>Scan and register all JAX-RS resource methods via {@link JaxRsRouteRegistrar}, installing per
      *       operation: the collected auth handler(s) → the validation gate → the sorted contributors →
      *       the {@link ResourceMethodInvoker}.</li>
+     *   <li>When this mount serves a declared application, log the no-explicit-security-policy warning
+     *       for the operations {@link JaxRsRouteRegistrar} recorded, if any.</li>
      *   <li>Run {@link RouterLifecycleHook#afterRouterCreated} hooks.</li>
      *   <li>Mount {@link MiddlewareScope#API} middlewares on the API router.</li>
      *   <li>Attach the router-level failure handler.</li>
      * </ol>
+     *
+     * <p>An application mount whose registration left one or more operations with no explicit
+     * security policy logs exactly one WARN, naming every such operation — sorted by full path, then
+     * method, then operation id — unless {@code jaxrs.security.requireExplicitPolicy} is enabled, in
+     * which case registration itself fails startup with a {@link RouteRegistrationException} instead of
+     * ever reaching this warning. A mount with no such operation logs nothing, and a mount not built
+     * from a declared application never logs this warning.
      *
      * <p>No OpenAPI contract is loaded: the router is built entirely from the JAX-RS annotation model,
      * so an {@code openapi.json} (when present) is documentation only (PRD-REST-017 FR-001).
@@ -345,7 +355,7 @@ public class JaxRsRouterMount implements RouterMount {
             hook.afterAuthSetup(routerSetup);
         }
 
-        JaxRsRouteRegistrar registrar = new JaxRsRouteRegistrar();
+        JaxRsRouteRegistrar registrar = new JaxRsRouteRegistrar(applicationType);
         registrar.registerAll(
                 resources,
                 apiRouter,
@@ -372,6 +382,27 @@ public class JaxRsRouterMount implements RouterMount {
                 factory.jaxRsConfig,
                 factory.jsonMapperProfileRegistry,
                 factory.jsonConfig);
+
+        // registerAll recorded one entry per implicit-policy operation, but only while THIS mount
+        // serves a declared application and the requireExplicitPolicy opt-in was off for that
+        // call (with the opt-in on, an implicit operation is a startup violation instead, raised
+        // from inside registerAll, so this point is never reached). Empty for every other mount,
+        // including a non-application mount, so exactly one WARN is logged here per composed
+        // application mount that has any.
+        List<JaxRsRouteRegistrar.ImplicitOperation> implicitOperations = registrar.implicitOperations();
+        if (!implicitOperations.isEmpty()) {
+            String entries = implicitOperations.stream()
+                    .sorted(Comparator.comparing(JaxRsRouteRegistrar.ImplicitOperation::fullPath)
+                            .thenComparing(JaxRsRouteRegistrar.ImplicitOperation::httpMethod)
+                            .thenComparing(JaxRsRouteRegistrar.ImplicitOperation::operationId))
+                    .map(op -> op.httpMethod() + " " + op.fullPath() + " (operationId '" + op.operationId() + "')")
+                    .collect(Collectors.joining(", "));
+            log.warn(
+                    "Application {} at '{}' has operations with no explicit security policy: {}",
+                    applicationType.getName(),
+                    mountPath,
+                    entries);
+        }
 
         for (RouterLifecycleHook hook : sortedRouterHooks) {
             hook.afterRouterCreated(apiRouter);
