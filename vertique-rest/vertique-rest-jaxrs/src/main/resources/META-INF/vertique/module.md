@@ -1015,9 +1015,14 @@ own order.
 ### Threading
 
 `Application` constructors and `getClasses()` run during mount composition, possibly on a Vert.x
-event-loop thread, and must not block. An `Application` must not depend on `Set<RouterMount>` —
-constructing the mount set from inside an application whose own construction is still in progress fails
-startup naming that application, instead of recursing.
+event-loop thread, and must not block. No `Application`, manually contributed `@JaxRsResources`
+resource, or generated resource catalog entry may depend on `Set<RouterMount>` of the same
+component — in zero-declaration mode as well as explicit mode. Doing so re-enters that component's
+own mount composition while it is still in progress, and fails startup with a named
+`RestConfigurationException` instead of recursing — naming the application under construction when
+one is in progress, and otherwise stating that a manually contributed resource or catalog entry
+re-entered composition. Composing a *different* component's `Set<RouterMount>` from inside a
+resource or an application is unaffected.
 
 ### Framework and library modules never declare an application
 

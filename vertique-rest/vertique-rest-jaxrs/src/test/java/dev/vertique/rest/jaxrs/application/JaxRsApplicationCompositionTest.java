@@ -24,6 +24,7 @@ import dev.vertique.rest.jaxrs.application.CompositionComponents.DiscoveryCompon
 import dev.vertique.rest.jaxrs.application.CompositionComponents.DiscoverySoloComponent;
 import dev.vertique.rest.jaxrs.application.CompositionComponents.InheritingApplicationComponent;
 import dev.vertique.rest.jaxrs.application.CompositionComponents.LazinessComponent;
+import dev.vertique.rest.jaxrs.application.CompositionComponents.NestedCompositionZeroDeclarationComponent;
 import dev.vertique.rest.jaxrs.application.CompositionComponents.ReentrantComponent;
 import dev.vertique.rest.jaxrs.application.CompositionComponents.ReentrantResourceExplicitComponent;
 import dev.vertique.rest.jaxrs.application.CompositionComponents.ReentrantResourceZeroDeclarationComponent;
@@ -460,6 +461,21 @@ class JaxRsApplicationCompositionTest {
                 chainContains(ex, ReentrantApplication.class.getSimpleName()),
                 () -> "expected the failure to name " + ReentrantApplication.class.getSimpleName() + ": "
                         + ex.getMessage());
+
+        // W-2: the wrapper always names the application, so TP-015 must also fail on the cause's own
+        // message — the re-entry guard's own diagnostic — not only on the outer wrapper text.
+        assertInstanceOf(
+                RestConfigurationException.class,
+                ex.getCause(),
+                () -> "expected the wrapped cause to itself be a RestConfigurationException: " + ex.getMessage());
+        RestConfigurationException cause = (RestConfigurationException) ex.getCause();
+        assertTrue(
+                cause.getMessage() != null && cause.getMessage().contains(ReentrantApplication.class.getName()),
+                () -> "expected the cause to name " + ReentrantApplication.class.getName() + " by fully qualified"
+                        + " name: " + cause.getMessage());
+        assertTrue(
+                cause.getMessage() != null && cause.getMessage().contains("re-entered"),
+                () -> "expected the cause to say 're-entered': " + cause.getMessage());
 
         JsonObject validConfig = config(
                 "unitb.publicApplication.active",
@@ -1130,6 +1146,24 @@ class JaxRsApplicationCompositionTest {
         assertDoesNotThrow(valid::routerMounts, "a valid composition must still succeed on the same thread afterward");
     }
 
+    // --- W-1 (round 2): nested composition of a DIFFERENT component must succeed, unlike G-06's
+    // same-component re-entry ---
+
+    @Test
+    @DisplayName("W-1: a manual resource that builds and resolves a second, independent Dagger component's"
+            + " Set<RouterMount> inside its own construction must succeed, because a nested composition of a"
+            + " different component is legitimate, unlike same-component re-entry (G-06)")
+    void nestedCompositionOfDifferentComponentSucceeds() {
+        NestedCompositionZeroDeclarationComponent component = nestedCompositionZeroDeclarationComponent(config());
+
+        assertDoesNotThrow(
+                component::routerMounts,
+                "resolving a second, independent component's Set<RouterMount> from within a manually contributed"
+                        + " resource's own construction must succeed: the composition-wide guard must reject only"
+                        + " re-entry into the SAME component, never a legitimate nested composition of a different"
+                        + " one");
+    }
+
     // --- G-07: null instances ---
 
     @Test
@@ -1184,8 +1218,11 @@ class JaxRsApplicationCompositionTest {
         List<String> infoLines = composerMessagesAt(Level.INFO);
         LOG.info("G-08 (a)/(b) INFO lines: {}", infoLines);
 
-        boolean registrationLineHasFullyQualifiedName =
-                infoLines.stream().anyMatch(message -> message.contains(PublicApplication.class.getName()));
+        // S-2: filtered to the registration line itself, so the per-mount line (which also names the
+        // application by fully qualified name) cannot satisfy this assertion in its place.
+        boolean registrationLineHasFullyQualifiedName = infoLines.stream()
+                .filter(message -> message.startsWith("Declared JAX-RS application registrations"))
+                .anyMatch(message -> message.contains(PublicApplication.class.getName()));
         assertTrue(
                 registrationLineHasFullyQualifiedName,
                 () -> "G-08 (a): the registration INFO line must name the application by fully qualified name: "
@@ -1402,6 +1439,12 @@ class JaxRsApplicationCompositionTest {
 
     private static ReentrantResourceExplicitComponent reentrantResourceExplicitComponent(JsonObject config) {
         return DaggerCompositionComponents_ReentrantResourceExplicitComponent.factory()
+                .create(config);
+    }
+
+    private static NestedCompositionZeroDeclarationComponent nestedCompositionZeroDeclarationComponent(
+            JsonObject config) {
+        return DaggerCompositionComponents_NestedCompositionZeroDeclarationComponent.factory()
                 .create(config);
     }
 

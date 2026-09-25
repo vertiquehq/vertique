@@ -10,6 +10,7 @@ import dev.vertique.rest.core.dagger.JaxRsResources;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.jaxrs.RestModule;
 import dev.vertique.rest.jaxrs.application.manual.ManualResourceModule;
+import dev.vertique.rest.jaxrs.application.manual.NestedCompositionResourceModule;
 import dev.vertique.rest.jaxrs.application.manual.ReentrantResourceModule;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
@@ -392,8 +393,8 @@ public final class CompositionComponents {
     /**
      * G-06 (a): zero declarations (no registration module at all) plus the single-proof
      * {@link ReentrantResourceModule}, so {@code RestModule.jaxRsRouterMount} runs its
-     * zero-declaration body directly (never {@code JaxRsApplicationComposer}), which has no
-     * re-entry guard at all.
+     * zero-declaration body; the component-scoped re-entry guard around that body turns the
+     * resource's dependency on this component's own {@code Set<RouterMount>} into a named failure.
      */
     @Singleton
     @Component(modules = {RestModule.class, ApplicationTestSupportModule.class, ReentrantResourceModule.class})
@@ -441,6 +442,34 @@ public final class CompositionComponents {
              * @return the constructed component
              */
             ReentrantResourceExplicitComponent create(@BindsInstance @VertxConfig JsonObject config);
+        }
+    }
+
+    /**
+     * W-1 (round 2): zero declarations (no registration module at all) plus the single-proof
+     * {@link NestedCompositionResourceModule}, whose {@link
+     * dev.vertique.rest.jaxrs.application.manual.NestedCompositionResource
+     * NestedCompositionResource} builds and resolves a SECOND, independent {@link
+     * ZeroDeclarationComponent} of its own inside its own construction. Resolving THIS
+     * component's {@code Set<RouterMount>} must succeed: a nested composition of a different
+     * component is legitimate, unlike {@link ReentrantResourceZeroDeclarationComponent}'s
+     * same-component re-entry (G-06).
+     */
+    @Singleton
+    @Component(modules = {RestModule.class, ApplicationTestSupportModule.class, NestedCompositionResourceModule.class})
+    public interface NestedCompositionZeroDeclarationComponent extends Provisions {
+
+        /** Factory taking the application configuration. */
+        @Component.Factory
+        interface Factory {
+
+            /**
+             * Creates the component bound to the given configuration.
+             *
+             * @param config the application configuration
+             * @return the constructed component
+             */
+            NestedCompositionZeroDeclarationComponent create(@BindsInstance @VertxConfig JsonObject config);
         }
     }
 }

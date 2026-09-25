@@ -36,9 +36,13 @@ import lombok.extern.slf4j.Slf4j;
  * Composes declared Jakarta REST {@link Application} registrations into one {@link JaxRsRouterMount}
  * per active application, on behalf of {@link RestModule}'s default-mount provider.
  *
- * <p>Runs only when at least one application registration is declared; with an empty registration
- * set, {@code RestModule.jaxRsRouterMount} keeps its zero-declaration body and never calls this
- * class. {@link #compose} runs in this order:
+ * <p>{@link #compose} runs only when at least one application registration is declared; with an
+ * empty registration set, {@code RestModule.jaxRsRouterMount} keeps its zero-declaration body and
+ * never calls {@link #compose}. Its composition-wide re-entry guard
+ * ({@link #enterComposition(JaxRsConfig)}/{@link #exitComposition(JaxRsConfig)}) still wraps that
+ * zero-declaration body, so a manually contributed resource that re-enters the same component's
+ * composition is still caught even when no application is declared. {@link #compose} runs in this
+ * order:
  *
  * <ol>
  *   <li>Validates every registration, active or inactive, without running any application code:
@@ -79,15 +83,25 @@ final class JaxRsApplicationComposer {
     private static final String DEFAULT_BASE_PATH = "/*";
 
     /**
-     * Marks that a composition is already running on this thread, so a manually contributed
+     * Tracks, per thread, the identity of every component-scoped {@code @Singleton JaxRsConfig}
+     * whose composition is currently running on that thread — one entry per {@code RestModule}
+     * component nested inside another, never one entry per thread. A manually contributed
      * resource, a catalog entry, or an {@code Application} whose own construction or member
-     * evaluation resolves {@code Set<RouterMount>} again is detected and named instead of recursing
-     * until the stack overflows. Set once, by {@link #enterComposition()}, and always cleared by the
-     * matching {@link #exitComposition()} in the same caller's {@code finally} block; a nested,
-     * rejected call never sets it, because {@link #enterComposition()} throws before returning, so
-     * only the outermost {@code RestModule.jaxRsRouterMount} call ever holds — or clears — it.
+     * evaluation resolves the SAME component's {@code Set<RouterMount>} again is detected and named
+     * instead of recursing until the stack overflows; resolving a DIFFERENT component's
+     * {@code Set<RouterMount>} from within that construction succeeds, because {@link JaxRsConfig}
+     * is {@code @Singleton}-scoped to its own Dagger component, so distinct components always hand
+     * {@link #enterComposition(JaxRsConfig)} distinct instances. Compared by identity
+     * ({@link IdentityHashMap}-backed), not {@code equals()}, since {@link JaxRsConfig} has none of
+     * its own and object identity is exactly "the same component's config instance". Added by
+     * {@link #enterComposition(JaxRsConfig)}, which fails when the instance is already present, and
+     * always removed by the matching {@link #exitComposition(JaxRsConfig)} in the same caller's
+     * {@code finally} block; a nested, rejected call never adds its instance, because
+     * {@link #enterComposition(JaxRsConfig)} throws before returning, so only a call that actually
+     * entered ever removes its own entry. The per-thread set itself is removed once it becomes
+     * empty, so a thread reused from a pool never accumulates stale sets.
      */
-    private static final ThreadLocal<Boolean> COMPOSING = new ThreadLocal<>();
+    private static final ThreadLocal<Set<JaxRsConfig>> COMPOSING = new ThreadLocal<>();
 
     /**
      * Marks the registration whose construction or member evaluation is in progress on this thread,
@@ -101,19 +115,28 @@ final class JaxRsApplicationComposer {
     private JaxRsApplicationComposer() {}
 
     /**
-     * Detects a composition already running on this thread and marks a new one starting. Called
-     * once by {@code RestModule.jaxRsRouterMount}, before either its zero-declaration body or
-     * {@link #compose} runs, so the guard covers both branches — the mistake a manually contributed
-     * resource, a catalog entry, or an {@code Application} can make by depending on
-     * {@code Set<RouterMount>}. A matching {@link #exitComposition()} in the caller's {@code finally}
-     * block always follows a successful call.
+     * Detects a composition of {@code config}'s own component already running on this thread and
+     * marks a new one starting. Called once by {@code RestModule.jaxRsRouterMount}, before either
+     * its zero-declaration body or {@link #compose} runs, so the guard covers both branches — the
+     * mistake a manually contributed resource, a catalog entry, or an {@code Application} can make
+     * by depending on its OWN component's {@code Set<RouterMount>}. Nesting a composition of a
+     * DIFFERENT component — a distinct {@code @Singleton JaxRsConfig} instance — inside this one
+     * succeeds. A matching {@link #exitComposition(JaxRsConfig)} in the caller's
+     * {@code finally} block always follows a successful call.
      *
-     * @throws RestConfigurationException when a composition is already running on this thread,
-     *     naming the application under construction when one is known, or the offending dependency
-     *     otherwise
+     * @param config the component-scoped {@code @Singleton JaxRsConfig} identifying this
+     *               composition's own component
+     * @throws RestConfigurationException when a composition of this same component is already
+     *     running on this thread, naming the application under construction when one is known, or
+     *     the offending dependency otherwise
      */
-    static void enterComposition() {
-        if (Boolean.TRUE.equals(COMPOSING.get())) {
+    static void enterComposition(JaxRsConfig config) {
+        Set<JaxRsConfig> composing = COMPOSING.get();
+        if (composing == null) {
+            composing = Collections.newSetFromMap(new IdentityHashMap<>());
+            COMPOSING.set(composing);
+        }
+        if (!composing.add(config)) {
             GeneratedJaxRsApplicationRegistration reentered = IN_PROGRESS.get();
             String subject = reentered != null
                     ? appContext(reentered)
@@ -124,17 +147,28 @@ final class JaxRsApplicationComposer {
                     + " manually contributed resource's or catalog entry's own construction must not depend on"
                     + " Set<RouterMount>");
         }
-        COMPOSING.set(Boolean.TRUE);
     }
 
     /**
-     * Clears the composition-in-progress marker {@link #enterComposition()} set. Must run only in
-     * the {@code finally} block of the same call that successfully called
-     * {@link #enterComposition()}; a nested, rejected call never reaches its own {@code finally}, so
-     * only the outermost composition ever clears the flag.
+     * Clears the composition-in-progress marker {@link #enterComposition(JaxRsConfig)} set for
+     * {@code config}'s component. Must run only in the {@code finally} block of the same call that
+     * successfully called {@link #enterComposition(JaxRsConfig)} with the same {@code config}; a
+     * nested, rejected call never reaches its own {@code finally}, so only a composition that
+     * actually entered ever clears its own entry. Removes the thread-local set entirely once it
+     * becomes empty.
+     *
+     * @param config the same component-scoped {@code @Singleton JaxRsConfig} passed to the matching
+     *               {@link #enterComposition(JaxRsConfig)} call
      */
-    static void exitComposition() {
-        COMPOSING.remove();
+    static void exitComposition(JaxRsConfig config) {
+        Set<JaxRsConfig> composing = COMPOSING.get();
+        if (composing == null) {
+            return;
+        }
+        composing.remove(config);
+        if (composing.isEmpty()) {
+            COMPOSING.remove();
+        }
     }
 
     /**
@@ -155,9 +189,9 @@ final class JaxRsApplicationComposer {
             Provider<Set<Object>> resources,
             Provider<Set<GeneratedJaxRsResourceEntry>> catalog,
             JaxRsConfig config) {
-        // Re-entry is detected by RestModule.jaxRsRouterMount's composition-wide guard
-        // (enterComposition()/exitComposition()), which wraps this call and the zero-declaration
-        // body alike, so it is not repeated here.
+        // Re-entry into THIS component's composition is detected by RestModule.jaxRsRouterMount's
+        // per-component guard (enterComposition(config)/exitComposition(config)), which wraps this
+        // call and the zero-declaration body alike, so it is not repeated here.
 
         // --- Step 1: registration checks (no application code runs yet) ---
 
@@ -650,7 +684,8 @@ final class JaxRsApplicationComposer {
      * message naming it.
      *
      * @param registration the registration to describe
-     * @return {@code "Application <simple name> at <path>"}
+     * @return {@code "Application <fully qualified name> at <path>"} — the fully qualified name,
+     *     not the simple name, so the message is unambiguous
      */
     private static String appContext(GeneratedJaxRsApplicationRegistration registration) {
         return "Application " + registration.type().getName() + " at " + registration.path();

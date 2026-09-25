@@ -615,18 +615,24 @@ public abstract class RestModule {
      * {@code @JaxRsResources} directly.
      *
      * <p>Guards against re-entry on both branches: a resource, a catalog entry, or an
-     * {@code Application} must not depend on {@code Set<RouterMount>}, since resolving it recurses
-     * back into this same provider. {@link JaxRsApplicationComposer#enterComposition()} detects that
-     * and fails named instead of overflowing the stack; the matching
-     * {@link JaxRsApplicationComposer#exitComposition()} always runs in {@code finally}, so only the
-     * outermost call on a thread ever holds the guard.
+     * {@code Application} must not depend on THIS component's own {@code Set<RouterMount>}, since
+     * resolving it recurses back into this same provider. Keyed on the identity of this component's
+     * own {@code @Singleton JaxRsConfig} instance (never on the thread alone), so
+     * {@link JaxRsApplicationComposer#enterComposition(JaxRsConfig)} rejects only re-entry into this
+     * SAME component's composition and still fails named instead of overflowing the stack; a nested
+     * composition of a different component, with its own distinct {@code JaxRsConfig} instance,
+     * succeeds. The matching {@link JaxRsApplicationComposer#exitComposition(JaxRsConfig)} always
+     * runs in {@code finally}, so only a call that actually entered ever clears its own component's
+     * guard entry.
      *
      * @param factory      the JAX-RS router mount factory
      * @param applications the generated application registration set (empty in zero-declaration
      *                     mode)
      * @param resources    the {@code @JaxRsResources} instances, resolved lazily
      * @param catalog      the generated resource catalog, resolved lazily
-     * @param config       the JAX-RS routing configuration (base path and OpenAPI spec location)
+     * @param config       the JAX-RS routing configuration (base path and OpenAPI spec location);
+     *                     also this component's re-entry guard key, since it is
+     *                     {@code @Singleton}-scoped to this component
      * @return one mount per active application in explicit mode; otherwise a singleton set with the
      *     default mount, or an empty set when there are no resources
      */
@@ -638,7 +644,7 @@ public abstract class RestModule {
             @JaxRsResources Provider<Set<Object>> resources,
             Provider<Set<GeneratedJaxRsResourceEntry>> catalog,
             JaxRsConfig config) {
-        JaxRsApplicationComposer.enterComposition();
+        JaxRsApplicationComposer.enterComposition(config);
         try {
             if (applications.isEmpty()) {
                 Set<Object> resolvedResources = resources.get();
@@ -649,7 +655,7 @@ public abstract class RestModule {
             }
             return JaxRsApplicationComposer.compose(factory, applications, resources, catalog, config);
         } finally {
-            JaxRsApplicationComposer.exitComposition();
+            JaxRsApplicationComposer.exitComposition(config);
         }
     }
 }

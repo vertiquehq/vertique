@@ -15,11 +15,11 @@ import java.util.Set;
  * G-06 fixture: a manually contributed resource (not a declared {@code Application}) whose
  * {@code @Inject} constructor takes {@code Set<RouterMount>} directly — the mistake C-COMPOSE's
  * threading rule forbids, applied to a resource instead of an application (TP-015's
- * {@code ReentrantApplication} already covers the application-construction re-entry; G-06 is the
- * re-entry the composer's guard does not cover: a resource resolved through
- * {@code @JaxRsResources Provider<Set<Object>> resources} — either the zero-declaration default
- * mount's own body ({@code RestModule.jaxRsRouterMount}), or the composer's step 4 manual-resource
- * resolution, both of which call {@code resources.get()} outside any {@code IN_PROGRESS} guard.
+ * {@code ReentrantApplication} covers the application-construction re-entry; G-06 covers a
+ * resource resolved through {@code @JaxRsResources Provider<Set<Object>> resources} — in the
+ * zero-declaration default mount's own body ({@code RestModule.jaxRsRouterMount}) or in the
+ * composer's step 4 manual-resource resolution, both of which the component-scoped re-entry guard
+ * around the whole provider body now covers.
  * Dagger accepts the resulting cycle at compile time only because {@code jaxRsRouterMount} already
  * takes a {@code Provider<Set<Object>> resources} parameter (not a direct {@code Set<Object>}),
  * deferring construction, so the cycle surfaces only when a provider actually calls {@code .get()}
