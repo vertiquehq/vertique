@@ -6,6 +6,7 @@ package dev.vertique.rest.core.capture;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import dev.vertique.core.extension.OrderedExtension;
 import java.lang.reflect.Method;
@@ -29,21 +30,42 @@ class HttpOperationMetaTest {
     class RecordFields {
 
         @Test
-        @DisplayName("holds method, operationId, and routeTemplate")
+        @DisplayName("holds method, resourceClass, operationId, and routeTemplate")
         void holdsAllFields() throws NoSuchMethodException {
+            Method method = HttpOperationMetaTest.class.getMethod("fixtureMethod");
+            HttpOperationMeta meta = new HttpOperationMeta(method, String.class, "listItems", "/items");
+
+            assertEquals(method, meta.method());
+            assertEquals(String.class, meta.resourceClass());
+            assertEquals("listItems", meta.operationId());
+            assertEquals("/items", meta.routeTemplate());
+        }
+
+        @Test
+        @SuppressWarnings("removal")
+        @DisplayName("the deprecated three-argument form uses the method's declaring class")
+        void deprecatedConstructorDefaultsToDeclaringClass() throws NoSuchMethodException {
             Method method = HttpOperationMetaTest.class.getMethod("fixtureMethod");
             HttpOperationMeta meta = new HttpOperationMeta(method, "listItems", "/items");
 
-            assertEquals(method, meta.method());
-            assertEquals("listItems", meta.operationId());
-            assertEquals("/items", meta.routeTemplate());
+            assertEquals(HttpOperationMetaTest.class, meta.resourceClass());
+        }
+
+        @Test
+        @DisplayName("method, resourceClass, and operationId are required")
+        void requiredComponents() throws NoSuchMethodException {
+            Method method = HttpOperationMetaTest.class.getMethod("fixtureMethod");
+
+            assertThrows(NullPointerException.class, () -> new HttpOperationMeta(null, String.class, "op", null));
+            assertThrows(NullPointerException.class, () -> new HttpOperationMeta(method, null, "op", null));
+            assertThrows(NullPointerException.class, () -> new HttpOperationMeta(method, String.class, null, null));
         }
 
         @Test
         @DisplayName("routeTemplate may be null")
         void routeTemplateNullable() throws NoSuchMethodException {
             Method method = HttpOperationMetaTest.class.getMethod("fixtureMethod");
-            HttpOperationMeta meta = new HttpOperationMeta(method, "getItem", null);
+            HttpOperationMeta meta = new HttpOperationMeta(method, HttpOperationMetaTest.class, "getItem", null);
 
             assertNull(meta.routeTemplate());
             assertEquals("getItem", meta.operationId());
