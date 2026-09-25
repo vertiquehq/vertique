@@ -12,6 +12,7 @@ import dev.vertique.core.util.Strings;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.json.JsonConfig;
+import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.core.capture.RestServerRequestEvidenceCapturer;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.config.JaxRsConfig;
@@ -99,6 +100,7 @@ public class JaxRsRouterMount implements RouterMount {
     private final int priority;
     private final Factory factory;
     private final @Nullable Class<? extends Application> applicationType;
+    private boolean validated;
 
     /**
      * Creates a new mount. Only {@link Factory} should call this constructor.
@@ -179,7 +181,25 @@ public class JaxRsRouterMount implements RouterMount {
     }
 
     /**
+     * Marks this application mount instance validated: called only by the rest-jaxrs {@code
+     * MountCompositionValidator}, and only when its own checks found no violation for the whole
+     * composition. {@link #createRouter(Vertx)} refuses an application mount until this has been
+     * called. Each composition builds new mount instances, so a mark never carries over to another
+     * composition.
+     */
+    void markValidated() {
+        this.validated = true;
+    }
+
+    /**
      * Creates the JAX-RS sub-router for this mount as a plain Vert.x {@link Router}.
+     *
+     * <p>An application mount (a non-{@code null} {@link #applicationType()}) whose instance was not
+     * marked validated refuses to build its router: no composition validator ran to confirm this
+     * mount's declaration, so an {@code HttpVerticle} built without composition validators — such as
+     * the public five-argument constructor, or a subclass — must not host it. This check runs first,
+     * before the early return below for a mount with no resources, so an all-disabled application is
+     * refused too.
      *
      * <p>If no resources are registered, an empty router is returned immediately. Otherwise the
      * pipeline is:
@@ -211,6 +231,14 @@ public class JaxRsRouterMount implements RouterMount {
      */
     @Override
     public Future<Router> createRouter(Vertx vertx) {
+        if (applicationType != null && !validated) {
+            throw new RestConfigurationException("Application " + applicationType.getName() + " at '"
+                    + mountPath + "' cannot create its router: the hosting HttpVerticle was built without"
+                    + " composition validators, such as with the public five-argument constructor or by a"
+                    + " subclass; obtain HttpVerticle from Dagger so its composition validators run before"
+                    + " any mount router is created");
+        }
+
         if (resources.isEmpty()) {
             return Future.succeededFuture(Router.router(vertx));
         }

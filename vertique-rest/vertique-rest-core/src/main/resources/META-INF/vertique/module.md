@@ -65,15 +65,18 @@ handlers, health endpoints, or a hand-built router are peers of it, not special 
 2. **Validate mount paths** — every violation is collected and the start promise fails with one
    aggregated message. Because validation runs *after* the sort, violations are reported in mounted
    order.
-3. **Detect overlaps** — duplicate paths and prefix containment log a warning; startup continues.
-4. Sort `MountCustomizer`s by the plain `OrderedExtension` comparator.
-5. Create the main router and attach every `ROOT`-scoped `Middleware` at its own `path()`.
-6. Run `BEFORE_MOUNTS` `RouterCustomizer`s.
-7. Create each mount's router **sequentially**, apply every matching `MountCustomizer`, attach as a
+3. **Run composition validators** — every `MountCompositionValidator` runs on the valid, sorted
+   mounts; any violation it returns, or any exception it throws, fails the start promise before any
+   mount router is created.
+4. **Detect overlaps** — duplicate paths and prefix containment log a warning; startup continues.
+5. Sort `MountCustomizer`s by the plain `OrderedExtension` comparator.
+6. Create the main router and attach every `ROOT`-scoped `Middleware` at its own `path()`.
+7. Run `BEFORE_MOUNTS` `RouterCustomizer`s.
+8. Create each mount's router **sequentially**, apply every matching `MountCustomizer`, attach as a
    sub-router. Creation is sequential precisely so mount order equals the sorted order.
-8. Run `AFTER_MOUNTS` `RouterCustomizer`s.
-9. Bind the server, then publish the bound port into
-   `vertx.sharedData().getLocalMap("vertique")` under the key `http.port`.
+9. Run `AFTER_MOUNTS` `RouterCustomizer`s.
+10. Bind the server, then publish the bound port into
+    `vertx.sharedData().getLocalMap("vertique")` under the key `http.port`.
 
 A failed `createRouter(...)` future fails startup.
 
@@ -1065,10 +1068,10 @@ Bind `HmacCursorCodec` (or your own) as a `@Singleton` and pass it to `CursorPag
 
 ### Framework seams
 
-Eleven public types are named nowhere above because no application uses one — `RestContextMessages`,
+Twelve public types are named nowhere above because no application uses one — `RestContextMessages`,
 `RestContextModule`, `RestContextTypes`, `HttpOperationMeta`, `OperationIdCaptureContributor`,
-`SecurityRequirementSet`, `AuthEnforcementCapability`, `SecurityPolicyViolation`,
-`RequiresActionResolver`, `DeferredCredentialRejectionAuthHandler`, and
+`MountCompositionValidator`, `SecurityRequirementSet`, `AuthEnforcementCapability`,
+`SecurityPolicyViolation`, `RequiresActionResolver`, `DeferredCredentialRejectionAuthHandler`, and
 `AnnotationSecurityPolicyResolver`. They are public because sibling framework modules call them
 across package boundaries: the JAX-RS route registrar, the security enforcement modules, the
 WebSocket transport, the OpenTelemetry integration, and the annotation processors that emit against

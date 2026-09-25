@@ -39,6 +39,7 @@ import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
 import dev.vertique.rest.core.response.ResponseBodyEncoder;
 import dev.vertique.rest.core.response.ResponseProducerBinding;
+import dev.vertique.rest.core.router.MountCompositionValidator;
 import dev.vertique.rest.core.router.MountCustomizer;
 import dev.vertique.rest.core.router.OperationHandlerContributor;
 import dev.vertique.rest.core.router.RouterCustomizer;
@@ -104,6 +105,9 @@ public abstract class RestCoreModule {
 
     @Multibinds
     abstract Set<MountCustomizer> mountCustomizers();
+
+    @Multibinds
+    abstract Set<MountCompositionValidator> mountCompositionValidators();
 
     @Multibinds
     abstract Set<SecuritySchemeHandler> securitySchemeHandlers();

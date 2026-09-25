@@ -32,6 +32,7 @@ import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
 import dev.vertique.rest.core.response.ResponseBodyEncoder;
 import dev.vertique.rest.core.response.ResponseSerializer;
+import dev.vertique.rest.core.router.MountCompositionValidator;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.core.sse.SseChannelFactory;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsApplicationRegistration;
@@ -120,6 +121,25 @@ public abstract class RestModule {
      */
     @Multibinds
     abstract Set<GeneratedJaxRsApplicationRegistration> generatedJaxRsApplicationRegistrations();
+
+    /**
+     * Contributes the rest-jaxrs {@link MountCompositionValidator}: it rejects an application mount
+     * that conflicts with a hand-built JAX-RS mount, and rejects two operations on any JAX-RS mounts
+     * that share an operationId without sharing the same owner, once one or more applications are
+     * declared. The declared registration set tells it whether any application is declared, even
+     * when none is active.
+     *
+     * @param registrations the declared application registration set (empty in zero-declaration
+     *                      mode)
+     * @return the rest-jaxrs composition validator, contributed into
+     *     {@code Set<MountCompositionValidator>}
+     */
+    @Provides
+    @IntoSet
+    static MountCompositionValidator jaxRsApplicationMountValidator(
+            Set<GeneratedJaxRsApplicationRegistration> registrations) {
+        return new JaxRsApplicationMountValidator(registrations);
+    }
 
     /**
      * Declares the {@link GeneratedJaxRsResourceEntry} multibinding set. A generated module

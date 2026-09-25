@@ -1062,14 +1062,42 @@ registration path that is not in the application path grammar's normalized form 
 `IllegalArgumentException`, naming the application class and the rejected path — a fail-closed backstop
 for a registration the processor did not produce.
 
+### Mount conflicts
+
+Once any application is declared, two independent checks reject overlapping mounts before any route
+installs:
+
+- **Between active applications.** Two active applications whose mount paths overlap — their prefixes
+  (each mount path without its trailing `/*`) are equal, or one starts with the other — fail startup
+  before either application is constructed, naming both application classes and both paths. An
+  application declared at `@ApplicationPath("/")` therefore conflicts with every other active
+  application, because `/` is a prefix of everything; `/api/public` and `/api/publicity` do not
+  conflict, because neither prefix starts with the other.
+- **Between an application and a hand-built JAX-RS mount.** An application mount whose path overlaps a
+  hand-built `JaxRsRouterMount`'s path, in either direction, fails startup before any mount router is
+  created, naming the application class and both paths. A hand-built JAX-RS mount whose path is a
+  router pattern — containing `:`, `{`, or `}` — conflicts with every application mount regardless of
+  any literal prefix relation, because the segment it matches is not known until request time.
+- **Unaffected.** A non-JAX-RS mount, and a pair of JAX-RS mounts that include no application, keep the
+  warning-only overlap detection `HttpVerticle` already performs for every mount.
+
+Only the Dagger-built `HttpVerticle` hosts application mounts. Its composition validators run the
+checks above and mark each application mount instance validated only once every check passes for the
+whole composition; an `HttpVerticle` built with the public five-argument constructor, or a subclass
+that runs no composition validator, refuses to create an application mount's router at all, naming the
+application class and stating that `HttpVerticle` must come from Dagger so its composition validators
+run first.
+
 ### Migrating a root application
 
 An application declared at `@ApplicationPath("/")` mounts at `/*`, the whole path space. Because every
-other prefix is its descendant, a root application cannot coexist with any other application or JAX-RS
-mount. Adding a first application to a deployment that currently serves a legacy API at the root path
-therefore switches the whole module into explicit mode: the root API must move to a non-root path
-before any other application can be declared, and every resource that must stay reachable has to be
-selected by some declared application.
+other prefix overlaps it, a root application conflicts with every other active application and every
+hand-built JAX-RS mount — both fail startup as described in [Mount conflicts](#mount-conflicts) above.
+A non-JAX-RS mount is unaffected and keeps only the warning-only overlap detection. Adding a first
+application to a deployment that currently serves a legacy API at the root path therefore switches the
+whole module into explicit mode: the root API must move to a non-root path before any other application
+can be declared, and every resource that must stay reachable has to be selected by some declared
+application.
 
 ---
 
@@ -1222,6 +1250,16 @@ gate.
 | `REQUIRES_ACTION_POLICY_CONFLICT` | a `@RequiresAction` declaration conflicts with the operation's resolved security policy |
 | `UNRESOLVABLE_PARAM_CONVERTER` | a path/query/header/cookie/form parameter type — or a collection's element type, or a convertible `@BeanParam` field — has no converter resolvable by the `ParamConversionResolver` chain |
 
+Once one or more `jakarta.ws.rs.core.Application` registrations are declared — even when none is
+active — `HttpVerticle` additionally rejects a duplicate operationId **across** mounts: two operations
+on different `JaxRsRouterMount`s that share an operationId fail startup unless they are the same
+operation — the same resource class (an annotation-free AOP proxy counts as its base class), method
+name, and parameter types. This is a cross-mount check performed by `HttpVerticle`'s composition
+validator, not a `RouteRegistrationViolation`: it throws `IllegalStateException`, naming both methods
+and both mounts. The per-mount `DUPLICATE_OPERATION_ID` row above is unaffected — it keeps comparing
+only within one mount, and with no application declared it remains the only operationId check that
+runs.
+
 `SecurityPolicyViolationException` is thrown immediately when a `SecurityPolicyValidator` is bound and
 finds a violation, rather than being collected. `JsonProfileConfigurationException` is thrown at
 router-build time for an unknown profile id.
@@ -1329,6 +1367,7 @@ Beyond what `RestCoreModule` and `JsonRuntimeModule` contribute:
 | `Set<GeneratedJaxRsApplicationRegistration>` | `@Multibinds`; INTERNAL generated-code contract, populated by the annotation processor with one entry per declared `jakarta.ws.rs.core.Application`; empty by default |
 | `Set<GeneratedJaxRsResourceEntry>` | `@Multibinds`; INTERNAL generated-code contract, populated by the annotation processor with one entry per DI-eligible JAX-RS resource; empty by default |
 | `Set<RouterMount>` | `@ElementsIntoSet`: with no `Application` declared, the default `JaxRsRouterMount` at `jaxrs.basePath`, empty when `@JaxRsResources` is empty; once an `Application` is declared, one mount per active application instead — see [Jakarta REST Applications](#jakarta-rest-applications) |
+| `MountCompositionValidator` (`JaxRsApplicationMountValidator`) | `@IntoSet`; INTERNAL; validates application mounts against hand-built JAX-RS mounts and cross-mount operationIds — see [Mount conflicts](#mount-conflicts) |
 | `ComposeValidator` (`JaxRsDefaultProfileValidator`) | `@IntoSet`; fails the `VALIDATE` phase on an unknown `jaxrs.jsonProfile` (`json.systemProfile` is validated earlier, by the `CONFIGURE`-phase install step) |
 | `OperationSchemaSource`, `BeanValidator`, `InputObjectProcessor` (`dev.vertique.input.processing.InputObjectProcessor`), `ActionRegistry`, `Authorizer` | `@BindsOptionalOf`; satisfied by `rest-validation`, `validation`, `sanitization`, and `rest-security` respectively |
 

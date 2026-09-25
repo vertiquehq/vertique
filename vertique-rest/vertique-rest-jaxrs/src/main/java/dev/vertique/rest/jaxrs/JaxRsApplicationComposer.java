@@ -47,9 +47,10 @@ import lombok.extern.slf4j.Slf4j;
  * <ol>
  *   <li>Validates every registration, active or inactive, without running any application code:
  *       rejects duplicate registrations of one application class, duplicate catalog entries of one
- *       resource class, and a discovery-style registration (one that overrides neither
- *       {@code getClasses()} nor {@code getSingletons()}) that is not the sole registration. Logs
- *       one informational line listing every registration. Any violation here aborts before any
+ *       resource class, a discovery-style registration (one that overrides neither
+ *       {@code getClasses()} nor {@code getSingletons()}) that is not the sole registration, and a
+ *       pair of active applications whose mount paths conflict ({@link JaxRsMountPaths}). Logs one
+ *       informational line listing every registration. Any violation here aborts before any
  *       application is constructed or any resource is resolved.
  *   <li>Warns once, without echoing the configured value, when the routing base path is non-default
  *       (it is never applied to an application mount).
@@ -245,8 +246,19 @@ final class JaxRsApplicationComposer {
                 .filter(GeneratedJaxRsApplicationRegistration::active)
                 .toList();
 
-        // Step 1b: path conflicts among active applications are rejected here. Not yet implemented;
-        // left as an explicit slot for a later task.
+        // Step 1b: path conflicts among active applications are rejected here.
+        for (int i = 0; i < activeRegistrations.size(); i++) {
+            GeneratedJaxRsApplicationRegistration first = activeRegistrations.get(i);
+            String firstMountPath = mountPath(first.path());
+            for (int j = i + 1; j < activeRegistrations.size(); j++) {
+                GeneratedJaxRsApplicationRegistration second = activeRegistrations.get(j);
+                String secondMountPath = mountPath(second.path());
+                if (JaxRsMountPaths.conflict(firstMountPath, secondMountPath)) {
+                    stepOneViolations.add(quotedAppContext(first) + " conflicts with " + quotedAppContext(second)
+                            + ": their mount paths overlap");
+                }
+            }
+        }
 
         if (!stepOneViolations.isEmpty()) {
             throw buildAggregateException(stepOneViolations);
@@ -689,6 +701,17 @@ final class JaxRsApplicationComposer {
      */
     private static String appContext(GeneratedJaxRsApplicationRegistration registration) {
         return "Application " + registration.type().getName() + " at " + registration.path();
+    }
+
+    /**
+     * Returns {@code registration}'s application class and path, like {@link #appContext}, but with
+     * the path single-quoted, for step 1b's conflict messages.
+     *
+     * @param registration the registration to describe
+     * @return {@code "Application <fully qualified name> at '<path>'"}
+     */
+    private static String quotedAppContext(GeneratedJaxRsApplicationRegistration registration) {
+        return "Application " + registration.type().getName() + " at '" + registration.path() + "'";
     }
 
     /**

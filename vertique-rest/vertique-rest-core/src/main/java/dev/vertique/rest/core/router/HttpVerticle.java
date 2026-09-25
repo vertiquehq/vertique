@@ -37,6 +37,7 @@ import lombok.extern.slf4j.Slf4j;
  * <p>Startup flow:
  * <ol>
  *   <li>Validate and sort mount paths (fail-fast on invalid paths)</li>
+ *   <li>Run {@link MountCompositionValidator}s once mount paths are valid (fail-fast on any violation)</li>
  *   <li>Create main router and mount ROOT-scoped middlewares</li>
  *   <li>Run {@link RouterCustomizer.MountPhase#BEFORE_MOUNTS} customizers</li>
  *   <li>Create each mount's router, apply {@link MountCustomizer}s, mount as sub-router</li>
@@ -52,9 +53,11 @@ public class HttpVerticle extends AbstractVerticle {
     private final Set<Middleware> middlewares;
     private final Set<RouterMount> routerMounts;
     private final Set<MountCustomizer> mountCustomizers;
+    private final Set<MountCompositionValidator> mountCompositionValidators;
 
     /**
-     * Creates a new {@code HttpVerticle} with all required HTTP server and routing dependencies.
+     * Creates a new {@code HttpVerticle} with all required HTTP server and routing dependencies,
+     * running no {@link MountCompositionValidator}.
      *
      * @param serverOptions     Vert.x {@link HttpServerOptions} (built from {@link HttpConfig} by the DI module)
      * @param routerCustomizers customizers applied to the main router before or after mounts
@@ -62,18 +65,41 @@ public class HttpVerticle extends AbstractVerticle {
      * @param routerMounts      sub-routers to compose into the main router
      * @param mountCustomizers  per-mount customization hooks applied after each router is created
      */
-    @Inject
     public HttpVerticle(
             HttpServerOptions serverOptions,
             Set<RouterCustomizer> routerCustomizers,
             Set<Middleware> middlewares,
             Set<RouterMount> routerMounts,
             Set<MountCustomizer> mountCustomizers) {
+        this(serverOptions, routerCustomizers, middlewares, routerMounts, mountCustomizers, Set.of());
+    }
+
+    /**
+     * Creates a new {@code HttpVerticle} with all required HTTP server and routing dependencies,
+     * including the {@link MountCompositionValidator}s to run before any mount router is created.
+     *
+     * @param serverOptions              Vert.x {@link HttpServerOptions} (built from {@link HttpConfig} by the DI module)
+     * @param routerCustomizers          customizers applied to the main router before or after mounts
+     * @param middlewares                scoped request handlers mounted automatically on the main router
+     * @param routerMounts               sub-routers to compose into the main router
+     * @param mountCustomizers           per-mount customization hooks applied after each router is created
+     * @param mountCompositionValidators INTERNAL composition validators run once mount paths are valid,
+     *                                   before any mount router is created
+     */
+    @Inject
+    HttpVerticle(
+            HttpServerOptions serverOptions,
+            Set<RouterCustomizer> routerCustomizers,
+            Set<Middleware> middlewares,
+            Set<RouterMount> routerMounts,
+            Set<MountCustomizer> mountCustomizers,
+            Set<MountCompositionValidator> mountCompositionValidators) {
         this.serverOptions = serverOptions;
         this.routerCustomizers = routerCustomizers;
         this.middlewares = middlewares;
         this.routerMounts = routerMounts;
         this.mountCustomizers = mountCustomizers;
+        this.mountCompositionValidators = mountCompositionValidators;
     }
 
     /**
@@ -105,29 +131,47 @@ public class HttpVerticle extends AbstractVerticle {
             return;
         }
 
-        // 3. Detect overlapping mounts (log warnings, don't fail)
+        // 3. Run composition validators once mount paths are valid, before any mount router is created
+        List<String> validatorViolations = new ArrayList<>();
+        try {
+            for (MountCompositionValidator validator : mountCompositionValidators) {
+                validatorViolations.addAll(validator.validate(sortedMounts));
+            }
+        } catch (RuntimeException validatorException) {
+            startPromise.fail(validatorException);
+            return;
+        }
+        if (!validatorViolations.isEmpty()) {
+            List<String> sortedViolations =
+                    validatorViolations.stream().sorted().toList();
+            startPromise.fail(new IllegalStateException(
+                    "Invalid mount configuration:\n  " + String.join("\n  ", sortedViolations)));
+            return;
+        }
+
+        // 4. Detect overlapping mounts (log warnings, don't fail)
         detectOverlaps(sortedMounts);
 
-        // 4. Sort mount customizers: phase ASC, priority ASC, orderKey ASC (full OrderedExtension contract)
+        // 5. Sort mount customizers: phase ASC, priority ASC, orderKey ASC (full OrderedExtension contract)
         List<MountCustomizer> sortedCustomizers =
                 mountCustomizers.stream().sorted(OrderedExtension.comparator()).toList();
 
-        // 5. Create main router
+        // 6. Create main router
         Router mainRouter = Router.router(vertx);
 
-        // 6. Mount ROOT-scoped middlewares sorted by OrderedExtension order (phase → priority → orderKey)
+        // 7. Mount ROOT-scoped middlewares sorted by OrderedExtension order (phase → priority → orderKey)
         middlewares.stream()
                 .filter(m -> m.scope() == MiddlewareScope.ROOT)
                 .sorted(OrderedExtension.comparator())
                 .forEach(m -> mainRouter.route(m.path()).handler(m));
 
-        // 7. Run BEFORE_MOUNTS customizers (sorted by OrderedExtension order: phase → priority → orderKey)
+        // 8. Run BEFORE_MOUNTS customizers (sorted by OrderedExtension order: phase → priority → orderKey)
         routerCustomizers.stream()
                 .filter(c -> c.mountPhase() == RouterCustomizer.MountPhase.BEFORE_MOUNTS)
                 .sorted(OrderedExtension.comparator())
                 .forEach(c -> c.customize(mainRouter));
 
-        // 8. Create and mount all routers sequentially (to preserve ordering)
+        // 9. Create and mount all routers sequentially (to preserve ordering)
         Future<Void> chain = Future.succeededFuture();
         for (RouterMount mount : sortedMounts) {
             chain = chain.compose(v -> mount.createRouter(vertx).map(router -> {
@@ -148,7 +192,7 @@ public class HttpVerticle extends AbstractVerticle {
             }));
         }
 
-        // 9. Run AFTER_MOUNTS customizers (sorted by OrderedExtension order: phase → priority → orderKey)
+        // 10. Run AFTER_MOUNTS customizers (sorted by OrderedExtension order: phase → priority → orderKey)
         chain.compose(v -> {
                     routerCustomizers.stream()
                             .filter(c -> c.mountPhase() == RouterCustomizer.MountPhase.AFTER_MOUNTS)
