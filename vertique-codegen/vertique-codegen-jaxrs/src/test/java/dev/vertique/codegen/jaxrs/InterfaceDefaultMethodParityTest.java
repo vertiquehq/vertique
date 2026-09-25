@@ -122,6 +122,45 @@ class InterfaceDefaultMethodParityTest {
     @Path("/invoices")
     static class InvoiceResource implements StringCrud {}
 
+    @Path("/generic-defaults")
+    static class GenericDefaultResource implements GenericCrud<String> {}
+
+    static class GenericBase<I> {
+        @DELETE
+        @Path("/{id}")
+        public String remove(@PathParam("id") I id) {
+            return "base " + id;
+        }
+    }
+
+    @Path("/tickets")
+    static class TicketResource extends GenericBase<String> {}
+
+    @Path("/reversed")
+    static class ReversedDocumentResource implements Crud, SoftCrud {}
+
+    interface Readable {
+        @GET
+        @Path("/r")
+        String fetch();
+    }
+
+    interface Fetchable {
+        @GET
+        @Path("/f")
+        String fetch();
+    }
+
+    interface ReadApi extends Readable, Fetchable {
+        @Override
+        default String fetch() {
+            return "fetched";
+        }
+    }
+
+    @Path("/multi")
+    static class MultiResource implements Fetchable, ReadApi {}
+
     interface VaultApi {
         @DELETE
         @Path("/{id}")
@@ -207,6 +246,9 @@ class InterfaceDefaultMethodParityTest {
      * @param sources           the generated-side sources
      * @param expectedRoutes    route count both sides must report
      * @param expectedBacking   simple name of the type declaring each route's method, in route order
+     * @param generatedPlans    whether the generated routes carry an execution plan; a method whose
+     *                          declared parameter types differ from its types as a resource member
+     *                          (an inherited generic method) keeps reflective dispatch
      */
     record ParityCase(
             String label,
@@ -214,7 +256,18 @@ class InterfaceDefaultMethodParityTest {
             String generatedResource,
             List<JavaFileObject> sources,
             int expectedRoutes,
-            List<String> expectedBacking) {
+            List<String> expectedBacking,
+            boolean generatedPlans) {
+        ParityCase(
+                String label,
+                Object reflective,
+                String generatedResource,
+                List<JavaFileObject> sources,
+                int expectedRoutes,
+                List<String> expectedBacking) {
+            this(label, reflective, generatedResource, sources, expectedRoutes, expectedBacking, true);
+        }
+
         @Override
         public String toString() {
             return label;
@@ -339,7 +392,87 @@ class InterfaceDefaultMethodParityTest {
                                         public class VaultResource implements VaultApi {}
                                         """)),
                                 2,
-                                List.of("VaultApi", "VaultApi")))
+                                List.of("VaultApi", "VaultApi")),
+                        new ParityCase(
+                                "non-overridden generic default binds its erasure and keeps reflective dispatch",
+                                new GenericDefaultResource(),
+                                "GenericDefaultResource",
+                                List.of(genericCrudSource(), src("GenericDefaultResource", """
+                                @Path("/generic-defaults")
+                                public class GenericDefaultResource implements GenericCrud<String> {}
+                                """)),
+                                1,
+                                List.of("GenericCrud"),
+                                false),
+                        new ParityCase(
+                                "inherited generic superclass method binds its erasure and keeps reflective dispatch",
+                                new TicketResource(),
+                                "TicketResource",
+                                List.of(src("GenericBase", """
+                                        public class GenericBase<I> {
+                                            @DELETE
+                                            @Path("/{id}")
+                                            public String remove(@PathParam("id") I id) {
+                                                return "base " + id;
+                                            }
+                                        }
+                                        """), src("TicketResource", """
+                                        @Path("/tickets")
+                                        public class TicketResource extends GenericBase<String> {}
+                                        """)),
+                                1,
+                                List.of("GenericBase"),
+                                false),
+                        new ParityCase(
+                                "most specific interface default wins when the less specific one is listed first",
+                                new ReversedDocumentResource(),
+                                "ReversedDocumentResource",
+                                List.of(crudSource(), src("SoftCrud", """
+                                        public interface SoftCrud extends Crud {
+                                            @Override
+                                            default String delete(String id) {
+                                                return "soft " + id;
+                                            }
+                                        }
+                                        """), src("ReversedDocumentResource", """
+                                        @Path("/reversed")
+                                        public class ReversedDocumentResource implements Crud, SoftCrud {}
+                                        """)),
+                                1,
+                                List.of("SoftCrud")),
+                        new ParityCase(
+                                "a default inherits annotations from its own interface hierarchy first",
+                                new MultiResource(),
+                                "MultiResource",
+                                List.of(
+                                        src("Readable", """
+                                        public interface Readable {
+                                            @GET
+                                            @Path("/r")
+                                            String fetch();
+                                        }
+                                        """),
+                                        src("Fetchable", """
+                                        public interface Fetchable {
+                                            @GET
+                                            @Path("/f")
+                                            String fetch();
+                                        }
+                                        """),
+                                        src("ReadApi", """
+                                        public interface ReadApi extends Readable, Fetchable {
+                                            @Override
+                                            default String fetch() {
+                                                return "fetched";
+                                            }
+                                        }
+                                        """),
+                                        src("MultiResource", """
+                                        @Path("/multi")
+                                        public class MultiResource implements Fetchable, ReadApi {}
+                                        """)),
+                                1,
+                                List.of("ReadApi")))
                 .map(Arguments::of);
     }
 
@@ -363,7 +496,7 @@ class InterfaceDefaultMethodParityTest {
         List<ResourceMethodMeta> generated = callDescribe(result, generatedInstance, resourceFqn + "_JaxRsDescriptor");
 
         List<Route> reflectiveRoutes = routes(reflective, false);
-        List<Route> generatedRoutes = routes(generated, true);
+        List<Route> generatedRoutes = routes(generated, parityCase.generatedPlans());
 
         assertEquals(parityCase.expectedRoutes(), reflectiveRoutes.size(), "reflective: " + reflectiveRoutes);
         assertEquals(
@@ -414,7 +547,7 @@ class InterfaceDefaultMethodParityTest {
             String security,
             Object invocationResult) {}
 
-    private static List<Route> routes(List<ResourceMethodMeta> metas, boolean generated) throws Throwable {
+    private static List<Route> routes(List<ResourceMethodMeta> metas, boolean expectPlans) throws Throwable {
         List<Route> routes = new ArrayList<>();
         for (ResourceMethodMeta meta : metas) {
             List<String> params = meta.params().stream()
@@ -423,10 +556,11 @@ class InterfaceDefaultMethodParityTest {
             Object[] args =
                     Collections.nCopies(meta.params().size(), (Object) "7").toArray();
             Object invocationResult;
-            if (generated) {
+            if (expectPlans) {
                 assertNotNull(meta.executionPlan(), "generated route must carry an execution plan: " + meta);
                 invocationResult = meta.executionPlan().invoke(meta.resourceInstance(), args);
             } else {
+                assertNull(meta.executionPlan(), "route must keep reflective dispatch: " + meta);
                 invocationResult = meta.method().invoke(meta.resourceInstance(), args);
             }
             routes.add(new Route(

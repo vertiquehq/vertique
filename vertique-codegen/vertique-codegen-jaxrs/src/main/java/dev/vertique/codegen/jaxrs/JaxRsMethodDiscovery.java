@@ -45,7 +45,8 @@ import javax.lang.model.util.Types;
  * methods: interface contributions reach such a method only as annotations, which the
  * {@link EffectiveJaxRsContractResolver} consults when resolving its effective contract. An
  * inherited default method is itself the resource method; its own annotations are its direct
- * annotations.
+ * annotations, and it inherits from the interfaces it overrides
+ * ({@link JaxRsHierarchy#interfacesForMethod}), as the runtime does from its declaring interface.
  */
 public final class JaxRsMethodDiscovery {
 
@@ -63,7 +64,7 @@ public final class JaxRsMethodDiscovery {
      * @param resource the concrete resource type element; must not be {@code null}
      * @return an ordered, deduplicated list of resource methods; never {@code null}
      */
-    public static List<ExecutableElement> collect(CodegenContext ctx, TypeElement resource) {
+    static List<ExecutableElement> collect(CodegenContext ctx, TypeElement resource) {
         Types types = ctx.types();
         Map<String, ExecutableElement> seen = new LinkedHashMap<>();
         TypeElement current = resource;
