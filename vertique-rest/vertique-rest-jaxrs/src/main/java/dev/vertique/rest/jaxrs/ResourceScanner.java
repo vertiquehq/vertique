@@ -63,7 +63,9 @@ import lombok.extern.slf4j.Slf4j;
  * concrete class, its superclass chain, and all transitively reachable interfaces. This ensures
  * that interface-declared JAX-RS annotations ({@code @Path}, HTTP verbs, {@code @Operation},
  * {@code @Consumes}/{@code @Produces}, parameter annotations, {@code @DefaultValue}) are honoured
- * for resource implementations that carry no direct annotations.
+ * for resource implementations that carry no direct annotations. The candidate methods are those
+ * declared by the class and its superclasses plus the interface {@code default} methods the class
+ * inherits without overriding.
  *
  * <p><strong>Descriptor fast-path / reflective fallback dispatch:</strong> for each resource
  * instance, {@link #scanResource(Object, List)} first consults
@@ -737,10 +739,18 @@ class ResourceScanner {
 
     /**
      * Collects methods from the class hierarchy, starting with the most specific class and walking
-     * up through superclasses (stopping at {@link Object}).
+     * up through superclasses (stopping at {@link Object}), then adding the interface
+     * {@code default} methods the class inherits.
      *
-     * <p>Deduplicates by method name + parameter types: subclass overrides win. Skips bridge
-     * methods, synthetic methods, and default interface methods.
+     * <p>Deduplicates by method name + parameter types: subclass overrides win. Skips bridge and
+     * synthetic methods.
+     *
+     * <p>An inherited default method is a resource method of the class exactly as an override
+     * would be (issue #630). {@link Class#getMethods()} already applies the Java selection rules:
+     * a method declared by a class — including a bridge that a generic override produces — hides
+     * an interface method with the same signature, and a more specific interface's method hides
+     * the one it overrides. Filtering it to {@link Method#isDefault()} therefore yields exactly the
+     * defaults no class and no more specific interface overrides.
      *
      * @param clazz the class to scan
      * @return collected methods with subclass overrides taking precedence
@@ -753,13 +763,16 @@ class ResourceScanner {
                 if (method.isBridge() || method.isSynthetic()) {
                     continue;
                 }
-                if (method.isDefault()) {
-                    continue;
-                }
                 String key = methodKey(method);
                 seen.putIfAbsent(key, method);
             }
             current = current.getSuperclass();
+        }
+        for (Method method : clazz.getMethods()) {
+            // An interface bridge is a synthetic default method; it is never a resource method.
+            if (method.isDefault() && !method.isBridge() && !method.isSynthetic()) {
+                seen.putIfAbsent(methodKey(method), method);
+            }
         }
         return List.copyOf(seen.values());
     }

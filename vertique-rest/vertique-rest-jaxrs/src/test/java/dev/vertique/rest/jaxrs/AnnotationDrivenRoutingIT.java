@@ -28,6 +28,7 @@ import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.BeanParam;
 import jakarta.ws.rs.CookieParam;
+import jakarta.ws.rs.DELETE;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.HeaderParam;
 import jakarta.ws.rs.Path;
@@ -308,6 +309,28 @@ public class AnnotationDrivenRoutingIT {
         }
     }
 
+    /** Contract whose route is an interface default method (issue #630). */
+    public interface DefaultDeleteApi {
+
+        /**
+         * Echoes the bound path id for {@code DELETE {base}/{id}}.
+         *
+         * @param id the path id
+         * @return the id echoed back
+         */
+        @DELETE
+        @Path("/{id}")
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "deleteByDefault")
+        default String delete(@PathParam("id") String id) {
+            return "deleted=" + id;
+        }
+    }
+
+    /** Implements {@link DefaultDeleteApi} without overriding its default method. */
+    @Path("/defaults")
+    public static class DefaultDeleteResource implements DefaultDeleteApi {}
+
     // --- Test 1: route created with no openapi.json present ---
 
     @Test
@@ -315,6 +338,16 @@ public class AnnotationDrivenRoutingIT {
     void routeCreatedWithNoOpenApiJsonPresent(VertxTestContext ctx) {
         request(vertx, ctx, Set.of(new UserResource()), HttpMethod.GET, "/users/42", body -> {
             assertEquals("id=42", body);
+        });
+    }
+
+    // --- Interface default method is routed and dispatched (issue #630) ---
+
+    @Test
+    @DisplayName("A non-overridden interface default method is routed and dispatched")
+    void interfaceDefaultMethodIsRoutedAndDispatched(VertxTestContext ctx) {
+        request(vertx, ctx, Set.of(new DefaultDeleteResource()), HttpMethod.DELETE, "/defaults/7", body -> {
+            assertEquals("deleted=7", body);
         });
     }
 
