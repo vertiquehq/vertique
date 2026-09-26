@@ -49,12 +49,16 @@ public interface RestServerRequestEvidenceCapturer extends OrderedExtension {
      * so a misconfiguration fails startup instead of every request.
      *
      * <p>Throwing rejects the route: the registrar records an {@code EVIDENCE_CAPTURE_REJECTED}
-     * violation carrying the exception and fails router build once all routes have been checked.
-     * The default accepts every route.
+     * violation carrying the exception's type and message (the throwable itself is logged), keeps
+     * validating the remaining routes, and then fails router build once with every collected
+     * violation. The default accepts every route.
      *
      * <p>The registrar calls this once per route <em>per router build</em> — for every mount and every
      * HTTP verticle instance — so the same route can be validated several times, concurrently, on
      * different event loops. Implementations must be idempotent, thread-safe, and non-blocking.
+     *
+     * <p>Exceptions thrown by this callback propagate and are fatal to the enclosing operation;
+     * processing does not continue.
      *
      * @param meta the route's operation descriptor; never {@code null}
      */

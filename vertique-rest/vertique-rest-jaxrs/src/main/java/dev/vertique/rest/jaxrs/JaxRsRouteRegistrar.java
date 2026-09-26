@@ -156,8 +156,9 @@ public class JaxRsRouteRegistrar {
      *                                {@code ValidationModule} is not included — validation is skipped
      * @param objectProcessor         optional input object processor for canonicalization and
      *                                sanitization; {@code null} when input processing is not configured
-     * @param evidenceCapturers       pre-sorted list of request-evidence capturers to invoke once
-     *                                per request after body materialisation; empty list is the no-op default
+     * @param evidenceCapturers       pre-sorted list of request-evidence capturers; each validates every
+     *                                registered route at router build and is invoked once per request
+     *                                after body materialisation; empty list is the no-op default
      * @param actionRegistry          the framework {@link ActionRegistry} used to validate
      *                                {@code @RequiresAction} values at startup; {@code null} when the
      *                                authz engine is not installed — in which case any operation that

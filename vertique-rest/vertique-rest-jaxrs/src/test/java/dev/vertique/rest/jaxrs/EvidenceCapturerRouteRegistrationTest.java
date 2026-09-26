@@ -59,6 +59,15 @@ class EvidenceCapturerRouteRegistrationTest {
     @Path("/hooked")
     static class HookedResource implements Lookup {}
 
+    @Path("/second")
+    static class SecondResource {
+        @GET
+        @Operation(operationId = "second")
+        public String second() {
+            return "second";
+        }
+    }
+
     /** Records every route it is offered and never captures. */
     static final class RecordingCapturer implements RestServerRequestEvidenceCapturer {
         final List<HttpOperationMeta> offered = new ArrayList<>();
@@ -101,6 +110,29 @@ class EvidenceCapturerRouteRegistrationTest {
         assertEquals(HookedResource.class, meta.resourceClass());
         assertEquals("lookupById", meta.operationId());
         assertEquals("/hooked/{id}", meta.routeTemplate());
+    }
+
+    @Test
+    @DisplayName("rejections are collected across routes, and every capturer still validates every route")
+    void rejectionsCollectedAcrossRoutesAndCapturers() {
+        RecordingCapturer recording = new RecordingCapturer();
+
+        RouteRegistrationException ex = assertThrows(
+                RouteRegistrationException.class,
+                () -> RegistrarTestSupport.registerAllWithCapturers(
+                        registrar,
+                        Set.of(new HookedResource(), new SecondResource()),
+                        router,
+                        RegistrarTestSupport.TEST_MOUNT_META,
+                        List.of(new RejectingCapturer(), recording)));
+
+        assertEquals(
+                Set.of("lookupById", "second"),
+                ex.violations().stream()
+                        .map(RouteRegistrationViolation::operationId)
+                        .collect(java.util.stream.Collectors.toSet()),
+                ex.violations().toString());
+        assertEquals(2, recording.offered.size(), "a rejection must not stop the other capturers or routes");
     }
 
     @Test

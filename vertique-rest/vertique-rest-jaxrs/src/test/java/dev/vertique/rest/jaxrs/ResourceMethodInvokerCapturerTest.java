@@ -123,7 +123,8 @@ class ResourceMethodInvokerCapturerTest {
 
     /**
      * Builds a minimal {@link RoutingContext} stub with an empty {@code ctx.data()} map and the
-     * given routeTemplate stored under {@link RestRequestCompletionEmitter#KEY_ROUTE_TEMPLATE}.
+     * given routeTemplate stored under {@link RestRequestCompletionEmitter#KEY_ROUTE_TEMPLATE} —
+     * a value capturers must <em>not</em> see: they receive the route's own template.
      *
      * @param routeTemplate the route template to place in ctx.data(), or {@code null}
      * @return the configured stub
