@@ -124,10 +124,11 @@ public abstract class RestModule {
 
     /**
      * Contributes the rest-jaxrs {@link MountCompositionValidator}: it rejects an application mount
-     * that conflicts with a hand-built JAX-RS mount, and rejects two operations on any JAX-RS mounts
+     * that conflicts with a hand-built JAX-RS mount or with another application mount in the same
+     * mount set (as when compositions are merged), and rejects two operations on any JAX-RS mounts
      * that share an operationId without sharing the same owner, once one or more applications are
-     * declared. The declared registration set tells it whether any application is declared, even
-     * when none is active.
+     * declared or any application mount is present. The declared registration set tells it whether
+     * any application is declared, even when none is active.
      *
      * @param registrations the declared application registration set (empty in zero-declaration
      *                      mode)

@@ -1092,7 +1092,9 @@ installs:
   hand-built `JaxRsRouterMount`'s path, in either direction, fails startup before any mount router is
   created, naming the application class and both paths. A hand-built JAX-RS mount whose path is a
   router pattern — containing `:`, `{`, or `}` — conflicts with every application mount regardless of
-  any literal prefix relation, because the segment it matches is not known until request time.
+  any literal prefix relation, because the segment it matches is not known until request time. When
+  mounts from separate compositions are merged into one `Set<RouterMount>`, the same check also
+  compares the application mounts with each other.
 - **Unaffected.** A non-JAX-RS mount, and a pair of JAX-RS mounts that include no application, keep the
   warning-only overlap detection `HttpVerticle` already performs for every mount.
 
@@ -1321,8 +1323,8 @@ throws `IllegalStateException`, naming both methods and both mounts. The per-mou
 `DUPLICATE_OPERATION_ID` row above is unaffected — it keeps comparing only within one mount, and
 with no application declared it remains the only operationId check that runs. An `HttpVerticle`
 built with the public five-argument constructor runs neither this operationId check nor the
-mount-conflict check in [Mount conflicts](#mount-conflicts) above, and refuses to create any
-application mount's router.
+application-versus-hand-built check in [Mount conflicts](#mount-conflicts) above, and refuses to
+create any application mount's router.
 
 `SecurityPolicyViolationException` is thrown immediately when a `SecurityPolicyValidator` is bound and
 finds a violation, rather than being collected. `JsonProfileConfigurationException` is thrown at
@@ -1431,7 +1433,7 @@ Beyond what `RestCoreModule` and `JsonRuntimeModule` contribute:
 | `Set<GeneratedJaxRsApplicationRegistration>` | `@Multibinds`; INTERNAL generated-code contract, populated by the annotation processor with one entry per declared `jakarta.ws.rs.core.Application`; empty by default |
 | `Set<GeneratedJaxRsResourceEntry>` | `@Multibinds`; INTERNAL generated-code contract, populated by the annotation processor with one entry per DI-eligible JAX-RS resource; empty by default |
 | `Set<RouterMount>` | `@ElementsIntoSet`: with no `Application` declared, the default `JaxRsRouterMount` at `jaxrs.basePath`, empty when `@JaxRsResources` is empty; once an `Application` is declared, one mount per active application instead — see [Jakarta REST Applications](#jakarta-rest-applications) |
-| `MountCompositionValidator` (`JaxRsApplicationMountValidator`) | `@IntoSet`; INTERNAL; validates application mounts against hand-built JAX-RS mounts and cross-mount operationIds — see [Mount conflicts](#mount-conflicts) |
+| `MountCompositionValidator` (`JaxRsApplicationMountValidator`) | `@IntoSet`; INTERNAL; validates application mounts against hand-built JAX-RS mounts and against each other, and cross-mount operationIds — see [Mount conflicts](#mount-conflicts) |
 | `ComposeValidator` (`JaxRsDefaultProfileValidator`) | `@IntoSet`; fails the `VALIDATE` phase on an unknown `jaxrs.jsonProfile` (`json.systemProfile` is validated earlier, by the `CONFIGURE`-phase install step) |
 | `OperationSchemaSource`, `BeanValidator`, `InputObjectProcessor` (`dev.vertique.input.processing.InputObjectProcessor`), `ActionRegistry`, `Authorizer` | `@BindsOptionalOf`; satisfied by `rest-validation`, `validation`, `sanitization`, and `rest-security` respectively |
 
