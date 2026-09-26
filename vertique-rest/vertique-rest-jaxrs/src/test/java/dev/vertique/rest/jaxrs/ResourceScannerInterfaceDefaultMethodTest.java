@@ -95,6 +95,18 @@ class ResourceScannerInterfaceDefaultMethodTest {
     /** Declares no interface and no method of its own. */
     static class DerivedResource extends BaseResource {}
 
+    /** Superclass whose private {@code delete(String)} is not inherited, so it cannot shadow the default. */
+    static class PrivateHelperBase {
+        @SuppressWarnings("unused")
+        private String delete(String id) {
+            return "private helper " + id;
+        }
+    }
+
+    /** Inherits the {@link Crud} default next to a superclass's private same-signature helper. */
+    @Path("/helpers")
+    static class PrivateHelperResource extends PrivateHelperBase implements Crud {}
+
     /** Overrides the {@link Crud} default with another default and no annotations of its own. */
     interface SoftCrud extends Crud {
         @Override
@@ -291,6 +303,16 @@ class ResourceScannerInterfaceDefaultMethodTest {
             assertEquals("deleteById", delete.operationId());
             assertEquals("id", delete.params().get(0).name());
             assertEquals("soft 7", invoke(delete, "7"));
+        }
+
+        @Test
+        @DisplayName("a superclass's private same-signature method does not shadow the inherited default")
+        void privateSuperclassMethod_doesNotShadowDefault() throws Exception {
+            List<ResourceMethodMeta> metas = scan(new PrivateHelperResource());
+
+            ResourceMethodMeta delete = only(metas, "DELETE");
+            assertEquals(Crud.class, delete.method().getDeclaringClass());
+            assertEquals("deleted 7", invoke(delete, "7"));
         }
 
         @Test
