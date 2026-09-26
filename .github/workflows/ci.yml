@@ -109,7 +109,7 @@ jobs:
           node-version: "22"
 
       - name: Verify release contracts
-        run: node --test release/tests/publication-contract.test.mjs release/tests/coverage-aggregate-contract.test.mjs release/tests/docs-only-scope.test.mjs
+        run: node --test release/tests/publication-contract.test.mjs release/tests/coverage-aggregate-contract.test.mjs release/tests/docs-only-scope.test.mjs release/tests/publish-artifacts.test.mjs
 
       - name: Verify test bind policy
         run: |
