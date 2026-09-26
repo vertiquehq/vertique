@@ -186,6 +186,38 @@ class ApplicationAnnotationAllowListTest {
         return List.of(pathContract, storefront);
     }
 
+    /**
+     * A row's fixture in which {@code extra} is placed on {@code GuardedContract}, and {@code
+     * GuardedContract} is implemented only by {@code GuardedBase} (the abstract superclass),
+     * never directly by {@code Storefront} itself. Unlike {@link #hierarchyFixture}, where {@code
+     * Storefront} always implements the interface directly, this shape proves that the scope
+     * discovers an interface through the superclass chain even when the concrete application's
+     * own {@code implements} clause is empty.
+     */
+    private static List<JavaFileObject> interfaceOnlyOnAbstractSuperclassFixture(String pkg, LevelAnnotation extra) {
+        JavaFileObject guardedContract = SourceFiles.inline(
+                pkg + ".GuardedContract",
+                "package " + pkg + ";\n\n"
+                        + importLine(extra)
+                        + "\n"
+                        + annotationLine(extra)
+                        + "public interface GuardedContract {}\n");
+        JavaFileObject guardedBase = SourceFiles.inline(
+                pkg + ".GuardedBase",
+                "package " + pkg + ";\n\n"
+                        + "import jakarta.ws.rs.core.Application;\n\n"
+                        + "public abstract class GuardedBase extends Application implements GuardedContract {}\n");
+        JavaFileObject storefront = SourceFiles.inline(
+                pkg + ".Storefront",
+                "package " + pkg + ";\n\n"
+                        + "import jakarta.ws.rs.ApplicationPath;\n\n"
+                        + "@ApplicationPath(\"/api/storefront\")\n"
+                        + "public class Storefront extends GuardedBase {\n"
+                        + "    public Storefront() {}\n"
+                        + "}\n");
+        return List.of(guardedContract, guardedBase, storefront);
+    }
+
     // -----------------------------------------------------------------------------------------
     // TP-001 — resource-semantics annotations anywhere in the hierarchy fail unless exempt
     // -----------------------------------------------------------------------------------------
@@ -223,6 +255,10 @@ class ApplicationAnnotationAllowListTest {
         LevelAnnotation conditionalOnProperty = new LevelAnnotation(
                 "dev.vertique.codegen.ConditionalOnProperty",
                 "@ConditionalOnProperty(name = \"tp001.storefront.active\")");
+        LevelAnnotation repeatedConditionalOnProperty = new LevelAnnotation(
+                "dev.vertique.codegen.ConditionalOnProperty",
+                "@ConditionalOnProperty(name = \"tp001.storefront.a\")\n"
+                        + "@ConditionalOnProperty(name = \"tp001.storefront.b\")");
         LevelAnnotation noAutoWire = new LevelAnnotation("dev.vertique.codegen.NoAutoWire", "@NoAutoWire");
 
         String pkg1 = pkg("rolesonapplication");
@@ -237,6 +273,8 @@ class ApplicationAnnotationAllowListTest {
         String pkg10 = pkg("conditionalonabstractsuperclass");
         String pkg11 = pkg("noautowireonabstractsuperclass");
         String pkg12 = pkg("exemptcontrol");
+        String pkg13 = pkg("rolesoninterfaceonlyonabstractsuperclass");
+        String pkg14 = pkg("repeatedconditionalonabstractsuperclass");
 
         List<JavaFileObject> row8Sources = hierarchyFixture(pkg8, Level.CONCRETE, auditStandIn, true, false);
         row8Sources.add(auditStandInFixture(pkg8));
@@ -361,7 +399,27 @@ class ApplicationAnnotationAllowListTest {
                         false,
                         false,
                         false,
-                        true));
+                        true),
+                new Tp001Case(
+                        "roles-on-interface-only-on-abstract-superclass",
+                        interfaceOnlyOnAbstractSuperclassFixture(pkg13, rolesAllowed),
+                        pkg13 + ".Storefront",
+                        rolesAllowed.importLine(),
+                        pkg13 + ".GuardedContract",
+                        false,
+                        false,
+                        false,
+                        false),
+                new Tp001Case(
+                        "repeated-conditional-on-abstract-superclass",
+                        hierarchyFixture(pkg14, Level.SUPERCLASS, repeatedConditionalOnProperty, true, false),
+                        pkg14 + ".Storefront",
+                        "dev.vertique.codegen.ConditionalOnProperties",
+                        pkg14 + ".GuardedBase",
+                        true,
+                        false,
+                        false,
+                        false));
         return cases.stream().map(c -> Arguments.of(c.name(), c));
     }
 
