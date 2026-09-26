@@ -772,6 +772,15 @@ it across threads.
 Fires exactly once per send, through the shared wire funnel in `KafkaProducerFactory`, after
 `producer.send(record)` settles. Also `extends OrderedExtension` and observer-only.
 
+The framework calls `onSend(KafkaProducerSend send)`: one record carrying every column below plus
+`operation`, a `KafkaProducerOperation(producerType, producerName, method)` that is non-`null` only
+for `DIRECT_PRODUCER`. Its default delegates to the positional seven-argument `onSend` in the table,
+so a hook overrides whichever form it needs; new send details are added to the record, never as
+further positional parameters. Read type-level annotations from `operation.producerType()` — the
+`@KafkaProducer` interface the application injected — not from `method.getDeclaringClass()`, which
+is the super-interface when the send method is inherited. The protected
+`KafkaProducerFactory.sendWire`/`fireHooks` funnel carries the same `KafkaProducerOperation`.
+
 | Parameter | Notes |
 |---|---|
 | `origin` | `KafkaSendOrigin` — `DIRECT_PRODUCER`, `OUTBOX`, `DLQ`, or `INTERNAL` |

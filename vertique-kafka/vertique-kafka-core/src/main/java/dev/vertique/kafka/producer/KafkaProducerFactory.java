@@ -51,7 +51,8 @@ import lombok.extern.slf4j.Slf4j;
  * captured via {@link DurableContextPropagator#mergeCaptured} and merged into the record
  * headers (FR-CTX-173).
  *
- * <p>Every send converges at {@link #sendWire(String, String, byte[], Map, KafkaSendOrigin, Method)},
+ * <p>Every send converges at
+ * {@link #sendWire(String, String, byte[], Map, KafkaSendOrigin, KafkaProducerOperation)},
  * which fires all registered {@link KafkaProducerCaptureHook} instances (observer-only) after the
  * underlying send settles. Hooks are sorted by {@link OrderedExtension#comparator()} and isolated
  * via try/catch so a throwing hook never affects the send result.
@@ -163,6 +164,13 @@ public class KafkaProducerFactory {
                 resolveMethodSerializers(producerInterface, producerName, producerConfig, kafkaConfig, serdeRegistry);
         builtSerializers.addAll(methodSerializers.values());
 
+        Map<Method, KafkaProducerOperation> operations = new HashMap<>();
+        for (Method method : producerInterface.getMethods()) {
+            if (method.getDeclaringClass() != Object.class) {
+                operations.put(method, new KafkaProducerOperation(producerInterface, producerName, method));
+            }
+        }
+
         return (T) Proxy.newProxyInstance(
                 producerInterface.getClassLoader(), new Class<?>[] {producerInterface}, (proxy, method, args) -> {
                     if (method.getDeclaringClass() == Object.class) {
@@ -198,14 +206,15 @@ public class KafkaProducerFactory {
                         final String fKey = key;
                         final Object fValue = value;
                         final Map<String, String> fHeaders = headers;
-                        final Method fMethod = method;
+                        final KafkaProducerOperation fOperation = operations.get(method);
                         return vertx.executeBlocking(() -> serializer.serialize(fValue, fTopic, fHeaders), false)
                                 .compose(bytes -> sendRaw(
-                                        fTopic, fKey, bytes, fHeaders, KafkaSendOrigin.DIRECT_PRODUCER, fMethod));
+                                        fTopic, fKey, bytes, fHeaders, KafkaSendOrigin.DIRECT_PRODUCER, fOperation));
                     }
                     try {
                         byte[] bytes = serializer.serialize(value, topic, headers);
-                        return sendRaw(topic, key, bytes, headers, KafkaSendOrigin.DIRECT_PRODUCER, method);
+                        return sendRaw(
+                                topic, key, bytes, headers, KafkaSendOrigin.DIRECT_PRODUCER, operations.get(method));
                     } catch (RuntimeException e) {
                         return Future.failedFuture(e);
                     }
@@ -587,7 +596,7 @@ public class KafkaProducerFactory {
      * @param value          the serialized message bytes
      * @param headers        optional caller-supplied application headers; may be {@code null}
      * @param origin         the send origin to thread through to the wire funnel
-     * @param producerMethod the proxy method, or {@code null} for non-proxy origins
+     * @param operation      the proxy's producer operation, or {@code null} for non-proxy origins
      * @return a future of the record metadata; FAILS with {@link IllegalArgumentException} if any
      *         application header uses the reserved framework prefix (the merge never throws
      *         synchronously, so callers can classify the failure in {@code recover})
@@ -598,7 +607,7 @@ public class KafkaProducerFactory {
             byte[] value,
             Map<String, String> headers,
             KafkaSendOrigin origin,
-            @Nullable Method producerMethod) {
+            @Nullable KafkaProducerOperation operation) {
         DurableMetadata ctx = propagator.capture(DispatchBoundary.KAFKA);
         final Map<String, String> wire;
         try {
@@ -606,7 +615,7 @@ public class KafkaProducerFactory {
         } catch (IllegalArgumentException e) {
             return Future.failedFuture(e);
         }
-        return sendWire(topic, key, value, wire, origin, producerMethod);
+        return sendWire(topic, key, value, wire, origin, operation);
     }
 
     /**
@@ -621,7 +630,7 @@ public class KafkaProducerFactory {
      * @param headers        optional caller-supplied application headers; may be {@code null}
      * @param context        the explicit durable context to project; must not be {@code null}
      * @param origin         the send origin to thread through to the wire funnel
-     * @param producerMethod the proxy method, or {@code null} for non-proxy origins
+     * @param operation      the proxy's producer operation, or {@code null} for non-proxy origins
      * @return a future of the record metadata; FAILS with {@link IllegalArgumentException} if any
      *         application header uses the reserved framework prefix (never throws synchronously)
      */
@@ -632,14 +641,14 @@ public class KafkaProducerFactory {
             Map<String, String> headers,
             DurableMetadata context,
             KafkaSendOrigin origin,
-            @Nullable Method producerMethod) {
+            @Nullable KafkaProducerOperation operation) {
         final Map<String, String> wire;
         try {
             wire = DurableMetadataHeaderCodec.mergeForEgress(headers, context);
         } catch (IllegalArgumentException e) {
             return Future.failedFuture(e);
         }
-        return sendWire(topic, key, value, wire, origin, producerMethod);
+        return sendWire(topic, key, value, wire, origin, operation);
     }
 
     /**
@@ -655,7 +664,7 @@ public class KafkaProducerFactory {
      * @param value          the serialized message bytes
      * @param wire           the fully merged wire headers (application + context); must not be {@code null}
      * @param origin         the send origin, threaded from the public entry point
-     * @param producerMethod the proxy method for {@link KafkaSendOrigin#DIRECT_PRODUCER}, or
+     * @param operation      the producer operation for {@link KafkaSendOrigin#DIRECT_PRODUCER}, or
      *                       {@code null} for all other origins
      * @return a future of the record metadata; the future reflects the actual Kafka send result —
      *         hook exceptions do not change its outcome
@@ -666,12 +675,11 @@ public class KafkaProducerFactory {
             byte[] value,
             Map<String, String> wire,
             KafkaSendOrigin origin,
-            @Nullable Method producerMethod) {
+            @Nullable KafkaProducerOperation operation) {
         return getOrCreateProducer().compose(producer -> {
             KafkaProducerRecord<String, byte[]> record = KafkaProducerRecord.create(topic, key, value);
             wire.forEach((k, v) -> record.addHeader(k, v));
-            return producer.send(record)
-                    .onComplete(ar -> fireHooks(origin, topic, key, value, wire, producerMethod, ar));
+            return producer.send(record).onComplete(ar -> fireHooks(origin, topic, key, value, wire, operation, ar));
         });
     }
 
@@ -684,7 +692,7 @@ public class KafkaProducerFactory {
      * @param key            the record key, or {@code null}
      * @param value          the serialized wire bytes
      * @param wire           the fully merged wire headers
-     * @param producerMethod the proxy method, or {@code null}
+     * @param operation      the producer operation, or {@code null}
      * @param ar             the settled send result
      */
     protected void fireHooks(
@@ -693,15 +701,16 @@ public class KafkaProducerFactory {
             @Nullable String key,
             byte[] value,
             Map<String, String> wire,
-            @Nullable Method producerMethod,
+            @Nullable KafkaProducerOperation operation,
             io.vertx.core.AsyncResult<RecordMetadata> ar) {
         if (captureHooks.isEmpty()) {
             return;
         }
-        dev.vertique.core.payload.PayloadSource payloadSource = PayloadSources.buffered(value, null);
+        KafkaProducerSend send =
+                new KafkaProducerSend(origin, topic, key, PayloadSources.buffered(value, null), wire, operation, ar);
         for (KafkaProducerCaptureHook hook : captureHooks) {
             try {
-                hook.onSend(origin, topic, key, payloadSource, wire, producerMethod, ar);
+                hook.onSend(send);
             } catch (Exception ex) {
                 log.warn(
                         "[KafkaProducerFactory] Capture hook {} threw an exception — swallowing: {}",

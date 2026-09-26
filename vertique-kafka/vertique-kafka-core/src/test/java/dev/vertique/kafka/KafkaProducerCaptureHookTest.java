@@ -21,6 +21,8 @@ import dev.vertique.kafka.config.KafkaConfig;
 import dev.vertique.kafka.producer.KafkaProducer;
 import dev.vertique.kafka.producer.KafkaProducerCaptureHook;
 import dev.vertique.kafka.producer.KafkaProducerFactory;
+import dev.vertique.kafka.producer.KafkaProducerOperation;
+import dev.vertique.kafka.producer.KafkaProducerSend;
 import dev.vertique.kafka.producer.KafkaSendOrigin;
 import dev.vertique.kafka.producer.Topic;
 import dev.vertique.kafka.serialization.KafkaSerdeRegistry;
@@ -77,6 +79,31 @@ class KafkaProducerCaptureHookTest {
          */
         @Topic("hook.test.topic")
         Future<RecordMetadata> publish(String msg);
+    }
+
+    /** Base contract whose send method a producer interface inherits. */
+    interface BaseMsgProducer {
+        /**
+         * @param msg the message value
+         * @return a future of the record metadata
+         */
+        @Topic("hook.base.topic")
+        Future<RecordMetadata> publishBase(String msg);
+    }
+
+    /** Producer interface whose only send method is inherited. */
+    @KafkaProducer(name = "derived")
+    interface DerivedMsgProducer extends BaseMsgProducer {}
+
+    /** Hook overriding the send-event overload; records the operation it receives. */
+    static final class OperationRecordingHook implements KafkaProducerCaptureHook {
+
+        final List<KafkaProducerSend> sends = new CopyOnWriteArrayList<>();
+
+        @Override
+        public void onSend(KafkaProducerSend send) {
+            sends.add(send);
+        }
     }
 
     /** Recording capture hook that collects all invocations. */
@@ -364,6 +391,60 @@ class KafkaProducerCaptureHookTest {
         }
     }
 
+    // --- Producer operation (issue #638) ---
+
+    @Nested
+    @DisplayName("Producer operation: hooks receive the @KafkaProducer interface and name")
+    class ProducerOperation {
+
+        @Test
+        @DisplayName("a proxy send carries the producer interface, name, and method")
+        void proxySendCarriesOperation() throws NoSuchMethodException {
+            OperationRecordingHook hook = new OperationRecordingHook();
+            capturingFactory(hook).create(TestMsgProducer.class).publish("hello");
+
+            assertEquals(1, hook.sends.size());
+            KafkaProducerSend send = hook.sends.get(0);
+            assertEquals(KafkaSendOrigin.DIRECT_PRODUCER, send.origin());
+            assertEquals(
+                    new KafkaProducerOperation(
+                            TestMsgProducer.class, "test", TestMsgProducer.class.getMethod("publish", String.class)),
+                    send.operation());
+        }
+
+        @Test
+        @DisplayName("an inherited send method carries the producer interface, not the declaring super-interface")
+        void inheritedSendCarriesProducerInterface() {
+            OperationRecordingHook hook = new OperationRecordingHook();
+            capturingFactory(hook).create(DerivedMsgProducer.class).publishBase("hello");
+
+            KafkaProducerOperation operation = hook.sends.get(0).operation();
+            assertEquals(DerivedMsgProducer.class, operation.producerType());
+            assertEquals("derived", operation.producerName());
+            assertEquals(BaseMsgProducer.class, operation.method().getDeclaringClass());
+        }
+
+        @Test
+        @DisplayName("non-proxy sends carry no operation")
+        void nonProxySendCarriesNoOperation() {
+            OperationRecordingHook hook = new OperationRecordingHook();
+            capturingFactory(hook).sendForDlq("dlq", "k", new byte[] {1}, Map.of());
+
+            assertEquals(1, hook.sends.size());
+            assertNull(hook.sends.get(0).operation());
+        }
+
+        @Test
+        @DisplayName("a hook overriding only the positional signature still receives proxy sends")
+        void positionalSignatureHookStillCalled() {
+            RecordingHook hook = new RecordingHook();
+            capturingFactory(hook).create(TestMsgProducer.class).publish("hello");
+
+            assertEquals(1, hook.captures.size());
+            assertEquals("publish", hook.captures.get(0).producerMethod().getName());
+        }
+    }
+
     // --- Origin-capturing test double ---
 
     /**
@@ -393,11 +474,11 @@ class KafkaProducerCaptureHookTest {
                 byte[] value,
                 Map<String, String> wire,
                 KafkaSendOrigin origin,
-                Method producerMethod) {
+                KafkaProducerOperation operation) {
             capturedOrigins.add(origin);
-            capturedMethods.add(producerMethod);
+            capturedMethods.add(operation != null ? operation.method() : null);
             // Fire hooks synchronously with a succeeded result so hook tests can assert without async
-            fireHooks(origin, topic, key, value, wire, producerMethod, Future.succeededFuture(null));
+            fireHooks(origin, topic, key, value, wire, operation, Future.succeededFuture(null));
             return Future.succeededFuture(null);
         }
     }
