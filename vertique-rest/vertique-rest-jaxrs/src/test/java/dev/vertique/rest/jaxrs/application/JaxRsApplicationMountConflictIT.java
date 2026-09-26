@@ -140,6 +140,21 @@ public class JaxRsApplicationMountConflictIT {
 
     // --- TP-004 ---
 
+    /**
+     * The reason fragment a genuine literal path overlap's failure must contain (G2-03): cases (a),
+     * (e), and (f), where {@code JaxRsMountPaths.conflict} holds between the application's and the
+     * hand-built mount's paths.
+     */
+    private static final String OVERLAP_CONFLICT_REASON = "their mount paths overlap";
+
+    /**
+     * The reason fragment a router-pattern-only conflict's failure must contain (G2-03): case (d),
+     * where the hand-built mount's path is a router pattern that conflicts with every application
+     * regardless of any literal prefix relation, so the failure must not claim a literal overlap.
+     */
+    private static final String ROUTER_PATTERN_CONFLICT_REASON =
+            "a router-pattern mount path conflicts with every application mount";
+
     @ParameterizedTest(name = "{0}")
     @MethodSource("conflictCases")
     @DisplayName("A hand-built JAX-RS mount that conflicts with a declared application fails deployment before any "
@@ -787,7 +802,11 @@ public class JaxRsApplicationMountConflictIT {
                         "(a) ManagementApplication at /api/mgmt beside hand-built /api/*: conflicts",
                         () -> managementApiPrefixConflictComponent(configA),
                         true,
-                        List.of("'/api/*'", "'/api/mgmt/*'", ManagementApplication.class.getName())),
+                        List.of(
+                                "'/api/*'",
+                                "'/api/mgmt/*'",
+                                ManagementApplication.class.getName(),
+                                OVERLAP_CONFLICT_REASON)),
                 new Case(
                         CaseId.B,
                         "(b) control: PublicApplication at /api/public beside hand-built /api/publicity/*: deploys",
@@ -805,19 +824,27 @@ public class JaxRsApplicationMountConflictIT {
                         "(d) PublicApplication at /api/public beside hand-built /:tenant/*: pattern-path conflicts with every application",
                         () -> publicTenantPatternConflictComponent(configD),
                         true,
-                        List.of("'/:tenant/*'", "'/api/public/*'", PublicApplication.class.getName())),
+                        List.of(
+                                "'/:tenant/*'",
+                                "'/api/public/*'",
+                                PublicApplication.class.getName(),
+                                ROUTER_PATTERN_CONFLICT_REASON)),
                 new Case(
                         CaseId.E,
                         "(e) PublicApplication at /api/public beside hand-built /api/public/admin/* (contained): conflicts in the reverse direction",
                         () -> publicAdminReverseConflictComponent(configE),
                         true,
-                        List.of("'/api/public/admin/*'", "'/api/public/*'", PublicApplication.class.getName())),
+                        List.of(
+                                "'/api/public/admin/*'",
+                                "'/api/public/*'",
+                                PublicApplication.class.getName(),
+                                OVERLAP_CONFLICT_REASON)),
                 new Case(
                         CaseId.F,
                         "(f) root application at / beside hand-built /other/*: the root application conflicts with everything",
                         () -> rootApplicationConflictComponent(configF),
                         true,
-                        List.of("'/other/*'", "'/*'", RootApplication.class.getName())));
+                        List.of("'/other/*'", "'/*'", RootApplication.class.getName(), OVERLAP_CONFLICT_REASON)));
     }
 
     /** Identifies which lettered TP-004 case a {@link Case} is, for the non-conflict cases' extra verification. */

@@ -47,6 +47,7 @@ import io.vertx.ext.web.handler.BodyHandler;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.core.Application;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
@@ -156,12 +157,14 @@ public class JaxRsRouterMount implements RouterMount {
     }
 
     /**
-     * Returns this mount's resources in their iteration order, for tests.
+     * Returns this mount's resources in their iteration order.
      *
-     * <p>{@link #meta()}'s {@code resourceTypes} is an unordered {@link Set}, so order-sensitive
-     * assertions (resources within an application mount, ordered by class name) read this accessor
-     * instead. Package-private; the test-support accessor in this test package exposes it to the
-     * {@code dev.vertique.rest.jaxrs.application} test package.
+     * <p>{@link #meta()}'s {@code resourceTypes} is an unordered {@link Set}, so the rest-jaxrs
+     * {@code MountCompositionValidator} contribution reads this accessor to scan every resource for
+     * its cross-mount operationId check, and order-sensitive test assertions (resources within an
+     * application mount, ordered by class name) read it too. Package-private; the test-support
+     * accessor in this test package exposes it to the {@code dev.vertique.rest.jaxrs.application}
+     * test package.
      *
      * @return the stored resources, in their iteration order
      */
@@ -355,7 +358,10 @@ public class JaxRsRouterMount implements RouterMount {
             hook.afterAuthSetup(routerSetup);
         }
 
-        JaxRsRouteRegistrar registrar = new JaxRsRouteRegistrar(applicationType);
+        JaxRsRouteRegistrar registrar = new JaxRsRouteRegistrar();
+        // This mount's own sink for registerAll's implicit-policy recording: the registrar carries
+        // no state between calls, so createRouter creates and reads this list itself.
+        List<JaxRsRouteRegistrar.ImplicitOperation> implicitOperations = new ArrayList<>();
         registrar.registerAll(
                 resources,
                 apiRouter,
@@ -381,15 +387,16 @@ public class JaxRsRouterMount implements RouterMount {
                 factory.authorizerAvailable,
                 factory.jaxRsConfig,
                 factory.jsonMapperProfileRegistry,
-                factory.jsonConfig);
+                factory.jsonConfig,
+                applicationType,
+                implicitOperations);
 
-        // registerAll recorded one entry per implicit-policy operation, but only while THIS mount
-        // serves a declared application and the requireExplicitPolicy opt-in was off for that
-        // call (with the opt-in on, an implicit operation is a startup violation instead, raised
-        // from inside registerAll, so this point is never reached). Empty for every other mount,
-        // including a non-application mount, so exactly one WARN is logged here per composed
-        // application mount that has any.
-        List<JaxRsRouteRegistrar.ImplicitOperation> implicitOperations = registrar.implicitOperations();
+        // registerAll recorded one entry per implicit-policy operation into this mount's own sink,
+        // but only while THIS mount serves a declared application and the requireExplicitPolicy
+        // opt-in was off for that call (with the opt-in on, an implicit operation is a startup
+        // violation instead, raised from inside registerAll, so this point is never reached). Empty
+        // for every other mount, including a non-application mount, so exactly one WARN is logged
+        // here per composed application mount that has any.
         if (!implicitOperations.isEmpty()) {
             String entries = implicitOperations.stream()
                     .sorted(Comparator.comparing(JaxRsRouteRegistrar.ImplicitOperation::fullPath)

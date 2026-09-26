@@ -112,49 +112,19 @@ import lombok.extern.slf4j.Slf4j;
 public class JaxRsRouteRegistrar {
 
     /**
-     * The declared {@code jakarta.ws.rs.core.Application} this registrar's {@link #registerAll}
-     * call serves, or {@code null} for a mount not built from a declared application. The only
-     * uses of this field are the opt-in-off recording condition inside {@link #registerAll}; the
-     * opt-in failure itself applies regardless of it.
+     * Creates a registrar. Stateless: {@link #registerAll} carries no state between calls, and the
+     * declared application a call serves, when it serves one, is a parameter of the package-private
+     * overload below, never instance state.
      */
-    private final @Nullable Class<? extends Application> applicationType;
-
-    /**
-     * The implicit operations recorded by the most recent {@link #registerAll} call, when this
-     * registrar serves an application mount and the {@code jaxrs.security.requireExplicitPolicy}
-     * opt-in is off. Exposed via {@link #implicitOperations()}; the owning {@code
-     * JaxRsRouterMount} composes the warning from these entries. Empty for a mount this
-     * registrar does not serve as an application mount, and whenever the opt-in is on (in which
-     * case an implicit operation is a startup violation instead, never a recorded warning entry).
-     */
-    private final List<ImplicitOperation> implicitOperations = new ArrayList<>();
-
-    /**
-     * Creates a registrar for a mount that does not serve a declared {@code
-     * jakarta.ws.rs.core.Application} — every public caller, including a hand-built {@link
-     * JaxRsRouterMount.Factory#create} mount and the zero-declaration legacy default mount, uses
-     * this constructor.
-     */
-    public JaxRsRouteRegistrar() {
-        this(null);
-    }
-
-    /**
-     * Creates a registrar, recording the declared application this registrar's {@link
-     * #registerAll} call serves, or {@code null} for a mount not built from a declared
-     * application. Package-private: only the package-private application-mount composition
-     * constructs a registrar with a known application type; every public caller uses the
-     * no-argument constructor.
-     *
-     * @param applicationType the declared {@code jakarta.ws.rs.core.Application} this registrar's
-     *                        mount was built for, or {@code null}
-     */
-    JaxRsRouteRegistrar(@Nullable Class<? extends Application> applicationType) {
-        this.applicationType = applicationType;
-    }
+    public JaxRsRouteRegistrar() {}
 
     /**
      * Scans all resource instances and registers handlers on a plain {@link Router}.
+     *
+     * <p>Delegates to the package-private overload below with a {@code null} application type and a
+     * sink this call discards, so it records no implicit-policy operation — every public caller,
+     * including a hand-built {@link JaxRsRouterMount.Factory#create} mount and the zero-declaration
+     * legacy default mount, serves no declared application.
      *
      * <p>If a {@code securityPolicyValidator} is provided, it is run for every discovered operation.
      * Any violations found cause startup to fail immediately with a {@link
@@ -252,14 +222,152 @@ public class JaxRsRouteRegistrar {
             JaxRsConfig jaxRsConfig,
             JsonMapperProfileRegistry jsonMapperProfileRegistry,
             JsonConfig jsonConfig) {
+        registerAll(
+                resources,
+                apiRouter,
+                strategy,
+                mount,
+                schemaSource,
+                securityHandlers,
+                operationInterceptors,
+                contributors,
+                errorPipeline,
+                responsePipeline,
+                restContextResolution,
+                paramConversionResolver,
+                securityPolicyValidator,
+                authEnabled,
+                decoders,
+                encoders,
+                mediaTypeValidation,
+                beanValidator,
+                objectProcessor,
+                evidenceCapturers,
+                actionRegistry,
+                authorizerAvailable,
+                jaxRsConfig,
+                jsonMapperProfileRegistry,
+                jsonConfig,
+                null,
+                new ArrayList<>());
+    }
+
+    /**
+     * Scans all resource instances and registers handlers on a plain {@link Router}, recording every
+     * implicit-policy operation into {@code implicitOperations} while this call serves
+     * {@code applicationType}.
+     *
+     * <p>Package-private: the package-private application-mount composition
+     * ({@code JaxRsRouterMount#createRouter}) is the sole caller that serves a declared application,
+     * passing its own type and a fresh sink it reads after this call returns; every other caller
+     * uses the public {@link #registerAll(Set, Router, RequestValidationStrategy, MountMeta,
+     * Optional, SecuritySchemeHandlerCollector, List, List, ErrorPipeline, ResponsePipeline,
+     * RestContextResolution, ParamConversionResolver, SecurityPolicyValidator, boolean, List, List,
+     * String, BeanValidator, InputObjectProcessor, List, ActionRegistry, boolean, JaxRsConfig,
+     * JsonMapperProfileRegistry, JsonConfig) overload}, which delegates here with a {@code null}
+     * application type and a sink it discards. This registrar keeps no state of its own between
+     * calls: {@code applicationType} and {@code implicitOperations} are this call's own, never
+     * instance fields.
+     *
+     * @param resources               JAX-RS annotated resource instances
+     * @param apiRouter               the plain Vert.x web router to register routes on
+     * @param strategy                the selected request-validation strategy producing the per-operation
+     *                                validation gate
+     * @param mount                   the metadata of the mount registering these resources; threaded to the
+     *                                mount-aware 3-arg {@link RequestValidationStrategy#gateFor(JaxRsOperationDescriptor,
+     *                                OperationSchemas, MountMeta)} call for every operation
+     * @param schemaSource            optional source of per-operation validation schemas; when empty an
+     *                                {@link OperationSchemas#empty()} collection is passed to the strategy
+     * @param securityHandlers        the collected authentication handlers keyed by scheme name, applied
+     *                                per the operation's security requirements
+     * @param operationInterceptors   sorted list of operation interceptors
+     * @param contributors            sorted list of operation handler contributors
+     * @param errorPipeline           shared error mapping pipeline
+     * @param responsePipeline        unified response pipeline for producing and sending responses
+     * @param restContextResolution   coordinator for the {@link RestContextResolution} resolver chain
+     * @param paramConversionResolver the framework parameter-conversion resolver; threaded into each
+     *                                {@link ResourceMethodInvoker} and used to fail-fast validate that a
+     *                                converter exists for every declared conversion-applicable parameter
+     * @param securityPolicyValidator optional security policy validator; {@code null} when auth
+     *                                module is absent
+     * @param authEnabled             whether the auth module is installed
+     * @param decoders                priority-sorted list of request body decoders
+     * @param encoders                priority-sorted list of response body encoders
+     * @param mediaTypeValidation     media type validation mode: {@code "WARN"}, {@code "STRICT"},
+     *                                or {@code "OFF"}
+     * @param beanValidator           optional Bean Validation implementation; {@code null} when
+     *                                {@code ValidationModule} is not included — validation is skipped
+     * @param objectProcessor         optional input object processor for canonicalization and
+     *                                sanitization; {@code null} when input processing is not configured
+     * @param evidenceCapturers       pre-sorted list of request-evidence capturers to invoke once
+     *                                per request after body materialisation; empty list is the no-op default
+     * @param actionRegistry          the framework {@link ActionRegistry} used to validate
+     *                                {@code @RequiresAction} values at startup; {@code null} when the
+     *                                authz engine is not installed — in which case any operation that
+     *                                declares {@code @RequiresAction} fails startup (fail-closed),
+     *                                since the action gate could not be enforced
+     * @param authorizerAvailable     whether the core action {@link dev.vertique.security.authz.Authorizer}
+     *                                is installed; the {@code Authorizer} is the function the enforcement
+     *                                layer calls to decide the action gate. Because the
+     *                                {@link ActionRegistry} and the {@code Authorizer} are bound through
+     *                                separate optional seams, a non-default graph can have the registry
+     *                                present while the {@code Authorizer} is absent; an operation that
+     *                                declares {@code @RequiresAction} then fails startup (fail-closed)
+     *                                rather than failing closed per-request when the gate evaluates
+     *                                (finding W2)
+     * @param jaxRsConfig             JAX-RS routing configuration; supplies the default request JSON
+     *                                profile ({@link JaxRsConfig#jsonProfile()}, config key
+     *                                {@code jaxrs.jsonProfile}) used when a resource method selects no
+     *                                profile of its own
+     * @param jsonMapperProfileRegistry registry of named JSON mapper profiles; used to resolve the
+     *                                effective request-body {@code ObjectMapper} per resource method
+     *                                ({@code @JsonProfile} method/class &rarr; config &rarr; {@code vertx}).
+     *                                Resolving an unknown profile id fails startup (fail-fast, FR-JSON-008)
+     * @param jsonConfig             global JSON configuration; supplies the {@code json.jsonProfile} default
+     *                                applied when a resource method and {@code jaxrs.jsonProfile} both select
+     *                                no profile of their own
+     * @param applicationType         the declared {@code jakarta.ws.rs.core.Application} this call's
+     *                                mount was built for, or {@code null} for a mount not built from a
+     *                                declared application. The only uses of this parameter are the
+     *                                opt-in-off recording condition below; the opt-in failure itself
+     *                                applies regardless of it.
+     * @param implicitOperations      the sink every implicit-policy operation is recorded into, while
+     *                                {@code applicationType} is non-{@code null} and the {@code
+     *                                jaxrs.security.requireExplicitPolicy} opt-in is off; untouched
+     *                                otherwise
+     */
+    void registerAll(
+            Set<Object> resources,
+            Router apiRouter,
+            RequestValidationStrategy strategy,
+            MountMeta mount,
+            Optional<OperationSchemaSource> schemaSource,
+            SecuritySchemeHandlerCollector securityHandlers,
+            List<OperationInterceptor> operationInterceptors,
+            List<OperationHandlerContributor> contributors,
+            ErrorPipeline errorPipeline,
+            ResponsePipeline responsePipeline,
+            RestContextResolution restContextResolution,
+            ParamConversionResolver paramConversionResolver,
+            SecurityPolicyValidator securityPolicyValidator,
+            boolean authEnabled,
+            List<RequestBodyDecoder> decoders,
+            List<ResponseBodyEncoder> encoders,
+            String mediaTypeValidation,
+            @Nullable BeanValidator beanValidator,
+            @Nullable InputObjectProcessor objectProcessor,
+            List<RestServerRequestEvidenceCapturer> evidenceCapturers,
+            @Nullable ActionRegistry actionRegistry,
+            boolean authorizerAvailable,
+            JaxRsConfig jaxRsConfig,
+            JsonMapperProfileRegistry jsonMapperProfileRegistry,
+            JsonConfig jsonConfig,
+            @Nullable Class<? extends Application> applicationType,
+            List<ImplicitOperation> implicitOperations) {
         List<OperationInterceptor> sortedInterceptors =
                 operationInterceptors != null ? Collections.unmodifiableList(operationInterceptors) : List.of();
         List<OperationHandlerContributor> sortedContributors =
                 contributors != null ? Collections.unmodifiableList(contributors) : List.of();
-        // Reset per call: a registrar instance may run registerAll more than once (several existing
-        // tests reuse one instance across assertions), and implicitOperations() must reflect only
-        // the most recent call once it returns.
-        implicitOperations.clear();
 
         // Null-safe opt-in read: many existing tests call registerAll directly with a hand-built
         // JaxRsConfig. A null jaxRsConfig, or a JaxRsConfig whose security() is null, is treated
@@ -412,8 +520,8 @@ public class JaxRsRouteRegistrar {
                                     + "jaxrs.security.requireExplicitPolicy requires"));
                 } else if (applicationType != null) {
                     // Recording condition: only when this registrar serves an application mount.
-                    // The owning JaxRsRouterMount reads implicitOperations() after registerAll
-                    // returns and logs the warning; a non-application mount never warns.
+                    // The owning JaxRsRouterMount reads its own implicitOperations sink after this
+                    // call returns and logs the warning; a non-application mount never warns.
                     implicitOperations.add(new ImplicitOperation(meta.httpMethod(), fullPath, meta.operationId()));
                 }
             }
@@ -1303,34 +1411,20 @@ public class JaxRsRouteRegistrar {
             SecurityPolicy effectivePolicy,
             List<SecurityRequirementSet> requirementSets,
             boolean requiredActionResolved) {
-        boolean policyRestricts = effectivePolicy instanceof SecurityPolicy.DenyAll
-                || effectivePolicy instanceof SecurityPolicy.AuthenticatedOnly
-                || effectivePolicy instanceof SecurityPolicy.Constrained;
         boolean requirementSetsRestrict = !requirementSets.isEmpty()
                 && requirementSets.stream().noneMatch(set -> set.schemes().isEmpty());
-        if (policyRestricts || requirementSetsRestrict || requiredActionResolved) {
+        if (requirementSetsRestrict || requiredActionResolved) {
             return ExplicitPolicy.RESTRICTS_CALLERS;
         }
-        if (effectivePolicy instanceof SecurityPolicy.PermitAll) {
-            return ExplicitPolicy.DECLARED_PUBLIC;
-        }
-        return ExplicitPolicy.IMPLICIT;
-    }
-
-    /**
-     * Returns the implicit operations recorded by the most recent {@link #registerAll} call: valid
-     * once that call returns, and empty when this registrar does not serve an application mount
-     * ({@link #applicationType} is {@code null}) or the {@code
-     * jaxrs.security.requireExplicitPolicy} opt-in was on for that call (an implicit operation is
-     * then a startup violation instead of a recorded warning entry).
-     *
-     * <p>Package-private: the owning {@code JaxRsRouterMount} reads this after {@link #registerAll}
-     * returns and logs the warning from it.
-     *
-     * @return the recorded implicit operations, in the order they were registered
-     */
-    List<ImplicitOperation> implicitOperations() {
-        return List.copyOf(implicitOperations);
+        // Exhaustive pattern switch over the sealed SecurityPolicy: adding a new variant is a
+        // compile error here rather than a silent fall-through to IMPLICIT.
+        return switch (effectivePolicy) {
+            case SecurityPolicy.DenyAll ignored -> ExplicitPolicy.RESTRICTS_CALLERS;
+            case SecurityPolicy.AuthenticatedOnly ignored -> ExplicitPolicy.RESTRICTS_CALLERS;
+            case SecurityPolicy.Constrained ignored -> ExplicitPolicy.RESTRICTS_CALLERS;
+            case SecurityPolicy.PermitAll ignored -> ExplicitPolicy.DECLARED_PUBLIC;
+            case SecurityPolicy.None ignored -> ExplicitPolicy.IMPLICIT;
+        };
     }
 
     /**
@@ -1353,8 +1447,7 @@ public class JaxRsRouteRegistrar {
      * {@code /console/items} yields {@code /api/mgmt/console/items}, and the legacy default mount
      * ({@code /*}) joined with {@code /console/items} yields {@code /console/items}.
      *
-     * <p>Package-private and static so the join rule lives in exactly one place; a later lane that
-     * refines it changes only this method.
+     * <p>Package-private and static so the join rule lives in exactly one place.
      *
      * @param mountPath     the mount's path prefix ({@link
      *                      dev.vertique.rest.core.router.MountMeta#mountPath()})

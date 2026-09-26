@@ -15,6 +15,7 @@ import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.jaxrs.JaxRsRouterMount;
 import dev.vertique.rest.jaxrs.RouteRegistrationException;
 import dev.vertique.rest.jaxrs.RouteRegistrationViolation;
+import dev.vertique.rest.jaxrs.application.policy.OrderMismatchResource;
 import dev.vertique.rest.jaxrs.application.policy.PermitAllResource;
 import dev.vertique.rest.jaxrs.application.policy.PermitAllScopedResource;
 import dev.vertique.rest.jaxrs.application.policy.RequiresActionResource;
@@ -34,6 +35,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
@@ -52,10 +54,13 @@ import org.slf4j.LoggerFactory;
  *
  * <p>TP-002 ({@link #applicationMountWarnsPerImplicitOperation}) composes {@code policy.app}'s
  * {@code ManagementApplication} mount ({@link ExplicitPolicyComponents.ApplicationMountComponent})
- * around one of the {@code policy} resources unit's five variants at a time: (a) is fully
+ * around one of the {@code policy} resources unit's six variants at a time: (a) is fully
  * unannotated, with two implicit operations that must both be named, sorted, in the mount's one
  * WARN event; (b) to (e) each carry a declaration that C-POLICY classifies as either declared
- * public or restricting callers, so none of them warns.
+ * public or restricting callers, so none of them warns; (f) (G2-10) is fully unannotated like (a),
+ * but its two operations' registration order differs from their full-path sort order, proving the
+ * warning's {@code .sorted(...)} by full path is observable rather than incidentally matching
+ * registration order.
  *
  * <p>TP-003 ({@link #requireExplicitPolicyFailsAnyJaxRsMount}) turns the opt-in on
  * ({@code jaxrs.security.requireExplicitPolicy: true}) and composes the same variant (a) resource
@@ -126,7 +131,7 @@ class ExplicitSecurityPolicyTest {
 
         if (testCase.expectWarning()) {
             assertEquals(
-                    List.of(expectedUnannotatedWarning()),
+                    List.of(testCase.expectedWarning().get()),
                     result.warnings(),
                     () -> testCase.label() + ": expected exactly one FR-013 warning naming both implicit operations, "
                             + "got: " + result.warnings());
@@ -138,9 +143,9 @@ class ExplicitSecurityPolicyTest {
     }
 
     /**
-     * TP-002's five named rows, (a) to (e) per the contract's case list.
+     * TP-002's six named rows, (a) to (f) per the contract's case list.
      *
-     * @return the five TP-002 cases, in contract order
+     * @return the six TP-002 cases, in contract order
      */
     private static Stream<ExplicitPolicyCase> applicationMountCases() {
         return Stream.of(
@@ -148,21 +153,30 @@ class ExplicitSecurityPolicyTest {
                         "(a) unannotated resource with two implicit operations",
                         "unannotated",
                         UnannotatedResource.class,
-                        true),
+                        true,
+                        ExplicitSecurityPolicyTest::expectedUnannotatedWarning),
                 new ExplicitPolicyCase(
-                        "(b) class-level @PermitAll resource", "permitAll", PermitAllResource.class, false),
+                        "(b) class-level @PermitAll resource", "permitAll", PermitAllResource.class, false, null),
                 new ExplicitPolicyCase(
                         "(c) scopeless @SecurityRequirement resource",
                         "scopeless",
                         ScopelessRequirementResource.class,
-                        false),
+                        false,
+                        null),
                 new ExplicitPolicyCase(
-                        "(d) @RequiresAction resource", "requiresAction", RequiresActionResource.class, false),
+                        "(d) @RequiresAction resource", "requiresAction", RequiresActionResource.class, false, null),
                 new ExplicitPolicyCase(
                         "(e) @PermitAll with a scoped @SecurityRequirement",
                         "permitAllScoped",
                         PermitAllScopedResource.class,
-                        false));
+                        false,
+                        null),
+                new ExplicitPolicyCase(
+                        "(f) unannotated resource whose registration order differs from full-path sort order (G2-10)",
+                        "orderMismatch",
+                        OrderMismatchResource.class,
+                        true,
+                        ExplicitSecurityPolicyTest::expectedOrderMismatchWarning));
     }
 
     /**
@@ -177,6 +191,22 @@ class ExplicitSecurityPolicyTest {
                 + "' has operations with no explicit security policy: " + "GET " + APPLICATION_MOUNT_PREFIX
                 + "/console/items (operationId 'mgmtItems'), " + "GET " + APPLICATION_MOUNT_PREFIX
                 + "/console/status (operationId 'mgmtStatus')";
+    }
+
+    /**
+     * The WARN message RL-2 fixes for TP-002 (f) (G2-10): {@link ManagementApplication}'s FQN, the
+     * quoted application mount path, and both of {@link OrderMismatchResource}'s operations, sorted
+     * by full path — {@code early} (one segment, {@code /aaa}) before {@code late} (two segments,
+     * {@code /zzz/yyy}) — the opposite of {@code RoutePathSpecificity}'s registration order, which
+     * registers the two-segment path first.
+     *
+     * @return the expected WARN message text
+     */
+    private static String expectedOrderMismatchWarning() {
+        return "Application " + ManagementApplication.class.getName() + " at '" + APPLICATION_MOUNT_PATH
+                + "' has operations with no explicit security policy: " + "GET " + APPLICATION_MOUNT_PREFIX
+                + "/console/aaa (operationId 'early'), " + "GET " + APPLICATION_MOUNT_PREFIX
+                + "/console/zzz/yyy (operationId 'late')";
     }
 
     // --- TP-003 ---
@@ -521,15 +551,22 @@ class ExplicitSecurityPolicyTest {
 
     /**
      * One TP-002 case: its display label, the {@code policy.<variant>.enabled} segment to enable,
-     * the resource class {@code ManagementApplication#getClasses()} must select, and whether the
-     * mount must warn.
+     * the resource class {@code ManagementApplication#getClasses()} must select, whether the mount
+     * must warn, and (for a warning case) the supplier of the expected WARN message text.
      *
-     * @param label        the case's display label
-     * @param variant      the {@code policy.<variant>.enabled} segment
-     * @param resourceType the resource class under test
-     * @param expectWarning whether the mount must log exactly one FR-013 warning
+     * @param label           the case's display label
+     * @param variant         the {@code policy.<variant>.enabled} segment
+     * @param resourceType    the resource class under test
+     * @param expectWarning   whether the mount must log exactly one FR-013 warning
+     * @param expectedWarning supplies the expected WARN message text; {@code null} for a
+     *                        non-warning case, where it is never read
      */
-    private record ExplicitPolicyCase(String label, String variant, Class<?> resourceType, boolean expectWarning) {
+    private record ExplicitPolicyCase(
+            String label,
+            String variant,
+            Class<?> resourceType,
+            boolean expectWarning,
+            @Nullable Supplier<String> expectedWarning) {
 
         @Override
         public String toString() {

@@ -302,6 +302,27 @@ public final class AllowListFixtures {
     @ApplicationPath("/api/allowlist-path-contract")
     interface PathContract {}
 
+    /**
+     * Row "roles-on-interface-implemented-by-superclass"'s annotated interface (G2-07): implemented
+     * only by {@link InterfaceImplementedBySuperclassApplication}, the abstract superclass — never
+     * re-declared on the concrete application below it, so this row proves the scope walk reaches an
+     * interface reachable only through an ancestor class, not just the application's own directly
+     * declared interfaces.
+     */
+    @RolesAllowed("admin")
+    interface SuperclassOnlyGuardedInterface {}
+
+    /**
+     * Row "roles-on-interface-implemented-by-superclass"'s abstract {@code Application} superclass
+     * (G2-07): the sole implementor of {@link SuperclassOnlyGuardedInterface} in this hierarchy.
+     */
+    abstract static class InterfaceImplementedBySuperclassApplication extends Application
+            implements SuperclassOnlyGuardedInterface {
+
+        /** Package-private no-argument constructor, invoked only via {@code super()}. */
+        InterfaceImplementedBySuperclassApplication() {}
+    }
+
     // -----------------------------------------------------------------------------------------
     // The 10 active failing rows.
     // -----------------------------------------------------------------------------------------
@@ -373,6 +394,32 @@ public final class AllowListFixtures {
 
         /** Counts this construction. */
         public RolesOnSuperinterfaceApplication() {
+            countApplicationConstruction();
+        }
+
+        /**
+         * Selects {@link AllowListResource}.
+         *
+         * @return a singleton set containing {@link AllowListResource}
+         */
+        @Override
+        public Set<Class<?>> getClasses() {
+            return Set.of(AllowListResource.class);
+        }
+    }
+
+    /**
+     * Row "roles-on-interface-implemented-by-superclass": {@code @RolesAllowed} on {@link
+     * SuperclassOnlyGuardedInterface}, which only {@link InterfaceImplementedBySuperclassApplication}
+     * (this class's abstract superclass) implements — this class extends it without itself
+     * re-declaring {@code implements SuperclassOnlyGuardedInterface} (G2-07).
+     */
+    @ApplicationPath("/api/allowlist")
+    public static class RolesOnInterfaceImplementedBySuperclassApplication
+            extends InterfaceImplementedBySuperclassApplication {
+
+        /** Counts this construction. */
+        public RolesOnInterfaceImplementedBySuperclassApplication() {
             countApplicationConstruction();
         }
 

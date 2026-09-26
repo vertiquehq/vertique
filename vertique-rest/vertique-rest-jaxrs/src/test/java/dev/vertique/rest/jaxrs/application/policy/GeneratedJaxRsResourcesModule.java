@@ -19,9 +19,9 @@ import java.util.Set;
 /**
  * Hand-written module in the exact C-GEN shape for compilation unit {@code policy} (T005): a
  * resources-only unit contributing {@link UnannotatedResource}, {@link PermitAllResource},
- * {@link ScopelessRequirementResource}, {@link RequiresActionResource}, and
- * {@link PermitAllScopedResource} — TP-002's cases (a) to (e) and TP-004's zero-declaration
- * fixture. Mirrors {@code application.unita.GeneratedJaxRsResourcesModule} (T002) exactly: every
+ * {@link ScopelessRequirementResource}, {@link RequiresActionResource},
+ * {@link PermitAllScopedResource}, and {@link OrderMismatchResource} — TP-002's cases (a) to (f)
+ * and TP-004's zero-declaration fixture. Mirrors {@code application.unita.GeneratedJaxRsResourcesModule} (T002) exactly: every
  * resource binding first checks {@code applications.isEmpty()} (D001 — with any application
  * registration present, {@code @JaxRsResources} contributes nothing), gated by its own
  * {@code policy.<variant>.enabled} condition, and every resource also gets a
@@ -45,6 +45,9 @@ public final class GeneratedJaxRsResourcesModule {
 
     private static final PropertyCondition[] PERMIT_ALL_SCOPED_RESOURCE_BINDING_CONDITIONS =
             new PropertyCondition[] {new PropertyCondition("policy.permitAllScoped.enabled", "true", false)};
+
+    private static final PropertyCondition[] ORDER_MISMATCH_RESOURCE_BINDING_CONDITIONS =
+            new PropertyCondition[] {new PropertyCondition("policy.orderMismatch.enabled", "true", false)};
 
     // --- (a) UnannotatedResource ---
 
@@ -262,6 +265,50 @@ public final class GeneratedJaxRsResourcesModule {
         return GeneratedJaxRsResourceEntry.of(
                 PermitAllScopedResource.class,
                 PropertyCondition.matchesAll(config, PERMIT_ALL_SCOPED_RESOURCE_BINDING_CONDITIONS),
+                provider);
+    }
+
+    // --- (f) OrderMismatchResource (G2-10) ---
+
+    /**
+     * Conditionally contributes {@link OrderMismatchResource} to {@code @JaxRsResources} in
+     * zero-declaration mode only, mirroring
+     * {@code @ConditionalOnProperty(name = "policy.orderMismatch.enabled")}.
+     *
+     * @param config       the application configuration the condition is evaluated against
+     * @param applications the generated application registration set
+     * @param provider     lazily constructs {@link OrderMismatchResource}
+     * @return a singleton set holding the constructed resource when in zero-declaration mode and
+     *     the condition matches, otherwise an empty set
+     */
+    @Provides
+    @ElementsIntoSet
+    @JaxRsResources
+    static Set<Object> orderMismatchResourceBinding(
+            @VertxConfig JsonObject config,
+            Set<GeneratedJaxRsApplicationRegistration> applications,
+            Provider<OrderMismatchResource> provider) {
+        return applications.isEmpty()
+                        && PropertyCondition.matchesAll(config, ORDER_MISMATCH_RESOURCE_BINDING_CONDITIONS)
+                ? Set.of(provider.get())
+                : Set.of();
+    }
+
+    /**
+     * Catalogs {@link OrderMismatchResource} for explicit-mode selection (TP-002 (f)), {@code
+     * enabled} reflecting {@code policy.orderMismatch.enabled}.
+     *
+     * @param config   the application configuration the condition is evaluated against
+     * @param provider lazily constructs {@link OrderMismatchResource}
+     * @return the catalog entry
+     */
+    @Provides
+    @IntoSet
+    static GeneratedJaxRsResourceEntry orderMismatchResourceEntry(
+            @VertxConfig JsonObject config, Provider<OrderMismatchResource> provider) {
+        return GeneratedJaxRsResourceEntry.of(
+                OrderMismatchResource.class,
+                PropertyCondition.matchesAll(config, ORDER_MISMATCH_RESOURCE_BINDING_CONDITIONS),
                 provider);
     }
 }

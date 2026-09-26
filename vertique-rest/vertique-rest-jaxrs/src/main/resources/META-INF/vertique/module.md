@@ -1083,11 +1083,11 @@ Once any application is declared, two independent checks reject overlapping moun
 installs:
 
 - **Between active applications.** Two active applications whose mount paths overlap — their prefixes
-  (each mount path without its trailing `/*`) are equal, or one starts with the other — fail startup
-  before either application is constructed, naming both application classes and both paths. An
-  application declared at `@ApplicationPath("/")` therefore conflicts with every other active
-  application, because `/` is a prefix of everything; `/api/public` and `/api/publicity` do not
-  conflict, because neither prefix starts with the other.
+  (each mount path without its terminal `*`, so it keeps its trailing `/`) are equal, or one starts
+  with the other — fail startup before either application is constructed, naming both application
+  classes and both paths. An application declared at `@ApplicationPath("/")` therefore conflicts with
+  every other active application, because `/` is a prefix of everything; `/api/public/*` and
+  `/api/publicity/*` do not conflict, because neither prefix starts with the other.
 - **Between an application and a hand-built JAX-RS mount.** An application mount whose path overlaps a
   hand-built `JaxRsRouterMount`'s path, in either direction, fails startup before any mount router is
   created, naming the application class and both paths. A hand-built JAX-RS mount whose path is a
@@ -1312,14 +1312,17 @@ gate.
 | `NO_EXPLICIT_SECURITY_POLICY` | `jaxrs.security.requireExplicitPolicy` is `true` and the operation is implicit (see [Explicit security policy](#explicit-security-policy)); message `<METHOD> <full path> has no explicit security policy, which jaxrs.security.requireExplicitPolicy requires`; fix by annotating the operation with `@PermitAll` or a restricting declaration |
 
 Once one or more `jakarta.ws.rs.core.Application` registrations are declared — even when none is
-active — `HttpVerticle` additionally rejects a duplicate operationId **across** mounts: two operations
-on different `JaxRsRouterMount`s that share an operationId fail startup unless they are the same
-operation — the same resource class (an annotation-free AOP proxy counts as its base class), method
-name, and parameter types. This is a cross-mount check performed by `HttpVerticle`'s composition
-validator, not a `RouteRegistrationViolation`: it throws `IllegalStateException`, naming both methods
-and both mounts. The per-mount `DUPLICATE_OPERATION_ID` row above is unaffected — it keeps comparing
-only within one mount, and with no application declared it remains the only operationId check that
-runs.
+active — the Dagger-built `HttpVerticle`'s composition validator additionally rejects a duplicate
+operationId **across** mounts: two operations on different `JaxRsRouterMount`s that share an
+operationId fail startup unless they are the same operation — the same resource class (an
+annotation-free AOP proxy counts as its base class), method name, and parameter types. This is a
+cross-mount check performed by that composition validator, not a `RouteRegistrationViolation`: it
+throws `IllegalStateException`, naming both methods and both mounts. The per-mount
+`DUPLICATE_OPERATION_ID` row above is unaffected — it keeps comparing only within one mount, and
+with no application declared it remains the only operationId check that runs. An `HttpVerticle`
+built with the public five-argument constructor runs neither this operationId check nor the
+mount-conflict check in [Mount conflicts](#mount-conflicts) above, and refuses to create any
+application mount's router.
 
 `SecurityPolicyViolationException` is thrown immediately when a `SecurityPolicyValidator` is bound and
 finds a violation, rather than being collected. `JsonProfileConfigurationException` is thrown at

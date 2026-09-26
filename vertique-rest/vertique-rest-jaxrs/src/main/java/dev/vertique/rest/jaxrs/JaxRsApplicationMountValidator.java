@@ -9,6 +9,7 @@ import dev.vertique.rest.core.security.SecurityPolicyViolation;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsApplicationRegistration;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -32,17 +33,23 @@ import java.util.stream.Collectors;
  *       For every application mount and every hand-built JAX-RS mount, reports a violation when
  *       {@link JaxRsMountPaths#conflict} holds between their paths, or the hand-built mount's path
  *       is a router pattern ({@link JaxRsMountPaths#isRouterPattern}), which conflicts with every
- *       application regardless of any literal prefix relation. A pair of application mounts is
- *       never reported here — {@link JaxRsApplicationComposer} already rejects that pairing before
- *       this validator ever runs.
+ *       application regardless of any literal prefix relation. Every pair of application mounts is
+ *       compared the same way too, the pairs ordered deterministically by mount path (never by the
+ *       given list's order): {@link JaxRsApplicationComposer} step 1b already rejects a conflicting
+ *       pair of active applications within one composition, before either of their mounts is ever
+ *       built, but a {@code Set<RouterMount>} merged from more than one composition is a shape the
+ *       composer's own resolution never sees, so this validator rejects that pairing too.
  *   <li><strong>Cross-mount operationId collisions.</strong> Runs whenever one or more application
- *       registrations are declared, even when none is active. Scans every {@link JaxRsRouterMount}'s
- *       resources with {@link ResourceScanner}'s accumulating overload, discarding the scanner's own
- *       violations (the registrar remains the reporter of declaration problems), and reports every
- *       pair of operations on two different mounts that share an operationId unless they share the
- *       same owner: the same normalized resource class, method name, and parameter types. The
- *       normalized class is the resource instance's own class, or that class's superclass when
- *       {@link JaxRsApplicationComposer#sameSurface} holds between them.
+ *       registrations are declared, even when none is active, or the given mounts list itself
+ *       contains an application mount — a list merged from more than one composition can hold an
+ *       application mount this validator instance's own registration set does not reflect. Scans
+ *       every {@link JaxRsRouterMount}'s resources with {@link ResourceScanner}'s accumulating
+ *       overload, discarding the scanner's own violations (the registrar remains the reporter of
+ *       declaration problems), and reports every pair of operations on two different mounts that
+ *       share an operationId unless they share the same owner: the same normalized resource class,
+ *       method name, and parameter types. The normalized class is the resource instance's own
+ *       class, or that class's superclass when {@link JaxRsApplicationComposer#sameSurface} holds
+ *       between them.
  *   <li><strong>Validated mark.</strong> Only when the checks above found no violation, marks every
  *       application mount instance in the given list validated.
  * </ol>
@@ -54,9 +61,11 @@ final class JaxRsApplicationMountValidator implements MountCompositionValidator 
     /**
      * Creates the validator.
      *
-     * @param registrations the declared application registration set; empty in zero-declaration
-     *                      mode, in which case this validator reports no violation and marks
-     *                      nothing (there is never an application mount to mark)
+     * @param registrations the declared application registration set for this validator instance's
+     *                      own composition; empty in zero-declaration mode. An empty set alone does
+     *                      not silence the operationId scan: {@link #validate} also runs it whenever
+     *                      the mounts it is given contain an application mount, which can happen
+     *                      when mounts are merged from more than one composition
      */
     JaxRsApplicationMountValidator(Set<GeneratedJaxRsApplicationRegistration> registrations) {
         this.registrations = registrations;
@@ -80,8 +89,9 @@ final class JaxRsApplicationMountValidator implements MountCompositionValidator 
         List<String> violations = new ArrayList<>();
         if (!applicationMounts.isEmpty()) {
             violations.addAll(pathConflictViolations(applicationMounts, handBuiltMounts));
+            violations.addAll(applicationPairConflictViolations(applicationMounts));
         }
-        if (!registrations.isEmpty()) {
+        if (!registrations.isEmpty() || !applicationMounts.isEmpty()) {
             violations.addAll(operationIdViolations(mounts));
         }
 
@@ -98,6 +108,13 @@ final class JaxRsApplicationMountValidator implements MountCompositionValidator 
      * Reports every application mount that conflicts with a hand-built JAX-RS mount, in either
      * direction, or whose hand-built counterpart has a router-pattern path.
      *
+     * <p>The reason named in each violation distinguishes the two rules: a genuine literal path
+     * overlap ({@link JaxRsMountPaths#conflict}) is reported as "their mount paths overlap"; a
+     * hand-built mount whose path is a router pattern, which conflicts with every application
+     * regardless of any literal prefix relation, is reported as "a router-pattern mount path
+     * conflicts with every application mount" instead — even when the two paths do not literally
+     * overlap.
+     *
      * @param applicationMounts every application mount in the composition
      * @param handBuiltMounts   every hand-built (non-application) {@link JaxRsRouterMount} in the
      *                          composition
@@ -108,12 +125,52 @@ final class JaxRsApplicationMountValidator implements MountCompositionValidator 
         List<String> violations = new ArrayList<>();
         for (JaxRsRouterMount applicationMount : applicationMounts) {
             for (JaxRsRouterMount handBuiltMount : handBuiltMounts) {
-                if (JaxRsMountPaths.conflict(applicationMount.mountPath(), handBuiltMount.mountPath())
-                        || JaxRsMountPaths.isRouterPattern(handBuiltMount.mountPath())) {
+                boolean overlaps = JaxRsMountPaths.conflict(applicationMount.mountPath(), handBuiltMount.mountPath());
+                boolean routerPattern = JaxRsMountPaths.isRouterPattern(handBuiltMount.mountPath());
+                if (overlaps || routerPattern) {
+                    String reason = overlaps
+                            ? "their mount paths overlap"
+                            : "a router-pattern mount path conflicts with every application mount";
                     violations.add(
                             "Application " + applicationMount.applicationType().getName() + " at '"
                                     + applicationMount.mountPath() + "' conflicts with hand-built JAX-RS mount '"
-                                    + handBuiltMount.mountPath() + "': their mount paths overlap");
+                                    + handBuiltMount.mountPath() + "': " + reason);
+                }
+            }
+        }
+        return violations;
+    }
+
+    /**
+     * Reports every pair of application mounts whose paths conflict per {@link
+     * JaxRsMountPaths#conflict}, the pairs ordered deterministically by mount path (then by
+     * application class name) so the report never depends on the given list's own order.
+     *
+     * <p>{@link JaxRsApplicationComposer} step 1b already rejects a conflicting pair of active
+     * applications within one composition, before either of their mounts is ever built, so a pair
+     * this method reports never came from a single composition's own resolution. It exists for
+     * mounts merged from more than one composition into one {@code Set<RouterMount>} — a shape the
+     * composer's own resolution never sees, because this validator is the only check that runs over
+     * the merged whole {@code HttpVerticle.start} hands it.
+     *
+     * @param applicationMounts every application mount in the composition
+     * @return the application-pair path conflict violations, unsorted
+     */
+    private static List<String> applicationPairConflictViolations(List<JaxRsRouterMount> applicationMounts) {
+        List<JaxRsRouterMount> sorted = applicationMounts.stream()
+                .sorted(Comparator.comparing(JaxRsRouterMount::mountPath)
+                        .thenComparing(mount -> mount.applicationType().getName()))
+                .toList();
+        List<String> violations = new ArrayList<>();
+        for (int i = 0; i < sorted.size(); i++) {
+            JaxRsRouterMount first = sorted.get(i);
+            for (int j = i + 1; j < sorted.size(); j++) {
+                JaxRsRouterMount second = sorted.get(j);
+                if (JaxRsMountPaths.conflict(first.mountPath(), second.mountPath())) {
+                    violations.add("Application " + first.applicationType().getName() + " at '" + first.mountPath()
+                            + "' conflicts with application "
+                            + second.applicationType().getName() + " at '"
+                            + second.mountPath() + "': their mount paths overlap");
                 }
             }
         }

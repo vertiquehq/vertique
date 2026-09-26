@@ -40,8 +40,11 @@ import org.slf4j.LoggerFactory;
  * against a fresh component ({@link AllowListFixtures#component(Class, boolean)}), never calling
  * {@code createRouter}: the mount's validated mark and the routing-base-path warning are both
  * irrelevant to step 1a, which runs long before either. The case list mirrors the compile-time
- * allow-list's rows in their runtime form: 10 active failing rows, 1 inactive failing row (the
- * sole registration), and 3 composing rows that guard against over-rejection.
+ * allow-list's rows in their runtime form: 11 active failing rows (including
+ * "roles-on-interface-implemented-by-superclass", G2-07, proving the scope walk reaches an
+ * interface implemented only by an ancestor class, never re-declared on the concrete application),
+ * 1 inactive failing row (the sole registration), and 3 composing rows that guard against
+ * over-rejection.
  */
 class ApplicationAnnotationBackstopTest {
 
@@ -131,10 +134,10 @@ class ApplicationAnnotationBackstopTest {
     }
 
     /**
-     * TP-003's 14 named rows: 10 active failing rows, 1 inactive failing row, and 3 composing
+     * TP-003's 15 named rows: 11 active failing rows, 1 inactive failing row, and 3 composing
      * rows.
      *
-     * @return the 14 cases, in contract order
+     * @return the 15 cases, in contract order
      */
     private static Stream<Tp003Case> cases() {
         String rolesAllowed = RolesAllowed.class.getName();
@@ -179,6 +182,15 @@ class ApplicationAnnotationBackstopTest {
                         true,
                         true,
                         AllowListFixtures.AnnotatedRootInterface.class,
+                        rolesAllowed,
+                        false,
+                        false),
+                new Tp003Case(
+                        "roles-on-interface-implemented-by-superclass",
+                        AllowListFixtures.RolesOnInterfaceImplementedBySuperclassApplication.class,
+                        true,
+                        true,
+                        AllowListFixtures.SuperclassOnlyGuardedInterface.class,
                         rolesAllowed,
                         false,
                         false),
