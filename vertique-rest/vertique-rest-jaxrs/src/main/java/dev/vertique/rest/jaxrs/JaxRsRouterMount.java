@@ -12,6 +12,7 @@ import dev.vertique.core.util.Strings;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.json.JsonConfig;
+import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.core.capture.RestServerRequestEvidenceCapturer;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.config.JaxRsConfig;
@@ -45,6 +46,9 @@ import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.handler.BodyHandler;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
+import jakarta.ws.rs.core.Application;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -79,6 +83,13 @@ import lombok.extern.slf4j.Slf4j;
  *     return factory.create(jaxRsConfig.basePath(), jaxRsConfig.openapiPath(), resources);
  * }
  * </pre>
+ *
+ * <p>This example describes zero-declaration mode, where an application contributes no
+ * {@code jakarta.ws.rs.core.Application} registration. When one or more registrations are declared,
+ * the package-private application composer owns mounting instead: it builds one mount per active
+ * application through {@link Factory#createApplicationMount}, and a hand-built call to
+ * {@link Factory#create} remains that mount's own responsibility, unrelated to any declared
+ * application.
  */
 @Slf4j
 public class JaxRsRouterMount implements RouterMount {
@@ -90,23 +101,34 @@ public class JaxRsRouterMount implements RouterMount {
     private final Set<Object> resources;
     private final int priority;
     private final Factory factory;
+    private final @Nullable Class<? extends Application> applicationType;
+    private boolean validated;
 
     /**
      * Creates a new mount. Only {@link Factory} should call this constructor.
      *
-     * @param mountPath    the path prefix where the sub-router is mounted
-     * @param openapiPath  classpath location of the OpenAPI spec
-     * @param resources    JAX-RS annotated resource instances
-     * @param priority     mount priority (lower values are mounted first)
-     * @param factory      shared services factory
+     * @param mountPath       the path prefix where the sub-router is mounted
+     * @param openapiPath     classpath location of the OpenAPI spec
+     * @param resources       JAX-RS annotated resource instances, in their given iteration order
+     * @param priority        mount priority (lower values are mounted first)
+     * @param factory         shared services factory
+     * @param applicationType the declared {@code jakarta.ws.rs.core.Application} this mount was
+     *                        built for, or {@code null} for a mount not built from a declared
+     *                        application
      */
     private JaxRsRouterMount(
-            String mountPath, String openapiPath, Set<Object> resources, int priority, Factory factory) {
+            String mountPath,
+            String openapiPath,
+            Set<Object> resources,
+            int priority,
+            Factory factory,
+            @Nullable Class<? extends Application> applicationType) {
         this.mountPath = mountPath;
         this.openapiPath = openapiPath;
         this.resources = resources;
         this.priority = priority;
         this.factory = factory;
+        this.applicationType = applicationType;
     }
 
     /** {@inheritDoc} */
@@ -135,7 +157,53 @@ public class JaxRsRouterMount implements RouterMount {
     }
 
     /**
+     * Returns this mount's resources in their iteration order.
+     *
+     * <p>{@link #meta()}'s {@code resourceTypes} is an unordered {@link Set}, so the rest-jaxrs
+     * {@code MountCompositionValidator} contribution reads this accessor to scan every resource for
+     * its cross-mount operationId check, and order-sensitive test assertions (resources within an
+     * application mount, ordered by class name) read it too. Package-private; the test-support
+     * accessor in this test package exposes it to the {@code dev.vertique.rest.jaxrs.application}
+     * test package.
+     *
+     * @return the stored resources, in their iteration order
+     */
+    List<Object> orderedResources() {
+        return List.copyOf(resources);
+    }
+
+    /**
+     * Returns the declared {@code jakarta.ws.rs.core.Application} this mount was built for, when the
+     * package-private application composer built it, or {@code null} for every other mount,
+     * including one built by {@link Factory#create}.
+     *
+     * @return the application type, or {@code null}
+     */
+    @Nullable
+    Class<? extends Application> applicationType() {
+        return applicationType;
+    }
+
+    /**
+     * Marks this application mount instance validated: called only by the rest-jaxrs {@code
+     * MountCompositionValidator}, and only when its own checks found no violation for the whole
+     * composition. {@link #createRouter(Vertx)} refuses an application mount until this has been
+     * called. Each composition builds new mount instances, so a mark never carries over to another
+     * composition.
+     */
+    void markValidated() {
+        this.validated = true;
+    }
+
+    /**
      * Creates the JAX-RS sub-router for this mount as a plain Vert.x {@link Router}.
+     *
+     * <p>An application mount (a non-{@code null} {@link #applicationType()}) whose instance was not
+     * marked validated refuses to build its router: no composition validator ran to confirm this
+     * mount's declaration, so an {@code HttpVerticle} built without composition validators — such as
+     * the public five-argument constructor, or a subclass — must not host it. This check runs first,
+     * before the early return below for a mount with no resources, so an all-disabled application is
+     * refused too.
      *
      * <p>If no resources are registered, an empty router is returned immediately. Otherwise the
      * pipeline is:
@@ -154,10 +222,19 @@ public class JaxRsRouterMount implements RouterMount {
      *   <li>Scan and register all JAX-RS resource methods via {@link JaxRsRouteRegistrar}, installing per
      *       operation: the collected auth handler(s) → the validation gate → the sorted contributors →
      *       the {@link ResourceMethodInvoker}.</li>
+     *   <li>When this mount serves a declared application, log the no-explicit-security-policy warning
+     *       for the operations {@link JaxRsRouteRegistrar} recorded, if any.</li>
      *   <li>Run {@link RouterLifecycleHook#afterRouterCreated} hooks.</li>
      *   <li>Mount {@link MiddlewareScope#API} middlewares on the API router.</li>
      *   <li>Attach the router-level failure handler.</li>
      * </ol>
+     *
+     * <p>An application mount whose registration left one or more operations with no explicit
+     * security policy logs exactly one WARN, naming every such operation — sorted by full path, then
+     * method, then operation id — unless {@code jaxrs.security.requireExplicitPolicy} is enabled, in
+     * which case registration itself fails startup with a {@link RouteRegistrationException} instead of
+     * ever reaching this warning. A mount with no such operation logs nothing, and a mount not built
+     * from a declared application never logs this warning.
      *
      * <p>No OpenAPI contract is loaded: the router is built entirely from the JAX-RS annotation model,
      * so an {@code openapi.json} (when present) is documentation only (PRD-REST-017 FR-001).
@@ -167,6 +244,14 @@ public class JaxRsRouterMount implements RouterMount {
      */
     @Override
     public Future<Router> createRouter(Vertx vertx) {
+        if (applicationType != null && !validated) {
+            throw new RestConfigurationException("Application " + applicationType.getName() + " at '"
+                    + mountPath + "' cannot create its router: the hosting HttpVerticle was built without"
+                    + " composition validators, such as with the public five-argument constructor or by a"
+                    + " subclass; obtain HttpVerticle from Dagger so its composition validators run before"
+                    + " any mount router is created");
+        }
+
         if (resources.isEmpty()) {
             return Future.succeededFuture(Router.router(vertx));
         }
@@ -274,6 +359,9 @@ public class JaxRsRouterMount implements RouterMount {
         }
 
         JaxRsRouteRegistrar registrar = new JaxRsRouteRegistrar();
+        // This mount's own sink for registerAll's implicit-policy recording: the registrar carries
+        // no state between calls, so createRouter creates and reads this list itself.
+        List<JaxRsRouteRegistrar.ImplicitOperation> implicitOperations = new ArrayList<>();
         registrar.registerAll(
                 resources,
                 apiRouter,
@@ -299,7 +387,29 @@ public class JaxRsRouterMount implements RouterMount {
                 factory.authorizerAvailable,
                 factory.jaxRsConfig,
                 factory.jsonMapperProfileRegistry,
-                factory.jsonConfig);
+                factory.jsonConfig,
+                applicationType,
+                implicitOperations);
+
+        // registerAll recorded one entry per implicit-policy operation into this mount's own sink,
+        // but only while THIS mount serves a declared application and the requireExplicitPolicy
+        // opt-in was off for that call (with the opt-in on, an implicit operation is a startup
+        // violation instead, raised from inside registerAll, so this point is never reached). Empty
+        // for every other mount, including a non-application mount, so exactly one WARN is logged
+        // here per composed application mount that has any.
+        if (!implicitOperations.isEmpty()) {
+            String entries = implicitOperations.stream()
+                    .sorted(Comparator.comparing(JaxRsRouteRegistrar.ImplicitOperation::fullPath)
+                            .thenComparing(JaxRsRouteRegistrar.ImplicitOperation::httpMethod)
+                            .thenComparing(JaxRsRouteRegistrar.ImplicitOperation::operationId))
+                    .map(op -> op.httpMethod() + " " + op.fullPath() + " (operationId '" + op.operationId() + "')")
+                    .collect(Collectors.joining(", "));
+            log.warn(
+                    "Application {} at '{}' has operations with no explicit security policy: {}",
+                    applicationType.getName(),
+                    mountPath,
+                    entries);
+        }
 
         for (RouterLifecycleHook hook : sortedRouterHooks) {
             hook.afterRouterCreated(apiRouter);
@@ -739,7 +849,7 @@ public class JaxRsRouterMount implements RouterMount {
          * @return a configured mount instance
          */
         public JaxRsRouterMount create(String mountPath, String openapiPath, Set<Object> resources) {
-            return new JaxRsRouterMount(mountPath, openapiPath, resources, 1000, this);
+            return new JaxRsRouterMount(mountPath, openapiPath, resources, 1000, this, null);
         }
 
         /**
@@ -752,7 +862,25 @@ public class JaxRsRouterMount implements RouterMount {
          * @return a configured mount instance
          */
         public JaxRsRouterMount create(String mountPath, String openapiPath, Set<Object> resources, int priority) {
-            return new JaxRsRouterMount(mountPath, openapiPath, resources, priority, this);
+            return new JaxRsRouterMount(mountPath, openapiPath, resources, priority, this, null);
+        }
+
+        /**
+         * Creates a new {@link JaxRsRouterMount} for a declared application, with the default
+         * priority of {@code 1000}. Only the package-private application composer calls this method;
+         * there is no public overload, because application mounts are created only through runtime
+         * composition, never by hand.
+         *
+         * @param mountPath   the application's mount path (e.g. {@code "/api/*"})
+         * @param openapiPath classpath location of the OpenAPI spec (e.g. {@code "openapi.json"})
+         * @param resources   the application's selected resource instances, in their given
+         *                    iteration order; this order is preserved, never re-sorted here
+         * @param type        the declared {@code jakarta.ws.rs.core.Application} type
+         * @return a configured application mount instance
+         */
+        JaxRsRouterMount createApplicationMount(
+                String mountPath, String openapiPath, Set<Object> resources, Class<? extends Application> type) {
+            return new JaxRsRouterMount(mountPath, openapiPath, resources, 1000, this, type);
         }
     }
 }

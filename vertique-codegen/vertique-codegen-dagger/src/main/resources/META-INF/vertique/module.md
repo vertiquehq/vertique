@@ -19,7 +19,7 @@ Two framework qualifiers use the multibinding emit shape; one uses a direct sing
 | `DelayedJobExecutor<P,C>` impls | root-element scan | `@Provides @IntoSet @DelayedJobs Object` |
 | `@RestClient` interfaces | annotation-rooted | `@Provides @Singleton {Interface} provideXxx(RestClientFactory)` |
 
-**`@Path` (JAX-RS) resource binding is not owned by this processor.** `@Path`-resource DI binding (`@Provides @IntoSet @JaxRsResources Object`) is emitted by `vertique-codegen-jaxrs`'s `JaxRsPipelineProcessor`, which also handles discovery, validation, and runtime optimization for JAX-RS resources. See `dev.vertique:vertique-codegen-jaxrs`.
+**`@Path` (JAX-RS) resource binding is not owned by this processor.** `@Path`-resource DI binding — a presence-gated `@Provides @ElementsIntoSet @JaxRsResources` binding, a lazy resource-catalog entry, and, for each eligible `jakarta.ws.rs.core.Application` subtype, an application registration — is emitted by `vertique-codegen-jaxrs`'s `JaxRsPipelineProcessor`, which also handles discovery, validation, and runtime optimization for JAX-RS resources. See `dev.vertique:vertique-codegen-jaxrs`.
 
 `@ServiceContract` implementation wiring is owned by `vertique-codegen-services`, not by this processor.
 

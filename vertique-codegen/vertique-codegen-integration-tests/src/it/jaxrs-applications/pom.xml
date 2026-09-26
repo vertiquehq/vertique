@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+SPDX-License-Identifier: EUPL-1.2
+-->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.vertique</groupId>
+        <artifactId>vertique-app-parent</artifactId>
+        <version>@vertiqueVersion@</version>
+        <relativePath/>
+    </parent>
+
+    <artifactId>codegen-it-jaxrs-applications</artifactId>
+    <version>1.0.0</version>
+    <packaging>pom</packaging>
+
+    <!--
+    T003 end-to-end proof: real JaxRsPipelineProcessor output, across two compilation units, serves
+    two Application mounts over HTTP with no handwritten registration or mount module, while a
+    zero-declaration consumer of the same resources keeps the default mount.
+
+    Module order matters (evidence/T003.md R2): the reactor topologically builds `resources` first
+    because both `legacy` and `app` depend on it, but `legacy` and `app` are mutually independent, so
+    their relative order here is the tie-break. Listing `legacy` before `app` keeps TP-006 (legacy)
+    observable even when `app` fails to compile at the baseline processor (TP-005's intended red):
+    the reactor's default fail-fast stops at the first failing module, after `legacy` has already run.
+    -->
+    <modules>
+        <module>resources</module>
+        <module>legacy</module>
+        <module>app</module>
+    </modules>
+</project>

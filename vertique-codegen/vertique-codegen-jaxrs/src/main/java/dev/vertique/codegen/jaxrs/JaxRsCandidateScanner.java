@@ -106,10 +106,13 @@ public final class JaxRsCandidateScanner {
      * <p>Both Jakarta EE and legacy {@code javax.inject} flavours are recognised for
      * compatibility with mixed codebases.
      *
+     * <p>Package-private (not {@code private}) so {@link JaxRsApplicationScanner} can reuse this
+     * same detection for its own application-construction rule instead of duplicating it.
+     *
      * @param typeElement the type element to inspect; must not be {@code null}
      * @return {@code true} when an {@code @Inject}-annotated constructor is found
      */
-    private static boolean hasInjectConstructor(TypeElement typeElement) {
+    static boolean hasInjectConstructor(TypeElement typeElement) {
         for (Element enclosed : typeElement.getEnclosedElements()) {
             if (enclosed.getKind() != ElementKind.CONSTRUCTOR) {
                 continue;

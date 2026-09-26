@@ -57,6 +57,7 @@ import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.handler.AuthenticationHandler;
 import io.vertx.ext.web.handler.ChainAuthHandler;
 import jakarta.annotation.Nullable;
+import jakarta.ws.rs.core.Application;
 import jakarta.ws.rs.core.EntityPart;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.ParameterizedType;
@@ -112,7 +113,19 @@ import lombok.extern.slf4j.Slf4j;
 public class JaxRsRouteRegistrar {
 
     /**
+     * Creates a registrar. Stateless: {@link #registerAll} carries no state between calls, and the
+     * declared application a call serves, when it serves one, is a parameter of the package-private
+     * overload below, never instance state.
+     */
+    public JaxRsRouteRegistrar() {}
+
+    /**
      * Scans all resource instances and registers handlers on a plain {@link Router}.
+     *
+     * <p>Delegates to the package-private overload below with a {@code null} application type and a
+     * sink this call discards, so it records no implicit-policy operation — every public caller,
+     * including a hand-built {@link JaxRsRouterMount.Factory#create} mount and the zero-declaration
+     * legacy default mount, serves no declared application.
      *
      * <p>If a {@code securityPolicyValidator} is provided, it is run for every discovered operation.
      * Any violations found cause startup to fail immediately with a {@link
@@ -211,10 +224,160 @@ public class JaxRsRouteRegistrar {
             JaxRsConfig jaxRsConfig,
             JsonMapperProfileRegistry jsonMapperProfileRegistry,
             JsonConfig jsonConfig) {
+        registerAll(
+                resources,
+                apiRouter,
+                strategy,
+                mount,
+                schemaSource,
+                securityHandlers,
+                operationInterceptors,
+                contributors,
+                errorPipeline,
+                responsePipeline,
+                restContextResolution,
+                paramConversionResolver,
+                securityPolicyValidator,
+                authEnabled,
+                decoders,
+                encoders,
+                mediaTypeValidation,
+                beanValidator,
+                objectProcessor,
+                evidenceCapturers,
+                actionRegistry,
+                authorizerAvailable,
+                jaxRsConfig,
+                jsonMapperProfileRegistry,
+                jsonConfig,
+                null,
+                new ArrayList<>());
+    }
+
+    /**
+     * Scans all resource instances and registers handlers on a plain {@link Router}, recording every
+     * implicit-policy operation into {@code implicitOperations} while this call serves
+     * {@code applicationType}.
+     *
+     * <p>Package-private: the package-private application-mount composition
+     * ({@code JaxRsRouterMount#createRouter}) is the sole caller that serves a declared application,
+     * passing its own type and a fresh sink it reads after this call returns; every other caller
+     * uses the public {@link #registerAll(Set, Router, RequestValidationStrategy, MountMeta,
+     * Optional, SecuritySchemeHandlerCollector, List, List, ErrorPipeline, ResponsePipeline,
+     * RestContextResolution, ParamConversionResolver, SecurityPolicyValidator, boolean, List, List,
+     * String, BeanValidator, InputObjectProcessor, List, ActionRegistry, boolean, JaxRsConfig,
+     * JsonMapperProfileRegistry, JsonConfig) overload}, which delegates here with a {@code null}
+     * application type and a sink it discards. This registrar keeps no state of its own between
+     * calls: {@code applicationType} and {@code implicitOperations} are this call's own, never
+     * instance fields.
+     *
+     * @param resources               JAX-RS annotated resource instances
+     * @param apiRouter               the plain Vert.x web router to register routes on
+     * @param strategy                the selected request-validation strategy producing the per-operation
+     *                                validation gate
+     * @param mount                   the metadata of the mount registering these resources; threaded to the
+     *                                mount-aware 3-arg {@link RequestValidationStrategy#gateFor(JaxRsOperationDescriptor,
+     *                                OperationSchemas, MountMeta)} call for every operation
+     * @param schemaSource            optional source of per-operation validation schemas; when empty an
+     *                                {@link OperationSchemas#empty()} collection is passed to the strategy
+     * @param securityHandlers        the collected authentication handlers keyed by scheme name, applied
+     *                                per the operation's security requirements
+     * @param operationInterceptors   sorted list of operation interceptors
+     * @param contributors            sorted list of operation handler contributors
+     * @param errorPipeline           shared error mapping pipeline
+     * @param responsePipeline        unified response pipeline for producing and sending responses
+     * @param restContextResolution   coordinator for the {@link RestContextResolution} resolver chain
+     * @param paramConversionResolver the framework parameter-conversion resolver; threaded into each
+     *                                {@link ResourceMethodInvoker} and used to fail-fast validate that a
+     *                                converter exists for every declared conversion-applicable parameter
+     * @param securityPolicyValidator optional security policy validator; {@code null} when auth
+     *                                module is absent
+     * @param authEnabled             whether the auth module is installed
+     * @param decoders                priority-sorted list of request body decoders
+     * @param encoders                priority-sorted list of response body encoders
+     * @param mediaTypeValidation     media type validation mode: {@code "WARN"}, {@code "STRICT"},
+     *                                or {@code "OFF"}
+     * @param beanValidator           optional Bean Validation implementation; {@code null} when
+     *                                {@code ValidationModule} is not included — validation is skipped
+     * @param objectProcessor         optional input object processor for canonicalization and
+     *                                sanitization; {@code null} when input processing is not configured
+     * @param evidenceCapturers       pre-sorted list of request-evidence capturers to invoke once
+     *                                per request after body materialisation; empty list is the no-op default
+     * @param actionRegistry          the framework {@link ActionRegistry} used to validate
+     *                                {@code @RequiresAction} values at startup; {@code null} when the
+     *                                authz engine is not installed — in which case any operation that
+     *                                declares {@code @RequiresAction} fails startup (fail-closed),
+     *                                since the action gate could not be enforced
+     * @param authorizerAvailable     whether the core action {@link dev.vertique.security.authz.Authorizer}
+     *                                is installed; the {@code Authorizer} is the function the enforcement
+     *                                layer calls to decide the action gate. Because the
+     *                                {@link ActionRegistry} and the {@code Authorizer} are bound through
+     *                                separate optional seams, a non-default graph can have the registry
+     *                                present while the {@code Authorizer} is absent; an operation that
+     *                                declares {@code @RequiresAction} then fails startup (fail-closed)
+     *                                rather than failing closed per-request when the gate evaluates
+     *                                (finding W2)
+     * @param jaxRsConfig             JAX-RS routing configuration; supplies the default request JSON
+     *                                profile ({@link JaxRsConfig#jsonProfile()}, config key
+     *                                {@code jaxrs.jsonProfile}) used when a resource method selects no
+     *                                profile of its own
+     * @param jsonMapperProfileRegistry registry of named JSON mapper profiles; used to resolve the
+     *                                effective request-body {@code ObjectMapper} per resource method
+     *                                ({@code @JsonProfile} method/class &rarr; config &rarr; {@code vertx}).
+     *                                Resolving an unknown profile id fails startup (fail-fast, FR-JSON-008)
+     * @param jsonConfig             global JSON configuration; supplies the {@code json.jsonProfile} default
+     *                                applied when a resource method and {@code jaxrs.jsonProfile} both select
+     *                                no profile of their own
+     * @param applicationType         the declared {@code jakarta.ws.rs.core.Application} this call's
+     *                                mount was built for, or {@code null} for a mount not built from a
+     *                                declared application. The only uses of this parameter are the
+     *                                opt-in-off recording condition below; the opt-in failure itself
+     *                                applies regardless of it.
+     * @param implicitOperations      the sink every implicit-policy operation is recorded into, while
+     *                                {@code applicationType} is non-{@code null} and the {@code
+     *                                jaxrs.security.requireExplicitPolicy} opt-in is off; untouched
+     *                                otherwise
+     */
+    void registerAll(
+            Set<Object> resources,
+            Router apiRouter,
+            RequestValidationStrategy strategy,
+            MountMeta mount,
+            Optional<OperationSchemaSource> schemaSource,
+            SecuritySchemeHandlerCollector securityHandlers,
+            List<OperationInterceptor> operationInterceptors,
+            List<OperationHandlerContributor> contributors,
+            ErrorPipeline errorPipeline,
+            ResponsePipeline responsePipeline,
+            RestContextResolution restContextResolution,
+            ParamConversionResolver paramConversionResolver,
+            SecurityPolicyValidator securityPolicyValidator,
+            boolean authEnabled,
+            List<RequestBodyDecoder> decoders,
+            List<ResponseBodyEncoder> encoders,
+            String mediaTypeValidation,
+            @Nullable BeanValidator beanValidator,
+            @Nullable InputObjectProcessor objectProcessor,
+            List<RestServerRequestEvidenceCapturer> evidenceCapturers,
+            @Nullable ActionRegistry actionRegistry,
+            boolean authorizerAvailable,
+            JaxRsConfig jaxRsConfig,
+            JsonMapperProfileRegistry jsonMapperProfileRegistry,
+            JsonConfig jsonConfig,
+            @Nullable Class<? extends Application> applicationType,
+            List<ImplicitOperation> implicitOperations) {
         List<OperationInterceptor> sortedInterceptors =
                 operationInterceptors != null ? Collections.unmodifiableList(operationInterceptors) : List.of();
         List<OperationHandlerContributor> sortedContributors =
                 contributors != null ? Collections.unmodifiableList(contributors) : List.of();
+
+        // Null-safe opt-in read: many existing tests call registerAll directly with a hand-built
+        // JaxRsConfig. A null jaxRsConfig, or a JaxRsConfig whose security() is null, is treated
+        // as the opt-in being off; no other behavior changes for those callers.
+        boolean requireExplicitPolicy = jaxRsConfig != null
+                && jaxRsConfig.security() != null
+                && jaxRsConfig.security().requireExplicitPolicy();
+
         List<SecurityPolicyViolation> securityViolations = new ArrayList<>();
         List<RouteRegistrationViolation> routeViolations = new ArrayList<>();
         Map<String, ResourceMethodMeta> registered = new HashMap<>();
@@ -348,6 +511,29 @@ public class JaxRsRouteRegistrar {
             // Resolve and startup-validate @RequiresAction (fail-closed on any problem)
             Optional<ActionRef> requiredAction = resolveRequiredAction(
                     meta, requiresActionResolver, actionRegistry, authEnabled, authorizerAvailable, routeViolations);
+
+            // Explicit-security-policy classification, from the SAME inputs enforcement already
+            // resolved above: the effective policy, the annotation-sourced requirement sets, and
+            // whether a required action was resolved. No second policy resolution.
+            ExplicitPolicy explicitPolicy = classifyExplicitPolicy(
+                    effectivePolicy, descriptor.securityRequirementSets(), requiredAction.isPresent());
+            if (explicitPolicy == ExplicitPolicy.IMPLICIT) {
+                String fullPath = fullOperationPath(mount.mountPath(), meta.path());
+                // Opt-in condition: applies on EVERY JaxRsRouterMount, application or not — fails
+                // startup through the existing violation path below instead of only warning.
+                if (requireExplicitPolicy) {
+                    routeViolations.add(new RouteRegistrationViolation(
+                            meta.operationId(),
+                            RouteRegistrationViolation.ViolationType.NO_EXPLICIT_SECURITY_POLICY,
+                            meta.httpMethod() + " " + fullPath + " has no explicit security policy, which "
+                                    + "jaxrs.security.requireExplicitPolicy requires"));
+                } else if (applicationType != null) {
+                    // Recording condition: only when this registrar serves an application mount.
+                    // The owning JaxRsRouterMount reads its own implicitOperations sink after this
+                    // call returns and logs the warning; a non-application mount never warns.
+                    implicitOperations.add(new ImplicitOperation(meta.httpMethod(), fullPath, meta.operationId()));
+                }
+            }
 
             // (a) Authentication: install the collected auth handler(s) for the operation's required
             // schemes FIRST. These are Vert.x AuthenticationHandlers; Vert.x rejects adding an
@@ -1180,6 +1366,109 @@ public class JaxRsRouteRegistrar {
             return Optional.empty();
         }
         return resolved;
+    }
+
+    /**
+     * The classification of one operation's declared security posture.
+     *
+     * <p>Package-private: consumed only by the per-operation classification in this class and by
+     * the classifier's own direct test.
+     */
+    enum ExplicitPolicy {
+        /** The operation restricts callers. */
+        RESTRICTS_CALLERS,
+        /** The operation does not restrict callers and its effective policy is {@code PermitAll}. */
+        DECLARED_PUBLIC,
+        /** Neither restricting nor declared public: no explicit security policy. */
+        IMPLICIT
+    }
+
+    /**
+     * Classifies one operation's declared security posture, from the same inputs enforcement
+     * already resolves: the effective {@link SecurityPolicy}, the annotation-sourced {@link
+     * SecurityRequirementSet}s, and whether a required action was resolved. Adds no second policy
+     * resolution.
+     *
+     * <p>An operation <strong>restricts callers</strong> when any of these holds:
+     * <ul>
+     *   <li>its effective policy is {@link SecurityPolicy.DenyAll}, {@link
+     *       SecurityPolicy.AuthenticatedOnly}, or {@link SecurityPolicy.Constrained};</li>
+     *   <li>{@code requirementSets} is non-empty and contains no empty (anonymous) set — an empty
+     *       set is one whose {@code schemes()} is empty;</li>
+     *   <li>{@code requiredActionResolved} is {@code true}.</li>
+     * </ul>
+     *
+     * <p>Otherwise it is <strong>declared public</strong> when its effective policy is {@link
+     * SecurityPolicy.PermitAll} — a restricting declaration takes precedence over a {@code
+     * PermitAll} declaration, so this is only reached once none of the restricting clauses above
+     * matched. Any other operation is <strong>implicit</strong>.
+     *
+     * <p><strong>Defensive empty-set rule.</strong> The annotation scanner cannot produce an empty
+     * {@link SecurityRequirementSet} today ({@code SecuritySchemeAnnotationScanner} treats {@code
+     * security = {}} as absent and rejects a malformed {@code @SecurityRequirement} with neither
+     * {@code name} nor {@code combine}), so no annotated resource can drive the anonymous-set
+     * clause. It exists so a directly constructed empty set — which {@link
+     * SecurityRequirementSet}'s canonical constructor accepts — is never misclassified as
+     * restricting.
+     *
+     * @param effectivePolicy        the operation's effective {@link SecurityPolicy}
+     * @param requirementSets        the operation's annotation-sourced {@link SecurityRequirementSet}s
+     * @param requiredActionResolved whether a required action was resolved for the operation
+     * @return the classification
+     */
+    static ExplicitPolicy classifyExplicitPolicy(
+            SecurityPolicy effectivePolicy,
+            List<SecurityRequirementSet> requirementSets,
+            boolean requiredActionResolved) {
+        boolean requirementSetsRestrict = !requirementSets.isEmpty()
+                && requirementSets.stream().noneMatch(set -> set.schemes().isEmpty());
+        if (requirementSetsRestrict || requiredActionResolved) {
+            return ExplicitPolicy.RESTRICTS_CALLERS;
+        }
+        // Exhaustive pattern switch over the sealed SecurityPolicy: adding a new variant is a
+        // compile error here rather than a silent fall-through to IMPLICIT.
+        return switch (effectivePolicy) {
+            case SecurityPolicy.DenyAll ignored -> ExplicitPolicy.RESTRICTS_CALLERS;
+            case SecurityPolicy.AuthenticatedOnly ignored -> ExplicitPolicy.RESTRICTS_CALLERS;
+            case SecurityPolicy.Constrained ignored -> ExplicitPolicy.RESTRICTS_CALLERS;
+            case SecurityPolicy.PermitAll ignored -> ExplicitPolicy.DECLARED_PUBLIC;
+            case SecurityPolicy.None ignored -> ExplicitPolicy.IMPLICIT;
+        };
+    }
+
+    /**
+     * One implicit operation recorded for the warning: an operation with no explicit security
+     * policy ({@link ExplicitPolicy#IMPLICIT}), on a mount this registrar serves as an application
+     * mount, while the {@code jaxrs.security.requireExplicitPolicy} opt-in is off.
+     *
+     * @param httpMethod  the operation's HTTP method
+     * @param fullPath    the operation's full path — the mount prefix (the mount path without its
+     *                    terminal {@code *}) joined with the operation's own path, via {@link
+     *                    #fullOperationPath}
+     * @param operationId the operation's id
+     */
+    record ImplicitOperation(String httpMethod, String fullPath, String operationId) {}
+
+    /**
+     * Joins a mount's path prefix with an operation's own path into the operation's full path,
+     * with exactly one {@code '/'} at the seam. {@code mountPath}'s terminal {@code '*'}
+     * (Vert.x's sub-router wildcard) is stripped first: mount {@code /api/mgmt/*} joined with
+     * {@code /console/items} yields {@code /api/mgmt/console/items}, and the legacy default mount
+     * ({@code /*}) joined with {@code /console/items} yields {@code /console/items}.
+     *
+     * <p>Package-private and static so the join rule lives in exactly one place.
+     *
+     * @param mountPath     the mount's path prefix ({@link
+     *                      dev.vertique.rest.core.router.MountMeta#mountPath()})
+     * @param operationPath the operation's own JAX-RS path ({@link ResourceMethodMeta#path()})
+     * @return the joined full path
+     */
+    static String fullOperationPath(String mountPath, String operationPath) {
+        String prefix = mountPath.endsWith("*") ? mountPath.substring(0, mountPath.length() - 1) : mountPath;
+        if (prefix.endsWith("/")) {
+            prefix = prefix.substring(0, prefix.length() - 1);
+        }
+        return prefix + operationPath;
     }
 
     /**

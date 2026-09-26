@@ -10,20 +10,31 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * APT compilation tests for conditional and uniform {@code @ElementsIntoSet} binding emission in
+ * APT compilation tests for the presence-gated legacy binding, its paired lazy catalog entry, and
+ * conditional and uniform {@code @ElementsIntoSet} binding emission in
  * {@link GeneratedJaxRsResourcesModuleEmitter} (CG-011 W3).
  *
  * <p>Each test compiles a small fixture through {@link JaxRsPipelineProcessor} and verifies
  * the shape of the generated {@code GeneratedJaxRsResourcesModule}:
  * <ul>
- *   <li>All bindings use {@code @ElementsIntoSet Set<Object>} — the uniform shape
- *       (FR-CG011-020).</li>
+ *   <li>All legacy bindings use {@code @ElementsIntoSet Set<Object>} — the uniform shape
+ *       (FR-CG011-020) — and also take {@code Set<GeneratedJaxRsApplicationRegistration>
+ *       applications}, gating their body on {@code applications.isEmpty()} (presence-gated
+ *       binding).</li>
  *   <li>All methods accept {@code @VertxConfig JsonObject config} and
  *       {@code Provider<Resource> provider} parameters (FR-CG011-021).</li>
- *   <li>Unconditional resources produce {@code Set.of(provider.get())} with no condition guard.</li>
- *   <li>Conditional resources emit a {@code private static final PropertyCondition[] X_CONDITIONS}
- *       constant and body {@code PropertyCondition.matchesAll(config, X_CONDITIONS) ? Set.of(provider.get()) : Set.of()}.</li>
+ *   <li>Unconditional resources produce {@code applications.isEmpty() ? Set.of(provider.get()) :
+ *       Set.of()} with no {@code PropertyCondition} guard.</li>
+ *   <li>Conditional resources emit a {@code private static final PropertyCondition[]
+ *       X_BINDING_CONDITIONS} constant and binding body {@code applications.isEmpty() &&
+ *       PropertyCondition.matchesAll(config, X_BINDING_CONDITIONS) ? Set.of(provider.get()) :
+ *       Set.of()}.</li>
  *   <li>Multiple {@code @ConditionalOnProperty} annotations (repeatable) are ANDed into one array.</li>
+ *   <li>Every DI-eligible resource also gets a lazy {@code @Provides @IntoSet
+ *       GeneratedJaxRsResourceEntry …Entry} method that never calls the provider and, when
+ *       conditional, reuses the binding's own {@code X_BINDING_CONDITIONS} constant — so one
+ *       conditional resource contains {@code PropertyCondition.matchesAll} twice: once gating its
+ *       binding, once feeding its entry's condition result.</li>
  * </ul>
  */
 class GeneratedJaxRsResourcesModuleEmitterConditionalTest {
@@ -279,14 +290,31 @@ class GeneratedJaxRsResourcesModuleEmitterConditionalTest {
                     source.contains("PropertyCondition.matchesAll"),
                     "Conditional resource must have a PropertyCondition.matchesAll guard");
 
-            // The conditional method has the guard; count occurrences: exactly one guard for one conditional resource
+            // The conditional resource contributes two guard sites: the presence-gated legacy
+            // binding and the lazy catalog entry, both reusing the same
+            // PRIVATE_RESOURCE_BINDING_CONDITIONS constant. The unconditional resource contributes
+            // none.
             long guardCount = source.lines()
                     .filter(line -> line.contains("PropertyCondition.matchesAll"))
                     .count();
             org.junit.jupiter.api.Assertions.assertEquals(
-                    1L,
+                    2L,
                     guardCount,
-                    "Exactly one PropertyCondition.matchesAll guard expected — one per conditional resource");
+                    "Exactly two PropertyCondition.matchesAll guards expected — one in the binding"
+                            + " and one in the catalog entry, for one conditional resource");
+
+            // One occurrence gates the presence-gated legacy binding...
+            result.assertGeneratedSourceContains(
+                    GENERATED_MODULE,
+                    "applications.isEmpty() && PropertyCondition.matchesAll(config,"
+                            + " PRIVATE_RESOURCE_BINDING_CONDITIONS)");
+
+            // ...and the other feeds the lazy catalog entry's condition result, reusing the same
+            // constant rather than declaring a second one.
+            result.assertGeneratedSourceContains(
+                    GENERATED_MODULE,
+                    "GeneratedJaxRsResourceEntry.of(PrivateResource.class,"
+                            + " PropertyCondition.matchesAll(config, PRIVATE_RESOURCE_BINDING_CONDITIONS), provider)");
         }
     }
 }

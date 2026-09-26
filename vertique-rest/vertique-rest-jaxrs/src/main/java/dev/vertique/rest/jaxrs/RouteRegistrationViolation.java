@@ -200,6 +200,16 @@ public record RouteRegistrationViolation(String operationId, ViolationType type,
         DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT,
 
         /**
+         * An operation has no explicit security policy: it neither restricts callers ({@code
+         * DenyAll}/{@code AuthenticatedOnly}/{@code Constrained}, a non-empty, non-anonymous
+         * {@code securityRequirementSets()}, or a resolved required action) nor is declared public
+         * with {@code @PermitAll}. Reported only when {@code jaxrs.security.requireExplicitPolicy}
+         * is {@code true}; without the opt-in, such an operation only produces a warning on the
+         * owning application mount, and startup succeeds.
+         */
+        NO_EXPLICIT_SECURITY_POLICY,
+
+        /**
          * A request-evidence capturer rejected the route when it validated it at router build — for
          * example because the evidence-capture policy the route selects does not exist. Such a
          * route could only ever fail its capture (silently) on every request, so startup fails fast.
