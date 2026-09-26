@@ -1099,6 +1099,7 @@ gate.
 | `REQUIRES_ACTION_INVALID` | a `@RequiresAction` declaration is malformed |
 | `REQUIRES_ACTION_POLICY_CONFLICT` | a `@RequiresAction` declaration conflicts with the operation's resolved security policy |
 | `UNRESOLVABLE_PARAM_CONVERTER` | a path/query/header/cookie/form parameter type — or a collection's element type, or a convertible `@BeanParam` field — has no converter resolvable by the `ParamConversionResolver` chain |
+| `EVIDENCE_CAPTURE_REJECTED` | a request-evidence capturer rejected the route when it validated it at router build (`RestServerRequestEvidenceCapturer#validateRoute` threw) — for example the audit adapter cannot resolve the capture policy the route selects |
 
 `SecurityPolicyViolationException` is thrown immediately when a `SecurityPolicyValidator` is bound and
 finds a violation, rather than being collected. `JsonProfileConfigurationException` is thrown at
