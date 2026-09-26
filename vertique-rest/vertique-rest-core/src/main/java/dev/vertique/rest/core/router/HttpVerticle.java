@@ -106,8 +106,9 @@ public class HttpVerticle extends AbstractVerticle {
      * Starts the HTTP server by composing the main router from all registered mounts,
      * applying customizers and middlewares, then binding to the configured port.
      *
-     * <p>Fails the {@code startPromise} immediately if any mount path is invalid or if
-     * the HTTP server fails to bind.
+     * <p>Fails the {@code startPromise} immediately if any mount path is invalid, if a
+     * {@link MountCompositionValidator} reports a composition violation, if a validator throws a
+     * {@link RuntimeException} or {@link LinkageError}, or if the HTTP server fails to bind.
      *
      * @param startPromise the promise to complete when the server is ready, or fail on error
      */
@@ -137,7 +138,7 @@ public class HttpVerticle extends AbstractVerticle {
             for (MountCompositionValidator validator : mountCompositionValidators) {
                 validatorViolations.addAll(validator.validate(sortedMounts));
             }
-        } catch (RuntimeException validatorException) {
+        } catch (RuntimeException | LinkageError validatorException) {
             startPromise.fail(validatorException);
             return;
         }

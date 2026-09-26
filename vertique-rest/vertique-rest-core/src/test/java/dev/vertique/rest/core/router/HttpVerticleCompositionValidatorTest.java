@@ -8,7 +8,12 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpServerOptions;
 import io.vertx.ext.web.Router;
@@ -20,20 +25,25 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.slf4j.LoggerFactory;
 
 /**
  * Unit tests for {@link HttpVerticle}'s package-private six-argument {@code @Inject} constructor
  * and its {@link MountCompositionValidator} seam (C-SPI): validators run only once mount-path
  * validation has passed, their combined violation messages are sorted lexicographically into the
  * existing {@code IllegalStateException("Invalid mount configuration:\n  ...")} shape, a throwing
- * validator fails start with its own exception, no validator ever sees an invalid-path composition,
- * and no mount router is created while a validator would still reject the composition. The
- * retained public five-argument constructor runs no validator at all.
+ * validator — whether a {@link RuntimeException} or a {@link LinkageError} — fails start with its
+ * own exception, no validator ever sees an invalid-path composition, no mount router is created
+ * while a validator would still reject the composition, and validators run before overlap
+ * detection so a rejected composition never logs an overlap warning. The retained public
+ * five-argument constructor runs no validator at all.
  *
  * <p>Lives in the {@code router} package because the six-argument constructor is package-private.
  */
@@ -63,6 +73,39 @@ class HttpVerticleCompositionValidatorTest {
 
     private static final String THROWING_VALIDATOR_MESSAGE = "validator boom";
 
+    private static final String LINKAGE_ERROR_VALIDATOR_MESSAGE = "x";
+
+    /** Two mount paths that overlap by containment: {@link #OVERLAP_INNER_PATH} is a prefix match under {@link #OVERLAP_OUTER_PATH}. */
+    private static final String OVERLAP_OUTER_PATH = "/overlap/*";
+
+    private static final String OVERLAP_INNER_PATH = "/overlap/nested/*";
+
+    private static final String ALWAYS_VIOLATING_MESSAGE = "G2-11: composition always rejected";
+
+    /** Substring of {@code HttpVerticle#detectOverlaps}'s containment-overlap warning message. */
+    private static final String OVERLAP_WARNING_SUBSTRING = "is a prefix of";
+
+    private Logger verticleLogger;
+    private Level previousLevel;
+    private ListAppender<ILoggingEvent> appender;
+
+    @BeforeEach
+    void captureVerticleLogs() {
+        verticleLogger = (Logger) LoggerFactory.getLogger(HttpVerticle.class);
+        previousLevel = verticleLogger.getLevel();
+        verticleLogger.setLevel(Level.WARN);
+        appender = new ListAppender<>();
+        appender.start();
+        verticleLogger.addAppender(appender);
+    }
+
+    @AfterEach
+    void releaseVerticleLogs() {
+        verticleLogger.detachAppender(appender);
+        appender.stop();
+        verticleLogger.setLevel(previousLevel);
+    }
+
     // --- TP-001 ---
 
     @ParameterizedTest(name = "{0}")
@@ -85,11 +128,12 @@ class HttpVerticleCompositionValidatorTest {
     }
 
     /**
-     * TP-001's three cases: (a) an invalid mount path, beside a validator that must never run; (b) a
+     * TP-001's four cases: (a) an invalid mount path, beside a validator that must never run; (b) a
      * valid path, beside two validators whose combined violations must be sorted into one
-     * {@link IllegalStateException}; (c) a valid path, beside a validator that throws.
+     * {@link IllegalStateException}; (c) a valid path, beside a validator that throws a {@link
+     * RuntimeException}; (d) a valid path, beside a validator that throws a {@link LinkageError}.
      *
-     * @return the three TP-001 cases, in contract order
+     * @return the four TP-001 cases, in contract order
      */
     private static Stream<ValidatorCase> validatorCases() {
         CountingRouterMount invalidPathMount = new CountingRouterMount(INVALID_MOUNT_PATH);
@@ -147,7 +191,49 @@ class HttpVerticleCompositionValidatorTest {
                         err,
                         "start must fail with the validator's own exception, never wrapped or replaced"));
 
-        return Stream.of(invalidPathCase, sortedViolationsCase, throwingValidatorCase);
+        CountingRouterMount linkageErrorValidatorMount = new CountingRouterMount(VALID_MOUNT_PATH);
+        NoClassDefFoundError validatorLinkageError = new NoClassDefFoundError(LINKAGE_ERROR_VALIDATOR_MESSAGE);
+        RecordingValidator linkageErrorValidator = RecordingValidator.throwingLinkageError(validatorLinkageError);
+        ValidatorCase linkageErrorValidatorCase = new ValidatorCase(
+                "(d) valid path: a validator throwing a LinkageError fails start with that error",
+                verticle(Set.of(linkageErrorValidatorMount), Set.of(linkageErrorValidator)),
+                linkageErrorValidatorMount,
+                err -> assertSame(
+                        validatorLinkageError,
+                        err,
+                        "start must fail with the validator's own LinkageError, never wrapped or replaced"));
+
+        return Stream.of(invalidPathCase, sortedViolationsCase, throwingValidatorCase, linkageErrorValidatorCase);
+    }
+
+    /**
+     * Calls {@link HttpVerticle#start(Promise)} directly, bypassing Vert.x's own deployment
+     * machinery entirely. Vert.x's deployment layer already fails a deployment whose {@code start}
+     * throws any {@link Throwable} (not only a {@link RuntimeException}), so the {@code
+     * deployVerticle}-based case (d) above cannot by itself distinguish {@code HttpVerticle}
+     * catching the {@link LinkageError} from Vert.x merely catching it one layer up. This test
+     * proves the catch lives in {@code start()} itself: without it, the error propagates out of
+     * this direct call uncaught; with it, {@code start()} returns normally having failed the
+     * promise itself.
+     */
+    @Test
+    @DisplayName("start() itself (not only Vert.x's deployment layer) catches a validator's LinkageError and fails "
+            + "the promise with it, returning normally")
+    void startItselfCatchesValidatorLinkageError() {
+        CountingRouterMount mount = new CountingRouterMount(VALID_MOUNT_PATH);
+        NoClassDefFoundError validatorLinkageError = new NoClassDefFoundError(LINKAGE_ERROR_VALIDATOR_MESSAGE);
+        RecordingValidator validator = RecordingValidator.throwingLinkageError(validatorLinkageError);
+        HttpVerticle verticle = verticle(Set.of(mount), Set.of(validator));
+        Promise<Void> promise = Promise.promise();
+
+        verticle.start(promise);
+
+        assertTrue(promise.future().failed(), "start() must fail the promise itself, not merely propagate the error");
+        assertSame(
+                validatorLinkageError,
+                promise.future().cause(),
+                "the promise must fail with the validator's own LinkageError, never wrapped or replaced");
+        assertEquals(0, mount.createRouterCalls(), "createRouter must never be called");
     }
 
     // --- TP-002 ---
@@ -197,6 +283,49 @@ class HttpVerticleCompositionValidatorTest {
                 return Future.succeededFuture(router);
             }
         };
+    }
+
+    // --- TP-003 ---
+
+    @Test
+    @DisplayName("Composition validators run before overlap detection: an always-violating validator fails start "
+            + "and HttpVerticle logs no overlap warning for the (valid but overlapping) mounts")
+    void validatorsRunBeforeDetectOverlaps(Vertx vertx, VertxTestContext ctx) {
+        CountingRouterMount outerMount = new CountingRouterMount(OVERLAP_OUTER_PATH);
+        CountingRouterMount innerMount = new CountingRouterMount(OVERLAP_INNER_PATH);
+        RecordingValidator alwaysViolatingValidator = RecordingValidator.returning(List.of(ALWAYS_VIOLATING_MESSAGE));
+        HttpVerticle verticle = verticle(Set.of(outerMount, innerMount), Set.of(alwaysViolatingValidator));
+
+        vertx.deployVerticle(verticle).onComplete(ctx.failing(err -> {
+            ctx.verify(() -> {
+                assertInstanceOf(IllegalStateException.class, err, "the always-violating validator must fail start");
+                assertTrue(
+                        err.getMessage().contains(ALWAYS_VIOLATING_MESSAGE),
+                        () -> "expected the validator's violation in: " + err.getMessage());
+                assertEquals(0, outerMount.createRouterCalls(), "createRouter must never be called");
+                assertEquals(0, innerMount.createRouterCalls(), "createRouter must never be called");
+                assertTrue(
+                        overlapWarnings().isEmpty(),
+                        () -> "detectOverlaps must never run once a validator has already failed start, but got: "
+                                + overlapWarnings());
+            });
+            ctx.completeNow();
+        }));
+    }
+
+    /**
+     * WARN events logged by {@link HttpVerticle} whose message names the containment-overlap
+     * condition ({@link #OVERLAP_WARNING_SUBSTRING}).
+     *
+     * @return the matching WARN messages, in emission order
+     */
+    private List<String> overlapWarnings() {
+        return appender.list.stream()
+                .filter(event -> event.getLevel() == Level.WARN)
+                .filter(event -> event.getLoggerName().equals(HttpVerticle.class.getName()))
+                .map(ILoggingEvent::getFormattedMessage)
+                .filter(message -> message.contains(OVERLAP_WARNING_SUBSTRING))
+                .toList();
     }
 
     // --- Shared helpers and fixtures ---
@@ -266,32 +395,43 @@ class HttpVerticleCompositionValidatorTest {
 
     /**
      * A {@link MountCompositionValidator} that counts its {@link #validate(List)} calls and either
-     * returns a fixed violation list or throws a fixed exception, as configured by its factory method.
+     * returns a fixed violation list, throws a fixed {@link RuntimeException}, or throws a fixed
+     * {@link LinkageError}, as configured by its factory method.
      */
     private static final class RecordingValidator implements MountCompositionValidator {
 
         private final AtomicInteger calls = new AtomicInteger();
         private final List<String> violations;
-        private final RuntimeException toThrow;
+        private final RuntimeException toThrowRuntime;
+        private final LinkageError toThrowLinkageError;
 
-        private RecordingValidator(List<String> violations, RuntimeException toThrow) {
+        private RecordingValidator(
+                List<String> violations, RuntimeException toThrowRuntime, LinkageError toThrowLinkageError) {
             this.violations = violations;
-            this.toThrow = toThrow;
+            this.toThrowRuntime = toThrowRuntime;
+            this.toThrowLinkageError = toThrowLinkageError;
         }
 
         static RecordingValidator returning(List<String> violations) {
-            return new RecordingValidator(violations, null);
+            return new RecordingValidator(violations, null, null);
         }
 
         static RecordingValidator throwing(RuntimeException toThrow) {
-            return new RecordingValidator(null, toThrow);
+            return new RecordingValidator(null, toThrow, null);
+        }
+
+        static RecordingValidator throwingLinkageError(LinkageError toThrow) {
+            return new RecordingValidator(null, null, toThrow);
         }
 
         @Override
         public List<String> validate(List<RouterMount> mounts) {
             calls.incrementAndGet();
-            if (toThrow != null) {
-                throw toThrow;
+            if (toThrowRuntime != null) {
+                throw toThrowRuntime;
+            }
+            if (toThrowLinkageError != null) {
+                throw toThrowLinkageError;
             }
             return violations;
         }

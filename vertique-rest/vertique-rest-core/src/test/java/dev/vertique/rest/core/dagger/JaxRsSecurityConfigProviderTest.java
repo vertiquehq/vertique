@@ -22,12 +22,21 @@ import dev.vertique.rest.core.config.JaxRsConfig;
 import dev.vertique.rest.core.config.JaxRsSecurityConfig;
 import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
+import java.lang.reflect.RecordComponent;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.slf4j.LoggerFactory;
@@ -186,6 +195,43 @@ class JaxRsSecurityConfigProviderTest {
                     assertNotNull(outcome.security());
                     assertFalse(outcome.security().requireExplicitPolicy());
                 }));
+    }
+
+    // --- TP-002 (G2-13) ---
+
+    /**
+     * Guards {@code RestCoreModule#checkSecurityKeys}'s reserved-name rule: it rejects any raw
+     * {@code "jaxrs"}-level key that case-insensitively matches a {@link JaxRsSecurityConfig}
+     * record component name, regardless of whether that key is actually a legitimate {@link
+     * JaxRsConfig} field. A future {@link JaxRsSecurityConfig} component sharing a name,
+     * case-insensitively, with an existing {@link JaxRsConfig} field would silently make that
+     * field unreachable from raw config. {@code "security"} itself is the expected container key
+     * and is excluded from the {@link JaxRsConfig} side of the comparison.
+     */
+    @Test
+    @DisplayName("JaxRsSecurityConfig component names never collide, case-insensitively, with a JaxRsConfig key")
+    void securityComponentNamesDoNotCollideWithJaxRsConfigKeys() {
+        Set<String> securityComponentNames = Arrays.stream(JaxRsSecurityConfig.class.getRecordComponents())
+                .map(RecordComponent::getName)
+                .map(name -> name.toLowerCase(Locale.ROOT))
+                .collect(Collectors.toCollection(TreeSet::new));
+
+        Set<String> jaxRsConfigKeys = Arrays.stream(JaxRsConfig.class.getDeclaredFields())
+                .filter(field -> !field.isSynthetic())
+                .filter(field -> !Modifier.isStatic(field.getModifiers()))
+                .map(Field::getName)
+                .filter(name -> !name.equals("security"))
+                .map(name -> name.toLowerCase(Locale.ROOT))
+                .collect(Collectors.toCollection(TreeSet::new));
+
+        Set<String> collisions = new TreeSet<>(securityComponentNames);
+        collisions.retainAll(jaxRsConfigKeys);
+
+        assertTrue(
+                collisions.isEmpty(),
+                () -> "JaxRsSecurityConfig component name(s) " + collisions + " collide, case-insensitively, with a "
+                        + "JaxRsConfig key; such a key would become unreachable via the reserved-name raw-key check "
+                        + "(RestCoreModule#checkSecurityKeys)");
     }
 
     // --- Helpers ---

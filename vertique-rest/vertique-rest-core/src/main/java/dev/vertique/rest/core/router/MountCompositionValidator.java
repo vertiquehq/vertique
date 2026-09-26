@@ -7,7 +7,8 @@ import java.util.List;
 
 /**
  * INTERNAL framework seam: validates a complete mount composition before any mount router is
- * created. Not an application contract and outside the maturity promise. Not ordered.
+ * created. Not an application contract and outside the maturity promise. An application uses the
+ * extension points and configuration this module documents and never names this type. Not ordered.
  */
 public interface MountCompositionValidator {
     /**

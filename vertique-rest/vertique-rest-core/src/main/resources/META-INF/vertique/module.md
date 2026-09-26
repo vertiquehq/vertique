@@ -65,9 +65,9 @@ handlers, health endpoints, or a hand-built router are peers of it, not special 
 2. **Validate mount paths** — every violation is collected and the start promise fails with one
    aggregated message. Because validation runs *after* the sort, violations are reported in mounted
    order.
-3. **Run composition validators** — every `MountCompositionValidator` runs on the valid, sorted
-   mounts; any violation it returns, or any exception it throws, fails the start promise before any
-   mount router is created.
+3. **Run composition validators** — every framework composition validator (see Framework seams
+   below) runs on the valid, sorted mounts; any violation it returns, or any exception it throws,
+   fails the start promise before any mount router is created.
 4. **Detect overlaps** — duplicate paths and prefix containment log a warning; startup continues.
 5. Sort `MountCustomizer`s by the plain `OrderedExtension` comparator.
 6. Create the main router and attach every `ROOT`-scoped `Middleware` at its own `path()`.
@@ -1173,6 +1173,16 @@ When `enabled` is `false` (the default) no CORS handler is installed and every o
 When `jaxrs.security.requireExplicitPolicy` is `true`, `RestCoreModule` logs one INFO line:
 `jaxrs.security.requireExplicitPolicy is enabled: explicit security policies are required for
 every JAX-RS operation`. The default `false` logs nothing new.
+
+`jaxrs.security.requireExplicitPolicy` is read only from the nested `jaxrs` → `security` object
+shown above. A dotted key placed directly under `jaxrs` — for example
+`{"security.requireExplicitPolicy": true}` — is an ordinary unknown key, not one of the reserved
+names above, and is silently ignored; it never reaches the opt-in. A flat
+`-Djaxrs.security.requireExplicitPolicy` system property or the equivalent environment variable is
+not read directly either, because neither source expands a dotted key into nested JSON; such a value
+reaches the opt-in only through a `${...}` placeholder written at the nested `requireExplicitPolicy`
+position, resolved as described in the `vertique-config-core` reference's placeholder resolution
+chain. The INFO line above is the only confirmation that the opt-in resolved to `true`.
 
 ### `jaxrs.defaultHeaders`
 
