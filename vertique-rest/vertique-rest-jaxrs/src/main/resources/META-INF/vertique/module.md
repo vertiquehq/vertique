@@ -67,7 +67,9 @@ interface `default` method the class inherits without overriding. An annotated d
 route of each class that implements its interface, exactly as an override would be, which matches
 Jakarta REST implementations such as Jersey and RESTEasy. A method declared by a class wins over an
 interface default, and a default in a more specific interface wins over the one it overrides, so an
-override never adds a second route. The route takes the resource class's class-level annotations
+override never adds a second route. A superclass's `private` method with the same signature is not
+inherited and does not hide the default. (A package-private one in another package does: the JVM
+dispatches the interface call to it and fails, so such a default is not routed.) The route takes the resource class's class-level annotations
 (`@Path`, security, media types) together with the default method's merged method annotations.
 Inherited annotations are matched by erased signature, and type variables are not resolved against
 the implementing class: a generic interface method (`Crud<ID>`) overridden with a concrete parameter

@@ -42,6 +42,7 @@ import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.EntityPart;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
@@ -746,7 +747,8 @@ class ResourceScanner {
      * synthetic methods.
      *
      * <p>An inherited default method is a resource method of the class exactly as an override
-     * would be (issue #630). {@link Class#getMethods()} already applies the Java selection rules:
+     * would be (issue #630). A superclass's private method with the same signature is not
+     * inherited and never shadows it. {@link Class#getMethods()} already applies the Java selection rules:
      * a method declared by a class — including a bridge that a generic override produces — hides
      * an interface method with the same signature, and a more specific interface's method hides
      * the one it overrides. Filtering it to {@link Method#isDefault()} therefore yields exactly the
@@ -771,7 +773,14 @@ class ResourceScanner {
         for (Method method : clazz.getMethods()) {
             // An interface bridge is a synthetic default method; it is never a resource method.
             if (method.isDefault() && !method.isBridge() && !method.isSynthetic()) {
-                seen.putIfAbsent(methodKey(method), method);
+                // A superclass's private same-signature method is not inherited and overrides nothing
+                // (JLS 8.2; JVMS 5.4.5 "can override" excludes ACC_PRIVATE), so it must not shadow the
+                // default. Any other same-key entry is a method that does override it.
+                String key = methodKey(method);
+                Method existing = seen.get(key);
+                if (existing == null || Modifier.isPrivate(existing.getModifiers())) {
+                    seen.put(key, method);
+                }
             }
         }
         return List.copyOf(seen.values());

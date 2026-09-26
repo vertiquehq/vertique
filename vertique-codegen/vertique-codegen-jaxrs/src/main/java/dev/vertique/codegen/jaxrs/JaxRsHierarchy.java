@@ -91,7 +91,7 @@ public final class JaxRsHierarchy {
      * @param resourceClass the resource class; must not be {@code null}
      * @return an ordered, deduplicated list of interface type elements; never {@code null}
      */
-    public static List<TypeElement> interfacesForMethod(
+    static List<TypeElement> interfacesForMethod(
             CodegenContext ctx, ExecutableElement method, TypeElement resourceClass) {
         if (method.getEnclosingElement() instanceof TypeElement owner && owner.getKind() == ElementKind.INTERFACE) {
             return allInterfaces(ctx, owner);

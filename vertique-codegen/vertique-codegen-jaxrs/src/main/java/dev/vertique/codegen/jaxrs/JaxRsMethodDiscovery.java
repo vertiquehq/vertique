@@ -31,9 +31,10 @@ import javax.lang.model.util.Types;
  *   <li>Deduplicate by {@code name:erasedParam1Type:...} so subclass overrides win (the resource
  *       class is visited first and its version is inserted first into the seen map).</li>
  *   <li>Then add every {@code default} method of the transitively implemented interfaces (BFS
- *       order, {@link JaxRsHierarchy#allInterfaces}) that the class inherits: one that no
- *       non-private, non-static method of the superclass chain overrides and no method of a more
- *       specific interface overrides (issue #630).</li>
+ *       order, {@link JaxRsHierarchy#allInterfaces}) that the class inherits: one that no inherited
+ *       method of the superclass chain overrides and no method of a more specific interface
+ *       overrides (issue #630). A superclass's private method with the same signature is not
+ *       inherited and never shadows a default.</li>
  * </ol>
  *
  * <p>The override test compares member types of the resource ({@link Types#asMemberOf} plus
@@ -84,7 +85,9 @@ public final class JaxRsMethodDiscovery {
             for (ExecutableElement method : declaredMethods(iface)) {
                 if (method.getModifiers().contains(Modifier.DEFAULT)
                         && !isOverridden(method, iface, classMethods, interfaces, resourceType, types)) {
-                    seen.putIfAbsent(methodKey(method, types), method);
+                    // A same-key class-chain entry is then a superclass's private method: it is not
+                    // inherited and overrides nothing (JLS 8.2), so it must not shadow the default.
+                    seen.put(methodKey(method, types), method);
                 }
             }
         }

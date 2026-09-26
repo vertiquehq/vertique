@@ -87,6 +87,16 @@ class InterfaceDefaultMethodParityTest {
     @Path("/derived")
     static class DerivedResource extends BaseResource {}
 
+    static class PrivateHelperBase {
+        @SuppressWarnings("unused")
+        private String delete(String id) {
+            return "private helper " + id;
+        }
+    }
+
+    @Path("/helpers")
+    static class PrivateHelperResource extends PrivateHelperBase implements Crud {}
+
     interface SoftCrud extends Crud {
         @Override
         default String delete(String id) {
@@ -318,6 +328,23 @@ class InterfaceDefaultMethodParityTest {
                                 """)),
                                 1,
                                 List.of("AccountResource")),
+                        new ParityCase(
+                                "a superclass's private same-signature method does not shadow the default; dispatch stays reflective",
+                                new PrivateHelperResource(),
+                                "PrivateHelperResource",
+                                List.of(crudSource(), src("PrivateHelperBase", """
+                                                public class PrivateHelperBase {
+                                                    private String delete(String id) {
+                                                        return "private helper " + id;
+                                                    }
+                                                }
+                                                """), src("PrivateHelperResource", """
+                                                @Path("/helpers")
+                                                public class PrivateHelperResource extends PrivateHelperBase implements Crud {}
+                                                """)),
+                                1,
+                                List.of("Crud"),
+                                false),
                         new ParityCase(
                                 "default through a superclass's interface",
                                 new DerivedResource(),
