@@ -194,6 +194,33 @@ class JaxRsRouteRegistrarTest {
         }
     }
 
+    /** Interface whose default route is inherited by two resources (issue #630). */
+    interface SharedDefaultApi {
+        @GET
+        @Operation(operationId = "sharedDefault")
+        default Future<String> shared() {
+            return Future.succeededFuture("shared");
+        }
+    }
+
+    @Path("/shared-a")
+    static class SharedDefaultResourceA implements SharedDefaultApi {}
+
+    @Path("/shared-b")
+    static class SharedDefaultResourceB implements SharedDefaultApi {}
+
+    /** Generic contract whose default binds a type-variable path parameter (issue #630). */
+    interface GenericDefaultApi<I> {
+        @DELETE
+        @Path("/{id}")
+        default Future<String> remove(@PathParam("id") I id) {
+            return Future.succeededFuture("removed " + id);
+        }
+    }
+
+    @Path("/generic-default")
+    static class GenericDefaultResource implements GenericDefaultApi<String> {}
+
     // --- Tests ---
 
     @Test
@@ -521,6 +548,65 @@ class JaxRsRouteRegistrarTest {
                 RouteRegistrationViolation.ViolationType.DUPLICATE_OPERATION_ID,
                 ex.violations().get(0).type());
         assertTrue(ex.violations().get(0).message().contains("sharedOp"));
+    }
+
+    @Test
+    @DisplayName("A default route inherited by two resources is a duplicate operationId naming both resources")
+    void sharedDefaultRoute_duplicateOperationIdNamesResourceClasses() {
+        RouteRegistrationException ex = assertThrows(
+                RouteRegistrationException.class,
+                () -> RegistrarTestSupport.registerAll(
+                        registrar,
+                        Set.of(new SharedDefaultResourceA(), new SharedDefaultResourceB()),
+                        router,
+                        RegistrarTestSupport.TEST_MOUNT_META,
+                        List.of(),
+                        List.of(),
+                        null,
+                        false,
+                        List.of(),
+                        List.of(),
+                        "OFF",
+                        null,
+                        null,
+                        null,
+                        false));
+
+        assertEquals(1, ex.violations().size());
+        RouteRegistrationViolation violation = ex.violations().get(0);
+        assertEquals(RouteRegistrationViolation.ViolationType.DUPLICATE_OPERATION_ID, violation.type());
+        assertTrue(
+                violation.message().contains("SharedDefaultResourceA.shared()")
+                        && violation.message().contains("SharedDefaultResourceB.shared()"),
+                "the message must name the resource classes, not the shared interface: " + violation.message());
+    }
+
+    @Test
+    @DisplayName("A non-overridden generic default binds its type-variable parameter as Object and fails startup")
+    void genericDefaultRoute_typeVariableParameterFailsStartup() {
+        RouteRegistrationException ex = assertThrows(
+                RouteRegistrationException.class,
+                () -> RegistrarTestSupport.registerAll(
+                        registrar,
+                        Set.of(new GenericDefaultResource()),
+                        router,
+                        RegistrarTestSupport.TEST_MOUNT_META,
+                        List.of(),
+                        List.of(),
+                        null,
+                        false,
+                        List.of(),
+                        List.of(),
+                        "OFF",
+                        null,
+                        null,
+                        null,
+                        false));
+
+        assertEquals(1, ex.violations().size(), ex.violations().toString());
+        assertEquals(
+                RouteRegistrationViolation.ViolationType.UNRESOLVABLE_PARAM_CONVERTER,
+                ex.violations().get(0).type());
     }
 
     // --- File upload and content type tests ---

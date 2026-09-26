@@ -513,7 +513,8 @@ public final class JaxRsDescriptorEmitter {
             cb.add(buildStringList(effective.rolesAllowed()));
             cb.add(", ");
             cb.add(buildStringList(effective.authorizedScopes()));
-            cb.add(", $L)", effective.authorizedMatchAll());
+            // Mirror AnnotationSecurityPolicyResolver: matchAll only means something with scopes.
+            cb.add(", $L)", !effective.authorizedScopes().isEmpty() && effective.authorizedMatchAll());
             return cb.build();
         }
         // None

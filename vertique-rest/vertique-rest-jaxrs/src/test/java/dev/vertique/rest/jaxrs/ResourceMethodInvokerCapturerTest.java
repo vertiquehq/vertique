@@ -45,8 +45,15 @@ import org.junit.jupiter.api.Test;
  */
 class ResourceMethodInvokerCapturerTest {
 
+    /** Contract whose default method backs a route on {@link FixtureResource} (issue #630). */
+    interface DefaultGreeting {
+        default String greetDefault() {
+            return "hello default";
+        }
+    }
+
     /** Fixture resource used for reflective invocation. */
-    static class FixtureResource {
+    static class FixtureResource implements DefaultGreeting {
         public String greetNoArgs() {
             return "hello world";
         }
@@ -175,6 +182,24 @@ class ResourceMethodInvokerCapturerTest {
     @Nested
     @DisplayName("Capturer invoked with correct meta")
     class CapturerInvoked {
+
+        @Test
+        @DisplayName("an interface-default route carries the resource class, not the declaring interface")
+        void capturerReceivesResourceClassForDefaultRoute() throws Throwable {
+            FixtureResource resource = new FixtureResource();
+            Method method = DefaultGreeting.class.getMethod("greetDefault");
+
+            List<HttpOperationMeta> captured = new ArrayList<>();
+            RestServerRequestEvidenceCapturer capturer = (ctx, meta) -> captured.add(meta);
+
+            Future<Object> result = invokeMethod(invokerFor(resource, method, Set.of(capturer)), ctx("/greet"));
+            assertTrue(result.succeeded(), "request must succeed");
+
+            assertEquals(1, captured.size(), "capturer must be called exactly once");
+            HttpOperationMeta meta = captured.get(0);
+            assertEquals(DefaultGreeting.class, meta.method().getDeclaringClass());
+            assertEquals(FixtureResource.class, meta.resourceClass(), "resourceClass must be the resource's class");
+        }
 
         @Test
         @DisplayName("captureRequest receives method, operationId, and routeTemplate from ctx.data()")

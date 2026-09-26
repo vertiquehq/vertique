@@ -339,8 +339,8 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
             // WARN and must never break request handling. When the set is empty this loop is a no-op.
             if (!evidenceCapturers.isEmpty()) {
                 String routeTemplate = ctx.get(RestRequestCompletionEmitter.KEY_ROUTE_TEMPLATE);
-                HttpOperationMeta operationMeta =
-                        new HttpOperationMeta(meta.method(), meta.operationId(), routeTemplate);
+                HttpOperationMeta operationMeta = new HttpOperationMeta(
+                        meta.method(), meta.resourceInstance().getClass(), meta.operationId(), routeTemplate);
                 for (RestServerRequestEvidenceCapturer capturer : evidenceCapturers) {
                     try {
                         capturer.captureRequest(ctx, operationMeta);
