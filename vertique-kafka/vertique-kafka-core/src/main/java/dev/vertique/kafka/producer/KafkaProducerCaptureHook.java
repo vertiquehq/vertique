@@ -31,8 +31,10 @@ import java.util.Map;
  * <p>The {@code origin} parameter identifies how the record entered the funnel:
  * <ul>
  *   <li>{@link KafkaSendOrigin#DIRECT_PRODUCER} — sent via a {@link KafkaProducer @KafkaProducer}
- *       proxy method. The {@code producerMethod} parameter is <em>non-null</em> for this origin
- *       only, so downstream adapters can inspect method-level annotations.</li>
+ *       proxy method. {@link KafkaProducerSend#operation()} (and the positional
+ *       {@code producerMethod}) is <em>non-null</em> for this origin only, so downstream adapters
+ *       can inspect the producer interface's type-level and the method's method-level
+ *       annotations.</li>
  *   <li>{@link KafkaSendOrigin#OUTBOX} — forwarded by the transactional outbox relay.</li>
  *   <li>{@link KafkaSendOrigin#DLQ} — a dead-letter publish from error handling.</li>
  *   <li>{@link KafkaSendOrigin#INTERNAL} — an internal framework send not covered above.</li>
@@ -57,7 +59,9 @@ import java.util.Map;
 public interface KafkaProducerCaptureHook extends OrderedExtension {
 
     /**
-     * Called once per send after the Kafka {@code producer.send(record)} call settles.
+     * Called once per send after the Kafka {@code producer.send(record)} call settles — by the
+     * default {@link #onSend(KafkaProducerSend)}, which the framework calls; a hook that overrides
+     * that form receives sends there instead.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
      * the enclosing operation.
@@ -84,4 +88,33 @@ public interface KafkaProducerCaptureHook extends OrderedExtension {
             Map<String, String> headers,
             @Nullable Method producerMethod,
             AsyncResult<RecordMetadata> result) {}
+
+    /**
+     * Called once per send after the Kafka {@code producer.send(record)} call settles; the framework
+     * always calls this method.
+     *
+     * <p>{@link KafkaProducerSend#operation()} carries the {@link KafkaProducer @KafkaProducer}
+     * interface the sending proxy was created for, its name, and the method — read type-level
+     * annotations from {@link KafkaProducerOperation#producerType()}, not from the method's
+     * declaring class, which is a super-interface for an inherited send method.
+     *
+     * <p>The default delegates to the positional {@link #onSend(KafkaSendOrigin, String, String,
+     * PayloadSource, Map, Method, AsyncResult)}, so a hook overrides whichever form it needs — but
+     * never make the positional form delegate back to this one, which would recurse.
+     *
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
+     * enclosing operation.
+     *
+     * @param send the settled send; never {@code null}
+     */
+    default void onSend(KafkaProducerSend send) {
+        onSend(
+                send.origin(),
+                send.topic(),
+                send.key(),
+                send.value(),
+                send.headers(),
+                send.operation() != null ? send.operation().method() : null,
+                send.result());
+    }
 }

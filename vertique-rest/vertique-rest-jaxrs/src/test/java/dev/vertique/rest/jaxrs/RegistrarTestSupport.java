@@ -174,6 +174,50 @@ final class RegistrarTestSupport {
     }
 
     /**
+     * Variant for tests of the request-evidence capturer seam: registers {@code resources} with the
+     * given capturers and the same inert defaults as the overloads above.
+     *
+     * @param registrar the registrar under test
+     * @param resources the resource instances to scan
+     * @param apiRouter the plain Vert.x router to register routes on
+     * @param mount     the mount metadata threaded to the registrar
+     * @param capturers the request-evidence capturers, already in invocation order
+     */
+    static void registerAllWithCapturers(
+            JaxRsRouteRegistrar registrar,
+            Set<Object> resources,
+            Router apiRouter,
+            MountMeta mount,
+            List<dev.vertique.rest.core.capture.RestServerRequestEvidenceCapturer> capturers) {
+        registrar.registerAll(
+                resources,
+                apiRouter,
+                new NoneValidationStrategy(),
+                mount,
+                Optional.<OperationSchemaSource>empty(),
+                new SecuritySchemeHandlerCollector(),
+                List.of(),
+                List.of(),
+                mock(ErrorPipeline.class),
+                mock(ResponsePipeline.class),
+                new RestContextResolution(Set.of()),
+                dev.vertique.rest.jaxrs.convert.ConversionContexts.defaultResolver(),
+                null,
+                false,
+                List.of(),
+                List.of(),
+                "OFF",
+                null,
+                null,
+                capturers,
+                null,
+                false,
+                JaxRsConfig.builder().build(),
+                new DefaultJsonMapperProfileRegistry(Set.of()),
+                JsonConfig.defaults());
+    }
+
+    /**
      * Variant for tests that vary the schema seam and the JSON profile configuration: it exposes the
      * three arguments the overloads above hard-code — the {@link OperationSchemaSource}, the
      * {@link JaxRsConfig} carrying {@code jaxrs.jsonProfile}, and the {@link JsonConfig} carrying

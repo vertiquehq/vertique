@@ -207,6 +207,13 @@ public record RouteRegistrationViolation(String operationId, ViolationType type,
          * is {@code true}; without the opt-in, such an operation only produces a warning on the
          * owning application mount, and startup succeeds.
          */
-        NO_EXPLICIT_SECURITY_POLICY
+        NO_EXPLICIT_SECURITY_POLICY,
+
+        /**
+         * A request-evidence capturer rejected the route when it validated it at router build — for
+         * example because the evidence-capture policy the route selects does not exist. Such a
+         * route could only ever fail its capture (silently) on every request, so startup fails fast.
+         */
+        EVIDENCE_CAPTURE_REJECTED
     }
 }

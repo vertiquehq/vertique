@@ -20,8 +20,9 @@ public enum KafkaSendOrigin {
      * The record was sent via a JDK-proxy {@link KafkaProducer @KafkaProducer} interface method.
      *
      * <p>This is the only origin for which {@link KafkaProducerCaptureHook#onSend} receives a
-     * non-null {@code producerMethod}; downstream adapters can inspect its method-level
-     * annotations.
+     * non-null {@code producerMethod} — and {@link KafkaProducerSend#operation()} a non-null
+     * {@link KafkaProducerOperation} — so downstream adapters can inspect the method's method-level
+     * and the producer interface's type-level annotations.
      */
     DIRECT_PRODUCER,
 
