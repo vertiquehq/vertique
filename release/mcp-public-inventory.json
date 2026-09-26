@@ -23,7 +23,8 @@
           "public abstract boolean dev.vertique.mcp.annotation.McpTool.readOnlyHint()",
           "public abstract java.lang.String dev.vertique.mcp.annotation.McpTool.description()",
           "public abstract java.lang.String dev.vertique.mcp.annotation.McpTool.name()",
-          "public abstract java.lang.String dev.vertique.mcp.annotation.McpTool.title()"
+          "public abstract java.lang.String dev.vertique.mcp.annotation.McpTool.title()",
+          "public abstract java.lang.String[] dev.vertique.mcp.annotation.McpTool.requiredClientCapabilities()"
         ],
         "dev.vertique.mcp.annotation.McpToolParam": [
           "public abstract java.lang.String dev.vertique.mcp.annotation.McpToolParam.description()",
@@ -114,6 +115,21 @@
           "public static dev.vertique.mcp.lifecycle.McpRequestCompletedEvent dev.vertique.mcp.lifecycle.McpRequestCompletedEvent.writeFailed(dev.vertique.mcp.lifecycle.McpRequestTerminalEvent,java.time.Instant,boolean)",
           "public static dev.vertique.mcp.lifecycle.McpRequestCompletedEvent dev.vertique.mcp.lifecycle.McpRequestCompletedEvent.written(dev.vertique.mcp.lifecycle.McpRequestTerminalEvent,java.time.Instant)"
         ],
+        "dev.vertique.mcp.lifecycle.McpRawEvidenceObservation": [
+          "public default void dev.vertique.mcp.lifecycle.McpRawEvidenceObservation.onRequestAdmitted(dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence)",
+          "public default void dev.vertique.mcp.lifecycle.McpRawEvidenceObservation.onResponseWritten(dev.vertique.mcp.lifecycle.McpResponseEvidence)"
+        ],
+        "dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence": [
+          "public byte[] dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.body()",
+          "public dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence(byte[],java.util.Map<java.lang.String, java.lang.String>,java.lang.String,java.lang.String,java.lang.String)",
+          "public final boolean dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.equals(java.lang.Object)",
+          "public final int dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.hashCode()",
+          "public final java.lang.String dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.toString()",
+          "public java.lang.String dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.contentType()",
+          "public java.lang.String dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.jsonRpcRequestId()",
+          "public java.lang.String dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.principalId()",
+          "public java.util.Map<java.lang.String, java.lang.String> dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.headers()"
+        ],
         "dev.vertique.mcp.lifecycle.McpRequestCompletedListener": [
           "public abstract void dev.vertique.mcp.lifecycle.McpRequestCompletedListener.onCompleted(dev.vertique.mcp.lifecycle.McpRequestCompletedEvent)"
         ],
@@ -123,6 +139,14 @@
         "dev.vertique.mcp.lifecycle.McpRequestObservation": [
           "public default void dev.vertique.mcp.lifecycle.McpRequestObservation.onCompleted(dev.vertique.mcp.lifecycle.McpRequestCompletedEvent)",
           "public default void dev.vertique.mcp.lifecycle.McpRequestObservation.onTerminal(dev.vertique.mcp.lifecycle.McpRequestTerminalObservation)"
+        ],
+        "dev.vertique.mcp.lifecycle.McpResponseEvidence": [
+          "public byte[] dev.vertique.mcp.lifecycle.McpResponseEvidence.body()",
+          "public dev.vertique.mcp.lifecycle.McpResponseEvidence(byte[],java.util.Map<java.lang.String, java.lang.String>)",
+          "public final boolean dev.vertique.mcp.lifecycle.McpResponseEvidence.equals(java.lang.Object)",
+          "public final int dev.vertique.mcp.lifecycle.McpResponseEvidence.hashCode()",
+          "public final java.lang.String dev.vertique.mcp.lifecycle.McpResponseEvidence.toString()",
+          "public java.util.Map<java.lang.String, java.lang.String> dev.vertique.mcp.lifecycle.McpResponseEvidence.headers()"
         ],
         "dev.vertique.mcp.lifecycle.McpRequestTerminalEvent": [
           "public dev.vertique.core.correlation.CorrelationContextSnapshot dev.vertique.mcp.lifecycle.McpRequestTerminalEvent.correlation()",
@@ -210,7 +234,8 @@
         ],
         "dev.vertique.mcp.tool.McpCancellationSignal": [
           "public abstract boolean dev.vertique.mcp.tool.McpCancellationSignal.isCancelled()",
-          "public abstract io.vertx.core.Future<java.lang.Void> dev.vertique.mcp.tool.McpCancellationSignal.cancelled()"
+          "public abstract io.vertx.core.Future<java.lang.Void> dev.vertique.mcp.tool.McpCancellationSignal.cancelled()",
+          "public default dev.vertique.mcp.tool.McpProgressReporter dev.vertique.mcp.tool.McpCancellationSignal.progressReporter()"
         ],
         "dev.vertique.mcp.tool.McpPreparedToolCall": [
           "public abstract io.vertx.core.Future<dev.vertique.mcp.tool.McpToolResult<?>> dev.vertique.mcp.tool.McpPreparedToolCall.invoke()",
@@ -253,45 +278,97 @@
         "dev.vertique.mcp.tool.McpToolInvoker": [
           "public abstract dev.vertique.mcp.tool.McpPreparedToolCall dev.vertique.mcp.tool.McpToolInvoker.prepare(java.util.Map<java.lang.String, java.lang.Object>,dev.vertique.mcp.tool.McpCancellationSignal)",
           "public abstract dev.vertique.mcp.tool.McpToolDescriptor dev.vertique.mcp.tool.McpToolInvoker.descriptor()",
-          "public default java.util.Optional<dev.vertique.mcp.tool.McpStructuredOutputWriter> dev.vertique.mcp.tool.McpToolInvoker.structuredOutputWriter()"
+          "public default java.util.Optional<dev.vertique.mcp.tool.McpStructuredOutputWriter> dev.vertique.mcp.tool.McpToolInvoker.structuredOutputWriter()",
+          "public default java.util.Set<java.lang.String> dev.vertique.mcp.tool.McpToolInvoker.requiredClientCapabilities()"
         ],
         "dev.vertique.mcp.tool.McpStructuredOutputWriter": [
           "public abstract void dev.vertique.mcp.tool.McpStructuredOutputWriter.write(java.lang.Object,java.io.OutputStream) throws java.io.IOException"
         ],
+        "dev.vertique.mcp.tool.McpContent": [],
+        "dev.vertique.mcp.tool.McpContent$Audio": [
+          "public dev.vertique.mcp.tool.McpContent$Audio(java.lang.String,java.lang.String)",
+          "public final boolean dev.vertique.mcp.tool.McpContent$Audio.equals(java.lang.Object)",
+          "public final int dev.vertique.mcp.tool.McpContent$Audio.hashCode()",
+          "public final java.lang.String dev.vertique.mcp.tool.McpContent$Audio.toString()",
+          "public java.lang.String dev.vertique.mcp.tool.McpContent$Audio.data()",
+          "public java.lang.String dev.vertique.mcp.tool.McpContent$Audio.mimeType()"
+        ],
+        "dev.vertique.mcp.tool.McpContent$BlobResource": [
+          "public dev.vertique.mcp.tool.McpContent$BlobResource(java.lang.String,java.lang.String,java.lang.String)",
+          "public final boolean dev.vertique.mcp.tool.McpContent$BlobResource.equals(java.lang.Object)",
+          "public final int dev.vertique.mcp.tool.McpContent$BlobResource.hashCode()",
+          "public final java.lang.String dev.vertique.mcp.tool.McpContent$BlobResource.toString()",
+          "public java.lang.String dev.vertique.mcp.tool.McpContent$BlobResource.blob()",
+          "public java.lang.String dev.vertique.mcp.tool.McpContent$BlobResource.mimeType()",
+          "public java.lang.String dev.vertique.mcp.tool.McpContent$BlobResource.uri()"
+        ],
+        "dev.vertique.mcp.tool.McpContent$EmbeddedResource": [
+          "public dev.vertique.mcp.tool.McpContent$EmbeddedResource(dev.vertique.mcp.tool.McpContent$Resource)",
+          "public final boolean dev.vertique.mcp.tool.McpContent$EmbeddedResource.equals(java.lang.Object)",
+          "public final int dev.vertique.mcp.tool.McpContent$EmbeddedResource.hashCode()",
+          "public final java.lang.String dev.vertique.mcp.tool.McpContent$EmbeddedResource.toString()",
+          "public dev.vertique.mcp.tool.McpContent$Resource dev.vertique.mcp.tool.McpContent$EmbeddedResource.resource()"
+        ],
+        "dev.vertique.mcp.tool.McpContent$Image": [
+          "public dev.vertique.mcp.tool.McpContent$Image(java.lang.String,java.lang.String)",
+          "public final boolean dev.vertique.mcp.tool.McpContent$Image.equals(java.lang.Object)",
+          "public final int dev.vertique.mcp.tool.McpContent$Image.hashCode()",
+          "public final java.lang.String dev.vertique.mcp.tool.McpContent$Image.toString()",
+          "public java.lang.String dev.vertique.mcp.tool.McpContent$Image.data()",
+          "public java.lang.String dev.vertique.mcp.tool.McpContent$Image.mimeType()"
+        ],
+        "dev.vertique.mcp.tool.McpContent$Resource": [
+          "public abstract java.lang.String dev.vertique.mcp.tool.McpContent$Resource.mimeType()",
+          "public abstract java.lang.String dev.vertique.mcp.tool.McpContent$Resource.uri()"
+        ],
+        "dev.vertique.mcp.tool.McpContent$ResourceLink": [
+          "public dev.vertique.mcp.tool.McpContent$ResourceLink(java.lang.String,java.lang.String)",
+          "public dev.vertique.mcp.tool.McpContent$ResourceLink(java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String)",
+          "public final boolean dev.vertique.mcp.tool.McpContent$ResourceLink.equals(java.lang.Object)",
+          "public final int dev.vertique.mcp.tool.McpContent$ResourceLink.hashCode()",
+          "public final java.lang.String dev.vertique.mcp.tool.McpContent$ResourceLink.toString()",
+          "public java.lang.String dev.vertique.mcp.tool.McpContent$ResourceLink.description()",
+          "public java.lang.String dev.vertique.mcp.tool.McpContent$ResourceLink.mimeType()",
+          "public java.lang.String dev.vertique.mcp.tool.McpContent$ResourceLink.name()",
+          "public java.lang.String dev.vertique.mcp.tool.McpContent$ResourceLink.title()",
+          "public java.lang.String dev.vertique.mcp.tool.McpContent$ResourceLink.uri()"
+        ],
+        "dev.vertique.mcp.tool.McpContent$Text": [
+          "public dev.vertique.mcp.tool.McpContent$Text(java.lang.String)",
+          "public final boolean dev.vertique.mcp.tool.McpContent$Text.equals(java.lang.Object)",
+          "public final int dev.vertique.mcp.tool.McpContent$Text.hashCode()",
+          "public final java.lang.String dev.vertique.mcp.tool.McpContent$Text.toString()",
+          "public java.lang.String dev.vertique.mcp.tool.McpContent$Text.text()"
+        ],
+        "dev.vertique.mcp.tool.McpContent$TextResource": [
+          "public dev.vertique.mcp.tool.McpContent$TextResource(java.lang.String,java.lang.String,java.lang.String)",
+          "public final boolean dev.vertique.mcp.tool.McpContent$TextResource.equals(java.lang.Object)",
+          "public final int dev.vertique.mcp.tool.McpContent$TextResource.hashCode()",
+          "public final java.lang.String dev.vertique.mcp.tool.McpContent$TextResource.toString()",
+          "public java.lang.String dev.vertique.mcp.tool.McpContent$TextResource.mimeType()",
+          "public java.lang.String dev.vertique.mcp.tool.McpContent$TextResource.text()",
+          "public java.lang.String dev.vertique.mcp.tool.McpContent$TextResource.uri()"
+        ],
+        "dev.vertique.mcp.tool.McpProgressReporter": [
+          "public abstract io.vertx.core.Future<java.lang.Void> dev.vertique.mcp.tool.McpProgressReporter.report(double,java.lang.Double,java.lang.String)",
+          "public static dev.vertique.mcp.tool.McpProgressReporter dev.vertique.mcp.tool.McpProgressReporter.noop()"
+        ],
         "dev.vertique.mcp.tool.McpToolResult": [
-          "public T dev.vertique.mcp.tool.McpToolResult.structuredContent()",
-          "public boolean dev.vertique.mcp.tool.McpToolResult.isError()",
+          "public final T dev.vertique.mcp.tool.McpToolResult.structuredContent()",
+          "public final boolean dev.vertique.mcp.tool.McpToolResult.isError()",
           "public dev.vertique.mcp.tool.McpToolResult(java.util.List<java.lang.String>,T,boolean)",
           "public final boolean dev.vertique.mcp.tool.McpToolResult.equals(java.lang.Object)",
           "public final int dev.vertique.mcp.tool.McpToolResult.hashCode()",
           "public final java.lang.String dev.vertique.mcp.tool.McpToolResult.toString()",
-          "public java.util.List<java.lang.String> dev.vertique.mcp.tool.McpToolResult.textContent()",
+          "public final java.util.List<dev.vertique.mcp.tool.McpContent> dev.vertique.mcp.tool.McpToolResult.content()",
+          "public final java.util.List<java.lang.String> dev.vertique.mcp.tool.McpToolResult.textContent()",
           "public static <T> dev.vertique.mcp.tool.McpToolResult<T> dev.vertique.mcp.tool.McpToolResult.structured(T)",
           "public static dev.vertique.mcp.tool.McpToolResult<java.lang.Void> dev.vertique.mcp.tool.McpToolResult.error(java.lang.String)",
-          "public static dev.vertique.mcp.tool.McpToolResult<java.lang.Void> dev.vertique.mcp.tool.McpToolResult.text(java.lang.String)"
-        ],
-        "dev.vertique.mcp.lifecycle.McpRawEvidenceObservation": [
-          "public default void dev.vertique.mcp.lifecycle.McpRawEvidenceObservation.onRequestAdmitted(dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence)",
-          "public default void dev.vertique.mcp.lifecycle.McpRawEvidenceObservation.onResponseWritten(dev.vertique.mcp.lifecycle.McpResponseEvidence)"
-        ],
-        "dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence": [
-          "public byte[] dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.body()",
-          "public dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence(byte[],java.util.Map<java.lang.String, java.lang.String>,java.lang.String,java.lang.String,java.lang.String)",
-          "public final boolean dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.equals(java.lang.Object)",
-          "public final int dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.hashCode()",
-          "public final java.lang.String dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.toString()",
-          "public java.lang.String dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.contentType()",
-          "public java.lang.String dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.jsonRpcRequestId()",
-          "public java.lang.String dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.principalId()",
-          "public java.util.Map<java.lang.String, java.lang.String> dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence.headers()"
-        ],
-        "dev.vertique.mcp.lifecycle.McpResponseEvidence": [
-          "public byte[] dev.vertique.mcp.lifecycle.McpResponseEvidence.body()",
-          "public dev.vertique.mcp.lifecycle.McpResponseEvidence(byte[],java.util.Map<java.lang.String, java.lang.String>)",
-          "public final boolean dev.vertique.mcp.lifecycle.McpResponseEvidence.equals(java.lang.Object)",
-          "public final int dev.vertique.mcp.lifecycle.McpResponseEvidence.hashCode()",
-          "public final java.lang.String dev.vertique.mcp.lifecycle.McpResponseEvidence.toString()",
-          "public java.util.Map<java.lang.String, java.lang.String> dev.vertique.mcp.lifecycle.McpResponseEvidence.headers()"
+          "public static dev.vertique.mcp.tool.McpToolResult<java.lang.Void> dev.vertique.mcp.tool.McpToolResult.text(java.lang.String)",
+          "public static dev.vertique.mcp.tool.McpToolResult<java.lang.Void> dev.vertique.mcp.tool.McpToolResult.content(java.util.List<? extends dev.vertique.mcp.tool.McpContent>)",
+          "public static <T> dev.vertique.mcp.tool.McpToolResult<T> dev.vertique.mcp.tool.McpToolResult.content(java.util.List<? extends dev.vertique.mcp.tool.McpContent>,T)",
+          "public static dev.vertique.mcp.tool.McpToolResult<java.lang.Void> dev.vertique.mcp.tool.McpToolResult.errorContent(java.util.List<? extends dev.vertique.mcp.tool.McpContent>)",
+          "public static <T> dev.vertique.mcp.tool.McpToolResult<T> dev.vertique.mcp.tool.McpToolResult.errorContent(java.util.List<? extends dev.vertique.mcp.tool.McpContent>,T)"
         ]
       }
     },
@@ -444,6 +521,23 @@
           "public dev.vertique.security.SecurityContext dev.vertique.rest.security.HolderBackedSecurityRuntime.current()",
           "public jakarta.ws.rs.core.SecurityContext dev.vertique.rest.security.HolderBackedSecurityRuntime.toJaxRs(dev.vertique.security.SecurityContext,boolean)"
         ],
+        "dev.vertique.rest.security.IdentityPipelineFactory": [
+          "public dev.vertique.rest.core.security.SecurityRuntime dev.vertique.rest.security.IdentityPipelineFactory.securityRuntime()",
+          "public dev.vertique.rest.security.IdentityPipelineFactory(java.util.Set<dev.vertique.security.resolver.SecurityIdentityResolver>,java.util.Optional<dev.vertique.rest.security.SecurityClaimMapper>,dev.vertique.security.runtime.events.SecurityEventEmitter,dev.vertique.rest.core.security.SecurityRuntime,dev.vertique.core.context.ContextHolder,java.util.Optional<dev.vertique.security.runtime.IdentitySnapshotCapture>,java.util.Optional<dev.vertique.rest.security.VertxAuthorizationImporter>,java.util.Optional<dev.vertique.rest.security.AuthorizationDecisionPoint>,java.util.Optional<dev.vertique.security.authz.AuthorizationPolicy>,java.util.Set<io.vertx.ext.auth.authorization.AuthorizationProvider>,java.util.Optional<dev.vertique.security.authz.Authorizer>,java.util.Optional<dev.vertique.rest.security.AuthorizationGateConfig>)",
+          "public dev.vertique.rest.security.IdentityResolutionMiddleware dev.vertique.rest.security.IdentityPipelineFactory.restIdentityResolution()",
+          "public dev.vertique.rest.security.SecurityPolicyEnforcer dev.vertique.rest.security.IdentityPipelineFactory.policyEnforcer()",
+          "public io.vertx.core.Handler<io.vertx.ext.web.RoutingContext> dev.vertique.rest.security.IdentityPipelineFactory.identityResolutionHandler(dev.vertique.rest.security.IdentityPipelineOptions)"
+        ],
+        "dev.vertique.rest.security.IdentityPipelineOptions": [
+          "public boolean dev.vertique.rest.security.IdentityPipelineOptions.identitySnapshotCapture()",
+          "public dev.vertique.rest.security.IdentityPipelineOptions(dev.vertique.security.authz.InvocationOrigin,boolean)",
+          "public dev.vertique.security.authz.InvocationOrigin dev.vertique.rest.security.IdentityPipelineOptions.origin()",
+          "public final boolean dev.vertique.rest.security.IdentityPipelineOptions.equals(java.lang.Object)",
+          "public final int dev.vertique.rest.security.IdentityPipelineOptions.hashCode()",
+          "public final java.lang.String dev.vertique.rest.security.IdentityPipelineOptions.toString()",
+          "public static dev.vertique.rest.security.IdentityPipelineOptions dev.vertique.rest.security.IdentityPipelineOptions.rest()",
+          "public static dev.vertique.rest.security.IdentityPipelineOptions dev.vertique.rest.security.IdentityPipelineOptions.webSocket()"
+        ],
         "dev.vertique.rest.security.IdentityResolutionContributor": [
           "public dev.vertique.rest.security.IdentityResolutionContributor(dev.vertique.rest.security.IdentityResolutionMiddleware)",
           "public int dev.vertique.rest.security.IdentityResolutionContributor.priority()",
@@ -455,6 +549,7 @@
           "public dev.vertique.rest.security.IdentityResolutionMiddleware(java.util.Set<dev.vertique.security.resolver.SecurityIdentityResolver>,java.util.Optional<dev.vertique.rest.security.SecurityClaimMapper>,dev.vertique.security.runtime.events.SecurityEventEmitter,dev.vertique.rest.core.security.SecurityRuntime,dev.vertique.core.context.ContextHolder,java.util.Optional<dev.vertique.security.runtime.IdentitySnapshotCapture>)",
           "public dev.vertique.rest.security.IdentityResolutionMiddleware(java.util.Set<dev.vertique.security.resolver.SecurityIdentityResolver>,java.util.Optional<dev.vertique.rest.security.SecurityClaimMapper>,dev.vertique.security.runtime.events.SecurityEventEmitter,dev.vertique.rest.core.security.SecurityRuntime,dev.vertique.core.context.ContextHolder,java.util.Optional<dev.vertique.security.runtime.IdentitySnapshotCapture>,java.util.Optional<dev.vertique.rest.security.VertxAuthorizationImporter>)",
           "public io.vertx.core.Handler<io.vertx.ext.web.RoutingContext> dev.vertique.rest.security.IdentityResolutionMiddleware.handlerFor(dev.vertique.security.authz.InvocationOrigin)",
+          "public static final dev.vertique.security.authz.InvocationOrigin dev.vertique.rest.security.IdentityResolutionMiddleware.REST_ORIGIN",
           "public void dev.vertique.rest.security.IdentityResolutionMiddleware.handle(io.vertx.ext.web.RoutingContext)"
         ],
         "dev.vertique.rest.security.JaxRsSecurityContext": [

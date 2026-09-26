@@ -618,10 +618,12 @@ describe('PublicCiContractTest', () => {
     const bodies = runStepBodies(yaml).join('\n');
     assert.match(bodies, /mvnw[^\n]*\bverify\b/, 'ci.yml must run a clean Maven verification');
     assert.match(bodies, /spotless:check/, 'ci.yml must run the formatting check');
+    // A glob, never an enumeration: a hand-maintained list silently drops
+    // every release-contract test nobody remembers to add.
     assert.match(
       bodies,
-      /verify-publication\.mjs|publication-contract\.test\.mjs/,
-      'ci.yml must run the release-contract tests'
+      /^node --test release\/tests\/\*\.test\.mjs$/m,
+      'ci.yml must run every release-contract test by glob'
     );
   });
 
