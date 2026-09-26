@@ -6,7 +6,6 @@ package dev.vertique.rest.jaxrs;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -202,7 +201,7 @@ class ResourceMethodInvokerCapturerTest {
         }
 
         @Test
-        @DisplayName("captureRequest receives method, operationId, and routeTemplate from ctx.data()")
+        @DisplayName("captureRequest receives the method, operationId, and route template")
         void capturerReceivesCorrectMeta() throws Throwable {
             FixtureResource resource = new FixtureResource();
             Method method = FixtureResource.class.getMethod("greetNoArgs");
@@ -221,7 +220,7 @@ class ResourceMethodInvokerCapturerTest {
             assertNotNull(meta);
             assertEquals(method, meta.method(), "method must match the resource method");
             assertEquals("greetNoArgs", meta.operationId(), "operationId must match the meta operationId");
-            assertEquals("/greet", meta.routeTemplate(), "routeTemplate must come from ctx.data()");
+            assertEquals("/greet", meta.routeTemplate(), "routeTemplate must be the route's template");
         }
 
         @Test
@@ -241,20 +240,23 @@ class ResourceMethodInvokerCapturerTest {
         }
 
         @Test
-        @DisplayName("null routeTemplate in ctx.data() → meta.routeTemplate() is null")
-        void nullRouteTemplatePassedThrough() throws Throwable {
+        @DisplayName("the route template comes from the route, not from ctx.data(), which any handler can rewrite")
+        void routeTemplateComesFromTheRoute() throws Throwable {
             FixtureResource resource = new FixtureResource();
             Method method = FixtureResource.class.getMethod("greetNoArgs");
 
             List<HttpOperationMeta> captured = new ArrayList<>();
             RestServerRequestEvidenceCapturer capturer = (ctx, meta) -> captured.add(meta);
 
-            RoutingContext ctx = ctx(null);
+            RoutingContext ctx = ctx("/rewritten-by-a-handler");
             ResourceMethodInvoker invoker = invokerFor(resource, method, Set.of(capturer));
 
             invokeMethod(invoker, ctx);
             assertEquals(1, captured.size());
-            assertNull(captured.get(0).routeTemplate(), "null routeTemplate must be passed through");
+            assertEquals(
+                    "/greet",
+                    captured.get(0).routeTemplate(),
+                    "capturers must see the route template the registrar validated, not a context value");
         }
     }
 

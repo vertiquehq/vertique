@@ -14,7 +14,6 @@ import dev.vertique.rest.core.capture.HttpOperationMeta;
 import dev.vertique.rest.core.capture.RestServerRequestEvidenceCapturer;
 import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.convert.ParamConversionResolver;
-import dev.vertique.rest.core.events.RestRequestCompletionEmitter;
 import dev.vertique.rest.core.interceptor.OperationContext;
 import dev.vertique.rest.core.interceptor.OperationInterceptor;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
@@ -65,6 +64,9 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
     private final ParameterExtractor parameterExtractor;
     private final @Nullable GeneratedJaxRsSupport generatedSupport;
     private final List<RestServerRequestEvidenceCapturer> evidenceCapturers;
+
+    /** The descriptor handed to every capturer; built once, by {@link #operationMetaFor}. */
+    private final HttpOperationMeta operationMeta;
 
     /**
      * The framework conversion resolver threaded into the {@link ParameterExtractor} and into every
@@ -204,6 +206,21 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
         // FR-024: build the operation descriptor once so the reflective path can construct a
         // DefaultBoundRequest per request without re-deriving the parameter model.
         this.descriptor = ResourceMethodMetaToDescriptorAdapter.adapt(meta);
+        this.operationMeta = operationMetaFor(meta, descriptor);
+    }
+
+    /**
+     * Builds the {@link HttpOperationMeta} request-evidence capturers receive for a route. The
+     * registrar validates the route with the result of this method and the invoker hands every
+     * request the result of this method, so the two can never disagree.
+     *
+     * @param meta       the route's method metadata
+     * @param descriptor the route's operation descriptor
+     * @return the operation descriptor for capturers; never {@code null}
+     */
+    static HttpOperationMeta operationMetaFor(ResourceMethodMeta meta, JaxRsOperationDescriptor descriptor) {
+        return new HttpOperationMeta(
+                meta.method(), meta.resourceInstance().getClass(), meta.operationId(), descriptor.routeTemplate());
     }
 
     /**
@@ -338,9 +355,6 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
             // Each capturer is called in OrderedExtension order; a throwing capturer is logged at
             // WARN and must never break request handling. When the set is empty this loop is a no-op.
             if (!evidenceCapturers.isEmpty()) {
-                String routeTemplate = ctx.get(RestRequestCompletionEmitter.KEY_ROUTE_TEMPLATE);
-                HttpOperationMeta operationMeta = new HttpOperationMeta(
-                        meta.method(), meta.resourceInstance().getClass(), meta.operationId(), routeTemplate);
                 for (RestServerRequestEvidenceCapturer capturer : evidenceCapturers) {
                     try {
                         capturer.captureRequest(ctx, operationMeta);

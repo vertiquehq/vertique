@@ -989,6 +989,15 @@ implement one, keep evidence in an implementation-private, identity-keyed side t
 `RoutingContext.data()`, which is keyed by public string constants and is readable and writable by
 every component sharing the context.
 
+`RestServerRequestEvidenceCapturer#validateRoute(HttpOperationMeta)` validates each route at router
+build, with the same descriptor value its requests will carry. Resolve and validate
+per-route state there — throwing rejects the route with an `EVIDENCE_CAPTURE_REJECTED` startup
+violation — so a misconfiguration fails startup rather than silently failing `captureRequest` on
+every request. The default accepts every route. It runs once per route per router build (every mount
+and every HTTP verticle instance), possibly concurrently, so it must be idempotent, thread-safe, and
+non-blocking. Read type-level policy from `HttpOperationMeta#resourceClass()`, not
+from the method's declaring class, which is the superclass or interface for an inherited method.
+
 ### `SecuritySchemeHandler` and `RouteAuthHandler`
 
 ```java

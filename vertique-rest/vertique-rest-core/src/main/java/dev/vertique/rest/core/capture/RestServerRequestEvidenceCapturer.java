@@ -19,8 +19,9 @@ import io.vertx.ext.web.RoutingContext;
  *   <li>Implementations MUST be side-effect-only — they must not modify the request pipeline,
  *       send a response, or call {@link RoutingContext#next()} or {@link RoutingContext#fail}.</li>
  *   <li>Implementations MUST NOT block the Vert.x event loop.</li>
- *   <li>All uncaught exceptions are caught by the invoking framework and logged at {@code WARN}.
- *       A throwing capturer must never break request handling.</li>
+ *   <li>Exceptions thrown by {@link #captureRequest} are caught by the invoking framework and
+ *       logged at {@code WARN}; a throwing capturer must never break request handling. (A throw
+ *       from {@link #validateRoute} is different: it rejects the route at router build.)</li>
  *   <li>When no capturers are registered the framework performs a pure no-op — zero overhead.</li>
  *   <li>Implementations MUST NOT stash sensitive evidence (resolved policy, captured bodies) on
  *       {@link RoutingContext#data()} — that map is a plain {@code Map<String, Object>} keyed by
@@ -38,6 +39,26 @@ import io.vertx.ext.web.RoutingContext;
  * @see OrderedExtension
  */
 public interface RestServerRequestEvidenceCapturer extends OrderedExtension {
+
+    /**
+     * Validates a route at router build, before any request can reach it.
+     *
+     * <p>{@code meta} is the descriptor the route's requests will carry: the same method, resource
+     * class, operationId, and route template {@link #captureRequest} receives. A capturer uses this
+     * to validate or warm its per-route state — for example resolving the route's capture policy —
+     * so a misconfiguration fails startup instead of every request.
+     *
+     * <p>Throwing rejects the route: the registrar records an {@code EVIDENCE_CAPTURE_REJECTED}
+     * violation carrying the exception and fails router build once all routes have been checked.
+     * The default accepts every route.
+     *
+     * <p>The registrar calls this once per route <em>per router build</em> — for every mount and every
+     * HTTP verticle instance — so the same route can be validated several times, concurrently, on
+     * different event loops. Implementations must be idempotent, thread-safe, and non-blocking.
+     *
+     * @param meta the route's operation descriptor; never {@code null}
+     */
+    default void validateRoute(HttpOperationMeta meta) {}
 
     /**
      * Captures evidence from the incoming HTTP request for later use by response-side audit logic.

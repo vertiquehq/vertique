@@ -197,6 +197,13 @@ public record RouteRegistrationViolation(String operationId, ViolationType type,
          * it now reports every reason two same-name declarations cannot share one descriptor. It is a
          * public enum constant, so it is kept as-is rather than renamed.
          */
-        DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT
+        DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT,
+
+        /**
+         * A request-evidence capturer rejected the route when it validated it at router build — for
+         * example because the evidence-capture policy the route selects does not exist. Such a
+         * route could only ever fail its capture (silently) on every request, so startup fails fast.
+         */
+        EVIDENCE_CAPTURE_REJECTED
     }
 }
