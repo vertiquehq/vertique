@@ -58,7 +58,9 @@ public interface RestServerRequestEvidenceCapturer extends OrderedExtension {
      * different event loops. Implementations must be idempotent, thread-safe, and non-blocking.
      *
      * <p>Exceptions thrown by this callback propagate and are fatal to the enclosing operation;
-     * processing does not continue.
+     * processing does not continue. The enclosing operation is the router build: the registrar
+     * records the rejection, finishes validating the remaining routes so every problem is reported
+     * together, and then fails the build — no route of that build is ever served.
      *
      * @param meta the route's operation descriptor; never {@code null}
      */
