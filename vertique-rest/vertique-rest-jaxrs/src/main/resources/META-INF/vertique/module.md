@@ -79,7 +79,9 @@ parameter typed `ID` fails startup with `UNRESOLVABLE_PARAM_CONVERTER`. Declare 
 concrete parameter types. A default route's `operationId` is the same in every class that inherits
 it, and operationIds are unique per mount, so only one resource per mount can inherit a given
 default route; give the others their own route by overriding it with a distinct
-`@Operation(operationId = "…")`.
+`@Operation(operationId = "…")`. Once any `Application` is declared, operationIds are also unique
+across mounts (see [Startup failures](#startup-failures)), so only one resource class across all
+JAX-RS mounts can inherit it.
 
 `OperationHandlerContributor`s are sorted by the framework `OrderedExtension` comparator (phase →
 priority → `orderKey`); the invoker is always appended last. Every declaration problem found during
