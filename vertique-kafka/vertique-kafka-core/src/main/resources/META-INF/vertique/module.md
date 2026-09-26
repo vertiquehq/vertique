@@ -779,7 +779,9 @@ so a hook overrides whichever form it needs; new send details are added to the r
 further positional parameters. Read type-level annotations from `operation.producerType()` — the
 `@KafkaProducer` interface the application injected — not from `method.getDeclaringClass()`, which
 is the super-interface when the send method is inherited. The protected
-`KafkaProducerFactory.sendWire`/`fireHooks` funnel carries the same `KafkaProducerOperation`.
+`KafkaProducerFactory.sendWire`/`fireHooks` funnel carries the same `KafkaProducerOperation` in place
+of the bare `Method` it took before (an Alpha-tier break: a subclass overriding the old signature
+fails to compile rather than silently no longer being called).
 
 | Parameter | Notes |
 |---|---|
@@ -791,7 +793,7 @@ is the super-interface when the send method is inherited. The protected
 | `producerMethod` | The `@KafkaProducer` interface method; non-`null` only for `DIRECT_PRODUCER` |
 | `result` | The settled `AsyncResult<RecordMetadata>` |
 
-`producerMethod` is the only way to reach method-level annotations on the direct-producer path.
+`producerMethod` (or `operation().method()` in the event form) is how a hook reaches method-level annotations on the direct-producer path.
 
 ### Other multibindings
 

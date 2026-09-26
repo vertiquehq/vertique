@@ -59,7 +59,9 @@ import java.util.Map;
 public interface KafkaProducerCaptureHook extends OrderedExtension {
 
     /**
-     * Called once per send after the Kafka {@code producer.send(record)} call settles.
+     * Called once per send after the Kafka {@code producer.send(record)} call settles — by the
+     * default {@link #onSend(KafkaProducerSend)}, which the framework calls; a hook that overrides
+     * that form receives sends there instead.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
      * the enclosing operation.
@@ -97,8 +99,11 @@ public interface KafkaProducerCaptureHook extends OrderedExtension {
      * declaring class, which is a super-interface for an inherited send method.
      *
      * <p>The default delegates to the positional {@link #onSend(KafkaSendOrigin, String, String,
-     * PayloadSource, Map, Method, AsyncResult)}, so a hook overrides whichever form it needs.
-     * Exceptions are caught, logged, and swallowed, as for the positional form.
+     * PayloadSource, Map, Method, AsyncResult)}, so a hook overrides whichever form it needs — but
+     * never make the positional form delegate back to this one, which would recurse.
+     *
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
+     * enclosing operation.
      *
      * @param send the settled send; never {@code null}
      */

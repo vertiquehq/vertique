@@ -164,12 +164,13 @@ public class KafkaProducerFactory {
                 resolveMethodSerializers(producerInterface, producerName, producerConfig, kafkaConfig, serdeRegistry);
         builtSerializers.addAll(methodSerializers.values());
 
-        Map<Method, KafkaProducerOperation> operations = new HashMap<>();
+        Map<Method, KafkaProducerOperation> operationsByMethod = new HashMap<>();
         for (Method method : producerInterface.getMethods()) {
             if (method.getDeclaringClass() != Object.class) {
-                operations.put(method, new KafkaProducerOperation(producerInterface, producerName, method));
+                operationsByMethod.put(method, new KafkaProducerOperation(producerInterface, producerName, method));
             }
         }
+        Map<Method, KafkaProducerOperation> operations = Map.copyOf(operationsByMethod);
 
         return (T) Proxy.newProxyInstance(
                 producerInterface.getClassLoader(), new Class<?>[] {producerInterface}, (proxy, method, args) -> {
