@@ -66,10 +66,20 @@ if [[ "$MODE" == "snapshot" && "$VERSION" != *-SNAPSHOT ]]; then
   die "snapshot mode requires a -SNAPSHOT version, got \"$VERSION\""
 fi
 
+# Maven runs from a scratch directory (see DEPLOY_DIR), so a relative file: URL
+# would stage into that directory and be deleted with it while reporting success.
+if [[ "$TARGET_URL" == file:* && "$TARGET_URL" != file:///* ]]; then
+  die "--target-url must be an absolute file:/// URL, got \"$TARGET_URL\""
+fi
+
 cd "$REPO_ROOT"
 
-MVN="./mvnw"
+MVN="$REPO_ROOT/mvnw"
 [[ -x "$MVN" ]] || MVN="mvn"
+
+# The deploy invocations run from a directory outside the repository, so a
+# relative --settings keeps meaning what it always meant: relative to the root.
+[[ -z "$SETTINGS" || "$SETTINGS" == /* ]] || SETTINGS="$REPO_ROOT/$SETTINGS"
 
 # deploy-file refuses to deploy a file that lives inside the local repository it
 # was given ("Cannot deploy artifact from the local repository"), and every
@@ -79,13 +89,23 @@ MVN="./mvnw"
 # explicitly and are never resolved from it.
 PLUGIN_REPO="$(mktemp -d "${TMPDIR:-/tmp}/vertique-deploy-plugins.XXXXXX")"
 
+# deploy-file needs no project, but Maven started inside the repository still
+# builds the reactor model before running it — resolving every import-scoped
+# BOM through the empty PLUGIN_REPO and Central alone. A BOM published anywhere
+# else (a SNAPSHOT line, or a release Central has not yet synced) then fails
+# model building and nothing is deployed. From an empty directory Maven builds
+# no model: deploy-file reads only the payload POM named by -DpomFile. It also
+# finds no .mvn/maven.config, so anything the deploy needs from it is passed
+# explicitly below.
+DEPLOY_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vertique-deploy-cwd.XXXXXX")"
+
 # Resolve the immutable payload units. This fails closed if any allowlisted GAV
 # is missing a required POM, primary, sources or Javadoc payload.
 PLAN_FILE="$(mktemp "${TMPDIR:-/tmp}/vertique-deploy-plan.XXXXXX")"
 
-# Registered after both paths exist, so `set -u` cannot trip on an unset name
+# Registered after every path exists, so `set -u` cannot trip on an unset name
 # while the trap runs.
-trap 'rm -rf "$PLAN_FILE" "$PLUGIN_REPO"' EXIT
+trap 'rm -rf "$PLAN_FILE" "$PLUGIN_REPO" "$DEPLOY_DIR"' EXIT
 
 node release/verify-publication.mjs \
   --deploy-plan "$LOCAL_REPOSITORY" \
@@ -119,6 +139,9 @@ while IFS=$'\t' read -r groupId artifactId version packaging pomFile jarFile sou
   args=(
     "$DEPLOY_PLUGIN"
     -B -ntp
+    # A single transient Bad Gateway from Central (plugin resolution) or the
+    # target must not stop the loop part-way through a publication.
+    "-Daether.connector.http.retryHandler.serviceUnavailable=429,502,503,504"
     "-Dmaven.repo.local=$PLUGIN_REPO"
     "-DrepositoryId=$REPOSITORY_ID"
     "-Durl=$TARGET_URL"
@@ -140,7 +163,7 @@ while IFS=$'\t' read -r groupId artifactId version packaging pomFile jarFile sou
 
   [[ -n "$SETTINGS" ]] && args+=(--settings "$SETTINGS")
 
-  "$MVN" "${args[@]}" -q || die "deploy-file failed for $groupId:$artifactId:$version"
+  (cd "$DEPLOY_DIR" && "$MVN" "${args[@]}" -q) || die "deploy-file failed for $groupId:$artifactId:$version"
   deployed=$((deployed + 1))
 done <<< "$PLAN_TSV"
 
