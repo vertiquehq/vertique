@@ -108,8 +108,17 @@ jobs:
         with:
           node-version: "22"
 
+      # A glob, never an enumeration. A hand-maintained list silently skips
+      # every test file nobody remembers to add, and `node --test` exits 0 when
+      # a listed path does not exist as long as another one resolves, so an
+      # unlisted or renamed contract drifts unnoticed.
+      #
+      # The glob cannot go stale. It does not guard an empty directory: Node 22
+      # expands an unmatched pattern itself and reports 0 tests with exit 0.
+      # (`node --test <dir>` does NOT work here — Node 22 resolves the path as
+      # a module and fails.) PublicCiContractTest pins this exact invocation.
       - name: Verify release contracts
-        run: node --test release/tests/publication-contract.test.mjs release/tests/coverage-aggregate-contract.test.mjs release/tests/docs-only-scope.test.mjs release/tests/publish-artifacts.test.mjs
+        run: node --test release/tests/*.test.mjs
 
       - name: Verify test bind policy
         run: |
