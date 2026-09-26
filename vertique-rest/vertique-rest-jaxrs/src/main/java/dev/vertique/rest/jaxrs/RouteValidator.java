@@ -642,6 +642,10 @@ class RouteValidator {
     /**
      * Checks for a duplicate operationId against already-registered methods.
      *
+     * <p>The message names each route by its resource class, not the method's declaring type: an
+     * inherited method — notably an interface {@code default} method two resources share — has
+     * the same declaring type on both sides.
+     *
      * @param meta       the resource method metadata to check
      * @param registered map of already-registered operationIds to their method metadata
      * @return a violation if {@code meta.operationId()} is already registered; empty otherwise
@@ -656,9 +660,9 @@ class RouteValidator {
                     String.format(
                             "Duplicate operationId '%s': %s.%s() and %s.%s()",
                             meta.operationId(),
-                            existing.method().getDeclaringClass().getSimpleName(),
+                            existing.resourceInstance().getClass().getSimpleName(),
                             existing.method().getName(),
-                            meta.method().getDeclaringClass().getSimpleName(),
+                            meta.resourceInstance().getClass().getSimpleName(),
                             meta.method().getName())));
         }
         return Optional.empty();

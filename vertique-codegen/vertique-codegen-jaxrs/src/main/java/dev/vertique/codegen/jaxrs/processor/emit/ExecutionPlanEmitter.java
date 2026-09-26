@@ -16,6 +16,7 @@ import com.palantir.javapoet.TypeSpec;
 import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.jaxrs.EffectiveMethodContract;
 import dev.vertique.codegen.jaxrs.EffectiveParamContract;
+import dev.vertique.codegen.jaxrs.JaxRsHierarchy;
 import dev.vertique.codegen.jaxrs.JaxRsParamSource;
 import dev.vertique.codegen.support.Identifiers;
 import jakarta.annotation.Nullable;
@@ -24,12 +25,16 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import javax.annotation.processing.Generated;
+import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.ExecutableType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
+import javax.lang.model.util.Types;
 
 /**
  * Emitter for per-method {@code {Resource}_{methodName}_{idx}_ExecutionPlan} companions
@@ -247,6 +252,18 @@ public final class ExecutionPlanEmitter {
      *   <li>The method's declaring class must not be {@code java.lang.Object}.</li>
      *   <li>No parameter or return type may be a non-public type whose enclosing package differs
      *       from the resource class's package.</li>
+     *   <li>Each declared parameter type must erase to the same type as the parameter's type as a
+     *       member of the resource. An inherited generic method — a {@code default remove(I id)} of
+     *       {@code Crud<I>}, or a generic superclass method — declares {@code I}, which the
+     *       reflective path binds as its erasure; a typed call {@code ((Resource) r).remove(...)}
+     *       sees {@code remove(String)} instead and would not compile, so such a method keeps
+     *       reflective dispatch at parity with the runtime.</li>
+     *   <li>An inherited interface {@code default} method must not share its name and erased
+     *       parameter types with a method declared along the resource's superclass chain. Such a
+     *       method can only be a superclass's private one (anything else would override the
+     *       default); the JVM resolves the typed call {@code ((Resource) r).m(...)} to it and throws
+     *       {@code IllegalAccessError}, while reflective dispatch of the default's {@code Method}
+     *       selects the default.</li>
      * </ol>
      *
      * @param concreteClass the resource class
@@ -278,6 +295,32 @@ public final class ExecutionPlanEmitter {
         // Check each parameter type
         for (EffectiveParamContract pc : method.params()) {
             if (!isTypeAccessible(pc.type(), resourcePkg, elements)) {
+                return false;
+            }
+        }
+
+        // Gate 5: an inherited default shadowed at the JVM level by a same-signature superclass method
+        if (method.concreteMethod().getEnclosingElement().getKind() == ElementKind.INTERFACE) {
+            TypeElement current = concreteClass;
+            while (current != null
+                    && !"java.lang.Object".equals(current.getQualifiedName().toString())) {
+                if (JaxRsHierarchy.findMatchingMethod(ctx, method.concreteMethod(), current) != null) {
+                    return false;
+                }
+                current = JaxRsHierarchy.superClass(ctx, current);
+            }
+        }
+
+        // Gate 4: declared parameter types must erase like their types as resource members
+        Types types = ctx.types();
+        ExecutableType memberType =
+                (ExecutableType) types.asMemberOf((DeclaredType) concreteClass.asType(), method.concreteMethod());
+        List<? extends VariableElement> declared = method.concreteMethod().getParameters();
+        for (int i = 0; i < declared.size(); i++) {
+            TypeMirror declaredErasure = types.erasure(declared.get(i).asType());
+            TypeMirror memberErasure =
+                    types.erasure(memberType.getParameterTypes().get(i));
+            if (!types.isSameType(declaredErasure, memberErasure)) {
                 return false;
             }
         }

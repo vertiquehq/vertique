@@ -62,6 +62,25 @@ chain:
 auth handler(s) → @Consumes 415 gate → validation gate → OperationHandlerContributors → ResourceMethodInvoker
 ```
 
+The candidate methods are the ones the resource class and its superclasses declare, plus every
+interface `default` method the class inherits without overriding. An annotated default method is a
+route of each class that implements its interface, exactly as an override would be, which matches
+Jakarta REST implementations such as Jersey and RESTEasy. A method declared by a class wins over an
+interface default, and a default in a more specific interface wins over the one it overrides, so an
+override never adds a second route. A superclass's `private` method with the same signature is not
+inherited and does not hide the default. (A package-private one in another package does: the JVM
+dispatches the interface call to it and fails, so such a default is not routed.) The route takes the resource class's class-level annotations
+(`@Path`, security, media types) together with the default method's merged method annotations.
+Inherited annotations are matched by erased signature, and type variables are not resolved against
+the implementing class: a generic interface method (`Crud<ID>`) overridden with a concrete parameter
+type inherits none of its annotations, and a non-overridden generic default (or generic superclass
+method) binds a type-variable parameter as its erasure, so a path, query, header, cookie, or form
+parameter typed `ID` fails startup with `UNRESOLVABLE_PARAM_CONVERTER`. Declare routed methods with
+concrete parameter types. A default route's `operationId` is the same in every class that inherits
+it, and operationIds are unique per mount, so only one resource per mount can inherit a given
+default route; give the others their own route by overriding it with a distinct
+`@Operation(operationId = "…")`.
+
 `OperationHandlerContributor`s are sorted by the framework `OrderedExtension` comparator (phase →
 priority → `orderKey`); the invoker is always appended last. Every declaration problem found during
 the scan is **collected**, and the whole set is thrown once as `RouteRegistrationException` after all
@@ -295,7 +314,9 @@ A 16-component convenience constructor omits `executionPlan`. The compact constr
 `validationGroups` and copies the four lists, so every component is immutable regardless of what the
 caller passes. `methodAnnotations` and `classAnnotations` are resolved through
 `dev.vertique.core.util.AnnotationResolver`, which walks the superclass chain and interfaces — an
-annotation on an interface method is visible here.
+annotation on an interface method is visible here. For a route backed by an inherited interface
+`default` method, `method()` is the interface's `Method`, so `method().getDeclaringClass()` is the
+interface; `resourceInstance().getClass()` is the resource class.
 
 `ParamMeta` describes one declared parameter:
 

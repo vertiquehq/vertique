@@ -145,6 +145,13 @@ public final class GeneratedJaxRsDescriptorSupport {
      * class loader. Primitive type names are handled without invoking {@link Class#forName};
      * see {@link #resolveClass(String, ClassLoader)}.
      *
+     * <p>The method is made accessible, exactly as {@code ResourceScanner} does for the methods it
+     * discovers, because a route without a generated execution plan dispatches through
+     * {@link Method#invoke}. A public method can still be inaccessible from the invoker: an
+     * interface {@code default} method declared by a package-private interface has no public
+     * bridge in the implementing class, so {@link Class#getMethod} returns the interface's own
+     * {@code Method}.
+     *
      * @param resourceType  the class that declares or inherits the method; must not be
      *                      {@code null}
      * @param name          the method name; must not be {@code null}
@@ -159,7 +166,9 @@ public final class GeneratedJaxRsDescriptorSupport {
             throws ClassNotFoundException, NoSuchMethodException {
         ClassLoader cl = resourceType.getClassLoader();
         Class<?>[] paramTypes = resolveClasses(paramTypeFqns, cl);
-        return resourceType.getMethod(name, paramTypes);
+        Method method = resourceType.getMethod(name, paramTypes);
+        method.setAccessible(true);
+        return method;
     }
 
     // --- Effective annotation resolution ---
