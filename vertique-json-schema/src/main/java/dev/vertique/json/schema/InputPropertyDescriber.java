@@ -2813,16 +2813,26 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     private static final String REGEX_METACHARACTERS = ".^$|?*+()[]{}\\";
 
     /**
+     * The ECMA-262-portable end-of-input anchor every case-folding pattern ends with: a negative
+     * lookahead asserting that no character — {@code [\s\S]}, the union of whitespace and
+     * non-whitespace — follows. Under {@code java.util.regex} this matches exactly what {@code \z}
+     * matches, with no exception for a trailing line terminator, but unlike {@code \z} it is
+     * recognised by ECMA-262 regular-expression engines as well.
+     */
+    private static final String PORTABLE_END_ANCHOR = "(?![\\s\\S])";
+
+    /**
      * An ASCII case-folding regular expression for a property name, anchored at both ends: each ASCII
      * letter becomes a two-character class of its lower- and upper-case form — {@code name} folds to
-     * {@code ^[nN][aA][mM][eE]\z} — and every other character is escaped literally.
+     * {@code ^[nN][aA][mM][eE](?![\s\S])} — and every other character is escaped literally.
      *
-     * <p>Anchored with {@code \z} rather than {@code $} (S2): {@code io.vertx.json.schema} 5.1.6
-     * compiles the {@code pattern} keyword with plain {@code java.util.regex.Pattern} (see {@code
-     * PatternFlagRenderingTest}), whose {@code $} — without {@code Pattern.MULTILINE} — still matches
-     * immediately before a single trailing line terminator, not only at the true end of input. A key
-     * ending in a newline would therefore wrongly match this fold under {@code $}; {@code \z} matches
-     * only the absolute end of the input, with no such exception.
+     * <p>Anchored with {@code (?![\s\S])} rather than {@code $}: {@code io.vertx.json.schema}
+     * 5.1.6 compiles the {@code pattern} keyword with plain {@code java.util.regex.Pattern} (see
+     * {@code PatternFlagRenderingTest}), whose {@code $} — without {@code Pattern.MULTILINE} — still
+     * matches immediately before a single trailing line terminator, not only at the true end of input.
+     * A key ending in a newline would therefore wrongly match this fold under {@code $}. {@code
+     * (?![\s\S])} is the ECMA-262 end-of-input form, which no character can follow; under {@code
+     * java.util.regex} it matches exactly what {@code \z} matches, with no such exception.
      *
      * <p>The fold is ASCII-only by design, not a locale-aware one: {@code String#toLowerCase()} and
      * {@code String#toUpperCase()} without an explicit {@link java.util.Locale} — which is what Jackson
@@ -2841,7 +2851,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         if (name.isEmpty()) {
             return null;
         }
-        StringBuilder pattern = new StringBuilder(name.length() * 4 + 2).append('^');
+        StringBuilder pattern = new StringBuilder(name.length() * 4 + 1 + PORTABLE_END_ANCHOR.length()).append('^');
         for (int index = 0; index < name.length(); index++) {
             char letter = name.charAt(index);
             if (letter > 0x7E) {
@@ -2863,7 +2873,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 pattern.append(letter);
             }
         }
-        return pattern.append("\\z").toString();
+        return pattern.append(PORTABLE_END_ANCHOR).toString();
     }
 
     /**
@@ -2901,7 +2911,9 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
 
     /**
      * One combined ASCII case-folding pattern excluding every reserved name, for {@code
-     * propertyNames: {"not": {"pattern": ...}}} on a case-insensitively bound type.
+     * propertyNames: {"not": {"pattern": ...}}} on a case-insensitively bound type. The alternatives
+     * share one pair of anchors around the group — a leading {@code ^} and the ECMA-262 end-of-input
+     * form {@code (?![\s\S])} — rather than each carrying its own.
      *
      * @param names the reserved names to fold together
      * @param type  the type being described, for the diagnostic
@@ -2924,11 +2936,11 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                         null);
             }
             // Strip the per-name anchors: every alternative shares one pair of anchors around the group.
-            // The leading anchor is the single character '^'; the trailing one is the two-character
-            // "\z" (S2), not "$".
-            alternatives.add(pattern.substring(1, pattern.length() - 2));
+            // The leading anchor is the single character '^'; the trailing one is the ECMA-262-portable
+            // "(?![\s\S])", not "\z" or "$".
+            alternatives.add(pattern.substring(1, pattern.length() - PORTABLE_END_ANCHOR.length()));
         }
-        return "^(?:" + String.join("|", alternatives) + ")\\z";
+        return "^(?:" + String.join("|", alternatives) + ")" + PORTABLE_END_ANCHOR;
     }
 
     // ---------------------------------------------------------------- Jackson plumbing, public API only

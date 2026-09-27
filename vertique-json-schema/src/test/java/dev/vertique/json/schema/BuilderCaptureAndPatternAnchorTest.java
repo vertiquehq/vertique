@@ -20,8 +20,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * S1 (the {@code builderFor} capturing-mapper guard) and S2 (the {@code \z} pattern anchor for
- * case-folded property names).
+ * S1 (the {@code builderFor} capturing-mapper guard) and S2 (the {@code (?![\s\S])} pattern anchor
+ * for case-folded property names).
  */
 class BuilderCaptureAndPatternAnchorTest {
 
@@ -97,7 +97,8 @@ class BuilderCaptureAndPatternAnchorTest {
     }
 
     @Test
-    @DisplayName("S2: the case-folded property pattern is anchored with \\z, not $ — a trailing newline must not match")
+    @DisplayName(
+            "S2: the case-folded property pattern is anchored with (?![\\s\\S]), not $ — a trailing newline must not match")
     void caseFoldedPatternDoesNotMatchAKeyWithATrailingNewline() {
         ObjectMapper mapper = new ObjectMapper().configure(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, true);
         JsonNode document = assertCanonicalForm(AnnotationJsonSchemaGenerator.forInputProfile(profile(mapper))
@@ -114,7 +115,7 @@ class BuilderCaptureAndPatternAnchorTest {
         assertFalse(
                 matchesTrailingNewlineKey,
                 "a key ending in a newline must not match the case-folded pattern for \"name\": under a"
-                        + " trailing $ anchor (rather than \\z), java.util.regex.Pattern's $ matches"
+                        + " trailing $ anchor (rather than (?![\\s\\S])), java.util.regex.Pattern's $ matches"
                         + " immediately before a single trailing line terminator even without MULTILINE,"
                         + " which would wrongly accept \"name\\n\" as the property \"name\"; pattern was: "
                         + regex);

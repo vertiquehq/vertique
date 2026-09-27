@@ -561,25 +561,28 @@ application-declared `propertyNames` is never displaced: the reserved set is com
 
 **Case-insensitive binding and Unicode code folding.** A type bound case-insensitively (mapper-wide,
 class-level, or member-level `@JsonFormat`) is described with `patternProperties` — one ASCII
-case-folding pattern per bound name (`name` folds to `^[nN][aA][mM][eE]\z`), since Jackson's own
-case-insensitive lookup measurably uses `String#toLowerCase()`/`toUpperCase()` with no explicit
+case-folding pattern per bound name (`name` folds to `^[nN][aA][mM][eE](?![\s\S])`), since Jackson's
+own case-insensitive lookup measurably uses `String#toLowerCase()`/`toUpperCase()` with no explicit
 `Locale`, which a fold pinned to any one locale could silently drift from. The fold is anchored with
-`\z`, not `$`: `io.vertx.json.schema` 5.1.6 compiles the `pattern` keyword with plain
-`java.util.regex.Pattern`, whose `$` — without `Pattern.MULTILINE` — still matches immediately before
-a single trailing line terminator, not only at the true end of input; a key ending in a newline would
-otherwise wrongly match the fold. Every case-insensitively bound type additionally carries a
-`propertyNames` rule refusing any key containing a non-ASCII code unit, **unconditionally** — where
-extras are also described, folded together with the reserved-name pattern; where they are not, on its
-own. This closes a real gap: a non-ASCII code point can fold to an ASCII letter under Java's
-locale-independent Unicode case mapping regardless of locale (U+212A KELVIN SIGN folds to ASCII `k`),
-so a key spelled with it binds at the *binder* to the same member an ASCII spelling would. Where
-extras are described, the ASCII-only `patternProperties` fold and the reserved-name pattern both miss
-it at the *schema*, so without this rule the key would fall through to `additionalProperties` and
-validate as a permissive extra instead of against the real member's own constraint. A **closed** type
-(no any-setter) at the REST gate has no other closure at all — REST has no hardener, and a closed type
-publishes no `additionalProperties` — so without this rule the key would simply be accepted and bound;
-the rule is emitted unconditionally for exactly this reason, not only where extras are described. A
-closed type still relies on Bean Validation, when one is supplied, as its own backstop after binding.
+`(?![\s\S])`, not `$`: `io.vertx.json.schema` 5.1.6 compiles the `pattern` keyword with plain
+`java.util.regex.Pattern`, whose `$` — without `Pattern.MULTILINE` — still matches immediately
+before a single trailing line terminator, not only at the true end of input; a key ending in a
+newline would otherwise wrongly match the fold. `(?![\s\S])` is the ECMA-262 end-of-input form — a
+negative lookahead asserting that no character follows — and under `java.util.regex` it matches
+exactly what `\z` matches, with no exception for a trailing line terminator. Every
+case-insensitively bound type additionally carries a `propertyNames` rule refusing any key
+containing a non-ASCII code unit, **unconditionally** — where extras are also described, folded
+together with the reserved-name pattern; where they are not, on its own. This closes a real gap: a
+non-ASCII code point can fold to an ASCII letter under Java's locale-independent Unicode case
+mapping regardless of locale (U+212A KELVIN SIGN folds to ASCII `k`), so a key spelled with it binds
+at the *binder* to the same member an ASCII spelling would. Where extras are described, the
+ASCII-only `patternProperties` fold and the reserved-name pattern both miss it at the *schema*, so
+without this rule the key would fall through to `additionalProperties` and validate as a permissive
+extra instead of against the real member's own constraint. A **closed** type (no any-setter) at the
+REST gate has no other closure at all — REST has no hardener, and a closed type publishes no
+`additionalProperties` — so without this rule the key would simply be accepted and bound; the rule
+is emitted unconditionally for exactly this reason, not only where extras are described. A closed
+type still relies on Bean Validation, when one is supplied, as its own backstop after binding.
 
 **Member-level case-insensitive binding.** A member bound case-insensitively only through its own
 contextual `@JsonFormat(with = ACCEPT_CASE_INSENSITIVE_PROPERTIES)` is described inline at that
