@@ -11,7 +11,7 @@ package dev.vertique.mcp.server;
  * <p>Mirrors Vert.x's own {@code TracingPolicy} default-off posture: the body reference is
  * client-supplied and, absent a trusted upstream gateway, carries exactly the same trust posture as
  * an inbound HTTP {@code traceparent} header from an anonymous caller — untrusted, link-only data
- * that must never enter an identity, authorization, or tenancy decision (D004).
+ * that must never enter an identity, authorization, or tenancy decision.
  * Configured via {@code mcp.bodyTracePolicy}.
  */
 public enum McpBodyTracePolicy {

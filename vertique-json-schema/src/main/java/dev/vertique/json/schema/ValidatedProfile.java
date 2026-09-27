@@ -102,7 +102,7 @@ final class ValidatedProfile {
      * @param override      the declared override
      * @param direction     the direction being constructed
      * @param mapper        the profile's mapper, consulted only to decide whether an INPUT-direction
-     *                      override's type is bean-like (F6)
+     *                      override's type is bean-like
      * @param profileLabel  the bounded profile label used in failure messages
      * @param effectiveKeys the accumulating set of expanded {@code (class, direction)} keys
      * @param selected      the accumulating direction-filtered fragment map
@@ -163,26 +163,24 @@ final class ValidatedProfile {
     }
 
     /**
-     * F6 (security review round 1, MEDIUM): the documented remedy for both new generator refusals
-     * (F1/F3's, and the delegating-creator/case-insensitive ones from an earlier round) is "declare a
-     * JsonSchemaTypeOverride". Nothing previously checked that a declared fragment for a refused
-     * <em>bean</em> type actually describes or closes anything: {@code ValidatedProfile} checked only
-     * nulls, duplicates, and the alias-expansion marker, so the natural remedy {@code {"type":"object"}}
-     * was accepted at construction and yields, at MCP, a non-root object with no {@code properties} and
-     * no {@code additionalProperties} — which {@code McpSchemaHardener} deliberately leaves open (it
-     * only closes an object that already declares a non-empty {@code properties}). An INPUT override
-     * for a bean-like class must now declare {@code properties} or an explicit {@code
-     * additionalProperties} — or, per {@link #isFullyConstrainedShape} (W3, spike/deserializer-driven
-     * -schema round 4 ruling), some other keyword that fully constrains the fragment's own wire shape
+     * The documented remedy for the generator's bean-type refusals is "declare a
+     * JsonSchemaTypeOverride". Without this check, a declared fragment for a refused <em>bean</em> type
+     * need not describe or close anything: the natural remedy {@code {"type":"object"}} would be accepted
+     * at construction and yield, at MCP, a non-root object with no {@code properties} and no {@code
+     * additionalProperties} — which {@code McpSchemaHardener} deliberately leaves open (it only closes an
+     * object that already declares a non-empty {@code properties}). An INPUT override for a bean-like
+     * class must therefore declare {@code properties} or an explicit {@code additionalProperties} — or,
+     * per {@link #isFullyConstrainedShape}, some other keyword that fully constrains the fragment's own
+     * wire shape
      * regardless: a {@code type} that is not (or does not contain) {@code "object"}, an {@code enum}, a
      * {@code const}, or a {@code oneOf}/{@code anyOf}/{@code allOf} whose every branch itself qualifies
      * — so the remedy cannot itself become an unconstrained, unclosed argument object at MCP or an
      * unconstrained body member at REST, without over-refusing a fragment that never had an
      * open-object position to begin with.
      *
-     * <p>"Bean-like" is decided through {@link BeanLikeTypes#beanLike}, the one shared check (S5,
-     * spike/deserializer-driven-schema round 4 ruling) {@link InputPropertyDescriber}'s own F1 refusal
-     * also consults: whether the mapper's reflective introspection reports any settable property for the
+     * <p>"Bean-like" is decided through {@link BeanLikeTypes#beanLike}, the one shared check {@link
+     * InputPropertyDescriber}'s own custom-deserializer refusal also consults: whether the mapper's
+     * reflective introspection reports any settable property for the
      * class at all. A type with no introspected properties (a scalar, a container, a {@code Map}
      * subclass, a Vert.x-style wrapper) is not a bean the override could be leaving unconstrained, so it
      * is exempt. Output-direction overrides are unaffected: this check runs only for

@@ -24,15 +24,14 @@ import java.util.function.Function;
 import java.util.regex.Pattern;
 
 /**
- * Single injected runtime entry point: one instance per application graph, no static registry
- * (D013, contracts/rate-limit-runtime.md "Exact API shape").
+ * Single injected runtime entry point: one instance per application graph, no static registry.
  *
  * <p>The constructor eagerly walks every declared policy against the bound backend map and fails
  * fast, before any handle is requested, on: a duplicate policy name, an enabled policy whose mode
  * has no bound backend, a missing {@code keyDerivation.secret} when any enabled policy is {@code
  * CLUSTERED}, a resolved secret that looks like an unresolved {@code ${...}} placeholder under the
  * same condition, and a resolved secret shorter than 32 bytes (UTF-8) under the same condition
- * (contracts/rate-limit-runtime.md, "Startup validation"; D013 — the same eager-construction
+ * (the same eager-construction
  * precedent {@code ResilienceModule} follows). {@code RateLimitCoreModule}'s {@code @IntoSet
  * ApplicationShutdownStep} forces this constructor to run unconditionally at bootstrap; this
  * validation is also independently provable by direct construction, as {@code

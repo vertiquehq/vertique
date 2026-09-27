@@ -7,11 +7,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
 
 /**
- * The one shared "is this class ever described as a bean by {@link InputPropertyDescriber}" check
- * (S5, spike/deserializer-driven-schema round 4 ruling), consulted by both {@link
- * InputPropertyDescriber}'s own F1 refusal and {@link ValidatedProfile}'s F6 override-closure check —
- * previously two separately maintained copies of the same exclusion list and "settable property" test,
- * now one.
+ * The one shared "is this class ever described as a bean by {@link InputPropertyDescriber}" check,
+ * consulted by both {@link InputPropertyDescriber}'s own custom-deserializer refusal and {@link
+ * ValidatedProfile}'s override-closure check, so the two never keep separate copies of the same
+ * exclusion list and "settable property" test.
  */
 final class BeanLikeTypes {
 
@@ -23,8 +22,8 @@ final class BeanLikeTypes {
      * none of which ever reach the describer's own bean-ness decision (Victools' own built-in handling
      * applies instead), so neither caller may call one of them bean-like merely because reflective
      * introspection happens to enumerate some property-shaped accessor on it — and the {@code
-     * io.vertx.*} family, which is excluded the same way {@link InputPropertyDescriber}'s own F1
-     * refusal excludes it: a no-argument getter such as {@code Buffer#getBytes()} or a
+     * io.vertx.*} family, which is excluded the same way {@link InputPropertyDescriber}'s own
+     * custom-deserializer refusal excludes it: a no-argument getter such as {@code Buffer#getBytes()} or a
      * mutable-collection getter such as {@code JsonObject#getMap()}/{@code JsonArray#getList()} makes
      * plain reflective introspection report a property for these well-known wrapper types even though
      * neither is ever bound as a bean. Otherwise, "settable" ({@link BeanPropertyDefinition#couldDeserialize()}), not

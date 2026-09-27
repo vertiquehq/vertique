@@ -24,22 +24,21 @@ import java.util.Set;
 /**
  * Renders the schema at a value position — a map value ({@link InputPropertyDescriber#describeMapLike}),
  * an any-setter extras value ({@link InputPropertyDescriber#describeExtras}), and a declared {@code
- * Optional<T>} content (T002, {@code D002}) — through one shared four-step pipeline (rest-023 T001;
- * {@code decisions/D001}, {@code D002}, {@code D004}):
+ * Optional<T>} content — through one shared four-step pipeline:
  *
  * <ol>
- *   <li><strong>Profile override first</strong> (the F4 rule) — a declared {@code JsonSchemaTypeOverride}
- *       on the value type wins before its own reflective schema is ever built.
+ *   <li><strong>Profile override first</strong> — a declared {@code JsonSchemaTypeOverride} on the value
+ *       type wins before its own reflective schema is ever built.
  *   <li><strong>The value's own schema</strong> — the value type's schema through {@code
  *       createDefinitionReference} (or, when a type-use overlay applies anywhere in this position's own
- *       — possibly nested — content, the context's own inline definition creation instead; see "N1" below);
- *       for a declared {@code Optional<T>} position (T002, {@code D002}), {@code T}'s own schema — not
+ *       — possibly nested — content, the context's own inline definition creation instead; see "Overlay
+ *       isolation" below); for a declared {@code Optional<T>} position, {@code T}'s own schema — not
  *       {@code Optional<T>}'s — so a profile override on {@code T} still wins first and {@code T}'s own
  *       declared constraints render exactly as they do for a non-{@code Optional} position; or, for an
  *       entry of {@link #UNCONSTRAINED_VALUE_TYPES} ({@code Object}, {@code JsonNode}, {@code TreeNode})
  *       or a {@code null} value type — including a declared {@code Optional<T>} whose {@code T} is one of
  *       those types — an open position (no schema written; each caller decides how to render "open" for
- *       its own shape, exactly as {@code main} does today).
+ *       its own shape).
  *   <li><strong>Type-use constraint overlay</strong> — overlays a walk-vocabulary constraint declared on
  *       the position's own {@link AnnotatedType} (field, getter, creator parameter, any-setter, or a
  *       {@code Map} subclass's own supertype chain), where one is supplied.
@@ -48,7 +47,7 @@ import java.util.Set;
  *       named-member callers ({@code fieldSchema}, {@code methodSchema}) already use.
  * </ol>
  *
- * <p><strong>N1 (spec-pass round 2): the overlay is never written into a shared or referenced
+ * <p><strong>Overlay isolation: the overlay is never written into a shared or referenced
  * definition node.</strong> Victools may resolve two different positions of the exact same underlying
  * {@code Map<K,V>} type to <em>one</em> shared {@code $defs} entry (measured: two members of the same
  * {@code Map<String,String>} type, one carrying a type-use constraint on {@code V} and one not, sharing
@@ -60,8 +59,8 @@ import java.util.Set;
  * Map<K,V>>} content) type-use overlay is non-empty anywhere; when it is, every level of that content is
  * rendered through {@code context.createDefinition} — an owned copy, never registered under {@code
  * $defs} — with the overlay applied onto that owned copy; when it is not, the position renders through
- * {@code context.createDefinitionReference} exactly as before this task, so every existing golden with
- * no overlay stays byte-identical. A named member's own map position is never resolved through the
+ * {@code context.createDefinitionReference}, the same shared reference any other position of that type
+ * receives. A named member's own map position is never resolved through the
  * schema library's shared, per-type custom-definition lookup at all when it carries an overlay: {@link
  * InputPropertyDescriber} short-circuits that member's own schema construction before ever asking
  * Victools for a {@code FieldScope}/{@code MethodScope} definition (see {@code propertySchema}), so the
@@ -75,37 +74,36 @@ import java.util.Set;
  * (or {@link InputPropertyDescriber} itself) is ever consulted for the value type — so step 1 needs no
  * separate lookup here, whether the value's own schema is created as a reference or inline.
  *
- * <p><strong>T001 wired steps 1–3 (inert); T002 ({@code D002}) activated step 4; T003 ({@code D001})
- * activates step 3.</strong> T002 detects a declared {@code Optional<T>} value position here: step 2
- * renders {@code T} itself — not {@code Optional<T>} — through the same value-schema step, and step 4
- * then marks the rendered node nullable through {@link InputPropertyDescriber#markNullable}, because the
- * declared type is nullable — null is admitted matching Jackson's own {@code Optional.empty()} binding.
- * An {@code Optional<T>} whose {@code T} is one of {@link #UNCONSTRAINED_VALUE_TYPES} stays an open
- * position (a {@code null} return), exactly like a non-{@code Optional} entry of one of those types. T003
- * wires a real {@link AnnotatedType} through for a named map position ({@link #mapValueSlotOfMember(Member)}),
- * for an any-setter's own value position (closing N16, the same helper), and, for a {@code
- * describeMapLike}-handled {@code Map} subclass, an overlay source of {@link
- * #mapValueSlotOfClass(Class)} (security round-2 finding S4) rather than a member-position {@link
- * AnnotatedType}, which does not exist for that type-level reach. Every one of these entry points
+ * <p><strong>Which positions reach each step.</strong> A declared {@code Optional<T>} value position is
+ * detected here: step 2 renders {@code T} itself — not {@code Optional<T>} — through the same value-schema
+ * step, and step 4 then marks the rendered node nullable through {@link InputPropertyDescriber#markNullable},
+ * because the declared type is nullable — null is admitted matching Jackson's own {@code Optional.empty()}
+ * binding. An {@code Optional<T>} whose {@code T} is one of {@link #UNCONSTRAINED_VALUE_TYPES} stays an open
+ * position (a {@code null} return), exactly like a non-{@code Optional} entry of one of those types. Step 3
+ * receives a real {@link AnnotatedType} that the describer computes: {@link #mapValueSlotOfMember(Member)}
+ * for a named map field, getter, or setter and for an any-setter's own value position, {@link
+ * #mapValueSlotOfParameter(Member, int)} for a creator parameter, and, for a {@code describeMapLike}-handled
+ * {@code Map} subclass, an overlay source of {@link #mapValueSlotOfClass(Class)} rather than a
+ * member-position {@link AnnotatedType}, which does not exist for that type-level reach. Every one of these
+ * entry points
  * resolves the {@code V} slot through {@link #mapValueSlot(AnnotatedType)} — the {@code java.util.Map}
  * type-parameter binding Jackson itself resolves along the declaration's own supertype chain, never the
  * fixed positional index {@code [1]} of a declaration site's own written type arguments, which silently
  * drops or misapplies the overlay for a {@code Map} subclass that reorders its own type parameters
- * relative to {@code Map<K,V>} (review round 1, Critical: {@code class Reordered<V, K> extends
- * LinkedHashMap<K, V>} binds {@code V} at index 0, not 1). A nested map value (N9) is
- * handled by {@link #renderValueSchema} recursing into its own content when the rendered type is itself
- * map-like and its own nested content carries an overlay. T004 ({@code D004}) is the first to invoke the
- * {@link InlineComposer} callback this class stores: {@link #renderConjunction} composes {@code {"allOf":
- * [...]}} of every any-setter's own value position feeding a shared, {@code @JsonUnwrapped}-conjoined
- * wire key (T004's own caller, {@code InputPropertyDescriber#describeExtras}, supplies the positions),
- * and {@link #renderConjunctionMember} offers each non-overridden member's own value type to the {@link
- * InlineComposer} first — the unconditional inline rule (architecture round-2 condition C5, corrected
- * round-3 R4) — falling back to the same reference-or-overlay rendering {@link #renderValueSchema} uses
- * when the callback answers {@code null} (a non-bean value type). {@link #renderValueSchema} itself is
- * unaffected: a single any-setter (no conjunction) never reaches the {@link InlineComposer}, and renders
- * byte-identically to before this task.
+ * relative to {@code Map<K,V>} ({@code class Reordered<V, K> extends LinkedHashMap<K, V>} binds {@code V}
+ * at index 0, not 1). A nested map value is handled by {@link #renderValueSchema} recursing into its own
+ * content when the rendered type is itself map-like and its own nested content carries an overlay.
  *
- * <p><strong>Collaborators (architecture round-2 condition C6).</strong> The renderer takes its
+ * <p><strong>Conjunctions.</strong> {@link #renderConjunction} composes {@code {"allOf": [...]}} of every
+ * any-setter's own value position feeding a shared, {@code @JsonUnwrapped}-conjoined wire key ({@code
+ * InputPropertyDescriber#describeExtras} supplies the positions), and {@link #renderConjunctionMember}
+ * first offers each non-overridden member's own value type to the {@link InlineComposer} callback this
+ * class stores — the unconditional inline rule — falling back to the same reference-or-overlay rendering
+ * {@link #renderValueSchema} uses when the callback answers {@code null} (a non-bean value type). {@link
+ * #renderValueSchema} itself never reaches the {@link InlineComposer}: a single any-setter (no
+ * conjunction) renders exactly as any other value position.
+ *
+ * <p><strong>Collaborators.</strong> The renderer takes its
  * collaborators at construction — a {@link ValidatedProfile} (possibly {@code null}, as in {@link
  * InputPropertyDescriber} itself), a {@link ConstraintSource} supplement (possibly {@code null}, as in
  * the describer), and a describer-supplied {@link InlineComposer} — and holds no reference back to
@@ -124,17 +122,16 @@ final class ValuePositionRenderer {
     /**
      * @param validatedProfile the validated, direction-filtered profile view, or {@code null} when none
      *                          was supplied to the generator; consulted directly by {@link
-     *                          #renderConjunctionMember} (T004, D004's own override-first carve-out) —
+     *                          #renderConjunctionMember} (its own override-first carve-out) —
      *                          {@link #renderValueSchema} itself still reaches the override step only
      *                          through {@code createDefinitionReference} (see class Javadoc)
      * @param supplement        the Bean Validation metadata supplement, or {@code null} when no {@link
-     *                          jakarta.validation.Validator} was supplied to the generator; not yet
-     *                          consulted by this task's own pipeline steps
+     *                          jakarta.validation.Validator} was supplied to the generator; not
+     *                          consulted by any pipeline step
      * @param inlineComposer    the describer-supplied callback that inlines a bean value type's own
      *                          object schema at a conjunction position, called by {@link
-     *                          #renderConjunctionMember} (T004); D005's own member-level inline path
-     *                          (T005) reuses the same describer-side helper independently of this
-     *                          renderer
+     *                          #renderConjunctionMember}; the describer's own member-level inline path
+     *                          reuses the same describer-side helper independently of this renderer
      */
     ValuePositionRenderer(
             ValidatedProfile validatedProfile, ConstraintSource supplement, InlineComposer inlineComposer) {
@@ -150,7 +147,7 @@ final class ValuePositionRenderer {
      * declared {@code Optional<T>} whose {@code T} is one of those) — the caller decides how to render
      * an open position for its own shape ({@link InputPropertyDescriber#describeMapLike} omits the
      * {@code additionalProperties} keyword entirely; {@link InputPropertyDescriber#describeExtras}
-     * writes an explicit empty object — both preserved byte-for-byte from before this extraction).
+     * writes an explicit empty object).
      *
      * @param context  the active generation context
      * @param position the value position being rendered
@@ -161,23 +158,23 @@ final class ValuePositionRenderer {
         if (valueType == null || UNCONSTRAINED_VALUE_TYPES.contains(valueType.getRawClass())) {
             return null;
         }
-        // T002 (D002): a declared Optional<T> position renders T itself (not Optional<T>) through steps
-        // 1+2 below, and is marked nullable by step 4 at the end — null is admitted because the
-        // declared type is nullable, matching Jackson's own Optional.empty() binding (see class
-        // Javadoc). AtomicReference is not widened to this branch: D002 is about Optional specifically.
+        // A declared Optional<T> position renders T itself (not Optional<T>) through steps 1+2 below,
+        // and is marked nullable by step 4 at the end — null is admitted because the declared type is
+        // nullable, matching Jackson's own Optional.empty() binding (see class Javadoc). AtomicReference
+        // is deliberately not widened to this branch: the rule covers Optional specifically.
         boolean optional = valueType.isReferenceType() && valueType.getRawClass() == Optional.class;
         JavaType renderedType = optional ? valueType.getReferencedType() : valueType;
         if (renderedType == null || UNCONSTRAINED_VALUE_TYPES.contains(renderedType.getRawClass())) {
             return null;
         }
         AnnotatedType annotatedType = position.annotatedType();
-        // Steps 1+2+3 (N1, see class Javadoc): a position (or its own nested map content) carrying an
-        // overlay anywhere is rendered entirely through the context's own inline definition creation, so
-        // the overlay is never written into a node the schema library could share across positions; a
-        // position with no overlay anywhere renders through createDefinitionReference exactly as T001
-        // left it, so every existing golden with no overlay stays byte-identical.
+        // Steps 1+2+3 (overlay isolation, see class Javadoc): a position (or its own nested map content)
+        // carrying an overlay anywhere is rendered entirely through the context's own inline definition
+        // creation, so the overlay is never written into a node the schema library could share across
+        // positions; a position with no overlay anywhere renders through createDefinitionReference, the
+        // same shared reference any other position of that type receives.
         JsonNode schema = renderReferenceOrOverlay(context, renderedType, annotatedType);
-        // Step 4: nullability, active only for a declared Optional<T> position (T002, D002).
+        // Step 4: nullability, active only for a declared Optional<T> position.
         if (optional) {
             InputPropertyDescriber.markNullable((ObjectNode) schema);
         }
@@ -185,21 +182,20 @@ final class ValuePositionRenderer {
     }
 
     /**
-     * Renders {@code positions}' own conjunction (D004): one any-setter's own value position renders
-     * byte-identically to {@link #renderValueSchema} (the pre-T004 single-slot shape, unchanged); more
-     * than one composes {@code {"allOf": [...]}} of every position's own value schema, in the order
-     * supplied — the parent's own any-setter first, then every unwrapped sibling's own (T004's own
-     * caller, {@link InputPropertyDescriber#describeExtras}, supplies that order). An open position
-     * contributes the empty schema {@code {}} rather than being omitted, so {@code AllOfFold} still sees
-     * every any-setter in the set once it folds the conjunction (D004, architecture round-2 condition
-     * C5).
+     * Renders {@code positions}' own conjunction: one any-setter's own value position renders
+     * byte-identically to {@link #renderValueSchema} (the single-slot shape); more than one composes
+     * {@code {"allOf": [...]}} of every position's own value schema, in the order supplied — the parent's
+     * own any-setter first, then every unwrapped sibling's own (the caller, {@link
+     * InputPropertyDescriber#describeExtras}, supplies that order). An open position contributes the empty
+     * schema {@code {}} rather than being omitted, so {@code AllOfFold} still sees every any-setter in the
+     * set once it folds the conjunction.
      *
      * <p>At a conjunction position (more than one entry), each subschema whose own value type is a bean
      * <strong>without</strong> a profile override is rendered inline instead of referenced — the
-     * unconditional inline rule (C5, corrected round-3 R4) — through the describer-supplied {@link
-     * InlineComposer}, never a separate, introspection-built inline copy. A profile-overridden value
-     * type keeps its {@code $ref} (the override-first carve-out, F4): the {@link InlineComposer} is
-     * never reached for it. A non-bean value type (a scalar, a {@code Map}-like type, ...) renders
+     * unconditional inline rule — through the describer-supplied {@link InlineComposer}, never a
+     * separate, introspection-built inline copy. A profile-overridden value type keeps its {@code $ref}
+     * (the override-first carve-out): the {@link InlineComposer} is never reached for it. A non-bean
+     * value type (a scalar, a {@code Map}-like type, ...) renders
      * exactly as a single, non-conjunction position would (the {@link InlineComposer} answers {@code
      * null} for it; see its own class Javadoc).
      *
@@ -207,7 +203,7 @@ final class ValuePositionRenderer {
      * @param positions every any-setter's own value position feeding the shared key
      * @return the sole position's own value schema when {@code positions} has one entry; {@code
      *     {"allOf": [...]}} of every position's own subschema when it has more than one; {@code null}
-     *     only when {@code positions} is empty (a caller error T004's own callers never make)
+     *     only when {@code positions} is empty (a caller error the describer never makes)
      */
     JsonNode renderConjunction(SchemaGenerationContext context, List<ValuePosition> positions) {
         if (positions.size() == 1) {
@@ -226,9 +222,9 @@ final class ValuePositionRenderer {
     }
 
     /**
-     * Renders one member of a conjunction (D004): the same steps {@link #renderValueSchema} applies,
-     * except that a non-overridden value type is offered to the describer-supplied {@link
-     * InlineComposer} first (C5's own unconditional inline rule) — a bean value type is inlined; a
+     * Renders one member of a conjunction: the same steps {@link #renderValueSchema} applies, except that
+     * a non-overridden value type is offered to the describer-supplied {@link InlineComposer} first (the
+     * unconditional inline rule) — a bean value type is inlined; a
      * non-bean value type (the {@link InlineComposer} answering {@code null}) falls back to the same
      * reference-or-overlay rendering {@link #renderValueSchema} uses.
      *
@@ -251,9 +247,9 @@ final class ValuePositionRenderer {
                 validatedProfile != null && validatedProfile.fragmentFor(renderedType.getRawClass()) != null;
         JsonNode schema;
         if (overridden) {
-            // F4 override-first (security round-2 MEDIUM, "D004's inline rule"): the override wins
-            // before the InlineComposer is ever consulted, exactly like every other position — never
-            // inlined from a reflection-built bean description, which would silently drop the override.
+            // Override first: the override wins before the InlineComposer is ever consulted, exactly like
+            // every other position — never inlined from a reflection-built bean description, which would
+            // silently drop the override.
             schema = context.createDefinitionReference(InputPropertyDescriber.resolve(context, renderedType));
         } else {
             JsonNode inlined = inlineComposer.inline(renderedType, position.memberName(), context);
@@ -270,7 +266,7 @@ final class ValuePositionRenderer {
     /**
      * Steps 1(no-op here, applied by the caller)+2+3: the value's own schema, through the context's own
      * inline definition creation when {@code renderedType}'s own position carries a type-use overlay
-     * anywhere (N1), or through {@code createDefinitionReference} otherwise — shared by {@link
+     * anywhere, or through {@code createDefinitionReference} otherwise — shared by {@link
      * #renderValueSchema} and, for a non-bean conjunction member, {@link #renderConjunctionMember}.
      *
      * @param context       the active generation context
@@ -288,7 +284,7 @@ final class ValuePositionRenderer {
 
     /**
      * Whether {@code type}'s own value position carries a walk-vocabulary type-use overlay, directly on
-     * {@code annotatedType} or, recursively, anywhere in its own nested map content (N9).
+     * {@code annotatedType} or, recursively, anywhere in its own nested map content.
      *
      * @param type          the position's own value type, or {@code null}
      * @param annotatedType the position's own {@link AnnotatedType}, or {@code null}
@@ -310,7 +306,7 @@ final class ValuePositionRenderer {
     }
 
     /**
-     * Renders {@code renderedType}'s own schema as an owned, never-shared node (N1), recursing into its
+     * Renders {@code renderedType}'s own schema as an owned, never-shared node, recursing into its
      * own nested map content when {@code renderedType} is itself map-like, and applying every
      * walk-vocabulary keyword {@code annotatedType} carries onto the rendered node through {@link
      * InputPropertyDescriber#applyCorrection} — the same stricter-wins keyword-merge semantics the
@@ -353,9 +349,9 @@ final class ValuePositionRenderer {
     /**
      * The {@link AnnotatedType} of a {@code Map<K,V>}-declaring member's own value position ({@code V}),
      * given the member's own raw {@link Field} or {@link Method} — a getter's own annotated return type,
-     * or a setter's own sole annotated parameter type. rest-023 T003 ({@code D001}): the one new
-     * reflection surface this task adds, since {@link com.fasterxml.jackson.databind.introspect.AnnotatedMember}
-     * carries no {@link AnnotatedType} of its own (verified against jackson-databind 2.22.2).
+     * or a setter's own sole annotated parameter type. Read reflectively because {@link
+     * com.fasterxml.jackson.databind.introspect.AnnotatedMember} carries no {@link AnnotatedType} of its
+     * own (verified against jackson-databind 2.22.2).
      *
      * @param raw the member's own raw {@link Field} or {@link Method}, or another {@link Member} kind
      *            (for which this method answers {@code null})
@@ -404,8 +400,8 @@ final class ValuePositionRenderer {
      * The {@link AnnotatedType} that carries {@code java.util.Map}'s own {@code V} type-parameter's
      * annotations for {@code declared} — resolved through {@code declared}'s own type-parameter binding
      * along its supertype chain, never through the fixed positional index {@code [1]} of {@code
-     * declared}'s own written type arguments (review round 1, Critical): a {@code Map} subclass that
-     * reorders its own type parameters relative to {@code Map<K,V>} (e.g. {@code class Reordered<V, K>
+     * declared}'s own written type arguments: a {@code Map} subclass that reorders its own type
+     * parameters relative to {@code Map<K,V>} (e.g. {@code class Reordered<V, K>
      * extends LinkedHashMap<K, V>}) binds {@code V} at a different index than a same-order declaration.
      *
      * <p>Recursive over {@code declared}'s own erased class's supertype chain (bounded by Java's acyclic
@@ -459,8 +455,8 @@ final class ValuePositionRenderer {
 
     /**
      * The overlay source {@link AnnotatedType} for a {@code Map}-like type reached without a declaration
-     * site (security round-2 finding S4) — a {@code describeMapLike}-handled type-level reach, which
-     * carries no member-position {@link AnnotatedType} of its own. Performs the same supertype-chain walk
+     * site — a {@code describeMapLike}-handled type-level reach, which carries no member-position {@link
+     * AnnotatedType} of its own. Performs the same supertype-chain walk
      * and type-parameter-binding resolution as {@link #mapValueSlot(AnnotatedType)}, starting one level
      * up: {@code raw}'s own {@link #mapAssignableSupertype(Class)}, recursively resolved, then re-bound
      * at {@code raw} only when the resolved slot is one of {@code raw}'s own type parameters and {@code
@@ -546,8 +542,8 @@ final class ValuePositionRenderer {
 
     /**
      * Inlines a bean value type's own object schema at a value position, in place of a {@code $ref} —
-     * the mechanism D004's own conjunction rule ({@link #renderConjunctionMember}) and D005's own
-     * member-level inline path share (C6: the callback, inside {@code InputPropertyDescriber}, does the
+     * the mechanism the conjunction rule ({@link #renderConjunctionMember}) and the describer's own
+     * member-level inline path share (the callback, inside {@code InputPropertyDescriber}, does the
      * bean classification, the {@code inlineInProgress} registration, and the refusal; this renderer
      * only ever calls it and never inspects that state itself).
      */
@@ -573,7 +569,8 @@ final class ValuePositionRenderer {
      * @param valueType     the value's declared {@link JavaType}, or {@code null} when the position has
      *                      none (an undeclared map content type)
      * @param annotatedType the position's own {@link AnnotatedType}, or {@code null}
-     * @param memberName    the position's own member name, for a future diagnostic, or {@code null}
+     * @param memberName    the position's own member name, named in the inline callback's diagnostics,
+     *                      or {@code null}
      */
     record ValuePosition(JavaType valueType, AnnotatedType annotatedType, String memberName) {}
 }
