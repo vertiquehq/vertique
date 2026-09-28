@@ -37,6 +37,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -1020,6 +1021,185 @@ class DefaultChannelIdentityManagerTest {
                         } catch (Throwable t) {
                             ctx.failNow(t);
                         }
+                    }));
+        }
+    }
+
+    // --- Vert.x timer id 0 ---
+
+    /**
+     * Vert.x numbers timers from a counter that starts at {@code 0}, so the first timer a fresh
+     * {@link Vertx} schedules has id {@code 0}. Each test here gives the manager its own fresh instance
+     * so that the channel's expiry timer <em>is</em> that first timer, then proves refresh and
+     * deregister still cancel it. A guard that treated {@code 0} as the "no timer" sentinel would leave
+     * the stale expiry armed, and it would later close a channel it no longer belongs to.
+     */
+    @Nested
+    @DisplayName("expiry timer with Vert.x timer id 0 — cancelled like any other timer")
+    class TimerIdZero {
+
+        /** Expiry of the first registration: far enough out that the register/refresh chain beats it. */
+        private static final long EXPIRY_MS = 300L;
+
+        /** How long to wait before asserting the stale expiry never fired: comfortably past EXPIRY_MS. */
+        private static final long PAST_EXPIRY_MS = 600L;
+
+        private Vertx freshVertx;
+
+        @BeforeEach
+        void createFreshVertx() {
+            freshVertx = Vertx.vertx();
+        }
+
+        @AfterEach
+        void closeFreshVertx() throws Exception {
+            freshVertx.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+        }
+
+        /**
+         * Proves the channel's expiry timer took id {@code 0}: a probe timer scheduled right after
+         * registration must receive the next id, {@code 1}. The probe is cancelled immediately.
+         */
+        private void assertExpiryTimerHasIdZero() {
+            long probe = freshVertx.setTimer(60_000L, id -> {});
+            freshVertx.cancelTimer(probe);
+            assertEquals(1L, probe, "precondition: the channel's expiry timer must be this Vertx's first timer (id 0)");
+        }
+
+        @Test
+        @DisplayName("refreshIdentity cancels a timer-id-0 expiry, so the old token's expiry never closes the channel")
+        void refreshIdentityCancelsTimerIdZero(VertxTestContext ctx) {
+            List<ChannelLifecycleEvent> captured = new ArrayList<>();
+            DefaultChannelIdentityManager manager = managerWithCapture(freshVertx, captured);
+            SecurityContext expiring = expiringContext(Instant.now().plusMillis(EXPIRY_MS));
+            SecurityContext refreshed = stubContext(); // no expiry: the refresh schedules no new timer
+            ChannelBinding binding = happyBinding();
+
+            ContextInternal dup = ((ContextInternal) freshVertx.getOrCreateContext()).duplicate();
+            dup.runOnContext(v -> manager.register("ch-timer-zero-refresh", expiring, binding)
+                    .compose(v2 -> {
+                        assertExpiryTimerHasIdZero();
+                        return manager.refreshIdentity("ch-timer-zero-refresh", refreshed);
+                    })
+                    .onComplete(ar -> {
+                        try {
+                            assertTrue(ar.succeeded(), () -> "register + refresh must succeed: " + ar.cause());
+                            // The mechanism: refresh must have cancelled timer 0. cancelTimer returns
+                            // true only for a timer that is still pending.
+                            assertFalse(
+                                    freshVertx.cancelTimer(0L), "refresh must cancel the prior expiry timer (id 0)");
+                        } catch (Throwable t) {
+                            ctx.failNow(t);
+                            return;
+                        }
+                        // The consequence: past the old token's expiry, the refreshed channel is still
+                        // open and was never closed with IDENTITY_EXPIRED.
+                        freshVertx.setTimer(PAST_EXPIRY_MS, id -> {
+                            try {
+                                verify(binding, never()).close(any());
+                                assertSame(
+                                        refreshed,
+                                        manager.current("ch-timer-zero-refresh").orElseThrow(),
+                                        "the refreshed identity must still be bound");
+                                ctx.completeNow();
+                            } catch (Throwable t) {
+                                ctx.failNow(t);
+                            }
+                        });
+                    }));
+        }
+
+        @Test
+        @DisplayName("deregister cancels a timer-id-0 expiry, so it cannot close a later channel reusing the id")
+        void deregisterCancelsTimerIdZero(VertxTestContext ctx) {
+            List<ChannelLifecycleEvent> captured = new ArrayList<>();
+            DefaultChannelIdentityManager manager = managerWithCapture(freshVertx, captured);
+            SecurityContext expiring = expiringContext(Instant.now().plusMillis(EXPIRY_MS));
+            SecurityContext reused = stubContext(); // no expiry: the second registration schedules no timer
+            ChannelBinding first = happyBinding();
+            ChannelBinding second = happyBinding();
+
+            ContextInternal dup = ((ContextInternal) freshVertx.getOrCreateContext()).duplicate();
+            dup.runOnContext(v -> manager.register("ch-timer-zero-dereg", expiring, first)
+                    .compose(v2 -> {
+                        assertExpiryTimerHasIdZero();
+                        return manager.deregister("ch-timer-zero-dereg", "CHANNEL_CLOSED_BY_PEER");
+                    })
+                    .compose(v2 -> {
+                        // The mechanism: deregister must have cancelled timer 0.
+                        assertFalse(
+                                freshVertx.cancelTimer(0L), "deregister must cancel the channel's expiry timer (id 0)");
+                        return manager.register("ch-timer-zero-dereg", reused, second);
+                    })
+                    .onComplete(ar -> {
+                        try {
+                            assertTrue(
+                                    ar.succeeded(),
+                                    () -> "register + deregister + register must succeed: " + ar.cause());
+                        } catch (Throwable t) {
+                            ctx.failNow(t);
+                            return;
+                        }
+                        // The consequence: past the first registration's expiry, the channel now bound
+                        // under the same id is still open and was never closed with IDENTITY_EXPIRED.
+                        freshVertx.setTimer(PAST_EXPIRY_MS, id -> {
+                            try {
+                                verify(second, never()).close(any());
+                                assertSame(
+                                        reused,
+                                        manager.current("ch-timer-zero-dereg").orElseThrow(),
+                                        "the second registration must still be bound");
+                                assertEquals(3, captured.size(), "opened, closed, opened — and no expiry close");
+                                ctx.completeNow();
+                            } catch (Throwable t) {
+                                ctx.failNow(t);
+                            }
+                        });
+                    }));
+        }
+
+        @Test
+        @DisplayName("re-registering the channel id cancels a timer-id-0 expiry, so it cannot close the new binding")
+        void collisionCancelsTimerIdZero(VertxTestContext ctx) {
+            List<ChannelLifecycleEvent> captured = new ArrayList<>();
+            DefaultChannelIdentityManager manager = managerWithCapture(freshVertx, captured);
+            SecurityContext expiring = expiringContext(Instant.now().plusMillis(EXPIRY_MS));
+            SecurityContext replacement = stubContext(); // no expiry: the colliding registration schedules no timer
+            ChannelBinding prior = happyBinding();
+            ChannelBinding replacementBinding = happyBinding();
+
+            ContextInternal dup = ((ContextInternal) freshVertx.getOrCreateContext()).duplicate();
+            dup.runOnContext(v -> manager.register("ch-timer-zero-collision", expiring, prior)
+                    .compose(v2 -> {
+                        assertExpiryTimerHasIdZero();
+                        return manager.register("ch-timer-zero-collision", replacement, replacementBinding);
+                    })
+                    .onComplete(ar -> {
+                        try {
+                            assertTrue(ar.succeeded(), () -> "both registrations must succeed: " + ar.cause());
+                            // The mechanism: the collision must have cancelled the prior entry's timer 0.
+                            assertFalse(
+                                    freshVertx.cancelTimer(0L),
+                                    "the colliding registration must cancel the prior expiry timer (id 0)");
+                        } catch (Throwable t) {
+                            ctx.failNow(t);
+                            return;
+                        }
+                        // The consequence: past the prior identity's expiry, the replacement binding is
+                        // still bound and was never closed with IDENTITY_EXPIRED.
+                        freshVertx.setTimer(PAST_EXPIRY_MS, id -> {
+                            try {
+                                verify(replacementBinding, never()).close(any());
+                                assertSame(
+                                        replacement,
+                                        manager.current("ch-timer-zero-collision")
+                                                .orElseThrow(),
+                                        "the replacement registration must still be bound");
+                                ctx.completeNow();
+                            } catch (Throwable t) {
+                                ctx.failNow(t);
+                            }
+                        });
                     }));
         }
     }

@@ -15,9 +15,15 @@ import dev.vertique.core.correlation.CorrelationIdentifier;
 import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.core.security.SecurityRuntime;
+import dev.vertique.security.AuthenticationState;
+import dev.vertique.security.DefaultAuthMethod;
+import dev.vertique.security.PrincipalRef;
+import dev.vertique.security.PrincipalType;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityIdentity;
 import dev.vertique.security.authz.ActionRef;
+import dev.vertique.security.authz.AuthorityClaim;
+import dev.vertique.security.authz.AuthorityKind;
 import dev.vertique.security.authz.AuthorizationClaims;
 import dev.vertique.security.authz.AuthorizationDecision;
 import dev.vertique.security.authz.AuthorizationRequest;
@@ -32,6 +38,7 @@ import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.ext.web.RoutingContext;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -40,6 +47,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 /**
  * Unit tests for {@link SecurityPolicyEnforcer}'s {@code @RequiresAction} composition (slice 12,
@@ -424,6 +432,94 @@ class SecurityPolicyEnforcerActionTest {
                     events.get(0).decision().reasonCode());
             // The action gate WAS evaluated against the anonymous identity (it is the real constraint).
             verify(authorizer).authorize(argThat(req -> CONTENT_READ.value().equals(req.action())));
+        }
+    }
+
+    // --- Composed role gate through the real decision point ---
+
+    /**
+     * Every other composed-path test stubs the role/scope gate, so none can tell which
+     * {@link SecurityContext} reached it. These run the real {@link VertxProviderDecisionPoint}, which
+     * decides from the request's own security context, and assert that the bound caller — never the
+     * anonymous stand-in reserved for the missing-context short-circuit — is what the role gate
+     * evaluates, what the action gate receives, and what the audit event records as the actor.
+     */
+    @Nested
+    @DisplayName("Composed path through the real VertxProviderDecisionPoint")
+    class ComposedRealDecisionPoint {
+
+        private static final AuthenticationState NO_EVIDENCE_AUTH = new AuthenticationState(
+                DefaultAuthMethod.none(), List.of(), Optional.empty(), Optional.empty(), Map.of());
+
+        /** The authenticated user {@code "alice"} holding exactly the given ROLE claims. */
+        private static SecurityContext alice(String... roles) {
+            Set<AuthorityClaim> claims = new HashSet<>();
+            for (String role : roles) {
+                claims.add(new AuthorityClaim(AuthorityKind.ROLE, role, "", "", "test", Map.of()));
+            }
+            SecurityIdentity identity = SecurityIdentity.user(new PrincipalRef(PrincipalType.USER, "alice", Map.of()));
+            return new AuthenticatedSecurityContext(
+                    identity, NO_EVIDENCE_AUTH, new AuthorizationClaims(claims, Map.of()), Optional.empty());
+        }
+
+        @Test
+        @DisplayName("caller holds the role → 200; role gate, action gate, and audit event all see the bound caller")
+        void composed_realDecisionPoint_callerHoldsRole_permit() {
+            SecurityContext caller = alice("admin");
+            Authorizer authorizer = authorizerReturning(AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED));
+            SecurityPolicyEnforcer enforcer = enforcerWith(new VertxProviderDecisionPoint(Set.of()), authorizer);
+
+            RoutingContext rc = stubRoutingContext(caller);
+            enforcer.createHandler(
+                            new SecurityPolicy.Constrained(List.of("admin"), List.of(), false),
+                            Optional.of(CONTENT_READ))
+                    .handle(rc);
+
+            // The real role gate permits only if it evaluated the caller's own claims: the anonymous
+            // stand-in carries no roles and would have been denied ROLE_MISSING.
+            verify(rc).next();
+            verify(rc, never()).fail(anyInt());
+            assertEquals(1, events.size(), "exactly one combined event");
+            AuthorizationDecisionEvent event = events.get(0);
+            assertTrue(event.decision().permitted());
+            assertEquals(Boolean.TRUE, event.decision().safeAttributes().get("rolesSatisfied"));
+            assertSame(caller, event.request().securityContext(), "the audit event must record the bound caller");
+            assertEquals(
+                    "alice",
+                    event.request().securityContext().identity().actor().id());
+
+            ArgumentCaptor<AuthorizationRequest> actionRequest = ArgumentCaptor.forClass(AuthorizationRequest.class);
+            verify(authorizer).authorize(actionRequest.capture());
+            assertSame(
+                    caller,
+                    actionRequest.getValue().securityContext(),
+                    "the action gate must evaluate the bound caller");
+        }
+
+        @Test
+        @DisplayName("caller lacks the role → 403 ROLE_MISSING, action gate not called, audit actor is the caller")
+        void composed_realDecisionPoint_callerLacksRole_deny() {
+            SecurityContext caller = alice("viewer");
+            Authorizer authorizer = mock(Authorizer.class);
+            SecurityPolicyEnforcer enforcer = enforcerWith(new VertxProviderDecisionPoint(Set.of()), authorizer);
+
+            RoutingContext rc = stubRoutingContext(caller);
+            enforcer.createHandler(
+                            new SecurityPolicy.Constrained(List.of("admin"), List.of(), false),
+                            Optional.of(CONTENT_READ))
+                    .handle(rc);
+
+            // The real role gate denies only if the policy's required roles reached it alongside the
+            // caller's claims.
+            verify(rc).fail(403);
+            verify(rc, never()).next();
+            assertEquals(1, events.size(), "exactly one combined event");
+            AuthorizationDecisionEvent event = events.get(0);
+            assertFalse(event.decision().permitted());
+            assertEquals(AuthzReasonCodes.ROLE_MISSING, event.decision().reasonCode());
+            assertEquals(Boolean.FALSE, event.decision().safeAttributes().get("actionEvaluated"));
+            assertSame(caller, event.request().securityContext(), "a deny must also record the bound caller");
+            verify(authorizer, never()).authorize(any(AuthorizationRequest.class));
         }
     }
 

@@ -54,6 +54,7 @@ import io.vertx.ext.web.impl.UserContextInternal;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.time.Instant;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -589,10 +590,17 @@ class IdentityResolutionMiddlewareTest {
                 }
             };
 
+            // The default resolver goes in FIRST, and a LinkedHashSet iterates in insertion order, so
+            // only the constructor's priority sort can move the qualifying resolver ahead of it. Set.of
+            // iterates in a per-JVM salted order, which let a missing sort pass about half the time.
+            Set<SecurityIdentityResolver> defaultResolverFirst = new LinkedHashSet<>();
+            defaultResolverFirst.add(new DefaultSecurityIdentityResolver());
+            defaultResolverFirst.add(qualifyingResolver);
+
             SecurityEventEmitter emitter = new SecurityEventEmitter(Set.of());
             CapturingSecurityRuntime runtime = new CapturingSecurityRuntime();
             IdentityResolutionMiddleware middleware = new IdentityResolutionMiddleware(
-                    Set.of(qualifyingResolver, new DefaultSecurityIdentityResolver()),
+                    defaultResolverFirst,
                     Optional.of(new DefaultSecurityClaimMapper()),
                     emitter,
                     runtime,

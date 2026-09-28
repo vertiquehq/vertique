@@ -353,7 +353,10 @@ handler factories that install no handler for the same shape; `DenyAll` denies w
 `AuthzReasonCodes.DENY_ALL` and emits one event; every other combination emits exactly one combined
 `AuthorizationDecisionEvent`. The returned future is never `null` and never fails for an ordinary
 deny — a contract-violating decision point or `Authorizer` resolves a fail-closed
-`INTERNAL_AUTHZ_ERROR` deny instead of propagating. `vertique-mcp-server` is the framework's own
+`INTERNAL_AUTHZ_ERROR` deny instead of propagating. An invalid input, such as a `Constrained` policy
+with neither roles nor scopes, also resolves an `INTERNAL_AUTHZ_ERROR` deny without consulting
+either gate. Unlike `createHandler`, which rejects that policy at startup, `decide(...)` does not
+throw; it logs a warning and emits no event. `vertique-mcp-server` is the framework's own
 caller, using it to authorize a tool invocation against the caller's already-resolved
 `SecurityContext` instead of a Vert.x route.
 
@@ -760,6 +763,8 @@ RequestOriginConfig originConfig() {
 Resolution rules:
 
 - `X-Forwarded-For` is always parsed and exposed for observability, trusted peer or not.
+- Each `X-Forwarded-For` entry must be an IP address literal. Hostnames and malformed addresses are
+  dropped and counted in `forwardedForRejectedCount`; they are never looked up in DNS.
 - `clientIp` uses the forwarded chain **only** when the direct peer matches a trusted CIDR;
   otherwise it is the direct peer address.
 - Forwarded scheme and host are honoured only when both the corresponding flag is set and the direct
