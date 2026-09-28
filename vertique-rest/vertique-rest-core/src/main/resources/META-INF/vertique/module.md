@@ -1243,8 +1243,9 @@ When `enabled` is `false` (the default) no CORS handler is installed and every o
 
 | Key | Default | Constraint / notes |
 |---|---:|---|
-| `jaxrs.basePath` | `"/*"` | mount path of the JAX-RS sub-router; not applied when one or more Jakarta REST `Application` classes are declared — each is mounted at its own `@ApplicationPath` instead |
+| `jaxrs.basePath` | `"/*"` | mount path of the JAX-RS sub-router; not applied when one or more `@RestApplication` declarations are present — each is mounted at its own `@RestApplication.path` instead |
 | `jaxrs.openapiPath` | `"openapi.json"` | classpath spec; only used by the opt-in `openapi-contract` strategy |
+| `jaxrs.applications` | *(none)* | per-application settings, keyed by application name; parsed strictly by `vertique-rest-jaxrs`; unknown keys fail startup — see that module's reference |
 | `jaxrs.mediaTypeValidation` | `"WARN"` | `WARN`, `STRICT` (fails startup on the first mismatch), or `OFF` |
 | `jaxrs.validationStrategy` | `"web-validation"` | must match a registered strategy id — built-ins are `web-validation`, `none`, `openapi-contract`; an unknown id fails startup |
 | `jaxrs.validationMode` | `"aggregate"` | `aggregate` or `failFast` |
