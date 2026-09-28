@@ -4,6 +4,8 @@
 package dev.vertique.rest.auth.jwt;
 
 import dev.vertique.rest.core.routing.SecuritySchemeRegistry;
+import dev.vertique.rest.core.security.Http;
+import dev.vertique.rest.core.security.SecuritySchemeDescription;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
 import dev.vertique.rest.security.CredentialRejectionReporter;
 import dev.vertique.rest.security.RestAuthenticationEvidence;
@@ -208,6 +210,17 @@ public class JwtBearerSecuritySchemeHandler implements SecuritySchemeHandler, Ha
     @Override
     public void configure(SecuritySchemeRegistry registry) {
         registry.authenticationHandler(new DelegatingJwtAuthHandler(JWTAuthHandler.create(jwtAuth)));
+    }
+
+    /**
+     * Describes this scheme as HTTP {@code bearer} with bearer format {@code JWT}, whatever its
+     * scheme name. The description carries no issuer, audience, or key-set location.
+     *
+     * @return {@code Http.bearer("JWT")}
+     */
+    @Override
+    public Optional<SecuritySchemeDescription> openApiDescription() {
+        return Optional.of(Http.bearer("JWT"));
     }
 
     // --- Handler<RoutingContext> ---
