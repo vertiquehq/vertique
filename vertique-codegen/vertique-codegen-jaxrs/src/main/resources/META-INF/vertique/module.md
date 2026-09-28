@@ -226,10 +226,27 @@ A class annotated `@NoAutoWire` is exempt from all of this: it is inert, neither
 | Inaccessible class (error) | `{Application} is not accessible from the generated module's package '{package}'; make it public, or package-private in that same package.` |
 | Non-static inner class (error) | `{Application} must be a top-level or static nested class to be an auto-wired JAX-RS application.` |
 | Missing `vertique-rest-jaxrs` dependency (error) | `An eligible JAX-RS application was found, but 'vertique-rest-jaxrs' is not on the compile classpath; add it as a dependency to generate application registrations.` |
+| `@RestApplication` on a non-interface (error) | `{Declaration} is annotated @RestApplication, which belongs on an interface; declare the application on an interface instead of this {kind}.` |
+| Missing `vertique-rest-jaxrs` dependency for a declaration (error) | `A @RestApplication declaration was found, but 'vertique-rest-jaxrs' is not on the compile classpath; add it as a dependency to generate application registrations.` |
+| Invalid declaration name (error) | `{Declaration} has an invalid @RestApplication name "{name}"; an application name must match [a-z0-9][a-z0-9_-]{0,63}.` |
+| Reserved declaration name (error) | `{Declaration} uses the @RestApplication name "{name}", which is reserved; none and null cannot name an application.` |
+| Invalid declaration path (error) | `{Declaration} has an invalid @RestApplication path "{value}" (rule: {rule}); an application path may contain only '/' and the characters A-Z a-z 0-9 . _ ~ -` |
+| Declaration membership form (error) | `{Declaration} sets both resources and discover = true (or: neither resources nor discover = true); a REST application declares exactly one of a non-empty resources list and discover = true.` |
+| Unresolvable declaration resources entry (error) | `{Declaration} lists a resources entry that could not be resolved to a class; list only concrete @Path resource classes this compilation can reference.` |
+| Duplicate declaration resources entry (error) | `{Declaration} lists {Resource} in resources more than once; list each resource class once.` |
+| Rejected declaration resources entry (error) | `{Declaration} lists {Resource} in resources, but {reason}; list only concrete @Path resource classes.` |
+| Inaccessible declaring interface (error) | `{Declaration} is not accessible from the generated module's package '{package}'; make it public, or package-private in that same package.` |
+| Inaccessible listed resource (error) | `{Declaration} lists a resource class its generated registration cannot name: {the inaccessible-type message above, naming the resource}` |
+| Duplicate declaration name (error) | `{Declaration} declares the application name "{name}", which {OtherDeclaration} also declares; application names must be unique within a compilation unit.` |
+| Declaration `discover` not alone (error) | `{Declaration} sets discover = true, but this compilation unit declares another application ({OtherDeclarations}); discovery is only for a compilation unit's sole application declaration.` |
+| Declaration `@NoAutoWire` warning | `{Declaration} is annotated @NoAutoWire, so it is not registered as a REST application and is not validated.` |
+| Declaration `autoWire=false` warning | `{Declaration} is not registered as a REST application because -Avertique.codegen.autoWire=false is set.` |
 
 Every eligible application is validated regardless of `-Avertique.codegen.autoWire=false` — accessibility, construction, the required `@ApplicationPath`, and its path grammar (see "Application Registrations" above) all still fail the build when violated; only the module write itself is skipped under that option (see "Extension Points" below).
 
 **Accessibility reaches enclosing types.** The inaccessible-class diagnostic above is not satisfied by the application class alone: the application *and every one of its enclosing types* must each be accessible from the generated module's package — public, or non-private and declared in that same package. A class nested inside an inaccessible enclosing type is unreachable from outside that type's package even when the nested class itself is `public`, so it fails this check too.
+
+**Declaration diagnostics: rejection reasons and accessibility variants.** A rejected `resources` entry names one reason: `it is an interface`, `it is an annotation type`, `it is an abstract class`, `it is a JAX-RS provider (@Provider)`, `it implements jakarta.ws.rs.core.Feature`, `it implements jakarta.ws.rs.container.DynamicFeature`, or `it has no effective @Path, on itself or on an implemented interface`. A declaration's accessibility diagnostic reaches enclosing types the same way an application's does (above): an inaccessible declaring interface or listed resource is named directly; when an enclosing type is the cause instead, the message names it too (`... its enclosing type {EnclosingType} is not public; make {EnclosingSimpleName} public, or package-private in that same package.`); and, when no generated-module package resolves at all, the message reads `{Declaration} is not accessible: no generated-module package could be resolved, so it and its enclosing types must be public.` A listed resource's accessibility diagnostic is one of these same messages, prefixed with `{Declaration} lists a resource class its generated registration cannot name: `.
 
 ### Components Must Also List `RestModule`
 
@@ -242,6 +259,68 @@ Two compilation units whose classes resolve to the same package both write `<pac
 ### Upgrading an Existing `Application` Subclass
 
 A concrete `jakarta.ws.rs.core.Application` subclass that this processor previously ignored now becomes an eligible application on upgrade: it is registered, and the deployment switches from the implicit default mount into discovery or explicit mode for that composition. Such a class must carry `@ApplicationPath` on itself or a superclass, that value must satisfy the path grammar, and neither it nor a superclass or implemented interface may carry an annotation outside the application annotation allow list (see "Application Registrations" and "Application Annotation Allow List" above) — all three checks apply even under `-Avertique.codegen.autoWire=false`, which still validates every eligible application. Annotate the class `@NoAutoWire` to opt back out of all three: it exempts the class from registration, from the allow list, and from the path grammar, keeps the legacy default `@JaxRsResources` mount for its resources, and produces the `@NoAutoWire` warning above instead of a registration note.
+
+---
+
+## REST Application Declarations
+
+`@RestApplication` (Beta, package `dev.vertique.rest.jaxrs.application`, in `vertique-rest-jaxrs`) declares a named REST application on an interface:
+
+```java
+@RestApplication(name = "mgmt", path = "/api/mgmt", resources = OrderResource.class,
+        openapiPath = "openapi/mgmt.yaml")
+interface MgmtApi {}
+```
+
+Exactly one of `resources` (a non-empty list of concrete `@Path` resource classes, listed in the order written) and `discover = true` (permitted only for a compilation unit's sole declaration) is set. `openapiPath` is carried as written; `""` (the default) means the global `jaxrs.openapiPath`. The declaring interface only carries the declaration — nothing implements or instantiates it.
+
+As with `jakarta.ws.rs.core.Application` scanning, this processor recognizes `RestApplication` and locates `GeneratedRestApplicationRegistration` by fully qualified name; `vertique-rest-jaxrs` and `jakarta.ws.rs-api` stay test-scope dependencies of this module, so declarations add no compile dependency.
+
+### Declaration Checks
+
+Every declaration is checked at compile time; each violation is a compile error naming the declaring interface by binary name (see "Diagnostics" below for the exact text):
+
+| Check | Rule |
+|---|---|
+| Form | `@RestApplication` must annotate an interface; a class, enum, record, or annotation type fails compilation. |
+| Name | Required; must match `[a-z0-9][a-z0-9_-]{0,63}` (at most 64 characters); must not be the reserved `none` or `null`. |
+| Path | Required; normalized and checked by the same `ApplicationPathGrammar` rule order `jakarta.ws.rs.core.Application` scanning uses (see "Application Registrations" above), applied to the value as written rather than read from `@ApplicationPath`. |
+| Membership | Exactly one of a non-empty `resources` and `discover = true`; both or neither fails. |
+| Listed resources | Each entry must be a concrete class with an effective `@Path` (direct, or via an implemented interface), and must not be an interface, an abstract class, a `@jakarta.ws.rs.ext.Provider`, a `jakarta.ws.rs.core.Feature`, or a `jakarta.ws.rs.container.DynamicFeature`; no entry may repeat. |
+| Accessibility | The declaring interface and every listed resource class must be accessible from the generated module's package — public, or non-private and declared in that package — since the emitted registration names each by its class literal. A type nested in an inaccessible enclosing type fails even when the nested type itself is `public` (the same enclosing-type rule `jakarta.ws.rs.core.Application` scanning uses; see "Accessibility reaches enclosing types" above). When no module package resolves (possible only under `-Avertique.codegen.autoWire=false`), a type is accessible only when it and every enclosing type are `public`. |
+| Unique names (per compilation unit) | No two declarations of one compilation unit may share a name, active or not; the error names both. Uniqueness across compilation units is a startup check, outside this module. |
+| Sole discovery (per compilation unit) | `discover = true` fails when the compilation unit declares another `@RestApplication`, active or not. The cross-unit half of this rule, combined with startup composition, is also outside this module. |
+
+### Emitted Registration
+
+For each registered declaration `D`, one `@Provides @IntoSet GeneratedRestApplicationRegistration` method is emitted, taking only `@VertxConfig JsonObject config` — never a `Provider`, and `D` itself is never constructed:
+
+```java
+private static final PropertyCondition[] MGMT_API_REGISTRATION_CONDITIONS =
+        new PropertyCondition[] { new PropertyCondition("mgmt.enabled", "true", false) };
+
+@Provides
+@IntoSet
+static GeneratedRestApplicationRegistration mgmtApiRegistration(@VertxConfig JsonObject config) {
+    return GeneratedRestApplicationRegistration.of(MgmtApi.class, "mgmt", "/api/mgmt",
+            List.of(OrderResource.class), false, "",
+            PropertyCondition.matchesAll(config, MGMT_API_REGISTRATION_CONDITIONS));
+}
+```
+
+The activation argument follows the same `PropertyCondition.matchesAll(config, …_CONDITIONS)` rule a resource binding or application registration uses, or `true` when `D` carries no `@ConditionalOnProperty`. The listed resources appear in the order written (empty for a `discover` declaration), and the path is the normalized one.
+
+**Naming.** A declaration's registration method is named like an `Application` registration — the declaring interface's decapitalized simple name plus `Registration` — and shares the same per-unit name counter as `Application` registrations, so a base name already used by either kind gets `_2`, `_3`, and so on.
+
+A declaration also joins the module-writing condition and package resolution on the same terms as an eligible `Application`: a unit with at least one registered declaration and no resources or applications still writes a module, in the declarations' package, and adding a declaration to a unit that already has resources never moves that unit's existing module.
+
+### Activation and Opting Out
+
+`@ConditionalOnProperty` on a declaration (single or repeated) is evaluated exactly as it is for a resource binding or an application registration. `@NoAutoWire` on a declaration makes it inert: it is checked first, gets one warning naming it, and is excluded before any other rule runs — it is neither registered nor validated, and does not count toward the compilation unit's unique-name or sole-discovery checks. Under `-Avertique.codegen.autoWire=false`, every declaration is instead still validated (as an eligible `Application` still is), but none is registered and no module is written; each declaration then gets one warning naming it instead of a registration.
+
+### Runtime Consumption
+
+`GeneratedRestApplicationRegistration` is meant for `vertique-rest-jaxrs`'s native composer to consume, through a `Set<GeneratedRestApplicationRegistration>` multibinding declared on `RestModule`. That multibinding and the composer are not wired yet: until a later change adds them, an emitted registration compiles and sits on the classpath, but nothing constructs, mounts, or startup-validates it.
 
 ---
 
