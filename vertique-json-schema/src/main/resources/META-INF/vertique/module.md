@@ -891,6 +891,100 @@ misdescribes the wire:
 `@Schema(type = ...)` has no effect in this module; `implementation` is the supported way for a
 property to contribute a type shape.
 
+**`@Hidden` alone hides nothing.** A member or type marked `@io.swagger.v3.oas.annotations.Hidden`
+without `@Schema(hidden = true)` stays in the document either generator produces. An input member
+stays described, so a gate that validates against the document keeps enforcing its constraints; an
+output member stays published. To keep a member out, use `@Schema(hidden = true)` on the field or
+getter the generator describes it through (the two are read together), except in the cases below;
+`@Hidden` is no substitute.
+
+`@Schema(hidden = true)` does not hide every member or type:
+
+- the input direction still describes a property the profile's mapper binds through its setter,
+  whether the marker sits on the property's field or on its getter; the output direction hides it;
+- neither direction hides the flattened content of a `@JsonUnwrapped` member marked
+  `@Schema(hidden = true)`;
+- neither direction hides an enum constant marked `@Schema(hidden = true)`;
+- neither direction honors a `@Schema(hidden = true)` a mix-in declares for a member;
+- neither direction honors a `@Schema(hidden = true)` on a setter: the property stays described;
+- neither direction honors a class-level `@Schema(hidden = true)`: the type is still described
+  wherever the document references it.
+
+Such a member or type stays in the document. A member or type carrying `@Hidden` beside
+`@Schema(hidden = true)` is not reported by `hiddenOnlyMembers` (below) either. Each declaration
+is judged by its own markers: a field, getter, or setter declaration carrying both is left out,
+whichever accessor the property is described through, while `@Hidden` on another declaration of
+the same method — one it overrides or implements, or one overriding it — is still reported. A
+`@Schema(hidden = true)` that the mix-in registered for a method's declaring class declares for it
+counts as that method's own; a mix-in registered for a subclass does not excuse the base
+declaration. Nor is any member of a property that `@Schema(hidden = true)` hides through its field
+or getter, read together as above; a setter's `@Schema(hidden = true)`, which neither direction
+honors, excuses only that setter.
+
+A method declaration's `@Schema` is read from its own annotations, without expanding annotation
+bundles, so a bundle that carries both markers on a method is still reported; on a field it is
+left out. When `@Hidden` reaches a method only through a mix-in registered for another class of
+its hierarchy, `@Schema(hidden = true)` on any declaration of that method keeps it out of the
+report.
+
+`AnnotationJsonSchemaGenerator#hiddenOnlyMembers(Type)` finds what `@Hidden` alone leaves in, in
+either direction: every member and every type that `type`'s document describes and that carries
+`@Hidden` without `@Schema(hidden = true)`. The document's reach is its root and every type it
+describes — a nested object, a collection or array element, an `Optional` payload, a shared
+definition, and, in the input direction, a map value — together with every property described on
+them.
+
+Each reported member is a Java member, reported under its own name and the class that declares it:
+
+- a described property's field, getter, or setter carrying `@Hidden`, whether the mapper binds the
+  property through one of them, through a record component, or through a creator parameter, so
+  `@Hidden` on the getter of a private field `secret` reports `getSecret`, and `@Hidden` on a
+  record component reports the component's name once;
+- in the input direction, a builder method carrying `@Hidden`, under the builder class, and an
+  any-setter carrying it when the document describes the type's extra keys; the output direction
+  describes neither;
+- a method carrying `@Hidden` that a described getter or setter overrides or implements, a generic
+  declaration overridden with concrete parameter types included, named where it is declared;
+- a `@JsonUnwrapped` member carrying `@Hidden`, in either direction, when the document describes its
+  flattened content, a getter-only or read-only member included;
+- a constant carrying `@Hidden` of an enum the document describes, which the document still lists,
+  reported under the enum's binary name and the constant's name.
+
+A type carrying `@Hidden` is reported as `HiddenOnlyMember(declaringType, null)` wherever the
+document describes it: as the root, as a member's type, as a collection or array element, inside an
+`Optional`, as a map value in the input direction, and as a polymorphic base that the document
+describes only through its subtypes, reached through a member at any of those positions. A subtype
+of a `@Hidden` class is not reported for that alone.
+
+`@Hidden` counts as the profile's mapper sees it in the generator's direction: declared on the
+member or type directly, through a Jackson annotation bundle (an annotation meta-annotated
+`@JacksonAnnotationsInside`) at any depth, or through a mix-in the mapper registers, that mix-in's
+superclasses included, and, for a method, on a declaration the method overrides or implements. A
+mix-in's `@Hidden` reports the target class's member or type, never the mix-in. A mix-in registered
+for a superclass reaches the members a subclass inherits and a method of the same signature that
+only a subclass declares.
+
+`@Hidden` is read on fields, methods, enum constants, and types. It cannot annotate a parameter, so
+a creator parameter carries it only through an application's own bundle annotation with a parameter
+target; such a marker is not read, and the property stays described and unreported — put `@Hidden`
+on the property's field or getter instead. A profile whose mapper disables annotation processing
+(`MapperFeature.USE_ANNOTATIONS`) sees no `@Hidden` at all, so nothing is reported, while the
+generator still honors `@Schema(hidden = true)`.
+
+A member the document does not describe is not reported: one that `@Schema(hidden = true)` hides,
+and one the profile's mapper does not bind (input) or serialize (output), such as a `@JsonIgnore`
+member. Neither is a member or type that `@Schema(hidden = true)` marks beside `@Hidden`, even one
+the cases above leave in the document. Each entry is reported once however often the document
+reaches it.
+
+The list is ordered by `declaringType`, then `member` (`String.compareTo`), with a type's own entry
+first within its declaring type; it is unmodifiable, and empty when nothing is hidden only by
+`@Hidden`. The call runs one generation under the same accepted type grammar, bounded
+`JsonSchemaGenerationException` failure contract, per-instance lock, and restore-on-failure
+behavior as `generateCanonical`, and it changes nothing a later call on the instance publishes. A
+generator built by either `forInputProfile` overload or by `forOutputProfile` answers for its own
+direction; one built by `withVictoolsDefaults()` throws `IllegalStateException`.
+
 ### What counts as a schema position
 
 Both post-generation passes — the disjoint-type check above and numeric-keyword suppression —
@@ -936,6 +1030,11 @@ or `describe(Type)` for the same document paired with its `RedactionManifest` (s
 below). An instance built by `forOutputProfile(profile)` also answers `outputRenames(Type)`, the
 list of published members whose schema name diverges from what the profile mapper serializes (see
 `OutputRename` below); every other construction mode throws `IllegalStateException` from that call.
+An instance built by either `forInputProfile` overload or by `forOutputProfile(profile)` answers
+`hiddenOnlyMembers(Type)` for its own direction: the members and types its document describes that
+carry `@Hidden` without `@Schema(hidden = true)` (see `HiddenOnlyMember` below and "Constraints and
+common mistakes" above); an instance built by `withVictoolsDefaults()` throws
+`IllegalStateException` from that call.
 
 ```java
 AnnotationJsonSchemaGenerator generator = AnnotationJsonSchemaGenerator.withVictoolsDefaults();
@@ -991,6 +1090,21 @@ publishes it under. The record carries names only, never a schema fragment.
 AnnotationJsonSchemaGenerator outputGenerator = AnnotationJsonSchemaGenerator.forOutputProfile(profile);
 List<OutputRename> renames = outputGenerator.outputRenames(MyResponseBody.class);
 // renames is empty unless some published member's schema name differs from its serialized name
+```
+
+### HiddenOnlyMember
+
+One entry `hiddenOnlyMembers(Type)` reports: `declaringType` is the binary class name
+(`Class#getName()`) of the class declaring the member, or of the type itself; `member` is the Java
+member's own name (`java.lang.reflect.Member#getName()`), the name of a field, a method, or an enum
+constant, or `null` when the entry reports the type itself (the component is annotated
+`jakarta.annotation.Nullable`). The record carries names only, never a schema fragment.
+
+```java
+AnnotationJsonSchemaGenerator inputGenerator =
+        AnnotationJsonSchemaGenerator.forInputProfile(resolvedProfile);
+List<HiddenOnlyMember> hiddenOnly = inputGenerator.hiddenOnlyMembers(MyRequestBody.class);
+// empty unless a described member or type carries @Hidden without @Schema(hidden = true)
 ```
 
 ### JsonSchemaGenerationException
