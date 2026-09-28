@@ -274,10 +274,14 @@ public final class RestTestMounts {
      * <p>A filesystem root is identified by having no parent once absolute and normalized — true of
      * {@code /} and of {@code C:\}, and false of every real upload directory.
      *
+     * <p>Package-private so the guard's own cases are tested by calling it directly: a test that
+     * instead handed the working directory or {@code /} to {@link #deleteRecursively} would delete real
+     * files the moment this guard regressed.
+     *
      * @param directory the caller-supplied path
      * @throws IllegalArgumentException if the path is blank, is the working directory, or is a root
      */
-    private static void requireDeletableTarget(Path directory) {
+    static void requireDeletableTarget(Path directory) {
         if (directory.toString().isBlank()) {
             throw new IllegalArgumentException("directory must not be blank: a blank or missing configured path "
                     + "resolves to the current working directory, which for a build is the module source tree");
