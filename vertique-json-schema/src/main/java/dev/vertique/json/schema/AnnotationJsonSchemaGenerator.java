@@ -112,8 +112,8 @@ import java.util.function.Consumer;
  * closed; a class-level {@code @Schema(additionalProperties = TRUE)} says less than the typed
  * description, which therefore wins.
  *
- * <p>Where extra keys are described, {@code propertyNames: {"not": {"enum": [...]}}} carries one
- * reserved set, computed as a difference rather than as a list of categories: every name Jackson
+ * <p>Where extra keys are described, one reserved set is refused under {@code propertyNames},
+ * computed as a difference rather than as a list of categories: every name Jackson
  * binds on input for that type, minus every name the document publishes under {@code properties},
  * minus every name whose Jackson property definition carries no member at all. Without it, a name
  * the document never published — a name marked {@code @JsonIgnore} or read-only, a class-level
@@ -125,8 +125,31 @@ import java.util.function.Consumer;
  * identity cannot be recovered, a creator parameter renamed away from its field, which therefore
  * keeps accepting the traffic it already accepted. A field that is both {@code @JsonAnyGetter} and
  * {@code @JsonAnySetter} reserves no storage name, because Jackson stores a key with that name as an
- * ordinary entry of the map. An existing {@code propertyNames} is combined with the reserved set
- * under {@code allOf} rather than replaced.
+ * ordinary entry of the map.
+ *
+ * <p>A case-sensitively bound type refuses its reserved set with {@code propertyNames: {"not":
+ * {"enum": [...]}}}, the names sorted. A case-insensitively bound type always carries a {@code
+ * propertyNames} refusing any key that contains a non-ASCII code unit, {@code {"not": {"pattern":
+ * "[^\\x00-\\x7F]"}}}, whether or not its extra keys are described, because such a key can fold onto
+ * a bound name; when it also reserves a name, the reserved set is refused in an assertion of its own,
+ * by one anchored pattern of the names' ASCII case folds, and the two refusals are the two entries of
+ * one {@code allOf}, the non-ASCII refusal first: {@code {"allOf": [{"not": {"pattern":
+ * "[^\\x00-\\x7F]"}}, {"not": {"pattern": "^(?:<folds>)(?![\\s\\S])"}}]}}. Any other {@code
+ * propertyNames} in a document comes only from a profile override fragment, which replaces the whole
+ * description of its class: it is published as declared, and is never guarded or listed.
+ *
+ * <p><strong>The redaction manifest.</strong> A reserved-name assertion spells the reserved names
+ * out, so {@link #describe(Type)} binds every document to a {@link RedactionManifest}: the sorted RFC
+ * 6901 pointers of every reserved-name assertion in the finished document — the case-sensitive rule
+ * itself, or the case-insensitive rule's second {@code allOf} entry — including every copy alias
+ * expansion or case-fold publication makes of it, and the digest of the document's canonical bytes.
+ * Removing exactly the listed pointers leaves no reserved name in any spelling or fold, while the
+ * non-ASCII refusal remains. The generator marks each assertion with a generator-private keyword
+ * where it emits it; after every other post-generation pass and before canonicalization, one final
+ * pass over the document's schema positions lists every marked position and removes the keyword, in
+ * every construction mode, so no generated document carries it. A profile override fragment carrying
+ * that keyword on a schema object is refused when the generator is constructed, as one carrying the
+ * alias-expansion keyword is.
  *
  * <p><strong>How the input direction describes an alias spelling.</strong> Every {@code @JsonAlias}
  * spelling Jackson reports for a visible input property that does not back an any-accessor is listed
@@ -703,6 +726,9 @@ public final class AnnotationJsonSchemaGenerator {
      * LinkageError} is deliberately not normalized: it reports a condition of the runtime rather than
      * of the requested type, and propagates unchanged.
      *
+     * <p>The returned text is exactly {@link #describe(Type)}'s {@link CanonicalSchema#json()} for the
+     * same type: both run one generation, under the same lock and failure contract.
+     *
      * @param type the resolved Java type to generate a schema for; must not be {@code null}
      * @return the canonical, compact Draft 2020-12 JSON Schema document as a {@code String}
      * @throws JsonSchemaGenerationException if {@code type} is outside the accepted grammar, if
@@ -711,6 +737,38 @@ public final class AnnotationJsonSchemaGenerator {
      *                                        canonicalization fails
      */
     public String generateCanonical(Type type) {
+        return describe(type).json();
+    }
+
+    /**
+     * Generates the canonical Draft 2020-12 JSON Schema document for the given resolved {@link Type},
+     * exactly as {@link #generateCanonical(Type)} does, and binds it to a {@link RedactionManifest}
+     * listing every reserved-name assertion in that document.
+     *
+     * <p>{@link CanonicalSchema#json()} is byte for byte the text {@link #generateCanonical(Type)}
+     * returns for the same type, and {@code describe} has the same accepted type grammar, the same
+     * per-instance lock, the same bounded {@link JsonSchemaGenerationException} failure contract, and
+     * the same restoration of the underlying generator's per-generation state on failure.
+     *
+     * <p>The manifest's {@link RedactionManifest#pointers() pointers} are the sorted RFC 6901 pointers
+     * of every reserved-name assertion in the finished document — a case-sensitively bound type's
+     * {@code propertyNames} rule, or a case-insensitively bound type's reserved-name entry of its
+     * {@code propertyNames} {@code allOf} — including every copy alias expansion or case-fold
+     * publication makes of one, so removing exactly those locations leaves no reserved name in the
+     * document in any spelling or fold. A {@code propertyNames} a profile override fragment declares
+     * is never listed, and the manifest of an output-direction generator or of a {@link
+     * #withVictoolsDefaults()} generator is always empty. The manifest's {@link
+     * RedactionManifest#digest() digest} is that of the document's canonical bytes, so {@link
+     * RedactionManifest#matches(String)} holds for {@link CanonicalSchema#json()}.
+     *
+     * @param type the resolved Java type to describe; must not be {@code null}
+     * @return the canonical document and its redaction manifest
+     * @throws JsonSchemaGenerationException if {@code type} is outside the accepted grammar, if
+     *                                        generation exhausts the stack, or if generation,
+     *                                        override application, conflict detection, or
+     *                                        canonicalization fails
+     */
+    public CanonicalSchema describe(Type type) {
         TypeGrammar.requireGeneratable(type);
         // The whole operation — generation and canonicalization — is serialized per instance. Victools'
         // own thread-safety is deliberately not relied upon, and the custom definition provider is
@@ -754,6 +812,7 @@ public final class AnnotationJsonSchemaGenerator {
                 restoreProviderStateAfterAbortedGeneration(aborted);
                 throw aborted;
             }
+            List<String> reservedNameGuards;
             try {
                 // Structural safety net: a document that conjoins disjoint explicit types is
                 // unsatisfiable, and is refused before it can be canonicalized and handed to a consumer.
@@ -773,6 +832,10 @@ public final class AnnotationJsonSchemaGenerator {
                     // argument and why the REST gate is indifferent to it.
                     AllOfFold.fold(generated);
                 }
+                // Last, in every construction mode, over the otherwise finished document: every copy of
+                // a reserved-name guard that alias expansion or case-fold publication made is in place
+                // by now, and removing the guard markers here keeps them out of the canonical text.
+                reservedNameGuards = InputPropertyDescriber.listReservedNameGuards(generated);
             } catch (JsonSchemaGenerationException alreadyBounded) {
                 throw alreadyBounded;
             } catch (RuntimeException failed) {
@@ -784,7 +847,9 @@ public final class AnnotationJsonSchemaGenerator {
                         failed);
             }
             try {
-                return SchemaCanonicalizer.canonicalize(generated);
+                String json = SchemaCanonicalizer.canonicalize(generated);
+                return new CanonicalSchema(
+                        json, new RedactionManifest(reservedNameGuards, RedactionManifest.digestOf(json)));
             } catch (JsonProcessingException | RuntimeException failed) {
                 throw Diagnostics.failure(
                         "canonicalization of the generated JSON Schema failed for " + Diagnostics.typeIdentity(type),
@@ -904,6 +969,16 @@ public final class AnnotationJsonSchemaGenerator {
         private static final Set<String> NAMED_MEMBER_KEYWORDS =
                 Set.of("properties", "patternProperties", "$defs", "dependentSchemas");
 
+        /**
+         * Every generator-private keyword a profile override fragment may not carry on a schema object,
+         * in the order {@link #fragmentCarriesMarker} checks each schema object for them.
+         */
+        private static final List<String> PRIVATE_KEYWORDS = List.of(
+                MARKER,
+                InputPropertyDescriber.NULLABLE_MARKER,
+                InputPropertyDescriber.SCOPED_CONSTRAINTS_MARKER,
+                InputPropertyDescriber.RESERVED_NAME_GUARD_MARKER);
+
         private AliasExpansion() {}
 
         /**
@@ -952,24 +1027,31 @@ public final class AnnotationJsonSchemaGenerator {
         }
 
         /**
-         * Whether a profile override fragment carries {@link #MARKER} as a member of a schema object at
-         * any depth. Such a member is not a plan the generator wrote: expansion would silently strip
-         * it, or execute it as a plan against the enclosing schema, so the fragment is refused when the
-         * profile is validated. Literal data is not inspected, so a {@code const} or {@code enum} value
-         * may carry the keyword as an ordinary member.
+         * Returns the generator-private keyword a profile override fragment carries as a member of a
+         * schema object at any depth, if any. {@link #MARKER} in such a position is not a plan the
+         * generator wrote: expansion would silently strip it, or execute it as a plan against the
+         * enclosing schema, so the fragment is refused when the profile is validated. The describer's
+         * own private keywords — {@link InputPropertyDescriber#NULLABLE_MARKER}, {@link
+         * InputPropertyDescriber#SCOPED_CONSTRAINTS_MARKER}, and {@link
+         * InputPropertyDescriber#RESERVED_NAME_GUARD_MARKER} — are refused the same way, for the same
+         * reason; the last would also make the redaction manifest list an assertion the generator did
+         * not emit as a reserved-name guard. Literal data is not inspected, so a {@code const} or
+         * {@code enum} value may carry the keyword as an ordinary member.
          *
          * @param fragment the parsed fragment
-         * @return {@code true} when some schema object in the fragment carries the keyword
+         * @return the first such keyword found, visiting schema objects parent before children and
+         *     checking each for {@link #PRIVATE_KEYWORDS} in order, or {@code null} when no schema object
+         *     in the fragment carries one
          */
-        static boolean fragmentCarriesMarker(JsonNode fragment) {
-            boolean[] found = {false};
-            walkSchemaPositions(
-                    fragment,
-                    false,
-                    newVisitedSet(),
-                    schema -> found[0] |= schema.has(MARKER)
-                            || schema.has(InputPropertyDescriber.NULLABLE_MARKER)
-                            || schema.has(InputPropertyDescriber.SCOPED_CONSTRAINTS_MARKER));
+        static String fragmentCarriesMarker(JsonNode fragment) {
+            String[] found = {null};
+            walkSchemaPositions(fragment, false, newVisitedSet(), schema -> {
+                for (String keyword : PRIVATE_KEYWORDS) {
+                    if (found[0] == null && schema.has(keyword)) {
+                        found[0] = keyword;
+                    }
+                }
+            });
             return found[0];
         }
 

@@ -524,7 +524,7 @@ Jackson never routes a key to that any-setter, so describing it would reject leg
 
 ### Reserved names beside described extras
 
-Where extra keys are described, the document also carries
+Where extra keys are described on a case-sensitively bound type, the document also carries
 
 ```json
 "propertyNames": {"not": {"enum": ["id", "role"]}}
@@ -555,9 +555,24 @@ Jackson stores a key named after it as an ordinary entry of the map. The publish
 is by member and never by spelling, so a property the document publishes under some other name is
 not reserved. The memberless subtraction fails open for the one shape whose member identity cannot
 be recovered — a `@JsonCreator` parameter renamed away from the field it populates — which therefore
-keeps accepting the traffic it already accepted; constrain that shape with Bean Validation. An
-application-declared `propertyNames` is never displaced: the reserved set is combined with it under
-`allOf`.
+keeps accepting the traffic it already accepted; constrain that shape with Bean Validation. A
+declared `propertyNames` in the document comes only from a profile override fragment, which replaces
+the whole description of its class: it is published exactly as declared, and is never guarded or
+listed — the generator itself never writes a `propertyNames` alongside one already on the node.
+
+**The redaction manifest.** The `propertyNames` rule above, and the case-insensitive reserved-name
+entry described below, are guards `AnnotationJsonSchemaGenerator` marks as it emits them.
+`describe(Type)` returns, beside the canonical document, a `RedactionManifest` whose sorted RFC 6901
+pointers name every such guard in the finished document — including every copy alias expansion or
+case-fold publication makes of one — so removing exactly those locations leaves no reserved name in
+any spelling or fold, while every other assertion, including the non-ASCII refusal below, remains. A
+`propertyNames` a profile override fragment declares carries no guard and is never listed. The mark
+is a generator-private keyword, `x-vertique-reserved-name-guard`, removed before the document is
+canonicalized, so no generated document carries it. A profile override fragment that carries it as a
+member of a schema object, at any depth, is refused when the generator is constructed — as one
+carrying the alias-plan keyword is (see "How an alias spelling is described") — because the
+manifest would otherwise list an assertion the generator never emitted; the refusal names the
+keyword and the profile. See "Canonical output" below.
 
 **Case-insensitive binding and Unicode code folding.** A type bound case-insensitively (mapper-wide,
 class-level, or member-level `@JsonFormat`) is described with `patternProperties` — one ASCII
@@ -571,8 +586,12 @@ newline would otherwise wrongly match the fold. `(?![\s\S])` is the ECMA-262 end
 negative lookahead asserting that no character follows — and under `java.util.regex` it matches
 exactly what `\z` matches, with no exception for a trailing line terminator. Every
 case-insensitively bound type additionally carries a `propertyNames` rule refusing any key
-containing a non-ASCII code unit, **unconditionally** — where extras are also described, folded
-together with the reserved-name pattern; where they are not, on its own. This closes a real gap: a
+containing a non-ASCII code unit, **unconditionally** — where extras are also described, paired with
+a second, separate refusal of the reserved names' ASCII case folds as the two entries of one `allOf`
+(the non-ASCII refusal first); where they are not, on its own. Refusing a key matching either pattern
+is exactly refusing a key matching their alternation, so the separated shape accepts the same keys a
+single combined pattern would; only the reserved-name entry (`propertyNames/allOf/1`) is a guard the
+redaction manifest lists, so removing it leaves the non-ASCII refusal in place. This closes a real gap: a
 non-ASCII code point can fold to an ASCII letter under Java's locale-independent Unicode case
 mapping regardless of locale (U+212A KELVIN SIGN folds to ASCII `k`), so a key spelled with it binds
 at the *binder* to the same member an ASCII spelling would. Where extras are described, the
@@ -705,6 +724,20 @@ configuration. Equal resolved types, annotations, construction mode, mapper conf
 selected profile direction, and canonical override fragments produce byte-identical documents
 across independent instances and repeated calls. Calls on one instance are safe from multiple
 threads; the complete generation and canonicalization operation is serialized per instance.
+
+`describe(Type)` runs the identical generation and returns a `CanonicalSchema` pairing that exact
+text, as `json()`, with a `RedactionManifest`: the sorted RFC 6901 pointers of every reserved-name
+guard in the finished document (see "Reserved names beside described extras" above), and a digest —
+`"sha-256:"` plus the lowercase hexadecimal SHA-256 of the UTF-8 bytes of the canonical form of the
+parsed document. `matches(text)` recomputes that digest for `text` with a strict reader — one that
+refuses content after the first JSON value, while still accepting trailing whitespace, and refuses an
+object repeating a key — and compares it with the manifest's own, so it holds for `json()` however
+that text is later re-rendered (reordered keys, inserted whitespace), and fails for any difference
+that survives parsing and canonicalization. A difference parsing itself erases — an escaped spelling
+of a character, or another notation of a number that parses to the same value — does not change the
+result. It returns `false` for unparsable or malformed input and never throws for a content reason. `generateCanonical(Type)` is exactly
+`describe(type).json()`; an output-direction generator's manifest, and a `withVictoolsDefaults()`
+generator's, is always empty, since neither emits a guard.
 
 Any failure — an unrepresentable `Type`, an invalid or conflicting profile override declaration,
 a detected structural conflict, or an unexpected Victools failure — is normalized to
@@ -880,7 +913,9 @@ above still fails generation.
 ### AnnotationJsonSchemaGenerator
 
 The single entry point. Construct with `withVictoolsDefaults()`, `forInputProfile(profile)`, or
-`forOutputProfile(profile)`, then call `generateCanonical(Type)` for each type that needs a schema.
+`forOutputProfile(profile)`, then call `generateCanonical(Type)` for each type that needs a schema,
+or `describe(Type)` for the same document paired with its `RedactionManifest` (see `CanonicalSchema`
+below).
 
 ```java
 AnnotationJsonSchemaGenerator generator = AnnotationJsonSchemaGenerator.withVictoolsDefaults();
@@ -895,6 +930,34 @@ AnnotationJsonSchemaGenerator inputGenerator =
         AnnotationJsonSchemaGenerator.forInputProfile(resolvedProfile);
 String argumentSchema = inputGenerator.generateCanonical(toolArgumentType);
 ```
+
+### CanonicalSchema
+
+The record `describe(Type)` returns: the canonical document text (`json()`) paired with the
+`RedactionManifest` bound to it (`redactionManifest()`). `json()` equals `generateCanonical(Type)`'s
+output for the same type only for an instance `describe` produced: the record is public and anyone
+can construct one, pairing any text with any manifest, so trust the pairing only when
+`redactionManifest().matches(json())` holds. Both components are required; the compact constructor
+rejects `null`.
+
+```java
+CanonicalSchema described = generator.describe(MyRequestBody.class);
+String schemaJson = described.json();                    // == generator.generateCanonical(MyRequestBody.class)
+RedactionManifest manifest = described.redactionManifest();
+```
+
+### RedactionManifest
+
+The sorted RFC 6901 pointers of every reserved-name guard in one `CanonicalSchema`'s document, bound
+to the SHA-256 digest of that document's canonical bytes. Only this package constructs one — no
+public or protected constructor, and the class is `final` — so a caller cannot forge a manifest.
+`CanonicalSchema`, however, is a plain record anyone can construct, so a consumer trusts the pairing
+only when `redactionManifest().matches(json())` holds; a borrowed manifest fails that check for
+different JSON. `pointers()` is unmodifiable and may be empty; `digest()` is `"sha-256:"` plus 64
+lowercase hexadecimal characters; `matches(schemaJson)` parses, canonicalizes, digests, and
+compares, returning `false` for any unparsable or malformed input — a document repeating a key in
+one object included — and throwing `NullPointerException` for a `null` argument. `toString()` prints the pointers and the digest only — a pointer names a
+schema location, never a reserved name, and no schema content is printed.
 
 ### JsonSchemaGenerationException
 

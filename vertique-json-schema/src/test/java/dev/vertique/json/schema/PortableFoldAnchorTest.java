@@ -40,8 +40,9 @@ import org.junit.jupiter.params.provider.MethodSource;
  * Every case-folding pattern the input generator builds for a case-insensitively bound type ends
  * with the ECMA-262-portable end-of-input form {@code (?![\s\S])} rather than the Java-only
  * {@code \z}: the per-name pattern published under {@code patternProperties}, and the combined
- * reserved-name refusal published under {@code propertyNames.not.pattern}, both for a single
- * reserved name and for several folded together into one alternation. Because the new form accepts
+ * reserved-name refusal published under {@code propertyNames.allOf[1].not.pattern} — the entry of
+ * its own beside the non-ASCII refusal — both for a single reserved name and for several folded
+ * together into one alternation. Because the new form accepts
  * exactly the inputs {@code \z} accepted, the real gate's verdicts over a corpus of trailing line
  * terminators and non-BMP characters are unchanged. Separately, an application-authored {@code
  * @Pattern}, including one that itself contains {@code \z}, is published exactly as written — the
@@ -122,9 +123,9 @@ class PortableFoldAnchorTest {
 
     private static final String NAME_FOLD_PATTERN = "^[nN][aA][mM][eE](?![\\s\\S])";
     private static final String DOTTED_FOLD_PATTERN = "^[aA]\\.[bB](?![\\s\\S])";
-    private static final String SECRET_REFUSAL_PATTERN = "(?:^(?:[sS][eE][cC][rR][eE][tT])(?![\\s\\S]))|[^\\x00-\\x7F]";
+    private static final String SECRET_REFUSAL_PATTERN = "^(?:[sS][eE][cC][rR][eE][tT])(?![\\s\\S])";
     private static final String TWO_RESERVED_REFUSAL_PATTERN =
-            "(?:^(?:[fF][iI][rR][sS][tT]|[sS][eE][cC][oO][nN][dD])(?![\\s\\S]))|[^\\x00-\\x7F]";
+            "^(?:[fF][iI][rR][sS][tT]|[sS][eE][cC][oO][nN][dD])(?![\\s\\S])";
 
     // ---------------------------------------------------------------- generation helpers
 
@@ -214,7 +215,7 @@ class PortableFoldAnchorTest {
                 patternPropertyKeys,
                 () -> "patternProperties keys must be exactly the two portable-anchored folds; document: " + document);
 
-        JsonNode reservedRefusal = document.path("propertyNames").path("not").path("pattern");
+        JsonNode reservedRefusal = document.at("/propertyNames/allOf/1/not/pattern");
         assertEquals(
                 SECRET_REFUSAL_PATTERN,
                 reservedRefusal.asText(),
@@ -226,8 +227,7 @@ class PortableFoldAnchorTest {
         // A second fixture with more than one reserved name proves the combined alternation keeps one
         // anchor pair around the whole group, with no anchor on any individual alternative.
         JsonNode twoReservedDocument = assertCanonicalForm(canonical(TwoReservedNamesFoldAnchorDto.class));
-        JsonNode combinedRefusal =
-                twoReservedDocument.path("propertyNames").path("not").path("pattern");
+        JsonNode combinedRefusal = twoReservedDocument.at("/propertyNames/allOf/1/not/pattern");
         assertEquals(
                 TWO_RESERVED_REFUSAL_PATTERN,
                 combinedRefusal.asText(),
