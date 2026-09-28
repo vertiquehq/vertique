@@ -4,8 +4,10 @@
 package dev.vertique.json.schema;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectReader;
 import com.fasterxml.jackson.databind.ObjectWriter;
 
 /**
@@ -29,6 +31,14 @@ final class NeutralJson {
     /** The compact writer every canonical document is emitted through. */
     private static final ObjectWriter WRITER = MAPPER.writer();
 
+    /**
+     * A reader derived from the neutral mapper that also refuses any token after the first JSON value
+     * and any object repeating a key, which a plain tree read would otherwise collapse to its last
+     * value. Deriving a reader leaves the shared mapper, and every other read through it, unchanged.
+     */
+    private static final ObjectReader STRICT_READER = MAPPER.reader()
+            .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS, DeserializationFeature.FAIL_ON_READING_DUP_TREE_KEY);
+
     private NeutralJson() {}
 
     /**
@@ -51,5 +61,20 @@ final class NeutralJson {
      */
     static JsonNode read(String json) throws JsonProcessingException {
         return MAPPER.readTree(json);
+    }
+
+    /**
+     * Reads JSON text into a fresh, unshared tree exactly as {@link #read(String)} does, except that
+     * content after the first JSON value is refused, and so is an object repeating a key; trailing
+     * whitespace is not content and is accepted. Text holding no value at all reads as a missing node,
+     * as it does through {@link #read(String)}.
+     *
+     * @param json the JSON text
+     * @return the parsed tree, or a missing node when the text holds no value
+     * @throws JsonProcessingException if the text is not well-formed JSON, carries content after its
+     *                                 first value, or repeats a key within one object
+     */
+    static JsonNode readStrict(String json) throws JsonProcessingException {
+        return STRICT_READER.readTree(json);
     }
 }

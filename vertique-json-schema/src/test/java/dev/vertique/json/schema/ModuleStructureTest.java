@@ -88,9 +88,13 @@ class ModuleStructureTest {
             "io.micrometer.",
             "io.opentelemetry.");
 
-    /** The only two types this module may expose publicly (PRD §6.2, plan §3a). */
-    private static final Set<String> ALLOWED_PUBLIC_TYPES =
-            Set.of("AnnotationJsonSchemaGenerator", "JsonSchemaGenerationException");
+    /**
+     * The only four types this module may expose publicly (PRD §6.2, plan §3a): the generator, its
+     * bounded failure type, and the canonical schema and redaction manifest the generator's {@code
+     * describe} returns.
+     */
+    private static final Set<String> ALLOWED_PUBLIC_TYPES = Set.of(
+            "AnnotationJsonSchemaGenerator", "JsonSchemaGenerationException", "CanonicalSchema", "RedactionManifest");
 
     // --- #1: dependency allowlist ---
 
@@ -238,7 +242,8 @@ class ModuleStructureTest {
 
     @Test
     @DisplayName(
-            "dev.vertique.json.schema exposes exactly AnnotationJsonSchemaGenerator and JsonSchemaGenerationException as public")
+            "dev.vertique.json.schema exposes exactly AnnotationJsonSchemaGenerator, JsonSchemaGenerationException,"
+                    + " CanonicalSchema, and RedactionManifest as public")
     void publicSurfaceIsFrozen() throws IOException {
         Path packageDir =
                 Path.of(System.getProperty("user.dir"), "target", "classes", "dev", "vertique", "json", "schema");
@@ -267,8 +272,8 @@ class ModuleStructureTest {
         assertEquals(
                 ALLOWED_PUBLIC_TYPES,
                 actualPublicTypes,
-                "dev.vertique.json.schema must expose exactly AnnotationJsonSchemaGenerator and"
-                        + " JsonSchemaGenerationException as public types");
+                "dev.vertique.json.schema must expose exactly AnnotationJsonSchemaGenerator,"
+                        + " JsonSchemaGenerationException, CanonicalSchema, and RedactionManifest as public types");
 
         if (!signatureViolations.isEmpty()) {
             fail("No public member of dev.vertique.json.schema may expose a com.github.victools or"

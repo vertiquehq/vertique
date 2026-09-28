@@ -838,29 +838,84 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             ObjectNode rule = JsonNodeFactory.instance.objectNode();
             ArrayNode values = rule.putObject("not").putArray("enum");
             reserved.forEach(values::add);
+            rule.put(RESERVED_NAME_GUARD_MARKER, true);
             definition.set("propertyNames", rule);
         }
     }
 
     /**
-     * The {@code propertyNames} rule for a case-insensitively bound type with extras described:
-     * refuses a key matching one of {@code reserved}'s ASCII case folds (when any), and, unconditionally
-     * (C1), a key containing any non-ASCII code unit — combined as two alternatives of one regex, since
-     * a JSON Schema object carries at most one {@code not}. The reserved-name alternative keeps its own
-     * anchors (an exact-name match); the non-ASCII alternative is deliberately unanchored, since it must
-     * refuse a code unit occurring anywhere in the key, not only a key consisting of nothing else.
+     * The {@code propertyNames} rule for a case-insensitively bound type: unconditionally, a refusal of
+     * any key containing a non-ASCII code unit, and, when {@code reserved} is non-empty, a separate
+     * refusal of any key matching one of the reserved names' ASCII case folds.
+     *
+     * <p>With nothing reserved the rule is the non-ASCII refusal alone, {@code {"not": {"pattern":
+     * "[^\\x00-\\x7F]"}}}. With a reserved name the two refusals are the two entries of one {@code
+     * allOf}, the non-ASCII refusal first: {@code {"allOf": [{"not": {"pattern": "[^\\x00-\\x7F]"}},
+     * {"not": {"pattern": "^(?:<folds>)(?![\\s\\S])"}}]}}. Refusing a key that matches either pattern is
+     * exactly refusing a key that matches their alternation, so the separated shape accepts the same
+     * keys one combined pattern would; keeping the reserved-name refusal in an entry of its own lets a
+     * publisher remove it — and with it every reserved name — while the non-ASCII refusal stays. The
+     * reserved-name entry, and only that entry, carries {@link #RESERVED_NAME_GUARD_MARKER}. The
+     * reserved-name pattern is anchored at both ends (an exact-name match); the non-ASCII pattern is
+     * deliberately unanchored, since it must refuse a code unit occurring anywhere in the key, not only
+     * a key consisting of nothing else.
      *
      * @param reserved   the reserved names to fold-exclude, possibly empty
      * @param builtClass the type being described, for the diagnostic a reserved name's own fold may throw
      * @return the {@code propertyNames} rule
      */
     private static ObjectNode caseInsensitivePropertyNamesRule(Set<String> reserved, Class<?> builtClass) {
-        String nonAscii = "[^\\x00-\\x7F]";
-        String pattern =
-                reserved.isEmpty() ? nonAscii : "(?:" + combinedFoldPattern(reserved, builtClass) + ")|" + nonAscii;
+        ObjectNode nonAsciiRefusal = JsonNodeFactory.instance.objectNode();
+        nonAsciiRefusal.putObject("not").put("pattern", "[^\\x00-\\x7F]");
+        if (reserved.isEmpty()) {
+            return nonAsciiRefusal;
+        }
+        ObjectNode reservedNameGuard = JsonNodeFactory.instance.objectNode();
+        reservedNameGuard.putObject("not").put("pattern", combinedFoldPattern(reserved, builtClass));
+        reservedNameGuard.put(RESERVED_NAME_GUARD_MARKER, true);
         ObjectNode rule = JsonNodeFactory.instance.objectNode();
-        rule.putObject("not").put("pattern", pattern);
+        rule.putArray("allOf").add(nonAsciiRefusal).add(reservedNameGuard);
         return rule;
+    }
+
+    /**
+     * The generator-private keyword marking a reserved-name guard: the {@code propertyNames} rule
+     * refusing a case-sensitively bound type's reserved names, or the {@code allOf} entry refusing a
+     * case-insensitively bound type's reserved-name folds. It is set where the guard is emitted, travels
+     * with every copy case-fold publication or alias expansion later makes of the enclosing schema, and
+     * is read and removed by {@link #listReservedNameGuards(JsonNode)} once the document is otherwise
+     * finished, so it never survives into a generated document.
+     */
+    static final String RESERVED_NAME_GUARD_MARKER = "x-vertique-reserved-name-guard";
+
+    /**
+     * Lists every reserved-name guard in a finished document and removes the marker from each: the
+     * sorted RFC 6901 pointers of every schema object carrying {@link #RESERVED_NAME_GUARD_MARKER}.
+     *
+     * <p>The walk visits schema positions only ({@link SchemaPositions}), never literal data and never
+     * a name map itself. Every position is found before any marker is removed, so a schema object the
+     * document reaches at more than one position is listed at each of them. A {@code propertyNames}
+     * the generator did not emit as a guard — one a profile override fragment declares — carries no
+     * marker and is never listed. Runs in every construction mode; a document from a direction or
+     * mode that emits no guard yields an empty list.
+     *
+     * @param document the finished document, after alias expansion and every other post-generation
+     *                 pass, and before canonicalization
+     * @return the pointers, sorted by {@link String#compareTo(String)}, unmodifiable, possibly empty
+     */
+    static List<String> listReservedNameGuards(JsonNode document) {
+        List<String> pointers = new ArrayList<>();
+        List<ObjectNode> guards = new ArrayList<>();
+        SchemaPositions.visitSchemaHeads(document, (schema, path) -> {
+            if (schema instanceof ObjectNode guard && guard.has(RESERVED_NAME_GUARD_MARKER)) {
+                // The traversal's path is "#" followed by the RFC 6901 pointer, tokens already escaped.
+                pointers.add(path.substring(1));
+                guards.add(guard);
+            }
+        });
+        guards.forEach(guard -> guard.remove(RESERVED_NAME_GUARD_MARKER));
+        Collections.sort(pointers);
+        return List.copyOf(pointers);
     }
 
     /** A primitive optional is bound by the Jdk8 module as the scalar or null; the library alone renders a bare object. */
@@ -2910,8 +2965,9 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     }
 
     /**
-     * One combined ASCII case-folding pattern excluding every reserved name, for {@code
-     * propertyNames: {"not": {"pattern": ...}}} on a case-insensitively bound type. The alternatives
+     * One combined ASCII case-folding pattern excluding every reserved name, for the reserved-name
+     * entry {@code {"not": {"pattern": ...}}} of a case-insensitively bound type's {@code
+     * propertyNames} {@code allOf} (see {@link #caseInsensitivePropertyNamesRule}). The alternatives
      * share one pair of anchors around the group — a leading {@code ^} and the ECMA-262 end-of-input
      * form {@code (?![\s\S])} — rather than each carrying its own.
      *
