@@ -51,20 +51,37 @@ import javax.net.ssl.SSLSession;
 public final class RequestOriginCapturer {
 
     /**
+     * One IPv4 octet: a value from {@code 0} to {@code 255} in one to three digits. The bound matters —
+     * the JDK does not parse a dotted quad with a larger octet as a literal, and resolves it as a
+     * hostname instead.
+     */
+    private static final String IPV4_OCTET = "(?:25[0-5]|2[0-4]\\d|[01]?\\d?\\d)";
+
+    /** Four dot-separated {@link #IPV4_OCTET}s. */
+    private static final String IPV4 = IPV4_OCTET + "(?:\\." + IPV4_OCTET + "){3}";
+
+    /**
      * Pattern that matches IP address literals (IPv4, IPv6, IPv4-mapped IPv6) without performing
      * DNS resolution. Used as a guard before calling {@link InetAddress#getByName(String)} to
      * ensure the call never triggers a blocking DNS lookup on the event loop.
      *
+     * <p>Only strings that {@code getByName} parses as literals — or rejects without a lookup — may
+     * match. Anything else goes to the OS resolver, and {@code X-Forwarded-For} is attacker-supplied
+     * on every request, trusted peer or not.
+     *
      * <p>Groups covered:
      * <ul>
-     *   <li>IPv4: four dot-separated decimal octets</li>
-     *   <li>IPv6: colon-hex notation with optional zone id ({@code %scope})</li>
-     *   <li>IPv4-mapped IPv6: {@code ::ffff:} prefix followed by four decimal octets</li>
+     *   <li>IPv4: four dot-separated decimal octets, each at most {@code 255}</li>
+     *   <li>IPv6: colon-hex notation with optional zone id ({@code %scope}), containing at least one
+     *       {@code :}. The colon keeps a hex-only hostname such as {@code cafe} out. The JDK never
+     *       resolves a string that starts with a hex digit or {@code :} and contains a {@code :} —
+     *       it parses it as an IPv6 literal or rejects it — and this branch admits no other
+     *       shape.</li>
+     *   <li>IPv4-mapped IPv6: {@code ::ffff:} prefix followed by an IPv4 address</li>
      * </ul>
      */
-    private static final Pattern IP_LITERAL = Pattern.compile("\\d{1,3}(?:\\.\\d{1,3}){3}"
-            + "|[0-9a-fA-F:]+(?:%[a-zA-Z0-9._~-]+)?"
-            + "|::ffff:\\d{1,3}(?:\\.\\d{1,3}){3}");
+    private static final Pattern IP_LITERAL =
+            Pattern.compile(IPV4 + "|[0-9a-fA-F]*:[0-9a-fA-F:]*(?:%[a-zA-Z0-9._~-]+)?|::ffff:" + IPV4);
 
     private final RequestOriginConfig config;
     private final List<CidrMatcher> trustedProxies;

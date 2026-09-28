@@ -372,6 +372,60 @@ class RequestOriginCapturerTest {
         }
     }
 
+    // --- IP-literal guard ---
+
+    /**
+     * The guard in front of every {@code InetAddress.getByName} call on the request path. Anything it
+     * passes that the JDK does not treat as a literal goes to the OS resolver — a blocking lookup on
+     * the event loop, triggered by an unauthenticated {@code X-Forwarded-For} header. The chain outcome
+     * cannot catch such a regression (a failed lookup also drops and counts the entry), so these tests
+     * assert on the guard itself.
+     */
+    @Nested
+    @DisplayName("IP-literal guard — nothing it passes reaches the DNS resolver")
+    class IpLiteralGuard {
+
+        @Test
+        @DisplayName("hex-only names and dotted quads with an octet above 255 are not IP literals")
+        void lookalikesAreNotIpLiterals() {
+            // A hex-only label is a hostname; an octet above 255 makes the JDK treat a dotted quad as
+            // one. Both used to pass the guard and trigger a real lookup.
+            for (String lookalike : List.of("cafe", "a1", "deadbeef", "999.1.1.1", "256.256.256.256", "1.2.3.256")) {
+                assertFalse(RequestOriginCapturer.isIpLiteral(lookalike), lookalike + " must not pass the guard");
+            }
+        }
+
+        @Test
+        @DisplayName("a dotted quad passes exactly when every octet is at most 255, in every position")
+        void dottedQuadPassesExactlyWhenEveryOctetIsInRange() {
+            for (int position = 0; position < 4; position++) {
+                for (int octet = 0; octet < 1000; octet++) {
+                    String[] parts = {"1", "1", "1", "1"};
+                    parts[position] = Integer.toString(octet);
+                    String quad = String.join(".", parts);
+
+                    assertEquals(octet <= 255, RequestOriginCapturer.isIpLiteral(quad), quad);
+                }
+            }
+        }
+
+        @Test
+        @DisplayName("IPv4, IPv6, scoped IPv6 and IPv4-mapped literals still pass")
+        void realLiteralsPass() {
+            for (String literal : List.of(
+                    "0.0.0.0",
+                    "1.2.3.4",
+                    "255.255.255.255",
+                    "::",
+                    "::1",
+                    "2001:db8::1",
+                    "fe80::1%lo0",
+                    "::ffff:1.2.3.4")) {
+                assertTrue(RequestOriginCapturer.isIpLiteral(literal), literal + " must pass the guard");
+            }
+        }
+    }
+
     // --- AC-RO-7: Untrusted peer + forwarded headers ---
 
     @Nested

@@ -763,6 +763,8 @@ RequestOriginConfig originConfig() {
 Resolution rules:
 
 - `X-Forwarded-For` is always parsed and exposed for observability, trusted peer or not.
+- Each `X-Forwarded-For` entry must be an IP address literal. Hostnames and malformed addresses are
+  dropped and counted in `forwardedForRejectedCount`; they are never looked up in DNS.
 - `clientIp` uses the forwarded chain **only** when the direct peer matches a trusted CIDR;
   otherwise it is the direct peer address.
 - Forwarded scheme and host are honoured only when both the corresponding flag is set and the direct
