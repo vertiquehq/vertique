@@ -9,7 +9,9 @@ import io.vertx.json.schema.JsonFormatValidator;
 import io.vertx.json.schema.JsonSchema;
 import io.vertx.json.schema.JsonSchemaOptions;
 import io.vertx.json.schema.Validator;
+import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
 
 /**
  * The {@code web-validation} gate's pattern-input guard: it bounds the input of pattern evaluation and of
@@ -32,6 +34,15 @@ import java.util.Set;
  * know, which passes the engine's built-in check; and an exception the format validator throws escapes
  * {@link Validator#validate(Object)} unwrapped. Entries are appended, never prepended, so every existing
  * {@code allOf} index and every reported keyword location stays valid against the original schema.
+ *
+ * <p>The rewrite also renames every {@code format} value found among {@link #REUSED_FORMAT_CHECKS}'s keys
+ * to {@code x-vertique-format-<name>}, in place, at every position the walk reaches as a schema node: the
+ * engine does not know the renamed name, so its built-in check passes it, and this validator decides the
+ * renamed name instead, with the reused check keyed by the standard name it was renamed from. A {@code
+ * String} instance runs the check; on failure the rejection carries a fixed, value-free detail, never the
+ * instance itself. A non-{@code String} instance passes. The renamed set grows as later changes add
+ * further reused formats; a format outside it, including one this class does not yet decide, is
+ * unaffected by the rename.
  */
 final class PatternInputGuard implements JsonFormatValidator {
 
@@ -43,6 +54,26 @@ final class PatternInputGuard implements JsonFormatValidator {
      * as linear-time. Every other format is neither bounded nor counted.
      */
     private static final Set<String> BOUNDED_FORMATS = Set.of("idn-hostname", "idn-email", "regex");
+
+    /**
+     * The prefix the rewrite gives each reused format's renamed name, {@code x-vertique-format-<name>},
+     * a name the engine does not know so its built-in check passes it.
+     */
+    private static final String REUSED_FORMAT_PREFIX = "x-vertique-format-";
+
+    /**
+     * The formats decided by a reused, non-regular-expression implementation once renamed, keyed by their
+     * standard name; grown as later changes add further reused formats. Every value is a stateless {@code
+     * String}-typed check owned by its own format-check class.
+     */
+    private static final Map<String, Predicate<String>> REUSED_FORMAT_CHECKS = Map.of(
+            "uri", UriFormatChecks::isUri,
+            "uri-reference", UriFormatChecks::isUriReference,
+            "url", UrlFormatCheck::isUrl,
+            "uri-template", UriTemplateSyntax::isValid,
+            "json-pointer", PointerFormatChecks::isPointer,
+            "relative-json-pointer", PointerFormatChecks::isRelativePointer,
+            "json-pointer-uri-fragment", PointerFormatChecks::isPointerFragment);
 
     /** The JSON Schema format keyword. */
     private static final String FORMAT_KEYWORD = "format";
@@ -80,7 +111,9 @@ final class PatternInputGuard implements JsonFormatValidator {
      * Returns a rewritten deep copy of {@code schema}: the bound entry appended to the {@code allOf} of every
      * pattern position and every bounded-format node, one per position, then the {@code propertyNames} entry
      * at every non-empty {@code patternProperties}. {@code schema} itself is never modified, and a schema with
-     * no such position yields a copy equal to it.
+     * no pattern, bounded format, reused format, or non-empty {@code patternProperties} at any reached schema
+     * node yields a copy equal to it. A reused {@code format} is renamed in place even at a node that gains no
+     * bound entry, so its presence alone breaks that equality.
      *
      * <p>The walk follows the gate's regex precompilation: it never enters the value of a literal keyword
      * ({@code const}, {@code enum}, {@code default}, {@code examples}, {@code example}), it treats each member
@@ -137,11 +170,11 @@ final class PatternInputGuard implements JsonFormatValidator {
      * Rewrites one schema node of the copy: one bound entry for a string {@code pattern}, one for a bounded
      * {@code format}, and then the {@code propertyNames} entry for a non-empty {@code patternProperties},
      * appended in that order to the node's {@code allOf}, which is created when absent. A node whose {@code
-     * allOf} is present but not an array is left unchanged, so the engine judges it exactly as it judges the
-     * original.
+     * allOf} is present but not an array gets no bound entries appended, since they cannot be added to it;
+     * its reused {@code format}, if any, is still renamed.
      *
-     * <p>This is the one per-node step of the rewrite, so a further rewrite of the node's {@code format}
-     * belongs here too.
+     * <p>This is the one per-node step of the rewrite, so the rename of the node's reused {@code format}
+     * belongs here too, applied to the same {@code format} value the bounded-format check reads.
      *
      * @param node the schema node, a member of the copy
      */
@@ -150,8 +183,12 @@ final class PatternInputGuard implements JsonFormatValidator {
         if (node.getValue(WebValidationStrategy.PATTERN_KEYWORD) instanceof String) {
             entries.add(boundEntry());
         }
-        if (node.getValue(FORMAT_KEYWORD) instanceof String format && BOUNDED_FORMATS.contains(format)) {
-            entries.add(boundEntry());
+        if (node.getValue(FORMAT_KEYWORD) instanceof String format) {
+            if (BOUNDED_FORMATS.contains(format)) {
+                entries.add(boundEntry());
+            } else if (REUSED_FORMAT_CHECKS.containsKey(format)) {
+                node.put(FORMAT_KEYWORD, REUSED_FORMAT_PREFIX + format);
+            }
         }
         if (node.getValue(WebValidationStrategy.PATTERN_PROPERTIES_KEYWORD) instanceof JsonObject byPattern
                 && !byPattern.isEmpty()) {
@@ -189,7 +226,8 @@ final class PatternInputGuard implements JsonFormatValidator {
     }
 
     /**
-     * Applies the bound at {@link #BOUND_FORMAT} and delegates every other format, {@code null} included, to
+     * Applies the bound at {@link #BOUND_FORMAT}, decides a renamed reused format at {@link
+     * #REUSED_FORMAT_CHECKS}, and delegates every other format, {@code null} included, to
      * {@link JsonFormatValidator#DEFAULT_VALIDATOR}.
      *
      * <p>At the bound entry, a string of length {@code L} (UTF-16 code units) longer than the per-string limit
@@ -197,10 +235,14 @@ final class PatternInputGuard implements JsonFormatValidator {
      * rejected once it exceeds the per-request limit. Outside a window only the per-string limit applies. A
      * non-string instance passes.
      *
+     * <p>At a renamed reused format, a {@code String} instance runs the format's reused check; a non-{@code
+     * String} instance passes.
+     *
      * @param instanceType the instance's JSON type
      * @param format       the format name, or {@code null} for a node without one
      * @param instance     the instance
-     * @return {@code null} when the instance passes, else the default validator's message
+     * @return {@code null} when the instance passes, else the default validator's message or, for a
+     *     renamed reused format, a fixed, value-free rejection message
      * @throws PatternInputTooLong        when a string at the bound entry is longer than the per-string limit
      * @throws PatternInputTotalExceeded when a string at the bound entry takes the request's total past the
      *     per-request limit
@@ -213,7 +255,31 @@ final class PatternInputGuard implements JsonFormatValidator {
             }
             return null;
         }
+        if (format != null && format.startsWith(REUSED_FORMAT_PREFIX)) {
+            String standardName = format.substring(REUSED_FORMAT_PREFIX.length());
+            Predicate<String> check = REUSED_FORMAT_CHECKS.get(standardName);
+            if (check != null) {
+                return validateReusedFormat(check, standardName, instance);
+            }
+        }
         return JsonFormatValidator.DEFAULT_VALIDATOR.validateFormat(instanceType, format, instance);
+    }
+
+    /**
+     * Decides one renamed reused format: a {@code String} instance runs {@code check}, and on failure the
+     * rejection carries a fixed, value-free message naming only {@code standardName}; a non-{@code String}
+     * instance passes.
+     *
+     * @param check        the format's reused check
+     * @param standardName the format's standard name, before the rename
+     * @param instance     the instance
+     * @return {@code null} when the instance passes, else the rejection message
+     */
+    private static String validateReusedFormat(Predicate<String> check, String standardName, Object instance) {
+        if (!(instance instanceof String text)) {
+            return null;
+        }
+        return check.test(text) ? null : "String does not match format \"" + standardName + "\"";
     }
 
     /**

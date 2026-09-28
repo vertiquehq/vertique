@@ -344,11 +344,100 @@ bounded format. The total covers one request's parameter and body validation and
 every request.
 
 No other format is bounded or counted. The date, time, duration, email, hostname, IP-address, and
-UUID formats, the URI, URI-template, and JSON-pointer formats, and an application-defined format are
-checked exactly as the validator checks them without the limits. `iri` and `iri-reference` are not
-checked by the validator at all: any string passes them. A body of dates, timestamps, or identifiers
-with no `pattern` is therefore never rejected by the limits, however large it is. Only the
-`web-validation` strategy applies the limits; `openapi-contract` does not.
+UUID formats, and an application-defined format, are checked exactly as the validator checks them
+without the limits. `iri` and `iri-reference` are not checked by the validator at all: any string
+passes them. A body of dates, timestamps, or identifiers with no `pattern` is therefore never
+rejected by the limits, however large it is. Only the `web-validation` strategy applies the limits;
+`openapi-contract` does not.
+
+**The `uri`, `uri-reference`, `url`, `uri-template`, `json-pointer`, `relative-json-pointer`, and
+`json-pointer-uri-fragment` formats are decided by reused implementations, never by the validator's
+own expressions for them,** with one schema-shape exception listed under "What the limits leave
+open" below. Those seven expressions can overflow the stack or take far longer than
+their input is long, so the gate keeps them from ever running: in its private compiled copy of each
+schema it renames every `format` value among the seven to `x-vertique-format-<name>` — for example
+`format: uri` becomes `format: x-vertique-format-uri` — a name the validator does not recognize and
+therefore passes unconditionally, and the gate's own format check then decides that renamed name.
+The rename happens only in the gate's private copy: the schema an `OperationSchemaSource` returns,
+and every published document built from it, keep the standard format names throughout. No regular
+expression decides any of the seven. `uri`, `uri-reference`, and `url` are decided by parsing the
+value with `java.net.URI`; `json-pointer` and `relative-json-pointer` are decided by one
+left-to-right pass over the string; `json-pointer-uri-fragment` is decided by percent-decoding its
+fragment through `java.net.URI` and then running the same left-to-right pass over the result; and
+`uri-template` is decided by the framework's own single-forward-pass syntax scanner for RFC 6570
+template syntax, written for this project.
+
+Because these reused implementations are not the validator's own expressions, a small number of
+values judge differently than the validator alone would judge them; every difference found against
+the pinned corpora — the JSON Schema Test Suite files and the tested corpus below — is recorded here,
+as tested, so no new check is ever added to chase it. Against the tested corpus, each format's
+recorded differences are:
+
+- `uri`: `http://` (rejected here); a value that is valid only without its trailing line feed, for
+  example `http://foo.bar/\n` (rejected here); `http://a.com/?x[0]=1` (accepted here); and
+  `http://[v1.x]/` (rejected here).
+- `uri-reference`: `http://` and `a:` (rejected here); a value that is valid only without its
+  trailing line feed, for example `/p\n` (rejected here); `http://a.com/?x[0]=1` and `#[0]`
+  (accepted here); and `http://[v1.x]/` (rejected here).
+- `json-pointer`: a value that is valid only without its trailing line feed, for example `\n`
+  (rejected here).
+- `relative-json-pointer`: a value that is valid only without its trailing line feed, for example
+  `0\n` (rejected here).
+- `json-pointer-uri-fragment`: a value that is valid only without its trailing line feed, for
+  example `#/a\n` (rejected here); `#/%7E2` and a trailing `#/%7E` (rejected here); and `#/ä`,
+  `#/a?b`, and `#/a[0]` (accepted here).
+- `uri-template`: `{a.b}`, `{a.%41}`, and `a'b` (accepted here); a value that is valid only without
+  its trailing line feed, for example `{a}\n` (rejected here); and `a\u0085b`, a lone high surrogate
+  (`a\uD800b` or a trailing `a\uD800`), a lone low surrogate (`a\uDC00b`), U+FFFF, U+E0001, U+EFFFE,
+  and U+FFFFE (rejected here).
+
+Against the JSON Schema Test Suite's own format cases, `uri` differs only on the suite's "non-numeric
+port is invalid" and "leading zero in an embedded IPv4 address is invalid" cases — both accepted by
+`java.net.URI` where the suite expects rejection; `uri-reference` differs only on the suite's "a
+network-path reference with an empty authority" case — rejected by `java.net.URI` where the suite
+expects acceptance — and, more leniently than the suite, its "a non-numeric port in a network-path
+reference", "more than one at-sign in the authority", and "a leading zero in the IPv4 part of an IPv6
+literal" cases; `json-pointer`, `relative-json-pointer`, `json-pointer-uri-fragment`, and
+`uri-template` have no recorded suite difference.
+
+`url` keeps the validator's own scheme and host filtering: an absolute value is accepted only when
+its scheme is `http`, `https`, or `ftp`; its host is present and is not an IPv6 literal; a
+dotted-quad host is rejected in `0/8`, `10/8`, `127/8`, `169.254/16`, `192.168/16`, `172.16/12`, and
+`224/4` and above, and a dotted-quad octet longer than one character that starts with `0` is
+rejected outright, for example `0177.0.0.1`: common URL and address parsers read such an octet as
+octal, so `0177.0.0.1` is `127.0.0.1` to them, and rejecting it here keeps the loopback and
+private-range filtering above from being bypassed by an octal-looking octet; a host that is not a
+dotted quad is rejected unless it contains a dot and ends in an alphabetic label of two or more
+letters, so `localhost` and `intranet` are rejected; and a port, when present, is rejected outside 2
+to 5 digits. That filtering matches the validator's own verdict, `[::1]` and every `file:`, `jar:`,
+and `mailto:` value included. Outside that filtering, fifteen inputs are recorded as differing from
+the validator: `http://bücher.de/` and `http://例え.テスト/` (`java.net.URI` cannot parse a non-ASCII
+host at all, so the gate rejects both; an application that needs to accept one should convert it to
+punycode first), `http://a--b.com/`, `http://xn--bcher-kva.de/`, `http://a.com./`,
+`http://1.2.3.0/`, `http://1.2.3.255/`, `http://example.com?x=1`, `http://example.com#f`,
+`http://example.com/a|b`, `http://example.com/%zz`, `http://us"er@example.com/`, and
+`http://8.08.8.8/` (accepted by the validator's own expression; rejected here by the
+leading-zero-octet rule above); `http://@example.com/` (rejected by the validator's own expression;
+accepted here, the host unchanged); and a value that is valid only without its trailing line feed,
+for example `http://foo.bar/\n` (accepted by the validator's own expression; rejected here).
+`format: url` is not an SSRF control: it resolves no names (for example `127.0.0.1.nip.io`) and
+follows no redirects; validate the resolved address at the outbound call.
+
+Each of the seven formats was also proved at the longest value the default `http.maxBodySize` (2
+MiB) and the default HTTP header-size limit (8 KiB) admit, with grammar-shaped worst-case values.
+Every one stayed within a pre-decided budget — at most 250 ms and at most 16 bytes allocated per
+character plus 1 MiB — with no stack overflow and no fallback to a bounded-and-counted check; the
+highest figures observed were 26.2 ms (a `url` value built from many host labels) and about 21.8 MB
+allocated (a `json-pointer-uri-fragment` value built from escaped segments, about 10.4 bytes per
+character against the 16-byte budget). That is the tested envelope: these proofs claim nothing for a
+value an application admits by raising `http.maxBodySize` or the header-size limit above these
+defaults.
+
+A Hibernate `@URL`-annotated property publishes as `format: uri` plus the pattern `@URL` composes on
+top of it, so the pattern bound above still applies there even though `uri` itself is not a bounded
+format: a value longer than `jaxrs.validationPatternMaxChars` at that position is rejected before
+the composed pattern runs, with the same value-free per-string detail any other `pattern` position
+gets.
 
 Either rejection is a 400 `RestValidationException` carrying one `ValidationErrorDetail` for the
 rejected validation call:
@@ -379,6 +468,13 @@ when its schema accepts the values. An application that must accept such input r
 `jaxrs.validationPatternMaxChars`, `jaxrs.validationPatternMaxTotalChars`, or both;
 `vertique-rest-core` validates both at startup, and its reference lists the failure messages.
 
+The `uri`, `uri-reference`, `url`, `uri-template`, `json-pointer`, `relative-json-pointer`, and
+`json-pointer-uri-fragment` formats now judge every value, however long, with one schema-shape
+exception listed under "What the limits leave open" below. A value long enough to overflow the
+validator's own check for one of them previously could overflow the stack and fail the request with
+a 500 error; outside that exception it is now judged, valid or invalid, by the reused implementation
+described above, including its recorded verdict differences from the validator's own expressions.
+
 What the limits leave open:
 
 - With the default limits, one request can still spend about 5.7 seconds of validator time on
@@ -402,9 +498,13 @@ What the limits leave open:
   `example`, `properties`, `patternProperties`, `$defs`, or `dependentSchemas` — is not bounded at
   that member: a pattern or bounded format inside it can run on input of any length. A
   `dependencies` member named `patternProperties` also changes the verdict: an object validated
-  there that has a property named `allOf` fails the request with a 500. Schemas the
-  `vertique-json-schema` generator writes use `$defs` only; an application-authored schema stays
-  fully bounded when it uses `$defs` and `dependentSchemas` instead, or other member names.
+  there that has a property named `allOf` fails the request with a 500. A draft-7 schema's
+  `definitions` container, reached through a local `$ref`, escapes the format rename the same way:
+  one of the seven reused formats placed there is still judged by the validator's own expression,
+  so a long enough value can overflow the stack there — the same residual patterns and bounded
+  formats have above. Generated schemas are unaffected. Schemas the `vertique-json-schema`
+  generator writes use `$defs` only; an application-authored schema stays fully bounded and fully
+  renamed when it uses `$defs` and `dependentSchemas` instead, or other member names.
 
 ---
 

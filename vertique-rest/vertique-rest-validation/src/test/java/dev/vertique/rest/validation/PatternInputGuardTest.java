@@ -438,9 +438,11 @@ class PatternInputGuardTest {
                         "{'type':'string','format':'date-time'}",
                         ok("'2026-09-27T12:00:00Z'"),
                         bad("'yesterday'")),
-                unchanged(
-                        "format uri: unchanged",
+                shape(
+                        "format uri: renamed, not bounded",
                         "{'type':'string','format':'uri'}",
+                        "{'type':'string','format':'" + RENAMED_URI + "'}",
+                        0,
                         ok("'https://example.com/a'"),
                         bad("'not a uri'")),
                 unchanged(
