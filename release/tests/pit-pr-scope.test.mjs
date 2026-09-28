@@ -533,6 +533,13 @@ describe('pit-pr-scope.sh', () => {
     assert.match(result.stderr, /PIT run failed/);
   });
 
+  it('runs the Maven command through the container runner with --sandbox', () => {
+    const r = repo('sandbox', { [RETRY_BACKOFF]: CHANGED_SOURCE });
+    const result = runScript(r, ['--base', 'main', '--sandbox', '--dry-run'], { PIT_EFFECTIVE_UID: '0' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /scripts\/pit-sandbox\.sh -ntp -T 1 -pl vertique-resilience /);
+  });
+
   it('refuses to run as root unless explicitly allowed', () => {
     const r = repo('root', { [RETRY_BACKOFF]: CHANGED_SOURCE });
     const refused = runScript(r, ['--base', 'main', '--dry-run'], { PIT_EFFECTIVE_UID: '0' });
@@ -620,5 +627,28 @@ describe('MutationWorkflowContractTest', () => {
   it('staysOutOfTheRequiredCheck', () => {
     const ci = readFileSync(path.join(REPO_ROOT, '.github', 'workflows', 'ci.yml'), 'utf8');
     assert.doesNotMatch(ci, /pit-pr-scope|pitest-maven|mutationCoverage|mutation\.yml/, 'required CI must not run or depend on mutation testing');
+  });
+});
+
+// --- scripts/pit-sandbox.sh ---
+
+describe('PitSandboxContractTest', () => {
+  const sandbox = () => readFileSync(path.join(REPO_ROOT, 'scripts', 'pit-sandbox.sh'), 'utf8');
+  const dockerfile = () => readFileSync(path.join(REPO_ROOT, 'scripts', 'pit-sandbox', 'Dockerfile'), 'utf8');
+
+  it('neverMountsAHostPathWritable', () => {
+    const binds = [...sandbox().matchAll(/--mount "(type=bind[^"]*)"/g)].map((m) => m[1]);
+    assert.ok(binds.length > 0, 'expected the read-only host Maven cache mounts');
+    for (const bind of binds) assert.match(bind, /,readonly$/, `host bind mount must be read-only: ${bind}`);
+    assert.doesNotMatch(sandbox(), /\s(?:-v|--volume)\s+["$~/]/, 'use --mount so read-only is explicit');
+  });
+
+  it('dropsPrivilegesAndNetworkByDefault', () => {
+    const script = sandbox();
+    assert.match(script, /network="\$\{PIT_SANDBOX_NETWORK:-none\}"/);
+    assert.match(script, /--cap-drop ALL --security-opt no-new-privileges/);
+    assert.match(script, /--memory "\$memory" --pids-limit \d+/);
+    assert.match(dockerfile(), /^USER pit$/m, 'the container must not run as root');
+    assert.match(dockerfile(), /^FROM eclipse-temurin:21-jdk@sha256:[0-9a-f]{64}$/m, 'pin the base image by digest');
   });
 });

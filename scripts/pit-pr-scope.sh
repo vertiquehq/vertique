@@ -10,6 +10,7 @@
 #   bash scripts/pit-pr-scope.sh                  # against origin/main
 #   bash scripts/pit-pr-scope.sh --base <ref>     # against another base
 #   bash scripts/pit-pr-scope.sh --dry-run        # print the Maven command only
+#   bash scripts/pit-pr-scope.sh --sandbox        # run PIT in a disposable container
 #
 # The change is the diff from the merge base to the working tree; `git add -N`
 # a new file before running, untracked files are not seen. Undetected mutants
@@ -18,12 +19,14 @@
 # --base upstream/main (or whichever remote tracks the upstream repository).
 #
 # Mutants execute with real side effects (a mutated guard once deleted a
-# module's source tree), so run this only in a disposable checkout or CI,
-# never as root and never in a checkout you cannot restore from git.
+# module's source tree). Without --sandbox, run this only in a disposable
+# checkout or CI, never as root and never in a checkout you cannot restore
+# from git. With --sandbox, PIT runs in a throwaway Docker container against
+# a snapshot of the working tree (scripts/pit-sandbox.sh).
 #
 # Environment:
 #   PIT_MAX_CLASSES   class budget; larger changes are skipped (default 25)
-#   PIT_MVN           Maven launcher (default ./mvnw)
+#   PIT_MVN           Maven launcher (default ./mvnw, or scripts/pit-sandbox.sh with --sandbox)
 #   PIT_ALLOW_ROOT=1  run as root anyway
 #   PIT_EFFECTIVE_UID test seam replacing `id -u`
 
@@ -34,17 +37,19 @@ SELECTOR="$SCRIPT_DIR/pit-pr-scope.mjs"
 
 base="origin/main"
 dry_run=false
+sandbox=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --base)
       [[ $# -ge 2 && -n "$2" ]] || { echo 'pit-pr-scope: --base requires a ref' >&2; exit 1; }
       base="$2"; shift 2 ;;
     --dry-run) dry_run=true; shift ;;
+    --sandbox) sandbox=true; shift ;;
     *) echo "pit-pr-scope: unrecognised argument: $1" >&2; exit 1 ;;
   esac
 done
 
-if [[ "${PIT_EFFECTIVE_UID:-$(id -u)}" == 0 && "${PIT_ALLOW_ROOT:-}" != 1 ]]; then
+if [[ "$sandbox" != true && "${PIT_EFFECTIVE_UID:-$(id -u)}" == 0 && "${PIT_ALLOW_ROOT:-}" != 1 ]]; then
   echo 'pit-pr-scope: refusing to run as root: mutants run with real side effects (set PIT_ALLOW_ROOT=1 to override)' >&2
   exit 1
 fi
@@ -52,7 +57,11 @@ fi
 cd "$(git rev-parse --show-toplevel)"
 
 max_classes="${PIT_MAX_CLASSES:-25}"
-mvn="${PIT_MVN:-./mvnw}"
+if [[ "$sandbox" == true ]]; then
+  mvn="${PIT_MVN:-$SCRIPT_DIR/pit-sandbox.sh}"
+else
+  mvn="${PIT_MVN:-./mvnw}"
+fi
 out_dir="target/pit-pr"
 mkdir -p "$out_dir"
 # Nothing from an earlier run may stand in for this one.
