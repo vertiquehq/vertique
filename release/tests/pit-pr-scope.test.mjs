@@ -11,14 +11,18 @@
  * report detail the filter depends on is pinned with a fixture.
  */
 
-import { describe, it } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(TEST_DIR, '..', '..');
 const MODULE = pathToFileURL(path.join(REPO_ROOT, 'scripts', 'pit-pr-scope.mjs')).href;
+const SCRIPT = path.join(REPO_ROOT, 'scripts', 'pit-pr-scope.sh');
 
 const {
   PILOT_MODULES,
@@ -242,6 +246,12 @@ describe('buildReport and renderMarkdown', () => {
     );
   });
 
+  it('treats an empty report as changed classes without mutable code', () => {
+    const empty = buildReport({ selection, changedLines: changed, xmlByModule: { 'vertique-resilience': '' } });
+    assert.deepEqual(empty.wholeClass, { total: 0, undetected: 0 });
+    assert.match(renderMarkdown(empty), /PIT found no mutable code in the changed classes/);
+  });
+
   it('renders the no-change, out-of-scope and budget cases without a table', () => {
     const none = renderMarkdown(buildReport({ selection: selectTargets(['vertique-core/src/main/java/a/B.java'], { maxClasses: 25 }), changedLines: new Map(), xmlByModule: {} }));
     assert.match(none, /No production classes changed in the pilot modules/);
@@ -255,3 +265,182 @@ describe('buildReport and renderMarkdown', () => {
 function files2(n) {
   return Array.from({ length: n }, (_, i) => `${RESILIENCE}/C${i}.java`);
 }
+
+// --- scripts/pit-pr-scope.sh, end to end against synthetic repositories ---
+
+const RETRY_BACKOFF = `${RESILIENCE}/RetryBackoff.java`;
+const BASE_SOURCE = 'package dev.vertique.resilience;\n\nclass RetryBackoff {\n    int a() {\n        return 1;\n    }\n}\n';
+const CHANGED_SOURCE = 'package dev.vertique.resilience;\n\nclass RetryBackoff {\n    int a() {\n        return 2;\n    }\n}\n';
+
+function git(cwd, ...args) {
+  return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+}
+
+function commitFiles(repo, files, message) {
+  for (const [file, content] of Object.entries(files)) {
+    const target = path.join(repo, file);
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, content);
+  }
+  git(repo, 'add', '.');
+  git(repo, 'commit', '--quiet', '-m', message);
+}
+
+/** A repository whose main holds RetryBackoff; `branch` adds `files` on top. */
+function makeRepo(branch, files) {
+  const repo = mkdtempSync(path.join(tmpdir(), 'pit-pr-scope-'));
+  git(repo, 'init', '--quiet', '--initial-branch=main');
+  git(repo, 'config', 'user.email', 'test@invalid');
+  git(repo, 'config', 'user.name', 'test');
+  git(repo, 'config', 'commit.gpgsign', 'false');
+  commitFiles(repo, { [RETRY_BACKOFF]: BASE_SOURCE, 'pom.xml': '<project/>\n' }, 'base');
+  git(repo, 'checkout', '--quiet', '-b', branch);
+  commitFiles(repo, files, branch);
+  return repo;
+}
+
+/**
+ * A stand-in for ./mvnw that records its arguments and writes the report a PIT
+ * run would, with one undetected mutant on the changed line 5 and one on the
+ * unchanged line 4.
+ */
+function stubMaven(repo, { exitCode = 0, writeReport = true, compileClass = true } = {}) {
+  const stub = path.join(repo, 'stub-mvnw.sh');
+  const report = path.join(repo, 'vertique-resilience', 'target', 'pit-reports');
+  const classes = path.join(repo, 'vertique-resilience', 'target', 'classes', 'dev', 'vertique', 'resilience');
+  const lines = [
+    '#!/usr/bin/env bash',
+    `printf '%s\\n' "$@" > "${path.join(repo, 'mvn-args.txt')}"`,
+  ];
+  if (compileClass) lines.push(`mkdir -p "${classes}"`, `touch "${path.join(classes, 'RetryBackoff.class')}"`);
+  if (writeReport) {
+    lines.push(
+      `mkdir -p "${report}"`,
+      `cat > "${path.join(report, 'mutations.xml')}" <<'XML'`,
+      mutationsXml(
+        mutation({ status: 'SURVIVED', cls: 'dev.vertique.resilience.RetryBackoff', file: 'RetryBackoff.java', line: 5, method: 'a', description: 'replaced int return with 0' }),
+        mutation({ status: 'SURVIVED', cls: 'dev.vertique.resilience.RetryBackoff', file: 'RetryBackoff.java', line: 4 })
+      ).trimEnd(),
+      'XML'
+    );
+  }
+  lines.push(`exit ${exitCode}`, '');
+  writeFileSync(stub, lines.join('\n'));
+  chmodSync(stub, 0o755);
+  return stub;
+}
+
+function runScript(repo, args, env = {}) {
+  const result = spawnSync('bash', [SCRIPT, ...args], {
+    cwd: repo,
+    encoding: 'utf8',
+    env: { ...process.env, GITHUB_STEP_SUMMARY: '', PIT_ALLOW_ROOT: '', PIT_EFFECTIVE_UID: '', ...env },
+  });
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+describe('pit-pr-scope.sh', () => {
+  const repos = [];
+  const repo = (branch, files) => {
+    const created = makeRepo(branch, files);
+    repos.push(created);
+    return created;
+  };
+  after(() => {
+    for (const created of repos) rmSync(created, { recursive: true, force: true });
+  });
+
+  it('does not run Maven when no production class changed', () => {
+    const r = repo('docs', { 'README.md': 'docs\n' });
+    const stub = stubMaven(r);
+    const result = runScript(r, ['--base', 'main'], { PIT_MVN: stub });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /No production classes changed in the pilot modules/);
+    assert.equal(existsSync(path.join(r, 'mvn-args.txt')), false);
+  });
+
+  it('lists a non-pilot change without running Maven', () => {
+    const r = repo('core', { 'vertique-core/src/main/java/dev/vertique/core/Json.java': 'class Json {}\n' });
+    const stub = stubMaven(r);
+    const result = runScript(r, ['--base', 'main'], { PIT_MVN: stub });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /vertique-core\/src\/main\/java\/dev\/vertique\/core\/Json\.java/);
+    assert.equal(existsSync(path.join(r, 'mvn-args.txt')), false);
+  });
+
+  it('prints the exact Maven command for a pilot change in dry-run mode', () => {
+    const r = repo('pilot', { [RETRY_BACKOFF]: CHANGED_SOURCE });
+    const result = runScript(r, ['--base', 'main', '--dry-run']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(
+      result.stdout,
+      /\.\/mvnw -ntp -pl vertique-resilience -am process-test-classes org\.pitest:pitest-maven:mutationCoverage -Dpitest\.skip=false -DtargetClasses=dev\.vertique\.resilience\.RetryBackoff,dev\.vertique\.resilience\.RetryBackoff\$\*/
+    );
+  });
+
+  it('runs Maven and reports only the undetected mutant on the added line', () => {
+    const r = repo('pilot-run', { [RETRY_BACKOFF]: CHANGED_SOURCE });
+    const stub = stubMaven(r);
+    const summary = path.join(r, 'step-summary.md');
+    const result = runScript(r, ['--base', 'main'], { PIT_MVN: stub, GITHUB_STEP_SUMMARY: summary });
+    assert.equal(result.status, 0, result.stderr);
+    const args = readFileSync(path.join(r, 'mvn-args.txt'), 'utf8').split('\n');
+    assert.deepEqual(args.slice(0, 7), [
+      '-ntp', '-pl', 'vertique-resilience', '-am', 'process-test-classes',
+      'org.pitest:pitest-maven:mutationCoverage', '-Dpitest.skip=false',
+    ]);
+    assert.match(result.stdout, /1 of 1 mutants on added lines were not detected/);
+    assert.match(result.stdout, /RetryBackoff\.java:5/);
+    assert.doesNotMatch(result.stdout, /RetryBackoff\.java:4/);
+    assert.equal(readFileSync(summary, 'utf8'), readFileSync(path.join(r, 'target', 'pit-pr', 'summary.md'), 'utf8'));
+  });
+
+  it('skips a change above the class budget with exit 0', () => {
+    const r = repo('budget', { [RETRY_BACKOFF]: CHANGED_SOURCE, [`${RESILIENCE}/Other.java`]: 'class Other {}\n' });
+    const stub = stubMaven(r);
+    const result = runScript(r, ['--base', 'main'], { PIT_MVN: stub, PIT_MAX_CLASSES: '1' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Skipped: 2 changed classes exceed the budget of 1/);
+    assert.equal(existsSync(path.join(r, 'mvn-args.txt')), false);
+  });
+
+  it('reports changed classes without mutable code when PIT writes no report', () => {
+    const r = repo('no-mutants', { [RETRY_BACKOFF]: CHANGED_SOURCE });
+    const stub = stubMaven(r, { writeReport: false });
+    const result = runScript(r, ['--base', 'main'], { PIT_MVN: stub });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /PIT found no mutable code in the changed classes/);
+  });
+
+  it('fails when PIT writes no report for a class that was never compiled', () => {
+    const r = repo('no-class', { [RETRY_BACKOFF]: CHANGED_SOURCE });
+    const stub = stubMaven(r, { writeReport: false, compileClass: false });
+    const result = runScript(r, ['--base', 'main'], { PIT_MVN: stub });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /no PIT report for vertique-resilience/);
+  });
+
+  it('fails when the Maven run fails', () => {
+    const r = repo('broken', { [RETRY_BACKOFF]: CHANGED_SOURCE });
+    const stub = stubMaven(r, { exitCode: 1 });
+    const result = runScript(r, ['--base', 'main'], { PIT_MVN: stub });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /PIT run failed/);
+  });
+
+  it('refuses to run as root unless explicitly allowed', () => {
+    const r = repo('root', { [RETRY_BACKOFF]: CHANGED_SOURCE });
+    const refused = runScript(r, ['--base', 'main', '--dry-run'], { PIT_EFFECTIVE_UID: '0' });
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, /refusing to run as root/);
+    const allowed = runScript(r, ['--base', 'main', '--dry-run'], { PIT_EFFECTIVE_UID: '0', PIT_ALLOW_ROOT: '1' });
+    assert.equal(allowed.status, 0, allowed.stderr);
+  });
+
+  it('rejects unknown arguments', () => {
+    const r = repo('args', { 'README.md': 'x\n' });
+    const result = runScript(r, ['--nope']);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /unrecognised argument: --nope/);
+  });
+});

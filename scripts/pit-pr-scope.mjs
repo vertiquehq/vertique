@@ -141,8 +141,10 @@ export function sourcePathOf(mutation) {
 }
 
 /**
- * Filters the selected modules' mutants to the added lines. Throws when a
- * selected module has no report: a missing report is a failed run.
+ * Filters the selected modules' mutants to the added lines. An empty string
+ * stands for a module whose changed classes hold no mutable code (PIT writes
+ * no report then). Throws when a selected module has no report at all: a
+ * missing report is a failed run.
  */
 export function buildReport({ selection, changedLines, xmlByModule }) {
   const report = { selection, changed: null, wholeClass: null };
@@ -187,6 +189,8 @@ export function renderMarkdown(report) {
     );
   } else if (!selection.run) {
     out.push('No production classes changed in the pilot modules, so nothing was mutated.');
+  } else if (wholeClass.total === 0) {
+    out.push('PIT found no mutable code in the changed classes, so nothing was mutated.');
   } else if (changed.total === 0) {
     out.push('No mutants fall on lines this change added (declarations, comments or formatting only).');
   } else if (changed.undetected.length === 0) {
@@ -203,7 +207,7 @@ export function renderMarkdown(report) {
     }
   }
 
-  if (wholeClass) {
+  if (wholeClass && wholeClass.total > 0) {
     out.push('', `Whole changed classes: ${wholeClass.total} mutants, ${wholeClass.undetected} undetected. Only mutants on added lines are listed.`);
   }
   if (selection.outOfScope.length > 0) {
@@ -217,6 +221,14 @@ export function renderMarkdown(report) {
       + `Pilot modules: ${PILOT_MODULES.map((m) => `\`${m}\``).join(', ')}.`
   );
   return `${out.join('\n')}\n`;
+}
+
+/** True when every selected source of `module` has a compiled class file. */
+function compiledClassesExist(selection, module) {
+  const prefix = `${module}/src/main/java/`;
+  return selection.files
+    .filter((file) => file.startsWith(prefix))
+    .every((file) => existsSync(path.join(module, 'target', 'classes', `${file.slice(prefix.length, -'.java'.length)}.class`)));
 }
 
 function parseArgs(argv) {
@@ -247,7 +259,12 @@ function main([command, ...rest]) {
     const xmlByModule = {};
     for (const module of selection.run ? selection.modules : []) {
       const xml = path.join(module, 'target', 'pit-reports', 'mutations.xml');
-      if (existsSync(xml)) xmlByModule[module] = readFileSync(xml, 'utf8');
+      if (existsSync(xml)) {
+        xmlByModule[module] = readFileSync(xml, 'utf8');
+      } else if (compiledClassesExist(selection, module)) {
+        // PIT writes no report when the targeted classes hold nothing to mutate.
+        xmlByModule[module] = '';
+      }
     }
     const report = buildReport({ selection, changedLines, xmlByModule });
     const markdown = renderMarkdown(report);
