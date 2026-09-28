@@ -326,6 +326,86 @@ gains nothing extra. A body the validator reports valid still produces no detail
 This is what makes a schema rule published as `oneOf`, `anyOf`, or `not` branches — the strict
 one-spelling alias rule above among them — enforceable at the gate.
 
+**Pattern and bounded-format input is bounded.** A regular expression can take far longer to
+evaluate than its input is long, so the gate limits the client text that reaches one. It rejects a
+string value or object key longer than `jaxrs.validationPatternMaxChars` (default 4,096 UTF-16 code
+units) before any of these checks runs on it, with one schema-shape exception listed under "What the
+limits leave open" below:
+
+- a `pattern`, including one under `propertyNames`, which applies it to object keys;
+- the key expressions of a non-empty `patternProperties`, for every key of that object; and
+- the three bounded formats: `idn-hostname`, `idn-email`, and `regex`.
+
+The gate also adds up the lengths of the strings and keys reaching those checks across the whole
+request — every parameter and the body — and rejects the request once the total exceeds
+`jaxrs.validationPatternMaxTotalChars` (default 262,144). A string checked at two positions counts
+at each: two `pattern` schemas that both apply to it, or one schema carrying both a `pattern` and a
+bounded format. The total covers one request's parameter and body validation and starts at zero for
+every request.
+
+No other format is bounded or counted. The date, time, duration, email, hostname, IP-address, and
+UUID formats, the URI, URI-template, and JSON-pointer formats, and an application-defined format are
+checked exactly as the validator checks them without the limits. `iri` and `iri-reference` are not
+checked by the validator at all: any string passes them. A body of dates, timestamps, or identifiers
+with no `pattern` is therefore never rejected by the limits, however large it is. Only the
+`web-validation` strategy applies the limits; `openapi-contract` does not.
+
+Either rejection is a 400 `RestValidationException` carrying one `ValidationErrorDetail` for the
+rejected validation call:
+
+| Field | Per-string limit | Per-request limit |
+|---|---|---|
+| `path` | `""` for the body, else the parameter name | same |
+| `location` | `body`, `path`, `query`, `header`, `cookie`, or `form` | same |
+| `type` | `patternInputLength` | `patternInputTotalLength` |
+| `detail` | `exceeds the maximum length of <N> characters for pattern validation` | `exceeds the maximum total length of <N> characters for pattern validation` |
+| `args` | `{"maxChars": <N>}` | `{"maxTotalChars": <N>}` |
+
+`<N>` is the configured limit. The detail reads "pattern validation" for a bounded format too, and
+it never contains the value, the key, or the pattern. Validation of the request stops at the
+rejection in both `aggregate` and `failFast` modes: nothing after the rejected call is evaluated —
+no later parameter, no body after a rejected parameter, no `@FilePart` constraint, and no
+`FileContentVerifier`. In `aggregate` mode the details that earlier parameters already contributed
+stay in the response, ahead of the rejection's detail.
+
+The gate never modifies the schemas an `OperationSchemaSource` returns. It compiles a private copy
+of each body and parameter schema in which a length check precedes every pattern and bounded-format
+position, and every detail it reports refers to the original schema. For input within both limits,
+the verdict and the violations are exactly those of the schema without the limits. Both statements
+hold for every schema but the draft-7 shape listed under "What the limits leave open".
+
+Under the default limits, a request with longer input at these positions is rejected with 400 even
+when its schema accepts the values. An application that must accept such input raises
+`jaxrs.validationPatternMaxChars`, `jaxrs.validationPatternMaxTotalChars`, or both;
+`vertique-rest-core` validates both at startup, and its reference lists the failure messages.
+
+What the limits leave open:
+
+- With the default limits, one request can still spend about 5.7 seconds of validator time on
+  `idn-hostname` and `idn-email` values: 64 values of 4,096 characters fill the total, at about
+  89 ms each. Lower `jaxrs.validationPatternMaxTotalChars` where that matters.
+- A `patternProperties` object with P patterns matches each of its K keys against every pattern —
+  P × K matches — while each key counts once. The folded patterns the schema generator writes for a
+  case-insensitively bound type are anchored and linear, so that cost is harmless there; the cost of
+  an application-authored `patternProperties` is the application's responsibility.
+- A key of a case-insensitively bound body type (for example one annotated
+  `@JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)`) counts up to three
+  times toward the total — at the refusal of non-ASCII keys, at the folded `patternProperties`, and
+  at the refusal of reserved names — so a bulk payload of such objects can reach 262,144 counted
+  characters and be rejected. Raise `jaxrs.validationPatternMaxTotalChars` where that matters.
+- The limits bound the length of the input, not the cost of a pattern. An application-authored
+  pattern whose matching time is super-linear — quadratic or exponential backtracking — can still
+  be slow on input within the limits; an exponential one can take seconds on a few dozen
+  characters. Keeping its patterns linear is the application's responsibility.
+- An application-authored schema that uses the draft-7 container `dependencies` or `definitions`
+  with a member named like a JSON Schema keyword — `const`, `enum`, `default`, `examples`,
+  `example`, `properties`, `patternProperties`, `$defs`, or `dependentSchemas` — is not bounded at
+  that member: a pattern or bounded format inside it can run on input of any length. A
+  `dependencies` member named `patternProperties` also changes the verdict: an object validated
+  there that has a property named `allOf` fails the request with a 500. Schemas the
+  `vertique-json-schema` generator writes use `$defs` only; an application-authored schema stays
+  fully bounded when it uses `$defs` and `dependentSchemas` instead, or other member names.
+
 ---
 
 ## Extension Points
@@ -420,6 +500,8 @@ validation; unmapped declared types are accepted without I/O.
 |-----|---------|-------------|
 | `jaxrs.validationStrategy` | `"web-validation"` | ID of the `RequestValidationStrategy` to activate |
 | `jaxrs.validationMode` | `"aggregate"` | `"aggregate"` (collect all violations, default) or `"failFast"` (stop on first); any other value fails startup |
+| `jaxrs.validationPatternMaxChars` | `4096` | Most UTF-16 code units one string value or object key may have at a pattern or bounded-format check (see [WebValidationStrategy](#webvalidationstrategy)); a longer one is rejected with 400; at least `1`, else startup fails |
+| `jaxrs.validationPatternMaxTotalChars` | `262144` | Most UTF-16 code units the strings and keys at those checks may add up to in one request; a request over it is rejected with 400; at least `1` and no smaller than `jaxrs.validationPatternMaxChars`, else startup fails |
 | `http.maxBodySize` | `2097152` | Global ingress body limit; the only pre-validation upload-size limit |
 | `http.maxFormFields` | `256` | Pre-validation ingress limit on part count, shared across multipart file parts, multipart text parts, and URL-encoded attributes |
 | `http.uploadsDirectory` | `"file-uploads"` | Non-blank Vert.x multipart spool directory; temporary files are always deleted at request end |

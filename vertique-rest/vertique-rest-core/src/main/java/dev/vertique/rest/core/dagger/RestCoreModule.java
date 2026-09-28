@@ -256,6 +256,14 @@ public abstract class RestCoreModule {
      *       {@link JaxRsSecurityConfig}'s record component names.
      * </ul>
      *
+     * <p>Immediately after parsing, the two pattern-input limits of the {@code web-validation} gate
+     * are validated, so every composition that provides {@link JaxRsConfig} fails at startup on
+     * invalid limits, whichever validation strategy it selects: {@link
+     * JaxRsConfig#validationPatternMaxChars()} must be at least {@code 1}, and {@link
+     * JaxRsConfig#validationPatternMaxTotalChars()} must be at least {@code 1} and no smaller than the
+     * per-string limit. The per-string limit is checked first, and a failure names only the failing
+     * setting.
+     *
      * <p>After parsing, when {@link JaxRsSecurityConfig#requireExplicitPolicy()} resolves to
      * {@code true}, exactly one INFO line announces the opt-in; a missing section or a
      * {@code false} value logs nothing.
@@ -264,7 +272,9 @@ public abstract class RestCoreModule {
      * @param parser the injected config parser
      * @return the deserialized JAX-RS routing configuration
      * @throws ConfigurationException when the raw-key check rejects the {@code "jaxrs"} or
-     *     {@code "jaxrs.security"} shape
+     *     {@code "jaxrs.security"} shape; when {@code jaxrs.validationPatternMaxChars} is below
+     *     {@code 1}; or, otherwise, when {@code jaxrs.validationPatternMaxTotalChars} is below
+     *     {@code 1} or below {@code jaxrs.validationPatternMaxChars}
      */
     @Provides
     @Singleton
@@ -272,6 +282,7 @@ public abstract class RestCoreModule {
         JsonObject jaxrs = JsonConfigPaths.navigateObject(config, "jaxrs");
         checkSecurityKeys(jaxrs);
         JaxRsConfig result = parser.parse(jaxrs, JaxRsConfig.class);
+        checkPatternInputLimits(result);
         if (result.security().requireExplicitPolicy()) {
             log.info(REQUIRE_EXPLICIT_POLICY_ENABLED_MESSAGE);
         }
@@ -317,6 +328,27 @@ public abstract class RestCoreModule {
         }
         if (!unknown.isEmpty()) {
             throw new ConfigurationException("Unknown keys under 'jaxrs.security': " + quoteJoin(unknown));
+        }
+    }
+
+    /**
+     * Validates the {@code web-validation} gate's two pattern-input limits. Each message names the
+     * failing setting only and echoes no configured value.
+     *
+     * @param jaxRsConfig the parsed JAX-RS configuration
+     * @throws ConfigurationException when {@code jaxrs.validationPatternMaxChars} is below {@code 1};
+     *     otherwise, when {@code jaxrs.validationPatternMaxTotalChars} is below {@code 1} or below the
+     *     per-string limit
+     */
+    private static void checkPatternInputLimits(JaxRsConfig jaxRsConfig) {
+        int maxChars = jaxRsConfig.validationPatternMaxChars();
+        int maxTotalChars = jaxRsConfig.validationPatternMaxTotalChars();
+        if (maxChars < 1) {
+            throw new ConfigurationException("jaxrs.validationPatternMaxChars must be at least 1");
+        }
+        if (maxTotalChars < 1 || maxTotalChars < maxChars) {
+            throw new ConfigurationException("jaxrs.validationPatternMaxTotalChars must be at least 1 and no smaller"
+                    + " than the per-string pattern limit");
         }
     }
 

@@ -1175,6 +1175,8 @@ When `enabled` is `false` (the default) no CORS handler is installed and every o
 | `jaxrs.mediaTypeValidation` | `"WARN"` | `WARN`, `STRICT` (fails startup on the first mismatch), or `OFF` |
 | `jaxrs.validationStrategy` | `"web-validation"` | must match a registered strategy id — built-ins are `web-validation`, `none`, `openapi-contract`; an unknown id fails startup |
 | `jaxrs.validationMode` | `"aggregate"` | `aggregate` or `failFast` |
+| `jaxrs.validationPatternMaxChars` | `4096` | at least `1`, else startup fails; the most UTF-16 code units one string value or object key may have when it reaches a `pattern`, `patternProperties`, or pattern-bearing `propertyNames` position, or an `idn-hostname`, `idn-email`, or `regex` format, under the `web-validation` strategy — a longer one is rejected with 400 before that check runs |
+| `jaxrs.validationPatternMaxTotalChars` | `262144` | at least `1` and no smaller than `jaxrs.validationPatternMaxChars`, else startup fails; the most UTF-16 code units the strings and keys reaching those positions may add up to in one request — the request is rejected with 400 once the total exceeds it |
 | `jaxrs.autoEtag` | `false` | attach a weak ETag derived from the serialized body when none is set |
 | `jaxrs.jsonProfile` | *(none)* | must name a registered JSON mapper profile; resolution is method `@JsonProfile` → class `@JsonProfile` → this key → `json.jsonProfile` → the `vertique` floor |
 | `jaxrs.security.requireExplicitPolicy` | `false` | boolean; when `true`, every JAX-RS operation must declare an explicit security policy, else startup fails — details in the `vertique-rest-jaxrs` reference |
@@ -1192,6 +1194,16 @@ not read directly either, because neither source expands a dotted key into neste
 reaches the opt-in only through a `${...}` placeholder written at the nested `requireExplicitPolicy`
 position, resolved as described in the `vertique-config-core` reference's placeholder resolution
 chain. The INFO line above is the only confirmation that the opt-in resolved to `true`.
+
+`jaxrs.validationPatternMaxChars` and `jaxrs.validationPatternMaxTotalChars` guard
+regular-expression evaluation against denial of service, and their defaults reject input: a request
+whose strings or keys at those positions exceed either limit receives a 400 even when its schema
+would accept the values. An application that must accept longer input there raises the limits.
+Only positions carrying a `pattern`, `patternProperties`, or one of the three named formats count,
+so a body with none of them — dates, timestamps, or identifiers alone — is never rejected by these
+limits. Both values are validated where `RestCoreModule` provides the `jaxrs` configuration, so an
+invalid value fails startup whichever validation strategy is selected. The positions, the rejection
+details, and the formats left unbounded are described in the `vertique-rest-validation` reference.
 
 ### `jaxrs.defaultHeaders`
 
@@ -1278,6 +1290,7 @@ root of this module's wiring failures.
 |---|---|
 | `IllegalStateException` failing the start promise | one or more invalid mount paths, reported as a single aggregated message |
 | `RestConfigurationException` | invalid `ssl.clientAuth`, blank `http.uploadsDirectory`, an unsupported security declaration shape, an unknown `jaxrs.validationStrategy` |
+| `ConfigurationException` | an invalid pattern-input limit; the per-string limit is checked first, with the message `jaxrs.validationPatternMaxChars must be at least 1`, then the total, with `jaxrs.validationPatternMaxTotalChars must be at least 1 and no smaller than the per-string pattern limit`; neither message echoes a configured value |
 | `SecurityPolicyViolationException` | security-policy validation found violations; `violations()` lists each with its `operationId` and `ViolationType` |
 | `IllegalStateException` at component construction | two `ParamConverterBinding`s claim the same target type |
 | `RestContextUnavailableException` | a declared `@Context` parameter has no resolver; carries `type()`, `resourceClass()`, `methodName()` |
