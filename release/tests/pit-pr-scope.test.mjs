@@ -444,3 +444,69 @@ describe('pit-pr-scope.sh', () => {
     assert.match(result.stderr, /unrecognised argument: --nope/);
   });
 });
+
+// --- .github/workflows/mutation.yml ---
+
+/** `run:` step bodies of a workflow, split textually as PublicCiContractTest does. */
+function runStepBodies(yaml) {
+  const bodies = [];
+  const lines = yaml.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^(\s*)-?\s*run:\s*(\|[-+]?|>[-+]?)?\s*(.*)$/.exec(lines[i]);
+    if (!m) continue;
+    const [, indent, block, inline] = m;
+    if (!block) {
+      bodies.push(inline.trim());
+      continue;
+    }
+    const body = [];
+    for (let j = i + 1; j < lines.length; j++) {
+      if (lines[j].trim() === '') continue;
+      if (lines[j].match(/^\s*/)[0].length <= indent.length) break;
+      body.push(lines[j].trim());
+    }
+    bodies.push(body.join('\n'));
+  }
+  return bodies;
+}
+
+describe('MutationWorkflowContractTest', () => {
+  const WORKFLOW = path.join(REPO_ROOT, '.github', 'workflows', 'mutation.yml');
+  const workflow = () => readFileSync(WORKFLOW, 'utf8');
+
+  it('runsOnlyOnPullRequestsWithReadOnlyContentsAndNoSecrets', () => {
+    const yaml = workflow();
+    assert.match(yaml, /^on:\n  pull_request:\n    branches: \[main\]\n\n/m, 'mutation.yml must run on pull requests to main only');
+    assert.doesNotMatch(yaml, /^\s*(push|pull_request_target|workflow_run|schedule):/m, 'mutation.yml must run on nothing but pull_request');
+    const granted = [...yaml.matchAll(/^\s*(contents|packages|pull-requests|id-token|actions|checks|deployments|issues|statuses|security-events|attestations|pages):\s*(\S+)\s*$/gm)]
+      .map(([, scope, level]) => `${scope}: ${level}`);
+    assert.deepEqual(granted, ['contents: read'], 'mutation.yml may only read repository contents');
+    assert.deepEqual([...yaml.matchAll(/\$\{\{\s*secrets\./g)], [], 'mutation.yml must reference no secrets');
+  });
+
+  it('delegatesToTheLocallyRunnableEntryPoint', () => {
+    const bodies = runStepBodies(workflow());
+    assert.ok(bodies.includes('bash scripts/pit-pr-scope.sh --base HEAD^1'), 'mutation.yml must run the PR-scoped entry point against the merge commit\'s base parent');
+    const ENTRY_POINT = /^(\.\/mvnw|bash\s+\S+\.sh|node\s+(--test\s+)?\S+\.mjs|npm\s+\S+)\b/;
+    for (const body of bodies) {
+      for (const command of body.split('\n').filter(Boolean)) {
+        assert.match(command, ENTRY_POINT, `mutation.yml step embeds logic instead of calling an entry point: "${command}"`);
+      }
+      assert.doesNotMatch(body, /\b(if|for|while|case)\b\s|&&|\|\||;\s*\w|\$\{\{/, `mutation.yml step contains inline logic or an expression:\n${body}`);
+    }
+  });
+
+  it('boundsTheRunAndKeepsTheReports', () => {
+    const yaml = workflow();
+    const timeout = /^\s*timeout-minutes:\s*(\d+)\s*$/m.exec(yaml);
+    assert.ok(timeout && Number(timeout[1]) <= 30, 'mutation.yml must cap the job at 30 minutes or less');
+    assert.match(yaml, /fetch-depth: 2/, 'the merge commit and its base parent must be fetched');
+    assert.match(yaml, /persist-credentials: false/);
+    assert.match(yaml, /if: \$\{\{ always\(\) \}\}\n\s+uses: actions\/upload-artifact@\S+ # v[\d.]+\n\s+with:\n\s+name: mutation-reports\n\s+path: \|\n\s+target\/pit-pr\/\*\*\n\s+\*\*\/target\/pit-reports\/\*\*/);
+  });
+
+  it('staysOutOfTheRequiredCheck', () => {
+    const ci = readFileSync(path.join(REPO_ROOT, '.github', 'workflows', 'ci.yml'), 'utf8');
+    assert.doesNotMatch(ci, /pit-pr-scope|pitest|mutation/i, 'required CI must not run or depend on mutation testing');
+  });
+});

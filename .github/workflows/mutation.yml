@@ -1,0 +1,80 @@
+# SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+# SPDX-License-Identifier: EUPL-1.2
+#
+# Mutation testing (advisory) — the PR-scoped PIT pilot.
+#
+# Mutates only the production classes a pull request adds lines to in the pilot
+# modules and lists, in the job summary, the mutants on those lines that no
+# unit test detects. Deliberately NOT a required check and not part of ci.yml:
+# a slow or flaky advisory run must never touch the required result, and
+# undetected mutants never fail this job. A failed PIT run does, visibly.
+#
+# Read-only and secret-free like required CI. All logic lives in
+# scripts/pit-pr-scope.sh, which runs locally with the same semantics.
+# Mutants execute with real side effects; this ephemeral, non-root runner is
+# the sandbox that makes that acceptable.
+
+name: Mutation (advisory)
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A newer push to the same pull request supersedes the running analysis.
+concurrency:
+  group: mutation-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  mutation:
+    name: PR-scoped mutation testing
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 30
+    steps:
+      # pull_request checks out the merge commit; its first parent is the base
+      # it was merged onto, so HEAD^1..HEAD is exactly this PR's change in the
+      # code that PIT mutates. Depth 2 fetches both.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22"
+
+      # Restore-only: required CI owns saving the Maven cache. PIT's own
+      # artifacts are small and resolve from Maven Central when missing.
+      - id: pom-hash
+        run: bash scripts/compute-maven-cache-key.sh >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.m2/repository
+          key: maven-${{ runner.os }}-${{ steps.pom-hash.outputs.value }}-${{ github.run_id }}
+          restore-keys: |
+            maven-${{ runner.os }}-${{ steps.pom-hash.outputs.value }}-
+            maven-${{ runner.os }}-
+
+      - name: Mutate changed pilot classes
+        run: bash scripts/pit-pr-scope.sh --base HEAD^1
+
+      # Kept on failure too: the HTML report shows every mutant of the changed
+      # classes, not only those on added lines.
+      - name: Upload mutation reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mutation-reports
+          path: |
+            target/pit-pr/**
+            **/target/pit-reports/**
+          if-no-files-found: ignore
