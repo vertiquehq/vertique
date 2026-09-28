@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 
 import dev.vertique.context.DefaultContextHolder;
 import dev.vertique.core.context.ContextHolder;
@@ -16,8 +17,11 @@ import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.correlation.CorrelationContextMutator;
 import dev.vertique.rest.core.correlation.CorrelationIngressConfig;
 import dev.vertique.rest.core.correlation.CorrelationIngressMiddleware;
+import dev.vertique.rest.core.events.HttpRequestCompletedEvent;
+import dev.vertique.rest.core.events.HttpRequestCompletedListener;
 import dev.vertique.rest.core.events.RequestCompletionRecorder;
 import dev.vertique.rest.core.events.RestRequestCompletedEvent;
+import dev.vertique.rest.core.events.RestRequestCompletedListener;
 import dev.vertique.rest.core.events.RestRequestCompletionEmitter;
 import dev.vertique.rest.core.middleware.Middleware;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
@@ -52,6 +56,7 @@ import io.vertx.junit5.VertxExtension;
 import jakarta.annotation.Nullable;
 import java.lang.annotation.Annotation;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -69,6 +74,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.slf4j.Logger;
@@ -76,8 +82,8 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Proves, through a real {@link HttpVerticle}, that a request which authenticates only after a
- * reroute emits a completion event carrying the security and correlation snapshots of the pass
- * that authenticated (FR-003, AC-003.1; Codex CX-F-007).
+ * reroute emits exactly one completion event carrying the security and correlation snapshots of the
+ * pass that authenticated (FR-003, AC-003.1; Codex CX-F-007).
  *
  * <p>A reroute re-runs every ROOT middleware on the same request. {@link RequestContextLifecycle}
  * must therefore keep one handle per request across the reroute and register no second cleanup:
@@ -91,8 +97,11 @@ import org.slf4j.LoggerFactory;
  * credential scheme, and reroutes to the case's target, which authenticates {@value #SUBJECT}. So
  * authentication happens only on the second pass, and each pass generates its own request id. The
  * one event must carry {@value #SUBJECT} and the second pass's request id, which is also the id the
- * response echoes (security review SEC-I4). Its route identity is the target operation's, or
- * {@code null} when the target matches no operation route.
+ * response echoes (security review SEC-I4). A reroute clears the claim {@code /start}'s operation
+ * route made, so the reroute target's claim selects the event's type: a
+ * {@link RestRequestCompletedEvent} whose {@code operation()} is the target's descriptor instance
+ * when the target is an operation route, and an {@link HttpRequestCompletedEvent} when the target
+ * matches no operation route and no transport claims the request.
  *
  * <p><strong>The server.</strong> Every test invocation deploys a fresh {@link HttpVerticle}, built
  * with its public five-argument constructor and bound to {@code 127.0.0.1} on port 0. The port is
@@ -100,7 +109,8 @@ import org.slf4j.LoggerFactory;
  * does. One {@link HolderBackedSecurityRuntime} and one {@link DefaultContextHolder} are shared by
  * the emitter, the correlation middleware, the identity middleware and the probes. The ROOT
  * middlewares, in {@link HttpVerticle}'s order, are the real {@link RequestContextLifecycle}, a
- * real {@link RestRequestCompletionEmitter} whose listener appends to {@link #EVENTS}, the real
+ * real {@link RestRequestCompletionEmitter} whose REST listener appends to {@link #REST_EVENTS} and
+ * whose HTTP listener appends to {@link #HTTP_EVENTS}, the real
  * {@link CorrelationIngressMiddleware} with its default configuration, the
  * {@link CorrelationProbe} and the {@link FirstPassBarrier}. The one mount is {@link RerouteMount}
  * at {@value #MOUNT_PATH}. Its routes run the real {@link IdentityResolutionMiddleware}, which
@@ -178,8 +188,11 @@ public class RerouteCompletionSnapshotIT {
 
     // --- Recorded state: filled by the fixtures, reset after every test ---
 
-    /** Every completion event the emitter's listener received, in emission order. */
-    private static final List<RestRequestCompletedEvent> EVENTS = new CopyOnWriteArrayList<>();
+    /** Every {@link RestRequestCompletedEvent} the emitter's REST listener received, in emission order. */
+    private static final List<RestRequestCompletedEvent> REST_EVENTS = new CopyOnWriteArrayList<>();
+
+    /** Every {@link HttpRequestCompletedEvent} the emitter's HTTP listener received, in emission order. */
+    private static final List<HttpRequestCompletedEvent> HTTP_EVENTS = new CopyOnWriteArrayList<>();
 
     /** Per-case barriers, handed out once by {@link FirstPassBarrier}. */
     private static final Map<String, CompletableFuture<Void>> BARRIERS = new ConcurrentHashMap<>();
@@ -247,8 +260,9 @@ public class RerouteCompletionSnapshotIT {
     }
 
     /**
-     * Undeploys the verticle, clears {@code http.port}, and resets the captured events, the
-     * barriers and both probes' observations. The resets run even when the undeploy fails.
+     * Undeploys the verticle, clears {@code http.port}, and resets the captured events of both
+     * types, the barriers and both probes' observations. The resets run even when the undeploy
+     * fails.
      *
      * @throws Exception if the undeploy does not complete within the async bound
      */
@@ -261,7 +275,8 @@ public class RerouteCompletionSnapshotIT {
             }
         } finally {
             clearPublishedPort();
-            EVENTS.clear();
+            REST_EVENTS.clear();
+            HTTP_EVENTS.clear();
             BARRIERS.clear();
             CORRELATION_PASSES.clear();
             SECURITY_PASSES.clear();
@@ -272,7 +287,7 @@ public class RerouteCompletionSnapshotIT {
 
     /**
      * TP-017's named cases. Both reroute to a route that authenticates {@value #SUBJECT}; they
-     * differ only in whether that route is an operation route.
+     * differ only in whether that route is an operation route, and so in the type of the one event.
      *
      * @return the two cases, in the contract's order
      */
@@ -284,9 +299,12 @@ public class RerouteCompletionSnapshotIT {
 
     /**
      * TP-017 (FR-003, AC-003.1; Codex CX-F-007; security review SEC-I4): a request that
-     * authenticates only on the pass after a reroute emits one event carrying that pass's security
-     * snapshot and request id, the request id the response echoes, and the target's route
-     * identity.
+     * authenticates only on the pass after a reroute emits exactly one event carrying that pass's
+     * security snapshot and request id, the request id the response echoes. For an operation target
+     * the event is a {@link RestRequestCompletedEvent} whose {@code operation()} is the target's
+     * descriptor instance, and no {@link HttpRequestCompletedEvent} is emitted; for a target that
+     * matches no operation route it is an {@link HttpRequestCompletedEvent}, and no
+     * {@link RestRequestCompletedEvent} is emitted.
      *
      * @param rerouteCase the case under test
      * @throws Exception if an asynchronous step does not complete within the async bound
@@ -352,83 +370,101 @@ public class RerouteCompletionSnapshotIT {
                 secondRequestId,
                 "precondition: each pass must bind its own generated request id, so the passes are distinguishable");
 
-        // --- Exactly one event for the request ---
-        List<RestRequestCompletedEvent> events = List.copyOf(EVENTS);
-        assertEquals(
-                1,
-                events.size(),
-                () -> "case " + rerouteCase + ": exactly one completion event must be emitted for the request, but was "
-                        + events);
-        RestRequestCompletedEvent event = events.get(0);
+        // --- Exactly one event for the request, of the type the reroute target's claim selects ---
+        RestOperationDescriptor expectedOperation = rerouteCase.expectedOperation();
+        boolean operationTarget = expectedOperation != null;
+        List<RestRequestCompletedEvent> restEvents = List.copyOf(REST_EVENTS);
+        List<HttpRequestCompletedEvent> httpEvents = List.copyOf(HTTP_EVENTS);
+        assertAll(
+                "case " + rerouteCase + ": exactly one completion event must be emitted for the request, "
+                        + (operationTarget
+                                ? "a REST event, because the reroute target is an operation route"
+                                : "an HTTP event, because the reroute cleared /start's claim and the target "
+                                        + "matches no operation route"),
+                () -> assertEquals(operationTarget ? 1 : 0, restEvents.size(), () -> "REST events: " + restEvents),
+                () -> assertEquals(operationTarget ? 0 : 1, httpEvents.size(), () -> "HTTP events: " + httpEvents));
 
-        SecurityContextSnapshot security = event.securityContextSnapshot();
-        CorrelationContextSnapshot correlation = event.correlationContext();
+        String eventType;
+        SecurityContextSnapshot security;
+        CorrelationContextSnapshot correlation;
+        RestOperationDescriptor eventOperation;
+        if (operationTarget) {
+            RestRequestCompletedEvent event = restEvents.get(0);
+            eventType = RestRequestCompletedEvent.class.getSimpleName();
+            security = event.securityContextSnapshot();
+            correlation = event.correlationContext();
+            eventOperation = event.operation();
+        } else {
+            HttpRequestCompletedEvent event = httpEvents.get(0);
+            eventType = HttpRequestCompletedEvent.class.getSimpleName();
+            security = event.securityContextSnapshot();
+            correlation = event.correlationContext();
+            eventOperation = null;
+        }
         String echoedRequestId = response.getHeader(CORRELATION_CONFIG.requestIdHeader());
-        RestOperationDescriptor expected = rerouteCase.expectedOperation();
-        String expectedOperationId = expected != null ? expected.operationId() : null;
-        String expectedRouteTemplate = expected != null ? expected.routeTemplate() : null;
         LOG.info(
-                "case {}: pass 1 requestId={}, pass 2 requestId={}; event actor={}, event requestId={}, "
-                        + "echoed {}={}, event operationId={} routeTemplate={}",
+                "case {}: pass 1 requestId={}, pass 2 requestId={}; event {} actor={}, requestId={}, "
+                        + "echoed {}={}, operation={}",
                 caseName,
                 firstRequestId,
                 secondRequestId,
+                eventType,
                 security != null ? security.identity().actor() : null,
                 correlation != null ? correlation.requestId().value() : null,
                 CORRELATION_CONFIG.requestIdHeader(),
                 echoedRequestId,
-                event.operationId(),
-                event.routeTemplate());
+                eventOperation != null ? eventOperation.operationId() + " " + eventOperation.routeTemplate() : null);
 
-        // --- Then: the event carries the second pass's snapshots and the target's identity ---
-        assertAll(
-                "case " + rerouteCase + ": the completion event",
-                () -> {
-                    assertNotNull(security, "securityContextSnapshot() must be present");
-                    assertEquals(
-                            SUBJECT,
-                            security.identity().actor().id(),
-                            () -> "securityContextSnapshot() must be pass 2's authenticated actor, not pass 1's "
-                                    + firstActor + "; was "
-                                    + security.identity().actor());
-                },
-                () -> {
-                    assertNotNull(correlation, "correlationContext() must be present");
-                    assertEquals(
-                            secondRequestId,
-                            correlation.requestId().value(),
-                            () -> "correlationContext().requestId() must be pass 2's request id, not pass 1's "
-                                    + firstRequestId);
-                },
-                () -> assertEquals(
-                        secondRequestId,
-                        echoedRequestId,
-                        () -> "the echoed " + CORRELATION_CONFIG.requestIdHeader()
-                                + " response header must be pass 2's request id, not pass 1's " + firstRequestId),
-                () -> assertEquals(
-                        expectedOperationId,
-                        event.operationId(),
-                        "operationId() must be the reroute target's, or null when it matched no operation route"),
-                () -> assertEquals(
-                        expectedRouteTemplate,
-                        event.routeTemplate(),
-                        "routeTemplate() must be the reroute target's, or null when it matched no operation route"));
+        // --- Then: the event carries the second pass's snapshots and, for an operation target, its operation ---
+        List<Executable> eventChecks = new ArrayList<>();
+        eventChecks.add(() -> {
+            assertNotNull(security, "securityContextSnapshot() must be present");
+            assertEquals(
+                    SUBJECT,
+                    security.identity().actor().id(),
+                    () -> "securityContextSnapshot() must be pass 2's authenticated actor, not pass 1's " + firstActor
+                            + "; was " + security.identity().actor());
+        });
+        eventChecks.add(() -> {
+            assertNotNull(correlation, "correlationContext() must be present");
+            assertEquals(
+                    secondRequestId,
+                    correlation.requestId().value(),
+                    () -> "correlationContext().requestId() must be pass 2's request id, not pass 1's "
+                            + firstRequestId);
+        });
+        eventChecks.add(() -> assertEquals(
+                secondRequestId,
+                echoedRequestId,
+                () -> "the echoed " + CORRELATION_CONFIG.requestIdHeader()
+                        + " response header must be pass 2's request id, not pass 1's " + firstRequestId));
+        if (operationTarget) {
+            eventChecks.add(() -> assertSame(
+                    expectedOperation,
+                    eventOperation,
+                    "operation() must be the reroute target's descriptor instance, the one its identity handler "
+                            + "recorded"));
+        }
+        assertAll("case " + rerouteCase + ": the " + eventType, eventChecks);
     }
 
     // --- Helpers ---
 
     /**
-     * The ROOT middlewares: the lifecycle, the emitter recording into {@link #EVENTS}, the real
-     * correlation middleware, the correlation probe and the barrier. {@link HttpVerticle} orders
-     * them by phase, then priority.
+     * The ROOT middlewares: the lifecycle, the emitter recording REST events into
+     * {@link #REST_EVENTS} and HTTP events into {@link #HTTP_EVENTS} (no capture coordinators, no
+     * completion scopes), the real correlation middleware, the correlation probe and the barrier.
+     * {@link HttpVerticle} orders them by phase, then priority.
      *
      * @param runtime the shared security runtime the emitter reads
      * @param holder  the shared context holder
      * @return the ROOT middleware set
      */
     private static Set<Middleware> rootMiddlewares(SecurityRuntime runtime, ContextHolder holder) {
-        RestRequestCompletionEmitter emitter =
-                new RestRequestCompletionEmitter(Optional.of(runtime), holder, Set.of(EVENTS::add));
+        RestRequestCompletedListener restListener = REST_EVENTS::add;
+        HttpRequestCompletedListener httpListener = HTTP_EVENTS::add;
+        RestRequestCompletionEmitter emitter = new RestRequestCompletionEmitter(
+                Optional.of(runtime), holder, Set.of(restListener), Set.of(httpListener), Set.of(), Set.of());
         return Set.of(
                 new RequestContextLifecycle(),
                 emitter,
@@ -516,8 +552,10 @@ public class RerouteCompletionSnapshotIT {
      * @param name              the case name, also sent as {@value #CASE_HEADER}
      * @param target            the absolute path {@code /api/start} reroutes to, sent as
      *                          {@value #REROUTE_HEADER}
-     * @param expectedOperation the operation whose identity the event must carry, or {@code null}
-     *                          when the target matches no operation route
+     * @param expectedOperation the descriptor instance the one {@link RestRequestCompletedEvent}'s
+     *                          {@code operation()} must be, or {@code null} when the target matches
+     *                          no operation route, so the one event must be an
+     *                          {@link HttpRequestCompletedEvent}
      */
     record RerouteCase(String name, String target, @Nullable RestOperationDescriptor expectedOperation) {
 

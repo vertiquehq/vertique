@@ -25,6 +25,7 @@ import dev.vertique.rest.core.convert.ParamConversionResolver;
 import dev.vertique.rest.core.convert.ParamConverterBinding;
 import dev.vertique.rest.core.convert.ParamConverterRegistry;
 import dev.vertique.rest.core.correlation.CorrelationIngressModule;
+import dev.vertique.rest.core.events.HttpRequestCompletedListener;
 import dev.vertique.rest.core.events.RequestCompletionScope;
 import dev.vertique.rest.core.events.RestRequestCompletedListener;
 import dev.vertique.rest.core.events.RestRequestCompletionEmitter;
@@ -136,6 +137,9 @@ public abstract class RestCoreModule {
 
     @Multibinds
     abstract Set<RestRequestCompletedListener> restRequestCompletedListeners();
+
+    @Multibinds
+    abstract Set<HttpRequestCompletedListener> httpRequestCompletedListeners();
 
     @Multibinds
     abstract Set<RestServerRequestEvidenceCapturer> restServerRequestEvidenceCapturers();
@@ -464,9 +468,14 @@ public abstract class RestCoreModule {
     }
 
     /**
-     * Provides {@link RestRequestCompletionEmitter} (ROOT, order={@link RequestContextLifecycle#ORDER}+5).
-     * Emits exactly one {@link dev.vertique.rest.core.events.RestRequestCompletedEvent} per handled
-     * request, covering all success and failure paths.
+     * Provides {@link RestRequestCompletionEmitter} (ROOT, phase {@code SYSTEM_FIRST},
+     * order={@link RequestContextLifecycle#ORDER}+5), which runs right after
+     * {@link RequestContextLifecycle} and ahead of every application-phase ROOT middleware. It emits
+     * exactly one completion event for each request that completes through the response lifecycle,
+     * covering all success and failure paths, owned by the transport that claimed the request: a
+     * {@link dev.vertique.rest.core.events.RestRequestCompletedEvent} when a JAX-RS operation route
+     * claimed it, a {@link dev.vertique.rest.core.events.HttpRequestCompletedEvent} when no transport
+     * claimed it, and none when another transport claimed it.
      *
      * @param emitter the singleton emitter middleware
      * @return the emitter contributed to the middleware set

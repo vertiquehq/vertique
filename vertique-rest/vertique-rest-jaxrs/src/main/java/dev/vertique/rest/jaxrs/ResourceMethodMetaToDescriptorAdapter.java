@@ -204,6 +204,12 @@ final class ResourceMethodMetaToDescriptorAdapter {
      * {@link JaxRsOperationDescriptor} backed by a {@link ResourceMethodMeta} plus the pre-resolved
      * operationId, parameters, file parts, body, and effective security requirement sets.
      *
+     * <p>The meta carries the application's resource instance, so {@link #toString()},
+     * {@link #equals(Object)} and {@link #hashCode()} override the record defaults and never reach
+     * it: the descriptor renders compactly from its identity strings and compares and hashes by
+     * identity. Logging, comparing or hashing a descriptor, or a completion event carrying it,
+     * therefore never calls into application code.
+     *
      * @param meta                    the backing resource-method metadata
      * @param operationId             the resolved operationId
      * @param parameters              the projected parameter descriptors
@@ -280,6 +286,40 @@ final class ResourceMethodMetaToDescriptorAdapter {
         @Override
         public Optional<BodyDescriptor> body() {
             return body;
+        }
+
+        /**
+         * Returns the compact {@code <httpMethod> <routeTemplate> (<operationId>)} rendering, for
+         * example {@code GET /users/{id} (getUser)}. It reads only the identity strings, never the
+         * resource instance, and is not a parse format.
+         *
+         * @return the compact rendering of this descriptor
+         */
+        @Override
+        public String toString() {
+            return httpMethod() + " " + routeTemplate() + " (" + operationId() + ")";
+        }
+
+        /**
+         * Compares by identity: a descriptor equals only itself, and never reaches the resource
+         * instance.
+         *
+         * @param o the object to compare with
+         * @return {@code true} only when {@code o} is this descriptor
+         */
+        @Override
+        public boolean equals(Object o) {
+            return this == o;
+        }
+
+        /**
+         * Returns the identity hash code, consistent with the identity {@link #equals(Object)}.
+         *
+         * @return {@code System.identityHashCode(this)}
+         */
+        @Override
+        public int hashCode() {
+            return System.identityHashCode(this);
         }
     }
 }

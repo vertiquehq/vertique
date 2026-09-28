@@ -14,8 +14,9 @@ Test-support module that lets a test graph assemble a production-faithful `JaxRs
 outside `dev.vertique.rest.jaxrs`. It ships a Dagger module, `RestTestFixtureModule`, that includes
 the framework's real REST wiring and unions a consumer's additional test-only collaborators into the
 same multibindings production uses; `RestTestNoSecurityModule`, the opt-in null security stand-in for
-graphs with no security wiring; and `RestTestMounts`, a pure Vert.x helper for turning a graph-built
-`RestTestMount` into a router or a running HTTP server.
+graphs with no security wiring; `RestTestMounts`, a pure Vert.x helper for turning a graph-built
+`RestTestMount` into a router or a running HTTP server; and `TestOperationDescriptors`, which builds
+identity-only `RestOperationDescriptor`s for unit tests of completion listeners.
 
 It is not a substitute for `HttpVerticle`. A fixture server is one JAX-RS mount with both of its
 production middleware pipelines — not the whole verticle.
@@ -178,6 +179,31 @@ RestTestContributions contributions = RestTestContributions.builder()
         .build();
 ```
 
+### TestOperationDescriptors
+
+Builds a `RestOperationDescriptor` for unit tests of completion listeners and other descriptor
+consumers, for example to build a `RestRequestCompletedEvent` in a listener test without a router.
+
+`of(httpMethod, routeTemplate, operationId)` returns a descriptor that carries only that identity.
+Its `consumes`, `produces`, `securityRequirementSets`, `methodAnnotations`, and `classAnnotations`
+are empty, its `securityPolicy()` is `SecurityPolicy.None` (no security annotations), and
+`findAnnotation` returns `Optional.empty()`. Each argument is required: a `null` one throws
+`NullPointerException`.
+
+It returns a new descriptor per call; like framework descriptors, compare by identity, never by
+value. The descriptor does not override `equals` or `hashCode`, so two calls with the same arguments
+return descriptors that are not equal. Its `toString` is compact, for example
+`GET /users/{id} (getUser)`, and is not a parse format.
+
+```java
+RestOperationDescriptor operation = TestOperationDescriptors.of("GET", "/users/{id}", "getUser");
+RestRequestCompletedEvent event = new RestRequestCompletedEvent(
+        start, end, "GET", "/users/7", operation, 200,
+        null, null, null, null, null, Optional.empty(), Map.of());
+
+listener.onCompleted(event);
+```
+
 ---
 
 ## Extension Points
@@ -223,7 +249,8 @@ Dagger module in the component instead, so the graph never carries two strategie
 - `dev.vertique:vertique-rest-jaxrs` — the real `JaxRsRouterMount.Factory` and `RestModule` the
   fixture graph resolves.
 - `dev.vertique:vertique-rest-core` — `Middleware`, `MiddlewareScope`, the ROOT middleware set, and
-  the REST config types.
+  the REST config types, plus `RestOperationDescriptor` and `SecurityPolicy`, which
+  `TestOperationDescriptors` builds on.
 - `dev.vertique:vertique-config-core` — `ConfigParsingModule`, so config-derived collaborators are
   parsed the production way.
 - `com.google.dagger:dagger` — the module and multibinding annotations the fixture is built from.

@@ -9,8 +9,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.context.DefaultContextHolder;
 import dev.vertique.micrometer.rest.RestServerRequestMetricsListener;
+import dev.vertique.rest.core.events.RequestCompletionRecorder;
 import dev.vertique.rest.core.events.RestRequestCompletionEmitter;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
+import dev.vertique.rest.core.routing.RestOperationDescriptor;
+import dev.vertique.rest.core.routing.SecurityRequirementSet;
+import dev.vertique.rest.core.security.SecurityPolicy;
 import io.micrometer.core.instrument.Clock;
 import io.micrometer.prometheusmetrics.PrometheusConfig;
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
@@ -40,6 +44,7 @@ import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import io.vertx.tracing.opentelemetry.OpenTelemetryOptions;
 import io.vertx.tracing.opentelemetry.OpenTelemetryTracingFactory;
+import java.lang.annotation.Annotation;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -81,6 +86,12 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *         <li>{@link RestServerRequestMetricsListener} as the sole listener</li>
  *         <li>{@link ServerSpanCompletionScope} as the completion scope</li>
  *       </ul></li>
+ *   <li>A route whose first handler is the operation's identity handler
+ *       ({@link RequestCompletionRecorder#operationRouteHandler}), as on every JAX-RS operation
+ *       route, so the request is claimed and the emitter dispatches a
+ *       {@code RestRequestCompletedEvent} to the metrics listener; a request no operation route
+ *       claims yields an {@code HttpRequestCompletedEvent} instead, which that listener never
+ *       receives</li>
  *   <li>A route handler that captures {@link Span#current()} (the active server span) and
  *       stashes it on the routing context under {@link RestSpanKeys#SPAN_KEY}, mirroring
  *       what {@link ServerSpanEnrichmentContributor} does in the production wiring</li>
@@ -112,6 +123,12 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class RestServerExemplarIT {
+
+    /** Test-local descriptor for {@code GET /exemplar}, operation {@code exemplar}. */
+    private static final RestOperationDescriptor EXEMPLAR_OPERATION = new TestOperation("exemplar", "GET", "/exemplar");
+
+    /** Test-local descriptor for {@code GET /negative}, operation {@code negative}. */
+    private static final RestOperationDescriptor NEGATIVE_OPERATION = new TestOperation("negative", "GET", "/negative");
 
     // --- Shared per-test state ---
 
@@ -270,15 +287,18 @@ public class RestServerExemplarIT {
         router.route().order(RequestContextLifecycle.ORDER).handler(new RequestContextLifecycle());
         router.route().order(emitter.priority()).handler(emitter);
 
-        // Route handler: stash the current server span on the RC (mirrors ServerSpanEnrichmentContributor)
-        router.get("/exemplar").handler(rc -> {
-            Span serverSpan = Span.current();
-            if (serverSpan.getSpanContext().isValid()) {
-                rc.put(RestSpanKeys.SPAN_KEY, serverSpan);
-                capturedTraceId.set(serverSpan.getSpanContext().getTraceId());
-            }
-            rc.response().setStatusCode(200).end("ok");
-        });
+        // The operation's identity handler first, so the request is claimed and the listener records it;
+        // then stash the current server span on the RC (mirrors ServerSpanEnrichmentContributor)
+        router.get("/exemplar")
+                .handler(RequestCompletionRecorder.operationRouteHandler(EXEMPLAR_OPERATION))
+                .handler(rc -> {
+                    Span serverSpan = Span.current();
+                    if (serverSpan.getSpanContext().isValid()) {
+                        rc.put(RestSpanKeys.SPAN_KEY, serverSpan);
+                        capturedTraceId.set(serverSpan.getSpanContext().getTraceId());
+                    }
+                    rc.response().setStatusCode(200).end("ok");
+                });
 
         vertx.createHttpServer()
                 .requestHandler(router)
@@ -361,13 +381,16 @@ public class RestServerExemplarIT {
         router.route().order(RequestContextLifecycle.ORDER).handler(new RequestContextLifecycle());
         router.route().order(emitter.priority()).handler(emitter);
 
-        router.get("/negative").handler(rc -> {
-            Span serverSpan = Span.current();
-            if (serverSpan.getSpanContext().isValid()) {
-                rc.put(RestSpanKeys.SPAN_KEY, serverSpan);
-            }
-            rc.response().setStatusCode(200).end("ok");
-        });
+        // The operation's identity handler first, so the request is claimed and the listener records it
+        router.get("/negative")
+                .handler(RequestCompletionRecorder.operationRouteHandler(NEGATIVE_OPERATION))
+                .handler(rc -> {
+                    Span serverSpan = Span.current();
+                    if (serverSpan.getSpanContext().isValid()) {
+                        rc.put(RestSpanKeys.SPAN_KEY, serverSpan);
+                    }
+                    rc.response().setStatusCode(200).end("ok");
+                });
 
         vertx.createHttpServer()
                 .requestHandler(router)
@@ -392,5 +415,55 @@ public class RestServerExemplarIT {
                     });
                     ctx.completeNow();
                 }));
+    }
+
+    // --- Test doubles ---
+
+    /**
+     * Test-local {@link RestOperationDescriptor} for an application route. Only the identity fields
+     * carry values: no route here is secured or negotiates content, so the security policy is
+     * {@link SecurityPolicy.None} and every collection is empty.
+     *
+     * @param operationId   the operation identifier
+     * @param httpMethod    the HTTP method
+     * @param routeTemplate the route template
+     */
+    private record TestOperation(String operationId, String httpMethod, String routeTemplate)
+            implements RestOperationDescriptor {
+
+        @Override
+        public List<String> consumes() {
+            return List.of();
+        }
+
+        @Override
+        public List<String> produces() {
+            return List.of();
+        }
+
+        @Override
+        public SecurityPolicy securityPolicy() {
+            return new SecurityPolicy.None();
+        }
+
+        @Override
+        public List<SecurityRequirementSet> securityRequirementSets() {
+            return List.of();
+        }
+
+        @Override
+        public List<Annotation> methodAnnotations() {
+            return List.of();
+        }
+
+        @Override
+        public List<Annotation> classAnnotations() {
+            return List.of();
+        }
+
+        @Override
+        public <A extends Annotation> Optional<A> findAnnotation(Class<A> type) {
+            return Optional.empty();
+        }
     }
 }

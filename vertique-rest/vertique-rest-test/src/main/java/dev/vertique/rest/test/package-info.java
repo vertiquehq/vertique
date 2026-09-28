@@ -5,7 +5,7 @@
  * Test-support fixture for assembling a production-faithful {@link
  * dev.vertique.rest.jaxrs.JaxRsRouterMount} from outside {@code dev.vertique.rest.jaxrs}.
  *
- * <p>This package ships five public types. {@code RestTestFixtureModule} is a Dagger {@code @Module}
+ * <p>This package ships six public types. {@code RestTestFixtureModule} is a Dagger {@code @Module}
  * that includes the real {@link dev.vertique.rest.jaxrs.RestModule} and {@code ConfigParsingModule},
  * and unions a consumer's additional test-only middlewares, request interceptors, response body
  * encoders, exception mappers, JSON mapper profiles, and file-content verifiers into the same
@@ -17,7 +17,9 @@
  * {@code @BindsInstance}. {@code RestTestMount} is the opaque handle the graph produces, carrying the
  * mount factory together with the graph's complete middleware set. {@code RestTestMounts} is a pure
  * Vert.x helper — no Dagger, no JUnit — that turns that handle into a mounted {@code Router} or a
- * running {@code HttpServer} for HTTP-level assertions.
+ * running {@code HttpServer} for HTTP-level assertions. {@code TestOperationDescriptors} builds
+ * identity-only {@code RestOperationDescriptor}s for unit tests of completion listeners and other
+ * descriptor consumers; like framework-built descriptors, they compare by identity, never by value.
  *
  * <p>A consumer never calls the 29-argument {@link dev.vertique.rest.jaxrs.JaxRsRouterMount.Factory}
  * constructor directly and never sorts encoder or decoder lists itself: Dagger builds the graph, so

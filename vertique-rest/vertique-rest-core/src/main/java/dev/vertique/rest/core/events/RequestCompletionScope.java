@@ -7,7 +7,9 @@ import io.vertx.ext.web.RoutingContext;
 
 /**
  * SPI for establishing an ambient scope around the synchronous completion-listener dispatch loop
- * in {@link RestRequestCompletionEmitter}.
+ * in {@link RestRequestCompletionEmitter}, for either event type it dispatches: a
+ * {@link RestRequestCompletedEvent} to the {@link RestRequestCompletedListener}s, or an
+ * {@link HttpRequestCompletedEvent} to the {@link HttpRequestCompletedListener}s.
  *
  * <p>Integrations implement this interface to re-establish a thread- or context-local at
  * completion time — for example, re-making the request's traced span current so that
@@ -19,6 +21,10 @@ import io.vertx.ext.web.RoutingContext;
  * opened in iteration order before listener dispatch and closed in reverse order after. When
  * no implementation is bound the set is empty and the emitter's behavior is identical to the
  * pre-SPI baseline (no bracket overhead).
+ *
+ * <p><strong>Bracketed dispatch.</strong> The scopes bracket the dispatch of either event type.
+ * A request another transport claimed gets no rest-core completion event, so the emitter
+ * dispatches nothing for it and opens no scope.
  *
  * <p><strong>Contract.</strong>
  * <ul>

@@ -7,17 +7,22 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertThrowsExactly;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.context.DefaultContextHolder;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.correlation.CorrelationContext;
@@ -29,8 +34,6 @@ import dev.vertique.core.correlation.TraceReference;
 import dev.vertique.rest.core.capture.RestRequestCaptureCoordinator;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.routing.RestOperationDescriptor;
-import dev.vertique.rest.core.routing.SecurityRequirementSet;
-import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.security.AuthenticationState;
 import dev.vertique.security.DefaultAuthMethod;
@@ -39,6 +42,7 @@ import dev.vertique.security.PrincipalType;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityContextSnapshot;
 import dev.vertique.security.SecurityIdentity;
+import dev.vertique.security.origin.RequestOrigin;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
@@ -57,11 +61,13 @@ import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
-import java.lang.annotation.Annotation;
+import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -78,6 +84,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -85,24 +92,41 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.slf4j.LoggerFactory;
 
 /**
  * Component tests for {@link RestRequestCompletionEmitter}.
  *
  * <p>Verifies:
  * <ul>
+ *   <li>Claim dispatch: a request an operation route claimed publishes exactly one
+ *       {@link RestRequestCompletedEvent}, carrying that route's operation, to the REST listeners and
+ *       then the capture coordinators; a request no transport claimed publishes exactly one
+ *       {@link HttpRequestCompletedEvent} to the HTTP listeners; a request another transport claimed
+ *       publishes nothing, and the emitter logs one DEBUG line for it, without the request path.</li>
  *   <li>Exactly one event emitted per successful request with correct method/path/status.</li>
  *   <li>Exactly one event emitted on mapped 500 failure; {@code failureCode} equals the exception's
  *       simple class name; {@code safeFailureMessage} is {@code null} and the raw exception message
- *       does not appear anywhere in the event.</li>
- *   <li>Exactly one event emitted for a 4xx request that matched no operation route, with
- *       {@code operationId} null because the framework recorded no route identity.</li>
+ *       does not appear anywhere in the event. An {@link HttpRequestCompletedEvent} carries the same
+ *       transport facts under the same rules.</li>
+ *   <li>Exactly one {@link HttpRequestCompletedEvent}, and no {@link RestRequestCompletedEvent}, for a
+ *       4xx request that matched no operation route, because no transport claimed it.</li>
  *   <li>Idempotency: the emitter's exactly-once guard collapses a doubly-mounted emitter handler to
  *       exactly one event.</li>
- *   <li>A throwing listener does not prevent other listeners from receiving the event.</li>
+ *   <li>A throwing listener, REST or HTTP, does not prevent other listeners from receiving the
+ *       event.</li>
  *   <li>No listeners: emitter completes silently without error.</li>
  *   <li>{@link SecurityContext} and {@link CorrelationContext} are captured when bound.</li>
+ *   <li>Completion scopes bracket the dispatch of either event type, and none opens for a request
+ *       another transport claimed.</li>
  * </ul>
+ *
+ * <p>The {@code /test} route of the shared router helper starts with
+ * {@link RequestCompletionRecorder#operationRouteHandler} for {@link #STUB}, as the JAX-RS route
+ * registrar installs it on every operation route, so the suites that observe
+ * {@link RestRequestCompletedEvent}s run on a request an operation route claimed. The unclaimed
+ * variant of that router, and the three-route router of the claim-dispatch proofs, cover the other
+ * claims.
  *
  * <p>A single {@link WebClient} is shared across all test methods via {@code @BeforeAll} to
  * avoid netty channel-pool churn under full-reactor load. Each test still creates its own
@@ -178,6 +202,21 @@ class RestRequestCompletionEmitterTest {
     // --- Helpers ---
 
     /**
+     * The operation claimed by the shared router's {@code /test} route and by the claim-dispatch
+     * proofs' {@code /rest} route. Its fields are arbitrary: the proofs compare it by identity only.
+     */
+    private static final RestOperationDescriptor STUB = new TestOperation("stubOperation", "GET", "/stub");
+
+    /** Claim-dispatch route that the identity handler for {@link #STUB} claims for REST. */
+    private static final String REST_PATH = "/rest";
+
+    /** Claim-dispatch route that no transport claims. */
+    private static final String PLAIN_PATH = "/plain";
+
+    /** Claim-dispatch route whose handler claims the request for another transport. */
+    private static final String OTHER_PATH = "/other";
+
+    /**
      * Creates an emitter with no security runtime and a plain {@link DefaultContextHolder}.
      *
      * @param listeners the listeners to notify
@@ -218,6 +257,11 @@ class RestRequestCompletionEmitterTest {
      * barrier middleware mounted in order, plus a terminal route at {@code /test} that delegates to
      * the supplied handler.
      *
+     * <p>The {@code /test} route's first handler is {@link RequestCompletionRecorder#operationRouteHandler}
+     * for {@link #STUB}, as the JAX-RS route registrar installs it on every operation route, so the
+     * request is claimed for REST and publishes a {@link RestRequestCompletedEvent}. A proof that needs
+     * the request unclaimed uses {@link #unclaimedRouterWithBarrier} instead.
+     *
      * <p>The barrier middleware runs on every request, after {@link RequestContextLifecycle} has
      * installed its {@link RequestContextLifecycle.Handle} on the routing context. Callers await
      * {@code barrier.future()} (via {@link #awaitBarrier(Vertx, Future)}) instead of a fixed settle
@@ -231,17 +275,97 @@ class RestRequestCompletionEmitterTest {
      */
     private static Router router(
             Vertx vertx, RestRequestCompletionEmitter emitter, Promise<Void> barrier, RouteHandler handler) {
+        Router router = spine(vertx, emitter, barrierHandler(barrier));
+        router.route("/test")
+                .handler(RequestCompletionRecorder.operationRouteHandler(STUB))
+                .handler(respondOkUnlessEnded(handler));
+        return router;
+    }
+
+    /**
+     * Builds a {@link Router} with the per-request spine mounted in order: {@link RequestContextLifecycle}
+     * (so {@code barrier} can register on its handle), the emitter, then {@code barrier}.
+     *
+     * @param vertx   the Vert.x instance
+     * @param emitter the emitter to mount
+     * @param barrier the lifecycle barrier middleware
+     * @return the router, ready for its routes
+     */
+    private static Router spine(Vertx vertx, RestRequestCompletionEmitter emitter, Handler<RoutingContext> barrier) {
         Router router = Router.router(vertx);
         router.route().order(RequestContextLifecycle.ORDER).handler(new RequestContextLifecycle());
         router.route().order(emitter.priority()).handler(emitter);
-        router.route().handler(barrierHandler(barrier));
-        router.route("/test").handler(rc -> {
+        router.route().handler(barrier);
+        return router;
+    }
+
+    /**
+     * Wraps a test route handler so that a response it left open ends with 200.
+     *
+     * @param handler the test route handler
+     * @return the terminal route handler
+     */
+    private static Handler<RoutingContext> respondOkUnlessEnded(RouteHandler handler) {
+        return rc -> {
             handler.handle(rc);
             if (!rc.response().ended()) {
                 rc.response().setStatusCode(200).end();
             }
+        };
+    }
+
+    /**
+     * Builds the router of {@link #routerWithBarrier}, but with no identity handler on {@code /test}:
+     * no transport claims the request, so it publishes an {@link HttpRequestCompletedEvent}.
+     *
+     * @param vertx   the Vert.x instance
+     * @param emitter the emitter to mount
+     * @param handler the terminal route handler
+     * @return the configured router paired with its lifecycle barrier future
+     */
+    private static RouterWithBarrier unclaimedRouterWithBarrier(
+            Vertx vertx, RestRequestCompletionEmitter emitter, RouteHandler handler) {
+        Promise<Void> barrier = Promise.promise();
+        Router router = spine(vertx, emitter, barrierHandler(barrier));
+        router.route("/test").handler(respondOkUnlessEnded(handler));
+        return new RouterWithBarrier(router, barrier.future());
+    }
+
+    /**
+     * Builds the claim-dispatch router: the spine with {@code barriers}' per-path lifecycle barrier,
+     * then three {@code GET} routes answering 200. {@code /rest} starts with the identity handler for
+     * {@link #STUB}, so it is claimed for REST; {@code /plain} is claimed by no transport;
+     * {@code /other} calls {@link RequestCompletionRecorder#claimForOtherTransport} first, as a
+     * transport that reports the request's completion itself does.
+     *
+     * @param emitter  the emitter to mount
+     * @param barriers the per-path lifecycle barriers
+     * @return the configured router
+     */
+    private static Router claimRouter(RestRequestCompletionEmitter emitter, PathBarriers barriers) {
+        Router router = spine(vertx, emitter, barriers.handler());
+        router.get(REST_PATH)
+                .handler(RequestCompletionRecorder.operationRouteHandler(STUB))
+                .handler(RESPOND_OK);
+        router.get(PLAIN_PATH).handler(RESPOND_OK);
+        router.get(OTHER_PATH).handler(rc -> {
+            RequestCompletionRecorder.claimForOtherTransport(rc);
+            respondOk(rc);
         });
         return router;
+    }
+
+    /**
+     * Sends {@code GET path} on the shared client and awaits the request's lifecycle barrier.
+     *
+     * @param port     the server port
+     * @param path     the request path
+     * @param barriers the per-path lifecycle barriers the router was wired with
+     * @return a future resolving to the response status once the request's lifecycle has fully closed
+     */
+    private static Future<Integer> getAndAwait(int port, String path, PathBarriers barriers) {
+        return client.get(port, "127.0.0.1", path).send().compose(resp -> barriers.await(path)
+                .map(v -> resp.statusCode()));
     }
 
     /**
@@ -379,6 +503,257 @@ class RestRequestCompletionEmitterTest {
         void handle(io.vertx.ext.web.RoutingContext rc);
     }
 
+    /**
+     * Asserts that a {@code String} value does not contain a forbidden raw message; a {@code null}
+     * value passes.
+     *
+     * @param fieldName names the value in the failure message
+     * @param value     the value to check, or {@code null}
+     * @param forbidden the raw message that must not appear
+     */
+    private static void assertFieldDoesNotContain(String fieldName, String value, String forbidden) {
+        if (value != null) {
+            assertTrue(
+                    !value.contains(forbidden),
+                    fieldName + " must not contain the raw exception message '" + forbidden + "' but was: " + value);
+        }
+    }
+
+    /**
+     * Lifecycle barriers keyed by request path, for a proof that sends one request per path, in
+     * sequence: the {@link #barrierHandler(Promise)} pattern with one barrier per request.
+     *
+     * <p>Each barrier is an {@link RequestContextLifecycle.Handle#afterClose(Runnable)} task, so it
+     * completes on the thread that ended the response, after every end handler, the emitter's
+     * included. An optional probe runs in that task, on that thread, just before the barrier
+     * completes.
+     */
+    private static final class PathBarriers {
+
+        private final Map<String, Promise<Void>> barriers = new ConcurrentHashMap<>();
+        private final Consumer<String> probe;
+
+        /** Creates barriers with no probe. */
+        PathBarriers() {
+            this(path -> {});
+        }
+
+        /**
+         * Creates barriers whose afterClose task first runs {@code probe}, given the request path.
+         *
+         * @param probe runs on the thread that ended the response, after all its end handlers
+         */
+        PathBarriers(Consumer<String> probe) {
+            this.probe = probe;
+        }
+
+        /**
+         * Returns the barrier middleware, to mount after {@link RequestContextLifecycle}.
+         *
+         * @return a handler registering the request's barrier, then delegating to the next handler
+         */
+        Handler<RoutingContext> handler() {
+            return rc -> {
+                String path = rc.request().path();
+                RequestContextLifecycle.fromRoutingContext(rc).afterClose(() -> {
+                    probe.accept(path);
+                    barrier(path).complete();
+                });
+                rc.next();
+            };
+        }
+
+        /**
+         * Awaits the barrier of the request whose path is {@code path}.
+         *
+         * @param path the request path
+         * @return a future completing once that request's lifecycle has fully closed, or failing with a
+         *     descriptive timeout
+         */
+        Future<Void> await(String path) {
+            return awaitBarrier(vertx, barrier(path).future(), "lifecycle afterClose barrier of " + path);
+        }
+
+        private Promise<Void> barrier(String path) {
+            return barriers.computeIfAbsent(path, p -> Promise.promise());
+        }
+    }
+
+    /**
+     * Every completion event of one proof's emitter, by type, in publication order.
+     *
+     * @param rest the {@link RestRequestCompletedEvent}s the REST listener received
+     * @param http the {@link HttpRequestCompletedEvent}s the HTTP listener received
+     */
+    private record Published(List<RestRequestCompletedEvent> rest, List<HttpRequestCompletedEvent> http) {
+
+        /**
+         * Returns empty captures, safe for the thread that ends the response to append to.
+         *
+         * @return the captures
+         */
+        static Published capture() {
+            return new Published(new CopyOnWriteArrayList<>(), new CopyOnWriteArrayList<>());
+        }
+
+        /**
+         * Creates an emitter, through the six-argument constructor, whose only listeners append to
+         * these captures: no security runtime, coordinator or completion scope.
+         *
+         * @return a new emitter instance
+         */
+        RestRequestCompletionEmitter emitter() {
+            return new RestRequestCompletionEmitter(
+                    Optional.empty(),
+                    new DefaultContextHolder(),
+                    Set.of(rest::add),
+                    Set.of(http::add),
+                    Set.of(),
+                    Set.of());
+        }
+
+        /**
+         * Returns the events of the request whose path is {@code path}.
+         *
+         * @param path the request path to select
+         * @return the selected events of each type, in publication order
+         */
+        Published ofPath(String path) {
+            return new Published(
+                    rest.stream().filter(event -> path.equals(event.path())).toList(),
+                    http.stream().filter(event -> path.equals(event.path())).toList());
+        }
+
+        /**
+         * Returns the start time of every captured event, REST events first.
+         *
+         * @return the start times
+         */
+        List<Instant> startTimes() {
+            return Stream.concat(
+                            rest.stream().map(RestRequestCompletedEvent::startTime),
+                            http.stream().map(HttpRequestCompletedEvent::startTime))
+                    .toList();
+        }
+
+        @Override
+        public String toString() {
+            return "REST " + identities(rest) + ", HTTP "
+                    + http.stream()
+                            .map(event -> event.path() + " " + event.statusCode())
+                            .toList();
+        }
+    }
+
+    /**
+     * What one request publishes, by its claim: exactly one {@link RestRequestCompletedEvent} carrying
+     * the claiming route's operation (an operation route claimed it), exactly one
+     * {@link HttpRequestCompletedEvent} (no transport claimed it), or no event (another transport
+     * claimed it, or no emitter is mounted).
+     *
+     * @param restEvents the number of REST events
+     * @param httpEvents the number of HTTP events
+     * @param operation  the operation the REST event carries; {@code null} when no REST event is expected
+     */
+    private record Expected(int restEvents, int httpEvents, RestOperationDescriptor operation) {
+
+        /** No transport claimed the request: exactly one HTTP event, and no REST event. */
+        static final Expected ONE_HTTP_EVENT = new Expected(0, 1, null);
+
+        /** Nothing is published: no event of either type. */
+        static final Expected NO_EVENT = new Expected(0, 0, null);
+
+        /**
+         * An operation route claimed the request: exactly one REST event, carrying {@code operation}, and
+         * no HTTP event.
+         *
+         * @param operation the claiming route's operation
+         * @return the expectation
+         */
+        static Expected oneRestEvent(RestOperationDescriptor operation) {
+            return new Expected(1, 0, Objects.requireNonNull(operation, "operation"));
+        }
+
+        /**
+         * Asserts this expectation on one request's captured events. The counts are asserted before any
+         * event is read, and every event read has a start time.
+         *
+         * @param published the request's captured events
+         * @param subject   names the request in failure messages
+         */
+        void assertOn(Published published, String subject) {
+            assertEquals(
+                    restEvents, published.rest().size(), subject + ": RestRequestCompletedEvent count, " + published);
+            assertEquals(
+                    httpEvents, published.http().size(), subject + ": HttpRequestCompletedEvent count, " + published);
+            if (restEvents == 1) {
+                assertIdentity(operation, published.rest().get(0), subject);
+            }
+            published.startTimes().forEach(startTime -> assertNotNull(startTime, subject + ": startTime must be set"));
+        }
+    }
+
+    /**
+     * The {@link ContextCapture} binding harness: a mocked {@link SecurityRuntime} whose current
+     * context returns a concrete security snapshot and a given origin, a {@link DefaultContextHolder},
+     * and a {@link CorrelationContext} binding that a route handler makes through the request's
+     * lifecycle handle, so the lifecycle closes it.
+     *
+     * @param runtime  the mocked security runtime
+     * @param snapshot the security snapshot its context returns
+     * @param holder   the context holder the correlation context is bound on
+     */
+    private record BoundContext(
+            SecurityRuntime runtime, SecurityContextSnapshot snapshot, DefaultContextHolder holder) {
+
+        /** Request id of the bound correlation context. */
+        static final String REQUEST_ID = "req-1";
+
+        /** Correlation id of the bound correlation context. */
+        static final String CORRELATION_ID = "corr-1";
+
+        /**
+         * Creates the harness.
+         *
+         * @param origin the origin the mocked security context returns
+         * @return the harness
+         */
+        static BoundContext create(Optional<RequestOrigin> origin) {
+            // snapshot() is a default method on the interface; Mockito returns null for default
+            // methods unless explicitly stubbed. Stub it with a concrete SecurityContextSnapshot
+            // so the emitter's sec.snapshot() call produces a non-null value.
+            SecurityContext mockSec = mock(SecurityContext.class);
+            SecurityIdentity stubIdentity =
+                    SecurityIdentity.user(new PrincipalRef(PrincipalType.USER, "test-user", Map.of()));
+            AuthenticationState stubAuth = new AuthenticationState(
+                    DefaultAuthMethod.jwt(), List.of(), Optional.empty(), Optional.empty(), Map.of());
+            SecurityContextSnapshot stubSnapshot =
+                    new SecurityContextSnapshot(stubIdentity, stubAuth, Optional.empty());
+            when(mockSec.snapshot()).thenReturn(stubSnapshot);
+            when(mockSec.origin()).thenReturn(origin);
+            SecurityRuntime mockRuntime = mock(SecurityRuntime.class);
+            when(mockRuntime.current()).thenReturn(mockSec);
+            // DefaultContextHolder, so the route handler can bind a CorrelationContext.
+            return new BoundContext(mockRuntime, stubSnapshot, new DefaultContextHolder());
+        }
+
+        /**
+         * Binds a {@link CorrelationContext} with {@link #REQUEST_ID} and {@link #CORRELATION_ID} on the
+         * holder for this request, closed through the request's lifecycle handle.
+         *
+         * @param rc the routing context of the request
+         */
+        void bindCorrelation(RoutingContext rc) {
+            CorrelationIdentifier reqId = new CorrelationIdentifier(REQUEST_ID, "test");
+            CorrelationIdentifier corrId = new CorrelationIdentifier(CORRELATION_ID, "test");
+            dev.vertique.correlation.CorrelationContextFactory factory =
+                    new dev.vertique.correlation.CorrelationContextFactory(Optional.empty());
+            CorrelationContext corrCtx = factory.create(reqId, corrId);
+            RequestContextLifecycle.Handle lifecycle = RequestContextLifecycle.fromRoutingContext(rc);
+            lifecycle.onClose(holder.bind(CorrelationContext.class, corrCtx));
+        }
+    }
+
     // --- Tests ---
 
     @Nested
@@ -448,7 +823,8 @@ class RestRequestCompletionEmitterTest {
         }
 
         /**
-         * Verifies that the raw exception message does not appear in any string field of the event.
+         * Verifies that the raw exception message does not appear in any string field of the event, nor in
+         * its operation's {@code operationId} and {@code routeTemplate} when it carries one.
          *
          * @param event      the event to check
          * @param rawMessage the raw exception message that must not appear
@@ -458,16 +834,10 @@ class RestRequestCompletionEmitterTest {
             assertFieldDoesNotContain("safeFailureMessage", event.safeFailureMessage(), rawMessage);
             assertFieldDoesNotContain("path", event.path(), rawMessage);
             assertFieldDoesNotContain("method", event.method(), rawMessage);
-            assertFieldDoesNotContain("operationId", event.operationId(), rawMessage);
-            assertFieldDoesNotContain("routeTemplate", event.routeTemplate(), rawMessage);
-        }
-
-        private static void assertFieldDoesNotContain(String fieldName, String value, String forbidden) {
-            if (value != null) {
-                assertTrue(
-                        !value.contains(forbidden),
-                        fieldName + " must not contain the raw exception message '" + forbidden + "' but was: "
-                                + value);
+            RestOperationDescriptor operation = event.operation();
+            if (operation != null) {
+                assertFieldDoesNotContain("operation.operationId", operation.operationId(), rawMessage);
+                assertFieldDoesNotContain("operation.routeTemplate", operation.routeTemplate(), rawMessage);
             }
         }
     }
@@ -477,12 +847,14 @@ class RestRequestCompletionEmitterTest {
     class PreOperationPath {
 
         @Test
-        @DisplayName("Exactly one event for a 400 response; operationId is null (no operation route matched)")
-        void emitsOneEventFor4xx(VertxTestContext ctx) {
-            List<RestRequestCompletedEvent> captured = new ArrayList<>();
-            RestRequestCompletionEmitter em = emitter(Set.of(captured::add));
-            RouterWithBarrier rb = routerWithBarrier(
-                    vertx, em, rc -> rc.response().setStatusCode(400).end());
+        @DisplayName("Exactly one HttpRequestCompletedEvent, and no RestRequestCompletedEvent, for a 400 on a route "
+                + "no transport claimed")
+        void emitsOneHttpEventFor4xxOnUnclaimedRoute(VertxTestContext ctx) {
+            Published published = Published.capture();
+            // /test carries no identity handler: no operation route matched, so no transport claimed the request
+            RouterWithBarrier rb = unclaimedRouterWithBarrier(vertx, published.emitter(), rc -> rc.response()
+                    .setStatusCode(400)
+                    .end());
 
             startServer(rb.router())
                     .compose(port -> client.get(port, "127.0.0.1", "/test").send())
@@ -492,11 +864,8 @@ class RestRequestCompletionEmitterTest {
                     })
                     .onComplete(ctx.succeeding(v -> {
                         ctx.verify(() -> {
-                            assertEquals(1, captured.size());
-                            RestRequestCompletedEvent event = captured.get(0);
-                            assertEquals(400, event.statusCode());
-                            // operationId is null: /test is no operation route, so no route identity was recorded
-                            assertNull(event.operationId(), "operationId must be null: no operation route matched");
+                            Expected.ONE_HTTP_EVENT.assertOn(published, "a 400 on an unclaimed route");
+                            assertEquals(400, published.http().get(0).statusCode());
                         });
                         ctx.completeNow();
                     }));
@@ -525,7 +894,11 @@ class RestRequestCompletionEmitterTest {
             router.route().order(em.priority()).handler(em);
             router.route().order(em.priority()).handler(em);
             router.route().handler(barrierHandler(barrier));
-            router.route("/test").handler(rc -> rc.response().setStatusCode(200).end());
+            // An operation route, as the JAX-RS route registrar builds it: the identity handler claims the
+            // request for REST after both emitter mounts have run.
+            router.route("/test")
+                    .handler(RequestCompletionRecorder.operationRouteHandler(STUB))
+                    .handler(rc -> rc.response().setStatusCode(200).end());
 
             startServer(router)
                     .compose(port -> client.get(port, "127.0.0.1", "/test").send())
@@ -603,26 +976,10 @@ class RestRequestCompletionEmitterTest {
             AtomicBoolean securityContextSeen = new AtomicBoolean(false);
             AtomicBoolean correlationContextSeen = new AtomicBoolean(false);
 
-            // Mock SecurityContext and SecurityRuntime.
-            // snapshot() is a default method on the interface; Mockito returns null for default
-            // methods unless explicitly stubbed. Stub it with a concrete SecurityContextSnapshot
-            // so the emitter's sec.snapshot() call produces a non-null value.
-            SecurityContext mockSec = mock(SecurityContext.class);
-            SecurityIdentity stubIdentity =
-                    SecurityIdentity.user(new PrincipalRef(PrincipalType.USER, "test-user", Map.of()));
-            AuthenticationState stubAuth = new AuthenticationState(
-                    DefaultAuthMethod.jwt(), List.of(), Optional.empty(), Optional.empty(), Map.of());
-            SecurityContextSnapshot stubSnapshot =
-                    new SecurityContextSnapshot(stubIdentity, stubAuth, Optional.empty());
-            when(mockSec.snapshot()).thenReturn(stubSnapshot);
-            when(mockSec.origin()).thenReturn(Optional.empty());
-            SecurityRuntime mockRuntime = mock(SecurityRuntime.class);
-            when(mockRuntime.current()).thenReturn(mockSec);
+            // Mocked SecurityContext and SecurityRuntime, and a DefaultContextHolder to bind on
+            BoundContext bound = BoundContext.create(Optional.empty());
 
-            // Use DefaultContextHolder so we can bind CorrelationContext
-            DefaultContextHolder holder = new DefaultContextHolder();
-
-            RestRequestCompletionEmitter em = emitter(mockRuntime, holder, Set.of(event -> {
+            RestRequestCompletionEmitter em = emitter(bound.runtime(), bound.holder(), Set.of(event -> {
                 if (event.securityContextSnapshot() != null) {
                     securityContextSeen.set(true);
                 }
@@ -634,13 +991,7 @@ class RestRequestCompletionEmitterTest {
 
             RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {
                 // Bind a CorrelationContext on the holder for this request
-                CorrelationIdentifier reqId = new CorrelationIdentifier("req-1", "test");
-                CorrelationIdentifier corrId = new CorrelationIdentifier("corr-1", "test");
-                dev.vertique.correlation.CorrelationContextFactory factory =
-                        new dev.vertique.correlation.CorrelationContextFactory(Optional.empty());
-                CorrelationContext corrCtx = factory.create(reqId, corrId);
-                RequestContextLifecycle.Handle lifecycle = RequestContextLifecycle.fromRoutingContext(rc);
-                lifecycle.onClose(holder.bind(CorrelationContext.class, corrCtx));
+                bound.bindCorrelation(rc);
                 rc.response().setStatusCode(200).end();
             });
 
@@ -658,6 +1009,113 @@ class RestRequestCompletionEmitterTest {
                         });
                         ctx.completeNow();
                     }));
+        }
+    }
+
+    /**
+     * T003 TP-006 (FR-008): a request no transport claimed publishes one
+     * {@link HttpRequestCompletedEvent} carrying the transport facts, built as for the REST event: the
+     * failure's simple class name, no failure message, the wire-failure marker, the bound security,
+     * origin and correlation snapshots, and empty attributes.
+     */
+    @Nested
+    @DisplayName("HTTP event facts")
+    class HttpEventFacts {
+
+        /** A known secret, carried only by the failure's raw message; no component may contain it. */
+        private static final String RAW = "raw-secret-7c1e: jdbc password=hunter2";
+
+        /** The non-empty origin the mocked security context returns. */
+        private static final RequestOrigin ORIGIN = new RequestOrigin(
+                "192.0.2.10", 54321, List.of(), 0, false, "192.0.2.10", "http", "api.example.test", Optional.empty());
+
+        /** T003 TP-006. */
+        @Test
+        @DisplayName("An unclaimed failed request's HttpRequestCompletedEvent carries the transport facts and no raw "
+                + "message")
+        void httpEventCarriesTransportFacts(VertxTestContext ctx) {
+            BoundContext bound = BoundContext.create(Optional.of(ORIGIN));
+            Published published = Published.capture();
+            RestRequestCompletionEmitter em = new RestRequestCompletionEmitter(
+                    Optional.of(bound.runtime()),
+                    bound.holder(),
+                    Set.of(published.rest()::add),
+                    Set.of(published.http()::add),
+                    Set.of(),
+                    Set.of());
+            RouterWithBarrier rb = unclaimedRouterWithBarrier(vertx, em, rc -> {
+                bound.bindCorrelation(rc);
+                rc.put(RestRequestCompletionEmitter.KEY_WIRE_FAILURE, new IOException());
+                rc.fail(500, new IllegalStateException(RAW));
+            });
+            rb.router().errorHandler(500, rc -> rc.response().setStatusCode(500).end());
+
+            startServer(rb.router())
+                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
+                    .compose(resp -> {
+                        ctx.verify(() -> assertEquals(500, resp.statusCode()));
+                        return awaitBarrier(vertx, rb.barrier());
+                    })
+                    .onComplete(ctx.succeeding(v -> {
+                        ctx.verify(() -> {
+                            Expected.ONE_HTTP_EVENT.assertOn(published, "an unclaimed failed request");
+                            HttpRequestCompletedEvent event = published.http().get(0);
+                            assertAll(
+                                    "transport facts",
+                                    () -> assertEquals("GET", event.method(), "method"),
+                                    () -> assertEquals("/test", event.path(), "path"),
+                                    () -> assertEquals(500, event.statusCode(), "statusCode"),
+                                    () -> assertEquals(
+                                            "IllegalStateException",
+                                            event.failureCode(),
+                                            "failureCode: the failure's simple class name"),
+                                    () -> assertNull(event.safeFailureMessage(), "safeFailureMessage must be null"),
+                                    () -> assertEquals(
+                                            "IOException",
+                                            event.wireFailureCode(),
+                                            "wireFailureCode: the marker's simple class name"),
+                                    () -> assertSame(
+                                            bound.snapshot(),
+                                            event.securityContextSnapshot(),
+                                            "the bound security snapshot"),
+                                    () -> assertEquals(Optional.of(ORIGIN), event.origin(), "the bound origin"),
+                                    () -> {
+                                        CorrelationContextSnapshot correlation = event.correlationContext();
+                                        assertNotNull(correlation, "the bound correlation snapshot");
+                                        assertEquals(
+                                                BoundContext.REQUEST_ID,
+                                                correlation.requestId().value(),
+                                                "the bound request id");
+                                        assertEquals(
+                                                BoundContext.CORRELATION_ID,
+                                                correlation.correlationId().value(),
+                                                "the bound correlation id");
+                                    },
+                                    () -> assertEquals(Map.of(), event.safeAttributes(), "safeAttributes is empty"),
+                                    () -> assertThrows(
+                                            UnsupportedOperationException.class,
+                                            () -> event.safeAttributes().put("key", "value"),
+                                            "safeAttributes is unmodifiable"),
+                                    () -> assertRawMessageAbsent(event, RAW));
+                        });
+                        ctx.completeNow();
+                    }));
+        }
+
+        /**
+         * Verifies that the raw exception message appears in no {@code String} component of the event, nor
+         * in its {@code toString()}.
+         *
+         * @param event      the event to check
+         * @param rawMessage the raw exception message that must not appear
+         */
+        private static void assertRawMessageAbsent(HttpRequestCompletedEvent event, String rawMessage) {
+            assertFieldDoesNotContain("method", event.method(), rawMessage);
+            assertFieldDoesNotContain("path", event.path(), rawMessage);
+            assertFieldDoesNotContain("failureCode", event.failureCode(), rawMessage);
+            assertFieldDoesNotContain("safeFailureMessage", event.safeFailureMessage(), rawMessage);
+            assertFieldDoesNotContain("wireFailureCode", event.wireFailureCode(), rawMessage);
+            assertFieldDoesNotContain("toString()", event.toString(), rawMessage);
         }
     }
 
@@ -749,7 +1207,9 @@ class RestRequestCompletionEmitterTest {
          * {@code #completeNowTwiceShouldBeNoOp}, and
          * {@code #endHandlerAfterCompleteNowShouldBeNoOp}. This class proves the
          * emitter-specific consequence: {@code completeNow()} neither emits nor suppresses the
-         * end-handler-driven {@link RestRequestCompletedEvent}.
+         * end-handler-driven completion event. The route carries no identity handler, so no
+         * transport claimed the request, as none claims a failed upgrade that ends with an HTTP
+         * response, and that event is an {@link HttpRequestCompletedEvent}.
          *
          * <p>A successful WebSocket 101 upgrade calls {@code lifecycle.completeNow()} because
          * Vert.x Web 5.1.2's {@code Http1xServerResponse.completeHandshake()} writes the 101
@@ -763,8 +1223,8 @@ class RestRequestCompletionEmitterTest {
         @Test
         @DisplayName("completeNow() neither emits nor suppresses the end-handler-driven completion event")
         void completeNowNeitherEmitsNorSuppressesCompletionEvent(VertxTestContext ctx) {
-            List<RestRequestCompletedEvent> captured = new ArrayList<>();
-            RestRequestCompletionEmitter em = emitter(Set.of(captured::add));
+            Published published = Published.capture();
+            RestRequestCompletionEmitter em = published.emitter();
 
             // The lifecycle barrier (barrierHandler / routerWithBarrier) is not a useful signal for
             // this test: the terminal handler below calls Handle.completeNow(), which drives
@@ -774,9 +1234,9 @@ class RestRequestCompletionEmitterTest {
             // RequestContextLifecycle and the emitter, registering its own ctx.addEndHandler that
             // completes `sentinel`. Because Vert.x Web fires end handlers in reverse registration
             // order, and this sentinel middleware registers its end handler AFTER the lifecycle but
-            // BEFORE the emitter, the firing order is: emitter's end handler (populates `captured`)
+            // BEFORE the emitter, the firing order is: emitter's end handler (populates `published`)
             // first, this sentinel's end handler second, RequestContextLifecycle's end handler last.
-            // Completing `sentinel` therefore happens-after the emitter's captured.add(...) call, on
+            // Completing `sentinel` therefore happens-after the emitter's listener dispatch, on
             // the same event-loop thread — giving the final assertion a real happens-before edge
             // instead of racing an early-burned lifecycle barrier. completeNow() cannot prematurely
             // satisfy `sentinel` because completeNow() drives only the Handle's own onClose/afterClose
@@ -790,13 +1250,14 @@ class RestRequestCompletionEmitterTest {
                 rc.next();
             });
             router.route().order(em.priority()).handler(em);
+            // No identity handler: like a failed upgrade, the request stays unclaimed.
             router.route("/test").handler(rc -> {
                 RequestContextLifecycle.fromRoutingContext(rc).completeNow();
                 // Non-vacuous: an implementation that wired the emitter's emission to
                 // Handle.completeNow() instead of ctx.addEndHandler would already have
-                // populated captured by this point, before the response has even ended.
-                ctx.verify(() -> assertTrue(
-                        captured.isEmpty(), "completeNow() must not trigger the emitter's completion event"));
+                // published an event of either type by this point, before the response has even ended.
+                ctx.verify(() -> Expected.NO_EVENT.assertOn(
+                        published, "completeNow() must not trigger the emitter's completion event"));
                 if (!rc.response().ended()) {
                     rc.response().setStatusCode(200).end();
                 }
@@ -809,11 +1270,11 @@ class RestRequestCompletionEmitterTest {
                         return awaitBarrier(vertx, sentinel.future(), "sentinel end handler");
                     })
                     .onComplete(ctx.succeeding(v -> {
-                        ctx.verify(() -> assertEquals(
-                                1,
-                                captured.size(),
+                        ctx.verify(() -> Expected.ONE_HTTP_EVENT.assertOn(
+                                published,
                                 "the end-handler-driven emission must still fire exactly once after the "
-                                        + "response ends; completeNow() neither emits nor suppresses it"));
+                                        + "response ends, as an HttpRequestCompletedEvent for this unclaimed "
+                                        + "request; completeNow() neither emits nor suppresses it"));
                         ctx.completeNow();
                     }));
         }
@@ -932,6 +1393,223 @@ class RestRequestCompletionEmitterTest {
                         ctx.completeNow();
                     }));
         }
+    }
+
+    /**
+     * T003 TP-005 (FR-001, D002): the emitter dispatches exactly one event type, chosen by the request's
+     * claim. A REST claim publishes one {@link RestRequestCompletedEvent} to the REST listeners, then the
+     * capture coordinators; no claim publishes one {@link HttpRequestCompletedEvent} to the HTTP listeners,
+     * each isolated from the others; another transport's claim publishes nothing and logs one DEBUG line
+     * on the emitter's logger, carrying the method and status but never the request path.
+     *
+     * <p>The DEBUG line carries no path, so it is attributed to its request by order: the three requests
+     * run in sequence, and after each one's lifecycle barrier the lines logged so far are taken from the
+     * appender.
+     */
+    @Nested
+    @DisplayName("Claim dispatch")
+    class ClaimDispatch {
+
+        /** The emitter's class logger, whose events {@link #appender} records. */
+        private Logger emitterLogger;
+
+        /** The logger's level before the test, restored after it. */
+        private Level previousLevel;
+
+        /** Records every event the emitter's logger accepts. */
+        private ListAppender<ILoggingEvent> appender;
+
+        /** Attaches {@link #appender} to the emitter's logger and enables DEBUG on it. */
+        @BeforeEach
+        void captureEmitterLog() {
+            emitterLogger = (Logger) LoggerFactory.getLogger(RestRequestCompletionEmitter.class);
+            previousLevel = emitterLogger.getLevel();
+            emitterLogger.setLevel(Level.DEBUG);
+            appender = new ListAppender<>();
+            appender.start();
+            emitterLogger.addAppender(appender);
+        }
+
+        /** Detaches {@link #appender} and restores the logger's previous level. */
+        @AfterEach
+        void releaseEmitterLog() {
+            emitterLogger.detachAppender(appender);
+            appender.stop();
+            emitterLogger.setLevel(previousLevel);
+        }
+
+        /** T003 TP-005. */
+        @Test
+        @DisplayName("REST claim: one REST event and one coordinator call; no claim: one HTTP event despite a throwing "
+                + "HTTP listener; another transport's claim: nothing, and one DEBUG line without the path")
+        void dispatchesExactlyOneEventTypeByClaim(VertxTestContext ctx) {
+            Published published = Published.capture();
+            List<RestRequestCompletedEvent> coordinated = new CopyOnWriteArrayList<>();
+            Set<HttpRequestCompletedListener> httpListeners = new LinkedHashSet<>();
+            httpListeners.add(event -> {
+                throw new IllegalStateException("http-listener-boom");
+            });
+            httpListeners.add(published.http()::add);
+            RestRequestCaptureCoordinator counting = (event, rc) -> coordinated.add(event);
+            RestRequestCompletionEmitter em = new RestRequestCompletionEmitter(
+                    Optional.empty(),
+                    new DefaultContextHolder(),
+                    Set.of(published.rest()::add),
+                    httpListeners,
+                    Set.of(counting),
+                    Set.of());
+            PathBarriers barriers = new PathBarriers();
+            Map<String, Integer> statuses = new ConcurrentHashMap<>();
+            Map<String, List<String>> debugByPath = new ConcurrentHashMap<>();
+
+            startServer(claimRouter(em, barriers))
+                    .compose(port -> complete(port, REST_PATH, barriers, statuses, debugByPath)
+                            .compose(v -> complete(port, PLAIN_PATH, barriers, statuses, debugByPath))
+                            .compose(v -> complete(port, OTHER_PATH, barriers, statuses, debugByPath)))
+                    .onComplete(ctx.succeeding(v -> {
+                        ctx.verify(() -> assertAll(
+                                "dispatch by claim",
+                                // /rest: REST(STUB) -> one REST event carrying STUB, one coordinator call
+                                () -> Expected.oneRestEvent(STUB).assertOn(published.ofPath(REST_PATH), REST_PATH),
+                                () -> assertCoordinatedOnceForRest(published, coordinated),
+                                () -> assertEquals(
+                                        List.of(), debugByPath.get(REST_PATH), REST_PATH + ": no DEBUG line"),
+                                // /plain: NONE -> one HTTP event, delivered past the throwing HTTP listener
+                                () -> Expected.ONE_HTTP_EVENT.assertOn(
+                                        published.ofPath(PLAIN_PATH),
+                                        PLAIN_PATH + ", after the throwing HTTP listener"),
+                                () -> assertEquals(
+                                        List.of(), debugByPath.get(PLAIN_PATH), PLAIN_PATH + ": no DEBUG line"),
+                                // /other: OTHER -> nothing, and one DEBUG line without the path
+                                () -> Expected.NO_EVENT.assertOn(published.ofPath(OTHER_PATH), OTHER_PATH),
+                                () -> assertSkipLine(debugByPath.get(OTHER_PATH)),
+                                // every route answers 200
+                                () -> assertEquals(
+                                        Map.of(REST_PATH, 200, PLAIN_PATH, 200, OTHER_PATH, 200),
+                                        statuses,
+                                        "every response is 200")));
+                        ctx.completeNow();
+                    }));
+        }
+
+        /**
+         * Sends {@code GET path}, awaits its lifecycle barrier, then records its status and the DEBUG lines
+         * the emitter logged while it completed.
+         *
+         * @param port        the server port
+         * @param path        the request path
+         * @param barriers    the per-path lifecycle barriers the router was wired with
+         * @param statuses    receives the response status, by path
+         * @param debugByPath receives the request's DEBUG lines, by path
+         * @return a future completing once the request is recorded
+         */
+        private Future<Void> complete(
+                int port,
+                String path,
+                PathBarriers barriers,
+                Map<String, Integer> statuses,
+                Map<String, List<String>> debugByPath) {
+            return getAndAwait(port, path, barriers).compose(status -> {
+                statuses.put(path, status);
+                debugByPath.put(path, debugLines());
+                return Future.<Void>succeededFuture();
+            });
+        }
+
+        /**
+         * Returns the formatted messages of the DEBUG events the emitter's logger recorded since the last
+         * call, and forgets every recorded event.
+         *
+         * @return the DEBUG messages, in logging order
+         */
+        private List<String> debugLines() {
+            List<String> lines = appender.list.stream()
+                    .filter(event -> event.getLevel() == Level.DEBUG)
+                    .map(ILoggingEvent::getFormattedMessage)
+                    .toList();
+            appender.list.clear();
+            return lines;
+        }
+
+        /**
+         * Asserts the coordinator was called exactly once, for {@code /rest}, with the very event the REST
+         * listener received.
+         *
+         * @param published   every captured event
+         * @param coordinated every event the counting coordinator received
+         */
+        private static void assertCoordinatedOnceForRest(
+                Published published, List<RestRequestCompletedEvent> coordinated) {
+            assertEquals(
+                    List.of(REST_PATH),
+                    coordinated.stream().map(RestRequestCompletedEvent::path).toList(),
+                    "the coordinator is called once, for " + REST_PATH + " only");
+            assertSame(
+                    published.ofPath(REST_PATH).rest().get(0),
+                    coordinated.get(0),
+                    "the coordinator receives the event the REST listener received");
+        }
+
+        /**
+         * Asserts {@code /other} logged exactly one DEBUG line, naming the method and the status but not the
+         * request path.
+         *
+         * @param lines the DEBUG lines logged while {@code /other} completed
+         */
+        private static void assertSkipLine(List<String> lines) {
+            assertEquals(1, lines.size(), OTHER_PATH + ": exactly one DEBUG line on the emitter's logger: " + lines);
+            String line = lines.get(0);
+            assertAll(
+                    OTHER_PATH + " DEBUG line",
+                    () -> assertTrue(line.contains("GET"), "it carries the method: " + line),
+                    () -> assertTrue(line.contains("200"), "it carries the status: " + line),
+                    () -> assertFalse(line.contains(OTHER_PATH), "it must not carry the request path: " + line));
+        }
+    }
+
+    /**
+     * T003 review finding T003-R-04 (supporting): an {@link Error} thrown by an
+     * {@link HttpRequestCompletedListener} is not isolated the way its exceptions are; it propagates out of
+     * {@code emit}. The request is unclaimed, and its route handler drives {@code emit} directly, through the
+     * seam {@code emitPopulatesWireFailureCodeFromFailedEndHandlerWiring} uses, so the {@link Error} surfaces on
+     * the calling thread. The mounted emitter's end handler then finds the request already emitted.
+     */
+    @Nested
+    @DisplayName("Listener Error propagation")
+    class ListenerErrorPropagation {
+
+        @Test
+        @DisplayName("An Error thrown by an HTTP listener escapes emit as the same instance instead of being "
+                + "logged and swallowed")
+        void httpListenerErrorEscapesEmit(VertxTestContext ctx) {
+            ListenerError listenerError = new ListenerError();
+            HttpRequestCompletedListener throwing = event -> {
+                throw listenerError;
+            };
+            RestRequestCompletionEmitter em = new RestRequestCompletionEmitter(
+                    Optional.empty(), new DefaultContextHolder(), Set.of(), Set.of(throwing), Set.of(), Set.of());
+            RouterWithBarrier rb = unclaimedRouterWithBarrier(
+                    vertx,
+                    em,
+                    rc -> ctx.verify(() -> {
+                        ListenerError escaped = assertThrowsExactly(
+                                ListenerError.class,
+                                () -> em.emit(rc, RequestCompletionRecorder.boundState(rc), Future.succeededFuture()),
+                                "an HTTP listener's Error must escape emit");
+                        assertSame(listenerError, escaped, "the listener's own Error instance escapes");
+                    }));
+
+            startServer(rb.router())
+                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
+                    .compose(resp -> {
+                        ctx.verify(() -> assertEquals(200, resp.statusCode()));
+                        return awaitBarrier(vertx, rb.barrier());
+                    })
+                    .onComplete(ctx.succeeding(v -> ctx.completeNow()));
+        }
+
+        /** Test-local {@link Error} the HTTP listener throws. */
+        private static final class ListenerError extends Error {}
     }
 
     // --- RequestCompletionScope ---
@@ -1284,6 +1962,100 @@ class RestRequestCompletionEmitterTest {
                         ctx.completeNow();
                     }));
         }
+
+        /** T003 TP-007: the {@code /rest} request's log, the scope bracketing the REST listener. */
+        private static final List<String> REST_BRACKETED = List.of("open", "rest(marker)", "close");
+
+        /** T003 TP-007: the {@code /plain} request's log, the scope bracketing the HTTP listener. */
+        private static final List<String> HTTP_BRACKETED = List.of("open", "http(marker)", "close");
+
+        /**
+         * T003 TP-007: the {@code /other} request's log. Scopes bracket the dispatch of an event, and none
+         * is dispatched for another transport's claim, so no scope opens (ruling R2).
+         */
+        private static final List<String> NOTHING_OPENED = List.of();
+
+        /**
+         * T003 TP-007 (FR-010): the scope brackets the dispatch of either event type, and none opens for a
+         * request another transport claimed. Each request's log is keyed by its path: the scope logs
+         * {@code open} and {@code close}, each listener its type and whether the scope's thread-local
+         * marker was set. The marker is read again on the thread that ran the dispatch, after every end
+         * handler, and removed there.
+         */
+        @Test
+        @DisplayName("scopes bracket the dispatch of the REST and the HTTP event, and none opens for another "
+                + "transport's claim")
+        void scopeBracketsBothEventTypes(VertxTestContext ctx) {
+            ThreadLocal<Boolean> marker = new ThreadLocal<>();
+            Map<String, List<String>> logs = new ConcurrentHashMap<>();
+            Function<String, List<String>> log = path -> logs.computeIfAbsent(path, p -> new CopyOnWriteArrayList<>());
+            Map<String, Boolean> markerSetAfterDispatch = new ConcurrentHashMap<>();
+
+            RequestCompletionScope scope = rc -> {
+                String path = rc.request().path();
+                log.apply(path).add("open");
+                marker.set(Boolean.TRUE);
+                return () -> {
+                    log.apply(path).add("close");
+                    marker.remove();
+                };
+            };
+            RestRequestCompletedListener restListener =
+                    event -> log.apply(event.path()).add("rest" + markerTag(marker));
+            HttpRequestCompletedListener httpListener =
+                    event -> log.apply(event.path()).add("http" + markerTag(marker));
+            RestRequestCompletionEmitter em = new RestRequestCompletionEmitter(
+                    Optional.empty(),
+                    new DefaultContextHolder(),
+                    Set.of(restListener),
+                    Set.of(httpListener),
+                    Set.of(),
+                    Set.of(scope));
+            PathBarriers barriers = new PathBarriers(path -> {
+                try {
+                    markerSetAfterDispatch.put(path, marker.get() != null);
+                } finally {
+                    marker.remove();
+                }
+            });
+
+            startServer(claimRouter(em, barriers))
+                    .compose(port -> getAndAwait(port, REST_PATH, barriers)
+                            .compose(status -> getAndAwait(port, PLAIN_PATH, barriers))
+                            .compose(status -> getAndAwait(port, OTHER_PATH, barriers)))
+                    .onComplete(ctx.succeeding(v -> {
+                        ctx.verify(() -> assertAll(
+                                "scope bracket by claim",
+                                () -> assertEquals(
+                                        REST_BRACKETED,
+                                        logs.getOrDefault(REST_PATH, List.of()),
+                                        REST_PATH + ": the scope brackets the REST listener"),
+                                () -> assertEquals(
+                                        HTTP_BRACKETED,
+                                        logs.getOrDefault(PLAIN_PATH, List.of()),
+                                        PLAIN_PATH + ": the scope brackets the HTTP listener"),
+                                () -> assertEquals(
+                                        NOTHING_OPENED,
+                                        logs.getOrDefault(OTHER_PATH, List.of()),
+                                        OTHER_PATH + ": no scope opens, because nothing is dispatched"),
+                                () -> assertEquals(
+                                        Map.of(REST_PATH, false, PLAIN_PATH, false, OTHER_PATH, false),
+                                        markerSetAfterDispatch,
+                                        "the marker is cleared after each request")));
+                        ctx.completeNow();
+                    }));
+        }
+
+        /**
+         * Returns {@code (marker)} when the scope's thread-local marker is set on the calling thread, and
+         * {@code (no marker)} otherwise.
+         *
+         * @param marker the scope's thread-local marker
+         * @return the log suffix
+         */
+        private static String markerTag(ThreadLocal<Boolean> marker) {
+            return Boolean.TRUE.equals(marker.get()) ? "(marker)" : "(no marker)";
+        }
     }
 
     @Nested
@@ -1412,7 +2184,9 @@ class RestRequestCompletionEmitterTest {
             RestRequestCompletionEmitter em = emitter(Set.of(captured::add));
             // No KEY_WIRE_FAILURE marker is set here — only the endResult channel carries a failure,
             // proving emit(ctx, state, endResult) actually threads that argument into the emitted event
-            // (the seam markerWinsOverEndHandlerFailure above no longer exercises end-to-end).
+            // (the seam markerWinsOverEndHandlerFailure above no longer exercises end-to-end). The shared
+            // router's identity handler has already claimed /test for REST when this handler runs, so the
+            // direct emit publishes a RestRequestCompletedEvent.
             RouterWithBarrier rb = routerWithBarrier(
                     vertx,
                     em,
@@ -1442,10 +2216,14 @@ class RestRequestCompletionEmitterTest {
 
     // --- Route identity and framework-owned completion state ---
     //
-    // These proofs (rest-025 TP-004 to TP-012, TP-015 and TP-016) run on a real server whose operation
-    // routes sit on a sub-router mounted at /api/*, the HttpVerticle mount shape. Each identity route
-    // starts with RequestCompletionRecorder.operationRouteHandler, as the JAX-RS route registrar installs
-    // it, and each proof awaits the first-pass sentinel, which fires after emission, before asserting.
+    // These proofs (rest-025 T002's TP-004 to TP-012, TP-015 and TP-016) run on a real server whose
+    // operation routes sit on a sub-router mounted at /api/*, the HttpVerticle mount shape. Each identity
+    // route starts with RequestCompletionRecorder.operationRouteHandler, as the JAX-RS route registrar
+    // installs it, and each proof awaits the first-pass sentinel, which fires after emission, before
+    // asserting. With T003's claim dispatch, a request no operation route claimed publishes an
+    // HttpRequestCompletedEvent instead of a RestRequestCompletedEvent with null identity, and a request
+    // another transport claimed publishes nothing; the proofs whose requests can end that way capture both
+    // event types and state their outcome as an Expected.
 
     /** Mount path of the sub-router that holds every operation route of these proofs. */
     private static final String API_MOUNT = "/api/*";
@@ -1475,22 +2253,24 @@ class RestRequestCompletionEmitterTest {
     /** Terminal route handler that responds 200 with no body. */
     private static final Handler<RoutingContext> RESPOND_OK = RestRequestCompletionEmitterTest::respondOk;
 
-    /** TP-012 (a) and (c): exactly one event, carrying {@code listItems}. */
-    private static final ClaimExpectation ONE_LIST_ITEMS_EVENT = new ClaimExpectation(1, LIST_ITEMS);
+    /** TP-012 (a) and (c): exactly one REST event, carrying {@code listItems}. */
+    private static final Expected ONE_LIST_ITEMS_EVENT = Expected.oneRestEvent(LIST_ITEMS);
 
     /**
-     * TP-012 (b), T002's interim reading of an OTHER claim: the request still emits exactly one
-     * {@link RestRequestCompletedEvent}, with {@code null} identity, because within the pass the operation
-     * route leaves OTHER unchanged. T003's claim-based dispatch changes this expectation to "no
-     * {@code RestRequestCompletedEvent}".
+     * TP-012 (b): within the pass the operation route leaves OTHER unchanged, so the request stays claimed
+     * by another transport and publishes no rest-core event. This replaces T002's interim reading, one
+     * {@link RestRequestCompletedEvent} with {@code null} identity, now that T003 dispatches by claim.
      */
-    private static final ClaimExpectation OTHER_CLAIM_INTERIM = new ClaimExpectation(1, null);
+    private static final Expected OTHER_CLAIM_NO_EVENT = Expected.NO_EVENT;
 
     /** TP-012 (d): no emitter is mounted, so there is no holder and no event. */
-    private static final ClaimExpectation NO_EMITTER_NO_EVENT = new ClaimExpectation(0, null);
+    private static final Expected NO_EMITTER_NO_EVENT = Expected.NO_EVENT;
 
-    /** TP-012 (e): the request stays unclaimed, as with holder removal, and still emits exactly once. */
-    private static final ClaimExpectation ONE_UNCLAIMED_EVENT = new ClaimExpectation(1, null);
+    /**
+     * TP-012 (e): the request stays unclaimed, as with holder removal, and still publishes exactly once: one
+     * {@link HttpRequestCompletedEvent}.
+     */
+    private static final Expected ONE_UNCLAIMED_EVENT = Expected.ONE_HTTP_EVENT;
 
     /**
      * Responds 200 with no body.
@@ -1590,49 +2370,35 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * Asserts an event's route identity: {@code expected}'s {@code operationId()} and
-     * {@code routeTemplate()}, or {@code null} for both when {@code expected} is {@code null}.
+     * Asserts an event's route identity: its {@code operation()} is the {@code expected} instance. It never
+     * dereferences the event's operation. A request without route identity publishes no
+     * {@link RestRequestCompletedEvent}: {@link Expected} states that outcome.
      *
-     * @param expected the operation the event must carry, or {@code null} for no operation
+     * @param expected the operation the event must carry
      * @param event    the event to check
      * @param subject  names the request in failure messages
      */
     private static void assertIdentity(
             RestOperationDescriptor expected, RestRequestCompletedEvent event, String subject) {
-        if (expected == null) {
-            assertAll(
-                    subject + ": no operation",
-                    () -> assertNull(event.operationId(), subject + ": operationId must be null"),
-                    () -> assertNull(event.routeTemplate(), subject + ": routeTemplate must be null"));
-        } else {
-            assertAll(
-                    subject + ": operation " + expected.operationId(),
-                    () -> assertEquals(expected.operationId(), event.operationId(), subject + ": operationId"),
-                    () -> assertEquals(expected.routeTemplate(), event.routeTemplate(), subject + ": routeTemplate"));
-        }
+        assertSame(expected, event.operation(), subject + ": operation " + expected.operationId());
     }
 
     /**
-     * Summarizes events for failure messages as {@code path -> operationId routeTemplate}.
+     * Summarizes events for failure messages as {@code path -> operationId routeTemplate}, or
+     * {@code path -> null} for an event without an operation. It never renders the operation through its
+     * {@code toString}.
      *
      * @param events the events to summarize
      * @return one summary line per event, in emission order
      */
     private static List<String> identities(List<RestRequestCompletedEvent> events) {
         return events.stream()
-                .map(event -> event.path() + " -> " + event.operationId() + " " + event.routeTemplate())
+                .map(event -> {
+                    RestOperationDescriptor operation = event.operation();
+                    return event.path() + " -> "
+                            + (operation == null ? "null" : operation.operationId() + " " + operation.routeTemplate());
+                })
                 .toList();
-    }
-
-    /**
-     * Returns the events of the request whose path is {@code path}.
-     *
-     * @param events every captured event
-     * @param path   the request path to select
-     * @return the selected events, in emission order
-     */
-    private static List<RestRequestCompletedEvent> eventsWithPath(List<RestRequestCompletedEvent> events, String path) {
-        return events.stream().filter(event -> path.equals(event.path())).toList();
     }
 
     /**
@@ -1754,14 +2520,16 @@ class RestRequestCompletionEmitterTest {
 
     /**
      * FR-003 and AC-003.1: a reroute re-enters the emitter, which reuses the request's state. The request
-     * emits once, with the operation its final pass matched and the start time of its first pass (TP-005).
+     * emits once, with the start time of its first pass, as its final pass's claim decides: a
+     * {@link RestRequestCompletedEvent} with the operation the final pass matched, or an
+     * {@link HttpRequestCompletedEvent} when the final pass matched no operation route (TP-005).
      */
     @Nested
     @DisplayName("Reroute")
     class Reroute {
 
-        /** Every event the emitter published. */
-        private final List<RestRequestCompletedEvent> events = new CopyOnWriteArrayList<>();
+        /** Every event the emitter published, of either type. */
+        private final Published published = Published.capture();
 
         /** One {@link Instant} per routing pass, taken by a ROOT handler ordered after the emitter. */
         private final List<Instant> passMarks = new CopyOnWriteArrayList<>();
@@ -1769,7 +2537,7 @@ class RestRequestCompletionEmitterTest {
         /** TP-005, one row per reroute target. */
         @ParameterizedTest(name = "{0}")
         @MethodSource("dev.vertique.rest.core.events.RestRequestCompletionEmitterTest#rerouteCases")
-        @DisplayName("A reroute emits once, with the final operation and the first pass's start time")
+        @DisplayName("A reroute emits once, as the final pass's claim decides, with the first pass's start time")
         void rerouteEmitsOnceWithFinalOperationAndFirstPassStartTime(RerouteCase rerouteCase, VertxTestContext ctx) {
             Wired wired = rerouteCase(rerouteCase.target());
 
@@ -1784,15 +2552,14 @@ class RestRequestCompletionEmitterTest {
                     })
                     .onComplete(ctx.succeeding(v -> {
                         ctx.verify(() -> {
-                            assertEquals(1, events.size(), "exactly one event: " + identities(events));
-                            RestRequestCompletedEvent event = events.get(0);
+                            rerouteCase.expected().assertOn(published, rerouteCase.name());
+                            Instant startTime = published.startTimes().get(0);
                             assertAll(
                                     () -> assertEquals(2, passMarks.size(), "the ROOT pass marker must run twice"),
                                     () -> assertFalse(
-                                            event.startTime().isAfter(passMarks.get(0)),
-                                            "startTime must be the first pass's: startTime=" + event.startTime()
-                                                    + ", pass marks=" + passMarks),
-                                    () -> assertIdentity(rerouteCase.expectedOperation(), event, rerouteCase.name()));
+                                            startTime.isAfter(passMarks.get(0)),
+                                            "startTime must be the first pass's: startTime=" + startTime
+                                                    + ", pass marks=" + passMarks));
                         });
                         ctx.completeNow();
                     }));
@@ -1808,7 +2575,7 @@ class RestRequestCompletionEmitterTest {
          * @return the wired root
          */
         private Wired rerouteCase(String target) {
-            return RootWiring.around(emitter(Set.of(events::add)))
+            return RootWiring.around(published.emitter())
                     .afterEmitter(rc -> {
                         passMarks.add(Instant.now());
                         rc.next();
@@ -1823,7 +2590,7 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * FR-023's claim transitions, observed through the event's identity: a later operation route in the same
+     * FR-023's claim transitions, observed through the published event: a later operation route in the same
      * pass replaces a REST claim (TP-006, AC-003.3); {@code claimForOtherTransport} is ignored once REST has
      * claimed (TP-009, AC-006.5); an OTHER claim holds within a pass and resets on a reroute, and a missing or
      * mistyped holder is a no-op (TP-012).
@@ -1860,7 +2627,7 @@ class RestRequestCompletionEmitterTest {
                     }));
         }
 
-        /** TP-009. At T002 an OTHER claim would show as {@code null} identity. */
+        /** TP-009. An effective OTHER claim would publish no event at all. */
         @Test
         @DisplayName("claimForOtherTransport after a REST claim is ignored")
         void otherTransportClaimAfterRestClaimIsIgnored(VertxTestContext ctx) {
@@ -1894,9 +2661,9 @@ class RestRequestCompletionEmitterTest {
                 "An OTHER claim holds within a pass and resets on a reroute; a missing or foreign holder is a no-op")
         void otherClaimHoldsWithinPassResetsOnRerouteAndMissingHolderIsANoOp(
                 ClaimCase claimCase, VertxTestContext ctx) {
-            List<RestRequestCompletedEvent> events = new CopyOnWriteArrayList<>();
+            Published published = Published.capture();
             AtomicInteger status = new AtomicInteger();
-            Wired wired = claimCase.router().apply(emitter(Set.of(events::add)));
+            Wired wired = claimCase.router().apply(published.emitter());
 
             startServer(wired.root())
                     .compose(port -> client.get(port, "127.0.0.1", claimCase.requestPath())
@@ -1910,7 +2677,7 @@ class RestRequestCompletionEmitterTest {
                                 claimCase.name(),
                                 () -> assertEquals(200, status.get(), "the response status"),
                                 () -> assertEquals(List.of(), wired.failures(), "no exception may be thrown"),
-                                () -> claimCase.expected().assertOn(events, claimCase.name())));
+                                () -> claimCase.expected().assertOn(published, claimCase.name())));
                         ctx.completeNow();
                     }));
         }
@@ -2086,8 +2853,9 @@ class RestRequestCompletionEmitterTest {
     /**
      * AC-006.9 and FR-006: the holder is bound to the request {@code begin} created it for. A holder copied
      * from another in-flight request, A, into this request's slot, B's, never changes A's event, and leaves
-     * B's event at most unclaimed, as holder removal does. The rows differ only in where the copy lands, and
-     * so in which of the three binding checks meets it (TP-015).
+     * B at most unclaimed, as holder removal does, so publishing an {@link HttpRequestCompletedEvent}. The
+     * rows differ only in where the copy lands, and so in which of the three binding checks meets it
+     * (TP-015).
      */
     @Nested
     @DisplayName("Holder binding")
@@ -2127,10 +2895,10 @@ class RestRequestCompletionEmitterTest {
         @MethodSource("dev.vertique.rest.core.events.RestRequestCompletionEmitterTest#copyCases")
         @DisplayName("A copied holder leaves the other request's event unchanged and this request's at most unclaimed")
         void copiedHolderLeavesOtherRequestUnchangedAndAtMostUnclaimsThisOne(CopyCase copyCase, VertxTestContext ctx) {
-            List<RestRequestCompletedEvent> events = new CopyOnWriteArrayList<>();
+            Published published = Published.capture();
             AtomicInteger aStatus = new AtomicInteger();
             AtomicInteger bStatus = new AtomicInteger();
-            Wired wired = RootWiring.around(emitter(Set.of(events::add)))
+            Wired wired = RootWiring.around(published.emitter())
                     .beforeEmitter(copyAt(CopyPoint.BEFORE_EMITTER))
                     .afterEmitter(copyAt(CopyPoint.AFTER_EMITTER))
                     .mountApi(api -> {
@@ -2178,35 +2946,23 @@ class RestRequestCompletionEmitterTest {
                     })
                     .onComplete(ctx.succeeding(v -> {
                         ctx.verify(() -> {
-                            List<RestRequestCompletedEvent> aEvents = eventsWithPath(events, copyCase.aPath());
-                            List<RestRequestCompletedEvent> bEvents = eventsWithPath(events, copyCase.bPath());
+                            Published aEvents = published.ofPath(copyCase.aPath());
+                            Published bEvents = published.ofPath(copyCase.bPath());
                             assertAll(
                                     copyCase.name(),
                                     () -> assertEquals(200, aStatus.get(), "request A's status"),
                                     () -> assertEquals(200, bStatus.get(), "request B's status"),
+                                    () -> Expected.oneRestEvent(OPERATION_A)
+                                            .assertOn(aEvents, "request A, the other request, emits exactly once"),
                                     () -> {
-                                        assertEquals(
-                                                1,
-                                                aEvents.size(),
-                                                "request A, the other request, emits exactly once: "
-                                                        + identities(events));
-                                        assertIdentity(OPERATION_A, aEvents.get(0), "request A, the other request");
-                                    },
-                                    () -> {
-                                        assertEquals(
-                                                1,
-                                                bEvents.size(),
-                                                "request B, this request, emits exactly once: " + identities(events));
-                                        RestRequestCompletedEvent bEvent = bEvents.get(0);
-                                        assertNotEquals(
-                                                OPERATION_A.operationId(),
-                                                bEvent.operationId(),
-                                                "request B's event must never carry A's operationId");
-                                        assertNotEquals(
-                                                OPERATION_A.routeTemplate(),
-                                                bEvent.routeTemplate(),
-                                                "request B's event must never carry A's routeTemplate");
-                                        assertIdentity(copyCase.expectedB(), bEvent, "request B, this request");
+                                        for (RestRequestCompletedEvent bEvent : bEvents.rest()) {
+                                            assertNotSame(
+                                                    OPERATION_A,
+                                                    bEvent.operation(),
+                                                    "request B's event must never carry A's operation");
+                                        }
+                                        copyCase.expectedB()
+                                                .assertOn(bEvents, "request B, this request, emits exactly once");
                                     });
                         });
                         ctx.completeNow();
@@ -2263,11 +3019,11 @@ class RestRequestCompletionEmitterTest {
     /**
      * A TP-005 row.
      *
-     * @param name              the row's display name
-     * @param target            the path {@code GET /api/a} reroutes to
-     * @param expectedOperation the operation the event must carry, or {@code null} for none
+     * @param name     the row's display name
+     * @param target   the path {@code GET /api/a} reroutes to
+     * @param expected what the request publishes, as the final pass's claim decides
      */
-    private record RerouteCase(String name, String target, RestOperationDescriptor expectedOperation) {
+    private record RerouteCase(String name, String target, Expected expected) {
         @Override
         public String toString() {
             return name;
@@ -2281,33 +3037,13 @@ class RestRequestCompletionEmitterTest {
      */
     private static Stream<RerouteCase> rerouteCases() {
         return Stream.of(
-                new RerouteCase("(a) rerouted to another operation route", "/api/b", OPERATION_B),
                 new RerouteCase(
-                        "(b) rerouted to a plain route: the reroute cleared the REST claim", "/api/plain", null));
-    }
-
-    /**
-     * What a TP-012 row expects of the captured events.
-     *
-     * @param eventCount the number of events
-     * @param operation  the operation the one event carries, or {@code null} for {@code null} identity
-     */
-    private record ClaimExpectation(int eventCount, RestOperationDescriptor operation) {
-
-        /**
-         * Asserts this expectation on the captured events.
-         *
-         * @param events   the captured events
-         * @param caseName names the row in failure messages
-         */
-        void assertOn(List<RestRequestCompletedEvent> events, String caseName) {
-            assertEquals(eventCount, events.size(), caseName + ": event count, events=" + identities(events));
-            if (eventCount == 1) {
-                RestRequestCompletedEvent event = events.get(0);
-                assertNotNull(event.startTime(), caseName + ": startTime must be set");
-                assertIdentity(operation, event, caseName);
-            }
-        }
+                        "(a) rerouted to another operation route", "/api/b", Expected.oneRestEvent(OPERATION_B)),
+                new RerouteCase(
+                        "(b) rerouted to a plain route: the reroute cleared the REST claim, so no transport claimed "
+                                + "the request",
+                        "/api/plain",
+                        Expected.ONE_HTTP_EVENT));
     }
 
     /**
@@ -2319,10 +3055,7 @@ class RestRequestCompletionEmitterTest {
      * @param expected    what the row expects of the captured events
      */
     private record ClaimCase(
-            String name,
-            String requestPath,
-            Function<RestRequestCompletionEmitter, Wired> router,
-            ClaimExpectation expected) {
+            String name, String requestPath, Function<RestRequestCompletionEmitter, Wired> router, Expected expected) {
         @Override
         public String toString() {
             return name;
@@ -2345,7 +3078,7 @@ class RestRequestCompletionEmitterTest {
                         "(b) OTHER claimed by a ROOT handler after the emitter, then the operation route matches",
                         "/api/items",
                         RestRequestCompletionEmitterTest::otherClaimBeforeOperationRoute,
-                        OTHER_CLAIM_INTERIM),
+                        OTHER_CLAIM_NO_EVENT),
                 new ClaimCase(
                         "(c) OTHER claimed, then rerouted to the operation route",
                         "/api/x",
@@ -2398,10 +3131,9 @@ class RestRequestCompletionEmitterTest {
      * TP-012 (c): {@code GET /api/x} claims OTHER, then reroutes to the {@code listItems} route.
      *
      * <p>FR-023 and ruling R5: a reroute resets every claim, OTHER included, to NONE, so the operation route
-     * claims REST on the second pass; a kept OTHER claim would block that claim and leave {@code null}
-     * identity. The target is an operation route because at T002 a reroute to a plain route yields
-     * {@code null} identity whether OTHER is kept or reset; T003's claim-based dispatch makes that difference
-     * observable.
+     * claims REST on the second pass; a kept OTHER claim would block that claim, and the request would
+     * publish no event. The target is an operation route, as at T002, where a reroute to a plain route could
+     * not tell a kept OTHER claim from a reset one; it also shows the second pass claims REST.
      *
      * @param emitter the emitter to mount
      * @return the wired root
@@ -2433,7 +3165,7 @@ class RestRequestCompletionEmitterTest {
 
     /**
      * TP-012 (e), removed: a ROOT handler after the emitter removes the holder before the operation route
-     * matches, so the identity handler finds no holder.
+     * matches, so the identity handler finds no holder and the request stays unclaimed.
      *
      * @param emitter the emitter to mount
      * @return the wired root
@@ -2450,7 +3182,7 @@ class RestRequestCompletionEmitterTest {
     /**
      * TP-012 (e), replaced: a ROOT handler after the emitter replaces the holder's value with a
      * {@link String} before the operation route matches. A value of another type counts as no holder, with
-     * no {@link ClassCastException}.
+     * no {@link ClassCastException}, and the request stays unclaimed.
      *
      * @param emitter the emitter to mount
      * @return the wired root
@@ -2494,10 +3226,10 @@ class RestRequestCompletionEmitterTest {
      * @param aPath     request A's path, the other request
      * @param copyPoint where A's holder lands in request B's slot
      * @param bPath     request B's path, this request
-     * @param expectedB the operation B's event carries, or {@code null} for an unclaimed event
+     * @param expectedB what B publishes: a REST event carrying its own operation, or an HTTP event when B is
+     *                  left unclaimed
      */
-    private record CopyCase(
-            String name, String aPath, CopyPoint copyPoint, String bPath, RestOperationDescriptor expectedB) {
+    private record CopyCase(String name, String aPath, CopyPoint copyPoint, String bPath, Expected expectedB) {
         @Override
         public String toString() {
             return name;
@@ -2518,23 +3250,23 @@ class RestRequestCompletionEmitterTest {
                         "/api/a",
                         CopyPoint.BEFORE_EMITTER,
                         "/api/b",
-                        OPERATION_B),
+                        Expected.oneRestEvent(OPERATION_B)),
                 // (b) checks the identity handler: the copy displaces B's own holder, so B's operation route
-                // finds no holder bound to B.
+                // finds no holder bound to B, and B stays unclaimed.
                 new CopyCase(
                         "(b) copy after B's emitter: the identity handler",
                         "/api/a",
                         CopyPoint.AFTER_EMITTER,
                         "/api/b",
-                        null),
+                        Expected.ONE_HTTP_EVENT),
                 // (c) checks claimForOtherTransport: A is held before its operation route, so A is still
-                // NONE; B's claim finds no holder bound to B.
+                // NONE; B's claim finds no holder bound to B, and B stays unclaimed.
                 new CopyCase(
                         "(c) copy after B's emitter: claimForOtherTransport",
                         "/api/a-late",
                         CopyPoint.AFTER_EMITTER,
                         "/api/claim",
-                        null));
+                        Expected.ONE_HTTP_EVENT));
     }
 
     // --- Route-identity fixtures ---
@@ -2804,54 +3536,6 @@ class RestRequestCompletionEmitterTest {
      * @param onEventLoop {@code Context.isOnEventLoopThread()} inside the listener
      */
     private record ObservedEmission(RestRequestCompletedEvent event, String threadName, boolean onEventLoop) {}
-
-    /**
-     * Test-local {@link RestOperationDescriptor}. Only the identity fields carry values: no route here is
-     * secured or negotiates content, so the security policy is {@link SecurityPolicy.None} and every
-     * collection is empty. T003's {@code TestOperationDescriptors} replaces it.
-     *
-     * @param operationId   the operation identifier
-     * @param httpMethod    the HTTP method
-     * @param routeTemplate the route template
-     */
-    private record TestOperation(String operationId, String httpMethod, String routeTemplate)
-            implements RestOperationDescriptor {
-
-        @Override
-        public List<String> consumes() {
-            return List.of();
-        }
-
-        @Override
-        public List<String> produces() {
-            return List.of();
-        }
-
-        @Override
-        public SecurityPolicy securityPolicy() {
-            return new SecurityPolicy.None();
-        }
-
-        @Override
-        public List<SecurityRequirementSet> securityRequirementSets() {
-            return List.of();
-        }
-
-        @Override
-        public List<Annotation> methodAnnotations() {
-            return List.of();
-        }
-
-        @Override
-        public List<Annotation> classAnnotations() {
-            return List.of();
-        }
-
-        @Override
-        public <A extends Annotation> Optional<A> findAnnotation(Class<A> type) {
-            return Optional.empty();
-        }
-    }
 
     // --- Test doubles ---
 

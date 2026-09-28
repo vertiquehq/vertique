@@ -5,14 +5,21 @@ package dev.vertique.micrometer.rest;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 import dev.vertique.micrometer.MetricsConfig;
 import dev.vertique.rest.core.events.RestRequestCompletedEvent;
+import dev.vertique.rest.core.routing.RestOperationDescriptor;
+import dev.vertique.rest.core.routing.SecurityRequirementSet;
+import dev.vertique.rest.core.security.SecurityPolicy;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.lang.annotation.Annotation;
 import java.time.Instant;
+import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
@@ -24,16 +31,32 @@ import org.junit.jupiter.api.Test;
 /**
  * Unit tests for {@link RestServerRequestMetricsListener}.
  *
- * <p>Verifies timer recording with correct tags for success and failure paths, tag defaults when
- * route/operationId are absent, outcome bucketing, negative-duration clamping, registry deduplication,
- * throwing-registry isolation, the {@code metricsEnabled} gate, and the {@code error.type} fallback
- * from {@code failureCode} to {@code wireFailureCode} when no curated failure was recorded.
+ * <p>Verifies timer recording with correct tags for success and failure paths, the {@code route} and
+ * {@code operation} tags read from the event's {@link RestRequestCompletedEvent#operation() operation},
+ * outcome bucketing, negative-duration clamping, registry deduplication, throwing-registry isolation,
+ * the {@code metricsEnabled} gate, and the {@code error.type} fallback from {@code failureCode} to
+ * {@code wireFailureCode} when no curated failure was recorded.
+ *
+ * <p>Events carry a test-local {@link RestOperationDescriptor} stub ({@link TestOperation}), one named
+ * constant per operation the tests use.
  */
 class RestServerRequestMetricsListenerTest {
 
     // --- Shared fixtures ---
 
     private static final Instant BASE = Instant.parse("2026-06-12T12:00:00Z");
+
+    /** {@code GET /orders/{id}}, operation {@code getOrder}. */
+    private static final RestOperationDescriptor GET_ORDER = new TestOperation("getOrder", "GET", "/orders/{id}");
+
+    /** {@code POST /process}, operation {@code processItem}. */
+    private static final RestOperationDescriptor PROCESS_ITEM = new TestOperation("processItem", "POST", "/process");
+
+    /** {@code GET /}, operation {@code op}. */
+    private static final RestOperationDescriptor ROOT_OP = new TestOperation("op", "GET", "/");
+
+    /** {@code GET /path}, operation {@code op}. */
+    private static final RestOperationDescriptor PATH_OP = new TestOperation("op", "GET", "/path");
 
     private SimpleMeterRegistry registry;
 
@@ -52,22 +75,16 @@ class RestServerRequestMetricsListenerTest {
     /**
      * Builds a minimal {@link RestRequestCompletedEvent} with no wire failure recorded.
      *
-     * @param method        HTTP method
-     * @param routeTemplate OpenAPI route template, or {@code null}
-     * @param operationId   OpenAPI operationId, or {@code null}
-     * @param statusCode    HTTP response status code
-     * @param failureCode   failure classification string, or {@code null}
-     * @param durationMs    duration in milliseconds (end = start + duration)
+     * @param method      HTTP method
+     * @param operation   the operation the request's route claimed
+     * @param statusCode  HTTP response status code
+     * @param failureCode failure classification string, or {@code null}
+     * @param durationMs  duration in milliseconds (end = start + duration)
      * @return a fully constructed event
      */
     private static RestRequestCompletedEvent event(
-            String method,
-            String routeTemplate,
-            String operationId,
-            int statusCode,
-            String failureCode,
-            long durationMs) {
-        return event(method, routeTemplate, operationId, statusCode, failureCode, durationMs, null);
+            String method, RestOperationDescriptor operation, int statusCode, String failureCode, long durationMs) {
+        return event(method, operation, statusCode, failureCode, durationMs, null);
     }
 
     /**
@@ -75,8 +92,7 @@ class RestServerRequestMetricsListenerTest {
      * wireFailureCode} for asserting the {@code error.type} fallback.
      *
      * @param method          HTTP method
-     * @param routeTemplate   OpenAPI route template, or {@code null}
-     * @param operationId     OpenAPI operationId, or {@code null}
+     * @param operation       the operation the request's route claimed
      * @param statusCode      HTTP response status code
      * @param failureCode     failure classification string, or {@code null}
      * @param durationMs      duration in milliseconds (end = start + duration)
@@ -85,8 +101,7 @@ class RestServerRequestMetricsListenerTest {
      */
     private static RestRequestCompletedEvent event(
             String method,
-            String routeTemplate,
-            String operationId,
+            RestOperationDescriptor operation,
             int statusCode,
             String failureCode,
             long durationMs,
@@ -98,8 +113,7 @@ class RestServerRequestMetricsListenerTest {
                 end,
                 method,
                 "/path",
-                routeTemplate,
-                operationId,
+                operation,
                 statusCode,
                 failureCode,
                 null,
@@ -111,7 +125,7 @@ class RestServerRequestMetricsListenerTest {
     }
 
     /**
-     * Builds an event where start == end (zero or negative effective duration).
+     * Builds a {@link #GET_ORDER} event where start == end (zero or negative effective duration).
      *
      * @param start     the start instant
      * @param end       the end instant (may be before start)
@@ -124,8 +138,7 @@ class RestServerRequestMetricsListenerTest {
                 end,
                 "GET",
                 "/path",
-                "/orders/{id}",
-                "getOrder",
+                GET_ORDER,
                 statusCode,
                 null,
                 null,
@@ -166,6 +179,22 @@ class RestServerRequestMetricsListenerTest {
                 .timer();
     }
 
+    /**
+     * Renders each timer's tags and count, for assertion messages.
+     *
+     * @param timers the timers to describe
+     * @return one {@code [key=value, …] count=n} entry per timer
+     */
+    private static String describe(Collection<Timer> timers) {
+        return timers.stream()
+                .map(t -> t.getId().getTags().stream()
+                                .map(tag -> tag.getKey() + "=" + tag.getValue())
+                                .toList()
+                        + " count=" + t.count())
+                .toList()
+                .toString();
+    }
+
     // =========================================================================
     // Test 1 — success event records timer with correct tags
     // =========================================================================
@@ -180,10 +209,11 @@ class RestServerRequestMetricsListenerTest {
             RestServerRequestMetricsListener listener =
                     new RestServerRequestMetricsListener(registry, Optional.empty());
 
-            RestRequestCompletedEvent event = event("GET", "/orders/{id}", "getOrder", 200, null, 150);
+            RestRequestCompletedEvent event = event("GET", GET_ORDER, 200, null, 150);
             listener.onCompleted(event);
 
             Timer timer = findTimer(registry, "GET", "/orders/{id}", "getOrder", "200", "SUCCESS", "none");
+            assertNotNull(timer, "timer with the success event's tags must be present");
             assertEquals(1, timer.count(), "timer must have count=1 after one success event");
             // totalTime in seconds from 150ms → ≈0.15; allow ±5ms tolerance
             assertEquals(
@@ -208,36 +238,49 @@ class RestServerRequestMetricsListenerTest {
             RestServerRequestMetricsListener listener =
                     new RestServerRequestMetricsListener(registry, Optional.empty());
 
-            RestRequestCompletedEvent event =
-                    event("POST", "/process", "processItem", 500, "IllegalStateException", 20);
+            RestRequestCompletedEvent event = event("POST", PROCESS_ITEM, 500, "IllegalStateException", 20);
             listener.onCompleted(event);
 
             Timer timer = findTimer(
                     registry, "POST", "/process", "processItem", "500", "SERVER_ERROR", "IllegalStateException");
+            assertNotNull(timer, "timer with the failure event's tags must be present");
             assertEquals(1, timer.count(), "failure timer must have count=1");
         }
     }
 
     // =========================================================================
-    // Test 3 — pre-dispatch failure: null route/operation → UNKNOWN, CLIENT_ERROR
+    // Test 3 — route and operation tags come from the event's operation (TP-013)
     // =========================================================================
 
+    /**
+     * TP-013: the timer's {@code route} and {@code operation} tags are read from the event's
+     * {@link RestRequestCompletedEvent#operation() operation}. It replaces the former pre-dispatch
+     * case, whose premise, a {@code null} route, no longer exists: every REST event carries the
+     * operation its JAX-RS route claimed, and a request no transport claimed yields an HTTP event,
+     * which this listener never receives.
+     */
     @Nested
-    @DisplayName("Test 3: pre-dispatch failure (null route, null operationId) uses UNKNOWN fallbacks")
-    class PreDispatchFailure {
+    @DisplayName("Test 3: route and operation tags come from the event's operation")
+    class OperationTags {
 
         @Test
-        @DisplayName(
-                "null routeTemplate + null operationId + 404 → route=UNKNOWN, operation=UNKNOWN, outcome=CLIENT_ERROR")
-        void nullRouteAndOperationFallToUnknown() {
+        @DisplayName("GET /orders/{id} (getOrder) operation + 200 → one timer: route=/orders/{id}, "
+                + "operation=getOrder, outcome=SUCCESS, error.type=none")
+        void routeAndOperationTagsComeFromTheOperation() {
             RestServerRequestMetricsListener listener =
                     new RestServerRequestMetricsListener(registry, Optional.empty());
 
-            RestRequestCompletedEvent event = event("GET", null, null, 404, null, 5);
-            listener.onCompleted(event);
+            listener.onCompleted(event("GET", GET_ORDER, 200, null, 5));
 
-            Timer timer = findTimer(registry, "GET", "UNKNOWN", "UNKNOWN", "404", "CLIENT_ERROR", "none");
-            assertEquals(1, timer.count(), "pre-dispatch failure must use UNKNOWN for route and operation");
+            Collection<Timer> timers =
+                    registry.find(RestServerRequestMetricsListener.METER_NAME).timers();
+            assertEquals(1, timers.size(), "exactly one timer must exist after one event; timers: " + describe(timers));
+            Timer timer = findTimer(registry, "GET", "/orders/{id}", "getOrder", "200", "SUCCESS", "none");
+            assertNotNull(
+                    timer,
+                    "the timer must carry route=/orders/{id} and operation=getOrder from the event's operation; "
+                            + "timers: " + describe(timers));
+            assertEquals(1, timer.count(), "the operation's timer must have count=1");
         }
     }
 
@@ -289,7 +332,7 @@ class RestServerRequestMetricsListenerTest {
             SimpleMeterRegistry r = new SimpleMeterRegistry();
             try {
                 RestServerRequestMetricsListener listener = new RestServerRequestMetricsListener(r, Optional.empty());
-                RestRequestCompletedEvent ev = event("GET", "/", "op", statusCode, null, 10);
+                RestRequestCompletedEvent ev = event("GET", ROOT_OP, statusCode, null, 10);
                 listener.onCompleted(ev);
 
                 Timer t = r.find(RestServerRequestMetricsListener.METER_NAME)
@@ -347,12 +390,13 @@ class RestServerRequestMetricsListenerTest {
             RestServerRequestMetricsListener listener =
                     new RestServerRequestMetricsListener(registry, Optional.empty());
 
-            RestRequestCompletedEvent e1 = event("GET", "/orders/{id}", "getOrder", 200, null, 100);
-            RestRequestCompletedEvent e2 = event("GET", "/orders/{id}", "getOrder", 200, null, 50);
+            RestRequestCompletedEvent e1 = event("GET", GET_ORDER, 200, null, 100);
+            RestRequestCompletedEvent e2 = event("GET", GET_ORDER, 200, null, 50);
             listener.onCompleted(e1);
             listener.onCompleted(e2);
 
             Timer timer = findTimer(registry, "GET", "/orders/{id}", "getOrder", "200", "SUCCESS", "none");
+            assertNotNull(timer, "timer with the two events' shared tags must be present");
             assertEquals(2, timer.count(), "registry must dedup same-tag timer and accumulate count=2");
         }
     }
@@ -372,7 +416,7 @@ class RestServerRequestMetricsListenerTest {
             RestServerRequestMetricsListener listener =
                     new RestServerRequestMetricsListener(throwingRegistry, Optional.empty());
 
-            RestRequestCompletedEvent event = event("GET", "/path", "op", 200, null, 10);
+            RestRequestCompletedEvent event = event("GET", PATH_OP, 200, null, 10);
 
             assertDoesNotThrow(
                     () -> listener.onCompleted(event),
@@ -405,7 +449,7 @@ class RestServerRequestMetricsListenerTest {
             RestServerRequestMetricsListener listener = new RestServerRequestMetricsListener(
                     registry, Optional.of(MetricsConfig.builder().enabled(false).build()));
 
-            listener.onCompleted(event("GET", "/path", "op", 200, null, 10));
+            listener.onCompleted(event("GET", PATH_OP, 200, null, 10));
 
             assertNull(
                     registry.find(RestServerRequestMetricsListener.METER_NAME).timer(),
@@ -418,7 +462,7 @@ class RestServerRequestMetricsListenerTest {
             RestServerRequestMetricsListener listener =
                     new RestServerRequestMetricsListener(registry, Optional.empty());
 
-            listener.onCompleted(event("GET", "/path", "op", 200, null, 10));
+            listener.onCompleted(event("GET", PATH_OP, 200, null, 10));
 
             Timer timer = registry.find(RestServerRequestMetricsListener.METER_NAME)
                     .tag(RestServerRequestMetricsListener.TAG_STATUS, "200")
@@ -442,7 +486,7 @@ class RestServerRequestMetricsListenerTest {
             RestServerRequestMetricsListener listener =
                     new RestServerRequestMetricsListener(registry, Optional.of(config));
 
-            listener.onCompleted(event("GET", "/path", "op", 200, null, 10));
+            listener.onCompleted(event("GET", PATH_OP, 200, null, 10));
 
             assertNull(
                     registry.find(RestServerRequestMetricsListener.METER_NAME).timer(),
@@ -464,7 +508,7 @@ class RestServerRequestMetricsListenerTest {
             RestServerRequestMetricsListener listener =
                     new RestServerRequestMetricsListener(registry, Optional.empty());
 
-            listener.onCompleted(event("GET", "/orders/{id}", "getOrder", 200, null, 50));
+            listener.onCompleted(event("GET", GET_ORDER, 200, null, 50));
 
             Timer timer = registry.find(RestServerRequestMetricsListener.METER_NAME)
                     .tag(RestServerRequestMetricsListener.TAG_STATUS, "200")
@@ -489,8 +533,7 @@ class RestServerRequestMetricsListenerTest {
 
             // A truncated-response signature: 200 status, no curated failureCode, but a post-handoff
             // wire failure was recorded.
-            RestRequestCompletedEvent event =
-                    event("GET", "/orders/{id}", "getOrder", 200, null, 10, "ConnectionClosed");
+            RestRequestCompletedEvent event = event("GET", GET_ORDER, 200, null, 10, "ConnectionClosed");
             listener.onCompleted(event);
 
             Timer timer = registry.find(RestServerRequestMetricsListener.METER_NAME)
@@ -498,6 +541,56 @@ class RestServerRequestMetricsListenerTest {
                     .tag(RestServerRequestMetricsListener.TAG_ERROR_TYPE, "ConnectionClosed")
                     .timer();
             assertEquals(1, timer.count(), "error.type must fall back to wireFailureCode when failureCode is null");
+        }
+    }
+
+    // --- Test doubles ---
+
+    /**
+     * Test-local {@link RestOperationDescriptor}. Only the identity fields carry values: the listener
+     * reads nothing else, so the security policy is {@link SecurityPolicy.None} and every collection is
+     * empty.
+     *
+     * @param operationId   the operation identifier
+     * @param httpMethod    the HTTP method
+     * @param routeTemplate the route template
+     */
+    private record TestOperation(String operationId, String httpMethod, String routeTemplate)
+            implements RestOperationDescriptor {
+
+        @Override
+        public List<String> consumes() {
+            return List.of();
+        }
+
+        @Override
+        public List<String> produces() {
+            return List.of();
+        }
+
+        @Override
+        public SecurityPolicy securityPolicy() {
+            return new SecurityPolicy.None();
+        }
+
+        @Override
+        public List<SecurityRequirementSet> securityRequirementSets() {
+            return List.of();
+        }
+
+        @Override
+        public List<Annotation> methodAnnotations() {
+            return List.of();
+        }
+
+        @Override
+        public List<Annotation> classAnnotations() {
+            return List.of();
+        }
+
+        @Override
+        public <A extends Annotation> Optional<A> findAnnotation(Class<A> type) {
+            return Optional.empty();
         }
     }
 }

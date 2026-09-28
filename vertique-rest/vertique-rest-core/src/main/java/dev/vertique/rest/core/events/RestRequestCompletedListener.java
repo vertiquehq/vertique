@@ -6,16 +6,20 @@ package dev.vertique.rest.core.events;
 /**
  * SPI for receiving {@link RestRequestCompletedEvent} notifications.
  *
- * <p>Emitted for every handled request that completes through the normal HTTP response lifecycle
- * (success and all failure paths). Successful protocol upgrades (e.g. WebSocket 101) complete
- * out-of-band via {@code RequestContextLifecycle.completeNow()} and do NOT produce a completion
- * event; channel lifecycle observers receive those transitions separately. A <em>failed</em>
- * upgrade that ends with an HTTP error response DOES produce a completion event.
+ * <p>The event is emitted once for each request that a JAX-RS operation route claimed and that
+ * completes through the normal HTTP response lifecycle, on every success and failure path,
+ * including a request denied with 401, 403, 415 or 400 on that route. A request that no transport
+ * claimed produces an {@link HttpRequestCompletedEvent} instead, observed through
+ * {@link HttpRequestCompletedListener}; a <em>failed</em> upgrade that ends with an HTTP error
+ * response is such a request. A request that another transport claimed produces neither event.
+ * Successful protocol upgrades (e.g. WebSocket 101) complete out-of-band via
+ * {@code RequestContextLifecycle.completeNow()} and produce no completion event; channel lifecycle
+ * observers receive those transitions separately.
  *
  * <p>Implementations are contributed via Dagger {@code Set<RestRequestCompletedListener>}
- * multibinding and are invoked synchronously on the Vert.x event loop thread after each handled
- * request completes. Implementations MUST NOT block the event loop — any I/O or heavy processing
- * must be dispatched to a worker thread or handled via {@code Future} composition.
+ * multibinding and are invoked synchronously on the Vert.x event loop thread after each
+ * JAX-RS-claimed request completes. Implementations MUST NOT block the event loop — any I/O or
+ * heavy processing must be dispatched to a worker thread or handled via {@code Future} composition.
  *
  * <p>The emitter ({@link RestRequestCompletionEmitter}) isolates each listener: an exception thrown
  * by one listener is caught, logged at {@code WARN}, and does not prevent subsequent listeners from
@@ -38,7 +42,7 @@ package dev.vertique.rest.core.events;
 public interface RestRequestCompletedListener {
 
     /**
-     * Called once per handled request after the HTTP response has completed.
+     * Called once per JAX-RS-claimed request after the HTTP response has completed.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
      * the enclosing operation. The exception message is logged, so it must carry no credentials,

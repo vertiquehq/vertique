@@ -34,8 +34,8 @@ Applications almost never depend on this artifact directly. Including
 Declare an explicit dependency when you:
 
 - implement a framework extension point — a `Middleware`, interceptor, `RequestBodyDecoder`,
-  `ResponseBodyEncoder`, `ParamConverter`, `RestContextResolver`, `OperationHandlerContributor`, or
-  `RestRequestCompletedListener`;
+  `ResponseBodyEncoder`, `ParamConverter`, `RestContextResolver`, `OperationHandlerContributor`,
+  `RestRequestCompletedListener`, or `HttpRequestCompletedListener`;
 - mount a non-JAX-RS sub-router (static assets, a health tree, a hand-written Vert.x router) beside
   the JAX-RS mount via `RouterMount`;
 - return `ProblemDetail` bodies, pagination envelopes, or SSE streams from resource methods; or
@@ -138,7 +138,7 @@ Framework middlewares occupy these positions:
 | Middleware | Phase | Priority | Scope |
 |---|---|---|---|
 | `RequestContextLifecycle` | `SYSTEM_FIRST` | `Integer.MIN_VALUE` | ROOT |
-| `RestRequestCompletionEmitter` | default | `RequestContextLifecycle.ORDER + 5` | ROOT |
+| `RestRequestCompletionEmitter` | `SYSTEM_FIRST` | `RequestContextLifecycle.ORDER + 5` | ROOT |
 | `CorrelationIngressMiddleware` | default | `RequestContextLifecycle.ORDER + 10` | ROOT |
 | `ContextualLoggingMiddleware` | default | `0` | ROOT |
 | `DefaultHeadersMiddleware` | default | `10` | ROOT |
@@ -146,20 +146,39 @@ Framework middlewares occupy these positions:
 
 `RequestContextLifecycle.ORDER` and `CorrelationIngressMiddleware.ORDER` are `public` and may be used
 as anchors. An application middleware that must observe an authenticated identity belongs at a
-positive priority.
+positive priority. `RestRequestCompletionEmitter` runs in `SYSTEM_FIRST` right after
+`RequestContextLifecycle`, so an application `ROOT` middleware that ends the response without
+calling `next()`, at any priority, still yields exactly one completion event; the phase is a trusted
+ordering hint, not a security boundary.
 
 ### Request completion
 
-Exactly one `RestRequestCompletedEvent` is published per HTTP request, carrying method, path, route
-template, operation id, status, timing, an optional security snapshot, an optional correlation
-snapshot, and the request origin.
+Exactly one completion event is published for each HTTP request that completes through the response
+lifecycle, owned by the transport that claimed it:
 
-The route template and operation id are recorded by a framework handler that the JAX-RS route
-registrar installs first on every operation route, ahead of authentication. A request that matched
-an operation route therefore carries both even when it is rejected with 401, 403, 415, or a
-validation 400. A request that matched no operation route carries `null` for both. The last
-operation route matched in the current routing pass decides. A reroute clears the identity, so the
-rerouted target decides it, and the event keeps the first pass's start time.
+- A **`RestRequestCompletedEvent`** when a JAX-RS operation route matched. The claim is recorded by
+  a platform handler (a Vert.x Web `PlatformHandler`) that the JAX-RS route registrar installs first
+  on every operation route, before authentication. So a request denied with 401, 403, 415, or a
+  validation 400 on a matched route still carries its non-null `operation()`.
+- **Nothing** when another transport claimed the request to emit its own lifecycle events.
+- An **`HttpRequestCompletedEvent`** otherwise, carrying the transport facts: method, path, status,
+  timing, failure classification, an optional security snapshot, an optional correlation snapshot,
+  and the request origin. The REST event carries the same facts plus its `operation()`.
+
+Unclaimed requests are:
+
+- `ROOT` rejections, for example a correlation `REJECT` 400 or a rate-limit 429;
+- requests that match no route (404 or 405);
+- JAX-RS mount-level rejections before any operation route matched: body 413 or 400,
+  request-interceptor rejections, and the API-scope 415;
+- MCP admission rejections;
+- failed WebSocket upgrades.
+
+Entering a JAX-RS mount, or reaching its failure handler, does not claim a request. The last
+operation route matched in the current routing pass decides the operation. A reroute clears the
+claim, so the rerouted target decides it, and the event keeps the first pass's start time. At
+`DEBUG`, `RestRequestCompletionEmitter` logs one line for each request it skips because another
+transport claimed it.
 
 The completion state is framework-owned. No `RoutingContext.data()` key exposes it, and writing the
 retired `rest.events.*` keys has no effect on the event. `RestRequestCompletionEmitter` holds the
@@ -169,9 +188,21 @@ mounted.
 Two deliberate properties:
 
 - A **successful protocol upgrade emits no event** — the 101 is written without firing the response
-  end handler. A *failed* upgrade does emit, because it takes the normal error path.
-- `safeFailureMessage` is always `null`, and `failureCode` is a class simple name only. Raw exception
-  messages can carry SQL text, upstream detail, or PII, so they never reach the event.
+  end handler. A *failed* upgrade takes the normal error path and emits an
+  `HttpRequestCompletedEvent`.
+- `safeFailureMessage` is always `null`, and `failureCode` is a class simple name only, on both
+  event types. Raw exception messages can carry SQL text, upstream detail, or PII, so they never
+  reach either event.
+
+#### Which completion source do I use?
+
+| To observe | Use | Module |
+|---|---|---|
+| JAX-RS operations, including requests denied on a matched operation route | `RestRequestCompletedListener` | `vertique-rest-core` |
+| HTTP requests no transport claimed (the list above) | `HttpRequestCompletedListener` | `vertique-rest-core` |
+| MCP requests | MCP completion observers: `McpRequestLifecycleObserver`, or `McpRequestCompletedListener` for a post-transport callback | `vertique-mcp-core` |
+| WebSocket connections after a successful upgrade | WebSocket channel events: `ChannelOpenedEvent` and `ChannelClosedEvent` through `SecurityEventObserver`, for connections registered as channels | `vertique-security-core`; `vertique-rest-websocket` says when a connection is registered |
+| Every HTTP request at the transport level, whatever claimed it, as counts and latencies | Vert.x native HTTP server metrics (`metrics.vertx.httpServer`) | `vertique-micrometer-core` |
 
 ### Neutral route registration
 
@@ -185,6 +216,9 @@ contributor.
 calls `EffectiveSecurityPolicy.enforceSupportedShape(...)` before folding, so simply reading the
 effective policy throws `RestConfigurationException` for an unsupported declaration shape whether or
 not the optional validator from `vertique-rest-security` is wired.
+
+`RestOperationDescriptor` is Stable and grows only through `default` methods, so an implementation
+written against an earlier version (such as a test descriptor) keeps compiling and linking.
 
 ---
 
@@ -967,13 +1001,18 @@ carries `dev.vertique.rest.core.convert.ParamSource`, whose five constants are `
 `HEADER`, `COOKIE`, and `FORM` — the string-ish transport kinds. Do not confuse it with the
 same-named but unrelated parameter-source enums in the JAX-RS and REST-client modules.
 
-### `RestRequestCompletedListener` and `RequestCompletionScope`
+### `RestRequestCompletedListener`, `HttpRequestCompletedListener`, and `RequestCompletionScope`
 
-Observe every completed request from an immutable snapshot, with no routing context in hand.
+`RestRequestCompletedListener` observes JAX-RS operations, and `HttpRequestCompletedListener`
+observes requests no transport claimed. A request another transport claimed produces neither event.
 
 ```java
 public interface RestRequestCompletedListener {
     void onCompleted(RestRequestCompletedEvent event);
+}
+
+public interface HttpRequestCompletedListener {
+    void onCompleted(HttpRequestCompletedEvent event);
 }
 
 public interface RequestCompletionScope {
@@ -988,7 +1027,7 @@ static RestRequestCompletedListener requestMetrics(MeterRegistry registry) {
     return event -> registry.counter(
                     "http.server.requests",
                     "method", event.method(),
-                    "route", event.routeTemplate() == null ? "unmatched" : event.routeTemplate(),
+                    "route", event.operation().routeTemplate(),
                     "status", Integer.toString(event.statusCode()))
             .increment();
 }
@@ -998,7 +1037,17 @@ static RestRequestCompletedListener requestMetrics(MeterRegistry registry) {
 public record RestRequestCompletedEvent(
         Instant startTime, Instant endTime,
         String method, String path,
-        @Nullable String routeTemplate, @Nullable String operationId,
+        RestOperationDescriptor operation,
+        int statusCode,
+        @Nullable String failureCode, @Nullable String safeFailureMessage, @Nullable String wireFailureCode,
+        @Nullable SecurityContextSnapshot securityContextSnapshot,
+        @Nullable CorrelationContextSnapshot correlationContext,
+        Optional<RequestOrigin> origin,
+        Map<String, Object> safeAttributes) {}
+
+public record HttpRequestCompletedEvent(
+        Instant startTime, Instant endTime,
+        String method, String path,
         int statusCode,
         @Nullable String failureCode, @Nullable String safeFailureMessage, @Nullable String wireFailureCode,
         @Nullable SecurityContextSnapshot securityContextSnapshot,
@@ -1006,6 +1055,27 @@ public record RestRequestCompletedEvent(
         Optional<RequestOrigin> origin,
         Map<String, Object> safeAttributes) {}
 ```
+
+`operation()` is never `null`. As a Stable promise, `operation()` is the same instance that
+`OperationHandlerContributor`s received as `OperationRegistrationContext.operation()` for the
+matched route. State a contributor keyed on its descriptor is therefore matched to the event by
+identity. Framework-built descriptors compare by identity, so don't key maps on descriptor value
+equality.
+
+The two compact `toString` forms differ on purpose, and neither is a parse format:
+
+- `RestRequestCompletedEvent` keeps the record's `RestRequestCompletedEvent[name=value, …]` form and
+  renders its operation as `<operationId> <routeTemplate>`, for example `getUser /users/{id}`,
+  without calling the descriptor's `toString`.
+- A framework-built descriptor, and one from `TestOperationDescriptors` (`vertique-rest-test`),
+  renders as `<httpMethod> <routeTemplate> (<operationId>)`, for example
+  `GET /users/{id} (getUser)`.
+
+`HttpRequestCompletedEvent` uses the default record `toString`.
+
+Both records evolve under the same rule: new components are only appended, after the last existing
+one, and each addition keeps the previous-arity constructor. Record-pattern deconstruction binds
+components by position, so it is outside the compatibility promise.
 
 A `RequestCompletionScope` wraps listener dispatch — scopes open in iteration order and close in
 reverse, which is how tracing modules re-establish a span around emission. A listener that throws an

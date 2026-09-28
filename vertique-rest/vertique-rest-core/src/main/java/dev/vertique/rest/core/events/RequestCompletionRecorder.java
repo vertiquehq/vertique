@@ -20,10 +20,14 @@ import java.time.Instant;
  * <ul>
  *   <li>{@link #operationRouteHandler(RestOperationDescriptor)} returns the handler that a route
  *       registrar installs first on every operation route, ahead of authentication, so a request
- *       rejected after its route matched still carries that route's template and operation id;</li>
+ *       rejected after its route matched still produces a {@link RestRequestCompletedEvent} whose
+ *       {@code operation()} is that route's descriptor;</li>
  *   <li>{@link #claimForOtherTransport(RoutingContext)} lets a transport that reports the request's
- *       completion itself claim the request; such a request carries no route identity.</li>
+ *       completion itself claim the request; such a request carries no route identity and produces
+ *       no completion event from the emitter.</li>
  * </ul>
+ * A request that neither of them claims is unclaimed, and produces an
+ * {@link HttpRequestCompletedEvent}.
  *
  * <p><strong>The holder.</strong> The state is reachable from every routing context of the request,
  * the root context and every sub-router's alike, as the value of a holder in the request's shared
@@ -58,7 +62,8 @@ public final class RequestCompletionRecorder {
      * claim value is built once, here.
      *
      * @param operation the operation descriptor of the route the handler is installed on; a request
-     *                  the route claims carries its {@code routeTemplate()} and {@code operationId()}
+     *                  the route claims produces a {@link RestRequestCompletedEvent} whose
+     *                  {@code operation()} is this instance
      * @return the operation route's identity handler
      * @throws NullPointerException if {@code operation} is {@code null}
      */
@@ -76,6 +81,11 @@ public final class RequestCompletionRecorder {
     /**
      * Claims the current request for a transport other than REST, one that reports the request's
      * completion itself. Call it where the transport commits to that completion.
+     *
+     * <p>{@link RestRequestCompletionEmitter} emits no completion event for a request claimed this
+     * way: neither a {@link RestRequestCompletedEvent} nor an {@link HttpRequestCompletedEvent}, and
+     * no {@link RequestCompletionScope} opens for it. The claiming transport reports the completion
+     * through its own events.
      *
      * <p>The claim applies only to an unclaimed request: once an operation route or another transport
      * has claimed the request, the call changes nothing. Without a holder bound to the request it is

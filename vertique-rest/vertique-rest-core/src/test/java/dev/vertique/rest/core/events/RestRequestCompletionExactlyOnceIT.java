@@ -3,9 +3,11 @@
 
 package dev.vertique.rest.core.events;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.context.DefaultContextHolder;
@@ -15,6 +17,7 @@ import dev.vertique.rest.core.correlation.CorrelationIngressConfig;
 import dev.vertique.rest.core.correlation.CorrelationIngressConfig.InvalidValuePolicy;
 import dev.vertique.rest.core.correlation.CorrelationIngressMiddleware;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
+import dev.vertique.rest.core.routing.RestOperationDescriptor;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
@@ -41,33 +44,38 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Integration test proving that {@link RestRequestCompletionEmitter} fires <em>exactly one</em>
- * {@link RestRequestCompletedEvent} per handled request across all success and failure paths
- * (FR-AUD-300, PRD-AUD-002 §21).
+ * completion event per request across all success and failure paths (FR-AUD-300, PRD-AUD-002 §21): a
+ * {@link RestRequestCompletedEvent} for a request an operation route claimed, and an
+ * {@link HttpRequestCompletedEvent} for a request no transport claimed.
  *
  * <p>This is a real-server IT (Maven Failsafe, {@code *IT.java}). Each test drives a live
  * {@code HttpServer} bound on port 0 with a fully ordered middleware stack:
  * <ol>
  *   <li>{@link RequestContextLifecycle} — owns holder scope and LIFO end-handler ordering</li>
- *   <li>{@link RestRequestCompletionEmitter} — the SUT (ORDER + 5)</li>
+ *   <li>{@link RestRequestCompletionEmitter} — the SUT (ORDER + 5), built through its six-argument
+ *       constructor with one capturing listener of each event type</li>
  *   <li>{@link CorrelationIngressMiddleware} — configured with strict REJECT policy (ORDER + 10)</li>
  * </ol>
  *
- * <p>Routes under test:
+ * <p>Routes under test, each operation route starting with
+ * {@link RequestCompletionRecorder#operationRouteHandler} for a stub named after the route, as the
+ * JAX-RS route registrar installs it:
  * <ul>
  *   <li>{@code GET /ok} — 200 success path</li>
  *   <li>{@code GET /bad} — explicit 400 response (client-error / validation-style path)</li>
  *   <li>{@code GET /boom} — {@code ctx.fail(500, ex)} exception path; asserts {@code failureCode}
  *       equals the exception's simple class name and the raw message does not leak into the event</li>
  *   <li>{@code GET /denied} — 401 auth-rejection-style path</li>
- *   <li>(no route for {@code GET /nope}) — 404 pre-operation failure; asserts {@code operationId}
- *       is {@code null}</li>
+ *   <li>(no route for {@code GET /nope}) — 404 pre-operation failure; asserts exactly one
+ *       {@link HttpRequestCompletedEvent} and no {@link RestRequestCompletedEvent}</li>
  *   <li>Correlation REJECT path — a request carrying an invalid {@code X-Request-Id} header value
- *       triggers the REJECT policy in {@link CorrelationIngressMiddleware}; asserts exactly one
- *       event is still emitted because the emitter registers its end handler <em>before</em> the
- *       correlation middleware can short-circuit the request</li>
+ *       triggers the REJECT policy in {@link CorrelationIngressMiddleware} before any operation route
+ *       claims it; asserts exactly one {@link HttpRequestCompletedEvent} is still emitted because the
+ *       emitter registers its end handler <em>before</em> the correlation middleware can short-circuit
+ *       the request</li>
  * </ul>
  *
- * <p>Aggregate assertion: total events == total requests (no duplicates, no misses).
+ * <p>Aggregate assertion: REST events plus HTTP events == total requests (no duplicates, no misses).
  *
  * <p>Note: the real {@link CorrelationIngressMiddleware} is used for the REJECT scenario (not a
  * substitute) because it is constructable without Dagger using the same factory helpers already
@@ -98,6 +106,20 @@ public class RestRequestCompletionExactlyOnceIT {
 
     // --- Raw exception message that must NOT appear in the emitted event ---
     private static final String BOOM_RAW_MESSAGE = "super secret upstream detail";
+
+    // --- Operation stubs, one per operation route, each named after its route ---
+
+    /** Identity of {@code GET /ok}. */
+    private static final RestOperationDescriptor OK_OPERATION = new TestOperation("ok", "GET", "/ok");
+
+    /** Identity of {@code GET /bad}. */
+    private static final RestOperationDescriptor BAD_OPERATION = new TestOperation("bad", "GET", "/bad");
+
+    /** Identity of {@code GET /boom}. */
+    private static final RestOperationDescriptor BOOM_OPERATION = new TestOperation("boom", "GET", "/boom");
+
+    /** Identity of {@code GET /denied}. */
+    private static final RestOperationDescriptor DENIED_OPERATION = new TestOperation("denied", "GET", "/denied");
 
     // --- Class-scoped resources (shared across all @Test methods) ---
 
@@ -176,29 +198,36 @@ public class RestRequestCompletionExactlyOnceIT {
     }
 
     /**
-     * Builds the full middleware stack and all routes, wires a capturing listener, and returns a
-     * future that resolves to the bound HTTP port.
+     * Builds the full middleware stack and all routes, wires one capturing listener of each event
+     * type into an emitter built through the six-argument constructor, and returns a future that
+     * resolves to the bound HTTP port.
      *
-     * <p>Routes:
+     * <p>Routes, each operation route starting with its stub's
+     * {@link RequestCompletionRecorder#operationRouteHandler identity handler}:
      * <ul>
-     *   <li>{@code GET /ok} — responds 200</li>
-     *   <li>{@code GET /bad} — responds 400</li>
-     *   <li>{@code GET /boom} — calls {@code ctx.fail(500, ex)} with a known raw message</li>
-     *   <li>{@code GET /denied} — responds 401</li>
+     *   <li>{@code GET /ok} — {@link #OK_OPERATION}, responds 200</li>
+     *   <li>{@code GET /bad} — {@link #BAD_OPERATION}, responds 400</li>
+     *   <li>{@code GET /boom} — {@link #BOOM_OPERATION}, calls {@code ctx.fail(500, ex)} with a known raw
+     *       message</li>
+     *   <li>{@code GET /denied} — {@link #DENIED_OPERATION}, responds 401</li>
      *   <li>(no route for /nope — will produce 404)</li>
      * </ul>
      * A trivial failure handler maps any {@code ctx.fail()} call to a 500 response so the HTTP
      * transaction completes and the end handlers fire.
      *
-     * @param vertx    the Vert.x instance
-     * @param captured thread-safe list into which the listener appends each event
+     * @param vertx      the Vert.x instance
+     * @param restEvents thread-safe list into which the REST listener appends each event
+     * @param httpEvents thread-safe list into which the HTTP listener appends each event
      * @return a future resolving to the server's actual TCP port
      */
-    private Future<Integer> startServer(Vertx vertx, List<RestRequestCompletedEvent> captured) {
+    private Future<Integer> startServer(
+            Vertx vertx, List<RestRequestCompletedEvent> restEvents, List<HttpRequestCompletedEvent> httpEvents) {
         DefaultContextHolder holder = newHolder();
 
-        RestRequestCompletionEmitter emitter =
-                new RestRequestCompletionEmitter(Optional.empty(), holder, Set.of(captured::add));
+        RestRequestCompletedListener restListener = restEvents::add;
+        HttpRequestCompletedListener httpListener = httpEvents::add;
+        RestRequestCompletionEmitter emitter = new RestRequestCompletionEmitter(
+                Optional.empty(), holder, Set.of(restListener), Set.of(httpListener), Set.of(), Set.of());
 
         CorrelationIngressMiddleware correlationMiddleware = newRejectCorrelationMiddleware(holder);
 
@@ -215,14 +244,22 @@ public class RestRequestCompletionExactlyOnceIT {
         //    requests that are short-circuited here.
         router.route().order(correlationMiddleware.priority()).handler(correlationMiddleware);
 
-        // --- Application routes ---
-        router.get("/ok").handler(rc -> rc.response().setStatusCode(200).end());
+        // --- Application routes: each claims its request for REST first, as the route registrar does ---
+        router.get("/ok")
+                .handler(RequestCompletionRecorder.operationRouteHandler(OK_OPERATION))
+                .handler(rc -> rc.response().setStatusCode(200).end());
 
-        router.get("/bad").handler(rc -> rc.response().setStatusCode(400).end());
+        router.get("/bad")
+                .handler(RequestCompletionRecorder.operationRouteHandler(BAD_OPERATION))
+                .handler(rc -> rc.response().setStatusCode(400).end());
 
-        router.get("/boom").handler(rc -> rc.fail(500, new IllegalStateException(BOOM_RAW_MESSAGE)));
+        router.get("/boom")
+                .handler(RequestCompletionRecorder.operationRouteHandler(BOOM_OPERATION))
+                .handler(rc -> rc.fail(500, new IllegalStateException(BOOM_RAW_MESSAGE)));
 
-        router.get("/denied").handler(rc -> rc.response().setStatusCode(401).end());
+        router.get("/denied")
+                .handler(RequestCompletionRecorder.operationRouteHandler(DENIED_OPERATION))
+                .handler(rc -> rc.response().setStatusCode(401).end());
 
         // --- Failure handler: maps ctx.fail() calls to HTTP responses so end handlers fire ---
         router.errorHandler(500, rc -> {
@@ -285,45 +322,59 @@ public class RestRequestCompletionExactlyOnceIT {
     private static final long SETTLE_MS = 50;
 
     /**
-     * Waits until {@code captured} holds at least {@code expected} events, then waits one short
-     * settle window before completing. The unbounded poll removes the load-dependent miss-flake
-     * (a fixed pre-assert delay was too short under CPU contention, so events arrived after the
-     * assertion and shifted index-based checks). The trailing {@link #SETTLE_MS} settle is a
-     * bounded proof, not an unconditional one: it only catches a duplicate event emitted within
-     * {@link #SETTLE_MS} (50 ms) of the threshold being reached — a duplicate emitted later escapes
-     * this check entirely. The causal-barrier pattern in {@code RestRequestCompletionEmitterTest}
-     * (await {@code afterClose} rather than a settle window) is the stronger form of this proof;
-     * prefer it if this helper is ever replaced. The class-level {@code @Timeout} is the upper
-     * bound.
+     * Waits until {@code restEvents} and {@code httpEvents} together hold at least {@code expected}
+     * events, then waits one short settle window before completing. The unbounded poll removes the
+     * load-dependent miss-flake (a fixed pre-assert delay was too short under CPU contention, so
+     * events arrived after the assertion and shifted index-based checks). The trailing
+     * {@link #SETTLE_MS} settle is a bounded proof, not an unconditional one: it only catches a
+     * duplicate event emitted within {@link #SETTLE_MS} (50 ms) of the threshold being reached — a
+     * duplicate emitted later escapes this check entirely. The causal-barrier pattern in
+     * {@code RestRequestCompletionEmitterTest} (await {@code afterClose} rather than a settle window)
+     * is the stronger form of this proof; prefer it if this helper is ever replaced. The class-level
+     * {@code @Timeout} is the upper bound.
      *
-     * @param vertx    the Vert.x instance
-     * @param captured the list being populated by the event listener
-     * @param expected the number of events to wait for
-     * @return a future that completes once {@code captured.size() >= expected} and the settle elapses
+     * <p>The wait counts both event types, so a request emitting the other type than a test expects
+     * still ends the wait and fails on the test's assertions rather than on the timeout.
+     *
+     * @param vertx      the Vert.x instance
+     * @param restEvents the list being populated by the REST listener
+     * @param httpEvents the list being populated by the HTTP listener
+     * @param expected   the number of events, of either type, to wait for
+     * @return a future that completes once the two lists together reach {@code expected} and the
+     *         settle elapses
      */
-    private static Future<Void> awaitCaptured(Vertx vertx, List<RestRequestCompletedEvent> captured, int expected) {
+    private static Future<Void> awaitCaptured(
+            Vertx vertx,
+            List<RestRequestCompletedEvent> restEvents,
+            List<HttpRequestCompletedEvent> httpEvents,
+            int expected) {
         Promise<Void> promise = Promise.promise();
-        pollCaptured(vertx, captured, expected, promise);
+        pollCaptured(vertx, restEvents, httpEvents, expected, promise);
         return promise.future();
     }
 
     /**
-     * Recursive polling step: once the list reaches {@code expected}, schedule one settle timer and
-     * then complete; otherwise a 10 ms timer fires the next poll iteration.
+     * Recursive polling step: once the two lists together reach {@code expected}, schedule one settle
+     * timer and then complete; otherwise a 10 ms timer fires the next poll iteration.
      *
-     * @param vertx    the Vert.x instance
-     * @param captured the list being populated by the event listener
-     * @param expected the minimum number of events required
-     * @param promise  the promise to complete after the threshold is reached and the settle elapses
+     * @param vertx      the Vert.x instance
+     * @param restEvents the list being populated by the REST listener
+     * @param httpEvents the list being populated by the HTTP listener
+     * @param expected   the minimum number of events, of either type, required
+     * @param promise    the promise to complete after the threshold is reached and the settle elapses
      */
     private static void pollCaptured(
-            Vertx vertx, List<RestRequestCompletedEvent> captured, int expected, Promise<Void> promise) {
-        if (captured.size() >= expected) {
+            Vertx vertx,
+            List<RestRequestCompletedEvent> restEvents,
+            List<HttpRequestCompletedEvent> httpEvents,
+            int expected,
+            Promise<Void> promise) {
+        if (restEvents.size() + httpEvents.size() >= expected) {
             // Local transient settle — give any erroneous extra event a window to surface
             vertx.setTimer(SETTLE_MS, id -> promise.complete());
         } else {
             // Local transient poll — lifetime bound to this single test's wait window
-            vertx.setTimer(10, id -> pollCaptured(vertx, captured, expected, promise));
+            vertx.setTimer(10, id -> pollCaptured(vertx, restEvents, httpEvents, expected, promise));
         }
     }
 
@@ -332,18 +383,20 @@ public class RestRequestCompletionExactlyOnceIT {
     @Test
     @DisplayName("Exactly one event emitted for the 200 success path (GET /ok)")
     void exactlyOneEventOnSuccess(Vertx vertx, VertxTestContext ctx) {
-        List<RestRequestCompletedEvent> captured = new CopyOnWriteArrayList<>();
+        List<RestRequestCompletedEvent> restEvents = new CopyOnWriteArrayList<>();
+        List<HttpRequestCompletedEvent> httpEvents = new CopyOnWriteArrayList<>();
 
-        startServer(vertx, captured)
+        startServer(vertx, restEvents, httpEvents)
                 .compose(port -> get(port, "/ok"))
                 .compose(status -> {
                     ctx.verify(() -> assertEquals(200, status));
-                    return awaitCaptured(vertx, captured, 1);
+                    return awaitCaptured(vertx, restEvents, httpEvents, 1);
                 })
                 .onComplete(ctx.succeeding(v -> {
                     ctx.verify(() -> {
-                        assertEquals(1, captured.size(), "exactly one event must be emitted for /ok");
-                        RestRequestCompletedEvent event = captured.get(0);
+                        assertEquals(List.of(), httpEvents, "no HTTP event: /ok's operation route claimed the request");
+                        assertEquals(1, restEvents.size(), "exactly one event must be emitted for /ok");
+                        RestRequestCompletedEvent event = restEvents.get(0);
                         assertEquals("GET", event.method());
                         assertEquals("/ok", event.path());
                         assertEquals(200, event.statusCode());
@@ -351,8 +404,7 @@ public class RestRequestCompletionExactlyOnceIT {
                         assertNotNull(event.endTime());
                         assertNull(event.failureCode(), "no failure on 200");
                         assertNull(event.safeFailureMessage(), "no failure message on 200");
-                        // operationId is null because no OperationIdCaptureContributor is wired
-                        assertNull(event.operationId(), "operationId must be null without the contributor");
+                        assertSame(OK_OPERATION, event.operation(), "the event carries /ok's operation instance");
                     });
                     ctx.completeNow();
                 }));
@@ -361,18 +413,21 @@ public class RestRequestCompletionExactlyOnceIT {
     @Test
     @DisplayName("Exactly one event emitted for the 400 client-error path (GET /bad)")
     void exactlyOneEventOn400(Vertx vertx, VertxTestContext ctx) {
-        List<RestRequestCompletedEvent> captured = new CopyOnWriteArrayList<>();
+        List<RestRequestCompletedEvent> restEvents = new CopyOnWriteArrayList<>();
+        List<HttpRequestCompletedEvent> httpEvents = new CopyOnWriteArrayList<>();
 
-        startServer(vertx, captured)
+        startServer(vertx, restEvents, httpEvents)
                 .compose(port -> get(port, "/bad"))
                 .compose(status -> {
                     ctx.verify(() -> assertEquals(400, status));
-                    return awaitCaptured(vertx, captured, 1);
+                    return awaitCaptured(vertx, restEvents, httpEvents, 1);
                 })
                 .onComplete(ctx.succeeding(v -> {
                     ctx.verify(() -> {
-                        assertEquals(1, captured.size(), "exactly one event must be emitted for /bad");
-                        RestRequestCompletedEvent event = captured.get(0);
+                        assertEquals(
+                                List.of(), httpEvents, "no HTTP event: /bad's operation route claimed the request");
+                        assertEquals(1, restEvents.size(), "exactly one event must be emitted for /bad");
+                        RestRequestCompletedEvent event = restEvents.get(0);
                         assertEquals("GET", event.method());
                         assertEquals("/bad", event.path());
                         assertEquals(400, event.statusCode());
@@ -386,18 +441,21 @@ public class RestRequestCompletionExactlyOnceIT {
     @Test
     @DisplayName("Exactly one event on ctx.fail(500, ex); failureCode = exception simple name; raw message absent")
     void exactlyOneEventOnBoom(Vertx vertx, VertxTestContext ctx) {
-        List<RestRequestCompletedEvent> captured = new CopyOnWriteArrayList<>();
+        List<RestRequestCompletedEvent> restEvents = new CopyOnWriteArrayList<>();
+        List<HttpRequestCompletedEvent> httpEvents = new CopyOnWriteArrayList<>();
 
-        startServer(vertx, captured)
+        startServer(vertx, restEvents, httpEvents)
                 .compose(port -> get(port, "/boom"))
                 .compose(status -> {
                     ctx.verify(() -> assertEquals(500, status));
-                    return awaitCaptured(vertx, captured, 1);
+                    return awaitCaptured(vertx, restEvents, httpEvents, 1);
                 })
                 .onComplete(ctx.succeeding(v -> {
                     ctx.verify(() -> {
-                        assertEquals(1, captured.size(), "exactly one event must be emitted for /boom");
-                        RestRequestCompletedEvent event = captured.get(0);
+                        assertEquals(
+                                List.of(), httpEvents, "no HTTP event: /boom's operation route claimed the request");
+                        assertEquals(1, restEvents.size(), "exactly one event must be emitted for /boom");
+                        RestRequestCompletedEvent event = restEvents.get(0);
                         assertEquals("GET", event.method());
                         assertEquals("/boom", event.path());
                         assertEquals(500, event.statusCode());
@@ -416,18 +474,21 @@ public class RestRequestCompletionExactlyOnceIT {
     @Test
     @DisplayName("Exactly one event emitted for the 401 auth-rejection-style path (GET /denied)")
     void exactlyOneEventOn401(Vertx vertx, VertxTestContext ctx) {
-        List<RestRequestCompletedEvent> captured = new CopyOnWriteArrayList<>();
+        List<RestRequestCompletedEvent> restEvents = new CopyOnWriteArrayList<>();
+        List<HttpRequestCompletedEvent> httpEvents = new CopyOnWriteArrayList<>();
 
-        startServer(vertx, captured)
+        startServer(vertx, restEvents, httpEvents)
                 .compose(port -> get(port, "/denied"))
                 .compose(status -> {
                     ctx.verify(() -> assertEquals(401, status));
-                    return awaitCaptured(vertx, captured, 1);
+                    return awaitCaptured(vertx, restEvents, httpEvents, 1);
                 })
                 .onComplete(ctx.succeeding(v -> {
                     ctx.verify(() -> {
-                        assertEquals(1, captured.size(), "exactly one event must be emitted for /denied");
-                        RestRequestCompletedEvent event = captured.get(0);
+                        assertEquals(
+                                List.of(), httpEvents, "no HTTP event: /denied's operation route claimed the request");
+                        assertEquals(1, restEvents.size(), "exactly one event must be emitted for /denied");
+                        RestRequestCompletedEvent event = restEvents.get(0);
                         assertEquals("GET", event.method());
                         assertEquals("/denied", event.path());
                         assertEquals(401, event.statusCode());
@@ -437,25 +498,30 @@ public class RestRequestCompletionExactlyOnceIT {
     }
 
     @Test
-    @DisplayName("Exactly one event with null operationId for a 404 (no matching route, GET /nope)")
-    void exactlyOneEventOn404WithNullOperationId(Vertx vertx, VertxTestContext ctx) {
-        List<RestRequestCompletedEvent> captured = new CopyOnWriteArrayList<>();
+    @DisplayName("Exactly one HTTP event and no REST event for a 404 (no matching route, GET /nope)")
+    void exactlyOneHttpEventAndNoRestEventOn404(Vertx vertx, VertxTestContext ctx) {
+        List<RestRequestCompletedEvent> restEvents = new CopyOnWriteArrayList<>();
+        List<HttpRequestCompletedEvent> httpEvents = new CopyOnWriteArrayList<>();
 
-        startServer(vertx, captured)
+        startServer(vertx, restEvents, httpEvents)
                 .compose(port -> get(port, "/nope"))
                 .compose(status -> {
                     ctx.verify(() -> assertEquals(404, status));
-                    return awaitCaptured(vertx, captured, 1);
+                    return awaitCaptured(vertx, restEvents, httpEvents, 1);
                 })
                 .onComplete(ctx.succeeding(v -> {
                     ctx.verify(() -> {
-                        assertEquals(1, captured.size(), "exactly one event must be emitted for /nope");
-                        RestRequestCompletedEvent event = captured.get(0);
+                        assertAll(
+                                "/nope matched no operation route, so no transport claimed it",
+                                () -> assertEquals(
+                                        1,
+                                        httpEvents.size(),
+                                        "exactly one HTTP event must be emitted for /nope: " + httpEvents),
+                                () -> assertEquals(List.of(), restEvents, "no REST event for /nope"));
+                        HttpRequestCompletedEvent event = httpEvents.get(0);
                         assertEquals("GET", event.method());
                         assertEquals("/nope", event.path());
                         assertEquals(404, event.statusCode());
-                        assertNull(
-                                event.operationId(), "operationId must be null for a 404 — no operation dispatch ran");
                     });
                     ctx.completeNow();
                 }));
@@ -467,27 +533,33 @@ public class RestRequestCompletionExactlyOnceIT {
     void exactlyOneEventOnCorrelationReject(Vertx vertx, VertxTestContext ctx) {
         // The emitter registers its end handler at ORDER+5, before CorrelationIngressMiddleware
         // at ORDER+10. So the emitter's end handler is registered even when correlation rejects
-        // the request. The CorrelationContext may be null on the event since the middleware calls
-        // ctx.fail() immediately after binding the generated context, but the important invariant
-        // is that exactly one event is emitted.
-        List<RestRequestCompletedEvent> captured = new CopyOnWriteArrayList<>();
+        // the request. The rejection happens at ROOT, before /ok's route could claim the request,
+        // so the one event is an HttpRequestCompletedEvent. The CorrelationContext may be null on
+        // the event since the middleware calls ctx.fail() immediately after binding the generated
+        // context, but the important invariant is that exactly one event is emitted.
+        List<RestRequestCompletedEvent> restEvents = new CopyOnWriteArrayList<>();
+        List<HttpRequestCompletedEvent> httpEvents = new CopyOnWriteArrayList<>();
 
-        startServer(vertx, captured)
+        startServer(vertx, restEvents, httpEvents)
                 // Send a request with an X-Request-Id value that contains spaces, which are outside
                 // the allow-list [A-Za-z0-9._~:/+=\-]+. With InvalidValuePolicy.REJECT this causes
                 // a 400 short-circuit inside CorrelationIngressMiddleware.
                 .compose(port -> getWithHeader(port, "/ok", "X-Request-Id", INVALID_CORRELATION_VALUE))
                 .compose(status -> {
                     ctx.verify(() -> assertEquals(400, status, "correlation REJECT must respond 400"));
-                    return awaitCaptured(vertx, captured, 1);
+                    return awaitCaptured(vertx, restEvents, httpEvents, 1);
                 })
                 .onComplete(ctx.succeeding(v -> {
                     ctx.verify(() -> {
-                        assertEquals(
-                                1,
-                                captured.size(),
-                                "exactly one event must be emitted even when correlation middleware rejects");
-                        RestRequestCompletedEvent event = captured.get(0);
+                        assertAll(
+                                "the REJECT happens at ROOT, before any operation route claims the request",
+                                () -> assertEquals(
+                                        1,
+                                        httpEvents.size(),
+                                        "exactly one HTTP event must be emitted even when correlation middleware "
+                                                + "rejects: " + httpEvents),
+                                () -> assertEquals(List.of(), restEvents, "no REST event for the rejected request"));
+                        HttpRequestCompletedEvent event = httpEvents.get(0);
                         assertEquals("GET", event.method());
                         assertEquals("/ok", event.path());
                         assertEquals(400, event.statusCode());
@@ -502,15 +574,30 @@ public class RestRequestCompletionExactlyOnceIT {
                 }));
     }
 
+    /**
+     * rest-025 T003 TP-014: the four operation routes each yield one {@link RestRequestCompletedEvent}
+     * carrying its route's stub, and {@code /nope} and the correlation-rejected {@code /ok} each yield
+     * one {@link HttpRequestCompletedEvent}, so the two event types together count the six requests.
+     *
+     * @param vertx the class-scoped Vert.x instance
+     * @param ctx   the test context
+     */
     @Test
-    @DisplayName("Aggregate: total events == total requests across all paths (no duplicates, no misses)")
+    @DisplayName("Aggregate: REST events + HTTP events == total requests across all paths (no duplicates, no misses)")
     void aggregateTotalEventsEqualsRequests(Vertx vertx, VertxTestContext ctx) {
-        List<RestRequestCompletedEvent> captured = new CopyOnWriteArrayList<>();
+        List<RestRequestCompletedEvent> restEvents = new CopyOnWriteArrayList<>();
+        List<HttpRequestCompletedEvent> httpEvents = new CopyOnWriteArrayList<>();
+        int requests = 6;
+        List<Integer> expectedRestStatuses = List.of(200, 400, 500, 401);
+        List<RestOperationDescriptor> expectedRestOperations =
+                List.of(OK_OPERATION, BAD_OPERATION, BOOM_OPERATION, DENIED_OPERATION);
+        List<Integer> expectedHttpStatuses = List.of(404, 400);
+        List<String> expectedHttpPaths = List.of("/nope", "/ok");
 
-        startServer(vertx, captured)
+        startServer(vertx, restEvents, httpEvents)
                 .compose(port ->
-                        // Fire all six request scenarios sequentially so the captured list order is
-                        // deterministic and the total-count assertion is meaningful.
+                        // Fire all six request scenarios sequentially so each captured list's order is
+                        // deterministic and the index-based assertions are meaningful.
                         get(port, "/ok")
                                 .compose(v -> get(port, "/bad"))
                                 .compose(v -> get(port, "/boom"))
@@ -518,27 +605,43 @@ public class RestRequestCompletionExactlyOnceIT {
                                 .compose(v -> get(port, "/nope"))
                                 .compose(v -> getWithHeader(port, "/ok", "X-Request-Id", INVALID_CORRELATION_VALUE))
                                 .map(port))
-                .compose(port -> awaitCaptured(vertx, captured, 6))
+                .compose(port -> awaitCaptured(vertx, restEvents, httpEvents, requests))
                 .onComplete(ctx.succeeding(v -> {
-                    ctx.verify(() -> {
-                        assertEquals(
-                                6,
-                                captured.size(),
-                                "aggregate: total events must equal total requests (6) — no duplicates, no misses");
-
-                        // Verify status codes in the order fired
-                        assertEquals(200, captured.get(0).statusCode(), "/ok -> 200");
-                        assertEquals(400, captured.get(1).statusCode(), "/bad -> 400");
-                        assertEquals(500, captured.get(2).statusCode(), "/boom -> 500");
-                        assertEquals(401, captured.get(3).statusCode(), "/denied -> 401");
-                        assertEquals(404, captured.get(4).statusCode(), "/nope -> 404");
-                        assertEquals(400, captured.get(5).statusCode(), "correlation REJECT -> 400");
-
-                        // No event may have the raw boom message
-                        for (RestRequestCompletedEvent event : captured) {
-                            assertRawMessageAbsent(event, BOOM_RAW_MESSAGE);
-                        }
-                    });
+                    ctx.verify(() -> assertAll(
+                            "aggregate: REST " + restSummary(restEvents) + ", HTTP " + httpSummary(httpEvents),
+                            () -> assertEquals(
+                                    requests,
+                                    restEvents.size() + httpEvents.size(),
+                                    "REST events plus HTTP events must equal the six requests: no duplicates, "
+                                            + "no misses"),
+                            () -> assertEquals(
+                                    expectedRestStatuses,
+                                    restEvents.stream()
+                                            .map(RestRequestCompletedEvent::statusCode)
+                                            .toList(),
+                                    "REST event statuses, in order: /ok, /bad, /boom, /denied"),
+                            () -> assertOperations(expectedRestOperations, restEvents),
+                            () -> assertEquals(
+                                    expectedHttpStatuses,
+                                    httpEvents.stream()
+                                            .map(HttpRequestCompletedEvent::statusCode)
+                                            .toList(),
+                                    "HTTP event statuses, in order: /nope, the rejected /ok"),
+                            () -> assertEquals(
+                                    expectedHttpPaths,
+                                    httpEvents.stream()
+                                            .map(HttpRequestCompletedEvent::path)
+                                            .toList(),
+                                    "HTTP event paths, in order: /nope, the rejected /ok"),
+                            () -> {
+                                // No event of either type may carry the raw boom message
+                                for (RestRequestCompletedEvent event : restEvents) {
+                                    assertRawMessageAbsent(event, BOOM_RAW_MESSAGE);
+                                }
+                                for (HttpRequestCompletedEvent event : httpEvents) {
+                                    assertRawMessageAbsent(event, BOOM_RAW_MESSAGE);
+                                }
+                            }));
                     ctx.completeNow();
                 }));
     }
@@ -546,7 +649,57 @@ public class RestRequestCompletionExactlyOnceIT {
     // --- Assertion helpers ---
 
     /**
-     * Verifies that the raw exception message does not appear in any string field of the event.
+     * Asserts that {@code events} are exactly one event per {@code expected} operation, in order, each
+     * carrying that operation instance. The count is checked before any event is indexed, and no
+     * event's operation is dereferenced.
+     *
+     * @param expected the operations the events must carry, in order
+     * @param events   the captured REST events
+     */
+    private static void assertOperations(
+            List<RestOperationDescriptor> expected, List<RestRequestCompletedEvent> events) {
+        assertEquals(expected.size(), events.size(), "one REST event per operation route: " + restSummary(events));
+        for (int i = 0; i < expected.size(); i++) {
+            RestRequestCompletedEvent event = events.get(i);
+            assertSame(
+                    expected.get(i),
+                    event.operation(),
+                    "REST event " + i + " (" + event.path() + ") must carry its route's operation instance");
+        }
+    }
+
+    /**
+     * Summarizes REST events for failure messages as {@code path status -> operationId routeTemplate},
+     * or {@code path status -> null} for an event without an operation.
+     *
+     * @param events the events to summarize
+     * @return one summary entry per event, in emission order
+     */
+    private static List<String> restSummary(List<RestRequestCompletedEvent> events) {
+        return events.stream()
+                .map(event -> {
+                    RestOperationDescriptor operation = event.operation();
+                    return event.path() + " " + event.statusCode() + " -> "
+                            + (operation == null ? "null" : operation.operationId() + " " + operation.routeTemplate());
+                })
+                .toList();
+    }
+
+    /**
+     * Summarizes HTTP events for failure messages as {@code path status}.
+     *
+     * @param events the events to summarize
+     * @return one summary entry per event, in emission order
+     */
+    private static List<String> httpSummary(List<HttpRequestCompletedEvent> events) {
+        return events.stream()
+                .map(event -> event.path() + " " + event.statusCode())
+                .toList();
+    }
+
+    /**
+     * Verifies that the raw exception message does not appear in any string field of the REST event,
+     * nor in its operation's {@code operationId} and {@code routeTemplate} when it carries one.
      *
      * @param event      the event to inspect
      * @param rawMessage the forbidden substring
@@ -554,12 +707,41 @@ public class RestRequestCompletionExactlyOnceIT {
     private static void assertRawMessageAbsent(RestRequestCompletedEvent event, String rawMessage) {
         assertFieldDoesNotContain("failureCode", event.failureCode(), rawMessage);
         assertFieldDoesNotContain("safeFailureMessage", event.safeFailureMessage(), rawMessage);
+        assertFieldDoesNotContain("wireFailureCode", event.wireFailureCode(), rawMessage);
         assertFieldDoesNotContain("path", event.path(), rawMessage);
         assertFieldDoesNotContain("method", event.method(), rawMessage);
-        assertFieldDoesNotContain("operationId", event.operationId(), rawMessage);
-        assertFieldDoesNotContain("routeTemplate", event.routeTemplate(), rawMessage);
-        // Also check safeAttributes values
-        for (Map.Entry<String, Object> entry : event.safeAttributes().entrySet()) {
+        RestOperationDescriptor operation = event.operation();
+        if (operation != null) {
+            assertFieldDoesNotContain("operation.operationId", operation.operationId(), rawMessage);
+            assertFieldDoesNotContain("operation.routeTemplate", operation.routeTemplate(), rawMessage);
+        }
+        assertSafeAttributesDoNotContain(event.safeAttributes(), rawMessage);
+    }
+
+    /**
+     * Verifies that the raw exception message does not appear in any string field of the HTTP event.
+     *
+     * @param event      the event to inspect
+     * @param rawMessage the forbidden substring
+     */
+    private static void assertRawMessageAbsent(HttpRequestCompletedEvent event, String rawMessage) {
+        assertFieldDoesNotContain("failureCode", event.failureCode(), rawMessage);
+        assertFieldDoesNotContain("safeFailureMessage", event.safeFailureMessage(), rawMessage);
+        assertFieldDoesNotContain("wireFailureCode", event.wireFailureCode(), rawMessage);
+        assertFieldDoesNotContain("path", event.path(), rawMessage);
+        assertFieldDoesNotContain("method", event.method(), rawMessage);
+        assertSafeAttributesDoNotContain(event.safeAttributes(), rawMessage);
+    }
+
+    /**
+     * Verifies that no string value of an event's {@code safeAttributes} contains the raw exception
+     * message.
+     *
+     * @param safeAttributes the event's safe attributes
+     * @param rawMessage     the forbidden substring
+     */
+    private static void assertSafeAttributesDoNotContain(Map<String, Object> safeAttributes, String rawMessage) {
+        for (Map.Entry<String, Object> entry : safeAttributes.entrySet()) {
             if (entry.getValue() instanceof String s) {
                 assertFieldDoesNotContain("safeAttributes[" + entry.getKey() + "]", s, rawMessage);
             }
