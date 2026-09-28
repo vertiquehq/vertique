@@ -574,9 +574,19 @@ per-mount OpenAPI contract) receives the registering mount's metadata for every 
 
 `OperationSchemaSource.schemasFor` takes the operation's effective `JsonMapperProfile` alongside the
 descriptor — `schemasFor(op, JsonMapperProfile profile)`. `JaxRsRouteRegistrar` resolves that profile
-once per operation at router build and passes it with every call. The one-argument form is removed
-rather than kept as a default overload, so an existing implementor recompiles once against the
-two-argument signature.
+once per operation at router build and passes it with every call.
+
+`OperationSchemas` has three INTERNAL members, public only for cross-module use by framework
+modules, opaque to this module, and outside its maturity promise: the typed accessor
+`<T> Optional<T> bodySchemaProvenance(Class<T> type)`, which returns the body's provenance only when
+it is an instance of `type`; `toBuilder()`, which seeds a new `Builder` with the instance's body, its
+provenance, and every parameter schema; and `Builder#bodySchema(JsonObject, Object)`, which sets the
+body together with its provenance (both arguments required, or a `NullPointerException` naming the
+missing one). The one-argument `Builder#bodySchema(JsonObject)` always leaves provenance
+empty, including when it replaces a body copied by `toBuilder()` — so a decorating
+`OperationSchemaSource` that delegates to another source and then rebuilds the result through
+`toBuilder()` and the one-argument form carries no provenance forward. This module never inspects the
+provenance: it stores the object as given and returns it by reference.
 
 ### `RestExceptionMapperCustomizer`
 
