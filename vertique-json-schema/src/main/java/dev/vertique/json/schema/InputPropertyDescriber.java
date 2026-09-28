@@ -201,11 +201,20 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     private final Set<JavaType> inlineInProgress = new HashSet<>();
 
     /**
+     * The recorder of described members and types that carry {@code @Hidden} without {@code
+     * @Schema(hidden = true)}, or {@code null} when nothing records. Recording never changes what this
+     * describer describes: it is told each property right after its schema is built, each unwrapped
+     * member once its content is accepted for folding into the parent, each any-setter once its extras
+     * are described, and each type this describer describes itself.
+     */
+    private final HiddenOnlyMemberRecorder hiddenMembers;
+
+    /**
      * @param mapper          the profile's mapper, which the binder parses a body with
      * @param strictSpellings whether the profile forbids several spellings of one property
      */
     InputPropertyDescriber(ObjectMapper mapper, boolean strictSpellings) {
-        this(mapper, strictSpellings, null, null);
+        this(mapper, strictSpellings, null, null, null);
     }
 
     /**
@@ -217,16 +226,20 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * @param validatedProfile the validated, direction-filtered profile view, consulted by the
      *                         member-level case-insensitive inline path so a declared override still
      *                         applies there; {@code null} is treated as "no overrides declared"
+     * @param hiddenMembers    the recorder told each described property and type, or {@code null} when
+     *                         nothing records
      */
     InputPropertyDescriber(
             ObjectMapper mapper,
             boolean strictSpellings,
             ConstraintSource supplement,
-            ValidatedProfile validatedProfile) {
+            ValidatedProfile validatedProfile,
+            HiddenOnlyMemberRecorder hiddenMembers) {
         this.mapper = mapper;
         this.strictSpellings = strictSpellings;
         this.supplement = supplement;
         this.validatedProfile = validatedProfile;
+        this.hiddenMembers = hiddenMembers;
         this.valuePositionRenderer = new ValuePositionRenderer(validatedProfile, supplement, this::inlineBeanSchema);
     }
 
@@ -351,6 +364,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             }
             throw refuseCustomDeserializer(javaType, deserializer);
         }
+        recordHiddenOnly(javaType.getRawClass());
         ObjectNode definition = context.getGeneratorConfig().createObjectNode();
         ValueInstantiator instantiator = bean.getValueInstantiator();
         requireNotDelegating(javaType, instantiator);
@@ -641,6 +655,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             }
             properties.set(name, schema);
             published.add(name);
+            recordHiddenOnly(property, builtClass);
             if (caseInsensitive) {
                 publishFolded(definition, patternProperties, name, schema, builtClass);
             }
@@ -689,6 +704,9 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 List<SettableBeanProperty> childBound = boundProperties(unwrapped, null);
                 unwrappedChildren.add(new UnwrappedChild(
                         property.getName(), transformer, childClass, childBuilder, childResolved, childBound));
+                // The unwrapped member is described through its content, which the sibling loop below
+                // folds in for every child accepted here, so the recorder is told about the member itself.
+                recordHiddenOnly(property, builtClass);
             }
 
             // C1 (spike/deserializer-driven-schema round 4, CRITICAL): whether extras will be described
@@ -707,6 +725,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             boolean extrasWillBeDescribed = !extrasSuppressed && wouldDescribeExtras(builder);
 
             for (UnwrappedChild sibling : unwrappedChildren) {
+                recordHiddenOnly(sibling.childClass());
                 if (extrasWillBeDescribed) {
                     // F2 (security review round 1, HIGH): a nested @JsonUnwrapped chain (this unwrapped
                     // child itself declares another unwrapped member) is refused rather than folded
@@ -728,6 +747,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                     if (schema != null) {
                         properties.set(name, schema);
                         published.add(name);
+                        recordHiddenOnly(childProperty, sibling.childClass());
                         if (caseInsensitive) {
                             publishFolded(definition, patternProperties, name, schema, builtClass);
                         }
@@ -1633,6 +1653,93 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         return schema != null && schema.hidden();
     }
 
+    /**
+     * Tells the recorder, while it records, about a type this describer describes itself — by reference,
+     * inline at a member, or as an unwrapped child whose properties it folds into the parent. Changes
+     * nothing this describer describes.
+     *
+     * @param type the described type
+     */
+    private void recordHiddenOnly(Class<?> type) {
+        if (hiddenMembers != null) {
+            hiddenMembers.recordType(type);
+        }
+    }
+
+    /**
+     * Tells the recorder, while it records, about a property this describer has just described, with
+     * its carriers read from the profile mapper's introspection of the type declaring it. Does nothing,
+     * and introspects nothing, when no recording is open; changes nothing this describer describes.
+     *
+     * @param property  the described property
+     * @param declaring the type whose own properties include it
+     */
+    private void recordHiddenOnly(SettableBeanProperty property, Class<?> declaring) {
+        if (hiddenMembers == null || !hiddenMembers.isRecording()) {
+            return;
+        }
+        AnnotatedMember member = property.getMember();
+        Member described = (member == null || member instanceof AnnotatedParameter) ? null : member.getMember();
+        hiddenMembers.recordProperty(declaring, described, introspectedProperty(declaring, member, property.getName()));
+    }
+
+    /**
+     * Tells the recorder, while it records, about an any-setter whose extras this describer has just
+     * described: the any-setter is its own and only carrier. Changes nothing this describer describes.
+     *
+     * @param anySetter the any-setter's method or field; a creator parameter, which {@code @Hidden}
+     *                  cannot annotate, records nothing
+     * @param described the type whose extras the any-setter binds
+     */
+    private void recordHiddenOnly(AnnotatedMember anySetter, Class<?> described) {
+        if (hiddenMembers != null && !(anySetter instanceof AnnotatedParameter)) {
+            hiddenMembers.recordProperty(described, anySetter.getMember(), null);
+        }
+    }
+
+    /**
+     * The introspected property a bound member belongs to: the one linking it as its field, getter,
+     * setter, or creator parameter; or, for a builder's method, which the built type never declares, the
+     * built type's property of the same wire name. {@code null} when neither exists.
+     */
+    private BeanPropertyDefinition introspectedProperty(Class<?> declaring, AnnotatedMember member, String wireName) {
+        if (member == null) {
+            return null;
+        }
+        List<BeanPropertyDefinition> candidates =
+                introspection(mapper.getTypeFactory().constructType(declaring)).findProperties();
+        for (BeanPropertyDefinition candidate : candidates) {
+            if (links(candidate, member)) {
+                return candidate;
+            }
+        }
+        if (!member.getDeclaringClass().isAssignableFrom(declaring)) {
+            for (BeanPropertyDefinition candidate : candidates) {
+                if (candidate.getName().equals(wireName)) {
+                    return candidate;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Whether an introspected property links {@code member} as its field, getter, setter, or creator parameter. */
+    private static boolean links(BeanPropertyDefinition candidate, AnnotatedMember member) {
+        if (member instanceof AnnotatedParameter parameter) {
+            AnnotatedParameter own = candidate.getConstructorParameter();
+            return own != null
+                    && own.getIndex() == parameter.getIndex()
+                    && own.getOwner().getMember().equals(parameter.getOwner().getMember());
+        }
+        for (AnnotatedMember accessor :
+                new AnnotatedMember[] {candidate.getField(), candidate.getGetter(), candidate.getSetter()}) {
+            if (accessor != null && accessor.getMember().equals(member.getMember())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** The field a setter implies by its name: {@code setLevel} implies {@code level}. */
     private static String impliedFieldName(Method method) {
         return stripAccessorPrefix(method.getName(), SETTER_PREFIXES);
@@ -2202,6 +2309,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                     applyCorrection(definition, "minProperties", swagger.minProperties());
                 }
             }
+            recordHiddenOnly(member, builtClass);
         }
         return true;
     }
@@ -2336,6 +2444,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         try {
             ValueInstantiator instantiator = nestedBean.getValueInstantiator();
             requireNotDelegating(memberType, instantiator);
+            recordHiddenOnly(memberType.getRawClass());
             ObjectNode inline = context.getGeneratorConfig().createObjectNode();
             // S2 (spike/deserializer-driven-schema round 4 ruling): describe()'s own root path checks
             // scalarCreator(instantiator) before ever building an object schema, so a from-string
