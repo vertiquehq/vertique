@@ -38,6 +38,11 @@ import javax.lang.model.element.TypeElement;
  *
  * <p>Step 5 (mount-path derivation) belongs to the runtime composer, not the processor.
  *
+ * <p>A path written as a plain string rather than read from {@code @ApplicationPath}, such as
+ * {@code @RestApplication.path}, has no step 0: {@link #normalize(String)} applies steps 1 and 2 to
+ * the value as written, {@link #violatedRule(String)} is step 3, and the caller
+ * ({@link RestApplicationScanner}) reports the rejection with the value as written and the rule.
+ *
  * <p>Since {@code jakarta.ws.rs-api} is a test-scope dependency of this module, the
  * {@code @ApplicationPath} annotation is never imported here; it is located by its
  * fully-qualified name through {@link AnnotationMirrors}, mirroring
@@ -71,6 +76,20 @@ public final class ApplicationPathGrammar {
     }
 
     /**
+     * Normalizes an application path value as written (steps 1 and 2), for a path that is not read
+     * from {@code @ApplicationPath}, such as {@code @RestApplication.path}: an empty value becomes
+     * {@code "/"}, a missing leading {@code /} is added, one terminal {@code /*} is removed, then
+     * every trailing {@code /}. The result is checked by {@link #violatedRule(String)}.
+     *
+     * @param value the path value as written; must not be {@code null}
+     * @return the normalized path, starting with {@code /} and never ending with a trailing
+     *     {@code /} other than the root path itself
+     */
+    public static String normalize(String value) {
+        return normalizeEnd(normalizeStart(value));
+    }
+
+    /**
      * Returns the {@code @ApplicationPath} value as written, before normalization, for the error
      * message accompanying a step-3 rejection.
      *
@@ -94,7 +113,8 @@ public final class ApplicationPathGrammar {
      * {@code %5c}); {@code unsupported character} (any character other than {@code /} outside
      * {@code A-Z a-z 0-9 . _ ~ -}, including any other percent sign).
      *
-     * @param normalizedPath the result of {@link #normalize}; must not be {@code null}
+     * @param normalizedPath the result of {@link #normalize(TypeElement, CodegenContext)} or
+     *                       {@link #normalize(String)}; must not be {@code null}
      * @return the first violated rule's name; or {@code null} when {@code normalizedPath}
      *     violates none of them
      */
