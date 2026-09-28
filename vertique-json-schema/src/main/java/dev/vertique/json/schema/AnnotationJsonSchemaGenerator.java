@@ -20,6 +20,7 @@ import com.github.victools.jsonschema.generator.FieldScope;
 import com.github.victools.jsonschema.generator.MemberScope;
 import com.github.victools.jsonschema.generator.MethodScope;
 import com.github.victools.jsonschema.generator.OptionPreset;
+import com.github.victools.jsonschema.generator.SchemaGenerationContext;
 import com.github.victools.jsonschema.generator.SchemaGenerator;
 import com.github.victools.jsonschema.generator.SchemaGeneratorConfig;
 import com.github.victools.jsonschema.generator.SchemaGeneratorConfigBuilder;
@@ -39,6 +40,7 @@ import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -151,6 +153,12 @@ import java.util.function.Consumer;
  * that keyword on a schema object is refused when the generator is constructed, as one carrying the
  * alias-expansion keyword is.
  *
+ * <p><strong>Output renames.</strong> The output direction publishes each member under the name the
+ * schema library resolves for it, so a {@code @Schema(name = ...)} can publish a member under a name
+ * other than the one the profile's mapper serializes it under. {@link #outputRenames(Type)} reports
+ * every such member reachable from a type without changing the document; only a generator built by
+ * {@link #forOutputProfile(JsonMapperProfile)} answers it.
+ *
  * <p><strong>How the input direction describes an alias spelling.</strong> Every {@code @JsonAlias}
  * spelling Jackson reports for a visible input property that does not back an any-accessor is listed
  * under {@code properties} with a deep copy of the schema that property is published with, so the
@@ -244,6 +252,13 @@ public final class AnnotationJsonSchemaGenerator {
     private final InputPropertyDescriber describer;
 
     /**
+     * The output direction's property-name resolver, or {@code null} in the other construction modes.
+     * It is present exactly when the instance was built by {@link #forOutputProfile(JsonMapperProfile)},
+     * the only kind {@link #outputRenames(Type)} answers for.
+     */
+    private final OutputPropertyNameResolver outputNames;
+
+    /**
      * Whether {@link NumericDomainKeywordFilter} runs on every generated document from this instance.
      *
      * <p>{@code true} only for a profile-aware generator ({@link #forInputProfile(JsonMapperProfile)}
@@ -280,7 +295,7 @@ public final class AnnotationJsonSchemaGenerator {
      *                                        than {@code DRAFT_2020_12}
      */
     AnnotationJsonSchemaGenerator(SchemaGenerator generator) {
-        this(generator, false, null);
+        this(generator, false, null, null);
     }
 
     /**
@@ -300,14 +315,18 @@ public final class AnnotationJsonSchemaGenerator {
      *                                        than {@code DRAFT_2020_12}
      */
     AnnotationJsonSchemaGenerator(SchemaGenerator generator, boolean suppressInapplicableNumericKeywords) {
-        this(generator, suppressInapplicableNumericKeywords, null);
+        this(generator, suppressInapplicableNumericKeywords, null, null);
     }
 
     private AnnotationJsonSchemaGenerator(
-            SchemaGenerator generator, boolean suppressInapplicableNumericKeywords, InputPropertyDescriber describer) {
+            SchemaGenerator generator,
+            boolean suppressInapplicableNumericKeywords,
+            InputPropertyDescriber describer,
+            OutputPropertyNameResolver outputNames) {
         this.generator = requirePinnedDialect(generator);
         this.suppressInapplicableNumericKeywords = suppressInapplicableNumericKeywords;
         this.describer = describer;
+        this.outputNames = outputNames;
     }
 
     /**
@@ -468,7 +487,8 @@ public final class AnnotationJsonSchemaGenerator {
         } else {
             outputNames = new OutputPropertyNameResolver(validated.mapper());
         }
-        return new AnnotationJsonSchemaGenerator(build(builder, describer, outputNames), hasOverrides, describer);
+        return new AnnotationJsonSchemaGenerator(
+                build(builder, describer, outputNames), hasOverrides, describer, outputNames);
     }
 
     /**
@@ -498,7 +518,10 @@ public final class AnnotationJsonSchemaGenerator {
      * before the modules, keeps precedence for an overridden class. The output direction keeps the
      * schema library's own walk and only projects the mapper's serialization names and visibility onto
      * it through {@link OutputPropertyNameResolver}, because Victools' Jackson module reads annotations
-     * but not an {@link ObjectMapper}-level naming strategy.
+     * but not an {@link ObjectMapper}-level naming strategy. The same resolver is also registered as a
+     * member attribute hook that leaves every node untouched: the schema library calls it for each
+     * member it publishes, under the name it publishes it with, which is what {@link
+     * #outputRenames(Type)} records.
      *
      * <p>The Jakarta Validation module ({@code NOT_NULLABLE_FIELD_IS_REQUIRED}, {@code
      * INCLUDE_PATTERN_EXPRESSIONS}) is installed <strong>unconditionally, in every mode</strong> — it
@@ -525,10 +548,12 @@ public final class AnnotationJsonSchemaGenerator {
         if (outputNames != null) {
             builder.forFields()
                     .withIgnoreCheck(outputNames::isIgnored)
-                    .withPropertyNameOverrideResolver(outputNames::resolve);
+                    .withPropertyNameOverrideResolver(outputNames::resolve)
+                    .withInstanceAttributeOverride(outputNames::recordPublished);
             builder.forMethods()
                     .withIgnoreCheck(outputNames::isIgnored)
-                    .withPropertyNameOverrideResolver(outputNames::resolve);
+                    .withPropertyNameOverrideResolver(outputNames::resolve)
+                    .withInstanceAttributeOverride(outputNames::recordPublished);
         }
         return new SchemaGenerator(builder.build());
     }
@@ -537,9 +562,25 @@ public final class AnnotationJsonSchemaGenerator {
      * The output direction's view of a type: the serialization names the profile's mapper materializes
      * and the members it serializes, keyed by the exact member Victools is publishing, with the
      * property's internal and wire name as the fallback for a member the introspection does not link.
+     *
+     * <p>While a recording is open it also records, for each member the schema publishes, the name it
+     * is published under beside the name it is serialized under, keeping the members whose two names
+     * differ. Recording state is read and written only under the owning generator's instance lock.
      */
     private static final class OutputPropertyNameResolver {
+        /** The report's order: declaring type, then member, then the two names for a same-named pair. */
+        private static final Comparator<OutputRename> REPORT_ORDER = Comparator.comparing(OutputRename::declaringType)
+                .thenComparing(OutputRename::member)
+                .thenComparing(OutputRename::serializedName)
+                .thenComparing(OutputRename::schemaName);
+
         private final ObjectMapper mapper;
+
+        /**
+         * The renamed published members of the generation being recorded, one entry per member however
+         * often the generation reaches it, or {@code null} when no recording is open.
+         */
+        private Map<Member, OutputRename> recording;
 
         private record PropertyMetadata(String wireName, boolean visible) {}
 
@@ -567,6 +608,57 @@ public final class AnnotationJsonSchemaGenerator {
         private boolean isIgnored(MemberScope<?, ?> scope) {
             PropertyMetadata property = metadata(scope);
             return property != null && !property.visible();
+        }
+
+        /** Opens a recording for the generation about to run, discarding any earlier one. */
+        private void beginRecording() {
+            recording = new HashMap<>();
+        }
+
+        /**
+         * The renames the open recording holds, in report order.
+         *
+         * @return an unmodifiable list, empty when no published member was renamed
+         */
+        private List<OutputRename> recordedRenames() {
+            return recording.values().stream().sorted(REPORT_ORDER).toList();
+        }
+
+        /** Closes the recording, whether the generation it recorded succeeded or failed. */
+        private void endRecording() {
+            recording = null;
+        }
+
+        /**
+         * The member attribute hook: the schema library calls it for each member it publishes, with the
+         * name it publishes the member under, after the ignore checks and the name overrides have run.
+         * It never modifies {@code attributes}, so it changes no document.
+         *
+         * <p>A member is recorded when a recording is open, the member is not a container's item view of
+         * itself, the mapper's serialization introspection knows it, and the published name differs from
+         * the serialized one.
+         *
+         * @param attributes the member's collected attributes, left untouched
+         * @param scope      the published member, carrying the name it is published under
+         * @param context    the generation context, unused
+         */
+        private void recordPublished(ObjectNode attributes, MemberScope<?, ?> scope, SchemaGenerationContext context) {
+            if (recording == null) {
+                return;
+            }
+            PropertyMetadata property = metadata(scope);
+            if (property == null) {
+                return;
+            }
+            String schemaName = scope.getSchemaPropertyName();
+            if (schemaName.equals(property.wireName())) {
+                return;
+            }
+            Member member = scope.getRawMember();
+            recording.putIfAbsent(
+                    member,
+                    new OutputRename(
+                            member.getDeclaringClass().getName(), member.getName(), property.wireName(), schemaName));
         }
 
         private PropertyMetadata metadata(MemberScope<?, ?> scope) {
@@ -854,6 +946,54 @@ public final class AnnotationJsonSchemaGenerator {
                 throw Diagnostics.failure(
                         "canonicalization of the generated JSON Schema failed for " + Diagnostics.typeIdentity(type),
                         failed);
+            }
+        }
+    }
+
+    /**
+     * Output-direction generators only: every member reachable from {@code type} whose published
+     * schema property name differs from the name Jackson serializes. Empty when none.
+     *
+     * <p>A member is reachable when the output document {@link #generateCanonical(Type)} publishes for
+     * {@code type} describes it — as a property of the root, of a nested object, of a collection
+     * element, or of a shared definition — and it is reported once however often the document reaches
+     * it. Its {@link OutputRename#schemaName() schemaName} is the property name that document
+     * publishes it under, and its {@link OutputRename#serializedName() serializedName} is the name the
+     * profile mapper's serialization introspection gives it. A {@code @Schema(name = ...)} on a member
+     * Jackson serializes under another name is the typical cause; a rename that lands on the serialized
+     * name is not reported, and neither is a member the mapper's serialization introspection does not
+     * know.
+     *
+     * <p>The list is ordered by {@link OutputRename#declaringType() declaringType}, then by {@link
+     * OutputRename#member() member}, each by {@link String#compareTo(String)}, and is unmodifiable.
+     *
+     * <p>The call runs one generation of {@code type}, exactly as {@link #generateCanonical(Type)}
+     * does, under the same per-instance lock: it has the same accepted type grammar, the same bounded
+     * {@link JsonSchemaGenerationException} failure contract — including the refusal of a member
+     * renamed onto a name another property carries — and the same restoration of the underlying
+     * generator's per-generation state on failure. It changes nothing that a later call on this
+     * instance publishes.
+     *
+     * @param type the resolved Java type whose output document to inspect; must not be {@code null}
+     * @return the renamed members, in the order above; empty when none
+     * @throws IllegalStateException         on any generator not built by forOutputProfile, including
+     *                                        input-direction and victools-defaults generators
+     * @throws JsonSchemaGenerationException if {@code type} is outside the accepted grammar, or if
+     *                                        generation of its output document fails
+     */
+    public List<OutputRename> outputRenames(Type type) {
+        if (outputNames == null) {
+            throw new IllegalStateException("outputRenames answers only for a generator built by forOutputProfile;"
+                    + " this generator was built for another construction mode and has no profile-mapper"
+                    + " serialization names to compare against");
+        }
+        synchronized (lock) {
+            outputNames.beginRecording();
+            try {
+                describe(type);
+                return outputNames.recordedRenames();
+            } finally {
+                outputNames.endRecording();
             }
         }
     }
