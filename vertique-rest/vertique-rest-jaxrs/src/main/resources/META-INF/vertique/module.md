@@ -1197,10 +1197,12 @@ application.
 
 ## Configuration
 
-This module reads no configuration section of its own; `http` and `jaxrs` are declared and parsed in
-`dev.vertique:vertique-rest-core`. The keys it acts on are `jaxrs.basePath`, `jaxrs.openapiPath`,
-`jaxrs.sse.*`, `jaxrs.validationStrategy`, `jaxrs.security.requireExplicitPolicy` (see
-[Explicit security policy](#explicit-security-policy)), and the JSON profile keys below.
+`http` and `jaxrs` are declared and parsed in `dev.vertique:vertique-rest-core`, with one exception:
+this module parses the `jaxrs.applications` section itself (see
+[Per-application configuration](#per-application-configuration)). The keys it acts on are
+`jaxrs.basePath`, `jaxrs.openapiPath`, `jaxrs.sse.*`, `jaxrs.validationStrategy`,
+`jaxrs.security.requireExplicitPolicy` (see [Explicit security policy](#explicit-security-policy)),
+`jaxrs.applications.<name>.openapiPath`, and the JSON profile keys below.
 
 ### JSON profile selection
 
@@ -1321,6 +1323,45 @@ above collapses to whatever the effective profile does, including enum leniency:
 `vertique-strict`, or a custom profile for a boundary that must reject unknown enum strings without a
 gate.
 
+### Per-application configuration
+
+`jaxrs.applications` is a keyed object: each key is an application's name, and its value is that
+application's settings object. The section sits under `jaxrs`, but this module parses it at startup;
+`vertique-rest-core`'s `jaxrs` parse (`JaxRsConfig`) does not declare it and ignores it.
+
+| Key | Default | Constraint / notes |
+|---|---|---|
+| `jaxrs.applications.<name>.openapiPath` | none | string; the application's OpenAPI contract location. An absent key or an explicit `null` configures none; an empty or whitespace-only value fails startup |
+
+```json
+{
+  "jaxrs": {
+    "applications": {
+      "orders": { "openapiPath": "orders-openapi.yaml" },
+      "admin": {}
+    }
+  }
+}
+```
+
+The section is strict:
+
+- An absent `jaxrs.applications` and an empty object `{}` both configure no per-application
+  settings. Any other value that is not a JSON object — a string, number, boolean, array, or
+  `null` — fails startup.
+- Every entry must be a JSON object; `{}` is a valid entry with no settings. An entry whose value is
+  anything else, `null` included, fails startup.
+- `openapiPath` is the only key an entry accepts, matched case-sensitively. Any other key fails
+  startup, including `name` (the entry key already is the name) and case variants such as
+  `OpenapiPath`.
+
+That strictness is a deliberate narrowing of the "unknown keys are ignored" rule
+`vertique-rest-core` applies to `jaxrs`, limited to the reserved name `applications`. Each of those
+failures, and a blank `openapiPath`, raises a `ConfigurationException` naming the offending
+configuration paths, sorted, never their values. Shapes and keys are checked before any
+`openapiPath` value is parsed, so blank values are reported only when no shape or key problem
+remains (see [Startup failures](#startup-failures)).
+
 ---
 
 ## Failures, Constraints, and Common Mistakes
@@ -1359,6 +1400,23 @@ with no application declared it remains the only operationId check that runs. An
 built with the public five-argument constructor runs neither this operationId check nor the
 application-versus-hand-built check in [Mount conflicts](#mount-conflicts) above, and refuses to
 create any application mount's router.
+
+Parsing `jaxrs.applications` (see [Per-application configuration](#per-application-configuration))
+raises `ConfigurationException`. The shape, key, and blank-value checks use the three messages
+below; `<paths>` lists every offending configuration path, single-quoted, sorted, and
+comma-separated. An entry that passes those checks but cannot be bound — an `openapiPath` that is a
+JSON object or array, or a blank entry key — fails instead with the configuration parser's own
+message, which does not name the full configuration path. No message contains a configured value.
+
+| Condition | Message |
+|---|---|
+| `jaxrs.applications` is present but not a JSON object (`null` included) | `'jaxrs.applications' must be a JSON object` |
+| An entry is not a JSON object (`null` included), or an entry carries a key other than `openapiPath` | `Invalid entries or keys under 'jaxrs.applications': <paths>; each entry must be a JSON object whose only key is 'openapiPath'` |
+| A configured `openapiPath` is empty or only whitespace | `Blank values under 'jaxrs.applications': <paths>; set 'openapiPath' to a non-blank location or omit it` |
+
+In the second message a path is `jaxrs.applications.<name>` for an entry that is not an object and
+`jaxrs.applications.<name>.<key>` for a rejected key; in the third it is
+`jaxrs.applications.<name>.openapiPath`.
 
 `SecurityPolicyViolationException` is thrown immediately when a `SecurityPolicyValidator` is bound and
 finds a violation, rather than being collected. `JsonProfileConfigurationException` is thrown at
@@ -1443,6 +1501,11 @@ as proof of a complete body.
   body may still be in flight. Observe the wire-completion channel for the delivery outcome.
 - **Setting `@JsonProfile` on a resource method and expecting the response to keep the class
   profile.** Request and response profiles are symmetric — the method-level override applies to both.
+- **Adding `name`, a case variant such as `OpenapiPath`, or another setting inside a
+  `jaxrs.applications` entry.** The entry key is the application's name, and `openapiPath`, spelled
+  exactly, is the only key an entry accepts; any other key fails startup instead of being ignored.
+- **Spelling the section `jaxrs.Applications` or another case variant.** Only `jaxrs.applications`
+  is read; a case variant is ignored like any unknown `jaxrs` key.
 
 ---
 

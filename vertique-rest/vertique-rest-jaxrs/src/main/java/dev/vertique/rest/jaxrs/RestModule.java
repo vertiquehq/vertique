@@ -10,6 +10,9 @@ import dagger.Provides;
 import dagger.multibindings.ElementsIntoSet;
 import dagger.multibindings.IntoSet;
 import dagger.multibindings.Multibinds;
+import dev.vertique.core.config.ConfigParser;
+import dev.vertique.core.config.JsonConfigPaths;
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.exception.ConflictException;
 import dev.vertique.core.exception.TooManyRequestsException;
 import dev.vertique.core.exception.UnavailableException;
@@ -44,6 +47,7 @@ import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
 import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
 import dev.vertique.security.authz.ActionRegistry;
 import dev.vertique.security.authz.Authorizer;
+import io.vertx.core.json.JsonObject;
 import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
 import jakarta.ws.rs.WebApplicationException;
@@ -51,6 +55,8 @@ import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.ext.ExceptionMapper;
 import java.util.List;
 import java.util.Set;
+import java.util.TreeSet;
+import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -692,5 +698,113 @@ public abstract class RestModule {
         } finally {
             JaxRsApplicationComposer.exitComposition(config);
         }
+    }
+
+    // --- jaxrs.applications configuration ---
+
+    /**
+     * Parses the strict keyed-object {@code jaxrs.applications} section into one
+     * {@link RestApplicationConfig} per entry, in the section's order. Not a Dagger binding.
+     *
+     * <p>The section is checked in three steps. Steps 1 and 3 each fail with one aggregated message
+     * that names every offending configuration path, sorted, and never a configuration value:
+     * <ol>
+     *   <li>A raw-key check, before any parsing: {@code jaxrs.applications}, when present, must be a
+     *       JSON object ({@code null} included in the rejection); every entry
+     *       {@code jaxrs.applications.<name>} must be a JSON object; and {@code openapiPath},
+     *       compared case-sensitively, is the only key an entry may carry.</li>
+     *   <li>A keyed-object parse through {@link ConfigParser#parseKeyedObject(JsonObject, String,
+     *       Class)}, which injects each entry's key into {@link RestApplicationConfig#name()}; an
+     *       entry it cannot deserialize fails with the parser's own message.</li>
+     *   <li>A blank-value check: a configured {@code openapiPath} that is empty or only whitespace
+     *       fails naming {@code jaxrs.applications.<name>.openapiPath}. An absent key or an explicit
+     *       JSON {@code null} binds {@code null} and is accepted.</li>
+     * </ol>
+     *
+     * @param config the full application configuration
+     * @param parser the injected config parser
+     * @return the parsed entries; empty when the section is absent or empty
+     * @throws ConfigurationException when {@code jaxrs} or {@code jaxrs.applications} is present but
+     *     not a JSON object, an entry is not a JSON object, an entry carries a key other than
+     *     {@code openapiPath}, an entry cannot be parsed, or a configured {@code openapiPath} is blank
+     */
+    static List<RestApplicationConfig> parseJaxRsApplications(JsonObject config, ConfigParser parser) {
+        JsonObject jaxrs = JsonConfigPaths.navigateObject(config, "jaxrs");
+        checkApplicationKeys(jaxrs);
+        List<RestApplicationConfig> applications = parser.parseKeyedObject(
+                JsonConfigPaths.navigateObject(config, "jaxrs", "applications"), "name", RestApplicationConfig.class);
+        checkBlankOpenapiPaths(applications);
+        return applications;
+    }
+
+    /**
+     * Rejects a raw {@code jaxrs.applications} section that is not a JSON object, entries that are
+     * not JSON objects, and entry keys other than {@code openapiPath}. Reads only key names and
+     * whether each value is a JSON object; no configuration value is echoed.
+     *
+     * @param jaxrs the {@code jaxrs} section, already navigated to a {@link JsonObject}
+     * @throws ConfigurationException when {@code jaxrs.applications} is present but not a JSON
+     *     object, or when any entry is not a JSON object or carries a key other than
+     *     {@code openapiPath}
+     */
+    private static void checkApplicationKeys(JsonObject jaxrs) {
+        if (!jaxrs.containsKey("applications")) {
+            return;
+        }
+        if (!(jaxrs.getValue("applications") instanceof JsonObject applications)) {
+            throw new ConfigurationException("'jaxrs.applications' must be a JSON object");
+        }
+        Set<String> invalid = new TreeSet<>();
+        for (String name : applications.fieldNames()) {
+            String entryPath = "jaxrs.applications." + name;
+            if (!(applications.getValue(name) instanceof JsonObject entry)) {
+                invalid.add(entryPath);
+                continue;
+            }
+            for (String key : entry.fieldNames()) {
+                if (!key.equals("openapiPath")) {
+                    invalid.add(entryPath + "." + key);
+                }
+            }
+        }
+        if (!invalid.isEmpty()) {
+            throw new ConfigurationException("Invalid entries or keys under 'jaxrs.applications': "
+                    + quoteJoin(invalid)
+                    + "; each entry must be a JSON object whose only key is 'openapiPath'");
+        }
+    }
+
+    /**
+     * Rejects every parsed entry whose configured {@code openapiPath} is empty or only whitespace,
+     * naming each such path in one message. An absent or explicit-{@code null} {@code openapiPath}
+     * is not blank.
+     *
+     * @param applications the parsed {@code jaxrs.applications} entries
+     * @throws ConfigurationException when one or more entries carry a blank {@code openapiPath}
+     */
+    private static void checkBlankOpenapiPaths(List<RestApplicationConfig> applications) {
+        Set<String> blank = new TreeSet<>();
+        for (RestApplicationConfig application : applications) {
+            String openapiPath = application.openapiPath();
+            if (openapiPath != null && openapiPath.isBlank()) {
+                blank.add("jaxrs.applications." + application.name() + ".openapiPath");
+            }
+        }
+        if (!blank.isEmpty()) {
+            throw new ConfigurationException("Blank values under 'jaxrs.applications': "
+                    + quoteJoin(blank)
+                    + "; set 'openapiPath' to a non-blank location or omit it");
+        }
+    }
+
+    /**
+     * Formats a sorted path set as single-quoted, comma-separated paths for a
+     * {@link ConfigurationException} message.
+     *
+     * @param paths the sorted configuration paths
+     * @return the formatted, single-quoted, comma-joined path list
+     */
+    private static String quoteJoin(Set<String> paths) {
+        return paths.stream().map(path -> "'" + path + "'").collect(Collectors.joining(", "));
     }
 }
