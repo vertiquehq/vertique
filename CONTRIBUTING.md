@@ -20,10 +20,11 @@ Use `./mvnw -ntp spotless:apply` to apply the project formatter.
 
 ## Mutation testing (advisory)
 
-Pull requests that change production code in the pilot modules (listed in
-`scripts/pit-pr-scope.mjs`) get a non-required "Mutation (advisory)" check. It
-runs [PIT](https://pitest.org) on the changed classes and lists the mutants on
-added lines that no unit test detects. It never blocks a merge. For each listed
+Pull requests that change production Java get a non-required "Mutation
+(advisory)" check. For classes in the pilot modules (listed in
+`scripts/pit-pr-scope.mjs`) it runs [PIT](https://pitest.org) on the changed
+classes and lists the mutants on added lines that no unit test detects. It never
+blocks a merge. For each listed
 mutant, add an assertion that fails when the line changes as described, or say
 in the review why the mutant cannot change behavior.
 
@@ -32,6 +33,8 @@ Run the same analysis locally before pushing:
 ```bash
 bash scripts/pit-pr-scope.sh
 ```
+
+It compares against `origin/main`; from a fork, pass `--base upstream/main`.
 
 PIT executes mutated code for real, including code that deletes files. Run it
 only in a checkout you can restore from git, and never as root.
