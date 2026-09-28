@@ -13,7 +13,6 @@ import static org.mockito.Mockito.when;
 import dev.vertique.rest.core.capture.HttpOperationMeta;
 import dev.vertique.rest.core.capture.RestServerRequestEvidenceCapturer;
 import dev.vertique.rest.core.context.RestContextResolution;
-import dev.vertique.rest.core.events.RestRequestCompletionEmitter;
 import io.vertx.core.Future;
 import io.vertx.ext.web.RoutingContext;
 import java.lang.reflect.Method;
@@ -122,21 +121,14 @@ class ResourceMethodInvokerCapturerTest {
     }
 
     /**
-     * Builds a minimal {@link RoutingContext} stub with an empty {@code ctx.data()} map and the
-     * given routeTemplate stored under {@link RestRequestCompletionEmitter#KEY_ROUTE_TEMPLATE} —
-     * a value capturers must <em>not</em> see: they receive the route's own template.
+     * Builds a minimal {@link RoutingContext} stub with an empty {@code ctx.data()} map.
      *
-     * @param routeTemplate the route template to place in ctx.data(), or {@code null}
      * @return the configured stub
      */
-    private static RoutingContext ctx(String routeTemplate) {
+    private static RoutingContext ctx() {
         RoutingContext ctx = mock(RoutingContext.class);
         Map<String, Object> data = new HashMap<>();
-        if (routeTemplate != null) {
-            data.put(RestRequestCompletionEmitter.KEY_ROUTE_TEMPLATE, routeTemplate);
-        }
         when(ctx.data()).thenReturn(data);
-        when(ctx.get(RestRequestCompletionEmitter.KEY_ROUTE_TEMPLATE)).thenAnswer(inv -> routeTemplate);
 
         // Raw-request stubs the reflective path's DefaultBoundRequest binding consults (FR-024).
         io.vertx.core.http.HttpServerRequest request = mock(io.vertx.core.http.HttpServerRequest.class);
@@ -161,7 +153,7 @@ class ResourceMethodInvokerCapturerTest {
             FixtureResource resource = new FixtureResource();
             Method method = FixtureResource.class.getMethod("greetNoArgs");
 
-            RoutingContext ctx = ctx("/greet");
+            RoutingContext ctx = ctx();
             ResourceMethodInvoker invoker = invokerFor(resource, method, Set.of());
 
             Future<Object> result = invokeMethod(invoker, ctx);
@@ -192,7 +184,7 @@ class ResourceMethodInvokerCapturerTest {
             List<HttpOperationMeta> captured = new ArrayList<>();
             RestServerRequestEvidenceCapturer capturer = (ctx, meta) -> captured.add(meta);
 
-            Future<Object> result = invokeMethod(invokerFor(resource, method, Set.of(capturer)), ctx("/greet"));
+            Future<Object> result = invokeMethod(invokerFor(resource, method, Set.of(capturer)), ctx());
             assertTrue(result.succeeded(), "request must succeed");
 
             assertEquals(1, captured.size(), "capturer must be called exactly once");
@@ -210,7 +202,7 @@ class ResourceMethodInvokerCapturerTest {
             List<HttpOperationMeta> captured = new ArrayList<>();
             RestServerRequestEvidenceCapturer capturer = (ctx, meta) -> captured.add(meta);
 
-            RoutingContext ctx = ctx("/greet");
+            RoutingContext ctx = ctx();
             ResourceMethodInvoker invoker = invokerFor(resource, method, Set.of(capturer));
 
             Future<Object> result = invokeMethod(invoker, ctx);
@@ -233,7 +225,7 @@ class ResourceMethodInvokerCapturerTest {
             List<HttpOperationMeta> captured = new ArrayList<>();
             RestServerRequestEvidenceCapturer capturer = (ctx, meta) -> captured.add(meta);
 
-            RoutingContext ctx = ctx(null /* no template in ctx */);
+            RoutingContext ctx = ctx();
             ResourceMethodInvoker invoker = invokerFor(resource, method, Set.of(capturer));
 
             invokeMethod(invoker, ctx);
@@ -249,7 +241,7 @@ class ResourceMethodInvokerCapturerTest {
             List<HttpOperationMeta> captured = new ArrayList<>();
             RestServerRequestEvidenceCapturer capturer = (ctx, meta) -> captured.add(meta);
 
-            RoutingContext ctx = ctx("/rewritten-by-a-handler");
+            RoutingContext ctx = ctx();
             ResourceMethodInvoker invoker = invokerFor(resource, method, Set.of(capturer));
 
             invokeMethod(invoker, ctx);
@@ -275,7 +267,7 @@ class ResourceMethodInvokerCapturerTest {
                 throw new RuntimeException("capturer-boom");
             };
 
-            RoutingContext ctx = ctx("/greet");
+            RoutingContext ctx = ctx();
             ResourceMethodInvoker invoker = invokerFor(resource, method, Set.of(throwing));
 
             Future<Object> result = invokeMethod(invoker, ctx);
@@ -317,7 +309,7 @@ class ResourceMethodInvokerCapturerTest {
                 }
             };
 
-            RoutingContext ctx = ctx("/greet");
+            RoutingContext ctx = ctx();
             // Build invoker with both capturers pre-sorted by priority
             List<RestServerRequestEvidenceCapturer> sorted = List.of(throwing, capturing);
             ResourceMethodMeta meta = new ResourceMethodMeta(

@@ -53,9 +53,11 @@ dispatch layer.
 **HTTP/2 extended-CONNECT limitation.** HTTP/2 extended-CONNECT (used by gRPC, WebTransport) is not
 detected; those requests are counted as regular requests. This is a documented limitation.
 
-**Auth-rejected and pre-dispatch requests.** When a request is rejected before operation dispatch
-(auth failure, 404 routing miss), the `route` and `operation` tags carry `UNKNOWN`. Tag enrichment
-runs post-auth via `OperationIdCaptureContributor`; tags are unavailable at rejection time.
+**Auth-rejected and pre-dispatch requests.** The `route` and `operation` tags come from the
+completion event's route identity, which the framework records before authentication. A request
+rejected after it matched a JAX-RS operation route (401, 403, 415, or a validation 400) therefore
+carries its `route` and `operation` tags. A request that matched no operation route (a 404 routing
+miss, or a rejection by a `ROOT` middleware) carries `UNKNOWN` for both.
 
 **Per-event registry lookup (no meter cache, D-L).** Both adapters call
 `Timer.builder(...).tags(...).register(registry)` on every event. Micrometer's internal registry

@@ -40,7 +40,7 @@ import java.util.Objects;
  * @param operationId   the OpenAPI {@code operationId} declared on the resource method; never
  *                      {@code null}
  * @param routeTemplate the operation's route template (e.g. {@code "/users/{id}"}), the same value
- *                      {@link dev.vertique.rest.core.events.OperationIdCaptureContributor} records;
+ *                      as {@link dev.vertique.rest.core.routing.RestOperationDescriptor#routeTemplate()};
  *                      the JAX-RS runtime always supplies it, other producers may pass {@code null}
  */
 public record HttpOperationMeta(

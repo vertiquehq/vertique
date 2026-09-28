@@ -17,9 +17,10 @@ import lombok.extern.slf4j.Slf4j;
  * HTTP route and operationId attributes for each REST operation request.
  *
  * <p>Contributed to the {@link OperationHandlerContributor} multibinding by
- * {@link OpenTelemetryRestModule}. Runs at priority {@value #PRIORITY} — one step after
- * {@link dev.vertique.rest.core.events.OperationIdCaptureContributor} at 350, so the operationId
- * is always captured before this handler fires.
+ * {@link OpenTelemetryRestModule}. Runs at priority {@value #PRIORITY}, in the post-context band,
+ * after the route's authentication handlers and the authorization contributors. It captures the
+ * operationId and route template once, at registration, so it does not depend on any other
+ * contributor running first.
  *
  * <p>For each incoming request, the contributed handler:
  * <ol>
@@ -44,7 +45,7 @@ import lombok.extern.slf4j.Slf4j;
 @RegisterIntoSet(OperationHandlerContributor.class)
 public final class ServerSpanEnrichmentContributor implements OperationHandlerContributor {
 
-    /** Priority for this contributor — one step after {@code OperationIdCaptureContributor} at 350. */
+    /** Priority for this contributor — in the post-context band (300+), after authorization. */
     public static final int PRIORITY = 360;
 
     /**

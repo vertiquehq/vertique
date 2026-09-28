@@ -11,6 +11,7 @@ import dev.vertique.rest.core.capture.RestRequestCaptureCoordinator;
 import dev.vertique.rest.core.middleware.Middleware;
 import dev.vertique.rest.core.middleware.MiddlewareScope;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
+import dev.vertique.rest.core.routing.RestOperationDescriptor;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityContextSnapshot;
@@ -44,21 +45,34 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>Placement ({@code ORDER = RequestContextLifecycle.ORDER + 5}) is chosen so that:
  * <ul>
- *   <li>This middleware runs after {@link RequestContextLifecycle} (which provides the per-request
- *       handle) but before {@code CorrelationIngressMiddleware} (ORDER + 10). The earlier placement
- *       ensures the end handler is registered even for requests that are short-circuited by the
- *       correlation middleware's REJECT policy.</li>
- *   <li>{@link RequestContextLifecycle} registers its end handler first (at {@code ORDER =
- *       Integer.MIN_VALUE}), and because Vert.x Web fires end handlers in reverse registration
- *       order, its end handler fires <em>last</em>. This means this middleware's end handler fires
- *       <em>before</em> {@link RequestContextLifecycle}'s own end handler — the lifecycle closes its
- *       scopes last — which is why holder-bound values ({@link SecurityContext},
- *       {@link CorrelationContext}) are still accessible at emit time.</li>
+ *   <li>This middleware runs before {@code CorrelationIngressMiddleware} (ORDER + 10), so the end
+ *       handler is registered even for requests that are short-circuited by the correlation
+ *       middleware's REJECT policy.</li>
+ *   <li>When {@link RequestContextLifecycle} is mounted, it runs first and registers its end handler
+ *       first (at {@code ORDER = Integer.MIN_VALUE}), and because Vert.x Web fires end handlers in
+ *       reverse registration order, its end handler fires <em>last</em>. This middleware's end
+ *       handler therefore fires <em>before</em> the lifecycle closes its scopes, which is why
+ *       holder-bound values ({@link SecurityContext}, {@link CorrelationContext}) are still
+ *       accessible at emit time.</li>
+ *   <li>This middleware calls no {@link RequestContextLifecycle} API and does not require it: its
+ *       exactly-once emission holds with or without the lifecycle.</li>
  * </ul>
  *
- * <p>Exactly-once guarantee: an idempotent flag ({@code KEY_EMITTED}) is stored on the routing
- * context so that even if the end handler fires more than once, only the first invocation emits an
- * event.
+ * <p>Exactly-once guarantee: on a request's first pass, this middleware creates the request's
+ * framework-owned completion state (start time, a compare-and-set emitted flag, and the route
+ * identity claim) and registers one end handler whose closure holds it. No public routing-context
+ * data key exposes that state. A reroute, or this middleware mounted twice, re-enters on the same
+ * request: the state is reused, no second end handler is registered, the first pass's start time is
+ * kept, and the claim is cleared so the current pass's routes decide it. Emission reads only the
+ * closure-held state and wins its compare-and-set or returns, so even if the end handler fires more
+ * than once, only the first invocation emits an event. It runs inline on whichever thread ends the
+ * response.
+ *
+ * <p>Route identity: an identity handler that a route registrar installs first on every operation
+ * route, ahead of authentication, claims the request with that route's operation
+ * ({@link RequestCompletionRecorder#operationRouteHandler}). The event's {@code routeTemplate} and
+ * {@code operationId} are that operation's; the last operation route matched in the current pass
+ * decides. They are {@code null} when no operation route claimed the request.
  *
  * <p>Listener isolation: each {@link RestRequestCompletedListener} is invoked in its own
  * {@code try/catch}. A throwing listener is logged at {@code WARN} and does not prevent other
@@ -73,26 +87,6 @@ import lombok.extern.slf4j.Slf4j;
 public final class RestRequestCompletionEmitter implements Middleware {
 
     // --- Routing context keys ---
-
-    /** Key under which the request start time ({@link Instant}) is stored on the routing context. */
-    static final String KEY_START_TIME = "rest.events.startTime";
-
-    /** Key under which the exactly-once emission flag ({@link Boolean}) is stored. */
-    static final String KEY_EMITTED = "rest.events.emitted";
-
-    /**
-     * Key under which the captured operationId ({@link String}) is stored by
-     * {@link OperationIdCaptureContributor}. Public so that external components such as
-     * {@code ResourceMethodInvoker} can read the value without depending on internal keys.
-     */
-    public static final String KEY_OPERATION_ID = "rest.events.operationId";
-
-    /**
-     * Key under which the route template ({@link String}) is stored by
-     * {@link OperationIdCaptureContributor}. Public so that external components such as
-     * {@code ResourceMethodInvoker} can read the value without depending on internal keys.
-     */
-    public static final String KEY_ROUTE_TEMPLATE = "rest.events.routeTemplate";
 
     /** Post-handoff wire-failure marker; value: Throwable; first writer wins. */
     public static final String KEY_WIRE_FAILURE = "vertique.rest.core.events.wireFailure";
@@ -204,23 +198,38 @@ public final class RestRequestCompletionEmitter implements Middleware {
     }
 
     /**
-     * Records the request start time on the routing context, registers the end handler that will
-     * emit the completion event, and delegates to the next handler.
+     * Begins the request's completion state, or reuses it on re-entry, and delegates to the next
+     * handler.
+     *
+     * <p>On the request's first pass it creates the framework-owned completion state, starting now
+     * and bound to {@code ctx.request()}, and registers the one end handler that emits the
+     * completion event from that state. A reroute, or this middleware mounted twice, re-enters on the
+     * same request: it finds the state bound to {@code ctx.request()}, reuses it, and registers no
+     * second end handler; it keeps the start time and clears the claim, so the operation routes of
+     * the current pass decide the route identity. A holder that is missing, of another type, or bound
+     * to another request is not re-entry: a fresh state replaces it.
      *
      * @param ctx the current routing context; must not be {@code null}
      */
     @Override
     public void handle(RoutingContext ctx) {
-        ctx.put(KEY_START_TIME, Instant.now());
-        ctx.addEndHandler(ar -> emit(ctx, ar));
+        RequestCompletionState reentered = RequestCompletionRecorder.boundState(ctx);
+        if (reentered != null) {
+            reentered.reroute();
+        } else {
+            RequestCompletionState state = RequestCompletionRecorder.begin(ctx);
+            ctx.addEndHandler(endResult -> emit(ctx, state, endResult));
+        }
         ctx.next();
     }
 
     // --- Emission ---
 
     /**
-     * Emits the {@link RestRequestCompletedEvent} exactly once for the given routing context.
-     * Protected against double-invocation by an idempotent flag stored on the context.
+     * Emits the {@link RestRequestCompletedEvent} at most once for the request whose completion
+     * state is {@code state}: the call that wins the state's compare-and-set emitted flag emits, and
+     * every other call returns. The start time and route identity come from {@code state} alone,
+     * never from routing-context data.
      *
      * <p>Package-private (not {@code private}) so {@code RestRequestCompletionEmitterTest} can
      * drive it directly with a synthetic {@link AsyncResult} for wire-failure scenarios that
@@ -228,22 +237,19 @@ public final class RestRequestCompletionEmitter implements Middleware {
      * {@code StreamResetException} on an HTTP/1.1 test server).
      *
      * @param ctx       the routing context for the completed request
+     * @param state     the request's completion state, as the end-handler closure holds it
      * @param endResult the outcome delivered to the response end handler; consulted for
      *                  {@code wireFailureCode} when the {@link #KEY_WIRE_FAILURE} marker is absent
      */
-    void emit(RoutingContext ctx, AsyncResult<Void> endResult) {
+    void emit(RoutingContext ctx, RequestCompletionState state, AsyncResult<Void> endResult) {
         // --- Exactly-once guard ---
-        if (Boolean.TRUE.equals(ctx.get(KEY_EMITTED))) {
+        if (!state.markEmitted()) {
             return;
         }
-        ctx.put(KEY_EMITTED, Boolean.TRUE);
 
         // --- Timing ---
         Instant endTime = Instant.now();
-        Instant startTime = ctx.get(KEY_START_TIME);
-        if (startTime == null) {
-            startTime = endTime;
-        }
+        Instant startTime = state.startTime();
 
         // --- Context values (still live: RequestContextLifecycle fires last) ---
         SecurityContext sec = securityRuntime.map(SecurityRuntime::current).orElse(null);
@@ -260,9 +266,12 @@ public final class RestRequestCompletionEmitter implements Middleware {
                 .orElse(null);
         Optional<RequestOrigin> origin = sec != null ? sec.origin() : Optional.empty();
 
-        // --- Operation metadata set by OperationIdCaptureContributor ---
-        String operationId = ctx.get(KEY_OPERATION_ID);
-        String routeTemplate = ctx.get(KEY_ROUTE_TEMPLATE);
+        // --- Route identity: only a REST claim carries an operation ---
+        RequestCompletionState.Claim claim = state.claim();
+        RestOperationDescriptor operation =
+                claim.kind() == RequestCompletionState.ClaimKind.REST ? claim.operation() : null;
+        String operationId = operation != null ? operation.operationId() : null;
+        String routeTemplate = operation != null ? operation.routeTemplate() : null;
 
         // --- HTTP facts ---
         int status = ctx.response().getStatusCode();

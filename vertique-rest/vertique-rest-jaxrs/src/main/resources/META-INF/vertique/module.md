@@ -59,8 +59,12 @@ builds a `ResourceMethodMeta`, validates the declaration, and installs the per-o
 chain:
 
 ```
-auth handler(s) → @Consumes 415 gate → validation gate → OperationHandlerContributors → ResourceMethodInvoker
+operation-route identity (PlatformHandler) → auth handler(s) → @Consumes 415 gate → validation gate → OperationHandlerContributors → ResourceMethodInvoker
 ```
+
+The operation-route identity handler records the operation's route template and operation id for
+the request's completion event; as a Vert.x `PlatformHandler` it runs ahead of authentication, and
+it never fails a request.
 
 The candidate methods are the ones the resource class and its superclasses declare, plus every
 interface `default` method the class inherits without overriding. An annotated default method is a

@@ -113,6 +113,15 @@ end handler, first — and because Vert.x Web fires `addEndHandler` callbacks in
 registration order, its cleanup runs **last**. Every value bound during the request (security
 context, MDC keys, correlation) therefore stays readable by every other end handler.
 
+A reroute re-runs every `ROOT` middleware on the same request, this one included. The lifecycle
+reuses the request's own `Handle` and registers no second cleanup, so "exactly one end handler per
+request" holds across reroutes. Every value bound on any pass, including an identity authenticated
+only after a reroute, stays readable by every other end handler until the request ends. A handle
+from another request is never reused. A handle closed by `completeNow()` is never reopened: a
+reroute after it chains a successor handle, which the same single cleanup closes. A rerouted request
+without an inbound `X-Request-Id` gets a generated request id on each pass; its completion event
+carries the last pass's id, the same one the echoed response header carries.
+
 The contract that follows from this: **no other component calls `ctx.addEndHandler(...)` for
 cleanup.** Register on the `Handle` instead.
 
@@ -143,7 +152,21 @@ positive priority.
 
 Exactly one `RestRequestCompletedEvent` is published per HTTP request, carrying method, path, route
 template, operation id, status, timing, an optional security snapshot, an optional correlation
-snapshot, and the request origin. Two deliberate properties:
+snapshot, and the request origin.
+
+The route template and operation id are recorded by a framework handler that the JAX-RS route
+registrar installs first on every operation route, ahead of authentication. A request that matched
+an operation route therefore carries both even when it is rejected with 401, 403, 415, or a
+validation 400. A request that matched no operation route carries `null` for both. The last
+operation route matched in the current routing pass decides. A reroute clears the identity, so the
+rerouted target decides it, and the event keeps the first pass's start time.
+
+The completion state is framework-owned. No `RoutingContext.data()` key exposes it, and writing the
+retired `rest.events.*` keys has no effect on the event. `RestRequestCompletionEmitter` holds the
+state in its own end handler and emits exactly once whether or not `RequestContextLifecycle` is
+mounted.
+
+Two deliberate properties:
 
 - A **successful protocol upgrade emits no event** — the 101 is written without firing the response
   end handler. A *failed* upgrade does emit, because it takes the normal error path.
@@ -695,8 +718,10 @@ contributor that reads an authenticated identity above 100:
 | 50 | JWT claims validation | `vertique-rest-auth-jwt` |
 | 80 | identity resolution | `vertique-rest-security` |
 | 100 | authorization | `vertique-rest-security` |
-| 350 | operation-id capture | `vertique-rest-core` |
 | 360 | server-span enrichment | `vertique-opentelemetry-rest` |
+
+Route identity for the completion event is recorded by the framework before authentication, not by
+a contributor (see Request completion above).
 
 The terminal operation invoker is appended after every contributor, so a contributor always runs
 before the resource method.
@@ -1078,7 +1103,7 @@ Bind `HmacCursorCodec` (or your own) as a `@Singleton` and pass it to `CursorPag
 ### Framework seams
 
 Twelve public types are named nowhere above because no application uses one — `RestContextMessages`,
-`RestContextModule`, `RestContextTypes`, `HttpOperationMeta`, `OperationIdCaptureContributor`,
+`RestContextModule`, `RestContextTypes`, `HttpOperationMeta`, `RequestCompletionRecorder`,
 `MountCompositionValidator`, `SecurityRequirementSet`, `AuthEnforcementCapability`,
 `SecurityPolicyViolation`, `RequiresActionResolver`, `DeferredCredentialRejectionAuthHandler`, and
 `AnnotationSecurityPolicyResolver`. They are public because sibling framework modules call them

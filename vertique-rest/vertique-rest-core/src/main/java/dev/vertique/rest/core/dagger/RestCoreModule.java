@@ -25,7 +25,6 @@ import dev.vertique.rest.core.convert.ParamConversionResolver;
 import dev.vertique.rest.core.convert.ParamConverterBinding;
 import dev.vertique.rest.core.convert.ParamConverterRegistry;
 import dev.vertique.rest.core.correlation.CorrelationIngressModule;
-import dev.vertique.rest.core.events.OperationIdCaptureContributor;
 import dev.vertique.rest.core.events.RequestCompletionScope;
 import dev.vertique.rest.core.events.RestRequestCompletedListener;
 import dev.vertique.rest.core.events.RestRequestCompletionEmitter;
@@ -477,20 +476,5 @@ public abstract class RestCoreModule {
     @Singleton
     static Middleware restRequestCompletionEmitter(RestRequestCompletionEmitter emitter) {
         return emitter;
-    }
-
-    /**
-     * Provides {@link OperationIdCaptureContributor} (priority=350).
-     * Stores the OpenAPI {@code operationId} and route template on the routing context for each
-     * operation-dispatched request so the emitter can include them in the completion event.
-     *
-     * @param contributor the singleton contributor
-     * @return the contributor contributed to the operation handler contributor set
-     */
-    @Provides
-    @IntoSet
-    @Singleton
-    static OperationHandlerContributor operationIdCaptureContributor(OperationIdCaptureContributor contributor) {
-        return contributor;
     }
 }

@@ -19,6 +19,7 @@ import dev.vertique.rest.core.capture.RestServerRequestEvidenceCapturer;
 import dev.vertique.rest.core.config.JaxRsConfig;
 import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.convert.ParamConversionResolver;
+import dev.vertique.rest.core.events.RequestCompletionRecorder;
 import dev.vertique.rest.core.interceptor.OperationInterceptor;
 import dev.vertique.rest.core.request.MediaType;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
@@ -90,9 +91,16 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>For each discovered operation the per-route handler chain is, in order:
  * <ol>
+ *   <li>The operation-route identity handler from
+ *       {@link RequestCompletionRecorder#operationRouteHandler}, which records the operation's route
+ *       template and operation id for the request's completion event. It is a Vert.x
+ *       {@code PlatformHandler}, the only handler type Vert.x lets precede authentication, so it is
+ *       added to the route <em>first</em>; a request rejected by any later handler (401, 403, 415,
+ *       400) still carries the route's identity. It runs ahead of authentication and never fails a
+ *       request.</li>
  *   <li>The collected authentication handler(s) for the schemes in the operation's
  *       {@link JaxRsOperationDescriptor#securityRequirementSets()}. These are Vert.x
- *       {@code AuthenticationHandler}s and must be added to the route <em>first</em>: Vert.x
+ *       {@code AuthenticationHandler}s and must be added ahead of every {@code USER} handler: Vert.x
  *       forbids adding an {@code AUTHENTICATION} handler to a route that already carries a
  *       {@code USER} handler, and the {@code @Consumes} check below is a {@code USER} handler.
  *       Multiple alternative requirements are an OpenAPI OR, composed into a single
@@ -503,6 +511,14 @@ public class JaxRsRouteRegistrar {
             // Create the Vert.x route from the translated JAX-RS path template.
             Route route = createRoute(apiRouter, meta);
 
+            // (0) Route identity: the route's FIRST handler records this operation on the request's
+            // framework-owned completion state, ahead of authentication, so a request rejected after
+            // this route matched (401, 403, 415, 400) still carries its route template and operation
+            // id. It is a PlatformHandler, the only handler type Vert.x lets precede the
+            // AUTHENTICATION handler(s) at (a); it reads no request data and never fails a request.
+            // It records the same descriptor instance the contributors at (c) receive.
+            route.handler(RequestCompletionRecorder.operationRouteHandler(descriptor));
+
             // Run security policy validation
             if (securityPolicyValidator != null) {
                 securityViolations.addAll(securityPolicyValidator.validate(descriptor, meta.securityPolicy()));
@@ -536,7 +552,7 @@ public class JaxRsRouteRegistrar {
             }
 
             // (a) Authentication: install the collected auth handler(s) for the operation's required
-            // schemes FIRST. These are Vert.x AuthenticationHandlers; Vert.x rejects adding an
+            // schemes right after (0). These are Vert.x AuthenticationHandlers; Vert.x rejects adding an
             // AUTHENTICATION handler to a route that already carries a USER handler (the @Consumes check
             // below is a USER handler), so auth must be added ahead of it. This also matches the
             // historical runtime order: authentication ran before content-type/validation under the
@@ -674,8 +690,8 @@ public class JaxRsRouteRegistrar {
             // would be applied to the error body instead of the matched route's own decision.
             //
             // A PER-ROUTE failure handler is the only mechanism that reliably identifies the matched
-            // route inside a failure: a router-level catch-all failure handler observes
-            // ctx.currentRoute() == null for matched-route failures in Vert.x 5.1.2, whereas Vert.x
+            // route inside a failure: a router-level catch-all failure handler observes its own
+            // catch-all route, not the matched route, as ctx.currentRoute(), whereas Vert.x
             // dispatches a route's failure to that SAME route's per-route failure handler (verified by
             // FailureHandlerRouteIdentityCharacterizationIT). This handler runs first, applies the
             // route's build-time decision, marks the decision as taken, and ctx.next()s to the existing

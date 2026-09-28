@@ -51,10 +51,12 @@ import java.util.Optional;
  * @param method             the HTTP method name (e.g., {@code "GET"}, {@code "POST"}); never
  *                           {@code null}
  * @param path               the raw request path; never {@code null}
- * @param routeTemplate      the OpenAPI path template (e.g., {@code "/users/{id}"}), or
- *                           {@code null} when the request did not reach operation dispatch
- * @param operationId        the OpenAPI {@code operationId}, or {@code null} when the request did
- *                           not reach operation dispatch (e.g., pre-operation validation failure)
+ * @param routeTemplate      the OpenAPI path template (e.g., {@code "/users/{id}"}); present for
+ *                           every request that matched a JAX-RS operation route (including
+ *                           401/403/415/400); null only when no operation route matched.
+ * @param operationId        the OpenAPI {@code operationId}; present for every request that
+ *                           matched a JAX-RS operation route (including 401/403/415/400); null
+ *                           only when no operation route matched.
  * @param statusCode         the HTTP response status code actually sent
  * @param failureCode        a low-cardinality failure classification (e.g., the exception's simple
  *                           class name), or {@code null} when no failure was recorded

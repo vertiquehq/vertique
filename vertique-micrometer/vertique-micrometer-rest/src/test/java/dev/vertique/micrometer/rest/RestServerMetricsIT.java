@@ -8,20 +8,28 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.context.DefaultContextHolder;
+import dev.vertique.rest.core.events.RequestCompletionRecorder;
 import dev.vertique.rest.core.events.RestRequestCompletionEmitter;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
+import dev.vertique.rest.core.routing.RestOperationDescriptor;
+import dev.vertique.rest.core.routing.SecurityRequirementSet;
+import dev.vertique.rest.core.security.SecurityPolicy;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.prometheusmetrics.PrometheusConfig;
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
+import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
+import io.vertx.ext.web.Route;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
+import java.lang.annotation.Annotation;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -49,10 +57,12 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>Routes:
  * <ul>
- *   <li>{@code GET /ok} — sets operationId + routeTemplate on the context, responds 200</li>
- *   <li>{@code GET /boom} — sets operationId + routeTemplate, calls {@code ctx.fail(500, ex)};
- *       failureCode is populated as the exception's simple class name; note: the error pipeline
- *       is absent in this harness, so the failure handler writes 500 directly</li>
+ *   <li>{@code GET /ok} — first installs the {@code ok} operation's identity handler
+ *       ({@link RequestCompletionRecorder#operationRouteHandler}), then responds 200</li>
+ *   <li>{@code GET /boom} — first installs the {@code boom} operation's identity handler, then calls
+ *       {@code ctx.fail(500, ex)}; failureCode is populated as the exception's simple class name;
+ *       note: the error pipeline is absent in this harness, so the failure handler writes 500
+ *       directly</li>
  *   <li>(no route for {@code GET /nope}) — 404 with null route/operation</li>
  * </ul>
  *
@@ -75,6 +85,12 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class RestServerMetricsIT {
+
+    /** Test-local descriptor for {@code GET /ok}, operation {@code ok}. */
+    private static final RestOperationDescriptor OK_OPERATION = new TestOperation("ok", "GET", "/ok");
+
+    /** Test-local descriptor for {@code GET /boom}, operation {@code boom}. */
+    private static final RestOperationDescriptor BOOM_OPERATION = new TestOperation("boom", "GET", "/boom");
 
     // --- Shared server/client state (per test) ---
 
@@ -141,18 +157,10 @@ public class RestServerMetricsIT {
             rc.next();
         });
 
-        // --- Application routes ---
-        router.get("/ok").handler(rc -> {
-            rc.put(RestRequestCompletionEmitter.KEY_OPERATION_ID, "ok");
-            rc.put(RestRequestCompletionEmitter.KEY_ROUTE_TEMPLATE, "/ok");
-            rc.response().setStatusCode(200).end();
-        });
-
-        router.get("/boom").handler(rc -> {
-            rc.put(RestRequestCompletionEmitter.KEY_OPERATION_ID, "boom");
-            rc.put(RestRequestCompletionEmitter.KEY_ROUTE_TEMPLATE, "/boom");
-            rc.fail(500, new IllegalStateException("simulated boom"));
-        });
+        // --- Application routes: each installs its operation's identity handler first ---
+        route(router, "/ok", OK_OPERATION)
+                .handler(rc -> rc.response().setStatusCode(200).end());
+        route(router, "/boom", BOOM_OPERATION).handler(rc -> rc.fail(500, new IllegalStateException("simulated boom")));
 
         // Failure handler: maps ctx.fail() to an HTTP response so the response end handler fires
         router.errorHandler(500, rc -> {
@@ -170,6 +178,21 @@ public class RestServerMetricsIT {
                     this.client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
                     return s.actualPort();
                 });
+    }
+
+    /**
+     * Adds a route at {@code path} for {@code operation}'s HTTP method whose first handler is
+     * {@link RequestCompletionRecorder#operationRouteHandler(RestOperationDescriptor)}, the handler
+     * that records the operation's identity for the completion event.
+     *
+     * @param router    the router to add the route to
+     * @param path      the Vert.x route path
+     * @param operation the operation the route serves
+     * @return the route, ready for its application handler
+     */
+    private static Route route(Router router, String path, RestOperationDescriptor operation) {
+        return router.route(HttpMethod.valueOf(operation.httpMethod()), path)
+                .handler(RequestCompletionRecorder.operationRouteHandler(operation));
     }
 
     /**
@@ -293,5 +316,55 @@ public class RestServerMetricsIT {
                     });
                     ctx.completeNow();
                 }));
+    }
+
+    // --- Test doubles ---
+
+    /**
+     * Test-local {@link RestOperationDescriptor} for an application route. Only the identity fields
+     * carry values: no route here is secured or negotiates content, so the security policy is
+     * {@link SecurityPolicy.None} and every collection is empty.
+     *
+     * @param operationId   the operation identifier
+     * @param httpMethod    the HTTP method
+     * @param routeTemplate the route template
+     */
+    private record TestOperation(String operationId, String httpMethod, String routeTemplate)
+            implements RestOperationDescriptor {
+
+        @Override
+        public List<String> consumes() {
+            return List.of();
+        }
+
+        @Override
+        public List<String> produces() {
+            return List.of();
+        }
+
+        @Override
+        public SecurityPolicy securityPolicy() {
+            return new SecurityPolicy.None();
+        }
+
+        @Override
+        public List<SecurityRequirementSet> securityRequirementSets() {
+            return List.of();
+        }
+
+        @Override
+        public List<Annotation> methodAnnotations() {
+            return List.of();
+        }
+
+        @Override
+        public List<Annotation> classAnnotations() {
+            return List.of();
+        }
+
+        @Override
+        public <A extends Annotation> Optional<A> findAnnotation(Class<A> type) {
+            return Optional.empty();
+        }
     }
 }
