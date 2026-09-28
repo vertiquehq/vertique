@@ -36,8 +36,10 @@ bash scripts/pit-pr-scope.sh
 
 It compares against `origin/main`; from a fork, pass `--base upstream/main`.
 
-PIT executes mutated code for real, including code that deletes files. Run it
-only in a checkout you can restore from git, and never as root.
+PIT executes mutated code for real, including code that deletes files. With
+Docker available, add `--sandbox` to run it in a throwaway container against a
+snapshot of your checkout. Otherwise run it only in a checkout you can restore
+from git, and never as root.
 
 ## Change scope
 
