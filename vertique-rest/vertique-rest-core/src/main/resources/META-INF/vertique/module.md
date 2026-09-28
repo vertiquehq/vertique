@@ -1009,16 +1009,43 @@ observes requests no transport claimed. A request another transport claimed prod
 ```java
 public interface RestRequestCompletedListener {
     void onCompleted(RestRequestCompletedEvent event);
+
+    default void onCompleted(RestRequestCompletedEvent event, RoutingContext routingContext) {
+        onCompleted(event);
+    }
 }
 
 public interface HttpRequestCompletedListener {
     void onCompleted(HttpRequestCompletedEvent event);
+
+    default void onCompleted(HttpRequestCompletedEvent event, RoutingContext routingContext) {
+        onCompleted(event);
+    }
 }
 
 public interface RequestCompletionScope {
     AutoCloseable open(RoutingContext rc);
 }
 ```
+
+The framework calls each listener's two-argument overload once per request, with the live root
+`RoutingContext` of the request; the default delegates to the one-argument method. Each interface
+keeps exactly one abstract method, so a listener that needs only the event stays a lambda over
+`onCompleted(event)`, like the one below, and receives each event exactly once. Override the
+overload when a listener needs per-request state or the live request. An override that does not
+delegate never sees the one-argument call.
+
+The overload runs on the thread that ended the response, which is usually, but not always, the
+Vert.x event loop. Its context stays the root one for a request a sub-router serves: the
+sub-router's route handler receives a different `RoutingContext` wrapper, which shares `request()`,
+`response()`, and `data()` with the root. Key per-request state by `routingContext.request()`,
+never by the `RoutingContext` object. An implementation must not block, write to the response, call
+`next()` or `fail()`, or keep the context after it returns, and it must keep sensitive values out
+of the exceptions it throws, as the isolation rules below explain.
+
+A Mockito mock of either listener does not run the default method, so a mock's one-argument method
+is never called. A test verifies the two-argument call instead, or creates the mock with
+`CALLS_REAL_METHODS`.
 
 ```java
 @Provides
@@ -1077,22 +1104,23 @@ Both records evolve under the same rule: new components are only appended, after
 one, and each addition keeps the previous-arity constructor. Record-pattern deconstruction binds
 components by position, so it is outside the compatibility promise.
 
-A `RequestCompletionScope` wraps listener dispatch — scopes open in iteration order and close in
-reverse, which is how tracing modules re-establish a span around emission. A listener that throws an
-`Exception` is logged at WARN and does not stop the remaining listeners; an `Error` propagates.
+A `RequestCompletionScope` wraps the dispatch of either event type — scopes open in iteration order
+and close in reverse, which is how tracing modules re-establish a span around emission. Listeners
+are unordered: the framework promises no invocation order, and no implementation may depend on
+another's side effects. A listener that throws an `Exception` is logged at WARN and does not stop
+the remaining listeners; an `Error` propagates.
 
 The logged failure carries the exception's own message, which is what keeps the fan-out diagnosable.
 An implementation must therefore keep credentials, tokens, personal data, and raw request values out
-of the exceptions it throws. The same obligation applies to `RestRequestCaptureCoordinator`. It is
-audit-safe by contract rather than by enforcement, exactly as
-`AuthorizationDecision.safeAttributes()` is — the framework does not inspect or scrub what an
-implementation throws.
+of the exceptions it throws. The obligation is audit-safe by contract rather than by enforcement,
+exactly as `AuthorizationDecision.safeAttributes()` is — the framework does not inspect or scrub
+what an implementation throws.
 
-The `dev.vertique.rest.core.capture` SPIs (`RestServerRequestEvidenceCapturer`,
-`RestRequestCaptureCoordinator`) are the boundary-evidence hooks the audit adapter implements. If you
-implement one, keep evidence in an implementation-private, identity-keyed side table — never in
-`RoutingContext.data()`, which is keyed by public string constants and is readable and writable by
-every component sharing the context.
+The `dev.vertique.rest.core.capture` SPI `RestServerRequestEvidenceCapturer` is the
+boundary-evidence hook the audit adapter implements. If you implement it, keep evidence in an
+implementation-private, identity-keyed side table — never in `RoutingContext.data()`, which is
+keyed by public string constants and is readable and writable by every component sharing the
+context.
 
 `RestServerRequestEvidenceCapturer#validateRoute(HttpOperationMeta)` validates each route at router
 build, with the same descriptor value its requests will carry. Resolve and validate

@@ -452,8 +452,8 @@ public class RerouteCompletionSnapshotIT {
 
     /**
      * The ROOT middlewares: the lifecycle, the emitter recording REST events into
-     * {@link #REST_EVENTS} and HTTP events into {@link #HTTP_EVENTS} (no capture coordinators, no
-     * completion scopes), the real correlation middleware, the correlation probe and the barrier.
+     * {@link #REST_EVENTS} and HTTP events into {@link #HTTP_EVENTS} (no completion scopes), the real
+     * correlation middleware, the correlation probe and the barrier.
      * {@link HttpVerticle} orders them by phase, then priority.
      *
      * @param runtime the shared security runtime the emitter reads
@@ -464,7 +464,7 @@ public class RerouteCompletionSnapshotIT {
         RestRequestCompletedListener restListener = REST_EVENTS::add;
         HttpRequestCompletedListener httpListener = HTTP_EVENTS::add;
         RestRequestCompletionEmitter emitter = new RestRequestCompletionEmitter(
-                Optional.of(runtime), holder, Set.of(restListener), Set.of(httpListener), Set.of(), Set.of());
+                Optional.of(runtime), holder, Set.of(restListener), Set.of(httpListener), Set.of());
         return Set.of(
                 new RequestContextLifecycle(),
                 emitter,

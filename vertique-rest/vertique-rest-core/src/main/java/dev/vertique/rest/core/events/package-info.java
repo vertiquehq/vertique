@@ -20,5 +20,15 @@
  * requests, contributed through their Dagger {@code Set} multibindings. A
  * {@link dev.vertique.rest.core.events.RequestCompletionScope} brackets the dispatch of either
  * event type.
+ *
+ * <p>Both listeners declare {@code onCompleted(event)} and a default
+ * {@code onCompleted(event, RoutingContext)} that delegates to it; the emitter calls the
+ * two-argument overload, with the request's live root routing context. A listener that needs only
+ * the event implements the one-argument method, for example as a lambda. A listener that needs
+ * per-request state or the live request overrides the two-argument overload and keys that state by
+ * {@code routingContext.request()}, never by the {@code RoutingContext} object, because a
+ * sub-router route handler receives a different {@code RoutingContext} wrapper around the same
+ * request. The overload serves every completion consumer, audit included; no separate audit-only
+ * completion SPI exists.
  */
 package dev.vertique.rest.core.events;

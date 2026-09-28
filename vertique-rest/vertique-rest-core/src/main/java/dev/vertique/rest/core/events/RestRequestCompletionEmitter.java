@@ -7,8 +7,6 @@ import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.correlation.CorrelationContext;
 import dev.vertique.core.correlation.CorrelationContextSnapshot;
 import dev.vertique.core.extension.ExtensionPhase;
-import dev.vertique.core.extension.OrderedExtension;
-import dev.vertique.rest.core.capture.RestRequestCaptureCoordinator;
 import dev.vertique.rest.core.middleware.Middleware;
 import dev.vertique.rest.core.middleware.MiddlewareScope;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
@@ -37,8 +35,7 @@ import lombok.extern.slf4j.Slf4j;
  * emitted:
  * <ul>
  *   <li>a request a JAX-RS operation route claimed produces a {@link RestRequestCompletedEvent}
- *       carrying that route's operation, dispatched to every {@link RestRequestCompletedListener}
- *       and then to every capture coordinator;</li>
+ *       carrying that route's operation, dispatched to every {@link RestRequestCompletedListener};</li>
  *   <li>a request no transport claimed produces an {@link HttpRequestCompletedEvent}, dispatched to
  *       every {@link HttpRequestCompletedListener};</li>
  *   <li>a request another transport claimed produces neither event, because that transport reports
@@ -100,10 +97,17 @@ import lombok.extern.slf4j.Slf4j;
  * consistent read. A {@link RestRequestCompletedEvent}'s {@code operation()} is the descriptor
  * instance the identity handler recorded.
  *
- * <p>Listener isolation: each {@link RestRequestCompletedListener},
- * {@link HttpRequestCompletedListener} and capture coordinator is invoked in its own
- * {@code try/catch}. A throwing one is logged at {@code WARN} and does not prevent the others from
- * receiving the event or affect the HTTP response. {@link Error}s are not caught and propagate.
+ * <p>Listener dispatch: every {@link RestRequestCompletedListener} and
+ * {@link HttpRequestCompletedListener} is called through its two-argument
+ * {@code onCompleted(event, RoutingContext)} overload, with the request's live root routing
+ * context: the context this middleware received on the request's first pass, which its end
+ * handler holds. The emitter never calls the one-argument {@code onCompleted(event)} directly; a
+ * listener reaches it through the overload's default, which delegates to it. Listeners are
+ * unordered.
+ *
+ * <p>Listener isolation: each listener is invoked in its own {@code try/catch}. A throwing one is
+ * logged at {@code WARN} and does not prevent the others from receiving the event or affect the
+ * HTTP response. {@link Error}s are not caught and propagate.
  *
  * <p>Safety: {@code safeFailureMessage} is intentionally left {@code null}. Raw exception messages
  * may contain SQL errors, upstream service details, or PII and must never be placed in the event
@@ -126,15 +130,12 @@ public final class RestRequestCompletionEmitter implements Middleware {
      * one's. The priority, not the tie-break, keeps that order: the class-name {@code orderKey}
      * tie-break would sort this middleware first. The {@code SYSTEM_FIRST} phase, not this priority,
      * runs this middleware ahead of every application-phase ROOT middleware, including
-     * {@code CorrelationIngressMiddleware} (ORDER + 10, default phase), so the end handler is
-     * registered on all request paths, including REJECT short-circuits and an application middleware
-     * that ends the response without calling {@code next()}. The phase is a trusted ordering hint, not
-     * a security boundary.
+     * {@code CorrelationIngressMiddleware} ({@code RequestContextLifecycle.ORDER + 10}, default
+     * phase), so the end handler is registered on all request paths, including REJECT
+     * short-circuits and an application middleware that ends the response without calling
+     * {@code next()}. The phase is a trusted ordering hint, not a security boundary.
      */
     static final int ORDER = RequestContextLifecycle.ORDER + 5;
-
-    /** No-op {@link AutoCloseable} returned when a scope's open fails or the set is empty. */
-    private static final AutoCloseable NO_OP_SCOPE = () -> {};
 
     // --- Dependencies ---
 
@@ -142,26 +143,19 @@ public final class RestRequestCompletionEmitter implements Middleware {
     private final ContextHolder contextHolder;
     private final Set<RestRequestCompletedListener> listeners;
     private final Set<HttpRequestCompletedListener> httpListeners;
-    private final List<RestRequestCaptureCoordinator> coordinators;
     private final Set<RequestCompletionScope> completionScopes;
 
     /**
-     * Creates the emitter with all required dependencies, including both listener sets, capture
-     * coordinators and a set of completion scopes.
-     *
-     * <p>This is the primary constructor used by Dagger. Coordinators are sorted once at
-     * construction time using {@link OrderedExtension#comparator()} so invocation order is
-     * deterministic and requires no per-request sorting.
+     * Creates the emitter with all its dependencies: both listener sets and the completion scopes.
+     * This is the constructor Dagger uses.
      *
      * @param securityRuntime  the optional security runtime; present when the security module is
      *                         active, empty otherwise
      * @param contextHolder    the request-scoped context holder for reading bound context values
-     * @param restListeners    the set of safe listeners notified for each request a JAX-RS
-     *                         operation route claimed
+     * @param restListeners    the set of {@link RestRequestCompletedListener}s notified for each
+     *                         request a JAX-RS operation route claimed; may be empty
      * @param httpListeners    the set of {@link HttpRequestCompletedListener}s notified for each
      *                         request no transport claimed; may be empty
-     * @param coordinators     the set of capture coordinators to invoke after the safe REST listener
-     *                         set; invoked in {@link OrderedExtension} order; may be empty
      * @param completionScopes the set of {@link RequestCompletionScope} implementations opened around
      *                         the dispatch of either event type; empty when no integrations are
      *                         bound — in that case behavior is identical to the pre-SPI baseline
@@ -172,79 +166,30 @@ public final class RestRequestCompletionEmitter implements Middleware {
             ContextHolder contextHolder,
             Set<RestRequestCompletedListener> restListeners,
             Set<HttpRequestCompletedListener> httpListeners,
-            Set<RestRequestCaptureCoordinator> coordinators,
             Set<RequestCompletionScope> completionScopes) {
         this.securityRuntime = securityRuntime;
         this.contextHolder = contextHolder;
         this.listeners = restListeners;
         this.httpListeners = httpListeners;
-        this.coordinators =
-                coordinators.stream().sorted(OrderedExtension.comparator()).toList();
         this.completionScopes = completionScopes;
     }
 
     /**
-     * Creates the emitter with capture coordinators and a set of completion scopes, but no
-     * {@link HttpRequestCompletedListener}s. Delegates to the primary constructor with an empty
-     * HTTP listener set.
-     *
-     * @param securityRuntime  the optional security runtime; present when the security module is
-     *                         active, empty otherwise
-     * @param contextHolder    the request-scoped context holder for reading bound context values
-     * @param listeners        the set of safe listeners notified for each request a JAX-RS operation
-     *                         route claimed
-     * @param coordinators     the set of capture coordinators to invoke after the safe listener set;
-     *                         invoked in {@link OrderedExtension} order; may be empty
-     * @param completionScopes the set of {@link RequestCompletionScope} implementations opened around
-     *                         the dispatch of either event type; empty when no integrations are
-     *                         bound — in that case behavior is identical to the pre-SPI baseline
-     */
-    public RestRequestCompletionEmitter(
-            Optional<SecurityRuntime> securityRuntime,
-            ContextHolder contextHolder,
-            Set<RestRequestCompletedListener> listeners,
-            Set<RestRequestCaptureCoordinator> coordinators,
-            Set<RequestCompletionScope> completionScopes) {
-        this(securityRuntime, contextHolder, listeners, Set.of(), coordinators, completionScopes);
-    }
-
-    /**
-     * Convenience constructor for use in tests and other non-Dagger construction sites where no
-     * capture coordinators or completion scopes are needed. Delegates to the primary constructor
-     * with an empty coordinator set and empty scopes.
+     * Convenience constructor for use in tests and other non-Dagger construction sites that need
+     * only {@link RestRequestCompletedListener}s. Delegates to the {@code @Inject} constructor with
+     * no {@link HttpRequestCompletedListener}s and no completion scopes.
      *
      * @param securityRuntime the optional security runtime; present when the security module is
      *                        active, empty otherwise
      * @param contextHolder   the request-scoped context holder for reading bound context values
-     * @param listeners       the set of safe listeners notified for each request a JAX-RS operation
-     *                        route claimed
+     * @param restListeners   the set of {@link RestRequestCompletedListener}s notified for each
+     *                        request a JAX-RS operation route claimed
      */
     public RestRequestCompletionEmitter(
             Optional<SecurityRuntime> securityRuntime,
             ContextHolder contextHolder,
-            Set<RestRequestCompletedListener> listeners) {
-        this(securityRuntime, contextHolder, listeners, Set.of(), Set.of());
-    }
-
-    /**
-     * Convenience constructor for use in tests and other non-Dagger construction sites where
-     * capture coordinators are provided but no {@link HttpRequestCompletedListener}s or completion
-     * scopes are needed. Delegates to the primary constructor with an empty HTTP listener set and
-     * empty scopes.
-     *
-     * @param securityRuntime the optional security runtime; present when the security module is
-     *                        active, empty otherwise
-     * @param contextHolder   the request-scoped context holder for reading bound context values
-     * @param listeners       the set of safe listeners notified for each request a JAX-RS operation
-     *                        route claimed
-     * @param coordinators    the set of capture coordinators to invoke after the safe listener set
-     */
-    public RestRequestCompletionEmitter(
-            Optional<SecurityRuntime> securityRuntime,
-            ContextHolder contextHolder,
-            Set<RestRequestCompletedListener> listeners,
-            Set<RestRequestCaptureCoordinator> coordinators) {
-        this(securityRuntime, contextHolder, listeners, Set.of(), coordinators, Set.of());
+            Set<RestRequestCompletedListener> restListeners) {
+        this(securityRuntime, contextHolder, restListeners, Set.of(), Set.of());
     }
 
     /**
@@ -322,20 +267,23 @@ public final class RestRequestCompletionEmitter implements Middleware {
      * <p>The transport facts are built once. The claim then selects the dispatch:
      * <ul>
      *   <li>{@code REST(op)}: a {@link RestRequestCompletedEvent} carrying {@code op}, to every
-     *       {@link RestRequestCompletedListener}, then every capture coordinator, inside the
-     *       {@link RequestCompletionScope} bracket;</li>
+     *       {@link RestRequestCompletedListener}, inside the {@link RequestCompletionScope}
+     *       bracket;</li>
      *   <li>{@code NONE}: an {@link HttpRequestCompletedEvent}, to every
      *       {@link HttpRequestCompletedListener}, inside the scope bracket;</li>
      *   <li>{@code OTHER}: nothing, and no scope opens; one {@code DEBUG} line, logged only when
      *       {@code DEBUG} is enabled, carries the method and status code, never the path.</li>
      * </ul>
+     * Every listener is called through its two-argument {@code onCompleted(event, RoutingContext)}
+     * overload, with {@code ctx}.
      *
      * <p>Package-private (not {@code private}) so {@code RestRequestCompletionEmitterTest} can
      * drive it directly with a synthetic {@link AsyncResult} for wire-failure scenarios that
      * cannot be produced deterministically over a real socket (e.g. an HTTP/2-only
      * {@code StreamResetException} on an HTTP/1.1 test server).
      *
-     * @param ctx       the routing context for the completed request
+     * @param ctx       the request's root routing context, as the end-handler closure holds it;
+     *                  every listener receives it
      * @param state     the request's completion state, as the end-handler closure holds it
      * @param endResult the outcome delivered to the response end handler; consulted for
      *                  {@code wireFailureCode} when the {@link #KEY_WIRE_FAILURE} marker is absent
@@ -424,10 +372,10 @@ public final class RestRequestCompletionEmitter implements Middleware {
 
     /**
      * Dispatches the event of a request a JAX-RS operation route claimed: opens the completion
-     * scopes, calls every {@link RestRequestCompletedListener}, then every capture coordinator in
-     * {@link OrderedExtension} order, each isolated, and closes the scopes.
+     * scopes, calls {@code onCompleted(event, ctx)} on every {@link RestRequestCompletedListener} in
+     * the set's own order, each isolated, and closes the scopes.
      *
-     * @param ctx   the routing context for the completed request
+     * @param ctx   the request's root routing context, passed to every listener
      * @param event the request's REST completion event
      */
     private void dispatchRest(RoutingContext ctx, RestRequestCompletedEvent event) {
@@ -435,18 +383,9 @@ public final class RestRequestCompletionEmitter implements Middleware {
         try {
             for (RestRequestCompletedListener listener : listeners) {
                 try {
-                    listener.onCompleted(event);
+                    listener.onCompleted(event, ctx);
                 } catch (Exception e) {
                     log.warn("RestRequestCompletedListener failed: {}", e.toString(), e);
-                }
-            }
-
-            // --- Capture coordinator invocation (after safe listeners, in OrderedExtension order) ---
-            for (RestRequestCaptureCoordinator coordinator : coordinators) {
-                try {
-                    coordinator.onRequestCompletion(event, ctx);
-                } catch (Exception e) {
-                    log.warn("RestRequestCaptureCoordinator failed: {}", e.toString(), e);
                 }
             }
         } finally {
@@ -456,10 +395,10 @@ public final class RestRequestCompletionEmitter implements Middleware {
 
     /**
      * Dispatches the event of a request no transport claimed: opens the completion scopes, calls
-     * every {@link HttpRequestCompletedListener} in the set's own order, each isolated, and closes
-     * the scopes.
+     * {@code onCompleted(event, ctx)} on every {@link HttpRequestCompletedListener} in the set's own
+     * order, each isolated, and closes the scopes.
      *
-     * @param ctx   the routing context for the completed request
+     * @param ctx   the request's root routing context, passed to every listener
      * @param event the request's HTTP completion event
      */
     private void dispatchHttp(RoutingContext ctx, HttpRequestCompletedEvent event) {
@@ -467,7 +406,7 @@ public final class RestRequestCompletionEmitter implements Middleware {
         try {
             for (HttpRequestCompletedListener listener : httpListeners) {
                 try {
-                    listener.onCompleted(event);
+                    listener.onCompleted(event, ctx);
                 } catch (Exception e) {
                     log.warn("HttpRequestCompletedListener failed: {}", e.toString(), e);
                 }

@@ -35,7 +35,7 @@ import io.vertx.ext.web.RoutingContext;
  *       (e.g. {@link OutOfMemoryError}) are <em>not</em> caught by the emitter and propagate
  *       as fatal — this is consistent with standard event-loop practice.</li>
  *   <li>The returned {@link AutoCloseable} is closed (via {@code try/finally}) after all
- *       listeners and capture coordinators have run. Its {@code close()} should also not throw
+ *       listeners of the dispatched event type have run. Its {@code close()} should also not throw
  *       {@link Exception}s — the emitter guards with its own {@code try/catch} (WARN + swallow)
  *       but good implementations do not rely on that guard. {@link Error}s from {@code close()}
  *       likewise propagate as fatal.</li>

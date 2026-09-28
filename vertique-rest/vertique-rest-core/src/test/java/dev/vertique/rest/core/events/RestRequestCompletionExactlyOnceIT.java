@@ -52,7 +52,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * {@code HttpServer} bound on port 0 with a fully ordered middleware stack:
  * <ol>
  *   <li>{@link RequestContextLifecycle} — owns holder scope and LIFO end-handler ordering</li>
- *   <li>{@link RestRequestCompletionEmitter} — the SUT (ORDER + 5), built through its six-argument
+ *   <li>{@link RestRequestCompletionEmitter} — the SUT (ORDER + 5), built through its {@code @Inject}
  *       constructor with one capturing listener of each event type</li>
  *   <li>{@link CorrelationIngressMiddleware} — configured with strict REJECT policy (ORDER + 10)</li>
  * </ol>
@@ -199,7 +199,7 @@ public class RestRequestCompletionExactlyOnceIT {
 
     /**
      * Builds the full middleware stack and all routes, wires one capturing listener of each event
-     * type into an emitter built through the six-argument constructor, and returns a future that
+     * type into an emitter built through the {@code @Inject} constructor, and returns a future that
      * resolves to the bound HTTP port.
      *
      * <p>Routes, each operation route starting with its stub's
@@ -227,7 +227,7 @@ public class RestRequestCompletionExactlyOnceIT {
         RestRequestCompletedListener restListener = restEvents::add;
         HttpRequestCompletedListener httpListener = httpEvents::add;
         RestRequestCompletionEmitter emitter = new RestRequestCompletionEmitter(
-                Optional.empty(), holder, Set.of(restListener), Set.of(httpListener), Set.of(), Set.of());
+                Optional.empty(), holder, Set.of(restListener), Set.of(httpListener), Set.of());
 
         CorrelationIngressMiddleware correlationMiddleware = newRejectCorrelationMiddleware(holder);
 

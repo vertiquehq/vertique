@@ -31,7 +31,6 @@ import dev.vertique.core.correlation.CorrelationIdentifier;
 import dev.vertique.core.correlation.CorrelationSessionRef;
 import dev.vertique.core.correlation.ProtocolCorrelationRef;
 import dev.vertique.core.correlation.TraceReference;
-import dev.vertique.rest.core.capture.RestRequestCaptureCoordinator;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.routing.RestOperationDescriptor;
 import dev.vertique.rest.core.security.SecurityRuntime;
@@ -51,6 +50,7 @@ import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
+import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.http.StreamResetException;
 import io.vertx.core.impl.NoStackTraceThrowable;
 import io.vertx.ext.web.Route;
@@ -100,10 +100,10 @@ import org.slf4j.LoggerFactory;
  * <p>Verifies:
  * <ul>
  *   <li>Claim dispatch: a request an operation route claimed publishes exactly one
- *       {@link RestRequestCompletedEvent}, carrying that route's operation, to the REST listeners and
- *       then the capture coordinators; a request no transport claimed publishes exactly one
- *       {@link HttpRequestCompletedEvent} to the HTTP listeners; a request another transport claimed
- *       publishes nothing, and the emitter logs one DEBUG line for it, without the request path.</li>
+ *       {@link RestRequestCompletedEvent}, carrying that route's operation, to the REST listeners; a
+ *       request no transport claimed publishes exactly one {@link HttpRequestCompletedEvent} to the
+ *       HTTP listeners; a request another transport claimed publishes nothing, and the emitter logs
+ *       one DEBUG line for it, without the request path.</li>
  *   <li>Exactly one event emitted per successful request with correct method/path/status.</li>
  *   <li>Exactly one event emitted on mapped 500 failure; {@code failureCode} equals the exception's
  *       simple class name; {@code safeFailureMessage} is {@code null} and the raw exception message
@@ -115,6 +115,11 @@ import org.slf4j.LoggerFactory;
  *       exactly one event.</li>
  *   <li>A throwing listener, REST or HTTP, does not prevent other listeners from receiving the
  *       event.</li>
+ *   <li>Listener overloads: every listener, of either type, is called through its two-argument
+ *       {@code onCompleted(event, RoutingContext)} overload with the request's root context, also on
+ *       a sub-router route, where that context's {@code request()} is the route handler's; a
+ *       listener implementing only the one-argument method receives each event exactly once; a
+ *       listener throwing from either method is isolated.</li>
  *   <li>No listeners: emitter completes silently without error.</li>
  *   <li>{@link SecurityContext} and {@link CorrelationContext} are captured when bound.</li>
  *   <li>Completion scopes bracket the dispatch of either event type, and none opens for a request
@@ -237,19 +242,6 @@ class RestRequestCompletionEmitterTest {
     private static RestRequestCompletionEmitter emitter(
             SecurityRuntime securityRuntime, ContextHolder holder, Set<RestRequestCompletedListener> listeners) {
         return new RestRequestCompletionEmitter(Optional.of(securityRuntime), holder, listeners);
-    }
-
-    /**
-     * Creates an emitter with no security runtime, a plain {@link DefaultContextHolder}, and the
-     * given listeners and coordinators.
-     *
-     * @param listeners    the safe listeners to notify
-     * @param coordinators the capture coordinators to invoke after listeners
-     * @return a new emitter instance
-     */
-    private static RestRequestCompletionEmitter emitterWithCoordinators(
-            Set<RestRequestCompletedListener> listeners, Set<RestRequestCaptureCoordinator> coordinators) {
-        return new RestRequestCompletionEmitter(Optional.empty(), new DefaultContextHolder(), listeners, coordinators);
     }
 
     /**
@@ -597,19 +589,14 @@ class RestRequestCompletionEmitterTest {
         }
 
         /**
-         * Creates an emitter, through the six-argument constructor, whose only listeners append to
-         * these captures: no security runtime, coordinator or completion scope.
+         * Creates an emitter, through the {@code @Inject} constructor, whose only listeners append to
+         * these captures: no security runtime and no completion scope.
          *
          * @return a new emitter instance
          */
         RestRequestCompletionEmitter emitter() {
             return new RestRequestCompletionEmitter(
-                    Optional.empty(),
-                    new DefaultContextHolder(),
-                    Set.of(rest::add),
-                    Set.of(http::add),
-                    Set.of(),
-                    Set.of());
+                    Optional.empty(), new DefaultContextHolder(), Set.of(rest::add), Set.of(http::add), Set.of());
         }
 
         /**
@@ -1041,7 +1028,6 @@ class RestRequestCompletionEmitterTest {
                     bound.holder(),
                     Set.of(published.rest()::add),
                     Set.of(published.http()::add),
-                    Set.of(),
                     Set.of());
             RouterWithBarrier rb = unclaimedRouterWithBarrier(vertx, em, rc -> {
                 bound.bindCorrelation(rc);
@@ -1280,127 +1266,12 @@ class RestRequestCompletionEmitterTest {
         }
     }
 
-    @Nested
-    @DisplayName("CaptureCoordinator")
-    class CaptureCoordinator {
-
-        @Test
-        @DisplayName("coordinator receives the same event the safe listeners got and the live RoutingContext")
-        void coordinatorReceivesEventAndRoutingContext(VertxTestContext ctx) {
-            List<RestRequestCompletedEvent> listenerCapture = new ArrayList<>();
-            AtomicReference<RestRequestCompletedEvent> coordinatorEvent = new AtomicReference<>();
-            AtomicReference<RoutingContext> coordinatorRc = new AtomicReference<>();
-
-            RestRequestCaptureCoordinator coordinator = (event, rc) -> {
-                coordinatorEvent.set(event);
-                coordinatorRc.set(rc);
-            };
-
-            RestRequestCompletionEmitter em =
-                    emitterWithCoordinators(Set.of(listenerCapture::add), Set.of(coordinator));
-            RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {});
-
-            startServer(rb.router())
-                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
-                    .compose(resp -> {
-                        ctx.verify(() -> assertEquals(200, resp.statusCode()));
-                        return awaitBarrier(vertx, rb.barrier());
-                    })
-                    .onComplete(ctx.succeeding(v -> {
-                        ctx.verify(() -> {
-                            assertEquals(1, listenerCapture.size(), "safe listener must receive exactly one event");
-                            assertNotNull(coordinatorEvent.get(), "coordinator must receive an event");
-                            assertSame(
-                                    listenerCapture.get(0),
-                                    coordinatorEvent.get(),
-                                    "coordinator must receive the identical event object the safe listener got");
-                            assertNotNull(coordinatorRc.get(), "coordinator must receive the live RoutingContext");
-                        });
-                        ctx.completeNow();
-                    }));
-        }
-
-        @Test
-        @DisplayName(
-                "a throwing coordinator does not break completion and does not prevent safe listeners from running")
-        void throwingCoordinatorDoesNotBreakCompletion(VertxTestContext ctx) {
-            List<RestRequestCompletedEvent> listenerCapture = new ArrayList<>();
-            RestRequestCaptureCoordinator throwing = (event, rc) -> {
-                throw new RuntimeException("coordinator-boom");
-            };
-
-            RestRequestCompletionEmitter em = emitterWithCoordinators(Set.of(listenerCapture::add), Set.of(throwing));
-            RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {});
-
-            startServer(rb.router())
-                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
-                    .compose(resp -> {
-                        // response must still complete normally despite the coordinator throwing
-                        ctx.verify(() -> assertEquals(200, resp.statusCode()));
-                        return awaitBarrier(vertx, rb.barrier());
-                    })
-                    .onComplete(ctx.succeeding(v -> {
-                        ctx.verify(() ->
-                                assertEquals(1, listenerCapture.size(), "safe listener must still receive the event"));
-                        ctx.completeNow();
-                    }));
-        }
-
-        @Test
-        @DisplayName("with no coordinators registered the emitter completes without error (pure no-op)")
-        void noCoordinatorsIsNoOp(VertxTestContext ctx) {
-            List<RestRequestCompletedEvent> listenerCapture = new ArrayList<>();
-            RestRequestCompletionEmitter em = emitterWithCoordinators(Set.of(listenerCapture::add), Set.of());
-            RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {});
-
-            startServer(rb.router())
-                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
-                    .compose(resp -> {
-                        ctx.verify(() -> assertEquals(200, resp.statusCode()));
-                        return awaitBarrier(vertx, rb.barrier());
-                    })
-                    .onComplete(ctx.succeeding(v -> {
-                        ctx.verify(() ->
-                                assertEquals(1, listenerCapture.size(), "safe listener must still receive event"));
-                        ctx.completeNow();
-                    }));
-        }
-
-        @Test
-        @DisplayName("coordinator is invoked after the safe listener set; safe listener path unchanged")
-        void coordinatorInvokedAfterSafeListeners(VertxTestContext ctx) {
-            List<String> order = new ArrayList<>();
-
-            RestRequestCompletedListener listener = event -> order.add("listener");
-            RestRequestCaptureCoordinator coordinator = (event, rc) -> order.add("coordinator");
-
-            RestRequestCompletionEmitter em = emitterWithCoordinators(Set.of(listener), Set.of(coordinator));
-            RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {});
-
-            startServer(rb.router())
-                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
-                    .compose(resp -> {
-                        ctx.verify(() -> assertEquals(200, resp.statusCode()));
-                        return awaitBarrier(vertx, rb.barrier());
-                    })
-                    .onComplete(ctx.succeeding(v -> {
-                        ctx.verify(() -> {
-                            assertEquals(
-                                    List.of("listener", "coordinator"),
-                                    order,
-                                    "safe listener must run before coordinator");
-                        });
-                        ctx.completeNow();
-                    }));
-        }
-    }
-
     /**
      * T003 TP-005 (FR-001, D002): the emitter dispatches exactly one event type, chosen by the request's
-     * claim. A REST claim publishes one {@link RestRequestCompletedEvent} to the REST listeners, then the
-     * capture coordinators; no claim publishes one {@link HttpRequestCompletedEvent} to the HTTP listeners,
-     * each isolated from the others; another transport's claim publishes nothing and logs one DEBUG line
-     * on the emitter's logger, carrying the method and status but never the request path.
+     * claim. A REST claim publishes one {@link RestRequestCompletedEvent} to the REST listeners; no claim
+     * publishes one {@link HttpRequestCompletedEvent} to the HTTP listeners, each isolated from the others;
+     * another transport's claim publishes nothing and logs one DEBUG line on the emitter's logger, carrying
+     * the method and status but never the request path.
      *
      * <p>The DEBUG line carries no path, so it is attributed to its request by order: the three requests
      * run in sequence, and after each one's lifecycle barrier the lines logged so far are taken from the
@@ -1440,23 +1311,20 @@ class RestRequestCompletionEmitterTest {
 
         /** T003 TP-005. */
         @Test
-        @DisplayName("REST claim: one REST event and one coordinator call; no claim: one HTTP event despite a throwing "
-                + "HTTP listener; another transport's claim: nothing, and one DEBUG line without the path")
+        @DisplayName("REST claim: one REST event; no claim: one HTTP event despite a throwing HTTP listener; another "
+                + "transport's claim: nothing, and one DEBUG line without the path")
         void dispatchesExactlyOneEventTypeByClaim(VertxTestContext ctx) {
             Published published = Published.capture();
-            List<RestRequestCompletedEvent> coordinated = new CopyOnWriteArrayList<>();
             Set<HttpRequestCompletedListener> httpListeners = new LinkedHashSet<>();
             httpListeners.add(event -> {
                 throw new IllegalStateException("http-listener-boom");
             });
             httpListeners.add(published.http()::add);
-            RestRequestCaptureCoordinator counting = (event, rc) -> coordinated.add(event);
             RestRequestCompletionEmitter em = new RestRequestCompletionEmitter(
                     Optional.empty(),
                     new DefaultContextHolder(),
                     Set.of(published.rest()::add),
                     httpListeners,
-                    Set.of(counting),
                     Set.of());
             PathBarriers barriers = new PathBarriers();
             Map<String, Integer> statuses = new ConcurrentHashMap<>();
@@ -1469,9 +1337,8 @@ class RestRequestCompletionEmitterTest {
                     .onComplete(ctx.succeeding(v -> {
                         ctx.verify(() -> assertAll(
                                 "dispatch by claim",
-                                // /rest: REST(STUB) -> one REST event carrying STUB, one coordinator call
+                                // /rest: REST(STUB) -> one REST event carrying STUB
                                 () -> Expected.oneRestEvent(STUB).assertOn(published.ofPath(REST_PATH), REST_PATH),
-                                () -> assertCoordinatedOnceForRest(published, coordinated),
                                 () -> assertEquals(
                                         List.of(), debugByPath.get(REST_PATH), REST_PATH + ": no DEBUG line"),
                                 // /plain: NONE -> one HTTP event, delivered past the throwing HTTP listener
@@ -1532,25 +1399,6 @@ class RestRequestCompletionEmitterTest {
         }
 
         /**
-         * Asserts the coordinator was called exactly once, for {@code /rest}, with the very event the REST
-         * listener received.
-         *
-         * @param published   every captured event
-         * @param coordinated every event the counting coordinator received
-         */
-        private static void assertCoordinatedOnceForRest(
-                Published published, List<RestRequestCompletedEvent> coordinated) {
-            assertEquals(
-                    List.of(REST_PATH),
-                    coordinated.stream().map(RestRequestCompletedEvent::path).toList(),
-                    "the coordinator is called once, for " + REST_PATH + " only");
-            assertSame(
-                    published.ofPath(REST_PATH).rest().get(0),
-                    coordinated.get(0),
-                    "the coordinator receives the event the REST listener received");
-        }
-
-        /**
          * Asserts {@code /other} logged exactly one DEBUG line, naming the method and the status but not the
          * request path.
          *
@@ -1587,7 +1435,7 @@ class RestRequestCompletionEmitterTest {
                 throw listenerError;
             };
             RestRequestCompletionEmitter em = new RestRequestCompletionEmitter(
-                    Optional.empty(), new DefaultContextHolder(), Set.of(), Set.of(throwing), Set.of(), Set.of());
+                    Optional.empty(), new DefaultContextHolder(), Set.of(), Set.of(throwing), Set.of());
             RouterWithBarrier rb = unclaimedRouterWithBarrier(
                     vertx,
                     em,
@@ -1612,12 +1460,779 @@ class RestRequestCompletionEmitterTest {
         private static final class ListenerError extends Error {}
     }
 
+    /**
+     * rest-025 T004's TP-001 to TP-004 (FR-009, AC-009.1 to AC-009.3): the listener overloads. The emitter reaches
+     * every listener, of either type, through {@code onCompleted(event, RoutingContext)}, whose default delegates to
+     * {@code onCompleted(event)}. A listener implementing only the one-argument method receives each event exactly
+     * once (TP-001). A listener overriding both methods gets only the two-argument call, with the request's root
+     * context (TP-002), also on a sub-router route, where that context's {@code request()} is the route handler's
+     * (TP-003). A throwing listener of either type, throwing from either method, is isolated (TP-004).
+     *
+     * <p>Every proof builds its emitter through {@link #overloadEmitter}, with each listener set a
+     * {@link LinkedHashSet}, and runs on {@link #overloadRouter}: the spine with per-path lifecycle barriers, a ROOT
+     * handler after the emitter that records each request's root context, {@code /claimed}, whose operation route
+     * claims the request for {@link #CLAIMED_OPERATION}, and the plain {@code /unclaimed}. Every route handler records
+     * its own context and {@code request()}, then answers 200. Captured state is read only after the request's
+     * lifecycle barrier. {@link #appender} records the emitter's WARN lines for TP-004.
+     */
+    @Nested
+    @DisplayName("Listener overloads")
+    class ListenerOverloads {
+
+        /** Route whose operation route claims the request for {@link #CLAIMED_OPERATION}: it publishes a REST event. */
+        private static final String CLAIMED = "/claimed";
+
+        /** Route that no transport claims: it publishes an HTTP event. */
+        private static final String UNCLAIMED = "/unclaimed";
+
+        /** Mount path of TP-003's sub-router. */
+        private static final String SUB_MOUNT = "/sub/*";
+
+        /** {@link #CLAIMED}, served by TP-003's sub-router. */
+        private static final String SUB_CLAIMED = "/sub" + CLAIMED;
+
+        /** {@link #UNCLAIMED}, served by TP-003's sub-router. */
+        private static final String SUB_UNCLAIMED = "/sub" + UNCLAIMED;
+
+        /** The operation of every {@code /claimed} route; the proofs compare it by identity only. */
+        private static final RestOperationDescriptor CLAIMED_OPERATION =
+                new TestOperation("claimedOperation", "GET", "/claimed");
+
+        /** Message of the exception TP-004's throwing listeners throw. */
+        private static final String BOOM = "listener-boom";
+
+        /** The emitter's class logger, whose events {@link #appender} records. */
+        private Logger emitterLogger;
+
+        /** The logger's level before the test, restored after it. */
+        private Level previousLevel;
+
+        /** Records every event the emitter's logger accepts. */
+        private ListAppender<ILoggingEvent> appender;
+
+        /** Attaches {@link #appender} to the emitter's logger and enables WARN on it. */
+        @BeforeEach
+        void captureEmitterLog() {
+            emitterLogger = (Logger) LoggerFactory.getLogger(RestRequestCompletionEmitter.class);
+            previousLevel = emitterLogger.getLevel();
+            emitterLogger.setLevel(Level.WARN);
+            appender = new ListAppender<>();
+            appender.start();
+            emitterLogger.addAppender(appender);
+        }
+
+        /** Detaches {@link #appender} and restores the logger's previous level. */
+        @AfterEach
+        void releaseEmitterLog() {
+            emitterLogger.detachAppender(appender);
+            appender.stop();
+            emitterLogger.setLevel(previousLevel);
+        }
+
+        /** TP-001 (AC-009.1): both listener types stay lambda-compatible. */
+        @Test
+        @DisplayName("A listener implementing only the one-argument method receives each event exactly once")
+        void oneArgumentOnlyListenerReceivesEachEventOnce(VertxTestContext ctx) {
+            Published delivered = Published.capture();
+            RestRequestCompletedListener restLambda = event -> delivered.rest().add(event);
+            HttpRequestCompletedListener httpLambda = event -> delivered.http().add(event);
+
+            claimedThenUnclaimed(restLambda, httpLambda, new Recorded()).onComplete(ctx.succeeding(statuses -> {
+                ctx.verify(() -> assertAll(
+                        "one REST event for " + CLAIMED + ", one HTTP event for " + UNCLAIMED,
+                        () -> assertEquals(
+                                Map.of(CLAIMED, 200, UNCLAIMED, 200), statuses, "fixture: every response is 200"),
+                        () -> assertEquals(
+                                List.of(CLAIMED),
+                                delivered.rest().stream()
+                                        .map(RestRequestCompletedEvent::path)
+                                        .toList(),
+                                "the REST lambda's events, by path: exactly one, for " + CLAIMED),
+                        () -> assertEquals(
+                                List.of(UNCLAIMED),
+                                delivered.http().stream()
+                                        .map(HttpRequestCompletedEvent::path)
+                                        .toList(),
+                                "the HTTP lambda's events, by path: exactly one, for " + UNCLAIMED),
+                        () -> {
+                            assertEquals(1, delivered.rest().size(), "REST events, before reading the operation");
+                            assertSame(
+                                    CLAIMED_OPERATION,
+                                    delivered.rest().get(0).operation(),
+                                    "the REST event carries the claimed operation");
+                        }));
+                ctx.completeNow();
+            }));
+        }
+
+        /** TP-002 (AC-009.2): only the two-argument call, with the root context, for both listener types. */
+        @Test
+        @DisplayName("A listener overriding both methods gets only the two-argument call, with the request's root "
+                + "context")
+        void twoArgumentOverrideIsCalledInsteadOfOneArgumentWithRootContext(VertxTestContext ctx) {
+            RestOverloadCounter restCounter = new RestOverloadCounter();
+            HttpOverloadCounter httpCounter = new HttpOverloadCounter();
+            Recorded recorded = new Recorded();
+
+            claimedThenUnclaimed(restCounter, httpCounter, recorded).onComplete(ctx.succeeding(statuses -> {
+                ctx.verify(() -> assertAll(
+                        "only the two-argument method is called, with the root context",
+                        () -> assertEquals(
+                                Map.of(CLAIMED, 200, UNCLAIMED, 200), statuses, "fixture: every response is 200"),
+                        () -> assertOnlyTwoArgumentCallWithRootContext(
+                                restCounter, recorded.rootContext(CLAIMED), "the REST listener, " + CLAIMED),
+                        () -> assertOnlyTwoArgumentCallWithRootContext(
+                                httpCounter, recorded.rootContext(UNCLAIMED), "the HTTP listener, " + UNCLAIMED)));
+                ctx.completeNow();
+            }));
+        }
+
+        /** TP-003 (AC-009.2 across a mount, R-004). */
+        @Test
+        @DisplayName("On a sub-router route the listener gets the root context, whose request() is the route "
+                + "handler's request()")
+        void subRouterRouteListenerGetsRootContextSharingTheRouteRequest(VertxTestContext ctx) {
+            RestOverloadCounter restCounter = new RestOverloadCounter();
+            HttpOverloadCounter httpCounter = new HttpOverloadCounter();
+            Recorded recorded = new Recorded();
+            PathBarriers barriers = new PathBarriers();
+            Router router =
+                    overloadRouter(overloadEmitter(inOrder(restCounter), inOrder(httpCounter)), barriers, recorded);
+            mountClaimedAndUnclaimedSubRouter(router, recorded);
+
+            startServer(router)
+                    .compose(port -> completeInOrder(port, barriers, SUB_CLAIMED, SUB_UNCLAIMED))
+                    .onComplete(ctx.succeeding(statuses -> {
+                        ctx.verify(() -> {
+                            assertEquals(
+                                    Map.of(SUB_CLAIMED, 200, SUB_UNCLAIMED, 200),
+                                    statuses,
+                                    "fixture: every response is 200");
+                            assertRanOnSubRouterWrapper(recorded, SUB_CLAIMED);
+                            assertRanOnSubRouterWrapper(recorded, SUB_UNCLAIMED);
+                            assertAll(
+                                    "the listener's context is the request's root context, and its request() is the "
+                                            + "request() the sub-router route handler received",
+                                    () -> assertRootContextSharingRouteRequest(
+                                            restCounter, recorded, SUB_CLAIMED, "the REST listener, " + SUB_CLAIMED),
+                                    () -> assertRootContextSharingRouteRequest(
+                                            httpCounter,
+                                            recorded,
+                                            SUB_UNCLAIMED,
+                                            "the HTTP listener, " + SUB_UNCLAIMED),
+                                    () -> {
+                                        RestRequestCompletedEvent event = restCounter.event();
+                                        assertNotNull(event, "the REST listener's two-argument call received an event");
+                                        assertSame(
+                                                CLAIMED_OPERATION,
+                                                event.operation(),
+                                                "the REST event carries the sub-router route's operation");
+                                    });
+                        });
+                        ctx.completeNow();
+                    }));
+        }
+
+        /** TP-004 (AC-009.3), one row per listener type and throwing method. */
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("dev.vertique.rest.core.events.RestRequestCompletionEmitterTest#isolationCases")
+        @DisplayName("A throwing listener of either type, throwing from either method, is isolated: the later "
+                + "listener still runs, the response is unaffected, and one WARN is logged")
+        void throwingListenerIsIsolatedForEitherTypeAndOverload(IsolationCase isolationCase, VertxTestContext ctx) {
+            ThrowingListener throwing = isolationCase.throwingListener().apply(isolationCase.throwsFromOverride());
+            List<Object> delivered = new CopyOnWriteArrayList<>();
+            PathBarriers barriers = new PathBarriers();
+            RestRequestCompletionEmitter emitter =
+                    overloadEmitter(throwing.restListeners(delivered), throwing.httpListeners(delivered));
+
+            startServer(overloadRouter(emitter, barriers, new Recorded()))
+                    .compose(port -> getAndAwait(port, isolationCase.path(), barriers))
+                    .onComplete(ctx.succeeding(status -> {
+                        ctx.verify(() -> assertIsolated(isolationCase, throwing, delivered, status));
+                        ctx.completeNow();
+                    }));
+        }
+
+        /**
+         * Creates the emitter of these proofs, their single construction site: no security runtime, a plain
+         * {@link DefaultContextHolder}, the given REST and HTTP listener sets, which the emitter iterates as given,
+         * and no completion scope.
+         *
+         * @param restListeners the REST listeners
+         * @param httpListeners the HTTP listeners
+         * @return a new emitter instance
+         */
+        private static RestRequestCompletionEmitter overloadEmitter(
+                Set<RestRequestCompletedListener> restListeners, Set<HttpRequestCompletedListener> httpListeners) {
+            return new RestRequestCompletionEmitter(
+                    Optional.empty(), new DefaultContextHolder(), restListeners, httpListeners, Set.of());
+        }
+
+        /**
+         * Returns {@code listeners} as a {@link LinkedHashSet}, in the given order.
+         *
+         * @param listeners the listeners
+         * @param <T>       the listener type
+         * @return the listeners, in the given order
+         */
+        @SafeVarargs
+        private static <T> Set<T> inOrder(T... listeners) {
+            return new LinkedHashSet<>(List.of(listeners));
+        }
+
+        /**
+         * Builds the proofs' router: the spine ({@link RequestContextLifecycle}, the emitter, then {@code barriers}'
+         * per-path lifecycle barrier), a ROOT handler after the emitter that stores each request's root context in
+         * {@code recorded}, then {@code GET /claimed}, whose operation route claims the request for
+         * {@link #CLAIMED_OPERATION}, and the plain {@code GET /unclaimed}.
+         *
+         * @param emitter  the emitter to mount
+         * @param barriers the per-path lifecycle barriers
+         * @param recorded receives what the ROOT and route handlers saw
+         * @return the configured router
+         */
+        private static Router overloadRouter(
+                RestRequestCompletionEmitter emitter, PathBarriers barriers, Recorded recorded) {
+            Router router = spine(vertx, emitter, barriers.handler());
+            router.route().handler(rc -> {
+                recorded.root(rc);
+                rc.next();
+            });
+            addClaimedAndUnclaimedRoutes(router, recorded);
+            return router;
+        }
+
+        /**
+         * Mounts a sub-router at {@code /sub/*} holding {@code GET /claimed} and {@code GET /unclaimed}, as
+         * {@link #overloadRouter} builds them on the root: TP-003's {@code /sub/claimed} and {@code /sub/unclaimed}.
+         *
+         * @param router   the root router to mount the sub-router on
+         * @param recorded receives what the sub-router's route handlers saw
+         */
+        private static void mountClaimedAndUnclaimedSubRouter(Router router, Recorded recorded) {
+            Router sub = Router.router(vertx);
+            addClaimedAndUnclaimedRoutes(sub, recorded);
+            router.route(SUB_MOUNT).subRouter(sub);
+        }
+
+        /**
+         * Adds {@code GET /claimed}, whose first handler is the operation route's identity handler for
+         * {@link #CLAIMED_OPERATION}, and the plain {@code GET /unclaimed}. Each route's handler records its own
+         * context and {@code request()} in {@code recorded}, then answers 200.
+         *
+         * @param router   the router to add the routes to
+         * @param recorded receives what the route handlers saw
+         */
+        private static void addClaimedAndUnclaimedRoutes(Router router, Recorded recorded) {
+            router.get(CLAIMED)
+                    .handler(RequestCompletionRecorder.operationRouteHandler(CLAIMED_OPERATION))
+                    .handler(recorded::routeThenRespondOk);
+            router.get(UNCLAIMED).handler(recorded::routeThenRespondOk);
+        }
+
+        /**
+         * TP-001's and TP-002's two requests: serves {@link #overloadRouter} over {@code restListener} and
+         * {@code httpListener}, each the only listener of its type, then completes {@code GET /claimed} and
+         * {@code GET /unclaimed}, in that order, each awaited through its lifecycle barrier.
+         *
+         * @param restListener the only REST listener
+         * @param httpListener the only HTTP listener
+         * @param recorded     receives what the ROOT and route handlers saw
+         * @return the response statuses, by path, once both requests' lifecycles have closed
+         */
+        private Future<Map<String, Integer>> claimedThenUnclaimed(
+                RestRequestCompletedListener restListener,
+                HttpRequestCompletedListener httpListener,
+                Recorded recorded) {
+            PathBarriers barriers = new PathBarriers();
+            Router router =
+                    overloadRouter(overloadEmitter(inOrder(restListener), inOrder(httpListener)), barriers, recorded);
+            return startServer(router).compose(port -> completeInOrder(port, barriers, CLAIMED, UNCLAIMED));
+        }
+
+        /**
+         * Completes {@code GET first}, then {@code GET second}, each awaited through its lifecycle barrier.
+         *
+         * @param port     the server port
+         * @param barriers the per-path lifecycle barriers the router was wired with
+         * @param first    the first request's path
+         * @param second   the second request's path
+         * @return the response statuses, by path, once both requests' lifecycles have closed
+         */
+        private static Future<Map<String, Integer>> completeInOrder(
+                int port, PathBarriers barriers, String first, String second) {
+            Map<String, Integer> statuses = new ConcurrentHashMap<>();
+            return getAndAwait(port, first, barriers)
+                    .compose(status -> {
+                        statuses.put(first, status);
+                        return getAndAwait(port, second, barriers);
+                    })
+                    .map(status -> {
+                        statuses.put(second, status);
+                        return statuses;
+                    });
+        }
+
+        /**
+         * Asserts TP-002 on one listener: the emitter called its two-argument method once, never its one-argument
+         * method, and passed the request's root context. The counts are asserted before the identity.
+         *
+         * @param counter the listener
+         * @param root    the root context the ROOT recording handler stored for the listener's request
+         * @param subject names the listener and its request in failure messages
+         */
+        private static void assertOnlyTwoArgumentCallWithRootContext(
+                OverloadCounter<?> counter, RoutingContext root, String subject) {
+            assertAll(
+                    subject,
+                    () -> assertEquals(
+                            0,
+                            counter.oneArgCalls(),
+                            "oneArgCalls: the emitter never calls the one-argument method directly"),
+                    () -> assertEquals(1, counter.twoArgCalls(), "twoArgCalls: the emitter calls the overload once"),
+                    () -> {
+                        assertNotNull(root, "fixture: the ROOT recording handler stored the request's root context");
+                        assertSame(root, counter.context(), "the two-argument call receives the root context");
+                    });
+        }
+
+        /**
+         * TP-003's fixture guard, which checks the fixture, not the contract: the route handler of {@code path} ran on
+         * a sub-router's own {@link RoutingContext} wrapper, not on the request's root context (R-004).
+         *
+         * @param recorded what the ROOT and route handlers saw
+         * @param path     the request path
+         */
+        private static void assertRanOnSubRouterWrapper(Recorded recorded, String path) {
+            RoutingContext root = recorded.rootContext(path);
+            RoutingContext route = recorded.routeContext(path);
+            assertNotNull(
+                    root, "fixture, not the contract: the ROOT recording handler stored the root context of " + path);
+            assertNotNull(route, "fixture, not the contract: the route handler of " + path + " recorded its context");
+            assertNotSame(
+                    root,
+                    route,
+                    "fixture, not the contract: " + path + " must run on a sub-router wrapper, not the root context");
+        }
+
+        /**
+         * Asserts TP-003 on one listener: its two-argument method was called once, with the request's root context,
+         * whose {@code request()} is the {@code request()} the sub-router route handler received. The count is asserted
+         * before the identities, and the received context is checked for {@code null} before it is read.
+         *
+         * @param counter  the listener
+         * @param recorded what the ROOT and route handlers saw
+         * @param path     the listener's request path
+         * @param subject  names the listener and its request in failure messages
+         */
+        private static void assertRootContextSharingRouteRequest(
+                OverloadCounter<?> counter, Recorded recorded, String path, String subject) {
+            assertAll(
+                    subject,
+                    () -> assertEquals(1, counter.twoArgCalls(), "twoArgCalls: the emitter calls the overload once"),
+                    () -> assertSame(
+                            recorded.rootContext(path),
+                            counter.context(),
+                            "the listener's context is the request's root context"),
+                    () -> {
+                        RoutingContext received = counter.context();
+                        assertNotNull(received, "the two-argument call received a context");
+                        assertSame(
+                                recorded.routeRequest(path),
+                                received.request(),
+                                "that context's request() is the request() the sub-router route handler received");
+                    });
+        }
+
+        /**
+         * Asserts TP-004's five outcomes for one row. Reaching it means the request's lifecycle barrier completed, so
+         * the response lifecycle ended normally.
+         *
+         * @param isolationCase the row
+         * @param throwing      the row's throwing listener, first in its set
+         * @param delivered     the events the capturing listener after it received
+         * @param status        the response status the client received
+         */
+        private void assertIsolated(
+                IsolationCase isolationCase, ThrowingListener throwing, List<Object> delivered, int status) {
+            List<String> warnings = emitterWarnings();
+            assertAll(
+                    isolationCase.name(),
+                    () -> assertEquals(200, status, "the client receives the route handler's 200"),
+                    () -> assertEquals(
+                            1, throwing.throwingMethodCalls(), "the throwing method is invoked exactly once"),
+                    () -> {
+                        if (throwing.throwsFromOverride()) {
+                            assertEquals(
+                                    0,
+                                    throwing.oneArgCalls(),
+                                    "the one-argument method of a listener throwing from its override is never "
+                                            + "invoked");
+                        }
+                    },
+                    () -> assertEquals(1, delivered.size(), "the later, capturing listener receives exactly one event"),
+                    () -> assertEquals(1, warnings.size(), "exactly one WARN on the emitter's logger: " + warnings));
+        }
+
+        /**
+         * Returns the formatted messages of the WARN events the emitter's logger recorded.
+         *
+         * @return the WARN messages, in logging order
+         */
+        private List<String> emitterWarnings() {
+            return appender.list.stream()
+                    .filter(event -> event.getLevel() == Level.WARN)
+                    .map(ILoggingEvent::getFormattedMessage)
+                    .toList();
+        }
+
+        /**
+         * What the proofs' handlers saw, by request path: each request's root context, stored by the ROOT recording
+         * handler, and the context and {@code request()} its route handler received. Written on the thread that ran
+         * the handler, read after the request's lifecycle barrier.
+         */
+        private static final class Recorded {
+
+            private final Map<String, RoutingContext> rootContexts = new ConcurrentHashMap<>();
+            private final Map<String, RoutingContext> routeContexts = new ConcurrentHashMap<>();
+            private final Map<String, HttpServerRequest> routeRequests = new ConcurrentHashMap<>();
+
+            /**
+             * The ROOT recording handler's step: stores {@code rc} as its request's root context.
+             *
+             * @param rc the root routing context
+             */
+            void root(RoutingContext rc) {
+                rootContexts.put(rc.request().path(), rc);
+            }
+
+            /**
+             * A route handler: records its own context and {@code request()}, then answers 200.
+             *
+             * @param rc the routing context the route handler received
+             */
+            void routeThenRespondOk(RoutingContext rc) {
+                String path = rc.request().path();
+                routeContexts.put(path, rc);
+                routeRequests.put(path, rc.request());
+                respondOk(rc);
+            }
+
+            /**
+             * Returns the root context of the request whose path is {@code path}.
+             *
+             * @param path the request path
+             * @return the root context, or {@code null} when none was stored
+             */
+            RoutingContext rootContext(String path) {
+                return rootContexts.get(path);
+            }
+
+            /**
+             * Returns the context the route handler of {@code path} received.
+             *
+             * @param path the request path
+             * @return the route handler's context, or {@code null} when none was recorded
+             */
+            RoutingContext routeContext(String path) {
+                return routeContexts.get(path);
+            }
+
+            /**
+             * Returns the {@code request()} the route handler of {@code path} received.
+             *
+             * @param path the request path
+             * @return the route handler's request, or {@code null} when none was recorded
+             */
+            HttpServerRequest routeRequest(String path) {
+                return routeRequests.get(path);
+            }
+        }
+
+        /**
+         * TP-002's and TP-003's counting double for a listener overriding both methods: it counts the calls of each,
+         * and records the event and the context the two-argument call received.
+         *
+         * @param <E> the event type
+         */
+        private abstract static class OverloadCounter<E> {
+
+            private final AtomicInteger oneArgCalls = new AtomicInteger();
+            private final AtomicInteger twoArgCalls = new AtomicInteger();
+            private final AtomicReference<E> event = new AtomicReference<>();
+            private final AtomicReference<RoutingContext> context = new AtomicReference<>();
+
+            /** Counts a call of the one-argument method. */
+            void countOneArgumentCall() {
+                oneArgCalls.incrementAndGet();
+            }
+
+            /**
+             * Counts a call of the two-argument method and records its arguments.
+             *
+             * @param received       the event
+             * @param routingContext the context
+             */
+            void recordTwoArgumentCall(E received, RoutingContext routingContext) {
+                twoArgCalls.incrementAndGet();
+                event.set(received);
+                context.set(routingContext);
+            }
+
+            int oneArgCalls() {
+                return oneArgCalls.get();
+            }
+
+            int twoArgCalls() {
+                return twoArgCalls.get();
+            }
+
+            /**
+             * Returns the event the two-argument method received.
+             *
+             * @return the event, or {@code null} when it was never called
+             */
+            E event() {
+                return event.get();
+            }
+
+            /**
+             * Returns the context the two-argument method received.
+             *
+             * @return the context, or {@code null} when it was never called
+             */
+            RoutingContext context() {
+                return context.get();
+            }
+        }
+
+        /** {@link OverloadCounter} for {@link RestRequestCompletedListener}. */
+        private static final class RestOverloadCounter extends OverloadCounter<RestRequestCompletedEvent>
+                implements RestRequestCompletedListener {
+
+            @Override
+            public void onCompleted(RestRequestCompletedEvent event) {
+                countOneArgumentCall();
+            }
+
+            @Override
+            public void onCompleted(RestRequestCompletedEvent event, RoutingContext routingContext) {
+                recordTwoArgumentCall(event, routingContext);
+            }
+        }
+
+        /** {@link OverloadCounter} for {@link HttpRequestCompletedListener}. */
+        private static final class HttpOverloadCounter extends OverloadCounter<HttpRequestCompletedEvent>
+                implements HttpRequestCompletedListener {
+
+            @Override
+            public void onCompleted(HttpRequestCompletedEvent event) {
+                countOneArgumentCall();
+            }
+
+            @Override
+            public void onCompleted(HttpRequestCompletedEvent event, RoutingContext routingContext) {
+                recordTwoArgumentCall(event, routingContext);
+            }
+        }
+
+        /**
+         * TP-004's throwing double: it counts the calls of each of its methods and throws
+         * {@code new RuntimeException("listener-boom")} from one of them, after counting. With
+         * {@link #throwsFromOverride()} it throws from its two-argument override, and its one-argument method only
+         * counts. Without it, it throws from its one-argument method, and its two-argument method runs the
+         * interface's default through {@code super}, so it is reached exactly as a listener implementing only the
+         * one-argument method is.
+         */
+        private abstract static class ThrowingListener {
+
+            private final boolean throwsFromOverride;
+            private final AtomicInteger oneArgCalls = new AtomicInteger();
+            private final AtomicInteger twoArgCalls = new AtomicInteger();
+
+            ThrowingListener(boolean throwsFromOverride) {
+                this.throwsFromOverride = throwsFromOverride;
+            }
+
+            boolean throwsFromOverride() {
+                return throwsFromOverride;
+            }
+
+            int oneArgCalls() {
+                return oneArgCalls.get();
+            }
+
+            /**
+             * Returns the calls of the method this listener throws from.
+             *
+             * @return the two-argument calls with {@link #throwsFromOverride()}, the one-argument calls without
+             */
+            int throwingMethodCalls() {
+                return throwsFromOverride ? twoArgCalls.get() : oneArgCalls.get();
+            }
+
+            /** The one-argument method: counts, then throws unless this listener throws from its override. */
+            void oneArgumentCall() {
+                oneArgCalls.incrementAndGet();
+                if (!throwsFromOverride) {
+                    throw new RuntimeException(BOOM);
+                }
+            }
+
+            /** The two-argument override, reached only with {@link #throwsFromOverride()}: counts, then throws. */
+            void twoArgumentOverrideCall() {
+                twoArgCalls.incrementAndGet();
+                throw new RuntimeException(BOOM);
+            }
+
+            /**
+             * Returns the REST listener set of this row: this listener, then one appending each event it receives to
+             * {@code delivered}, for a REST listener; empty otherwise.
+             *
+             * @param delivered receives the capturing listener's events
+             * @return the REST listeners, in dispatch order
+             */
+            abstract Set<RestRequestCompletedListener> restListeners(List<Object> delivered);
+
+            /**
+             * Returns the HTTP listener set of this row: this listener, then one appending each event it receives to
+             * {@code delivered}, for an HTTP listener; empty otherwise.
+             *
+             * @param delivered receives the capturing listener's events
+             * @return the HTTP listeners, in dispatch order
+             */
+            abstract Set<HttpRequestCompletedListener> httpListeners(List<Object> delivered);
+        }
+
+        /** {@link ThrowingListener} for {@link RestRequestCompletedListener}. */
+        private static final class ThrowingRestListener extends ThrowingListener
+                implements RestRequestCompletedListener {
+
+            ThrowingRestListener(boolean throwsFromOverride) {
+                super(throwsFromOverride);
+            }
+
+            @Override
+            public void onCompleted(RestRequestCompletedEvent event) {
+                oneArgumentCall();
+            }
+
+            @Override
+            public void onCompleted(RestRequestCompletedEvent event, RoutingContext routingContext) {
+                if (throwsFromOverride()) {
+                    twoArgumentOverrideCall();
+                } else {
+                    RestRequestCompletedListener.super.onCompleted(event, routingContext);
+                }
+            }
+
+            @Override
+            Set<RestRequestCompletedListener> restListeners(List<Object> delivered) {
+                RestRequestCompletedListener capturing = delivered::add;
+                return inOrder(this, capturing);
+            }
+
+            @Override
+            Set<HttpRequestCompletedListener> httpListeners(List<Object> delivered) {
+                return inOrder();
+            }
+        }
+
+        /** {@link ThrowingListener} for {@link HttpRequestCompletedListener}. */
+        private static final class ThrowingHttpListener extends ThrowingListener
+                implements HttpRequestCompletedListener {
+
+            ThrowingHttpListener(boolean throwsFromOverride) {
+                super(throwsFromOverride);
+            }
+
+            @Override
+            public void onCompleted(HttpRequestCompletedEvent event) {
+                oneArgumentCall();
+            }
+
+            @Override
+            public void onCompleted(HttpRequestCompletedEvent event, RoutingContext routingContext) {
+                if (throwsFromOverride()) {
+                    twoArgumentOverrideCall();
+                } else {
+                    HttpRequestCompletedListener.super.onCompleted(event, routingContext);
+                }
+            }
+
+            @Override
+            Set<RestRequestCompletedListener> restListeners(List<Object> delivered) {
+                return inOrder();
+            }
+
+            @Override
+            Set<HttpRequestCompletedListener> httpListeners(List<Object> delivered) {
+                HttpRequestCompletedListener capturing = delivered::add;
+                return inOrder(this, capturing);
+            }
+        }
+    }
+
+    /**
+     * A TP-004 row (rest-025 T004): the throwing listener's type, by the request that reaches it, and the method it
+     * throws from.
+     *
+     * @param name               the row's display name
+     * @param path               the request path: {@code /claimed} publishes a REST event, {@code /unclaimed} an
+     *                           HTTP event
+     * @param throwingListener   creates the row's throwing listener, of that event's type, given
+     *                           {@code throwsFromOverride}
+     * @param throwsFromOverride whether the listener throws from its two-argument override rather than from its
+     *                           one-argument method
+     */
+    private record IsolationCase(
+            String name,
+            String path,
+            Function<Boolean, ListenerOverloads.ThrowingListener> throwingListener,
+            boolean throwsFromOverride) {
+        @Override
+        public String toString() {
+            return name;
+        }
+    }
+
+    /**
+     * TP-004's rows: {REST on {@code /claimed}, HTTP on {@code /unclaimed}} × {throws from the one-argument method,
+     * throws from the two-argument override}.
+     *
+     * @return the rows in contract order
+     */
+    private static Stream<IsolationCase> isolationCases() {
+        return Stream.of(
+                new IsolationCase(
+                        "REST, one-argument throws",
+                        ListenerOverloads.CLAIMED,
+                        ListenerOverloads.ThrowingRestListener::new,
+                        false),
+                new IsolationCase(
+                        "REST, two-argument override throws",
+                        ListenerOverloads.CLAIMED,
+                        ListenerOverloads.ThrowingRestListener::new,
+                        true),
+                new IsolationCase(
+                        "HTTP, one-argument throws",
+                        ListenerOverloads.UNCLAIMED,
+                        ListenerOverloads.ThrowingHttpListener::new,
+                        false),
+                new IsolationCase(
+                        "HTTP, two-argument override throws",
+                        ListenerOverloads.UNCLAIMED,
+                        ListenerOverloads.ThrowingHttpListener::new,
+                        true));
+    }
+
     // --- RequestCompletionScope ---
 
     /**
      * Helper that creates an emitter with a single completion scope and listener set.
      *
-     * <p>Uses the primary constructor passing a {@code Set.of(scope)} (the new multibind API).
+     * <p>Uses the {@code @Inject} constructor with no HTTP listeners and {@code Set.of(scope)} as the
+     * completion scopes.
      *
      * @param scope     the completion scope to install
      * @param listeners the listeners to notify
@@ -1631,6 +2246,8 @@ class RestRequestCompletionEmitterTest {
 
     /**
      * Helper that creates an emitter with a given set of completion scopes and listener set.
+     *
+     * <p>Uses the {@code @Inject} constructor with no HTTP listeners.
      *
      * @param scopes    the completion scopes to install
      * @param listeners the listeners to notify
@@ -2009,7 +2626,6 @@ class RestRequestCompletionEmitterTest {
                     new DefaultContextHolder(),
                     Set.of(restListener),
                     Set.of(httpListener),
-                    Set.of(),
                     Set.of(scope));
             PathBarriers barriers = new PathBarriers(path -> {
                 try {
