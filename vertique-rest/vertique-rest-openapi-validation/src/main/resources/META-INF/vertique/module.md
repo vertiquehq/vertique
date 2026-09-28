@@ -163,9 +163,22 @@ The strategy also injects the framework's `ParamConversionResolver` (`vertique-r
 - **Every mount must declare an `openapiPath`.** Binding a mount without one throws
   `RestConfigurationException` at startup naming the mount id; the strategy never borrows another
   mount's contract.
-- **The contract is chosen per mount, not per application.** Two mounts with different `openapiPath`
-  values validate against different contracts. An operationId therefore only has to exist in the
-  contract of the mount that serves it.
+- **Each declared application resolves its own contract location.** `vertique-rest-jaxrs`'s
+  `RestApplications` view decides each application's effective `openapiPath` by precedence
+  (`jaxrs.applications.<name>.openapiPath`, then the `@RestApplication` annotation's `openapiPath`,
+  then the global `jaxrs.openapiPath`); this strategy then caches and validates against one loaded
+  contract per distinct `openapiPath` value, so two applications resolving to the same location share
+  one contract and two resolving to different locations validate against different contracts. An
+  operationId therefore only has to exist in the contract of the mount that serves it — but two
+  operations that share an operationId across different JAX-RS mounts are still refused at startup by
+  `vertique-rest-jaxrs`'s mount composition validator (its global cross-mount operationId rule, same
+  owner exempted), even when both mounts resolve to the same contract location, until a later change
+  scopes that rule per mount.
+- **This strategy reports `resolvesOperationsFromMountContract()` (`true`).** The rest-jaxrs mount
+  composition validator reads that flag from the strategy selected by `jaxrs.validationStrategy`, but
+  only once an application is declared (active or not) or an application mount is present; under that
+  gate, when the flag is set, it normalizes every JAX-RS mount's contract location and reports one it
+  cannot parse as a startup violation, naming the mount and never the value.
 - **operationId matching is exact.** A route whose operationId is absent from its mount's contract
   fails requests with HTTP 500 and logs an `ERROR` naming the mount path and the contract path; it
   never falls back to an unvalidated route.

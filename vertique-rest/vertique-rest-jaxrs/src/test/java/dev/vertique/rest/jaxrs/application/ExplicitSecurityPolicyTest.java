@@ -21,9 +21,8 @@ import dev.vertique.rest.jaxrs.application.policy.PermitAllScopedResource;
 import dev.vertique.rest.jaxrs.application.policy.RequiresActionResource;
 import dev.vertique.rest.jaxrs.application.policy.ScopelessRequirementResource;
 import dev.vertique.rest.jaxrs.application.policy.UnannotatedResource;
-import dev.vertique.rest.jaxrs.application.policy.app.ManagementApplication;
+import dev.vertique.rest.jaxrs.application.policy.app.ManagementApis;
 import io.vertx.core.Vertx;
-import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.junit5.VertxExtension;
@@ -31,11 +30,11 @@ import jakarta.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
@@ -53,18 +52,19 @@ import org.slf4j.LoggerFactory;
  * mount.
  *
  * <p>TP-002 ({@link #applicationMountWarnsPerImplicitOperation}) composes {@code policy.app}'s
- * {@code ManagementApplication} mount ({@link ExplicitPolicyComponents.ApplicationMountComponent})
- * around one of the {@code policy} resources unit's six variants at a time: (a) is fully
- * unannotated, with two implicit operations that must both be named, sorted, in the mount's one
- * WARN event; (b) to (e) each carry a declaration that C-POLICY classifies as either declared
- * public or restricting callers, so none of them warns; (f) (G2-10) is fully unannotated like (a),
- * but its two operations' registration order differs from their full-path sort order, proving the
- * warning's {@code .sorted(...)} by full path is observable rather than incidentally matching
- * registration order.
+ * {@code /api/mgmt} mount ({@link ExplicitPolicyComponents.ApplicationMountComponent}) around one
+ * of {@link ManagementApis}'s six variant registrations at a time (T023 L22: one native
+ * registration per variant, in place of the removed {@code jakarta.ws.rs.core.Application}
+ * subclass's config-selected shape): (a) is fully unannotated, with two implicit
+ * operations that must both be named, sorted, in the mount's one WARN event; (b) to (e) each carry
+ * a declaration that C-POLICY classifies as either declared public or restricting callers, so none
+ * of them warns; (f) (G2-10) is fully unannotated like (a), but its two operations' registration
+ * order differs from their full-path sort order, proving the warning's {@code .sorted(...)} by full
+ * path is observable rather than incidentally matching registration order.
  *
  * <p>TP-003 ({@link #requireExplicitPolicyFailsAnyJaxRsMount}) turns the opt-in on
- * ({@code jaxrs.security.requireExplicitPolicy: true}) and composes the same variant (a) resource
- * onto both mount shapes: the {@code ManagementApplication} mount and the legacy default mount of a
+ * ({@code jaxrs.security.requireExplicitPolicy: true}) and composes the same variant (a)
+ * registration onto both mount shapes: the application mount and the legacy default mount of a
  * zero-declaration component. Both must fail {@code createRouter} with a {@link
  * RouteRegistrationException} carrying one {@code NO_EXPLICIT_SECURITY_POLICY} violation per
  * implicit operation and log no FR-013 warning; a control row per mount shape, hosting variant (b)
@@ -80,6 +80,12 @@ import org.slf4j.LoggerFactory;
  * own {@code Set<MountCompositionValidator>} over the resolved {@code Set<RouterMount>} before
  * calling {@code createRouter}, as {@code HttpVerticle.start} does — the unit-proof form the
  * contract's "Integration variant" clause permits.
+ *
+ * <p>T023 L22 wording change: every WARN and violation message that named the {@code Application}
+ * class now names the active variant's registration by its name and declaring interface instead
+ * (§ Mount identity); this class asserts each required fragment individually rather than one
+ * hand-composed exact string, since the literal message shape is production's to choose within
+ * those required elements.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -119,7 +125,7 @@ class ExplicitSecurityPolicyTest {
     @MethodSource("applicationMountCases")
     @DisplayName("An application mount warns once per composition about its implicit operations only")
     void applicationMountWarnsPerImplicitOperation(ExplicitPolicyCase testCase, Vertx vertx) {
-        JsonObject config = applicationConfig(testCase.variant(), testCase.resourceType());
+        JsonObject config = applicationConfig(testCase.variant());
         ExplicitPolicyComponents.ApplicationMountComponent component =
                 DaggerExplicitPolicyComponents_ApplicationMountComponent.factory()
                         .create(config);
@@ -131,10 +137,21 @@ class ExplicitSecurityPolicyTest {
 
         if (testCase.expectWarning()) {
             assertEquals(
-                    List.of(testCase.expectedWarning().get()),
-                    result.warnings(),
+                    1,
+                    result.warnings().size(),
                     () -> testCase.label() + ": expected exactly one FR-013 warning naming both implicit operations, "
                             + "got: " + result.warnings());
+            String warning = result.warnings().get(0);
+            for (String fragment : testCase.expectedWarningFragments()) {
+                assertTrue(
+                        warning.contains(fragment),
+                        () -> testCase.label() + ": expected the warning to name '" + fragment + "': " + warning);
+            }
+            testCase.expectedOperationOrder()
+                    .ifPresent(order -> assertTrue(
+                            warning.indexOf(order.get(0)) < warning.indexOf(order.get(1)),
+                            () -> testCase.label() + ": expected '" + order.get(0) + "' before '" + order.get(1)
+                                    + "' (full-path sort, not registration order): " + warning));
         } else {
             assertTrue(
                     result.warnings().isEmpty(),
@@ -154,59 +171,57 @@ class ExplicitSecurityPolicyTest {
                         "unannotated",
                         UnannotatedResource.class,
                         true,
-                        ExplicitSecurityPolicyTest::expectedUnannotatedWarning),
+                        List.of(
+                                ManagementApis.UnannotatedApi.class.getName(),
+                                "mgmt-unannotated",
+                                "'" + APPLICATION_MOUNT_PATH + "'",
+                                APPLICATION_MOUNT_PREFIX + "/console/items",
+                                "mgmtItems",
+                                APPLICATION_MOUNT_PREFIX + "/console/status",
+                                "mgmtStatus"),
+                        Optional.empty()),
                 new ExplicitPolicyCase(
-                        "(b) class-level @PermitAll resource", "permitAll", PermitAllResource.class, false, null),
+                        "(b) class-level @PermitAll resource",
+                        "permitAll",
+                        PermitAllResource.class,
+                        false,
+                        List.of(),
+                        Optional.empty()),
                 new ExplicitPolicyCase(
                         "(c) scopeless @SecurityRequirement resource",
                         "scopeless",
                         ScopelessRequirementResource.class,
                         false,
-                        null),
+                        List.of(),
+                        Optional.empty()),
                 new ExplicitPolicyCase(
-                        "(d) @RequiresAction resource", "requiresAction", RequiresActionResource.class, false, null),
+                        "(d) @RequiresAction resource",
+                        "requiresAction",
+                        RequiresActionResource.class,
+                        false,
+                        List.of(),
+                        Optional.empty()),
                 new ExplicitPolicyCase(
                         "(e) @PermitAll with a scoped @SecurityRequirement",
                         "permitAllScoped",
                         PermitAllScopedResource.class,
                         false,
-                        null),
+                        List.of(),
+                        Optional.empty()),
                 new ExplicitPolicyCase(
                         "(f) unannotated resource whose registration order differs from full-path sort order (G2-10)",
                         "orderMismatch",
                         OrderMismatchResource.class,
                         true,
-                        ExplicitSecurityPolicyTest::expectedOrderMismatchWarning));
-    }
-
-    /**
-     * The WARN message RL-2 fixes for TP-002 (a): {@link ManagementApplication}'s FQN, the quoted
-     * application mount path, and both of {@link UnannotatedResource}'s operations, sorted by full
-     * path.
-     *
-     * @return the expected WARN message text
-     */
-    private static String expectedUnannotatedWarning() {
-        return "Application " + ManagementApplication.class.getName() + " at '" + APPLICATION_MOUNT_PATH
-                + "' has operations with no explicit security policy: " + "GET " + APPLICATION_MOUNT_PREFIX
-                + "/console/items (operationId 'mgmtItems'), " + "GET " + APPLICATION_MOUNT_PREFIX
-                + "/console/status (operationId 'mgmtStatus')";
-    }
-
-    /**
-     * The WARN message RL-2 fixes for TP-002 (f) (G2-10): {@link ManagementApplication}'s FQN, the
-     * quoted application mount path, and both of {@link OrderMismatchResource}'s operations, sorted
-     * by full path — {@code early} (one segment, {@code /aaa}) before {@code late} (two segments,
-     * {@code /zzz/yyy}) — the opposite of {@code RoutePathSpecificity}'s registration order, which
-     * registers the two-segment path first.
-     *
-     * @return the expected WARN message text
-     */
-    private static String expectedOrderMismatchWarning() {
-        return "Application " + ManagementApplication.class.getName() + " at '" + APPLICATION_MOUNT_PATH
-                + "' has operations with no explicit security policy: " + "GET " + APPLICATION_MOUNT_PREFIX
-                + "/console/aaa (operationId 'early'), " + "GET " + APPLICATION_MOUNT_PREFIX
-                + "/console/zzz/yyy (operationId 'late')";
+                        List.of(
+                                ManagementApis.OrderMismatchApi.class.getName(),
+                                "mgmt-order-mismatch",
+                                "'" + APPLICATION_MOUNT_PATH + "'",
+                                APPLICATION_MOUNT_PREFIX + "/console/aaa",
+                                "early",
+                                APPLICATION_MOUNT_PREFIX + "/console/zzz/yyy",
+                                "late"),
+                        Optional.of(List.of("aaa", "zzz/yyy"))));
     }
 
     // --- TP-003 ---
@@ -216,7 +231,7 @@ class ExplicitSecurityPolicyTest {
     @DisplayName("The opt-in fails startup on an application mount and on the legacy default mount")
     void requireExplicitPolicyFailsAnyJaxRsMount(OptInCase testCase, Vertx vertx) {
         JsonObject config = testCase.applicationMount()
-                ? applicationConfigWithOptIn(testCase.variant(), testCase.resourceType())
+                ? applicationConfigWithOptIn(testCase.variant())
                 : legacyConfigWithOptIn(testCase.variant());
         ExplicitPolicyComponents.Provisions component = testCase.applicationMount()
                 ? DaggerExplicitPolicyComponents_ApplicationMountComponent.factory()
@@ -317,28 +332,21 @@ class ExplicitSecurityPolicyTest {
 
     /**
      * Builds an application-mount composition's configuration with the opt-in on: same shape as
-     * {@link #applicationConfig(String, Class)}, plus {@code jaxrs.security.requireExplicitPolicy}
-     * set to {@code true}.
+     * {@link #applicationConfig(String)}, plus {@code jaxrs.security.requireExplicitPolicy} set to
+     * {@code true}.
      *
-     * @param variant      the {@code policy.<variant>.enabled} segment to enable
-     * @param resourceType the single resource class {@code ManagementApplication#getClasses()}
-     *                     must select
+     * @param variant the {@code policy.<variant>.enabled} segment to enable, which activates that
+     *                single {@link ManagementApis} declaring interface's registration
      * @return the configuration
      */
-    private static JsonObject applicationConfigWithOptIn(String variant, Class<?> resourceType) {
+    private static JsonObject applicationConfigWithOptIn(String variant) {
         return new JsonObject()
                 .put(
                         "jaxrs",
                         new JsonObject()
                                 .put("validationStrategy", "none")
                                 .put("security", new JsonObject().put("requireExplicitPolicy", true)))
-                .put(
-                        "policy",
-                        new JsonObject()
-                                .put(variant, new JsonObject().put("enabled", true))
-                                .put(
-                                        "app",
-                                        new JsonObject().put("classes", new JsonArray().add(resourceType.getName()))));
+                .put("policy", new JsonObject().put(variant, new JsonObject().put("enabled", true)));
     }
 
     /**
@@ -365,7 +373,7 @@ class ExplicitSecurityPolicyTest {
      * class under test, and whether {@code createRouter} must fail.
      *
      * @param label            the case's display label
-     * @param applicationMount {@code true} for the {@code ManagementApplication} mount,
+     * @param applicationMount {@code true} for the {@code policy.app} application mount,
      *                         {@code false} for the legacy default mount
      * @param variant          the {@code policy.<variant>.enabled} segment
      * @param resourceType     the resource class under test
@@ -515,24 +523,17 @@ class ExplicitSecurityPolicyTest {
 
     /**
      * Builds an application-mount composition's configuration: {@code jaxrs.validationStrategy}
-     * always {@code none}, the given variant's gate enabled, and {@code policy.app.classes}
-     * naming only {@code resourceType}. No {@code jaxrs.security} section (the opt-in stays off).
+     * always {@code none}, and the given variant's gate enabled — activating that single
+     * {@link ManagementApis} declaring interface's registration, which lists exactly the one
+     * resource that variant declares. No {@code jaxrs.security} section (the opt-in stays off).
      *
-     * @param variant      the {@code policy.<variant>.enabled} segment to enable
-     * @param resourceType the single resource class {@code ManagementApplication#getClasses()}
-     *                     must select
+     * @param variant the {@code policy.<variant>.enabled} segment to enable
      * @return the configuration
      */
-    private static JsonObject applicationConfig(String variant, Class<?> resourceType) {
+    private static JsonObject applicationConfig(String variant) {
         return new JsonObject()
                 .put("jaxrs", new JsonObject().put("validationStrategy", "none"))
-                .put(
-                        "policy",
-                        new JsonObject()
-                                .put(variant, new JsonObject().put("enabled", true))
-                                .put(
-                                        "app",
-                                        new JsonObject().put("classes", new JsonArray().add(resourceType.getName()))));
+                .put("policy", new JsonObject().put(variant, new JsonObject().put("enabled", true)));
     }
 
     /**
@@ -550,23 +551,29 @@ class ExplicitSecurityPolicyTest {
     }
 
     /**
-     * One TP-002 case: its display label, the {@code policy.<variant>.enabled} segment to enable,
-     * the resource class {@code ManagementApplication#getClasses()} must select, whether the mount
-     * must warn, and (for a warning case) the supplier of the expected WARN message text.
+     * One TP-002 case: its display label, the {@code policy.<variant>.enabled} segment to enable
+     * (which activates that single {@link ManagementApis} declaring interface's registration),
+     * whether the mount must warn, the fragments the single captured WARN must contain (empty for a
+     * non-warning case), and, only for G2-10, the two path fragments the warning's full-path sort
+     * must show in order.
      *
-     * @param label           the case's display label
-     * @param variant         the {@code policy.<variant>.enabled} segment
-     * @param resourceType    the resource class under test
-     * @param expectWarning   whether the mount must log exactly one FR-013 warning
-     * @param expectedWarning supplies the expected WARN message text; {@code null} for a
-     *                        non-warning case, where it is never read
+     * @param label                    the case's display label
+     * @param variant                  the {@code policy.<variant>.enabled} segment
+     * @param resourceType             the resource class under test
+     * @param expectWarning            whether the mount must log exactly one FR-013 warning
+     * @param expectedWarningFragments the fragments the single captured warning must contain; empty
+     *                                 for a non-warning case, where it is never read
+     * @param expectedOperationOrder   for G2-10 only, the two path fragments (first, second) the
+     *                                 warning's full-path sort must show in that order; empty
+     *                                 otherwise
      */
     private record ExplicitPolicyCase(
             String label,
             String variant,
             Class<?> resourceType,
             boolean expectWarning,
-            @Nullable Supplier<String> expectedWarning) {
+            List<String> expectedWarningFragments,
+            Optional<List<String>> expectedOperationOrder) {
 
         @Override
         public String toString() {

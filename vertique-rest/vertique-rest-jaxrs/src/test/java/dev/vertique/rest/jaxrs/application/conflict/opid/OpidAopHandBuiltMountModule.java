@@ -14,16 +14,16 @@ import java.util.Set;
  * TP-005 (T004) case (f) fixture: hand-built module contributing a {@code JaxRsRouterMount} at
  * {@link #MOUNT_PATH}, holding an unproxied {@link OpidAopBaseResource} instance passed directly
  * to {@link JaxRsRouterMount.Factory#create} — never through {@code @JaxRsResources}, so
- * {@link OpidAopApplication}'s listing of {@link OpidAopBaseResource} stays unambiguous (matched
+ * {@link OpidApis.OpidAopApi}'s listing of {@link OpidAopBaseResource} stays unambiguous (matched
  * only by {@link OpidAopProxyResourceModule}'s manual contribution). Non-conflicting with
- * {@link OpidAopApplication}'s mount at {@code /opid/aop/*}.
+ * {@link OpidApis.OpidAopApi}'s mount at {@code /opid/aop/*}.
  */
 @Module
 public final class OpidAopHandBuiltMountModule {
 
     private OpidAopHandBuiltMountModule() {}
 
-    /** This mount's path, non-conflicting with {@link OpidAopApplication}'s {@code /opid/aop/*}. */
+    /** This mount's path, non-conflicting with {@link OpidApis.OpidAopApi}'s {@code /opid/aop/*}. */
     public static final String MOUNT_PATH = "/opid-aop-other/*";
 
     /**

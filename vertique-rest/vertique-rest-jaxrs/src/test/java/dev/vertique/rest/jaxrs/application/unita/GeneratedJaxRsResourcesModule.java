@@ -10,8 +10,8 @@ import dagger.multibindings.IntoSet;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.PropertyCondition;
 import dev.vertique.rest.core.dagger.JaxRsResources;
-import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsApplicationRegistration;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsResourceEntry;
+import dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Provider;
 import java.util.Set;
@@ -23,7 +23,7 @@ import java.util.Set;
  * (D001: with any application registration present, {@code @JaxRsResources} contributes nothing —
  * explicit mode routes only through selected applications), and every resource also gets a
  * {@link GeneratedJaxRsResourceEntry} so {@code JaxRsApplicationComposer} can select it from an
- * application's {@code getClasses()}.
+ * application's declared resources.
  */
 @Module
 public final class GeneratedJaxRsResourcesModule {
@@ -48,7 +48,7 @@ public final class GeneratedJaxRsResourcesModule {
     @JaxRsResources
     static Set<Object> catalogResourceBinding(
             @VertxConfig JsonObject config,
-            Set<GeneratedJaxRsApplicationRegistration> applications,
+            Set<GeneratedRestApplicationRegistration> applications,
             Provider<CatalogResource> provider) {
         return applications.isEmpty() ? Set.of(provider.get()) : Set.of();
     }
@@ -83,7 +83,7 @@ public final class GeneratedJaxRsResourcesModule {
     @JaxRsResources
     static Set<Object> extraResourceBinding(
             @VertxConfig JsonObject config,
-            Set<GeneratedJaxRsApplicationRegistration> applications,
+            Set<GeneratedRestApplicationRegistration> applications,
             Provider<ExtraResource> provider) {
         return applications.isEmpty() ? Set.of(provider.get()) : Set.of();
     }
@@ -119,7 +119,7 @@ public final class GeneratedJaxRsResourcesModule {
     @JaxRsResources
     static Set<Object> disabledResourceBinding(
             @VertxConfig JsonObject config,
-            Set<GeneratedJaxRsApplicationRegistration> applications,
+            Set<GeneratedRestApplicationRegistration> applications,
             Provider<DisabledResource> provider) {
         return applications.isEmpty() && PropertyCondition.matchesAll(config, DISABLED_RESOURCE_BINDING_CONDITIONS)
                 ? Set.of(provider.get())

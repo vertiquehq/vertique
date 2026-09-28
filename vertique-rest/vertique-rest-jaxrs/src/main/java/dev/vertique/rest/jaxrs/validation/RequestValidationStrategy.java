@@ -54,6 +54,22 @@ public interface RequestValidationStrategy extends OrderedExtension {
     }
 
     /**
+     * Reports whether this strategy looks each operation up by operationId in the contract of the
+     * mount that registers it.
+     *
+     * <p>The default is {@code false}, the precedent set by {@link #runsFileVerifiers()}: a
+     * strategy must opt in explicitly. {@code OpenApiContractValidationStrategy} ({@code
+     * vertique-rest-openapi-validation}) overrides this to {@code true}. The rest-jaxrs mount
+     * composition validator reads it, when a strategy id is selected, to decide whether a mount's
+     * OpenAPI contract location must parse.
+     *
+     * @return {@code true} when this strategy resolves operations from the mount's contract
+     */
+    default boolean resolvesOperationsFromMountContract() {
+        return false;
+    }
+
+    /**
      * Produces the validation gate for a single operation, or {@link Optional#empty()} when this
      * strategy installs no gate for the operation.
      *

@@ -17,7 +17,7 @@ import java.util.Set;
  * Compile-time-only Dagger component validating that the shared C-GEN-shaped fixture modules
  * ({@code unita}'s resources-only module, {@code unitb}'s applications-only module, and
  * {@link ManualResourceModule}) resolve against {@link RestModule}'s new
- * {@code Set<GeneratedJaxRsApplicationRegistration>} and {@code Set<GeneratedJaxRsResourceEntry>}
+ * {@code Set<GeneratedRestApplicationRegistration>} and {@code Set<GeneratedJaxRsResourceEntry>}
  * {@code @Multibinds} declarations, and against {@link ApplicationTestSupportModule}'s stand-ins.
  *
  * <p>This component has no test method: it is exercised only by annotation processing during
@@ -39,7 +39,7 @@ public interface SharedFixtureSmokeComponents {
      * Resolves the {@code Set<RouterMount>} multibinding, forcing Dagger to validate every
      * contribution reachable from it: {@code RestModule}'s default mount provider,
      * {@code @JaxRsResources} (including {@code unita}'s bindings and {@code manual}'s
-     * contribution), and, transitively, {@code Set<GeneratedJaxRsApplicationRegistration>}
+     * contribution), and, transitively, {@code Set<GeneratedRestApplicationRegistration>}
      * (including {@code unitb}'s registrations).
      *
      * @return the resolved mount set

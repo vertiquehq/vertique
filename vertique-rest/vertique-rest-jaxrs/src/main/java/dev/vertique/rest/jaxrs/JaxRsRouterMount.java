@@ -46,10 +46,10 @@ import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.handler.BodyHandler;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
-import jakarta.ws.rs.core.Application;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -85,9 +85,9 @@ import lombok.extern.slf4j.Slf4j;
  * </pre>
  *
  * <p>This example describes zero-declaration mode, where an application contributes no
- * {@code jakarta.ws.rs.core.Application} registration. When one or more registrations are declared,
- * the package-private application composer owns mounting instead: it builds one mount per active
- * application through {@link Factory#createApplicationMount}, and a hand-built call to
+ * {@code @RestApplication} declaration. When one or more {@code @RestApplication} declarations
+ * exist, the package-private application composer owns mounting instead: it builds one mount per
+ * active application through {@link Factory#createApplicationMount}, and a hand-built call to
  * {@link Factory#create} remains that mount's own responsibility, unrelated to any declared
  * application.
  */
@@ -97,38 +97,56 @@ public class JaxRsRouterMount implements RouterMount {
     // --- Instance fields ---
 
     private final String mountPath;
-    private final String openapiPath;
+    private final @Nullable String openapiPath;
     private final Set<Object> resources;
     private final int priority;
     private final Factory factory;
-    private final @Nullable Class<? extends Application> applicationType;
+    private final @Nullable String applicationName;
+    private final @Nullable Class<?> declaringType;
     private boolean validated;
 
     /**
      * Creates a new mount. Only {@link Factory} should call this constructor.
      *
+     * <p>A mount built for a declared {@code @RestApplication} carries {@code applicationName} and
+     * {@code declaringType}, both non-{@code null} together. {@link Factory#create(String, String,
+     * Set)} builds a mount with both {@code null}.
+     *
      * @param mountPath       the path prefix where the sub-router is mounted
-     * @param openapiPath     classpath location of the OpenAPI spec
+     * @param openapiPath     classpath location of the OpenAPI spec, or {@code null}
      * @param resources       JAX-RS annotated resource instances, in their given iteration order
      * @param priority        mount priority (lower values are mounted first)
      * @param factory         shared services factory
-     * @param applicationType the declared {@code jakarta.ws.rs.core.Application} this mount was
-     *                        built for, or {@code null} for a mount not built from a declared
-     *                        application
+     * @param applicationName the declared {@code @RestApplication} name this mount was built for,
+     *                        or {@code null} for a mount not built from a declared
+     *                        {@code @RestApplication}
+     * @param declaringType   the declared {@code @RestApplication}'s declaring interface, or
+     *                        {@code null} for a mount not built from a declared
+     *                        {@code @RestApplication}
+     * @throws NullPointerException if exactly one of {@code applicationName} and
+     *                              {@code declaringType} is {@code null}
      */
     private JaxRsRouterMount(
             String mountPath,
-            String openapiPath,
+            @Nullable String openapiPath,
             Set<Object> resources,
             int priority,
             Factory factory,
-            @Nullable Class<? extends Application> applicationType) {
+            @Nullable String applicationName,
+            @Nullable Class<?> declaringType) {
+        if (applicationName != null) {
+            Objects.requireNonNull(declaringType, "declaringType");
+        }
+        if (declaringType != null) {
+            Objects.requireNonNull(applicationName, "applicationName");
+        }
         this.mountPath = mountPath;
         this.openapiPath = openapiPath;
         this.resources = resources;
         this.priority = priority;
         this.factory = factory;
-        this.applicationType = applicationType;
+        this.applicationName = applicationName;
+        this.declaringType = declaringType;
     }
 
     /** {@inheritDoc} */
@@ -173,15 +191,38 @@ public class JaxRsRouterMount implements RouterMount {
     }
 
     /**
-     * Returns the declared {@code jakarta.ws.rs.core.Application} this mount was built for, when the
-     * package-private application composer built it, or {@code null} for every other mount,
-     * including one built by {@link Factory#create}.
+     * Returns the declared {@code @RestApplication} name this mount was built for, when the
+     * package-private application composer built it from a native {@code @RestApplication}
+     * declaration, or {@code null} for every other mount, including a mount built by
+     * {@link Factory#create}.
      *
-     * @return the application type, or {@code null}
+     * @return the application name, or {@code null}
      */
     @Nullable
-    Class<? extends Application> applicationType() {
-        return applicationType;
+    String applicationName() {
+        return applicationName;
+    }
+
+    /**
+     * Returns the declared {@code @RestApplication}'s declaring interface this mount was built for,
+     * when the package-private application composer built it from a native {@code @RestApplication}
+     * declaration, or {@code null} for every other mount, including a mount built by
+     * {@link Factory#create}.
+     *
+     * @return the declaring type, or {@code null}
+     */
+    @Nullable
+    Class<?> declaringType() {
+        return declaringType;
+    }
+
+    /**
+     * Returns whether a {@code MountCompositionValidator} has marked this mount instance validated.
+     *
+     * @return {@code true} when this mount instance was marked validated
+     */
+    boolean isValidated() {
+        return validated;
     }
 
     /**
@@ -196,14 +237,28 @@ public class JaxRsRouterMount implements RouterMount {
     }
 
     /**
+     * Returns the display label for this mount's declared application identity: the application's
+     * {@link #applicationName} and its {@link #declaringType}'s name. Used for the
+     * unvalidated-mount refusal, the implicit-policy WARN, and the rest-jaxrs {@code
+     * MountCompositionValidator} contribution's conflict messages. Only called when this mount is
+     * known to be an application mount ({@link #declaringType} is non-{@code null}).
+     *
+     * @return the declared application's identity display label, naming both the application and
+     *     its declaring interface
+     */
+    String applicationIdentityLabel() {
+        return "'" + applicationName + "' (" + declaringType.getName() + ")";
+    }
+
+    /**
      * Creates the JAX-RS sub-router for this mount as a plain Vert.x {@link Router}.
      *
-     * <p>An application mount (a non-{@code null} {@link #applicationType()}) whose instance was not
-     * marked validated refuses to build its router: no composition validator ran to confirm this
-     * mount's declaration, so an {@code HttpVerticle} built without composition validators — such as
-     * the public five-argument constructor, or a subclass — must not host it. This check runs first,
-     * before the early return below for a mount with no resources, so an all-disabled application is
-     * refused too.
+     * <p>An application mount (a non-{@code null} {@link #declaringType()}) whose instance was not
+     * marked validated refuses to build its router: no
+     * composition validator ran to confirm this mount's declaration, so an {@code HttpVerticle}
+     * built without composition validators — such as the public five-argument constructor, or a
+     * subclass — must not host it. This check runs first, before the early return below for a mount
+     * with no resources, so an all-disabled application is refused too.
      *
      * <p>If no resources are registered, an empty router is returned immediately. Otherwise the
      * pipeline is:
@@ -244,8 +299,8 @@ public class JaxRsRouterMount implements RouterMount {
      */
     @Override
     public Future<Router> createRouter(Vertx vertx) {
-        if (applicationType != null && !validated) {
-            throw new RestConfigurationException("Application " + applicationType.getName() + " at '"
+        if (declaringType != null && !validated) {
+            throw new RestConfigurationException("Application " + applicationIdentityLabel() + " at '"
                     + mountPath + "' cannot create its router: the hosting HttpVerticle was built without"
                     + " composition validators, such as with the public five-argument constructor or by a"
                     + " subclass; obtain HttpVerticle from Dagger so its composition validators run before"
@@ -382,7 +437,7 @@ public class JaxRsRouterMount implements RouterMount {
                 factory.jaxRsConfig,
                 factory.jsonMapperProfileRegistry,
                 factory.jsonConfig,
-                applicationType,
+                declaringType,
                 implicitOperations);
 
         // registerAll recorded one entry per implicit-policy operation into this mount's own sink,
@@ -400,7 +455,7 @@ public class JaxRsRouterMount implements RouterMount {
                     .collect(Collectors.joining(", "));
             log.warn(
                     "Application {} at '{}' has operations with no explicit security policy: {}",
-                    applicationType.getName(),
+                    applicationIdentityLabel(),
                     mountPath,
                     entries);
         }
@@ -885,7 +940,7 @@ public class JaxRsRouterMount implements RouterMount {
          * @return a configured mount instance
          */
         public JaxRsRouterMount create(String mountPath, String openapiPath, Set<Object> resources) {
-            return new JaxRsRouterMount(mountPath, openapiPath, resources, 1000, this, null);
+            return new JaxRsRouterMount(mountPath, openapiPath, resources, 1000, this, null, null);
         }
 
         /**
@@ -898,25 +953,30 @@ public class JaxRsRouterMount implements RouterMount {
          * @return a configured mount instance
          */
         public JaxRsRouterMount create(String mountPath, String openapiPath, Set<Object> resources, int priority) {
-            return new JaxRsRouterMount(mountPath, openapiPath, resources, priority, this, null);
+            return new JaxRsRouterMount(mountPath, openapiPath, resources, priority, this, null, null);
         }
 
         /**
-         * Creates a new {@link JaxRsRouterMount} for a declared application, with the default
-         * priority of {@code 1000}. Only the package-private application composer calls this method;
-         * there is no public overload, because application mounts are created only through runtime
-         * composition, never by hand.
+         * Creates a new {@link JaxRsRouterMount} for a declared native {@code @RestApplication},
+         * with the default priority of {@code 1000}. Only the package-private application composer
+         * calls this method; there is no public overload, because application mounts are created
+         * only through runtime composition, never by hand.
          *
-         * @param mountPath   the application's mount path (e.g. {@code "/api/*"})
-         * @param openapiPath classpath location of the OpenAPI spec (e.g. {@code "openapi.json"})
-         * @param resources   the application's selected resource instances, in their given
-         *                    iteration order; this order is preserved, never re-sorted here
-         * @param type        the declared {@code jakarta.ws.rs.core.Application} type
+         * @param mountPath       the application's mount path, as registered (e.g. {@code "/api/*"})
+         * @param openapiPath     the effective OpenAPI contract location, or {@code null}
+         * @param resources       the application's selected resource instances, in their given
+         *                        iteration order; this order is preserved, never re-sorted here
+         * @param applicationName the declared application's name
+         * @param declaringType   the declared application's declaring interface
          * @return a configured application mount instance
          */
         JaxRsRouterMount createApplicationMount(
-                String mountPath, String openapiPath, Set<Object> resources, Class<? extends Application> type) {
-            return new JaxRsRouterMount(mountPath, openapiPath, resources, 1000, this, type);
+                String mountPath,
+                @Nullable String openapiPath,
+                Set<Object> resources,
+                String applicationName,
+                Class<?> declaringType) {
+            return new JaxRsRouterMount(mountPath, openapiPath, resources, 1000, this, applicationName, declaringType);
         }
     }
 }

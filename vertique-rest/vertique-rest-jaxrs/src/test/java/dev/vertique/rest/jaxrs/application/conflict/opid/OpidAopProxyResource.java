@@ -10,7 +10,7 @@ import jakarta.inject.Inject;
  * {@code public final}, extends the bean directly, adds no interface, and marks its override with
  * only the source-retained {@code @Override} — no other class or method annotation, no parameter
  * annotations (matching {@code AopProxyEmitter.java:124-127,449-460}, T002 TP-018's precedent).
- * {@code sameSurface} accepts exactly this shape, so {@link OpidAopApplication}'s listing of
+ * {@code sameSurface} accepts exactly this shape, so {@link OpidApis.OpidAopApi}'s listing of
  * {@link OpidAopBaseResource} successfully selects this instance, and the validator's owner rule
  * normalizes this operation to {@link OpidAopBaseResource}, the same owner as
  * {@link OpidAopHandBuiltMountModule}'s unproxied instance's operation.

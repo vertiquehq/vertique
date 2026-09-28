@@ -25,27 +25,27 @@ import dev.vertique.rest.jaxrs.application.ConflictDeploymentComponents.NestedHa
 import dev.vertique.rest.jaxrs.application.ConflictDeploymentComponents.Provisions;
 import dev.vertique.rest.jaxrs.application.conflict.handbuilt.LegacyOuterMountModule;
 import dev.vertique.rest.jaxrs.application.conflict.handbuilt.LegacyReportsMountModule;
-import dev.vertique.rest.jaxrs.application.conflict.opid.OpidAlphaApplication;
 import dev.vertique.rest.jaxrs.application.conflict.opid.OpidAlphaListResource;
-import dev.vertique.rest.jaxrs.application.conflict.opid.OpidBetaApplication;
 import dev.vertique.rest.jaxrs.application.conflict.opid.OpidBetaListResource;
 import dev.vertique.rest.jaxrs.application.conflict.opid.OpidHandBuiltOneMountModule;
 import dev.vertique.rest.jaxrs.application.conflict.opid.OpidHandBuiltOneResource;
 import dev.vertique.rest.jaxrs.application.conflict.opid.OpidHandBuiltTwoMountModule;
 import dev.vertique.rest.jaxrs.application.conflict.opid.OpidHandBuiltTwoResource;
-import dev.vertique.rest.jaxrs.application.conflict.opid.OpidInheritedFirstApplication;
 import dev.vertique.rest.jaxrs.application.conflict.opid.OpidInheritedFirstResource;
-import dev.vertique.rest.jaxrs.application.conflict.opid.OpidInheritedSecondApplication;
 import dev.vertique.rest.jaxrs.application.conflict.opid.OpidInheritedSecondResource;
-import dev.vertique.rest.jaxrs.application.conflict.paths.RootApplication;
+import dev.vertique.rest.jaxrs.application.conflict.opid.tp009.PartnerListResource;
+import dev.vertique.rest.jaxrs.application.conflict.opid.tp009.PublicListResource;
+import dev.vertique.rest.jaxrs.application.conflict.opid.tp009.Tp009SharedContractRegistrationModule;
+import dev.vertique.rest.jaxrs.application.conflict.paths.PathConflictApis;
 import dev.vertique.rest.jaxrs.application.conflict.paths.RootResource;
 import dev.vertique.rest.jaxrs.application.conflict.spy.CountingRouterLifecycleHook;
 import dev.vertique.rest.jaxrs.application.conflict.spy.CountingRouterMount;
 import dev.vertique.rest.jaxrs.application.unita.CatalogResource;
 import dev.vertique.rest.jaxrs.application.unita.DisabledResource;
 import dev.vertique.rest.jaxrs.application.unita.ExtraResource;
-import dev.vertique.rest.jaxrs.application.unitb.ManagementApplication;
-import dev.vertique.rest.jaxrs.application.unitb.PublicApplication;
+import dev.vertique.rest.jaxrs.application.unitb.DisabledOnlyApi;
+import dev.vertique.rest.jaxrs.application.unitb.ManagementApi;
+import dev.vertique.rest.jaxrs.application.unitb.PublicApi;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Future;
@@ -53,13 +53,11 @@ import io.vertx.core.Verticle;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServerOptions;
-import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import jakarta.annotation.Nullable;
-import jakarta.ws.rs.core.Application;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -113,11 +111,9 @@ public class JaxRsApplicationMountConflictIT {
     void resetFixtures() {
         CountingRouterMount.reset();
         CountingRouterLifecycleHook.reset();
-        PublicApplication.reset();
         CatalogResource.reset();
         ExtraResource.reset();
         DisabledResource.reset();
-        RootApplication.reset();
         RootResource.reset();
     }
 
@@ -209,7 +205,7 @@ public class JaxRsApplicationMountConflictIT {
             assertEquals(
                     200,
                     publicResponse.statusCode(),
-                    "(b): PublicApplication's mount must still serve /api/public/catalog");
+                    "(b): unitb.PublicApi's mount must still serve /api/public/catalog");
             assertEquals("catalog", publicResponse.bodyAsString());
 
             HttpResponse<Buffer> publicityResponse =
@@ -326,12 +322,17 @@ public class JaxRsApplicationMountConflictIT {
                 () -> name + ": no http.port must be published after a rejected composition");
     }
 
-    // --- TP-005's six named cases ---
+    // --- TP-005's six named cases, plus T023's TP-009 rows (a) to (c) ---
 
     /**
-     * TP-005's six cases, named (a) to (f) per the contract's case list.
+     * TP-005's six cases, named (a) to (f) per the contract's case list, plus T023's TP-009 rows,
+     * named {@code "TP-009 (a)"} to {@code "TP-009 (c)"}: {@code public} and {@code partner}, whose
+     * distinct-owner {@code list()} operations collide under the {@code web-validation} strategy,
+     * the {@code openapi-contract} strategy with distinct contract locations, and the
+     * {@code openapi-contract} strategy with one shared global location — every row still conflicts,
+     * because FR-027's per-mount relaxation and shared-location clause remain staged to CO-4 (CX-007).
      *
-     * @return the six TP-005 cases, in contract order
+     * @return the nine cases, in contract order
      */
     private static Stream<OperationIdCase> operationIdCases() {
         JsonObject configA = deploymentConfig("conflict.opid.alpha.active", true, "conflict.opid.beta.active", true);
@@ -352,8 +353,8 @@ public class JaxRsApplicationMountConflictIT {
                                 OpidAlphaListResource.class.getName(),
                                 OpidBetaListResource.class.getName(),
                                 SHARED_OPERATION_ID,
-                                "'" + OpidAlphaApplication.PATH + "/*'",
-                                "'" + OpidBetaApplication.PATH + "/*'")),
+                                "'/opid/alpha/*'",
+                                "'/opid/beta/*'")),
                 new OperationIdCase(
                         "(b) control: one resource declaring 'list', listed by both applications: same owner, deploys",
                         () -> sharedListResourceComponent(configB),
@@ -374,8 +375,8 @@ public class JaxRsApplicationMountConflictIT {
                                 OpidInheritedFirstResource.class.getName(),
                                 OpidInheritedSecondResource.class.getName(),
                                 SHARED_OPERATION_ID,
-                                "'" + OpidInheritedFirstApplication.PATH + "/*'",
-                                "'" + OpidInheritedSecondApplication.PATH + "/*'")),
+                                "'/opid/inherited-first/*'",
+                                "'/opid/inherited-second/*'")),
                 new OperationIdCase(
                         "(e) one inactive registration beside two hand-built mounts declaring 'list': an application"
                                 + " is declared though none is active, conflicts",
@@ -392,7 +393,48 @@ public class JaxRsApplicationMountConflictIT {
                                 + " same normalized owner, deploys",
                         () -> aopProxyOverrideComponent(configF),
                         false,
-                        List.of()));
+                        List.of()),
+                new OperationIdCase(
+                        "TP-009 (a): 'public' and 'partner', distinct owners, under the web-validation strategy:"
+                                + " the global refusal still applies, conflicts",
+                        () -> publicPartnerWebValidationComponent(
+                                deploymentConfig("jaxrs.validationStrategy", "web-validation")),
+                        true,
+                        List.of(
+                                PublicListResource.class.getName(),
+                                PartnerListResource.class.getName(),
+                                SHARED_OPERATION_ID,
+                                "'/api/public/*'",
+                                "'/api/partner/*'")),
+                new OperationIdCase(
+                        "TP-009 (b): 'public' and 'partner', distinct owners, each at its own"
+                                + " openapi-contract location: the per-mount relaxation is staged to CO-4, so"
+                                + " distinct locations do not exempt the collision, conflicts",
+                        () -> publicPartnerDistinctContractLocationsComponent(
+                                deploymentConfig("jaxrs.validationStrategy", "openapi-contract")),
+                        true,
+                        List.of(
+                                PublicListResource.class.getName(),
+                                PartnerListResource.class.getName(),
+                                SHARED_OPERATION_ID,
+                                "'/api/public/*'",
+                                "'/api/partner/*'")),
+                new OperationIdCase(
+                        "TP-009 (c): 'public' and 'partner', distinct owners, both falling back to one shared"
+                                + " global openapi-contract location: the shared-location clause is staged to"
+                                + " CO-4, so sharing one location does not exempt the collision, conflicts",
+                        () -> publicPartnerSharedContractLocationComponent(deploymentConfig(
+                                "jaxrs.validationStrategy",
+                                "openapi-contract",
+                                "jaxrs.openapiPath",
+                                Tp009SharedContractRegistrationModule.SHARED_OPENAPI_PATH)),
+                        true,
+                        List.of(
+                                PublicListResource.class.getName(),
+                                PartnerListResource.class.getName(),
+                                SHARED_OPERATION_ID,
+                                "'/api/public/*'",
+                                "'/api/partner/*'")));
     }
 
     /**
@@ -451,6 +493,21 @@ public class JaxRsApplicationMountConflictIT {
         return DaggerOperationIdComponents_AopProxyOverrideComponent.factory().create(config);
     }
 
+    private static OperationIdComponents.Provisions publicPartnerWebValidationComponent(JsonObject config) {
+        return DaggerOperationIdComponents_PublicPartnerWebValidationComponent.factory()
+                .create(config);
+    }
+
+    private static OperationIdComponents.Provisions publicPartnerDistinctContractLocationsComponent(JsonObject config) {
+        return DaggerOperationIdComponents_PublicPartnerDistinctContractLocationsComponent.factory()
+                .create(config);
+    }
+
+    private static OperationIdComponents.Provisions publicPartnerSharedContractLocationComponent(JsonObject config) {
+        return DaggerOperationIdComponents_PublicPartnerSharedContractLocationComponent.factory()
+                .create(config);
+    }
+
     // --- TP-006 ---
 
     /** Fragment every TP-006 refusal message must contain (RL-2). */
@@ -475,8 +532,9 @@ public class JaxRsApplicationMountConflictIT {
 
     /**
      * Cases (a) and (d): a five-argument-built {@code HttpVerticle}, from a fresh
-     * {@code Set<RouterMount>} resolution holding {@code PublicApplication}'s mount, must fail to
-     * deploy, because no composition validator ran to mark that mount valid.
+     * {@code Set<RouterMount>} resolution holding {@code unitb.PublicApi}'s mount (case (a)) or
+     * {@code unitb.DisabledOnlyApi}'s zero-resource mount (case (d)), must fail to deploy, because no
+     * composition validator ran to mark that mount valid.
      *
      * @param testCase the case
      * @param vertx    the test's {@link Vertx} instance
@@ -489,12 +547,12 @@ public class JaxRsApplicationMountConflictIT {
                 outcome.failed(),
                 () -> testCase.name() + ": a five-argument-built HttpVerticle must refuse to deploy an unvalidated "
                         + "application mount");
-        assertRefusalNames(testCase.name(), outcome.failure(), PublicApplication.class);
+        assertRefusalNames(testCase.name(), outcome.failure(), testCase.applicationType());
         assertNoHttpPortPublished(testCase.name(), vertx);
     }
 
     /**
-     * Case (b): {@code PublicApplication} beside a conflicting hand-built mount. The component's
+     * Case (b): {@code unitb.PublicApi} beside a conflicting hand-built mount. The component's
      * validators, called directly on the mounting-order-sorted {@code Set<RouterMount>}, must
      * report at least one violation; the application mount's own {@code createRouter}, called
      * directly (bypassing {@code HttpVerticle} entirely), must then throw the same refusal, since
@@ -518,13 +576,13 @@ public class JaxRsApplicationMountConflictIT {
                 () -> testCase.name()
                         + ": the validators must report at least one violation for the conflicting composition");
 
-        JaxRsRouterMount applicationMount = applicationMount(sortedMounts, PublicApplication.class, testCase.name());
+        JaxRsRouterMount applicationMount = applicationMount(sortedMounts, PublicApi.class, testCase.name());
         RestConfigurationException ex = assertThrows(
                 RestConfigurationException.class,
                 () -> applicationMount.createRouter(vertx),
                 () -> testCase.name() + ": createRouter must refuse an application mount the validators rejected");
         LOG.info("TP-006 {} createRouter refusal: {}", testCase.name(), ex.getMessage());
-        assertRefusalMessage(testCase.name(), ex.getMessage(), PublicApplication.class);
+        assertRefusalMessage(testCase.name(), ex.getMessage(), PublicApi.class);
     }
 
     /**
@@ -552,7 +610,7 @@ public class JaxRsApplicationMountConflictIT {
                 second.failed(),
                 () -> testCase.name() + ": composition 2 (a second, five-argument-built resolution) must fail, "
                         + "because its mount instances are new and unmarked");
-        assertRefusalNames(testCase.name(), second.failure(), PublicApplication.class);
+        assertRefusalNames(testCase.name(), second.failure(), PublicApi.class);
         assertNoHttpPortPublished(testCase.name(), vertx);
     }
 
@@ -647,23 +705,22 @@ public class JaxRsApplicationMountConflictIT {
     }
 
     /**
-     * Finds the {@link JaxRsRouterMount} built for the given declared application, identified
-     * through {@link ApplicationMountTestAccess#applicationType(JaxRsRouterMount)}.
+     * Finds the {@link JaxRsRouterMount} built for the given declaring type, identified through
+     * {@link ApplicationMountTestAccess#declaringType(JaxRsRouterMount)}.
      *
-     * @param mounts          the mounts to search, in any order
-     * @param applicationType the declared application type to find
-     * @param label           the case name, used in the failure message when no such mount exists
+     * @param mounts        the mounts to search, in any order
+     * @param declaringType the declaring type to find
+     * @param label         the case name, used in the failure message when no such mount exists
      * @return the matching application mount
      */
-    private static JaxRsRouterMount applicationMount(
-            List<RouterMount> mounts, Class<? extends Application> applicationType, String label) {
+    private static JaxRsRouterMount applicationMount(List<RouterMount> mounts, Class<?> declaringType, String label) {
         for (RouterMount mount : mounts) {
             if (mount instanceof JaxRsRouterMount jaxRsRouterMount
-                    && applicationType.equals(ApplicationMountTestAccess.applicationType(jaxRsRouterMount))) {
+                    && declaringType.equals(ApplicationMountTestAccess.declaringType(jaxRsRouterMount))) {
                 return jaxRsRouterMount;
             }
         }
-        throw new AssertionError(label + ": expected an application mount for " + applicationType.getName());
+        throw new AssertionError(label + ": expected an application mount for " + declaringType.getName());
     }
 
     /**
@@ -687,48 +744,40 @@ public class JaxRsApplicationMountConflictIT {
      * @return the four TP-006 cases, in contract order
      */
     private static Stream<ValidatedMarkCase> validatedMarkCases() {
-        JsonObject configA = deploymentConfig(
-                "unitb.publicApplication.active",
-                true,
-                PublicApplication.CLASSES_CONFIG_KEY,
-                new JsonArray(List.of(CatalogResource.class.getName())));
-        JsonObject configB = deploymentConfig(
-                "unitb.publicApplication.active",
-                true,
-                PublicApplication.CLASSES_CONFIG_KEY,
-                new JsonArray(List.of(CatalogResource.class.getName())));
-        JsonObject configC = deploymentConfig(
-                "unitb.publicApplication.active",
-                true,
-                PublicApplication.CLASSES_CONFIG_KEY,
-                new JsonArray(List.of(CatalogResource.class.getName())));
-        JsonObject configD = deploymentConfig(
-                "unitb.publicApplication.active",
-                true,
-                PublicApplication.CLASSES_CONFIG_KEY,
-                new JsonArray(List.of(DisabledResource.class.getName())));
+        JsonObject configA = deploymentConfig("unitb.publicApplication.active", true);
+        JsonObject configB = deploymentConfig("unitb.publicApplication.active", true);
+        JsonObject configC = deploymentConfig("unitb.publicApplication.active", true);
+        // R-004: (d) activates DisabledOnlyApi instead of reusing PublicApi, so its mount has zero
+        // resources (its sole listed class, DisabledResource, is a catalog entry disabled by
+        // default) — proving the refusal runs before the empty-mount early return, not merely for a
+        // mount that also happens to carry resources.
+        JsonObject configD = deploymentConfig("unitb.disabledOnlyApplication.active", true);
 
         return Stream.of(
                 new ValidatedMarkCase(
                         ValidatedMarkCaseId.A,
-                        "(a) PublicApplication's mount, five-argument HttpVerticle (no validator runs): refused",
-                        configA),
+                        "(a) unitb.PublicApi's mount, five-argument HttpVerticle (no validator runs): refused",
+                        configA,
+                        PublicApi.class),
                 new ValidatedMarkCase(
                         ValidatedMarkCaseId.B,
-                        "(b) PublicApplication beside a conflicting hand-built mount: the validators report a "
+                        "(b) unitb.PublicApi beside a conflicting hand-built mount: the validators report a "
                                 + "violation, then createRouter refuses directly",
-                        configB),
+                        configB,
+                        PublicApi.class),
                 new ValidatedMarkCase(
                         ValidatedMarkCaseId.C,
                         "(c) one component, two sequential Set<RouterMount> resolutions: the Dagger-built "
                                 + "HttpVerticle deploys, a second five-argument HttpVerticle from a fresh "
                                 + "resolution is refused",
-                        configC),
+                        configC,
+                        PublicApi.class),
                 new ValidatedMarkCase(
                         ValidatedMarkCaseId.D,
-                        "(d) T002 TP-014's all-disabled selection, five-argument HttpVerticle: refused before the "
-                                + "empty-mount early return",
-                        configD));
+                        "(d) unitb.DisabledOnlyApi's all-disabled, zero-resource mount, five-argument "
+                                + "HttpVerticle: refused before the empty-mount early return",
+                        configD,
+                        DisabledOnlyApi.class));
     }
 
     /** Identifies which lettered TP-006 case a {@link ValidatedMarkCase} is, for the test method's dispatch. */
@@ -741,14 +790,17 @@ public class JaxRsApplicationMountConflictIT {
 
     /**
      * One TP-006 case: its id (used by the test method to dispatch the right assertion helper),
-     * its name (shown by {@code @ParameterizedTest(name = "{0}")} and so in {@code TEST-*.xml}),
-     * and the deployment configuration its component's factory is bound to.
+     * its name (shown by {@code @ParameterizedTest(name = "{0}")} and so in {@code TEST-*.xml}), the
+     * deployment configuration its component's factory is bound to, and the declaring type its
+     * refusal (cases a and d) must name (R-004: case (d)'s differs from cases a and c's).
      *
-     * @param id     the case's letter
-     * @param name   the case's display name
-     * @param config the deployment configuration for this case's component
+     * @param id              the case's letter
+     * @param name            the case's display name
+     * @param config          the deployment configuration for this case's component
+     * @param applicationType the declaring type a five-argument-built refusal (cases a and d) must
+     *                        name
      */
-    private record ValidatedMarkCase(ValidatedMarkCaseId id, String name, JsonObject config) {
+    private record ValidatedMarkCase(ValidatedMarkCaseId id, String name, JsonObject config, Class<?> applicationType) {
 
         @Override
         public String toString() {
@@ -778,38 +830,22 @@ public class JaxRsApplicationMountConflictIT {
      */
     private static Stream<Case> conflictCases() {
         JsonObject configA = deploymentConfig("unitb.managementApplication.active", true);
-        JsonObject configB = deploymentConfig(
-                "unitb.publicApplication.active",
-                true,
-                PublicApplication.CLASSES_CONFIG_KEY,
-                new JsonArray(List.of(CatalogResource.class.getName())));
+        JsonObject configB = deploymentConfig("unitb.publicApplication.active", true);
         JsonObject configC = deploymentConfig();
-        JsonObject configD = deploymentConfig(
-                "unitb.publicApplication.active",
-                true,
-                PublicApplication.CLASSES_CONFIG_KEY,
-                new JsonArray(List.of(CatalogResource.class.getName())));
-        JsonObject configE = deploymentConfig(
-                "unitb.publicApplication.active",
-                true,
-                PublicApplication.CLASSES_CONFIG_KEY,
-                new JsonArray(List.of(CatalogResource.class.getName())));
+        JsonObject configD = deploymentConfig("unitb.publicApplication.active", true);
+        JsonObject configE = deploymentConfig("unitb.publicApplication.active", true);
         JsonObject configF = deploymentConfig("conflict.paths.root.active", true);
 
         return Stream.of(
                 new Case(
                         CaseId.A,
-                        "(a) ManagementApplication at /api/mgmt beside hand-built /api/*: conflicts",
+                        "(a) unitb.ManagementApi at /api/mgmt beside hand-built /api/*: conflicts",
                         () -> managementApiPrefixConflictComponent(configA),
                         true,
-                        List.of(
-                                "'/api/*'",
-                                "'/api/mgmt/*'",
-                                ManagementApplication.class.getName(),
-                                OVERLAP_CONFLICT_REASON)),
+                        List.of("'/api/*'", "'/api/mgmt/*'", ManagementApi.class.getName(), OVERLAP_CONFLICT_REASON)),
                 new Case(
                         CaseId.B,
-                        "(b) control: PublicApplication at /api/public beside hand-built /api/publicity/*: deploys",
+                        "(b) control: unitb.PublicApi at /api/public beside hand-built /api/publicity/*: deploys",
                         () -> publicPublicityNonConflictComponent(configB),
                         false,
                         List.of()),
@@ -821,30 +857,34 @@ public class JaxRsApplicationMountConflictIT {
                         List.of()),
                 new Case(
                         CaseId.D,
-                        "(d) PublicApplication at /api/public beside hand-built /:tenant/*: pattern-path conflicts with every application",
+                        "(d) unitb.PublicApi at /api/public beside hand-built /:tenant/*: pattern-path conflicts with every application",
                         () -> publicTenantPatternConflictComponent(configD),
                         true,
                         List.of(
                                 "'/:tenant/*'",
                                 "'/api/public/*'",
-                                PublicApplication.class.getName(),
+                                PublicApi.class.getName(),
                                 ROUTER_PATTERN_CONFLICT_REASON)),
                 new Case(
                         CaseId.E,
-                        "(e) PublicApplication at /api/public beside hand-built /api/public/admin/* (contained): conflicts in the reverse direction",
+                        "(e) unitb.PublicApi at /api/public beside hand-built /api/public/admin/* (contained): conflicts in the reverse direction",
                         () -> publicAdminReverseConflictComponent(configE),
                         true,
                         List.of(
                                 "'/api/public/admin/*'",
                                 "'/api/public/*'",
-                                PublicApplication.class.getName(),
+                                PublicApi.class.getName(),
                                 OVERLAP_CONFLICT_REASON)),
                 new Case(
                         CaseId.F,
                         "(f) root application at / beside hand-built /other/*: the root application conflicts with everything",
                         () -> rootApplicationConflictComponent(configF),
                         true,
-                        List.of("'/other/*'", "'/*'", RootApplication.class.getName(), OVERLAP_CONFLICT_REASON)));
+                        List.of(
+                                "'/other/*'",
+                                "'/*'",
+                                PathConflictApis.RootApi.class.getName(),
+                                OVERLAP_CONFLICT_REASON)));
     }
 
     /** Identifies which lettered TP-004 case a {@link Case} is, for the non-conflict cases' extra verification. */

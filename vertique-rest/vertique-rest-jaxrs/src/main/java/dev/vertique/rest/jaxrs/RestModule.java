@@ -10,6 +10,7 @@ import dagger.Provides;
 import dagger.multibindings.ElementsIntoSet;
 import dagger.multibindings.IntoSet;
 import dagger.multibindings.Multibinds;
+import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.config.JsonConfigPaths;
 import dev.vertique.core.exception.ConfigurationException;
@@ -38,9 +39,11 @@ import dev.vertique.rest.core.response.ResponseSerializer;
 import dev.vertique.rest.core.router.MountCompositionValidator;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.core.sse.SseChannelFactory;
+import dev.vertique.rest.jaxrs.publication.ApiDocsInstalled;
+import dev.vertique.rest.jaxrs.publication.RestApplications;
 import dev.vertique.rest.jaxrs.publication.SyntheticOperations;
-import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsApplicationRegistration;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsResourceEntry;
+import dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration;
 import dev.vertique.rest.jaxrs.validation.FileContentVerifier;
 import dev.vertique.rest.jaxrs.validation.NoneValidationStrategy;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
@@ -54,6 +57,7 @@ import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.ext.ExceptionMapper;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.stream.Collectors;
@@ -120,33 +124,79 @@ public abstract class RestModule {
     abstract Set<FileContentVerifier> fileContentVerifiers();
 
     /**
-     * Declares the {@link GeneratedJaxRsApplicationRegistration} multibinding set. A generated
-     * module contributes one registration per eligible {@code jakarta.ws.rs.core.Application} via
-     * {@code @Provides @IntoSet}; the set stays empty in zero-declaration mode.
+     * Declares the {@link GeneratedRestApplicationRegistration} multibinding set. A generated
+     * module contributes one registration per {@code @RestApplication} declaration via
+     * {@code @Provides @IntoSet}; the set stays empty when no declaration is present.
      *
-     * @return the application registration set (populated by {@code @IntoSet} contributions)
+     * @return the native application registration set (populated by {@code @IntoSet} contributions)
      */
     @Multibinds
-    abstract Set<GeneratedJaxRsApplicationRegistration> generatedJaxRsApplicationRegistrations();
+    abstract Set<GeneratedRestApplicationRegistration> generatedRestApplicationRegistrations();
+
+    /**
+     * Declares the {@link ApiDocsInstalled} optional binding: present when the OpenAPI
+     * documentation module is included in this component, absent otherwise. rest-jaxrs never
+     * depends on the docs module, so it can only detect this marker, never bind it.
+     *
+     * @return the optional marker binding, resolved as {@code Optional<ApiDocsInstalled>}
+     */
+    @BindsOptionalOf
+    abstract ApiDocsInstalled apiDocsInstalled();
+
+    /**
+     * Provides the {@link RestApplications} view, built once per component by
+     * {@link RestApplicationsBuilder} from every declared native registration, the parsed
+     * {@code jaxrs.applications} configuration, the global {@code jaxrs.openapiPath} default, and
+     * whether the OpenAPI documentation module is present in this component.
+     *
+     * <p>{@link #parseJaxRsApplications} runs first, before the builder's checks: a raw-key,
+     * parse, or blank-value {@link ConfigurationException} it throws propagates unwrapped and
+     * alone, never wrapped by the builder. No package-private type reaches the Dagger graph: the
+     * parsed {@link RestApplicationConfig} list is a plain method-local value, never bound.
+     *
+     * @param registrations    the declared native application registration set (empty in
+     *                         zero-declaration mode)
+     * @param config           the full application configuration, navigated to {@code jaxrs} and
+     *                         {@code jaxrs.applications} by {@link #parseJaxRsApplications}
+     * @param parser           the injected config parser
+     * @param jaxRsConfig      the JAX-RS routing configuration, supplying the global
+     *                         {@code jaxrs.openapiPath} default
+     * @param apiDocsInstalled present when the OpenAPI documentation module is included in this
+     *                         component
+     * @return the component-scoped view
+     */
+    @Provides
+    @Singleton
+    static RestApplications restApplications(
+            Set<GeneratedRestApplicationRegistration> registrations,
+            @VertxConfig JsonObject config,
+            ConfigParser parser,
+            JaxRsConfig jaxRsConfig,
+            Optional<ApiDocsInstalled> apiDocsInstalled) {
+        List<RestApplicationConfig> configuredApplications = parseJaxRsApplications(config, parser);
+        return RestApplicationsBuilder.build(registrations, configuredApplications, jaxRsConfig, apiDocsInstalled);
+    }
 
     /**
      * Contributes the rest-jaxrs {@link MountCompositionValidator}: it rejects an application mount
      * that conflicts with a hand-built JAX-RS mount or with another application mount in the same
      * mount set (as when compositions are merged), and rejects two operations on any JAX-RS mounts
      * that share an operationId without sharing the same owner, once one or more applications are
-     * declared or any application mount is present. The declared registration set tells it whether
-     * any application is declared, even when none is active.
+     * declared or any application mount is present.
      *
-     * @param registrations the declared application registration set (empty in zero-declaration
-     *                      mode)
+     * @param view       this composition's application view
+     * @param config     the JAX-RS routing configuration, carrying the configured
+     *                   {@code jaxrs.validationStrategy} id
+     * @param strategies the registered request-validation strategies, resolved by id against
+     *                   {@code config}'s configured id
      * @return the rest-jaxrs composition validator, contributed into
      *     {@code Set<MountCompositionValidator>}
      */
     @Provides
     @IntoSet
     static MountCompositionValidator jaxRsApplicationMountValidator(
-            Set<GeneratedJaxRsApplicationRegistration> registrations) {
-        return new JaxRsApplicationMountValidator(registrations);
+            RestApplications view, JaxRsConfig config, Set<RequestValidationStrategy> strategies) {
+        return new JaxRsApplicationMountValidator(view, config, strategies);
     }
 
     /**
@@ -633,12 +683,13 @@ public abstract class RestModule {
     /**
      * Registers the JAX-RS router mount(s): a default mount built from the {@link JaxRsResources}
      * multibinding set in zero-declaration mode, or one mount per active application, built by
-     * {@link JaxRsApplicationComposer}, when one or more {@code jakarta.ws.rs.core.Application}
-     * registrations are declared.
+     * {@link JaxRsApplicationComposer}, when one or more {@code @RestApplication} registrations are
+     * declared.
      *
-     * <p>Reads {@code applications} before it resolves {@code resources} or {@code catalog}, so
-     * declaration presence is known before any generated resource provider runs. With an empty
-     * {@code applications} set, this provider keeps today's zero-declaration behavior unchanged: a
+     * <p>Requests {@code view} on both branches, so its checks (duplicate, reserved, or mismatched
+     * names, sole discovery, and an unknown {@code jaxrs.applications.<name>}) run even in
+     * zero-declaration mode, before {@code resources} or {@code catalog} resolves. With an empty
+     * {@code registrations} set, this provider keeps today's zero-declaration behavior unchanged: a
      * single default mount is built directly from {@code @JaxRsResources}, at {@code jaxrs.basePath}.
      * For single-API apps, resources are contributed via {@code @Provides @IntoSet @JaxRsResources}
      * in the app's {@code ResourceModule}.
@@ -649,14 +700,13 @@ public abstract class RestModule {
      *
      * <p>With one or more registrations, this provider delegates entirely to
      * {@link JaxRsApplicationComposer#compose}: the routing base path no longer applies to any
-     * mount, and disabling every declared application never falls back to the default mount. In
-     * explicit mode, {@code @JaxRsResources} holds every manual contribution, plus any contributed
-     * by a module built by an older processor; a resource generated by the current processor reaches
-     * an application mount only through the generated resource catalog, never through
-     * {@code @JaxRsResources} directly.
+     * mount, and disabling every declared application never falls back to the default mount.
+     * {@code @JaxRsResources} holds every manual contribution; a resource generated by the current
+     * processor reaches an application mount only through the generated resource catalog, never
+     * through {@code @JaxRsResources} directly.
      *
-     * <p>Guards against re-entry on both branches: a resource, a catalog entry, or an
-     * {@code Application} must not depend on THIS component's own {@code Set<RouterMount>}, since
+     * <p>Guards against re-entry on both branches: a manually contributed resource or a generated
+     * resource catalog entry must not depend on THIS component's own {@code Set<RouterMount>}, since
      * resolving it recurses back into this same provider. Keyed on the identity of this component's
      * own {@code @Singleton JaxRsConfig} instance (never on the thread alone), so
      * {@link JaxRsApplicationComposer#enterComposition(JaxRsConfig)} rejects only re-entry into this
@@ -666,14 +716,16 @@ public abstract class RestModule {
      * runs in {@code finally}, so only a call that actually entered ever clears its own component's
      * guard entry.
      *
-     * @param factory      the JAX-RS router mount factory
-     * @param applications the generated application registration set (empty in zero-declaration
-     *                     mode)
-     * @param resources    the {@code @JaxRsResources} instances, resolved lazily
-     * @param catalog      the generated resource catalog, resolved lazily
-     * @param config       the JAX-RS routing configuration (base path and OpenAPI spec location);
-     *                     also this component's re-entry guard key, since it is
-     *                     {@code @Singleton}-scoped to this component
+     * @param factory       the JAX-RS router mount factory
+     * @param view          this component's {@link RestApplications} view, requested here so its
+     *                      checks run before either branch resolves a resource
+     * @param registrations the declared native application registration set (empty in
+     *                      zero-declaration mode)
+     * @param resources     the {@code @JaxRsResources} instances, resolved lazily
+     * @param catalog       the generated resource catalog, resolved lazily
+     * @param config        the JAX-RS routing configuration (base path and OpenAPI spec location);
+     *                      also this component's re-entry guard key, since it is
+     *                      {@code @Singleton}-scoped to this component
      * @return one mount per active application in explicit mode; otherwise a singleton set with the
      *     default mount, or an empty set when there are no resources
      */
@@ -681,20 +733,21 @@ public abstract class RestModule {
     @ElementsIntoSet
     static Set<RouterMount> jaxRsRouterMount(
             JaxRsRouterMount.Factory factory,
-            Set<GeneratedJaxRsApplicationRegistration> applications,
+            RestApplications view,
+            Set<GeneratedRestApplicationRegistration> registrations,
             @JaxRsResources Provider<Set<Object>> resources,
             Provider<Set<GeneratedJaxRsResourceEntry>> catalog,
             JaxRsConfig config) {
         JaxRsApplicationComposer.enterComposition(config);
         try {
-            if (applications.isEmpty()) {
+            if (registrations.isEmpty()) {
                 Set<Object> resolvedResources = resources.get();
                 if (resolvedResources.isEmpty()) {
                     return Set.of();
                 }
                 return Set.of(factory.create(config.basePath(), config.openapiPath(), resolvedResources));
             }
-            return JaxRsApplicationComposer.compose(factory, applications, resources, catalog, config);
+            return JaxRsApplicationComposer.compose(factory, view, registrations, resources, catalog, config);
         } finally {
             JaxRsApplicationComposer.exitComposition(config);
         }

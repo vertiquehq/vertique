@@ -17,8 +17,8 @@ import java.util.Set;
  * becomes the default mount's sole resource), and {@link OpidZeroDeclarationOtherResource} as a
  * hand-built {@code /other/*} mount ({@link #MOUNT_PATH}), built directly through
  * {@link JaxRsRouterMount.Factory#create}, never through {@code @JaxRsResources}. This case's
- * component includes no {@code GeneratedJaxRsApplicationRegistration} module at all, so
- * {@code Set<GeneratedJaxRsApplicationRegistration>} is empty and only the existing per-mount
+ * component includes no {@code GeneratedRestApplicationRegistration} module at all, so
+ * {@code Set<GeneratedRestApplicationRegistration>} is empty and only the existing per-mount
  * operationId rule applies, unchanged.
  */
 @Module

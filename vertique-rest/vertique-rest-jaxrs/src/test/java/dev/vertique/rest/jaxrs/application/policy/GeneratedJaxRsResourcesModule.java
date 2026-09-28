@@ -10,8 +10,8 @@ import dagger.multibindings.IntoSet;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.PropertyCondition;
 import dev.vertique.rest.core.dagger.JaxRsResources;
-import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsApplicationRegistration;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsResourceEntry;
+import dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Provider;
 import java.util.Set;
@@ -26,7 +26,9 @@ import java.util.Set;
  * registration present, {@code @JaxRsResources} contributes nothing), gated by its own
  * {@code policy.<variant>.enabled} condition, and every resource also gets a
  * {@link GeneratedJaxRsResourceEntry} so {@code JaxRsApplicationComposer} can select it from
- * {@code policy.app}'s {@code ManagementApplication#getClasses()}.
+ * {@code policy.app}'s matching declaring interface (T023 L22: one native registration per variant,
+ * gated on the same {@code policy.<variant>.enabled} property, in place of the removed
+ * {@code jakarta.ws.rs.core.Application} subclass's config-selected shape).
  */
 @Module
 public final class GeneratedJaxRsResourcesModule {
@@ -68,7 +70,7 @@ public final class GeneratedJaxRsResourcesModule {
     @JaxRsResources
     static Set<Object> unannotatedResourceBinding(
             @VertxConfig JsonObject config,
-            Set<GeneratedJaxRsApplicationRegistration> applications,
+            Set<GeneratedRestApplicationRegistration> applications,
             Provider<UnannotatedResource> provider) {
         return applications.isEmpty() && PropertyCondition.matchesAll(config, UNANNOTATED_RESOURCE_BINDING_CONDITIONS)
                 ? Set.of(provider.get())
@@ -111,7 +113,7 @@ public final class GeneratedJaxRsResourcesModule {
     @JaxRsResources
     static Set<Object> permitAllResourceBinding(
             @VertxConfig JsonObject config,
-            Set<GeneratedJaxRsApplicationRegistration> applications,
+            Set<GeneratedRestApplicationRegistration> applications,
             Provider<PermitAllResource> provider) {
         return applications.isEmpty() && PropertyCondition.matchesAll(config, PERMIT_ALL_RESOURCE_BINDING_CONDITIONS)
                 ? Set.of(provider.get())
@@ -154,7 +156,7 @@ public final class GeneratedJaxRsResourcesModule {
     @JaxRsResources
     static Set<Object> scopelessRequirementResourceBinding(
             @VertxConfig JsonObject config,
-            Set<GeneratedJaxRsApplicationRegistration> applications,
+            Set<GeneratedRestApplicationRegistration> applications,
             Provider<ScopelessRequirementResource> provider) {
         return applications.isEmpty()
                         && PropertyCondition.matchesAll(config, SCOPELESS_REQUIREMENT_RESOURCE_BINDING_CONDITIONS)
@@ -198,7 +200,7 @@ public final class GeneratedJaxRsResourcesModule {
     @JaxRsResources
     static Set<Object> requiresActionResourceBinding(
             @VertxConfig JsonObject config,
-            Set<GeneratedJaxRsApplicationRegistration> applications,
+            Set<GeneratedRestApplicationRegistration> applications,
             Provider<RequiresActionResource> provider) {
         return applications.isEmpty()
                         && PropertyCondition.matchesAll(config, REQUIRES_ACTION_RESOURCE_BINDING_CONDITIONS)
@@ -242,7 +244,7 @@ public final class GeneratedJaxRsResourcesModule {
     @JaxRsResources
     static Set<Object> permitAllScopedResourceBinding(
             @VertxConfig JsonObject config,
-            Set<GeneratedJaxRsApplicationRegistration> applications,
+            Set<GeneratedRestApplicationRegistration> applications,
             Provider<PermitAllScopedResource> provider) {
         return applications.isEmpty()
                         && PropertyCondition.matchesAll(config, PERMIT_ALL_SCOPED_RESOURCE_BINDING_CONDITIONS)
@@ -286,7 +288,7 @@ public final class GeneratedJaxRsResourcesModule {
     @JaxRsResources
     static Set<Object> orderMismatchResourceBinding(
             @VertxConfig JsonObject config,
-            Set<GeneratedJaxRsApplicationRegistration> applications,
+            Set<GeneratedRestApplicationRegistration> applications,
             Provider<OrderMismatchResource> provider) {
         return applications.isEmpty()
                         && PropertyCondition.matchesAll(config, ORDER_MISMATCH_RESOURCE_BINDING_CONDITIONS)

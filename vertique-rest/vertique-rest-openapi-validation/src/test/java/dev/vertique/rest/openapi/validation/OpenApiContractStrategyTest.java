@@ -101,6 +101,13 @@ class OpenApiContractStrategyTest {
     }
 
     @Test
+    @DisplayName("resolvesOperationsFromMountContract() reports true: this strategy looks each operation up by"
+            + " operationId in the contract of the mount that registers it")
+    void openApiContractStrategyResolvesOperationsFromTheMountContract(Vertx vertx) {
+        assertTrue(strategy(vertx).resolvesOperationsFromMountContract());
+    }
+
+    @Test
     @DisplayName("gateFor() always produces a gate handler (the contract drives validation, not OperationSchemas)")
     void openApiContractStrategyAlwaysInstallsGate(Vertx vertx) {
         JaxRsOperationDescriptor op = op("POST", "/widgets", "createWidget");

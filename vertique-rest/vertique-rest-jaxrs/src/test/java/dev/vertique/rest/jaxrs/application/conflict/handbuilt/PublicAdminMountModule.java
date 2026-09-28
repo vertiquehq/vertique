@@ -12,8 +12,8 @@ import java.util.Set;
 
 /**
  * TP-004 (T004) fixture: hand-built module contributing a {@code JaxRsRouterMount} at
- * {@link #MOUNT_PATH}. Used by case (e): {@code PublicApplication} at {@code /api/public} beside
- * this hand-built mount, which {@code PublicApplication}'s {@code /api/public/*} contains — the
+ * {@link #MOUNT_PATH}. Used by case (e): {@code unitb.PublicApi} at {@code /api/public} beside
+ * this hand-built mount, which {@code unitb.PublicApi}'s {@code /api/public/*} contains — the
  * direction a one-direction-only bug (checking only whether the hand-built prefix contains the
  * application's) would miss.
  */
@@ -22,7 +22,7 @@ public final class PublicAdminMountModule {
 
     private PublicAdminMountModule() {}
 
-    /** This mount's path; contained by {@code PublicApplication}'s {@code /api/public/*}. */
+    /** This mount's path; contained by {@code unitb.PublicApi}'s {@code /api/public/*}. */
     public static final String MOUNT_PATH = "/api/public/admin/*";
 
     /**

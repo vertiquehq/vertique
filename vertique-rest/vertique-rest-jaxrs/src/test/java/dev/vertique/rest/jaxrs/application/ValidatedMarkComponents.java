@@ -63,13 +63,13 @@ public final class ValidatedMarkComponents {
     }
 
     /**
-     * Cases (a), (c), and (d): {@code unita} (for {@link
-     * dev.vertique.rest.jaxrs.application.unita.CatalogResource CatalogResource} and {@link
-     * dev.vertique.rest.jaxrs.application.unita.DisabledResource DisabledResource}) and
-     * {@code unitb} (for {@link dev.vertique.rest.jaxrs.application.unitb.PublicApplication
-     * PublicApplication}), with no conflicting mount. Case (a) and (c) configure
-     * {@code test.public.classes} to the bound {@code CatalogResource}; case (d) configures it to
-     * T002 TP-014's all-disabled selection, {@code DisabledResource} alone (S-004).
+     * Cases (a) and (c): {@code unita}'s catalog and {@code unitb}'s
+     * {@link dev.vertique.rest.jaxrs.application.unitb.PublicApi PublicApi}, with no conflicting
+     * mount, activated by {@code unitb.publicApplication.active}. Case (d) (R-004) instead activates
+     * {@link dev.vertique.rest.jaxrs.application.unitb.DisabledOnlyApi DisabledOnlyApi}, whose sole
+     * listed class is a catalog entry disabled by default, so its mount has zero resources: the
+     * {@code createRouter} refusal this case proves must run before the empty-mount early return,
+     * not merely for a mount that also happens to carry resources.
      */
     @Singleton
     @Component(
@@ -77,7 +77,10 @@ public final class ValidatedMarkComponents {
                 RestModule.class,
                 ApplicationTestSupportModule.class,
                 dev.vertique.rest.jaxrs.application.unita.GeneratedJaxRsResourcesModule.class,
-                dev.vertique.rest.jaxrs.application.unitb.GeneratedJaxRsResourcesModule.class
+                dev.vertique.rest.jaxrs.application.unita.scoped.GeneratedJaxRsResourcesModule.class,
+                dev.vertique.rest.jaxrs.application.unitb.GeneratedJaxRsResourcesModule.class,
+                dev.vertique.rest.jaxrs.application.unitb.DisabledOnlyApplicationRegistrationModule.class,
+                dev.vertique.rest.jaxrs.application.manual.ManualResourceModule.class
             })
     public interface PublicApplicationComponent extends Provisions {
 
@@ -98,7 +101,7 @@ public final class ValidatedMarkComponents {
     /**
      * Case (b): {@link PublicApplicationComponent}'s fixture set plus a hand-built, conflicting
      * mount at {@code /api/public/admin/*} ({@link PublicAdminMountModule}), which
-     * {@code PublicApplication}'s {@code /api/public/*} contains.
+     * {@code unitb.PublicApi}'s {@code /api/public/*} contains.
      */
     @Singleton
     @Component(
@@ -106,7 +109,9 @@ public final class ValidatedMarkComponents {
                 RestModule.class,
                 ApplicationTestSupportModule.class,
                 dev.vertique.rest.jaxrs.application.unita.GeneratedJaxRsResourcesModule.class,
+                dev.vertique.rest.jaxrs.application.unita.scoped.GeneratedJaxRsResourcesModule.class,
                 dev.vertique.rest.jaxrs.application.unitb.GeneratedJaxRsResourcesModule.class,
+                dev.vertique.rest.jaxrs.application.manual.ManualResourceModule.class,
                 PublicAdminMountModule.class
             })
     public interface PublicApplicationAdminConflictComponent extends Provisions {

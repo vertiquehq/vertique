@@ -13,7 +13,7 @@ import java.util.Set;
 /**
  * TP-004 (T004) fixture: hand-built module contributing a {@code JaxRsRouterMount} at
  * {@link #MOUNT_PATH}. Used by case (f), beside the reused
- * {@link dev.vertique.rest.jaxrs.application.conflict.paths.RootApplication RootApplication} at
+ * {@link dev.vertique.rest.jaxrs.application.conflict.paths.PathConflictApis.RootApi RootApi} at
  * the root path ({@code /*}), which conflicts with every other mount under C-CONFLICT.
  */
 @Module

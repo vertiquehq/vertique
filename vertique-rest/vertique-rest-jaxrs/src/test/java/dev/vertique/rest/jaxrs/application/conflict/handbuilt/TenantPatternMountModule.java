@@ -13,7 +13,7 @@ import java.util.Set;
 /**
  * TP-004 (T004) fixture: hand-built module contributing a {@code JaxRsRouterMount} at
  * {@link #MOUNT_PATH}, a valid mount path per {@code HttpVerticle#validateMountPaths} (which
- * accepts a leading path variable segment). Used by case (d): {@code PublicApplication} at
+ * accepts a leading path variable segment). Used by case (d): {@code unitb.PublicApi} at
  * {@code /api/public} beside this pattern-path mount, which conflicts with every application
  * mount under C-CONFLICT's pattern-path rule.
  */

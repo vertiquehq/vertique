@@ -246,6 +246,18 @@ public final class OpenApiContractValidationStrategy implements RequestValidatio
     }
 
     /**
+     * Reports {@code true}: this strategy looks each operation up by operationId in the OpenAPI
+     * contract of the mount that registers it, so the rest-jaxrs mount composition validator must
+     * parse every mount's contract location.
+     *
+     * @return {@code true}, always
+     */
+    @Override
+    public boolean resolvesOperationsFromMountContract() {
+        return true;
+    }
+
+    /**
      * Binds this strategy to one mount by making sure that mount's OpenAPI contract is loaded, or is
      * loading, before any of the mount's gates are built. The mount's {@link MountMeta#openapiPath()} is
      * the cache key: the first mount to declare a given path starts its load, every later mount
