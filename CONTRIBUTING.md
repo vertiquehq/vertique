@@ -30,7 +30,9 @@ It inspects the effective tools rather than any installer or version manager. It
 also catches a `JAVA_HOME` that a Java version manager points at a missing JDK,
 which otherwise fails only the nested Maven builds of the integration tests, and
 an engine the `docker` CLI reaches only through a Docker context, which
-Testcontainers does not use.
+Testcontainers does not use. CI runs the same check before every build, so a
+failing "Verify build prerequisites" step reports what `scripts/doctor.sh` would
+report locally.
 
 Before submitting a change, run:
 
