@@ -45,7 +45,7 @@ const DIFF = [
   '-a',
   '-b',
   '+a',
-  '+b',
+  '+++ b',
   '+c',
   '@@ -40 +41 @@ record Fixed(long delayMs) {',
   '-x',
@@ -72,6 +72,16 @@ const DIFF = [
   '@@ -1,2 +0,0 @@',
   '-1',
   '-2',
+  `diff --git a/${RESILIENCE}/Old.java b/${RESILIENCE}/Renamed.java`,
+  'similarity index 90%',
+  `rename from ${RESILIENCE}/Old.java`,
+  `rename to ${RESILIENCE}/Renamed.java`,
+  'index 7777777..8888888 100644',
+  `--- a/${RESILIENCE}/Old.java`,
+  `+++ b/${RESILIENCE}/Renamed.java`,
+  '@@ -3 +3 @@',
+  '-x',
+  '+y',
   `diff --git a/${RESILIENCE}/OnlyDeletions.java b/${RESILIENCE}/OnlyDeletions.java`,
   'index 5555555..6666666 100644',
   `--- a/${RESILIENCE}/OnlyDeletions.java`,
@@ -83,7 +93,7 @@ const DIFF = [
 
 /** A mutations.xml entry in PIT 1.30's exact shape. */
 function mutation({ status, cls, file, line, mutator = 'ConditionalsBoundaryMutator', method = 'm', description = 'changed conditional boundary' }) {
-  const detected = status === 'KILLED' || status === 'TIMED_OUT' ? 'true' : 'false';
+  const detected = ['KILLED', 'TIMED_OUT', 'MEMORY_ERROR', 'RUN_ERROR'].includes(status) ? 'true' : 'false';
   const killing = status === 'KILLED' ? `<killingTest>${cls}Test.[engine:junit-jupiter]</killingTest>` : '<killingTest/>';
   return `<mutation detected='${detected}' status='${status}' numberOfTestsRun='1'><sourceFile>${file}</sourceFile>`
     + `<mutatedClass>${cls}</mutatedClass><mutatedMethod>${method}</mutatedMethod><methodDescription>(I)J</methodDescription>`
@@ -101,6 +111,16 @@ describe('parseChangedLines', () => {
 
   it('records every new-side line of a multi-line hunk', () => {
     assert.deepEqual([...changed.get(`${RESILIENCE}/RetryBackoff.java`)].sort((a, b) => a - b), [10, 11, 12, 41]);
+  });
+
+  it('reads an added line that starts with "++ " as content, not as a file header', () => {
+    assert.ok(changed.get(`${RESILIENCE}/RetryBackoff.java`).has(11));
+    assert.equal(changed.has('b'), false);
+  });
+
+  it('records a renamed file under its new path', () => {
+    assert.deepEqual([...changed.get(`${RESILIENCE}/Renamed.java`)], [3]);
+    assert.equal(changed.has(`${RESILIENCE}/Old.java`), false);
   });
 
   it('records all lines of a new file', () => {
@@ -246,10 +266,44 @@ describe('buildReport and renderMarkdown', () => {
     );
   });
 
-  it('treats an empty report as changed classes without mutable code', () => {
+  it('treats an empty report as changed classes PIT reported no mutations for', () => {
     const empty = buildReport({ selection, changedLines: changed, xmlByModule: { 'vertique-resilience': '' } });
     assert.deepEqual(empty.wholeClass, { total: 0, undetected: 0 });
-    assert.match(renderMarkdown(empty), /PIT found no mutable code in the changed classes/);
+    assert.match(renderMarkdown(empty), /PIT reported no mutations for the changed classes \(see the Maven log\)/);
+  });
+
+  it('uses PIT\'s detected flag and leaves non-viable mutants out', () => {
+    const statuses = buildReport({
+      selection,
+      changedLines: changed,
+      xmlByModule: {
+        'vertique-resilience': mutationsXml(
+          ...['MEMORY_ERROR', 'RUN_ERROR', 'NOT_STARTED', 'NON_VIABLE'].map((status) =>
+            mutation({ status, cls: 'dev.vertique.resilience.RetryBackoff', file: 'RetryBackoff.java', line: 12 }))
+        ),
+      },
+    });
+    assert.equal(statuses.changed.total, 3);
+    assert.equal(statuses.changed.detected, 2);
+    assert.deepEqual(statuses.changed.undetected.map((m) => m.status), ['NOT_STARTED']);
+  });
+
+  it('says so when every mutant on added lines was detected', () => {
+    const allKilled = buildReport({
+      selection,
+      changedLines: changed,
+      xmlByModule: { 'vertique-resilience': mutationsXml(mutation({ status: 'KILLED', cls: 'dev.vertique.resilience.RetryBackoff', file: 'RetryBackoff.java', line: 12 })) },
+    });
+    assert.match(renderMarkdown(allKilled), /All 1 mutants on added lines were detected/);
+  });
+
+  it('says so when no mutant falls on an added line', () => {
+    const elsewhere = buildReport({
+      selection,
+      changedLines: changed,
+      xmlByModule: { 'vertique-resilience': mutationsXml(mutation({ status: 'SURVIVED', cls: 'dev.vertique.resilience.RetryBackoff', file: 'RetryBackoff.java', line: 99 })) },
+    });
+    assert.match(renderMarkdown(elsewhere), /No mutants fall on lines this change added/);
   });
 
   it('renders the no-change, out-of-scope and budget cases without a table', () => {
@@ -259,6 +313,7 @@ describe('buildReport and renderMarkdown', () => {
 
     const budget = renderMarkdown(buildReport({ selection: selectTargets(files2(30), { maxClasses: 25 }), changedLines: new Map(), xmlByModule: {} }));
     assert.match(budget, /Skipped: 30 changed classes exceed the budget of 25/);
+    assert.match(budget, /PIT_MAX_CLASSES=30 bash scripts\/pit-pr-scope\.sh/);
   });
 });
 
@@ -286,14 +341,14 @@ function commitFiles(repo, files, message) {
   git(repo, 'commit', '--quiet', '-m', message);
 }
 
-/** A repository whose main holds RetryBackoff; `branch` adds `files` on top. */
-function makeRepo(branch, files) {
+/** A repository whose main holds RetryBackoff (plus `baseFiles`); `branch` adds `files` on top. */
+function makeRepo(branch, files, baseFiles = {}) {
   const repo = mkdtempSync(path.join(tmpdir(), 'pit-pr-scope-'));
   git(repo, 'init', '--quiet', '--initial-branch=main');
   git(repo, 'config', 'user.email', 'test@invalid');
   git(repo, 'config', 'user.name', 'test');
   git(repo, 'config', 'commit.gpgsign', 'false');
-  commitFiles(repo, { [RETRY_BACKOFF]: BASE_SOURCE, 'pom.xml': '<project/>\n' }, 'base');
+  commitFiles(repo, { [RETRY_BACKOFF]: BASE_SOURCE, 'pom.xml': '<project/>\n', ...baseFiles }, 'base');
   git(repo, 'checkout', '--quiet', '-b', branch);
   commitFiles(repo, files, branch);
   return repo;
@@ -334,15 +389,15 @@ function runScript(repo, args, env = {}) {
   const result = spawnSync('bash', [SCRIPT, ...args], {
     cwd: repo,
     encoding: 'utf8',
-    env: { ...process.env, GITHUB_STEP_SUMMARY: '', PIT_ALLOW_ROOT: '', PIT_EFFECTIVE_UID: '', ...env },
+    env: { ...process.env, GITHUB_STEP_SUMMARY: '', PIT_ALLOW_ROOT: '', PIT_EFFECTIVE_UID: '1000', ...env },
   });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
 describe('pit-pr-scope.sh', () => {
   const repos = [];
-  const repo = (branch, files) => {
-    const created = makeRepo(branch, files);
+  const repo = (branch, files, baseFiles) => {
+    const created = makeRepo(branch, files, baseFiles);
     repos.push(created);
     return created;
   };
@@ -372,9 +427,10 @@ describe('pit-pr-scope.sh', () => {
     const r = repo('pilot', { [RETRY_BACKOFF]: CHANGED_SOURCE });
     const result = runScript(r, ['--base', 'main', '--dry-run']);
     assert.equal(result.status, 0, result.stderr);
+    // Printed shell-quoted, so pasting it cannot expand `$*` and narrow the run.
     assert.match(
       result.stdout,
-      /\.\/mvnw -ntp -pl vertique-resilience -am process-test-classes org\.pitest:pitest-maven:mutationCoverage -Dpitest\.skip=false -DtargetClasses=dev\.vertique\.resilience\.RetryBackoff,dev\.vertique\.resilience\.RetryBackoff\$\*/
+      /\.\/mvnw -ntp -T 1 -pl vertique-resilience -am process-test-classes org\.pitest:pitest-maven:mutationCoverage -Dpitest\.skip=false -DtargetClasses=dev\.vertique\.resilience\.RetryBackoff\\,dev\.vertique\.resilience\.RetryBackoff\\\$\\\*/
     );
   });
 
@@ -385,9 +441,10 @@ describe('pit-pr-scope.sh', () => {
     const result = runScript(r, ['--base', 'main'], { PIT_MVN: stub, GITHUB_STEP_SUMMARY: summary });
     assert.equal(result.status, 0, result.stderr);
     const args = readFileSync(path.join(r, 'mvn-args.txt'), 'utf8').split('\n');
-    assert.deepEqual(args.slice(0, 7), [
-      '-ntp', '-pl', 'vertique-resilience', '-am', 'process-test-classes',
+    assert.deepEqual(args.slice(0, 10), [
+      '-ntp', '-T', '1', '-pl', 'vertique-resilience', '-am', 'process-test-classes',
       'org.pitest:pitest-maven:mutationCoverage', '-Dpitest.skip=false',
+      '-DtargetClasses=dev.vertique.resilience.RetryBackoff,dev.vertique.resilience.RetryBackoff$*',
     ]);
     assert.match(result.stdout, /1 of 1 mutants on added lines were not detected/);
     assert.match(result.stdout, /RetryBackoff\.java:5/);
@@ -409,7 +466,7 @@ describe('pit-pr-scope.sh', () => {
     const stub = stubMaven(r, { writeReport: false });
     const result = runScript(r, ['--base', 'main'], { PIT_MVN: stub });
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /PIT found no mutable code in the changed classes/);
+    assert.match(result.stdout, /PIT reported no mutations for the changed classes/);
   });
 
   it('fails when PIT writes no report for a class that was never compiled', () => {
@@ -418,6 +475,54 @@ describe('pit-pr-scope.sh', () => {
     const result = runScript(r, ['--base', 'main'], { PIT_MVN: stub });
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /no PIT report for vertique-resilience/);
+  });
+
+  it('never reuses a report left by an earlier run', () => {
+    const r = repo('stale', { [RETRY_BACKOFF]: CHANGED_SOURCE });
+    const reports = path.join(r, 'vertique-resilience', 'target', 'pit-reports');
+    mkdirSync(reports, { recursive: true });
+    writeFileSync(path.join(reports, 'mutations.xml'), mutationsXml(
+      mutation({ status: 'SURVIVED', cls: 'dev.vertique.resilience.RetryBackoff', file: 'RetryBackoff.java', line: 5, description: 'stale survivor' })
+    ));
+    const stub = stubMaven(r, { writeReport: false });
+    const result = runScript(r, ['--base', 'main'], { PIT_MVN: stub });
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stdout, /stale survivor/);
+  });
+
+  it('fails instead of showing an earlier result when selection fails', () => {
+    const r = repo('select-fails', { [RETRY_BACKOFF]: CHANGED_SOURCE });
+    const stub = stubMaven(r);
+    assert.equal(runScript(r, ['--base', 'main'], { PIT_MVN: stub }).status, 0);
+    const result = runScript(r, ['--base', 'main'], { PIT_MVN: stub, PIT_MAX_CLASSES: 'abc' });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /--max-classes must be a positive integer/);
+    assert.doesNotMatch(result.stdout, /not detected/);
+  });
+
+  it('diffs from the merge base, not from a base that moved on', () => {
+    // main drops a line of Other after the branch point: diffed against main
+    // instead of the merge base, the branch would appear to add it back.
+    const other = `${RESILIENCE}/Other.java`;
+    const r = repo('behind', { [RETRY_BACKOFF]: CHANGED_SOURCE }, { [other]: 'class Other {\n    int a;\n    int b;\n}\n' });
+    git(r, 'checkout', '--quiet', 'main');
+    commitFiles(r, { [other]: 'class Other {\n    int a;\n}\n' }, 'main drops a field');
+    git(r, 'checkout', '--quiet', 'behind');
+    const result = runScript(r, ['--base', 'main', '--dry-run']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /mutationCoverage .*-DtargetClasses=dev\.vertique\.resilience\.RetryBackoff/);
+    assert.doesNotMatch(result.stdout, /Other/);
+  });
+
+  it('ignores the user\'s diff prefix configuration', () => {
+    const r = repo('prefix', { [RETRY_BACKOFF]: CHANGED_SOURCE });
+    git(r, 'config', 'diff.mnemonicPrefix', 'true');
+    git(r, 'config', 'diff.noprefix', 'false');
+    git(r, 'config', 'diff.dstPrefix', 'new/');
+    const result = runScript(r, ['--base', 'main', '--dry-run']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /mutationCoverage .*-DtargetClasses=dev\.vertique\.resilience\.RetryBackoff/);
+    assert.doesNotMatch(result.stdout, /outside the pilot modules/);
   });
 
   it('fails when the Maven run fails', () => {
@@ -437,11 +542,14 @@ describe('pit-pr-scope.sh', () => {
     assert.equal(allowed.status, 0, allowed.stderr);
   });
 
-  it('rejects unknown arguments', () => {
+  it('rejects unknown arguments and a --base without a ref', () => {
     const r = repo('args', { 'README.md': 'x\n' });
-    const result = runScript(r, ['--nope']);
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /unrecognised argument: --nope/);
+    const unknown = runScript(r, ['--nope']);
+    assert.notEqual(unknown.status, 0);
+    assert.match(unknown.stderr, /unrecognised argument: --nope/);
+    const bare = runScript(r, ['--base']);
+    assert.notEqual(bare.status, 0);
+    assert.match(bare.stderr, /--base requires a ref/);
   });
 });
 
@@ -476,7 +584,11 @@ describe('MutationWorkflowContractTest', () => {
 
   it('runsOnlyOnPullRequestsWithReadOnlyContentsAndNoSecrets', () => {
     const yaml = workflow();
-    assert.match(yaml, /^on:\n  pull_request:\n    branches: \[main\]\n\n/m, 'mutation.yml must run on pull requests to main only');
+    assert.match(
+      yaml,
+      /^on:\n  pull_request:\n    branches: \[main\]\n    paths:\n      - "\*\*\/src\/main\/java\/\*\*"\n      - "scripts\/pit-pr-scope\.\*"\n      - "\.github\/workflows\/mutation\.yml"\n      - "pom\.xml"\n\n/m,
+      'mutation.yml must run on pull requests to main that touch production Java or the tooling'
+    );
     assert.doesNotMatch(yaml, /^\s*(push|pull_request_target|workflow_run|schedule):/m, 'mutation.yml must run on nothing but pull_request');
     const granted = [...yaml.matchAll(/^\s*(contents|packages|pull-requests|id-token|actions|checks|deployments|issues|statuses|security-events|attestations|pages):\s*(\S+)\s*$/gm)]
       .map(([, scope, level]) => `${scope}: ${level}`);
@@ -507,6 +619,6 @@ describe('MutationWorkflowContractTest', () => {
 
   it('staysOutOfTheRequiredCheck', () => {
     const ci = readFileSync(path.join(REPO_ROOT, '.github', 'workflows', 'ci.yml'), 'utf8');
-    assert.doesNotMatch(ci, /pit-pr-scope|pitest|mutation/i, 'required CI must not run or depend on mutation testing');
+    assert.doesNotMatch(ci, /pit-pr-scope|pitest-maven|mutationCoverage|mutation\.yml/, 'required CI must not run or depend on mutation testing');
   });
 });

@@ -21,6 +21,10 @@
  * Markdown. The report is advisory: surviving mutants never fail it, while a
  * selected module without a PIT report does, so a broken run is never shown
  * as a clean one.
+ *
+ * Only the class named after each changed file and its nested classes are
+ * mutated (`X`, `X$*`); a secondary top-level class declared in the same file
+ * is not. The diff must use the default `a/` and `b/` prefixes.
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
@@ -35,8 +39,8 @@ export const PILOT_MODULES = Object.freeze([
   'vertique-rest/vertique-rest-security',
 ]);
 
-const DETECTED = new Set(['KILLED', 'TIMED_OUT', 'MEMORY_ERROR', 'RUN_ERROR']);
-const UNDETECTED = new Set(['SURVIVED', 'NO_COVERAGE']);
+/** Mutants PIT could not run in a meaningful form; they count neither way. */
+const NOT_VIABLE = 'NON_VIABLE';
 const PRODUCTION_SOURCE = /^(.+?)\/src\/main\/java\/(.+)\.java$/;
 const NOT_A_CLASS = new Set(['package-info', 'module-info']);
 
@@ -47,13 +51,19 @@ const NOT_A_CLASS = new Set(['package-info', 'module-info']);
 export function parseChangedLines(diff) {
   const changed = new Map();
   let current = null;
+  // `+++` names the file only in a file header, before the first hunk; inside
+  // a hunk it is an added line whose text starts with "++ ".
+  let inHeader = false;
   for (const line of diff.split('\n')) {
     if (line.startsWith('diff --git ')) {
       current = null;
-    } else if (line.startsWith('+++ ')) {
+      inHeader = true;
+    } else if (inHeader && line.startsWith('+++ ')) {
       const target = line.slice(4).trim();
       current = target === '/dev/null' ? null : target.replace(/^b\//, '');
-    } else if (current && line.startsWith('@@ ')) {
+    } else if (line.startsWith('@@ ')) {
+      inHeader = false;
+      if (!current) continue;
       const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
       if (!hunk) continue;
       const start = Number(hunk[1]);
@@ -119,6 +129,7 @@ export function parseMutations(xml) {
     for (const [, tag, value] of body.matchAll(/<(\w+)>([\s\S]*?)<\/\1>/g)) record[tag] = decode(value);
     mutations.push({
       status: record.status,
+      detected: record.detected === 'true',
       sourceFile: record.sourceFile,
       mutatedClass: record.mutatedClass,
       mutatedMethod: record.mutatedMethod,
@@ -142,8 +153,8 @@ export function sourcePathOf(mutation) {
 
 /**
  * Filters the selected modules' mutants to the added lines. An empty string
- * stands for a module whose changed classes hold no mutable code (PIT writes
- * no report then). Throws when a selected module has no report at all: a
+ * stands for a module for which PIT found nothing to mutate in the compiled
+ * changed classes (it writes no report then). Throws when a selected module has no report at all: a
  * missing report is a failed run.
  */
 export function buildReport({ selection, changedLines, xmlByModule }) {
@@ -158,13 +169,13 @@ export function buildReport({ selection, changedLines, xmlByModule }) {
     if (xml === undefined) throw new Error(`no PIT report for ${module}`);
     for (const mutation of parseMutations(xml)) {
       const file = `${module}/src/main/java/${sourcePathOf(mutation)}`;
-      if (!selectedFiles.has(file)) continue;
+      if (!selectedFiles.has(file) || mutation.status === NOT_VIABLE) continue;
       wholeClass.total++;
-      if (UNDETECTED.has(mutation.status)) wholeClass.undetected++;
+      if (!mutation.detected) wholeClass.undetected++;
       if (!changedLines.get(file)?.has(mutation.lineNumber)) continue;
       changed.total++;
-      if (DETECTED.has(mutation.status)) changed.detected++;
-      if (UNDETECTED.has(mutation.status)) changed.undetected.push({ file, ...mutation });
+      if (mutation.detected) changed.detected++;
+      else changed.undetected.push({ file, ...mutation });
     }
   }
   changed.undetected.sort((a, b) => a.file.localeCompare(b.file) || a.lineNumber - b.lineNumber);
@@ -185,12 +196,12 @@ export function renderMarkdown(report) {
   if (selection.skipped) {
     out.push(
       `Skipped: ${selection.skipped.classes} changed classes exceed the budget of ${selection.skipped.maxClasses} (\`PIT_MAX_CLASSES\`).`,
-      'Run `bash scripts/pit-pr-scope.sh` locally to mutate them.'
+      `Run \`PIT_MAX_CLASSES=${selection.skipped.classes} bash scripts/pit-pr-scope.sh\` locally to mutate them.`
     );
   } else if (!selection.run) {
     out.push('No production classes changed in the pilot modules, so nothing was mutated.');
   } else if (wholeClass.total === 0) {
-    out.push('PIT found no mutable code in the changed classes, so nothing was mutated.');
+    out.push('PIT reported no mutations for the changed classes (see the Maven log). Classes without logic, such as interfaces and plain records, produce none.');
   } else if (changed.total === 0) {
     out.push('No mutants fall on lines this change added (declarations, comments or formatting only).');
   } else if (changed.undetected.length === 0) {
@@ -262,7 +273,7 @@ function main([command, ...rest]) {
       if (existsSync(xml)) {
         xmlByModule[module] = readFileSync(xml, 'utf8');
       } else if (compiledClassesExist(selection, module)) {
-        // PIT writes no report when the targeted classes hold nothing to mutate.
+        // PIT writes no report when it finds nothing to mutate in the targeted classes.
         xmlByModule[module] = '';
       }
     }

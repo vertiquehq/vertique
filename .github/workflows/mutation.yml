@@ -16,9 +16,16 @@
 
 name: Mutation (advisory)
 
+# Only pull requests that can produce a result (production Java) or that
+# change the tooling itself start a runner.
 on:
   pull_request:
     branches: [main]
+    paths:
+      - "**/src/main/java/**"
+      - "scripts/pit-pr-scope.*"
+      - ".github/workflows/mutation.yml"
+      - "pom.xml"
 
 permissions:
   contents: read
