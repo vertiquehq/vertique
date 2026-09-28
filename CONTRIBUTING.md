@@ -15,6 +15,9 @@ The full build and its integration tests need:
 - Go at the version the MCP Go interop fixture's `go.mod` requires (1.25);
 - Node.js 22 or later with npm, for the MCP TypeScript interop and conformance tests;
 - a running Docker-compatible engine, for the Testcontainers-based integration tests.
+  Testcontainers finds Docker Desktop and Docker Engine by itself; Podman, Colima,
+  and similar engines need `DOCKER_HOST` set to their API socket (see
+  [Testcontainers' supported environments](https://java.testcontainers.org/supported_docker_environment/)).
 
 The MCP interop tests download their pinned Go modules and npm packages, so the
 full build also needs network access. Check the tools with:
@@ -23,9 +26,11 @@ full build also needs network access. Check the tools with:
 scripts/doctor.sh
 ```
 
-It inspects the effective tools rather than any installer or version manager, and
+It inspects the effective tools rather than any installer or version manager. It
 also catches a `JAVA_HOME` that a Java version manager points at a missing JDK,
-which otherwise fails only the nested Maven builds of the integration tests.
+which otherwise fails only the nested Maven builds of the integration tests, and
+an engine the `docker` CLI reaches only through a Docker context, which
+Testcontainers does not use.
 
 Before submitting a change, run:
 

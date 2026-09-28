@@ -18,7 +18,13 @@
 #            (McpGoClientInteropIT runs `go run`).
 #   Node.js  Node 22 or later plus npm: the MCP TypeScript interop and
 #            conformance tests run node, and their fixtures run `npm ci`.
-#   Docker   A reachable daemon for the Testcontainers-based integration tests.
+#   Docker   A container engine answering at the endpoint Testcontainers picks.
+#            The endpoints are resolved the way Testcontainers 2.x resolves
+#            them and pinged over the Docker API, so Docker, Podman, Colima and
+#            other compatible engines are all checked alike. Docker CLI
+#            contexts are not endpoints Testcontainers uses, so an engine the
+#            CLI reaches only through a context is reported with the
+#            DOCKER_HOST that would expose it.
 #
 # Every check inspects the effective tool, never a particular installer or
 # version manager, so it applies however each tool was installed.
@@ -34,8 +40,8 @@ usage() {
         "Usage: scripts/doctor.sh" \
         "" \
         "Checks the tools ./mvnw clean verify needs: a JDK, Go, Node.js with npm," \
-        "and a reachable Docker daemon. Exits 0 when nothing blocks the build and" \
-        "1 when a check failed."
+        "and a container engine Testcontainers can reach. Exits 0 when nothing" \
+        "blocks the build and 1 when a check failed."
 }
 
 case "${1-}" in
@@ -56,10 +62,15 @@ repo_root="$(cd "$script_dir/.." && pwd)"
 go_mod="vertique-mcp/vertique-mcp-server/src/test/resources/mcp/clients/go/go.mod"
 # CI's setup-node version; the MCP fixture lockfiles pin packages needing >=22.
 node_min_major=22
-docker_timeout_seconds="${VERTIQUE_DOCTOR_DOCKER_TIMEOUT_SECONDS:-20}"
+docker_timeout_seconds="${VERTIQUE_DOCTOR_DOCKER_TIMEOUT_SECONDS:-10}"
 
 problems=0
 warnings=0
+os_name="$(uname -s)"
+# The JVM's user.home, which Testcontainers resolves its properties file and
+# default sockets against; filled in by the Java probe when it runs. The JVM
+# takes it from the account database, so it can differ from $HOME.
+jvm_user_home=""
 
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/vertique-doctor-XXXXXXXX")"
 trap 'rm -rf "$work_dir"' EXIT
@@ -124,34 +135,164 @@ java_feature_of() {
     printf '%s' "${spec%%.*}"
 }
 
-# Runs "$@" but stops it after $1 seconds, with SIGTERM and then, for a process
-# that ignores it, SIGKILL two seconds later; macOS ships no timeout(1). The
-# watcher kills its own pending sleep when it is stopped early, so a command
-# that finishes in time leaves no stray process behind.
-run_with_timeout() {
-    local seconds="$1"
-    shift
-    "$@" &
-    local pid=$!
-    (
-        nap=""
-        trap 'kill "$nap" 2>/dev/null; exit 0' TERM
-        nap_for() {
-            sleep "$1" &
-            nap=$!
-            wait "$nap"
-        }
-        nap_for "$seconds"
-        kill "$pid" 2>/dev/null || exit 0
-        nap_for 2
-        kill -KILL "$pid" 2>/dev/null
-    ) >/dev/null 2>&1 &
-    local watcher=$!
-    local status=0
-    wait "$pid" || status=$?
-    kill "$watcher" 2>/dev/null || true
-    wait "$watcher" 2>/dev/null || true
-    return "$status"
+# Prints property $2 from $1/.testcontainers.properties with Java properties
+# escapes removed, so docker.host=unix\:///path reads as unix:///path.
+testcontainers_property() {
+    local file="$1/.testcontainers.properties"
+    if [[ -n "$1" && -f "$file" ]]; then
+        sed -n "/^[[:space:]]*${2//./\\.}[[:space:]]*[=:]/{s/^[^=:]*[=:][[:space:]]*//;p;q;}" "$file" \
+            | tr -d '\r' | sed 's/\\\(.\)/\1/g'
+    fi
+}
+
+# Prints the default endpoint of Testcontainers strategy $1 (a class simple
+# name) under home directory $2, or nothing when that strategy does not apply.
+default_endpoint() {
+    local socket
+    case "$1" in
+        RootlessDockerClientProviderStrategy)
+            [[ "$os_name" == Linux ]] || return 0
+            for socket in "${XDG_RUNTIME_DIR:+$XDG_RUNTIME_DIR/docker.sock}" \
+                "$2/.docker/run/docker.sock" "/run/user/$(id -u)/docker.sock"; do
+                if [[ -n "$socket" && -e "$socket" ]]; then
+                    printf 'unix://%s\n' "$socket"
+                    return 0
+                fi
+            done
+            ;;
+        UnixSocketClientProviderStrategy)
+            if [[ "$os_name" == Linux || "$os_name" == Darwin ]] && [[ -e /var/run/docker.sock ]]; then
+                printf 'unix:///var/run/docker.sock\n'
+            fi
+            ;;
+        DockerDesktopClientProviderStrategy)
+            [[ "$os_name" == Linux || "$os_name" == Darwin ]] || return 0
+            for socket in "$2/.docker/desktop/docker.sock" "$2/.docker/run/docker.sock"; do
+                if [[ -e "$socket" ]]; then
+                    printf 'unix://%s\n' "$socket"
+                    return 0
+                fi
+            done
+            ;;
+    esac
+}
+
+# Prints "origin endpoint" lines for the container engine endpoints
+# Testcontainers 2.x tries, in the order of its
+# DockerClientProviderStrategy.getFirstValidStrategy, with $1 as the JVM's
+# user.home. It uses the first endpoint that connects and answers:
+#   1. tc.host in ~/.testcontainers.properties (Testcontainers Desktop writes
+#      it; there is no environment variable for it)
+#   2. DOCKER_HOST, else docker.host in ~/.testcontainers.properties
+#   3. the strategy cached as docker.client.strategy after an earlier success,
+#      honored only when it is persistable: the rootless or
+#      /var/run/docker.sock strategy (a cached Docker Desktop one is ignored)
+#   4. the defaults by priority: rootless docker.sock on Linux (81),
+#      /var/run/docker.sock (80), Docker Desktop's socket (79)
+# Default sockets that do not exist are omitted, as Testcontainers omits them.
+engine_candidates() {
+    local home="$1" value
+    value="$(testcontainers_property "$home" tc.host)" || true
+    if [[ -n "$value" ]]; then
+        printf 'tc.host %s\n' "$value"
+    fi
+    if [[ -n "${DOCKER_HOST:-}" ]]; then
+        printf 'DOCKER_HOST %s\n' "$DOCKER_HOST"
+    else
+        value="$(testcontainers_property "$home" docker.host)" || true
+        if [[ -n "$value" ]]; then
+            printf 'docker.host %s\n' "$value"
+        fi
+    fi
+
+    local cached="${TESTCONTAINERS_DOCKER_CLIENT_STRATEGY:-${DOCKER_CLIENT_STRATEGY:-}}"
+    if [[ -z "$cached" ]]; then
+        cached="$(testcontainers_property "$home" docker.client.strategy)" || true
+    fi
+    case "${cached##*.}" in
+        RootlessDockerClientProviderStrategy | UnixSocketClientProviderStrategy) ;;
+        *) cached="" ;;
+    esac
+    local strategy
+    for strategy in "${cached##*.}" RootlessDockerClientProviderStrategy \
+        UnixSocketClientProviderStrategy DockerDesktopClientProviderStrategy; do
+        value="$(default_endpoint "$strategy" "$home")"
+        if [[ -n "$value" ]]; then
+            printf 'default %s\n' "$value"
+        fi
+    done
+}
+
+# Pings engine endpoint $1 through the Docker API's /_ping, which Docker,
+# Podman and other compatible engines all serve. On success prints the engine's
+# Server header, such as "Docker/29.1.0 (linux)" or "Libpod/5.2.0 (linux)".
+# Otherwise prints why and returns 1 when the endpoint failed, or 2 when it is
+# a transport curl cannot reach: a Windows named pipe, or another scheme such
+# as ssh. Testcontainers tries those itself and moves on when they fail, so the
+# outcome for them is unknown rather than failed.
+ping_endpoint() {
+    local endpoint="$1"
+    case "$endpoint" in
+        unix://*)
+            local socket="${endpoint#unix://}"
+            if [[ ! -e "$socket" ]]; then
+                printf 'socket does not exist'
+                return 1
+            fi
+            set -- --unix-socket "$socket" http://localhost/_ping
+            ;;
+        tcp://* | http://* | https://*)
+            local address="${endpoint#*://}"
+            address="${address%%/*}"
+            if [[ "$endpoint" == https://* || "${DOCKER_TLS_VERIFY:-}" == 1 ]]; then
+                local certs="${DOCKER_CERT_PATH:-${HOME:-}/.docker}"
+                set -- --cacert "$certs/ca.pem" --cert "$certs/cert.pem" --key "$certs/key.pem" \
+                    "https://$address/_ping"
+            else
+                set -- "http://$address/_ping"
+            fi
+            ;;
+        *)
+            printf 'curl cannot reach a %s endpoint' "${endpoint%%://*}"
+            return 2
+            ;;
+    esac
+
+    local response status=0
+    response="$(curl --silent --show-error --include --max-time "$docker_timeout_seconds" \
+        "$@" 2>&1 | tr -d '\r')" || status=$?
+    case "$status" in
+        0) ;;
+        7)
+            printf 'nothing is listening'
+            return 1
+            ;;
+        28)
+            printf 'did not answer within %ss' "$docker_timeout_seconds"
+            return 1
+            ;;
+        *)
+            printf '%s' "$(printf '%s\n' "$response" | sed -n '/^curl: /{s/^curl: ([0-9]*) //;p;q;}')"
+            return 1
+            ;;
+    esac
+
+    local status_line server
+    status_line="$(printf '%s\n' "$response" | sed -n 1p)"
+    if [[ "$status_line" != HTTP/*" 200"* ]]; then
+        printf 'answered %s' "$status_line"
+        return 1
+    fi
+    server="$(printf '%s\n' "$response" \
+        | sed -n '/^[Ss][Ee][Rr][Vv][Ee][Rr]:/{s/^[^:]*:[[:space:]]*//;p;q;}')"
+    printf '%s' "${server:-an engine}"
+}
+
+# Prints the endpoint of the Docker CLI's current context, when there is a CLI.
+docker_context_host() {
+    if command -v docker >/dev/null 2>&1; then
+        docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true
+    fi
 }
 
 # --- Checks ---
@@ -186,6 +327,7 @@ public class DoctorProbe {
         System.out.println("version=" + Runtime.version());
         System.out.println("home=" + System.getProperty("java.home"));
         System.out.println("env=" + (javaHome == null ? "" : javaHome));
+        System.out.println("userhome=" + System.getProperty("user.home"));
     }
 }
 JAVA
@@ -204,6 +346,7 @@ JAVA
     version="$(printf '%s\n' "$probe" | sed -n 's/^version=//p')"
     home="$(printf '%s\n' "$probe" | sed -n 's/^home=//p')"
     seen="$(printf '%s\n' "$probe" | sed -n 's/^env=//p')"
+    jvm_user_home="$(printf '%s\n' "$probe" | sed -n 's/^userhome=//p')"
 
     if [[ ! "$feature" =~ ^[0-9]+$ ]]; then
         report_fail Java "could not determine the Java version of $launcher"
@@ -307,28 +450,103 @@ check_node() {
 }
 
 check_docker() {
-    local docker_bin
-    if ! docker_bin="$(command -v docker)"; then
-        report_warn Docker "docker CLI not found, so the daemon Testcontainers needs could not be checked" \
-            "install the docker CLI, or make sure DOCKER_HOST points at a running daemon"
+    if ! command -v curl >/dev/null 2>&1; then
+        report_warn Docker "curl not found, so the container engine Testcontainers would use could not be checked" \
+            "install curl"
         return
     fi
 
-    local server_version status=0
-    server_version="$(run_with_timeout "$docker_timeout_seconds" \
-        "$docker_bin" info --format '{{.ServerVersion}}' 2>"$work_dir/docker.err")" || status=$?
-    if ((status == 0)); then
-        report_ok Docker "daemon ${server_version:-(unknown version)} reachable"
+    # Walk the endpoints the way Testcontainers does and take the first that
+    # answers. Configured endpoints passed over on the way, or ranked below
+    # the one taken, still matter: the tests then run against an engine other
+    # than the one that setting names. An endpoint curl cannot reach is noted
+    # and passed over too, since Testcontainers moves on if it fails.
+    local home="${jvm_user_home:-${HOME:-}}"
+    local candidates origin endpoint name result status
+    local tried="" failures="" skipped="" shadowed="" unchecked=""
+    local chosen="" chosen_name="" chosen_engine=""
+    candidates="$(engine_candidates "$home")"
+    while read -r origin endpoint; do
+        if [[ -z "$endpoint" || " $tried " == *" $endpoint "* ]]; then
+            continue
+        fi
+        tried="$tried $endpoint"
+        name="$endpoint"
+        if [[ "$origin" != default ]]; then
+            name="$origin=$endpoint"
+        fi
+        if [[ -n "$chosen" ]]; then
+            if [[ "$origin" != default ]]; then
+                shadowed="${shadowed:+$shadowed, }$name"
+            fi
+            continue
+        fi
+        status=0
+        result="$(ping_endpoint "$endpoint")" || status=$?
+        if ((status == 2)); then
+            unchecked="${unchecked:+$unchecked, }$name ($result)"
+            continue
+        fi
+        if ((status == 0)); then
+            chosen="$endpoint"
+            chosen_name="$name"
+            chosen_engine="$result"
+            continue
+        fi
+        failures="${failures:+$failures; }$name: $result"
+        if [[ "$origin" != default ]]; then
+            skipped="${skipped:+$skipped, }$name ($result)"
+        fi
+    done <<<"$candidates"
+
+    if [[ -n "$chosen" ]]; then
+        report_ok Docker "$chosen_engine at $chosen"
+        if [[ -n "$unchecked" ]]; then
+            report_warn Docker "Testcontainers tries $unchecked before $chosen; if that answers, the tests use it instead" \
+                "confirm which engine that endpoint reaches, or unset it"
+        fi
+        if [[ -n "$skipped" ]]; then
+            report_warn Docker "Testcontainers skips $skipped and uses $chosen instead" \
+                "correct or unset that setting if $chosen is not the engine the tests should use"
+        fi
+        if [[ -n "$shadowed" ]]; then
+            report_warn Docker "Testcontainers uses $chosen_name ahead of $shadowed" \
+                "remove $chosen_name if the tests should use $shadowed"
+        fi
         return
     fi
 
-    local reason
-    reason="$(sed -n '/[^[:space:]]/{p;q;}' "$work_dir/docker.err")"
-    if ((status > 128)); then
-        reason="the daemon did not answer within ${docker_timeout_seconds}s"
+    local finding remedy context_host context_engine
+    if [[ -n "$failures" ]]; then
+        finding="no container engine answered where Testcontainers looks: $failures"
+    elif [[ -n "$unchecked" ]]; then
+        finding="no container engine the doctor can reach is configured or found"
+    else
+        finding="no container engine where Testcontainers looks: DOCKER_HOST is unset and no docker.sock exists in its default locations"
     fi
-    report_fail Docker "${reason:-docker info failed with exit status $status}" \
-        "start a Docker-compatible engine (Docker Desktop, Colima, OrbStack, Podman, ...); the Testcontainers integration tests need it"
+    remedy="start a Docker-compatible engine, or export DOCKER_HOST to its API socket, which Podman, Colima and similar engines need (https://java.testcontainers.org/supported_docker_environment/)"
+    # A CLI that works through a Docker context is the usual way this check
+    # and a plain `docker info` disagree: Testcontainers ignores contexts.
+    context_host="$(docker_context_host)"
+    if [[ -n "$context_host" && " $tried " != *" $context_host "* ]] \
+        && context_engine="$(ping_endpoint "$context_host")"; then
+        remedy="the docker CLI reaches $context_engine at $context_host through its current context, which Testcontainers ignores; export DOCKER_HOST=$context_host"
+    fi
+    # An endpoint curl cannot reach may still work for Testcontainers, so an
+    # otherwise unanswered search is not proof of failure.
+    if [[ -n "$unchecked" ]]; then
+        report_warn Docker "$finding; Testcontainers would also try $unchecked, which the doctor cannot check" \
+            "$remedy"
+        return
+    fi
+    if [[ "$os_name" != Linux && "$os_name" != Darwin ]]; then
+        # Elsewhere (Windows) Testcontainers falls back to a named pipe curl
+        # cannot reach, which likewise leaves the outcome unknown.
+        report_warn Docker "$finding, and Testcontainers' default on $os_name is a named pipe the doctor cannot check" \
+            "$remedy"
+        return
+    fi
+    report_fail Docker "$finding" "$remedy"
 }
 
 # --- Main ---

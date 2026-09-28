@@ -4,17 +4,24 @@
 
 # Regression harness for scripts/doctor.sh.
 #
-# Each case builds stub java, go, node, npm, and docker executables under a
-# temporary directory and runs the doctor with an emptied environment whose PATH
-# holds only those stubs plus the few system utilities the doctor uses, so the
-# machine's real toolchains can never satisfy or break a case. A case declares
-# the outcome the doctor is contractually required to produce and a diagnostic
-# it must print; a failing case must also report exactly one blocking problem,
-# which proves the stubs isolate the check under test.
+# Each case builds stub java, go, node, npm, curl, and docker executables under
+# a temporary directory and runs the doctor with an emptied environment whose
+# PATH holds only those stubs plus the few system utilities the doctor uses, and
+# whose HOME is the case directory, so the machine's real toolchains and engine
+# configuration can never satisfy or break a case. A case declares the outcome
+# the doctor is contractually required to produce and a diagnostic it must
+# print; a failing case must also report exactly one blocking problem, which
+# proves the stubs isolate the check under test.
 #
 # The doctor still reads the real pom.xml and go.mod for the required versions,
 # so stub versions are chosen far from any plausible requirement: 99 passes,
 # 11 (Java) and 1.20 (Go) are too old, and 8 predates Java source-file launch.
+#
+# Container engines are simulated by the curl stub, which answers the doctor's
+# /_ping from the case's engine table. Only endpoints registered there answer,
+# so an absolute default socket the host machine happens to have
+# (/var/run/docker.sock) is refused like any dead endpoint and cannot satisfy a
+# case.
 
 set -euo pipefail
 
@@ -34,7 +41,7 @@ bash_bin="$(command -v bash)"
 # The only system utilities the doctor and the stubs may resolve from PATH.
 system_bin="$work_dir/system-bin"
 mkdir -p "$system_bin"
-for utility in bash cat dirname head mktemp rm sed sleep; do
+for utility in bash cat dirname head id mktemp rm sed tr uname; do
     ln -s "$(command -v "$utility")" "$system_bin/$utility"
 done
 
@@ -45,10 +52,12 @@ executed_cases=0
 
 case_root=""
 
-# Starts a new case directory named $1 with an empty stub bin directory.
+# Starts a new case directory named $1 with an empty stub bin directory and an
+# empty engine table.
 case_reset() {
     case_root="$work_dir/$1"
     mkdir -p "$case_root/bin"
+    : >"$case_root/stub-engines"
 }
 
 # Writes executable $1 whose body is the remaining lines of stdin, after a
@@ -70,8 +79,10 @@ write_stub() {
 
 # Creates a JDK of feature release $2 at $1 whose java answers the doctor's
 # source-file probe, -XshowSettings query, and -version like a real launcher.
+# Its user.home is $3 when given, else $HOME; a real JVM reads it from the
+# account database, so the two can differ.
 make_jdk() {
-    write_stub "$1/bin/java" feature="$2" home="$1" <<'STUB'
+    write_stub "$1/bin/java" feature="$2" home="$1" user_home="${3-}" <<'STUB'
 case "${1-}" in
     -XshowSettings:properties)
         printf '    java.specification.version = %s\n' "$feature" >&2
@@ -85,8 +96,8 @@ case "${1-}" in
             printf 'Error: Could not find or load main class %s\n' "$1" >&2
             exit 1
         fi
-        printf 'feature=%s\nversion=%s.0.1\nhome=%s\nenv=%s\n' \
-            "$feature" "$feature" "$home" "${JAVA_HOME-}"
+        printf 'feature=%s\nversion=%s.0.1\nhome=%s\nenv=%s\nuserhome=%s\n' \
+            "$feature" "$feature" "$home" "${JAVA_HOME-}" "${user_home:-$HOME}"
         ;;
     *)
         exit 2
@@ -125,44 +136,105 @@ make_npm() {
 STUB
 }
 
-# Creates docker in bin directory $1 whose daemon is up, down, or hung.
-make_docker() {
-    case "$2" in
-        up)
-            write_stub "$1/docker" <<'STUB'
-printf '99.0.0\n'
-STUB
-            ;;
-        down)
-            write_stub "$1/docker" <<'STUB'
-printf 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?\n' >&2
-exit 1
-STUB
+# Creates curl in bin directory $1 answering the doctor's engine pings from the
+# case's engine table ($HOME/stub-engines), whose lines read
+# "live <endpoint> <Server header>" or "hung <endpoint>"; an endpoint is
+# unix://<socket> or http://<host:port>. Anything else is refused like a dead
+# socket. A ping without --max-time is rejected, so every case also proves the
+# doctor bounds its pings.
+make_curl() {
+    write_stub "$1/curl" <<'STUB'
+socket=""
+url=""
+max_time=""
+while (($#)); do
+    case "$1" in
+        --unix-socket) socket="$2"; shift ;;
+        --max-time) max_time="$2"; shift ;;
+        --cacert | --cert | --key) shift ;;
+        -*) ;;
+        *) url="$1" ;;
+    esac
+    shift
+done
+if [[ -z "$max_time" ]]; then
+    printf 'curl stub: ping issued without --max-time\n' >&2
+    exit 99
+fi
+if [[ -n "$socket" ]]; then
+    endpoint="unix://$socket"
+else
+    endpoint="${url%/_ping}"
+fi
+while read -r state candidate server; do
+    [[ "$candidate" == "$endpoint" ]] || continue
+    case "$state" in
+        live)
+            printf 'HTTP/1.1 200 OK\r\nServer: %s\r\nContent-Length: 2\r\n\r\nOK' "$server"
+            exit 0
             ;;
         hung)
-            # exec keeps the stub a single process, like the real CLI, so the
-            # doctor's timeout reaches the process holding its output pipe.
-            write_stub "$1/docker" <<'STUB'
-exec sleep 30
-STUB
+            printf 'curl: (28) Operation timed out after %s000 milliseconds\n' "$max_time" >&2
+            exit 28
             ;;
-        deaf)
-            # An ignored signal stays ignored across exec, so this hung process
-            # survives SIGTERM and only SIGKILL stops it.
-            write_stub "$1/docker" <<'STUB'
-trap '' TERM
-exec sleep 30
+    esac
+done <"$HOME/stub-engines"
+printf 'curl: (7) Failed to connect to localhost port 80: Could not connect to server\n' >&2
+exit 7
 STUB
+}
+
+# Creates the placeholder file a unix:// endpoint $1 needs to be found, since
+# Testcontainers and the doctor only consider sockets that exist.
+make_socket_file() {
+    case "$1" in
+        unix://*)
+            mkdir -p "$(dirname "${1#unix://}")"
+            : >"${1#unix://}"
             ;;
     esac
 }
 
-# Fills the case bin directory with passing go, node, npm, and docker stubs.
-make_healthy_tools() {
+# Registers an engine answering at endpoint $1 with Server header $2.
+engine_live() {
+    make_socket_file "$1"
+    printf 'live %s %s\n' "$1" "${2:-Docker/99.0.0 (linux)}" >>"$case_root/stub-engines"
+}
+
+# Registers an engine at endpoint $1 that never answers.
+engine_hung() {
+    make_socket_file "$1"
+    printf 'hung %s\n' "$1" >>"$case_root/stub-engines"
+}
+
+# Creates uname in bin directory $1 reporting operating system $2.
+make_uname() {
+    write_stub "$1/uname" os="$2" <<'STUB'
+printf '%s\n' "$os"
+STUB
+}
+
+# Creates docker in bin directory $1 whose current context points at $2.
+make_docker_context() {
+    write_stub "$1/docker" host="$2" <<'STUB'
+[[ "${1-} ${2-}" == "context inspect" ]] || exit 2
+printf '%s\n' "$host"
+STUB
+}
+
+# Fills the case bin directory with passing go, node, npm, and curl stubs.
+make_healthy_toolchains() {
     make_go "$case_root/bin" go99.0.0
     make_node "$case_root/bin" v99.0.0
     make_npm "$case_root/bin"
-    make_docker "$case_root/bin" up
+    make_curl "$case_root/bin"
+}
+
+# Healthy toolchains plus an engine at Docker Desktop's socket, a default
+# location Testcontainers finds on both Linux and macOS.
+make_healthy_tools() {
+    make_healthy_toolchains
+    engine_live "unix://$case_root/.docker/run/docker.sock"
 }
 
 # --- Runner ---
@@ -335,36 +407,179 @@ run_case "npm-missing" fail "npm not found on PATH" \
 
 # --- Cases: Docker ---
 
-case_reset docker-down
+case_reset engine-default-socket
 make_jdk "$case_root/jdk" 99
 make_healthy_tools
-make_docker "$case_root/bin" down
-run_case "docker-down" fail "Cannot connect to the Docker daemon" \
+run_case "engine-default-socket" pass \
+    "Docker/99.0.0 (linux) at unix://$case_root/.docker/run/docker.sock" \
     "$case_root/jdk/bin:$case_root/bin:$system_bin"
 
-case_reset docker-hung
+# DOCKER_HOST outranks every default socket, and the engine behind it is
+# reported by its own Server header, here Podman's.
+case_reset engine-docker-host-podman
 make_jdk "$case_root/jdk" 99
 make_healthy_tools
-make_docker "$case_root/bin" hung
-run_case "docker-hung" fail "the daemon did not answer within 1s" \
-    "$case_root/jdk/bin:$case_root/bin:$system_bin" VERTIQUE_DOCTOR_DOCKER_TIMEOUT_SECONDS=1
+engine_live "unix://$case_root/podman/podman.sock" "Libpod/5.2.0 (linux)"
+run_case "engine-docker-host-podman" pass \
+    "Libpod/5.2.0 (linux) at unix://$case_root/podman/podman.sock" \
+    "$case_root/jdk/bin:$case_root/bin:$system_bin" \
+    DOCKER_HOST="unix://$case_root/podman/podman.sock"
 
-# A hung CLI that ignores SIGTERM must still be stopped rather than hang the
-# doctor.
-case_reset docker-hung-ignoring-term
+# Testcontainers passes over a DOCKER_HOST that does not answer and quietly
+# uses the next engine it finds; the tests would run somewhere unintended.
+case_reset engine-docker-host-dead-fallback
 make_jdk "$case_root/jdk" 99
 make_healthy_tools
-make_docker "$case_root/bin" deaf
-run_case "docker-hung-ignoring-term" fail "the daemon did not answer within 1s" \
-    "$case_root/jdk/bin:$case_root/bin:$system_bin" VERTIQUE_DOCTOR_DOCKER_TIMEOUT_SECONDS=1
+make_socket_file "unix://$case_root/dead.sock"
+run_case "engine-docker-host-dead-fallback" pass \
+    "Testcontainers skips DOCKER_HOST=unix://$case_root/dead.sock (nothing is listening)" \
+    "$case_root/jdk/bin:$case_root/bin:$system_bin" \
+    DOCKER_HOST="unix://$case_root/dead.sock"
 
-# Testcontainers talks to the daemon without the CLI, so a missing CLI is an
-# unverifiable daemon, not a proven failure.
-case_reset docker-cli-missing
+case_reset engine-docker-host-missing-socket
+make_jdk "$case_root/jdk" 99
+make_healthy_toolchains
+run_case "engine-docker-host-missing-socket" fail \
+    "DOCKER_HOST=unix://$case_root/nowhere.sock: socket does not exist" \
+    "$case_root/jdk/bin:$case_root/bin:$system_bin" \
+    DOCKER_HOST="unix://$case_root/nowhere.sock"
+
+# docker.host in ~/.testcontainers.properties stands in for DOCKER_HOST, with
+# Java properties escaping.
+case_reset engine-properties-docker-host
+make_jdk "$case_root/jdk" 99
+make_healthy_toolchains
+engine_live "unix://$case_root/engine.sock"
+printf '%s\n' "# written by a tool" "ryuk.disabled=true" \
+    "docker.host=unix\\://$case_root/engine.sock" >"$case_root/.testcontainers.properties"
+run_case "engine-properties-docker-host" pass \
+    "at unix://$case_root/engine.sock" \
+    "$case_root/jdk/bin:$case_root/bin:$system_bin"
+
+# tc.host, which Testcontainers Desktop writes, is a TCP endpoint.
+case_reset engine-properties-tc-host
+make_jdk "$case_root/jdk" 99
+make_healthy_toolchains
+engine_live "http://127.0.0.1:41234"
+printf '%s\n' "tc.host=tcp\\://127.0.0.1\\:41234" >"$case_root/.testcontainers.properties"
+run_case "engine-properties-tc-host" pass \
+    "at tcp://127.0.0.1:41234" \
+    "$case_root/jdk/bin:$case_root/bin:$system_bin"
+
+# Testcontainers tries tc.host ahead of DOCKER_HOST whatever their numeric
+# priorities say, so an exported DOCKER_HOST is silently shadowed.
+case_reset engine-tc-host-ahead-of-docker-host
+make_jdk "$case_root/jdk" 99
+make_healthy_toolchains
+engine_live "http://127.0.0.1:41234"
+engine_live "unix://$case_root/engine.sock"
+printf '%s\n' "tc.host=tcp\\://127.0.0.1\\:41234" >"$case_root/.testcontainers.properties"
+run_case "engine-tc-host-ahead-of-docker-host" pass \
+    "Testcontainers uses tc.host=tcp://127.0.0.1:41234 ahead of DOCKER_HOST=unix://$case_root/engine.sock" \
+    "$case_root/jdk/bin:$case_root/bin:$system_bin" \
+    DOCKER_HOST="unix://$case_root/engine.sock"
+
+# tc.host is read from ~/.testcontainers.properties only; an environment
+# variable of that shape is not a Testcontainers setting and must not be used.
+case_reset engine-tc-host-env-is-not-a-setting
 make_jdk "$case_root/jdk" 99
 make_healthy_tools
-rm "$case_root/bin/docker"
-run_case "docker-cli-missing" pass "docker CLI not found" \
+engine_live "http://127.0.0.1:41234"
+run_case "engine-tc-host-env-is-not-a-setting" pass \
+    "Docker/99.0.0 (linux) at unix://$case_root/.docker/run/docker.sock" \
+    "$case_root/jdk/bin:$case_root/bin:$system_bin" \
+    TESTCONTAINERS_TC_HOST="tcp://127.0.0.1:41234"
+
+# Testcontainers honors a cached docker.client.strategy only when it is
+# persistable, which the Docker Desktop strategy is not. On Linux the rootless
+# socket (priority 81) therefore still wins; on macOS rootless does not apply
+# and Docker Desktop's socket is the only candidate.
+case_reset engine-cached-desktop-strategy-ignored
+make_jdk "$case_root/jdk" 99
+make_healthy_toolchains
+engine_live "unix://$case_root/xdg/docker.sock" "Rootless/1.0 (linux)"
+engine_live "unix://$case_root/.docker/desktop/docker.sock" "Desktop/1.0 (linux)"
+printf '%s\n' "docker.client.strategy=org.testcontainers.dockerclient.DockerDesktopClientProviderStrategy" \
+    >"$case_root/.testcontainers.properties"
+if [[ "$(uname -s)" == Linux ]]; then
+    expected_engine="Rootless/1.0 (linux) at unix://$case_root/xdg/docker.sock"
+else
+    expected_engine="Desktop/1.0 (linux) at unix://$case_root/.docker/desktop/docker.sock"
+fi
+run_case "engine-cached-desktop-strategy-ignored" pass "$expected_engine" \
+    "$case_root/jdk/bin:$case_root/bin:$system_bin" XDG_RUNTIME_DIR="$case_root/xdg"
+
+# Default sockets and the properties file sit under the JVM's user.home, which
+# need not be $HOME.
+case_reset engine-under-jvm-user-home
+make_jdk "$case_root/jdk" 99 "$case_root/jvm-home"
+make_healthy_toolchains
+engine_live "unix://$case_root/jvm-home/.docker/run/docker.sock"
+run_case "engine-under-jvm-user-home" pass \
+    "at unix://$case_root/jvm-home/.docker/run/docker.sock" \
+    "$case_root/jdk/bin:$case_root/bin:$system_bin"
+
+# curl cannot reach an ssh endpoint, but Testcontainers tries it and moves on
+# if it fails, so the doctor notes it and keeps looking: the live default
+# socket below it is found, with a warning that the ssh endpoint ranks first.
+case_reset engine-uncheckable-before-fallback
+make_jdk "$case_root/jdk" 99
+make_healthy_tools
+run_case "engine-uncheckable-before-fallback" pass \
+    "Testcontainers tries DOCKER_HOST=ssh://builder@remote (curl cannot reach a ssh endpoint) before unix://$case_root/.docker/run/docker.sock" \
+    "$case_root/jdk/bin:$case_root/bin:$system_bin" DOCKER_HOST="ssh://builder@remote"
+
+# With nothing else answering, an endpoint the doctor cannot check leaves the
+# outcome unknown: a warning, not a failure.
+case_reset engine-only-uncheckable
+make_jdk "$case_root/jdk" 99
+make_healthy_toolchains
+run_case "engine-only-uncheckable" pass \
+    "Testcontainers would also try DOCKER_HOST=ssh://builder@remote (curl cannot reach a ssh endpoint), which the doctor cannot check" \
+    "$case_root/jdk/bin:$case_root/bin:$system_bin" DOCKER_HOST="ssh://builder@remote"
+
+# On Windows Testcontainers falls back to a named pipe curl cannot reach, so
+# finding nothing is a warning, not a failure.
+case_reset engine-windows-named-pipe
+make_jdk "$case_root/jdk" 99
+make_healthy_toolchains
+make_uname "$case_root/bin" MINGW64_NT-10.0
+run_case "engine-windows-named-pipe" pass "a named pipe the doctor cannot check" \
+    "$case_root/jdk/bin:$case_root/bin:$system_bin"
+
+# The false "ok" a plain `docker info` gives: the CLI reaches an engine through
+# a Docker context (Colima, Podman machine, ...) that Testcontainers never
+# consults. The remedy names the DOCKER_HOST that would expose it.
+case_reset engine-only-via-cli-context
+make_jdk "$case_root/jdk" 99
+make_healthy_toolchains
+engine_live "unix://$case_root/.colima/default/docker.sock"
+make_docker_context "$case_root/bin" "unix://$case_root/.colima/default/docker.sock"
+run_case "engine-only-via-cli-context" fail \
+    "export DOCKER_HOST=unix://$case_root/.colima/default/docker.sock" \
+    "$case_root/jdk/bin:$case_root/bin:$system_bin"
+
+case_reset engine-missing
+make_jdk "$case_root/jdk" 99
+make_healthy_toolchains
+run_case "engine-missing" fail "export DOCKER_HOST to its API socket" \
+    "$case_root/jdk/bin:$case_root/bin:$system_bin"
+
+case_reset engine-hung
+make_jdk "$case_root/jdk" 99
+make_healthy_toolchains
+engine_hung "unix://$case_root/hung.sock"
+run_case "engine-hung" fail \
+    "DOCKER_HOST=unix://$case_root/hung.sock: did not answer within 1s" \
+    "$case_root/jdk/bin:$case_root/bin:$system_bin" \
+    DOCKER_HOST="unix://$case_root/hung.sock" VERTIQUE_DOCTOR_DOCKER_TIMEOUT_SECONDS=1
+
+# Without curl the engine cannot be pinged; that is unverified, not failed.
+case_reset engine-unverifiable-without-curl
+make_jdk "$case_root/jdk" 99
+make_healthy_tools
+rm "$case_root/bin/curl"
+run_case "engine-unverifiable-without-curl" pass "curl not found" \
     "$case_root/jdk/bin:$case_root/bin:$system_bin"
 
 # --- Summary ---
