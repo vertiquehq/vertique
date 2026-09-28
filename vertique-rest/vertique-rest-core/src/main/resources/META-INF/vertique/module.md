@@ -1028,6 +1028,7 @@ from the method's declaring class, which is the superclass or interface for an i
 public interface SecuritySchemeHandler {
     String schemeName();
     void configure(SecuritySchemeRegistry registry);
+    default Optional<SecuritySchemeDescription> openApiDescription() { return Optional.empty(); }
 }
 
 public interface SecuritySchemeRegistry {
@@ -1065,6 +1066,64 @@ credentials through the same verification path as its required handler.
 implemented in `vertique-rest-security`. Bind your own only to replace framework behavior wholesale.
 `SecurityRuntime.bindCurrent(SecurityContext)` returns a `ContextHolder.Scope` that **must** be
 registered with `RequestContextLifecycle.Handle.onClose(...)`.
+
+#### Describing a scheme for OpenAPI
+
+A handler may override `openApiDescription()` to describe its scheme; the default returns
+`Optional.empty()`, so no existing handler need change. The description is dormant in this module —
+nothing here reads it — until a documentation-rendering module turns it into
+`components.securitySchemes`.
+
+`SecuritySchemeDescription` is a closed, sealed interface with five kinds, each an immutable final
+class built only through its static factories, with `with*` copies:
+
+```java
+public sealed interface SecuritySchemeDescription permits Http, ApiKey, OAuth2, OpenIdConnect, MutualTls {
+    Optional<String> description();
+}
+
+Http.bearer(@Nullable String bearerFormat)   // type: http, scheme: bearer
+Http.of(String scheme)                       // type: http, any scheme name
+
+ApiKey.header(String name)                   // type: apiKey, in: header
+ApiKey.query(String name)                    // type: apiKey, in: query
+ApiKey.cookie(String name)                   // type: apiKey, in: cookie
+
+OAuth2.of(OAuthFlows flows)                  // type: oauth2, flows built through OAuthFlows.builder()
+
+OpenIdConnect.of(URI openIdConnectUrl)       // type: openIdConnect
+
+MutualTls.of()                               // type: mutualTLS
+```
+
+`OAuthFlows.builder()` sets each of the four flow kinds — `implicit(authorizationUrl, scopes)`,
+`password(tokenUrl, scopes)`, `clientCredentials(tokenUrl, scopes)`, and
+`authorizationCode(authorizationUrl, tokenUrl, scopes)` — with a typed method so a flow carries
+exactly the URLs its type uses, plus `refreshUrl(URI)`, applied to every flow set on the builder
+whether called before or after it; `build()` requires at least one flow to have been set.
+
+A description carries only OpenAPI Security Scheme fields — no extension map, no JSON tree. What a
+handler puts in those fields is its own responsibility; the type itself checks nothing about token
+claims, granted scopes, or any other business meaning.
+
+**Construction rules.** Every factory and `with*` method rejects a `null` argument with
+`NullPointerException` and a blank string or relative URI with `IllegalArgumentException`, each
+naming the argument. `Http.bearer`'s `bearerFormat` is the one nullable argument across every
+factory: `null` yields an empty `bearerFormat()`, while a blank value is rejected. `ApiKey.header`
+and `ApiKey.cookie` names must additionally be RFC 9110 tokens — an ASCII letter, a digit, or one of
+`` !#$%&'*+-.^_`|~ `` — because a header scheme's name can reach a response's `Vary` header;
+`ApiKey.query` names need only be non-blank, since a query parameter reaches no header. Every OAuth
+flow URL and the OpenID Connect discovery URL must be absolute; a scope name must be non-blank
+though its description may be empty; and `OAuthFlows.builder().build()` throws
+`IllegalStateException` when no flow was set.
+
+Each kind implements `equals`, `hashCode`, and a field-only `toString` — equality is by value over
+every field.
+
+**Evolution rule (Stable).** New kinds and new optional fields may arrive in later releases; do not
+switch exhaustively over the permitted kinds. A new optional field arrives as a new accessor plus a
+new `with*` method; a new kind arrives as a new permitted class; every existing factory keeps its
+signature.
 
 ### `ProtocolCorrelationSpec` and `ProtocolCorrelationContributor`
 
