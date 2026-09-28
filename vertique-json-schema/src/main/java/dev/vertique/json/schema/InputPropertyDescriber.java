@@ -139,11 +139,11 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     private static final TypeResolver CLASSMATE = new TypeResolver();
 
     /**
-     * JDK {@code System.Logger} rather than SLF4J: this module's own architecture rule (FR-JSON-070)
-     * freezes its compile dependencies to victools, Jackson, Jakarta Validation/Swagger annotations, and
-     * {@code vertique-core}, with no logging facade among them ({@link MetadataConstraintSource}'s own
-     * {@code LOG} field is the existing precedent this task follows for the same facility — rest-023 T003,
-     * {@code D001}, owner decision Q1).
+     * JDK {@code System.Logger} rather than SLF4J: this module's own architecture rule (enforced by
+     * {@code ModuleStructureTest}) freezes its compile dependencies to victools, Jackson, Jakarta
+     * Validation/Swagger annotations, and {@code vertique-core}, with no logging facade among them
+     * ({@link MetadataConstraintSource}'s own {@code LOG} field uses the same facility for the same
+     * reason).
      */
     private static final System.Logger LOG = System.getLogger(InputPropertyDescriber.class.getName());
 
@@ -170,9 +170,9 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     private final ValidatedProfile validatedProfile;
 
     /**
-     * The shared value-position renderer (rest-023 T001; architecture round-2 condition C6) that
-     * {@link #describeMapLike} and {@link #describeExtras} route their own value-schema rendering
-     * through — see {@link ValuePositionRenderer}'s own class Javadoc for the pipeline this task wires.
+     * The shared value-position renderer that {@link #describeMapLike}, {@link #mapMemberSchema}, and
+     * {@link #describeExtras} route their own value-schema rendering through — see {@link
+     * ValuePositionRenderer}'s own class Javadoc for the pipeline it applies.
      */
     private final ValuePositionRenderer valuePositionRenderer;
 
@@ -188,15 +188,14 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     private final Set<JavaType> inProgress = new HashSet<>();
 
     /**
-     * The bean value types currently being populated <em>inline</em> at a value position — D004's own
-     * conjunction inline rule (C5) and D005's own member-level inline path (S1) both register here for
-     * the duration of their own {@link #populateObjectSchema} call, distinct from {@link #inProgress}
-     * (security round-3 MEDIUM; {@code decisions/D005-…md} § Recursion bound). {@link #inlineBeanSchema}
-     * refuses re-entry when a type is already in this set <em>or</em> in {@link #inProgress}; {@link
-     * #provideCustomSchemaDefinition} itself refuses — never silently falls back to a standard,
-     * reflection-built {@code $defs} entry via its own pre-existing "return {@code null} on re-entry"
-     * branch — for a type already in this set, closing the round-3 MEDIUM's own silent-misdescription
-     * class.
+     * The bean value types currently being populated <em>inline</em> at a value position — the
+     * conjunction's unconditional inline rule and the member-level inline path both register here for
+     * the duration of their own {@link #populateObjectSchema} call, distinct from {@link #inProgress}, to
+     * bound recursion through inline population. {@link #inlineBeanSchema} refuses re-entry when a type
+     * is already in this set <em>or</em> in {@link #inProgress}; {@link #provideCustomSchemaDefinition}
+     * itself refuses — never silently falls back to a standard, reflection-built {@code $defs} entry via
+     * its own pre-existing "return {@code null} on re-entry" branch — for a type already in this set, so a
+     * re-entered inline type is never silently misdescribed.
      */
     private final Set<JavaType> inlineInProgress = new HashSet<>();
 
@@ -247,12 +246,12 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 || erased == java.util.OptionalDouble.class) {
             return primitiveOptional(erased, context);
         }
-        // rest-023 T003 (D001): a map-like position — java.util.Map, its JDK implementations, or a
-        // user-defined subclass — is carved out of the java.*/javax.*/jakarta.*/com.fasterxml.jackson.*
-        // exclusion below, ahead of it, so it still reaches describe() -> describeMapLike and is
-        // described with V's own schema as additionalProperties, at every reach (property, parameter,
-        // extras value, collection item, or nested map). Object/JsonNode/TreeNode are not Map-assignable,
-        // so they are unaffected and keep flowing through the ordinary opaque-type paths below.
+        // A map-like position — java.util.Map, its JDK implementations, or a user-defined subclass — is
+        // carved out of the java.*/javax.*/jakarta.*/com.fasterxml.jackson.* exclusion below, ahead of
+        // it, so it still reaches describe() -> describeMapLike and is described with V's own schema as
+        // additionalProperties, at every reach (property, parameter, extras value, collection item, or
+        // nested map). Object/JsonNode/TreeNode are not Map-assignable, so they are unaffected and keep
+        // flowing through the ordinary opaque-type paths below.
         boolean mapLike = Map.class.isAssignableFrom(erased);
         if (!mapLike
                 && (erased.isPrimitive()
@@ -269,7 +268,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         if (!mapLike && (javaType.isEnumType() || javaType.isReferenceType() || javaType.isCollectionLikeType())) {
             return null;
         }
-        // D004/D005 § Recursion bound (security round-3 MEDIUM): a type already being populated
+        // Inline recursion bound: a type already being populated
         // inline at a value position is refused here, before the ordinary inProgress guard below ever
         // runs — otherwise a non-inline re-entry of an inline-registered type (a plain $ref reached
         // from elsewhere in the same document while the inline population is still on the stack) would
@@ -328,16 +327,15 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             // "known" matters: Vert.x's own Buffer carries a no-argument getBytes() getter, which
             // Jackson's introspection reports as a property regardless — findProperties().isEmpty()
             // alone would misclassify it as bean-like and wrongly refuse it, exactly the false positive
-            // D005 calls out by name. Vert.x's io.vertx.* family (JsonObject, JsonArray, Buffer, ...) is
+            // this refusal must avoid. Vert.x's io.vertx.* family (JsonObject, JsonArray, Buffer, ...) is
             // additionally excluded outright: JsonObject#getMap() and JsonArray#getList() are themselves
             // mutable-collection getters Jackson's own "fill in place" fallback treats as settable, so
             // couldDeserialize() alone is not a safe signal for this specific, well-known opaque-wrapper
-            // family either — the same family this method's own class Javadoc and D005 name by example.
-            // A type with neither a
+            // family either — the same family the class Javadoc names by example. A type with neither a
             // settable property nor an io.vertx.* package (a scalar, a container, a node) never had a
-            // field walk to protect and stays described as unconstrained. S5 (spike/deserializer-driven
-            // -schema round 4 ruling): this decision is the shared BeanLikeTypes.beanLike check, the one
-            // exclusion list also consulted by ValidatedProfile's own F6 override-closure check.
+            // field walk to protect and stays described as unconstrained. This decision is the shared
+            // BeanLikeTypes.beanLike check, the one exclusion list also consulted by ValidatedProfile's
+            // own override-closure check.
             boolean beanLike = BeanLikeTypes.beanLike(mapper, javaType.getRawClass());
             if (!declaresOwnDeserializerOverride(javaType) && !beanLike) {
                 // A scalar, container, node, or Vert.x-style opaque wrapper: some module registered a
@@ -512,7 +510,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * @param builder         the captured builder the deserializer was assembled from, or {@code null}
      * @param context          the active generation context
      * @param caseInsensitive  whether {@code bean} binds its properties case-insensitively
-     * @param extrasSuppressed whether the type's own any-setter extras are suppressed (D005, T005): when
+     * @param extrasSuppressed whether the type's own any-setter extras are suppressed: when
      *                         {@code true}, {@link #describeExtras} is never consulted and {@code
      *                         additionalProperties: false} is written directly instead — the member-level
      *                         inline-closure rule's own effect, reused by {@link #inlineMemberSchema} for
@@ -544,8 +542,8 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
 
     /**
      * Whether a type built from {@code builder} would itself describe extras on its own object schema:
-     * its own any-setter, or one declared by a {@code @JsonUnwrapped} member of its own (T005 round 2,
-     * MEDIUM). The one place this "would this type describe extras?" question is answered, so {@link
+     * its own any-setter, or one declared by a {@code @JsonUnwrapped} member of its own. The one place
+     * this "would this type describe extras?" question is answered, so {@link
      * #populateObjectSchema}'s own {@code extrasWillBeDescribed} computation and {@link #propertySchema}'s
      * member-level {@code additionalProperties = FALSE} trigger never diverge — before this helper, the
      * member-level trigger read only the value type's own builder any-setter and silently fell through to
@@ -605,10 +603,10 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         List<SettableBeanProperty> bound = boundProperties(bean, builder);
         SettableAnyProperty anySetter = builder == null ? null : builder.getAnySetter();
         Set<Object> storage = storageMembers(javaType, anySetter);
-        // D004: every any-setter feeding the shared extras position, parent first — the parent's own,
-        // when it declares one, then each unwrapped sibling's own, in declaration order (below). One
-        // entry behaves byte-identically to the pre-T004 single-slot rule; more than one is described
-        // as their conjunction (describeExtras, ValuePositionRenderer#renderConjunction).
+        // Every any-setter feeding the shared extras position, parent first — the parent's own, when it
+        // declares one, then each unwrapped sibling's own, in declaration order (below). One entry
+        // renders as the single-slot shape; more than one is described as their conjunction
+        // (describeExtras, ValuePositionRenderer#renderConjunction).
         List<SettableAnyProperty> anySetters = new ArrayList<>();
         if (anySetter != null) {
             anySetters.add(anySetter);
@@ -699,7 +697,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             // fold entirely: {@code Parent { @JsonUnwrapped A a; @JsonUnwrapped B b }} with the
             // any-setter on B alone still left A's own alias and hidden member unfolded when A was
             // processed first, regardless of the fact that the type as a whole is any-setter-shaped.
-            // T005 round 2: computed through the shared #wouldDescribeExtras(BeanDeserializerBuilder) helper
+            // Computed through the shared #wouldDescribeExtras(BeanDeserializerBuilder) helper
             // so this "own or unwrapped sibling any-setter" question never diverges from propertySchema's
             // own member-level FALSE trigger, and gated by extrasSuppressed so a member-level FALSE that
             // closes this very type also suppresses the conjunction path here — no any-setter, own or
@@ -734,9 +732,9 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                     }
                 }
                 if (sibling.childBuilder() != null) {
-                    // D004: collect this sibling's own any-setter too (not only the first found), so
-                    // the shared key describes the conjunction of every any-setter in the set — the
-                    // pre-T004 single-slot rule stopped at the first sibling with one.
+                    // Collect this sibling's own any-setter too (not only the first found), so the shared
+                    // key describes the conjunction of every any-setter in the set rather than stopping at
+                    // the first sibling with one.
                     SettableAnyProperty siblingAnySetter =
                             sibling.childBuilder().getAnySetter();
                     if (siblingAnySetter != null) {
@@ -798,7 +796,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             });
         }
 
-        // D005, T005: an extras-suppressed member-level inline description (a member-level FALSE, alone
+        // An extras-suppressed member-level inline description (a member-level FALSE, alone
         // or composed with case-insensitivity) never consults describeExtras at all — additionalProperties
         // is written as the literal false this hand-built inline node otherwise never receives, since it
         // bypasses the standard CustomDefinition/AttributeInclusion path the Swagger module's own
@@ -878,15 +876,14 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         ObjectNode definition = context.getGeneratorConfig().createObjectNode();
         definition.put("type", "object");
         JavaType content = javaType.getContentType();
-        // rest-023 T003 (D001, S4): a describeMapLike caller has no member-position AnnotatedType at all
-        // (a type-level reach from describe(), reached identically for every member referencing the
-        // type) — its own overlay source, if any, is the type's own supertype chain (a Map subclass such
-        // as `class Tags extends HashMap<String, @Size(max=3) String>`), which is intrinsic to the type
-        // and therefore identical, and safe to share, at every position referencing it. A plain
-        // java.util.Map (no user subclass) carries no such chain, so this resolves to null exactly as
-        // before T003 for that shape — an open position (content == null, or one of the renderer's own
-        // unconstrained value types) omits the additionalProperties keyword entirely, exactly as before
-        // this extraction.
+        // A describeMapLike caller has no member-position AnnotatedType at all (a type-level reach from
+        // describe(), reached identically for every member referencing the type) — its own overlay
+        // source, if any, is the type's own supertype chain (a Map subclass such as
+        // `class Tags extends HashMap<String, @Size(max=3) String>`), which is intrinsic to the type and
+        // therefore identical, and safe to share, at every position referencing it. A plain
+        // java.util.Map (no user subclass) carries no such chain, so this resolves to null and no overlay
+        // applies. An open position (content == null, or one of the renderer's own unconstrained value
+        // types) omits the additionalProperties keyword entirely.
         AnnotatedType typeLevelOverlay = ValuePositionRenderer.mapValueSlotOfClass(javaType.getRawClass());
         JsonNode valueSchema = valuePositionRenderer.renderValueSchema(
                 context, new ValuePositionRenderer.ValuePosition(content, typeLevelOverlay, null));
@@ -965,36 +962,33 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             // it the same way): the type's ordinary, case-sensitive shared definition would misdescribe
             // it here, so it is described inline instead of by reference to that shared definition.
             boolean caseInsensitiveInline = nestedBean.isCaseInsensitive();
-            // D005, T005: a member-level @Schema(additionalProperties = FALSE) closes this member's own
-            // extras when its resolved value type would describe extras — read from the resolved
-            // deserializer's own builder (never live reflection, which would inline a
-            // @JsonDeserialize(using=...) type's own internals past the F1 refusal this class relies on
-            // elsewhere). A Map-typed member never reaches this branch at all: its own deserializer
-            // resolves to a MapDeserializer, not a BeanDeserializerBase, so T003's own Q1 rule (the
-            // annotation stays ignored there) is untouched.
-            // Security review finding (T005 round 2, MEDIUM): "would describe extras" is not only the
-            // value type's own builder any-setter — an any-setter reachable only through the value type's
-            // own @JsonUnwrapped child (Y { @JsonUnwrapped Z z }, Z carrying the any-setter) closes the
-            // same way. wouldDescribeExtras(BeanDeserializerBuilder) below is the one place this question is
-            // answered, shared with populateObjectSchema's own extrasWillBeDescribed so the two triggers
-            // never diverge; it stops at one level of unwrapping, same as requireNoNestedUnwrapping does
-            // once extras actually need describing.
-            // Security review finding (T005 round 2): builderFor(memberType, nestedBean) is a first-touch
-            // capturing-mapper probe that can throw, so it must never run for a plain bean-valued member
-            // that carries no member-level FALSE at all — memberLevelAdditionalPropertiesFalse(member) is
-            // checked first and short-circuits the probe, keeping a plain member byte-identical to before
-            // this task (no probe, ordinary $ref).
+            // A member-level @Schema(additionalProperties = FALSE) closes this member's own extras when
+            // its resolved value type would describe extras — read from the resolved deserializer's own
+            // builder (never live reflection, which would inline a @JsonDeserialize(using=...) type's own
+            // internals past the custom-deserializer refusal this class relies on elsewhere). A Map-typed
+            // member never reaches this branch at all: its own deserializer resolves to a
+            // MapDeserializer, not a BeanDeserializerBase, so the Map-member rule (the annotation stays
+            // ignored there, with a WARN — see warnIfAdditionalPropertiesAnnotationIgnored) is untouched.
+            // "Would describe extras" is not only the value type's own builder any-setter — an any-setter
+            // reachable only through the value type's own @JsonUnwrapped child (Y { @JsonUnwrapped Z z },
+            // Z carrying the any-setter) closes the same way. wouldDescribeExtras(BeanDeserializerBuilder)
+            // below is the one place this question is answered, shared with populateObjectSchema's own
+            // extrasWillBeDescribed so the two triggers never diverge; it stops at one level of
+            // unwrapping, same as requireNoNestedUnwrapping does once extras actually need describing.
+            // builderFor(memberType, nestedBean) is a first-touch capturing-mapper probe that can throw,
+            // so it must never run for a plain bean-valued member that carries no member-level FALSE at
+            // all — memberLevelAdditionalPropertiesFalse(member) is checked first and short-circuits the
+            // probe, so a plain member gets no probe and an ordinary $ref.
             JavaType memberType = property.getType();
             boolean extrasSuppressed = memberLevelAdditionalPropertiesFalse(member)
                     && wouldDescribeExtras(builderFor(memberType, nestedBean));
             if (caseInsensitiveInline || extrasSuppressed) {
-                // F4 (security review round 1, MEDIUM)/D005 (T005): the shared inline-description helper
-                // runs the override-first check, the distinct inlineInProgress recursion bound, the
-                // requireNotDelegating and scalar-creator checks, and populateObjectSchema itself — the
-                // same machinery T004's own any-setter-conjunction inline path (inlineBeanSchema) reuses,
-                // so both the CI-inline and CI-plus-FALSE (or plain-FALSE) branches are bounded the same
-                // way. A null return means a (non-extras-suppressed) profile override applies: the caller
-                // falls back to the ordinary reference path below, exactly as before this task.
+                // The shared inline-description helper runs the override-first check, the distinct
+                // inlineInProgress recursion bound, the requireNotDelegating and scalar-creator checks,
+                // and populateObjectSchema itself — the same machinery the any-setter-conjunction inline
+                // path (inlineBeanSchema) reuses, so both the CI-inline and CI-plus-FALSE (or plain-FALSE)
+                // branches are bounded the same way. A null return means a (non-extras-suppressed) profile
+                // override applies: the caller falls back to the ordinary reference path below.
                 JsonNode schema =
                         inlineMemberSchema(memberType, nestedBean, property.getName(), extrasSuppressed, context);
                 if (schema == null) {
@@ -1023,10 +1017,10 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             }
             return schema;
         }
-        // rest-023 T003 (D001): a Map-typed member is a distinct position — see mapMemberSchema's own
-        // Javadoc for the Q1 WARN and the N1 leakage control. Checked ahead of the Field/Method/Parameter
-        // dispatch below so it covers a field-, getter-, setter-, or creator-parameter-backed Map member
-        // uniformly, through one path.
+        // A Map-typed member is a distinct position — see mapMemberSchema's own Javadoc for the WARN on
+        // an ignored @Schema(additionalProperties) and for the shared-definition leakage control. Checked
+        // ahead of the Field/Method/Parameter dispatch below so it covers a field-, getter-, setter-, or
+        // creator-parameter-backed Map member uniformly, through one path.
         if (property.getType().isMapLikeType()) {
             JsonNode mapSchema = mapMemberSchema(property, member, raw, builtClass, context);
             if (mapSchema != null) {
@@ -1067,22 +1061,22 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     }
 
     /**
-     * Handles a {@code Map}-typed member as a distinct position (rest-023 T003, {@code D001}): emits the
-     * Q1 WARN when the member or its getter carries an {@code @Schema(additionalProperties = ...)}
-     * annotation (ignored either way — the map's entries are its own content, so there is nothing
-     * "additional" to forbid), and — only when the member's own value position carries a walk-vocabulary
-     * type-use overlay anywhere in its own, possibly nested, {@code Map} content (N1, N9) — renders the
-     * member's own schema entirely inline, never asking the schema library for a {@code FieldScope}/
-     * {@code MethodScope}-based definition at all for this member. This is the N1 leakage control: two
-     * members can share the exact same underlying {@code Map<K,V>} type while only one of them carries a
-     * type-use overlay on {@code V}, and {@link #provideCustomSchemaDefinition} receives only the
-     * resolved type, never the member — so a member-specific overlay can never safely be written into
-     * whatever definition the schema library might create or share for that type. Returns {@code null}
-     * when the member carries no overlay at all (including when it has no recognizable {@link
-     * AnnotatedType} of its own — a raw, non-parameterized {@code Map} declaration, or a member kind this
-     * method does not resolve one for), leaving the caller's own pre-existing field/method/parameter
-     * dispatch to render it exactly as before this task — now correctly reaching {@link #describeMapLike}
-     * for the base rendering, this task's own reachability fix.
+     * Handles a {@code Map}-typed member as a distinct position: logs a WARN when the member or its getter
+     * carries an {@code @Schema(additionalProperties = ...)} annotation (ignored either way — the map's
+     * entries are its own content, so there is nothing "additional" to forbid), and — only when the
+     * member's own value position carries a walk-vocabulary type-use overlay anywhere in its own, possibly
+     * nested, {@code Map} content — renders the member's own schema entirely inline, never asking the
+     * schema library for a {@code FieldScope}/{@code MethodScope}-based definition at all for this member.
+     * This is the shared-definition leakage control: two members can share the exact same underlying
+     * {@code Map<K,V>} type while only one of them carries a type-use overlay on {@code V}, and {@link
+     * #provideCustomSchemaDefinition} receives only the resolved type, never the member — so a
+     * member-specific overlay can never safely be written into whatever definition the schema library
+     * might create or share for that type. Returns {@code null} when the member carries no overlay at all
+     * (including when it has no recognizable {@link AnnotatedType} of its own — a raw, non-parameterized
+     * {@code Map} declaration, or a member kind this method does not resolve one for), leaving the
+     * caller's own field/method/parameter dispatch to render it through the ordinary per-type lookup,
+     * which reaches {@link #describeMapLike} for the base rendering through the map-like carve-out in
+     * {@link #provideCustomSchemaDefinition}.
      *
      * @param property   the property being described
      * @param member     the property's own Jackson member, possibly {@code null}
@@ -1125,12 +1119,12 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     }
 
     /**
-     * Emits the Q1 WARN (rest-023 T003, {@code D001}, owner decision Q1) exactly once, naming {@code
-     * member}'s own declaring class and name, when {@code member} (or its paired field/getter, through
-     * Jackson's own merged annotation resolution — the same {@code member.getAnnotation(Schema.class)}
-     * lookup {@link #translateConstraints} already uses) carries an {@code @Schema(additionalProperties =
-     * TRUE|FALSE)} declaration. The annotation has no effect on the generated input schema for a
-     * {@code Map}-typed member either way; this WARN is the only new behavior this rule adds. Never fails
+     * Emits a WARN exactly once, naming {@code member}'s own declaring class and name, when {@code
+     * member} (or its paired field/getter, through Jackson's own merged annotation resolution — the same
+     * {@code member.getAnnotation(Schema.class)} lookup {@link #translateConstraints} already uses)
+     * carries an {@code @Schema(additionalProperties = TRUE|FALSE)} declaration. The annotation has no
+     * effect on the generated input schema for a {@code Map}-typed member either way; this WARN is the
+     * annotation's only observable effect, so the ignored declaration is never silent. Never fails
      * generation.
      *
      * @param member     the property's own Jackson member, possibly {@code null}
@@ -1156,7 +1150,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     }
 
     /**
-     * Whether {@code member} itself carries {@code @Schema(additionalProperties = FALSE)} (D005, T005) —
+     * Whether {@code member} itself carries {@code @Schema(additionalProperties = FALSE)} —
      * read through the same {@code member.getAnnotation(Schema.class)} lookup {@link
      * #translateConstraints} and {@link #warnIfAdditionalPropertiesAnnotationIgnored} already use, never
      * live reflection on the member's own value type.
@@ -1769,20 +1763,19 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             Set.of("maximum", "exclusiveMaximum", "maxLength", "maxItems", "maxProperties");
 
     /**
-     * Applies one #606 correction keyword onto a schema the floor already wrote to.
+     * Applies one supplement correction keyword onto a schema the floor already wrote to.
      *
-     * <p>F7 (security review round 1, LOW): a correction is keyed by annotation type but applied by
-     * keyword, unconditionally — before this method existed, a correction from a different annotation
-     * than the one the floor rendered from (e.g. {@code @Range(min = 10, max = 20)} correcting over a
-     * floor {@code minimum: 15} rendered from a separate {@code @Min(15)}) silently overwrote a
-     * <em>stricter</em> value the floor already had right, loosening the gate below both the floor and
-     * the binder — Bean Validation enforces the conjunction of every constraint on a member, not only
-     * the last one rendered. When both the floor and this correction set the same bound keyword, the
-     * stricter of the two now wins: for a "min" keyword the larger value, for a "max" keyword the
-     * smaller one. For {@code pattern}, where "stricter" has no total order, both patterns are kept, as
-     * an {@code allOf} of two single-{@code pattern} subschemas — the same shape {@link #putKeyword}
-     * already renders for two {@code @Pattern} constraints from the <em>same</em> source (S5). Every
-     * other keyword keeps the pre-existing unconditional-overwrite behavior.
+     * <p>A correction is keyed by annotation type but applied by keyword. Written unconditionally, a
+     * correction from a different annotation than the one the floor rendered from (e.g.
+     * {@code @Range(min = 10, max = 20)} correcting over a floor {@code minimum: 15} rendered from a
+     * separate {@code @Min(15)}) would silently overwrite a <em>stricter</em> value the floor already had
+     * right, loosening the gate below both the floor and the binder — Bean Validation enforces the
+     * conjunction of every constraint on a member, not only the last one rendered. When both the floor
+     * and this correction set the same bound keyword, the stricter of the two wins: for a "min" keyword
+     * the larger value, for a "max" keyword the smaller one. For {@code pattern}, where "stricter" has no
+     * total order, both patterns are kept, as an {@code allOf} of two single-{@code pattern} subschemas —
+     * the same shape {@link #putKeyword} renders for two {@code @Pattern} constraints from the
+     * <em>same</em> source. Every other keyword is overwritten unconditionally.
      *
      * @param schema the schema the floor already wrote to
      * @param key    the correction's keyword
@@ -1837,16 +1830,17 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      *
      * <p>Excepted: when {@code candidatePattern} is exactly {@code existingPattern} with an inline Java
      * regex modifier group embedded around it — {@link MetadataConstraintSource#renderPattern}'s own
-     * shape for a single {@code @Pattern}'s flags (#606) — the two values are not two different
+     * shape for a single {@code @Pattern}'s flags — the two values are not two different
      * annotations in conflict, only the same one rendered twice at different fidelity: the floor (the
      * schema library's own Jakarta module, or {@link WalkConstraintSource} for an unscoped member)
      * embeds no flags, and this correction is the flag-aware rendering of that identical regexp. The
-     * more complete rendering replaces the floor's own outright, exactly as it did before F7 (proven by
+     * more complete rendering replaces the floor's own outright (proven by
      * {@code MetadataConstraintSourceCoverageTest#sharp606Shapes}), rather than being combined with it
      * into a redundant {@code allOf}.
      *
      * <p>Appends to an existing {@code allOf} array rather than replacing it, so a genuine two-source
-     * conflict composes with S5's own same-source multi-pattern rendering instead of discarding it.
+     * conflict composes with {@link #putKeyword}'s own same-source multi-pattern {@code allOf} instead
+     * of discarding it.
      */
     static void mergePatternAsAllOf(ObjectNode schema, String existingPattern, String candidatePattern) {
         if (existingPattern.equals(candidatePattern)) {
@@ -1921,14 +1915,14 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * when that subschema is an inline object — a {@code $ref}'d items subschema is left unchanged,
      * the same gap the generator already accepts for a {@code Map} value position.
      *
-     * <p>{@code "allOf"} is also special (S5): its value is a {@link List} of pattern strings, rendered
+     * <p>{@code "allOf"} is also special: its value is a {@link List} of pattern strings, rendered
      * as {@code allOf} branches of single-keyword {@code {"pattern": ...}} objects — the shape two
      * {@code @Pattern} constraints in the default group on one member need, since the schema's
      * {@code pattern} keyword itself can only ever hold one regular expression. This follows the same
-     * rule the supplement's corrections follow (FR-009 of the rest-021 package: a constraint keyword is
-     * never removed): an existing {@code allOf} array is appended to, never replaced, and a pattern
-     * already carried by one of its branches is skipped rather than duplicated — the same composition
-     * {@link #mergePatternAsAllOf} already performs for a {@code "pattern"} correction.
+     * rule the supplement's corrections follow (a constraint keyword is never removed): an existing
+     * {@code allOf} array is appended to, never replaced — as {@link #mergePatternAsAllOf} also does for
+     * a {@code "pattern"} correction — and a pattern already carried by one of its branches is skipped
+     * rather than duplicated.
      */
     @SuppressWarnings("unchecked")
     private static void putKeyword(ObjectNode schema, String key, Object value) {
@@ -2049,13 +2043,13 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     // ---------------------------------------------------------------- extras, aliases, reserved names
 
     /**
-     * Publishes the conjunction of every any-setter's own extras beside the named properties (D004),
+     * Publishes the conjunction of every any-setter's own extras beside the named properties,
      * unless the class declares {@code @Schema(additionalProperties = FALSE)}, whose restriction the
      * Swagger module then publishes unopposed.
      *
-     * <p>One any-setter renders byte-identically to before this task (the shared renderer's own plain
-     * value schema, per {@link ValuePositionRenderer#renderConjunction}); more than one — the parent's
-     * own plus every unwrapped sibling's own (D004) — renders their conjunction, {@code {"allOf": [...]}}
+     * <p>One any-setter renders the shared renderer's own plain value schema (per {@link
+     * ValuePositionRenderer#renderConjunction}); more than one — the parent's own plus every unwrapped
+     * sibling's own — renders their conjunction, {@code {"allOf": [...]}}
      * of each any-setter's own value schema, including its own type-use overlay. The key-count bound
      * (below) takes the strictest {@code @Size}/{@code @Schema(minProperties/maxProperties)} across
      * every any-setter in the set, never an {@code allOf} of {@code maxProperties} values.
@@ -2078,13 +2072,13 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         List<AnnotatedMember> members = new ArrayList<>(anySetters.size());
         for (SettableAnyProperty anySetter : anySetters) {
             JavaType valueType = anySetter.getType();
-            // rest-023 T003 (D001, N16/N9): the any-setter's own value position's AnnotatedType, read
-            // off its own backing field/method's declared Map<K,V> type through the type-parameter
-            // binding (ValuePositionRenderer.mapValueSlotOfMember), so a type-use constraint on V (N16)
-            // — and, recursively, on a nested map's own V (N9) — overlays that any-setter's own value
-            // schema through the shared renderer, exactly like a named member's own map position (T001
-            // left this null; T003 wires the real AnnotatedType through, see ValuePositionRenderer's own
-            // class Javadoc).
+            // The any-setter's own value position's AnnotatedType, read off a Map-typed any-setter field's
+            // declared Map<K,V> type through the type-parameter binding
+            // (ValuePositionRenderer.mapValueSlotOfMember), so a type-use constraint on V — and,
+            // recursively, on a nested map's own V — overlays that any-setter's own value schema through
+            // the shared renderer, exactly like a named member's own map position (see
+            // ValuePositionRenderer's own class Javadoc). A two-argument any-setter method declares no Map
+            // type, so the helper answers null there and no type-use overlay applies.
             AnnotatedMember member = anySetter.getProperty() == null
                     ? null
                     : anySetter.getProperty().getMember();
@@ -2105,13 +2099,13 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             definition.set("additionalProperties", valueSchema);
         }
         // A bound on an any-setter's own map itself — @Size on the field, @Schema(minProperties/
-        // maxProperties) on the member — is a bound on the shared object's key count. D004: the
-        // stricter @Size-derived value across every any-setter in the set is the constraint-source
-        // floor, written first with a plain put(...); the Swagger value from any member is then routed
-        // through applyCorrection (S1, the same rule the supplement's corrections follow — FR-009 of the
-        // rest-021 package) so a looser @Schema(minProperties/maxProperties) never overwrites a stricter
-        // bound already written for the same keyword — one keyword each on the object, never an allOf of
-        // maxProperties/minProperties values.
+        // maxProperties) on the member — is a bound on the shared object's key count. The stricter
+        // @Size-derived value across every any-setter in the set is the constraint-source floor,
+        // written first with a plain put(...); the Swagger value from any member is then routed through
+        // applyCorrection (the same stricter-wins rule the supplement's corrections follow) so a looser
+        // @Schema(minProperties/maxProperties) never overwrites a stricter bound already written for the
+        // same keyword — one keyword each on the object, never an allOf of maxProperties/minProperties
+        // values.
         Integer maxProperties = null;
         Integer minProperties = null;
         for (AnnotatedMember member : members) {
@@ -2153,10 +2147,10 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
 
     /**
      * The {@link ValuePositionRenderer.InlineComposer} supplied to {@link #valuePositionRenderer} at
-     * construction (rest-023 T001, C6). Called by {@link ValuePositionRenderer#renderConjunction} (D004,
-     * T004) for a conjunction position's own subschema whose value type is not profile-overridden (the
-     * override carve-out is applied by the renderer itself, before this callback is ever reached), and
-     * by D005's own member-level inline path (T005).
+     * construction. Called by {@link ValuePositionRenderer#renderConjunction} for a conjunction position's
+     * own subschema whose value type is not profile-overridden (the override carve-out is applied by the
+     * renderer itself, before this callback is ever reached); it shares its inline-description tail
+     * ({@link #inlineMemberSchema}) with the member-level inline branch in {@link #propertySchema}.
      *
      * <p>Mirrors {@link #describe}'s own bean classification, so a non-bean value type — a JDK/foreign
      * scalar, a {@code Map}-like type, a polymorphic base, or an opaque wrapper this class's own field
@@ -2164,24 +2158,22 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * {@code null}, and the renderer falls back to its own ordinary (non-inline) rendering for that
      * position. Only a value type that <em>does</em> resolve to a {@link BeanDeserializerBase} is
      * inlined; a type that looks bean-like yet resolves to a genuine custom deserializer is refused with
-     * the same bounded diagnostic {@link #describe} throws for the same shape (F1).
+     * the same bounded diagnostic {@link #describe} throws for the same shape.
      *
-     * <p>D004, D005 § Recursion bound (security round-3 MEDIUM): the bean type is registered in {@link
-     * #inlineInProgress} — a set distinct from {@link #inProgress} — for the duration of its own inline
-     * population, and re-entry (from either set) is refused with a bounded diagnostic naming the member
-     * and the remedy, never silently recursed and never left to the provider's own standard,
-     * reflection-built {@code $defs} fallback (see {@link #provideCustomSchemaDefinition}'s own added
-     * guard).
+     * <p>Recursion bound: the bean type is registered in {@link #inlineInProgress} — a set distinct from
+     * {@link #inProgress} — for the duration of its own inline population, and re-entry (from either set)
+     * is refused with a bounded diagnostic naming the member and the remedy, never silently recursed and
+     * never left to the provider's own standard, reflection-built {@code $defs} fallback (see {@link
+     * #provideCustomSchemaDefinition}'s own inline re-entry guard).
      *
      * @param beanType   the value type to inline, or render normally when it is not bean-like
-     * @param memberName the any-setter's own member name, or D005's own member name, for the recursion
-     *                   diagnostic
+     * @param memberName the position's own member name, for the recursion and custom-deserializer
+     *                   diagnostics
      * @param context    the active generation context
      * @return the inlined object (or scalar-creator) schema, or {@code null} when {@code beanType} is
      *     not bean-like and must be rendered by the renderer's own ordinary path instead
      * @throws JsonSchemaGenerationException when {@code beanType} resolves to a genuine custom
-     *     deserializer (F1), or re-enters a type already being described inline or by reference (D005
-     *     § Recursion bound)
+     *     deserializer, or re-enters a type already being described inline or by reference
      */
     private JsonNode inlineBeanSchema(JavaType beanType, String memberName, SchemaGenerationContext context) {
         Class<?> erased = beanType.getRawClass();
@@ -2216,26 +2208,26 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             }
             throw refuseCustomDeserializer(beanType, deserializer, memberName);
         }
-        // D005, T005: the registration/refusal/requireNotDelegating/scalar-creator/populateObjectSchema
-        // tail is shared with the member-level inline-closure branch in propertySchema, rather than
-        // re-implemented here — see inlineMemberSchema's own Javadoc. The renderer's own override carve-
-        // out (this method's own class Javadoc) means the override-first check inside inlineMemberSchema
-        // never actually fires from this call site; extrasSuppressed is always false here, since a
-        // conjunction position's own extras suppression belongs to D004's own scope, not D005's.
+        // The registration/refusal/requireNotDelegating/scalar-creator/populateObjectSchema tail is
+        // shared with the member-level inline-closure branch in propertySchema, rather than
+        // re-implemented here — see inlineMemberSchema's own Javadoc. The renderer's own override
+        // carve-out (see ValuePositionRenderer#renderConjunctionMember) means the override-first check
+        // inside inlineMemberSchema never actually fires from this call site; extrasSuppressed is always
+        // false here, since extras suppression is decided only by the member-level inline branch, never
+        // at a conjunction position.
         return inlineMemberSchema(beanType, bean, memberName, false, context);
     }
 
     /**
-     * The shared inline-description tail (D005, T005) reused by both {@link #inlineBeanSchema} (D004's
-     * own any-setter-conjunction composition) and the member-level case-insensitive/{@code FALSE} branch
-     * in {@link #propertySchema}: the override-first check, the distinct {@link #inlineInProgress}
-     * recursion bound (shared with {@link #inProgress}, refusing re-entry from either set), {@link
-     * #requireNotDelegating}, the scalar-creator check, and {@link #populateObjectSchema} itself — see
-     * {@code decisions/D005-...} § Recursion bound for the exact shape this method implements verbatim.
+     * The shared inline-description tail reused by both {@link #inlineBeanSchema} (the
+     * any-setter-conjunction composition) and the member-level case-insensitive/{@code FALSE} branch in
+     * {@link #propertySchema}: the override-first check, the distinct {@link #inlineInProgress} recursion
+     * bound (shared with {@link #inProgress}, refusing re-entry from either set), {@link
+     * #requireNotDelegating}, the scalar-creator check, and {@link #populateObjectSchema} itself.
      *
      * <p>An override on {@code memberType} is handled differently depending on {@code extrasSuppressed}:
      * a plain case-insensitive-inline member (extras not suppressed) keeps its override's own {@code
-     * $ref} exactly as before this task, signaled by a {@code null} return so the caller falls back to an
+     * $ref}, signaled by a {@code null} return so the caller falls back to an
      * ordinary reference; a member whose {@code FALSE} annotation would suppress extras cannot honor that
      * annotation from an overridden value type at all, so generation refuses instead of silently dropping
      * either the override or the {@code FALSE}.
@@ -2245,7 +2237,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * @param memberName       the member's own wire name (or the any-setter's own member name, for {@link
      *                         #inlineBeanSchema}'s own call), named in a recursion or override-precedence
      *                         diagnostic
-     * @param extrasSuppressed whether the member's own extras are suppressed (D005): when {@code true},
+     * @param extrasSuppressed whether the member's own extras are suppressed: when {@code true},
      *                         a profile override on {@code memberType} is refused rather than kept as a
      *                         reference
      * @param context          the active generation context
@@ -2253,7 +2245,6 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      *     caller must fall back to an ordinary reference instead
      * @throws JsonSchemaGenerationException when an extras-suppressed override applies, a delegating
      *     creator is reached, or {@code memberType} is already being described inline or by reference
-     *     (D005 § Recursion bound)
      */
     private ObjectNode inlineMemberSchema(
             JavaType memberType,
@@ -2475,12 +2466,12 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * recorded with the mark, so the finished document renders exactly as the library's own walk
      * would.
      *
-     * <p>Package-private (rest-023 T001, C6) so {@link ValuePositionRenderer}'s own nullability step
-     * can share it once a later task (T002, {@code D002}) activates that step for an {@code
-     * Optional}-typed value position; the two existing named-member callers here ({@code fieldSchema},
-     * {@code methodSchema}) are unchanged by this task. {@link #NULLABLE_MARKER} and {@link
-     * #WRAPPING_KEYWORDS} stay here, consulted only by this method and by {@link
-     * #applyNullability(JsonNode)}, the generator's own document-level post-pass — neither moves.
+     * <p>Package-private so {@link ValuePositionRenderer}'s own nullability step can share it for an
+     * {@code Optional}-typed value position, alongside the named-member callers here ({@code
+     * fieldSchema}, {@code methodSchema}). {@link #WRAPPING_KEYWORDS} is consulted only by this method and
+     * by {@link #applyNullability(JsonNode)}, the generator's own document-level post-pass; {@link
+     * #NULLABLE_MARKER} is also read by the profile-fragment check in {@link ValidatedProfile}, which
+     * refuses an override fragment that already carries it.
      */
     static void markNullable(ObjectNode schema) {
         boolean wrap = WRAPPING_KEYWORDS.stream().anyMatch(schema::has);
@@ -2780,7 +2771,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     private static final List<String> ACCESSOR_PREFIXES = List.of("get", "set", "with", "is");
 
     /**
-     * The single accessor-prefix-stripping helper (S4), used everywhere a method name is reduced to
+     * The single accessor-prefix-stripping helper, used everywhere a method name is reduced to
      * the property name it implies: {@link #impliedFieldName}, {@link #getterBeanName}, and
      * {@link #impliedAccessorName} each call this with their own prefix list.
      *
@@ -3112,8 +3103,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     /**
      * Resolves a Jackson-resolved type into the schema library's type model.
      *
-     * <p>Package-private (rest-023 T001, C6) so {@link ValuePositionRenderer#renderValueSchema} can
-     * share it rather than duplicate it; every other call site in this class is unchanged by this task.
+     * <p>Package-private so {@link ValuePositionRenderer} can share it rather than duplicate it.
      */
     static ResolvedType resolve(SchemaGenerationContext context, JavaType type) {
         return context.getTypeContext().resolve(toResolvedType(type));

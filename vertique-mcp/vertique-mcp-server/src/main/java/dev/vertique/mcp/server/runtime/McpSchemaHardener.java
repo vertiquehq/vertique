@@ -30,7 +30,7 @@ import java.util.Objects;
  *       descends into that declared schema, closing the value type like any other subschema. A
  *       property-less non-root object — a resolved map included — is never closed this way: the
  *       hardener never treats a map's own absence of a {@code properties} member as
- *       under-description. On the input direction (rest-023 T003) a resolved map already carries its
+ *       under-description. On the input direction a resolved map already carries its
  *       own {@code additionalProperties} — the value type's own schema, or an open schema for an
  *       unconstrained value type — which the rule above respects and never overwrites, exactly like a
  *       {@code @JsonAnySetter} type's own extras.

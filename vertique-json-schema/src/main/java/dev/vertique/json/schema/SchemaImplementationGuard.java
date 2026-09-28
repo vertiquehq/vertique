@@ -82,10 +82,10 @@ import java.util.function.Supplier;
  * and it must not be narrowed to match it. This guard decides only whether an override <em>could</em>
  * be reachable under a redirect; being fail-closed, it prefers a false rejection, which a developer
  * sees and can resolve by declaring the wire shape once, over a silent drop, which nobody sees. That
- * posture also keeps the walk internally consistent even though it is no longer uniform across
- * directions (rest-023 T003, {@code D001}): an inherited {@link Map} value is now a described position
- * on the input direction, through the shared value-position renderer, so this guard's own walk exactly
- * matches what the input-direction generator actually describes there; the output direction still
+ * posture also keeps the walk internally consistent even though it is not uniform across directions:
+ * an inherited {@link Map} value is a described position on the input direction, through the shared
+ * value-position renderer, so this guard's own walk exactly matches what the input-direction
+ * generator actually describes there; the output direction
  * leaves it undescribed (the generator does not enable {@code Option.MAP_VALUES_AS_ADDITIONAL_PROPERTIES}
  * there), so the walk stays a deliberate over-approximation for that direction alone. This guard's own
  * walk is never narrowed to track that split: it has no way to know which direction is generating, so

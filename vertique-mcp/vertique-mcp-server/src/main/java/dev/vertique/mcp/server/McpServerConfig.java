@@ -99,7 +99,7 @@ public final class McpServerConfig {
      * trace reference is parsed and, once extracted, linked onto the request's OpenTelemetry span
      * Defaults to {@link McpBodyTracePolicy#IGNORE} — mirroring Vert.x's own
      * {@code TracingPolicy} default-off posture, since the body reference is untrusted, client-
-     * supplied data with no trusted upstream gateway to sanitize it by default (D004). Set to
+     * supplied data with no trusted upstream gateway to sanitize it by default. Set to
      * {@link McpBodyTracePolicy#LINK} only for a deployment behind a header-cleaning gateway or with
      * first-party callers.
      */
