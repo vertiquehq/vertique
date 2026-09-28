@@ -6,7 +6,9 @@ package dev.vertique.rest.validation;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.json.DefaultJsonMapperProfileRegistry;
@@ -51,6 +53,9 @@ class SchemaCorpusMetadataCrossCheckTest {
             .buildValidatorFactory()
             .getValidator();
 
+    /** Reads the seam's canonical document text back into a node. */
+    private static final ObjectMapper DOCUMENT_READER = new ObjectMapper();
+
     private static DefaultJsonMapperProfileRegistry builtInRegistry() {
         return new DefaultJsonMapperProfileRegistry(Set.of());
     }
@@ -79,13 +84,22 @@ class SchemaCorpusMetadataCrossCheckTest {
     private static JsonNode metadataDocumentFor(CorpusFixture fixture, JsonMapperProfile profile) {
         MetadataBackedSource source = new MetadataBackedSource();
         Type type = fixture.genericType() != null ? fixture.genericType() : fixture.rawType();
-        return source.generateBodySchema(type, profile);
+        return readDocument(source.generateBodySchema(type, profile).json());
     }
 
     private static JsonNode walkDocumentFor(CorpusFixture fixture, JsonMapperProfile profile) {
         AnnotationSchemaSource source = new AnnotationSchemaSource();
         Type type = fixture.genericType() != null ? fixture.genericType() : fixture.rawType();
-        return source.generateBodySchema(type, profile);
+        return readDocument(source.generateBodySchema(type, profile).json());
+    }
+
+    /** Parses the seam's canonical document text into a node for {@link SchemaCorpusGenerator#render}. */
+    private static JsonNode readDocument(String canonical) {
+        try {
+            return DOCUMENT_READER.readTree(canonical);
+        } catch (JsonProcessingException unreadable) {
+            throw new IllegalStateException("the seam's canonical document is not readable JSON", unreadable);
+        }
     }
 
     static Stream<Arguments> corpusFixtures() {
