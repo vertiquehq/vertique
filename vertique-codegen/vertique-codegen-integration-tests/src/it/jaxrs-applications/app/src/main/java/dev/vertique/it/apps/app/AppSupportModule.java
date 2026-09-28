@@ -59,6 +59,9 @@ final class AppSupportModule {
 
             @Override
             public <T> List<T> parseKeyedObject(JsonObject section, String identityProp, Class<T> elementType) {
+                if (section == null || section.isEmpty()) {
+                    return List.of();
+                }
                 throw new UnsupportedOperationException("not needed by this fixture");
             }
 
