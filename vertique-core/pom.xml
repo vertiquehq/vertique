@@ -95,6 +95,25 @@ SPDX-License-Identifier: EUPL-1.2
     </dependencies>
 
     <build>
+        <pluginManagement>
+            <plugins>
+                <!-- PIT runs every test in one JVM and reads only plugin-level Surefire settings,
+                     so it cannot reproduce the two Surefire executions below: its minions get the
+                     reset flag and the flagless refusal proof stays with Surefire. -->
+                <plugin>
+                    <groupId>org.pitest</groupId>
+                    <artifactId>pitest-maven</artifactId>
+                    <configuration>
+                        <jvmArgs>
+                            <jvmArg>-Dvertique.json.codec.allowReset=true</jvmArg>
+                        </jvmArgs>
+                        <excludedTestClasses combine.children="append">
+                            <param>*VertiqueJsonCodecResetGateTest</param>
+                        </excludedTestClasses>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
         <plugins>
             <!-- The process-codec proof (VertiqueJsonCodecTest) installs mappers into the
                  process-global Vertique JSON codec and must restore the raw Vert.x delegate in
