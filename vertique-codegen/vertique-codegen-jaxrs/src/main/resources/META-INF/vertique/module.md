@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Beta
 > **Package:** `dev.vertique.codegen.jaxrs`
 > **Artifact:** `vertique-codegen-jaxrs`
-> **Depends on:** `vertique-codegen-core` (compile), `vertique-rest-core` (compile — for `dev.vertique.rest.core.security.Authorized`), `vertique-rest-jaxrs` (compile — runtime SPI types)
+> **Depends on:** `vertique-codegen-core` (compile), `vertique-rest-core` (compile — for `dev.vertique.rest.core.security.Authorized`), `vertique-security-core` (compile), `vertique-input-processing` (compile), `jakarta.annotation-api` (compile), `swagger-annotations-jakarta` (compile), `vertique-rest-jaxrs` (test — the generated sources reference its runtime SPI types, so the consuming application declares it), `jakarta.ws.rs-api` (test)
 
 `vertique-codegen-jaxrs` is a unified annotation processor that owns the entire compile-time JAX-RS pipeline: discovery, effective-contract resolution, validation, Dagger DI binding emission, and runtime performance optimization via generated descriptor, bean-param model, and execution plan companions.
 
@@ -81,9 +81,9 @@ For a parameterized collection (`List<T>`, `Set<T>`, `SortedSet<T>`, `NavigableS
 | `HttpVerbValidator` | Tier-B guardrail: error on multiple HTTP verb annotations on a single method. |
 | `PathParamAlignmentValidator` | Bidirectional check between `@Path` placeholders and `@PathParam` declarations. Handles `@BeanParam` and `@RequestParams` composite types including record components. |
 | `BodyFormValidator` | Mirrors `RouteValidator.validateMethodParams`: at most one body parameter; body and form parameters mutually exclusive. |
-| `ApplicationAnnotationValidator` | Checks every eligible `jakarta.ws.rs.core.Application`'s annotation scope — the application, its superclasses strictly below `jakarta.ws.rs.core.Application`, and every interface any of them implements, transitively including superinterfaces — against the fixed application annotation allow list, right after `JaxRsApplicationScanner.scan` and before `JaxRsApplicationScanner.validate` runs; see "Application Annotation Allow List" below. |
+| `ApplicationAnnotationValidator` | Checks every `@RestApplication` declaration not annotated `@NoAutoWire` — the declaring interface and every superinterface, transitively — against the declaration annotation allow list, and the declaration's `@ApiDocs` against the documentation access rules; see "Declaration Annotation Allow List" and "`@ApiDocs` Checks" below. |
 
-`ContextParamValidator` runs first, before the remaining four resource-contract validators — see the short-circuit behavior noted under "Validation Rules" below. Those five validators take `EffectiveResourceContract`; `ApplicationAnnotationValidator` instead validates an eligible application's annotation scope directly, against the list `JaxRsApplicationScanner.scan` produces.
+`ContextParamValidator` runs first, before the remaining four resource-contract validators — see the short-circuit behavior noted under "Validation Rules" below. Those five validators take `EffectiveResourceContract`; `ApplicationAnnotationValidator` instead checks the `@RestApplication` declarations directly.
 
 ### Generated Artifacts
 
@@ -91,7 +91,7 @@ Four artifact types are emitted for every semantic candidate:
 
 | Artifact | What it does |
 |---|---|
-| `GeneratedJaxRsResourcesModule` Dagger module | A presence-gated `@Provides @ElementsIntoSet @JaxRsResources Set<Object>` binding and a lazy `GeneratedJaxRsResourceEntry` catalog entry for each DI-eligible resource, plus a `GeneratedJaxRsApplicationRegistration` for each eligible `jakarta.ws.rs.core.Application` subtype — see "Generated Binding Shape" below |
+| `GeneratedJaxRsResourcesModule` Dagger module | A presence-gated `@Provides @ElementsIntoSet @JaxRsResources Set<Object>` binding and a lazy `GeneratedJaxRsResourceEntry` catalog entry for each DI-eligible resource, plus a `GeneratedRestApplicationRegistration` for each registered `@RestApplication` declaration — see "Generated Binding Shape" below |
 | `{Resource}_JaxRsDescriptor` | Precomputes `SecurityPolicy` constants and method/parameter metadata, eliminating the reflective `getDeclaredMethods()` walk at startup |
 | `{Bean}_BeanParamModel` | Static field-metadata list per `@BeanParam`/`@RequestParams` type, eliminating the reflective bean-field scan |
 | `{Resource}_{methodName}_{idx}_ExecutionPlan` | Precomputed `EffectiveInputPolicies` (`dev.vertique.input.processing`) constants plus a direct typed method call, eliminating `Method.invoke` from the request hot path. For `CONTEXT` parameters, emits a static `Class<?>` constant (`CTX{i}`) loaded once at class-initialization time and a `support.resolveContext(CTX{i}, ctx, "<declaringClassFqn>", "<method>")` call per parameter — no per-request reflection, no `ParamMeta`/policy entry for `CONTEXT` params |
@@ -102,13 +102,13 @@ Only the Dagger module row is gated by DI eligibility (see "Semantic vs. DI cand
 
 ## Generated Binding Shape
 
-Each compilation unit's `GeneratedJaxRsResourcesModule` keeps one name and stays a concrete Dagger module. It is written only when the unit has at least one DI-eligible resource or at least one eligible `jakarta.ws.rs.core.Application` subtype (see "Application Registrations" below); when neither is present, nothing is written. Its package is resolved from the unit's DI-eligible resources whenever it has any; only in an applications-only unit does the set of eligible applications decide the package instead — so adding an `Application` to a unit that already has resources never moves that unit's existing module.
+Each compilation unit's `GeneratedJaxRsResourcesModule` keeps one name and stays a concrete Dagger module. It is written only when the unit has at least one DI-eligible resource or at least one registered `@RestApplication` declaration (see "REST Application Declarations" below); when neither is present, nothing is written. Its package is resolved from the unit's DI-eligible resources whenever it has any; only in a unit without them do its declarations decide the package instead — so adding a declaration to a unit that already has resources never moves that unit's existing module. A `jakarta.ws.rs.core.Application` subclass counts toward neither (see "Jakarta `Application` Subclasses" below).
 
 ### Resource Bindings
 
 Every DI-eligible resource `R` gets two `@Provides` methods, both taking `@VertxConfig JsonObject config` whether or not `R` carries `@ConditionalOnProperty`:
 
-- a presence-gated `@Provides @ElementsIntoSet @JaxRsResources Set<Object>` binding, named by `R`'s decapitalized simple name plus `Binding`, that also takes `Set<GeneratedJaxRsApplicationRegistration> applications` and a `Provider<R>`, and contributes `R` only when `applications` is empty (no application is registered in this composition) and `R`'s own conditions, if any, are satisfied;
+- a presence-gated `@Provides @ElementsIntoSet @JaxRsResources Set<Object>` binding, named by `R`'s decapitalized simple name plus `Binding`, that also takes `Set<GeneratedRestApplicationRegistration> applications` and a `Provider<R>`, and contributes `R` only when `applications` is empty (the component registers no `@RestApplication` declaration) and `R`'s own conditions, if any, are satisfied;
 - a lazy `@Provides @IntoSet GeneratedJaxRsResourceEntry` catalog entry, named by `R`'s decapitalized simple name plus `Entry`, carrying `R`'s class, its evaluated condition result, and its `Provider<R>` — it never calls the provider.
 
 **Unconditional resource binding** (`CatalogResource`, no `@ConditionalOnProperty`):
@@ -118,7 +118,7 @@ Every DI-eligible resource `R` gets two `@Provides` methods, both taking `@Vertx
 @ElementsIntoSet
 @JaxRsResources
 static Set<Object> catalogResourceBinding(@VertxConfig JsonObject config,
-        Set<GeneratedJaxRsApplicationRegistration> applications, Provider<CatalogResource> provider) {
+        Set<GeneratedRestApplicationRegistration> applications, Provider<CatalogResource> provider) {
     return applications.isEmpty() ? Set.of(provider.get()) : Set.of();
 }
 
@@ -141,7 +141,7 @@ private static final PropertyCondition[] DISABLED_RESOURCE_BINDING_CONDITIONS = 
 @ElementsIntoSet
 @JaxRsResources
 static Set<Object> disabledResourceBinding(@VertxConfig JsonObject config,
-        Set<GeneratedJaxRsApplicationRegistration> applications,
+        Set<GeneratedRestApplicationRegistration> applications,
         Provider<DisabledResource> provider) {
     return applications.isEmpty()
             && PropertyCondition.matchesAll(config, DISABLED_RESOURCE_BINDING_CONDITIONS)
@@ -162,23 +162,21 @@ The condition constant's name is the binding method's own name upper-cased to `S
 
 Inactive resources are never instantiated (lazy `Provider` injection): the binding calls `provider.get()` only when it contributes, and the catalog entry only hands its `Provider` to the runtime, which calls it for a resource that a declared application selects and whose conditions match. Descriptor, bean-param model, and execution-plan companions are still emitted for all semantic candidates — only the DI set contribution and the catalog entry's condition flag follow the gate.
 
-### Application Registrations
+### Jakarta `Application` Subclasses
 
-Every eligible `jakarta.ws.rs.core.Application` subtype `A` — concrete, top-level or static nested at any depth, and not annotated `@NoAutoWire` — gets one `@Provides @IntoSet GeneratedJaxRsApplicationRegistration` method, named by `A`'s decapitalized simple name plus `Registration`, taking `@VertxConfig JsonObject config`:
+The processor never registers a `jakarta.ws.rs.core.Application` subclass and emits no construction code for one: a REST application is declared with `@RestApplication` instead (see "REST Application Declarations" below). Every concrete subclass — top-level or nested at any depth, static or not — gets exactly one mandatory warning: its binary name followed by static text, the same for every subclass:
 
-```java
-@Provides
-@IntoSet
-static GeneratedJaxRsApplicationRegistration managementApplicationRegistration(
-        @VertxConfig JsonObject config) {
-    return GeneratedJaxRsApplicationRegistration.of(
-            ManagementApplication.class, "/api/mgmt", true, ManagementApplication::new);
-}
+```text
+{Application}: @ApplicationPath and getClasses() have no effect; with no @RestApplication declared in the component, its resources are served on the legacy default mount at jaxrs.basePath; otherwise they are served only where a @RestApplication lists them; declare an application with @RestApplication
 ```
 
-`A::new` is the factory argument when `A` has no `@Inject` constructor, as shown above. When `A` has exactly one `@Inject` constructor (`jakarta` or `javax`) instead, the method additionally takes a `Provider<A>` parameter and passes it as the factory argument in place of `A::new`.
+The text cannot be specific to one subclass, because neither a `getClasses()` body nor another compilation unit's declarations are visible at compile time. The warning is the only diagnostic a subclass gets, whatever its constructors, annotations, or `@ApplicationPath`, and it is the same under `-Avertique.codegen.autoWire=false`. It never fails compilation by itself, but a build that treats warnings as errors (for example, one compiled with `-Werror`) fails on it. Annotate the subclass `@NoAutoWire` to suppress the warning. A subclass counts toward neither the module-writing condition nor package resolution (see "Generated Binding Shape" above); to port one, see "Porting a Jakarta `Application` Subclass" below.
 
-The path argument is `A`'s `@ApplicationPath` value, read from `A` itself or the nearest superclass that carries it (an interface is never read), then normalized at compile time: an empty value, or one with no leading `/`, is anchored to `/`; one terminal `/*` and every trailing `/` are then removed — so `/api/public/` and `/api/public/*` both normalize to `/api/public`, and a value of `/` or `/*` normalizes to `/`.
+**Local and anonymous subclasses are invisible to the processor.** A subclass declared inside a method body (a local class), or as an anonymous class expression, is not among the round's root elements the processor scans, so it gets no warning.
+
+### Application Path Grammar
+
+A `@RestApplication` declaration's `path` (see "REST Application Declarations" below) is normalized at compile time: an empty value, or one with no leading `/`, is anchored to `/`; one terminal `/*` and every trailing `/` are then removed — so `/api/public/` and `/api/public/*` both normalize to `/api/public`, and a value of `/` or `/*` normalizes to `/`.
 
 The normalized path must then consist only of `/` and the RFC 3986 unreserved characters (`A-Z a-z 0-9 . _ ~ -`), or compilation fails with the first matching rule, in this order:
 
@@ -195,37 +193,38 @@ The normalized path must then consist only of `/` and the RFC 3986 unreserved ch
 
 A `.` inside a segment (`v1.0`) is fine — only a segment consisting solely of `.` or `..` is a dot segment.
 
-The condition argument follows the same `PropertyCondition.matchesAll(config, …_CONDITIONS)` rule as a resource binding, or `true` when `A` carries no `@ConditionalOnProperty`.
+### Declaration Annotation Allow List
 
-**Naming.** A registration method's base name is `A`'s decapitalized simple name plus `Registration`. When two eligible applications in one unit share a simple name (in different enclosing scopes), the processor appends `_2`, `_3`, and so on to the later ones, in fully-qualified-name order.
+Every `@RestApplication` declaration not annotated `@NoAutoWire` is checked against a fixed annotation allow list. The checked scope is the declaring interface and every superinterface, transitively. Only annotations on the type declarations in that scope are checked — an annotation on a member, such as a constant or a `default` method, is never inspected — and a repeatable container annotation (for example the compiler-synthesized `ConditionalOnProperties` when two or more `@ConditionalOnProperty` annotations appear on one type) is checked as an annotation in its own right, not unwrapped into its repeated elements.
 
-**Local and anonymous subclasses are invisible to the processor.** A `jakarta.ws.rs.core.Application` subclass declared inside a method body (a local class), or as an anonymous class expression, is not among the round's root elements the processor scans, so it is neither registered nor reported — no diagnostic names it. Declare every `Application` subclass as a top-level class, or a static nested class at any depth, so the processor can see it.
+The declaring interface may carry only:
 
-### Application Annotation Allow List
+- `@RestApplication`;
+- `@ApiDocs` (`dev.vertique.rest.openapi.docs.ApiDocs`), itself checked as described under "`@ApiDocs` Checks" below;
+- `@io.swagger.v3.oas.annotations.OpenAPIDefinition` in which every element other than `info` equals its declared default;
+- the `SOURCE`-retained `@ConditionalOnProperty` (single or repeated) and `@NoAutoWire`;
+- annotation types in the packages `java.lang` and `java.lang.annotation`, such as `@Deprecated`.
 
-Every eligible application `A` is also checked against a fixed annotation allow list, covering a wider scope than path resolution uses: `A` itself, every superclass of `A` strictly below `jakarta.ws.rs.core.Application` (nearest first), and every interface any of them implements, transitively including superinterfaces — path resolution reads only `A` and its superclasses; an interface is never read for `@ApplicationPath`. Only annotations on the type declarations in that scope are checked — an annotation on a member, such as the `@Inject` constructor or an overriding method, has no effect on an application and is never inspected — and a repeatable container annotation (for example the compiler-synthesized `ConditionalOnProperties` when two or more `@ConditionalOnProperty` annotations appear on one type) is checked as an annotation in its own right, not unwrapped into its repeated elements.
+Of its `RUNTIME`-retained annotations, a superinterface may carry only those whose types are in `java.lang` and `java.lang.annotation`. Any other `RUNTIME`-retained annotation on the declaration or on a superinterface fails the build (see "Diagnostics" below) — security, `@Path`, `@ApplicationPath`, scope, and qualifier annotations included — because a declaration carries no resource semantics: security and other resource annotations belong on resources, not on the interface that lists them. `@RestApplication`, `@ApiDocs`, `@OpenAPIDefinition`, `@ConditionalOnProperty` (or its `ConditionalOnProperties` container), and `@NoAutoWire` are honored only on the declaring interface; found on a superinterface, each fails the build instead. `@ConditionalOnProperty` and `@NoAutoWire` are `SOURCE`-retained, so on a superinterface they are seen only when it is compiled in the same build. Every other `CLASS`- or `SOURCE`-retained annotation is unchecked.
 
-Every `RUNTIME`-retained type-declaration annotation in that scope must be one of: `@jakarta.ws.rs.ApplicationPath`, but not on an interface; a type meta-annotated with `jakarta.inject.Scope`, `jakarta.inject.Qualifier`, `javax.inject.Scope`, or `javax.inject.Qualifier`; a type in package `java.lang`; or `@io.swagger.v3.oas.annotations.OpenAPIDefinition` in which every element other than `info` equals its declared default. Any other `RUNTIME`-retained annotation fails the build (see "Diagnostics" below), because application classes carry no resource semantics — security, audit, and profile annotations belong on resources, not on the `Application` that assembles them.
+Each error names the declaration, the annotation, and the type carrying it, each by binary name. A declaration that fails the allow list is not registered.
 
-`@ConditionalOnProperty`, `@ConditionalOnProperties`, and `@NoAutoWire` are `SOURCE`-retained and honored only on `A` itself; found on any supertype compiled in the same build, each is a compile error instead, because the processor would otherwise ignore it there silently.
+### `@ApiDocs` Checks
 
-A class annotated `@NoAutoWire` is exempt from all of this: it is inert, neither registered nor validated by the allow list or by the checks described under "Application Registrations" above, and it gets only the `@NoAutoWire` warning below instead.
+A declaration's `@ApiDocs` is recognized by its fully qualified name, `dev.vertique.rest.openapi.docs.ApiDocs`, so this processor needs no dependency on the module that declares it. Its elements are checked at compile time:
+
+| `access` | `securityScheme` | `rolesAllowed` |
+|---|---|---|
+| `PROTECTED` | required, not blank | optional; every entry must be non-blank; empty admits any authenticated caller |
+| `PUBLIC` | must not be set | must not be set |
+
+`access` has no default: an `@ApiDocs` without it is the compiler's own missing-element error. Elements are judged by value, so an explicit value equal to the default (`securityScheme = ""`, `rolesAllowed = {}`) counts as not set. Each violation is a compile error naming the declaration and the element (see "Diagnostics" below), and a declaration with any violation is not registered.
 
 ### Diagnostics
 
 | Diagnostic | Text |
 | --- | --- |
-| Registration note | `Registered JAX-RS application {Application} at {normalized path}` |
-| `@NoAutoWire` warning | `{Application} is annotated @NoAutoWire, so it is not registered or validated; its resources fall back to the default mount.` |
-| `autoWire=false` warning | `{Application} is not auto-wired because -Avertique.codegen.autoWire=false is set; its resources are exposed through the default @JaxRsResources mount.` |
-| Allow-list violation (error) | `Application {Application} carries @{annotation} on {declaring type}, which is not allowed: application classes carry no resource semantics` (appends `; only its info element may be set` when `{annotation}` is `@OpenAPIDefinition`) |
-| Source-retained annotation on a supertype (error) | `Application {Application} carries @{annotation} on supertype {declaring type}, which is honored only on the application class itself` |
-| Missing `@ApplicationPath` (error) | `{Application} declares no @ApplicationPath on itself or any superclass; declare @ApplicationPath("/") for a root application.` |
-| Invalid `@ApplicationPath` value (error) | `{Application} has an invalid @ApplicationPath value "{value}" (rule: {rule}); an application path may contain only '/' and the characters A-Z a-z 0-9 . _ ~ -` |
-| No usable constructor (error) | `{Application} has no usable constructor for application registration: it needs exactly one @Inject constructor, or an accessible no-arg constructor.` |
-| Inaccessible class (error) | `{Application} is not accessible from the generated module's package '{package}'; make it public, or package-private in that same package.` |
-| Non-static inner class (error) | `{Application} must be a top-level or static nested class to be an auto-wired JAX-RS application.` |
-| Missing `vertique-rest-jaxrs` dependency (error) | `An eligible JAX-RS application was found, but 'vertique-rest-jaxrs' is not on the compile classpath; add it as a dependency to generate application registrations.` |
+| `Application` subclass warning (mandatory warning) | `{Application}: @ApplicationPath and getClasses() have no effect; with no @RestApplication declared in the component, its resources are served on the legacy default mount at jaxrs.basePath; otherwise they are served only where a @RestApplication lists them; declare an application with @RestApplication` |
 | `@RestApplication` on a non-interface (error) | `{Declaration} is annotated @RestApplication, which belongs on an interface; declare the application on an interface instead of this {kind}.` |
 | Missing `vertique-rest-jaxrs` dependency for a declaration (error) | `A @RestApplication declaration was found, but 'vertique-rest-jaxrs' is not on the compile classpath; add it as a dependency to generate application registrations.` |
 | Invalid declaration name (error) | `{Declaration} has an invalid @RestApplication name "{name}"; an application name must match [a-z0-9][a-z0-9_-]{0,63}.` |
@@ -239,26 +238,53 @@ A class annotated `@NoAutoWire` is exempt from all of this: it is inert, neither
 | Inaccessible listed resource (error) | `{Declaration} lists a resource class its generated registration cannot name: {the inaccessible-type message above, naming the resource}` |
 | Duplicate declaration name (error) | `{Declaration} declares the application name "{name}", which {OtherDeclaration} also declares; application names must be unique within a compilation unit.` |
 | Declaration `discover` not alone (error) | `{Declaration} sets discover = true, but this compilation unit declares another application ({OtherDeclarations}); discovery is only for a compilation unit's sole application declaration.` |
+| Disallowed annotation on the declaration (error) | `{Declaration} carries @{annotation}, which a @RestApplication declaration may not carry: a declaration has no resource semantics and may carry only @RestApplication, @ApiDocs, @OpenAPIDefinition with only info set, @ConditionalOnProperty, @NoAutoWire, and java.lang and java.lang.annotation annotations` |
+| Disallowed annotation on a superinterface (error) | `{Declaration} carries @{annotation} on its superinterface {Superinterface}, which a @RestApplication declaration's superinterface may not carry: a superinterface of a declaration may carry only java.lang and java.lang.annotation annotations` |
+| Declaration-only annotation on a superinterface (error) | `{Declaration} carries @{annotation} on its superinterface {Superinterface}, which is not allowed: that annotation is honored only on the @RestApplication declaring interface itself` |
+| `@OpenAPIDefinition` element other than `info` (error) | `{Declaration} carries @io.swagger.v3.oas.annotations.OpenAPIDefinition with an element other than info set, which is not allowed on a @RestApplication declaration: only its info element may be set` |
+| `@ApiDocs(access = PROTECTED)` without a scheme (error) | `{Declaration} declares @ApiDocs(access = PROTECTED) without a non-blank securityScheme; protected documentation needs securityScheme to name the security scheme that authenticates its readers` |
+| `@ApiDocs(access = PROTECTED)` with a blank role (error) | `{Declaration} declares @ApiDocs(access = PROTECTED) with a blank rolesAllowed entry; every rolesAllowed entry must name a role (leave rolesAllowed empty to admit any authenticated caller)` |
+| `@ApiDocs(access = PUBLIC)` with a scheme (error) | `{Declaration} declares @ApiDocs(access = PUBLIC) with a securityScheme; securityScheme is set only when access is PROTECTED` |
+| `@ApiDocs(access = PUBLIC)` with roles (error) | `{Declaration} declares @ApiDocs(access = PUBLIC) with rolesAllowed; rolesAllowed is set only when access is PROTECTED` |
 | Declaration `@NoAutoWire` warning | `{Declaration} is annotated @NoAutoWire, so it is not registered as a REST application and is not validated.` |
 | Declaration `autoWire=false` warning | `{Declaration} is not registered as a REST application because -Avertique.codegen.autoWire=false is set.` |
 
-Every eligible application is validated regardless of `-Avertique.codegen.autoWire=false` — accessibility, construction, the required `@ApplicationPath`, and its path grammar (see "Application Registrations" above) all still fail the build when violated; only the module write itself is skipped under that option (see "Extension Points" below).
+Every type in the messages — `{Application}`, `{Declaration}`, `{Superinterface}`, `{Resource}`, and `{annotation}` — is named by its binary name.
 
-**Accessibility reaches enclosing types.** The inaccessible-class diagnostic above is not satisfied by the application class alone: the application *and every one of its enclosing types* must each be accessible from the generated module's package — public, or non-private and declared in that same package. A class nested inside an inaccessible enclosing type is unreachable from outside that type's package even when the nested class itself is `public`, so it fails this check too.
+Every `@RestApplication` declaration not annotated `@NoAutoWire` is checked regardless of `-Avertique.codegen.autoWire=false` — the annotation allow list, the `@ApiDocs` checks, and the declaration checks (see "Declaration Checks" below) all still fail the build when violated; only the module write itself is skipped under that option (see "Extension Points" below). The `Application` subclass warning is the same with or without that option.
 
-**Declaration diagnostics: rejection reasons and accessibility variants.** A rejected `resources` entry names one reason: `it is an interface`, `it is an annotation type`, `it is an abstract class`, `it is a JAX-RS provider (@Provider)`, `it implements jakarta.ws.rs.core.Feature`, `it implements jakarta.ws.rs.container.DynamicFeature`, or `it has no effective @Path, on itself or on an implemented interface`. A declaration's accessibility diagnostic reaches enclosing types the same way an application's does (above): an inaccessible declaring interface or listed resource is named directly; when an enclosing type is the cause instead, the message names it too (`... its enclosing type {EnclosingType} is not public; make {EnclosingSimpleName} public, or package-private in that same package.`); and, when no generated-module package resolves at all, the message reads `{Declaration} is not accessible: no generated-module package could be resolved, so it and its enclosing types must be public.` A listed resource's accessibility diagnostic is one of these same messages, prefixed with `{Declaration} lists a resource class its generated registration cannot name: `.
+**Accessibility reaches enclosing types.** The declaration accessibility diagnostics are not satisfied by the declaring interface or listed resource class alone: the type *and every one of its enclosing types* must each be accessible from the generated module's package — public, or non-private and declared in that same package. A type nested inside an inaccessible enclosing type is unreachable from outside that type's package even when the nested type itself is `public`, so it fails this check too.
+
+**Declaration diagnostics: rejection reasons and accessibility variants.** A rejected `resources` entry names one reason: `it is an interface`, `it is an annotation type`, `it is an abstract class`, `it is a JAX-RS provider (@Provider)`, `it implements jakarta.ws.rs.core.Feature`, `it implements jakarta.ws.rs.container.DynamicFeature`, or `it has no effective @Path, on itself or on an implemented interface`. A declaration's accessibility diagnostic reaches enclosing types as described above: an inaccessible declaring interface or listed resource is named directly; when an enclosing type is the cause instead, the message names it too (`... its enclosing type {EnclosingType} is not public; make {EnclosingSimpleName} public, or package-private in that same package.`); and, when no generated-module package resolves at all, the message reads `{Declaration} is not accessible: no generated-module package could be resolved, so it and its enclosing types must be public.` A listed resource's accessibility diagnostic is one of these same messages, prefixed with `{Declaration} lists a resource class its generated registration cannot name: `.
 
 ### Components Must Also List `RestModule`
 
-Each presence-gated resource binding consumes the `Set<GeneratedJaxRsApplicationRegistration>` multibinding that `RestModule` declares. A Dagger component that lists a generated `GeneratedJaxRsResourcesModule` must therefore also list `RestModule`, or that set is unsatisfied and the component fails to compile.
+Each presence-gated resource binding consumes the `Set<GeneratedRestApplicationRegistration>` multibinding that `RestModule` declares. A Dagger component that lists a generated `GeneratedJaxRsResourcesModule` must therefore also list `RestModule`, or that set is unsatisfied and the component fails to compile.
 
 ### Distinct-Package Rule
 
 Two compilation units whose classes resolve to the same package both write `<package>.GeneratedJaxRsResourcesModule`, and whichever copy lands first on the classpath wins silently — the processor cannot reliably tell a stale copy of a unit's own prior output from another unit's module, so it does not check for a collision. Each compilation unit must resolve a distinct package for its generated module, or set `-Avertique.codegen.package` to force one; otherwise one unit's bindings and registrations can silently never reach the component.
 
-### Upgrading an Existing `Application` Subclass
+### Porting a Jakarta `Application` Subclass
 
-A concrete `jakarta.ws.rs.core.Application` subclass that this processor previously ignored now becomes an eligible application on upgrade: it is registered, and the deployment switches from the implicit default mount into discovery or explicit mode for that composition. Such a class must carry `@ApplicationPath` on itself or a superclass, that value must satisfy the path grammar, and neither it nor a superclass or implemented interface may carry an annotation outside the application annotation allow list (see "Application Registrations" and "Application Annotation Allow List" above) — all three checks apply even under `-Avertique.codegen.autoWire=false`, which still validates every eligible application. Annotate the class `@NoAutoWire` to opt back out of all three: it exempts the class from registration, from the allow list, and from the path grammar, keeps the legacy default `@JaxRsResources` mount for its resources, and produces the `@NoAutoWire` warning above instead of a registration note.
+A `jakarta.ws.rs.core.Application` subclass declares nothing the processor acts on: its `@ApplicationPath` and `getClasses()` have no effect, and it only gets the warning described under "Jakarta `Application` Subclasses" above. To serve its resources as a named application at its path, declare a `@RestApplication` interface with the same path that lists those resources — or sets `discover = true` instead, when it is the compilation unit's sole declaration — and delete the subclass:
+
+```java
+// Before: warned about, never registered
+@ApplicationPath("/api/mgmt")
+public class ManagementApplication extends Application {
+    @Override
+    public Set<Class<?>> getClasses() {
+        return Set.of(OrderResource.class);
+    }
+}
+
+// After
+@RestApplication(name = "mgmt", path = "/api/mgmt", resources = OrderResource.class)
+interface MgmtApi {}
+```
+
+The declaration also needs a `name` (see "Declaration Checks" below). A subclass kept for another reason can be annotated `@NoAutoWire` to suppress its warning.
 
 ---
 
@@ -274,7 +300,7 @@ interface MgmtApi {}
 
 Exactly one of `resources` (a non-empty list of concrete `@Path` resource classes, listed in the order written) and `discover = true` (permitted only for a compilation unit's sole declaration) is set. `openapiPath` is carried as written; `""` (the default) means the global `jaxrs.openapiPath`. The declaring interface only carries the declaration — nothing implements or instantiates it.
 
-As with `jakarta.ws.rs.core.Application` scanning, this processor recognizes `RestApplication` and locates `GeneratedRestApplicationRegistration` by fully qualified name; `vertique-rest-jaxrs` and `jakarta.ws.rs-api` stay test-scope dependencies of this module, so declarations add no compile dependency.
+This processor recognizes `RestApplication`, `jakarta.ws.rs.core.Application`, and `ApiDocs`, and locates `GeneratedRestApplicationRegistration`, by fully qualified name; `vertique-rest-jaxrs` and `jakarta.ws.rs-api` stay test-scope dependencies of this module, so declarations add no compile dependency.
 
 ### Declaration Checks
 
@@ -284,12 +310,14 @@ Every declaration is checked at compile time; each violation is a compile error 
 |---|---|
 | Form | `@RestApplication` must annotate an interface; a class, enum, record, or annotation type fails compilation. |
 | Name | Required; must match `[a-z0-9][a-z0-9_-]{0,63}` (at most 64 characters); must not be the reserved `none` or `null`. |
-| Path | Required; normalized and checked by the same `ApplicationPathGrammar` rule order `jakarta.ws.rs.core.Application` scanning uses (see "Application Registrations" above), applied to the value as written rather than read from `@ApplicationPath`. |
+| Path | Required; normalized and checked, as written, by the rule order under "Application Path Grammar" above. |
 | Membership | Exactly one of a non-empty `resources` and `discover = true`; both or neither fails. |
 | Listed resources | Each entry must be a concrete class with an effective `@Path` (direct, or via an implemented interface), and must not be an interface, an abstract class, a `@jakarta.ws.rs.ext.Provider`, a `jakarta.ws.rs.core.Feature`, or a `jakarta.ws.rs.container.DynamicFeature`; no entry may repeat. |
-| Accessibility | The declaring interface and every listed resource class must be accessible from the generated module's package — public, or non-private and declared in that package — since the emitted registration names each by its class literal. A type nested in an inaccessible enclosing type fails even when the nested type itself is `public` (the same enclosing-type rule `jakarta.ws.rs.core.Application` scanning uses; see "Accessibility reaches enclosing types" above). When no module package resolves (possible only under `-Avertique.codegen.autoWire=false`), a type is accessible only when it and every enclosing type are `public`. |
+| Accessibility | The declaring interface and every listed resource class must be accessible from the generated module's package — public, or non-private and declared in that package — since the emitted registration names each by its class literal. A type nested in an inaccessible enclosing type fails even when the nested type itself is `public` (see "Accessibility reaches enclosing types" above). When no module package resolves (possible only under `-Avertique.codegen.autoWire=false`), a type is accessible only when it and every enclosing type are `public`. |
 | Unique names (per compilation unit) | No two declarations of one compilation unit may share a name, active or not; the error names both. Uniqueness across compilation units is a startup check, outside this module. |
 | Sole discovery (per compilation unit) | `discover = true` fails when the compilation unit declares another `@RestApplication`, active or not. The cross-unit half of this rule, combined with startup composition, is also outside this module. |
+| Annotations | The declaring interface and its superinterfaces carry only allowed annotations; see "Declaration Annotation Allow List" above. |
+| `@ApiDocs` | `securityScheme` and `rolesAllowed` match `access`; see "`@ApiDocs` Checks" above. |
 
 ### Emitted Registration
 
@@ -308,19 +336,15 @@ static GeneratedRestApplicationRegistration mgmtApiRegistration(@VertxConfig Jso
 }
 ```
 
-The activation argument follows the same `PropertyCondition.matchesAll(config, …_CONDITIONS)` rule a resource binding or application registration uses, or `true` when `D` carries no `@ConditionalOnProperty`. The listed resources appear in the order written (empty for a `discover` declaration), and the path is the normalized one.
+The activation argument follows the same `PropertyCondition.matchesAll(config, …_CONDITIONS)` rule a resource binding uses, or `true` when `D` carries no `@ConditionalOnProperty`. The listed resources appear in the order written (empty for a `discover` declaration), and the path is the normalized one.
 
-**Naming.** A declaration's registration method is named like an `Application` registration — the declaring interface's decapitalized simple name plus `Registration` — and shares the same per-unit name counter as `Application` registrations, so a base name already used by either kind gets `_2`, `_3`, and so on.
+**Naming.** A declaration's registration method is named by the declaring interface's decapitalized simple name plus `Registration`. When two declarations in one unit share a simple name (in different enclosing scopes), the processor appends `_2`, `_3`, and so on to the later ones, in fully-qualified-name order.
 
-A declaration also joins the module-writing condition and package resolution on the same terms as an eligible `Application`: a unit with at least one registered declaration and no resources or applications still writes a module, in the declarations' package, and adding a declaration to a unit that already has resources never moves that unit's existing module.
+A unit with at least one registered declaration and no DI-eligible resource still writes a module, in the declarations' package (see "Generated Binding Shape" above).
 
 ### Activation and Opting Out
 
-`@ConditionalOnProperty` on a declaration (single or repeated) is evaluated exactly as it is for a resource binding or an application registration. `@NoAutoWire` on a declaration makes it inert: it is checked first, gets one warning naming it, and is excluded before any other rule runs — it is neither registered nor validated, and does not count toward the compilation unit's unique-name or sole-discovery checks. Under `-Avertique.codegen.autoWire=false`, every declaration is instead still validated (as an eligible `Application` still is), but none is registered and no module is written; each declaration then gets one warning naming it instead of a registration.
-
-### Runtime Consumption
-
-`GeneratedRestApplicationRegistration` is meant for `vertique-rest-jaxrs`'s native composer to consume, through a `Set<GeneratedRestApplicationRegistration>` multibinding declared on `RestModule`. That multibinding and the composer are not wired yet: until a later change adds them, an emitted registration compiles and sits on the classpath, but nothing constructs, mounts, or startup-validates it.
+`@ConditionalOnProperty` on a declaration (single or repeated) is evaluated exactly as it is for a resource binding. `@NoAutoWire` on a declaration makes it inert: it is checked first, gets one warning naming it, and is excluded before any other rule runs — it is neither registered nor validated, not even against the annotation allow list or the `@ApiDocs` checks, and does not count toward the compilation unit's unique-name or sole-discovery checks. Under `-Avertique.codegen.autoWire=false`, every declaration is instead still validated, the annotation allow list and the `@ApiDocs` checks included, but none is registered and no module is written; each declaration then gets one warning naming it instead of a registration.
 
 ---
 
@@ -436,9 +460,9 @@ The large observed ratios are directional measurements over a hot JVM loop with 
 
 ### `-Avertique.codegen.autoWire=false` — global disable
 
-Suppresses **only the generated `GeneratedJaxRsResourcesModule`**: no resource binding, catalog entry, or application registration is written for any unit in the build. Descriptor, bean-param model, and execution-plan companions are still emitted; only the DI module is skipped. Every eligible `jakarta.ws.rs.core.Application` is still validated — accessibility, construction, the required `@ApplicationPath`, its path grammar, and the application annotation allow list (see "Application Registrations" and "Application Annotation Allow List" above) all still fail the build when violated — and each eligible, non-`@NoAutoWire` application gets one `autoWire=false` warning naming it and stating that its resources are exposed through the default `@JaxRsResources` mount instead. Useful when you manage resource bindings manually or want to test companions without the generated module.
+Suppresses **only the generated `GeneratedJaxRsResourcesModule`**: no resource binding, catalog entry, or application registration is written for any unit in the build. Descriptor, bean-param model, and execution-plan companions are still emitted; only the DI module is skipped. Every `@RestApplication` declaration not annotated `@NoAutoWire` is still checked — the declaration checks, the annotation allow list, and the `@ApiDocs` checks (see "REST Application Declarations" above) all still fail the build when violated — and each gets one `autoWire=false` warning naming it and stating that it is not registered. A `jakarta.ws.rs.core.Application` subclass gets only its usual subclass warning (see "Jakarta `Application` Subclasses" above). Useful when you manage resource bindings manually or want to test companions without the generated module.
 
-**Package resolution does not fail the build.** Because no module is written under this option, the processor still resolves a package to validate against, without emitting `PackageResolver`'s disjoint-packages error: the `-Avertique.codegen.package` override when set, otherwise the longest common package prefix of the unit's DI-eligible resources (or, in an applications-only unit, of its eligible applications), otherwise no package at all. When no package resolves, accessibility and no-arg-constructor validation fall back to public-only — an application, an enclosing type, or a no-arg constructor that is merely package-private has no package left to match against and fails the build.
+**Package resolution does not fail the build.** Because no module is written under this option, the processor still resolves a package to validate against, without emitting `PackageResolver`'s disjoint-packages error: the `-Avertique.codegen.package` override when set, otherwise the longest common package prefix of the unit's DI-eligible resources (or, in a unit without them, of its declarations), otherwise no package at all. When no package resolves, accessibility validation falls back to public-only — a declaring interface, a listed resource class, or an enclosing type that is merely package-private has no package left to match against and fails the build.
 
 ### `-Avertique.codegen.package=...` — output package override
 
@@ -448,13 +472,15 @@ Overrides `PackageResolver`'s LCP computation. Required when annotated types liv
 
 Place on any `@Path`-annotated type to exclude it from Dagger module emission; validation and descriptor emission still apply, and only its `GeneratedJaxRsResourcesModule` binding is suppressed.
 
-Place on a `jakarta.ws.rs.core.Application` subtype instead, and it is inert: the class is neither registered nor validated (it is not checked for `@ApplicationPath`, its path grammar, a usable constructor, accessibility, or its annotations against the application annotation allow list), it keeps the legacy default `@JaxRsResources` mount for its resources, and it gets the `@NoAutoWire` warning above instead of a registration note or an error.
+Place on a `@RestApplication` declaration instead, and the declaration is inert: it is neither registered nor checked, and gets one warning naming it (see "Activation and Opting Out" above).
+
+Place on a `jakarta.ws.rs.core.Application` subclass, and it suppresses that subclass's warning; the subclass is never registered either way (see "Jakarta `Application` Subclasses" above).
 
 ---
 
 ## Module Dagger Bindings
 
-None at runtime. `vertique-codegen-jaxrs` is a compile-time annotation processor. It generates a `GeneratedJaxRsResourcesModule` for the consuming module's component, contributing to the `@JaxRsResources` multibinding set and, for each eligible application, to the `GeneratedJaxRsApplicationRegistration` set. A component that lists a generated module must also list `RestModule`, which declares that registration set (see "Components Must Also List `RestModule`" above).
+None at runtime. `vertique-codegen-jaxrs` is a compile-time annotation processor. It generates a `GeneratedJaxRsResourcesModule` for the consuming module's component, contributing to the `@JaxRsResources` multibinding set and, for each registered `@RestApplication` declaration, to the `GeneratedRestApplicationRegistration` set. A component that lists a generated module must also list `RestModule`, which declares that registration set (see "Components Must Also List `RestModule`" above).
 
 ---
 
@@ -463,14 +489,16 @@ None at runtime. `vertique-codegen-jaxrs` is a compile-time annotation processor
 | Artifact | Scope | Purpose |
 |----------|-------|---------|
 | `vertique-codegen-core` | compile | `CodegenContext`, `TypeResolver`, `AnnotationMirrors`, `Diagnostics`, `PackageResolver`, `PathPlaceholders`, `JaxRsBeanScanner`, `JaxRsAnnotations`, `@NoAutoWire` |
-| `vertique-rest-jaxrs` | compile | Runtime SPI interfaces: `GeneratedJaxRsResourceDescriptor`, `ResourceExecutionPlan`, `GeneratedJaxRsBeanParamModel`, `BeanParamFieldMeta`; `ResourceMethodMeta` (for descriptor method signature) |
+| `vertique-rest-jaxrs` | test | Runtime SPI types the generated sources reference by fully qualified name: `GeneratedJaxRsResourceDescriptor`, `ResourceExecutionPlan`, `GeneratedJaxRsBeanParamModel`, `BeanParamFieldMeta`, `GeneratedRestApplicationRegistration`; `ResourceMethodMeta` (for descriptor method signature). The consuming application declares it (see "Adoption"); tests load the generated companions reflectively |
 | `vertique-rest-core` | compile | `dev.vertique.rest.core.security.Authorized`, `RequestPreconditions` |
+| `vertique-security-core` | compile | Framework security types, such as `dev.vertique.security.SecurityContext`, a `ContextValue` the `@Context` parameter checks accept |
 | `vertique-input-processing` | compile | `dev.vertique.input.processing.EffectiveInputPolicies` (referenced by generated `ExecutionPlan` constants); `dev.vertique.input.processing.apt.ElementInvocationPolicies` and `InvocationPolicyConflictException`, the shared compile-time derivation of route and parameter policy chains |
-| `jakarta.ws.rs-api` | compile | JAX-RS annotation types |
+| `jakarta.ws.rs-api` | test | JAX-RS annotation types for resource fixtures; the processor recognizes them by fully qualified name |
 | `jakarta.annotation-api` | compile | `@PermitAll`, `@RolesAllowed`, `@DenyAll` |
-| `com.palantir.javapoet:javapoet` | compile | Source code emission |
+| `swagger-annotations-jakarta` | compile | `@io.swagger.v3.oas.annotations.Operation`, whose `operationId` the processor reads by fully qualified name |
+| `com.palantir.javapoet:javapoet` | compile (transitive) | Source code emission, through `vertique-codegen-core` |
 
-Test-only dependencies: `vertique-codegen-test`.
+Other test-only dependencies: `vertique-codegen-test` (compilation harness) and the `vertique-input-processing` test-jar (input-policy fixture stubs).
 
 ---
 

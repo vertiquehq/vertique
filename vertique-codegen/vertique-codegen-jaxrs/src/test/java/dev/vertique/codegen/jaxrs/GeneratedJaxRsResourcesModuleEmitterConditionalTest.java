@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Test;
  * the shape of the generated {@code GeneratedJaxRsResourcesModule}:
  * <ul>
  *   <li>All legacy bindings use {@code @ElementsIntoSet Set<Object>} — the uniform shape
- *       (FR-CG011-020) — and also take {@code Set<GeneratedJaxRsApplicationRegistration>
+ *       (FR-CG011-020) — and also take {@code Set<GeneratedRestApplicationRegistration>
  *       applications}, gating their body on {@code applications.isEmpty()} (presence-gated
  *       binding).</li>
  *   <li>All methods accept {@code @VertxConfig JsonObject config} and

@@ -8,8 +8,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
-import java.beans.Introspector;
+import dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration;
+import io.vertx.core.json.JsonObject;
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
@@ -22,55 +26,93 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.opentest4j.AssertionFailedError;
 
 /**
- * APT compilation tests for the {@code @ApplicationPath} rejection grammar: step 3 (the first
- * matching rule, in the frozen order {@code wildcard}, {@code router pattern}, {@code query},
- * {@code fragment}, {@code repeated separator}, {@code dot segment}, {@code encoded separator},
- * {@code unsupported character}) and step 4 ({@link JaxRsApplicationScanner} reporting one
- * compile error naming the application class, the value as written, and the rule).
+ * APT compilation tests for the application path grammar applied to {@code @RestApplication.path}:
+ * step 3 of {@link ApplicationPathGrammar} (the first matching rule, in the frozen order
+ * {@code wildcard}, {@code router pattern}, {@code query}, {@code fragment},
+ * {@code repeated separator}, {@code dot segment}, {@code encoded separator},
+ * {@code unsupported character}) and step 4 ({@link RestApplicationScanner} reporting one compile
+ * error naming the declaration, the value as written, and the rule), with unreserved values
+ * reaching {@code GeneratedRestApplicationRegistration.of(…)} unchanged.
  *
- * <p>Each test compiles a small {@code jakarta.ws.rs.core.Application} fixture through {@link
- * JaxRsPipelineProcessor} via {@link ProcessorTestHarness} and asserts the compiler diagnostics
- * and/or the generated {@code GeneratedJaxRsResourcesModule} source, mirroring {@link
- * JaxRsApplicationRegistrationEmitterTest}'s fixture and assertion style.
+ * <p>Each test compiles a {@code PathResource} and an {@code Api} declaration,
+ * {@code @RestApplication(name = "api", path = <value>, resources = PathResource.class)}, through
+ * {@link JaxRsPipelineProcessor} via {@link ProcessorTestHarness}, following
+ * {@link RestApplicationDeclarationTest}'s fixture style, whose TP-004 holds the normalization
+ * rows. An error names the declaration when its message contains its binary name. An accepted
+ * value is checked at method level: the generated module declares exactly one registration method,
+ * {@code apiRegistration}, whose {@code of(…)} call carries the value as its path literal and whose
+ * registration's {@code path()} returns it.
  */
 class ApplicationPathGrammarTest {
 
     // -----------------------------------------------------------------------------------------
-    // Shared fixture — a concrete, eligible, top-level Application with a public no-arg
-    // constructor, so the only diagnostic a rejected value can produce is the grammar's own.
+    // Shared fixture — a PathResource and an Api declaration listing it, so the only diagnostic a
+    // rejected value can produce is the grammar's own.
     // -----------------------------------------------------------------------------------------
 
     private static final String PATH_GRAMMAR_PACKAGE = "dev.vertique.test.pathgrammar";
-    private static final String PATH_GRAMMAR_CLASS = "PathGrammarApplication";
-    private static final String PATH_GRAMMAR_FQN = PATH_GRAMMAR_PACKAGE + "." + PATH_GRAMMAR_CLASS;
-    private static final String PATH_GRAMMAR_MODULE = PATH_GRAMMAR_PACKAGE + ".GeneratedJaxRsResourcesModule";
+    private static final String NO_AUTO_WIRE_PACKAGE = "dev.vertique.test.pathgrammar.noautowire";
+    private static final String DECLARATION_SIMPLE_NAME = "Api";
+    private static final String MODULE_SIMPLE_NAME = "GeneratedJaxRsResourcesModule";
+    private static final String REGISTRATION_METHOD = "apiRegistration";
 
-    /** Builds the fixture source for {@code value}, unquoted and unescaped (no row needs escaping). */
-    private static JavaFileObject pathGrammarFixture(String value) {
-        return SourceFiles.inline(PATH_GRAMMAR_FQN, """
-                package dev.vertique.test.pathgrammar;
-
-                import jakarta.ws.rs.ApplicationPath;
-                import jakarta.ws.rs.core.Application;
-
-                @ApplicationPath("%s")
-                public class PathGrammarApplication extends Application {
-                    public PathGrammarApplication() {}
-                }
-                """.formatted(value));
+    private static String declarationBinaryName(String packageName) {
+        return packageName + "." + DECLARATION_SIMPLE_NAME;
     }
 
-    /** Builds and compiles the fixture source for {@code value} through the pipeline processor. */
-    private static ProcessorTestHarness.Result compilePathGrammarFixture(String value, Map<String, String> options) {
-        JavaFileObject source = pathGrammarFixture(value);
-        return options.isEmpty()
-                ? ProcessorTestHarness.run(new JaxRsPipelineProcessor(), source)
-                : ProcessorTestHarness.run(new JaxRsPipelineProcessor(), options, source);
+    private static String moduleFqn(String packageName) {
+        return packageName + "." + MODULE_SIMPLE_NAME;
+    }
+
+    private static JavaFileObject pathResourceFixture(String packageName) {
+        return SourceFiles.inline(packageName + ".PathResource", """
+                package %s;
+
+                import jakarta.inject.Inject;
+                import jakarta.ws.rs.GET;
+                import jakarta.ws.rs.Path;
+
+                @Path("/p")
+                public class PathResource {
+                    @Inject
+                    public PathResource() {}
+
+                    @GET
+                    public String get() { return ""; }
+                }
+                """.formatted(packageName));
+    }
+
+    /**
+     * Builds the {@code Api} declaration for {@code value}, unquoted and unescaped (no row needs
+     * escaping), preceded by {@code annotations}.
+     */
+    private static JavaFileObject declarationFixture(String packageName, String annotations, String value) {
+        return SourceFiles.inline(declarationBinaryName(packageName), """
+                package %s;
+
+                import dev.vertique.codegen.NoAutoWire;
+                import dev.vertique.rest.jaxrs.application.RestApplication;
+
+                %s
+                @RestApplication(name = "api", path = "%s", resources = PathResource.class)
+                interface Api {}
+                """.formatted(packageName, annotations, value));
+    }
+
+    /** Compiles {@code PathResource} and the {@code Api} declaration through the pipeline processor. */
+    private static ProcessorTestHarness.Result compile(
+            String packageName, String annotations, String value, Map<String, String> options) {
+        return ProcessorTestHarness.run(
+                new JaxRsPipelineProcessor(),
+                options,
+                pathResourceFixture(packageName),
+                declarationFixture(packageName, annotations, value));
     }
 
     // -----------------------------------------------------------------------------------------
-    // TP-001 — an invalid application path fails compilation naming the application, value, and
-    // rule
+    // TP-001 — an invalid @RestApplication path fails compilation naming the declaration, value,
+    // and rule
     // -----------------------------------------------------------------------------------------
 
     private record PathRejectionCase(String label, String value, String rule, Map<String, String> options) {}
@@ -103,9 +145,9 @@ class ApplicationPathGrammarTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("pathRejectionCases")
-    @DisplayName("TP-001 — an invalid application path fails compilation naming the application, value, and rule")
+    @DisplayName("TP-001 — an invalid @RestApplication path fails compilation naming the declaration, value, and rule")
     void rejectsInvalidPathsNamingRule(String label, PathRejectionCase testCase) {
-        var result = compilePathGrammarFixture(testCase.value(), testCase.options());
+        var result = compile(PATH_GRAMMAR_PACKAGE, "", testCase.value(), testCase.options());
         logDiagnostics("TP-001 " + label, result);
 
         result.assertFailed();
@@ -116,9 +158,10 @@ class ApplicationPathGrammarTest {
                 () -> "Expected exactly one ERROR diagnostic rejecting '" + testCase.value() + "'."
                         + diagnosticsSummary(result));
         String message = errors.get(0).getMessage(null);
+        String declaration = declarationBinaryName(PATH_GRAMMAR_PACKAGE);
         assertTrue(
-                message != null && message.contains(PATH_GRAMMAR_CLASS),
-                () -> "Expected the single ERROR to name '" + PATH_GRAMMAR_CLASS + "'." + diagnosticsSummary(result));
+                message != null && message.contains(declaration),
+                () -> "Expected the single ERROR to name '" + declaration + "'." + diagnosticsSummary(result));
         assertTrue(
                 message.contains(testCase.value()),
                 () -> "Expected the single ERROR to contain the value as written '" + testCase.value() + "'."
@@ -130,99 +173,39 @@ class ApplicationPathGrammarTest {
     }
 
     // -----------------------------------------------------------------------------------------
-    // TP-002 — unreserved paths compile unchanged, and a @NoAutoWire class is never checked
+    // TP-002 — unreserved paths compile unchanged, and a @NoAutoWire declaration is never checked
     // -----------------------------------------------------------------------------------------
 
-    private static final String NO_AUTO_WIRE_PACKAGE = "dev.vertique.test.pathgrammar.noautowire";
-    private static final String NO_AUTO_WIRE_CLASS = "NoAutoWirePathGrammarApplication";
-    private static final String NO_AUTO_WIRE_MODULE = NO_AUTO_WIRE_PACKAGE + ".GeneratedJaxRsResourcesModule";
-
     /**
-     * The exempt row's fixture (owner decision Q4): a concrete, eligible-looking {@code
-     * Application} annotated {@code @NoAutoWire} and {@code @ApplicationPath("/api/:id")} — a
-     * value TP-001 rejects on a non-exempt class — so a mutation that runs the grammar on {@code
-     * @NoAutoWire} classes anyway (M-7) is observable.
+     * One TP-002 row. The {@code @NoAutoWire} row carries {@code "/api/:id"}, a value TP-001
+     * rejects on a checked declaration, so a mutation that runs the grammar on opted-out
+     * declarations is observable; it expects T022's opt-out warning instead of a registration.
      */
-    private static final JavaFileObject NO_AUTO_WIRE_APPLICATION =
-            SourceFiles.inline(NO_AUTO_WIRE_PACKAGE + "." + NO_AUTO_WIRE_CLASS, """
-            package dev.vertique.test.pathgrammar.noautowire;
-
-            import dev.vertique.codegen.NoAutoWire;
-            import jakarta.ws.rs.ApplicationPath;
-            import jakarta.ws.rs.core.Application;
-
-            @NoAutoWire
-            @ApplicationPath("/api/:id")
-            public class NoAutoWirePathGrammarApplication extends Application {
-                public NoAutoWirePathGrammarApplication() {}
-            }
-            """);
-
-    private record UnreservedPathCase(
-            String label,
-            JavaFileObject source,
-            String moduleFqn,
-            String applicationSimpleName,
-            String value,
-            boolean noAutoWireExempt) {}
+    private record UnreservedPathCase(String label, String packageName, String value, boolean noAutoWire) {}
 
     private static Stream<Arguments> unreservedPathCases() {
         List<UnreservedPathCase> cases = List.of(
-                new UnreservedPathCase(
-                        "/api/v1.0",
-                        pathGrammarFixture("/api/v1.0"),
-                        PATH_GRAMMAR_MODULE,
-                        PATH_GRAMMAR_CLASS,
-                        "/api/v1.0",
-                        false),
-                new UnreservedPathCase(
-                        "/api/~x",
-                        pathGrammarFixture("/api/~x"),
-                        PATH_GRAMMAR_MODULE,
-                        PATH_GRAMMAR_CLASS,
-                        "/api/~x",
-                        false),
-                new UnreservedPathCase(
-                        "/a-b_c/d",
-                        pathGrammarFixture("/a-b_c/d"),
-                        PATH_GRAMMAR_MODULE,
-                        PATH_GRAMMAR_CLASS,
-                        "/a-b_c/d",
-                        false),
-                new UnreservedPathCase(
-                        "@NoAutoWire exempt: /api/:id",
-                        NO_AUTO_WIRE_APPLICATION,
-                        NO_AUTO_WIRE_MODULE,
-                        NO_AUTO_WIRE_CLASS,
-                        "/api/:id",
-                        true));
+                new UnreservedPathCase("/api/v1.0", PATH_GRAMMAR_PACKAGE, "/api/v1.0", false),
+                new UnreservedPathCase("/api/~x", PATH_GRAMMAR_PACKAGE, "/api/~x", false),
+                new UnreservedPathCase("/a-b_c/d", PATH_GRAMMAR_PACKAGE, "/a-b_c/d", false),
+                new UnreservedPathCase("@NoAutoWire exempt: /api/:id", NO_AUTO_WIRE_PACKAGE, "/api/:id", true));
         return cases.stream().map(c -> Arguments.of(c.label(), c));
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("unreservedPathCases")
-    @DisplayName("TP-002 — unreserved paths compile unchanged, and a @NoAutoWire class is never checked")
+    @DisplayName("TP-002 — unreserved paths compile unchanged, and a @NoAutoWire declaration is never checked")
     void acceptsUnreservedPaths(String label, UnreservedPathCase testCase) {
-        var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), testCase.source());
+        String annotations = testCase.noAutoWire() ? "@NoAutoWire" : "";
+        var result = compile(testCase.packageName(), annotations, testCase.value(), Map.of());
         logDiagnostics("TP-002 " + label, result);
 
         result.assertSuccess();
-        if (testCase.noAutoWireExempt()) {
-            assertTrue(
-                    result.compilation().errors().isEmpty(),
-                    () -> "Expected no ERROR diagnostic for the @NoAutoWire exempt application."
-                            + diagnosticsSummary(result));
-            result.assertWarningMessage(testCase.applicationSimpleName()
-                    + " is annotated @NoAutoWire, so it is not registered or" + " validated");
-            assertTrue(
-                    result.compilation()
-                            .generatedSourceFile(testCase.moduleFqn())
-                            .isEmpty(),
-                    () -> "Expected no generated module registering the @NoAutoWire exempt application."
-                            + diagnosticsSummary(result));
+        if (testCase.noAutoWire()) {
+            assertOnlyTheOptOutWarning(result, testCase.packageName());
             return;
         }
-        assertNormalizedPathLiteral(result, testCase.moduleFqn(), testCase.applicationSimpleName(), testCase.value());
+        assertRegistrationCarriesPathLiteral(result, testCase.packageName(), testCase.value());
     }
 
     // -----------------------------------------------------------------------------------------
@@ -230,25 +213,101 @@ class ApplicationPathGrammarTest {
     // -----------------------------------------------------------------------------------------
 
     /**
-     * Asserts that the generated module at {@code moduleFqn} declares a {@code
-     * GeneratedJaxRsApplicationRegistration} provider method for {@code applicationSimpleName}
-     * whose body's {@code of(...)} call carries {@code value} unchanged as the normalized path
-     * literal, mirroring {@link JaxRsApplicationRegistrationEmitterTest}'s
-     * normalized-path assertions.
+     * Asserts that the generated module in {@code packageName} declares exactly one registration
+     * method, {@code apiRegistration}, whose signature and body are
+     * {@code GeneratedRestApplicationRegistration.of(Api.class, "api", "<value>", …)} with
+     * {@code value} unchanged as the path literal, and whose registration names {@code Api} and
+     * returns {@code value} from {@code path()}.
      */
-    private static void assertNormalizedPathLiteral(
-            ProcessorTestHarness.Result result, String moduleFqn, String applicationSimpleName, String value) {
+    private static void assertRegistrationCarriesPathLiteral(
+            ProcessorTestHarness.Result result, String packageName, String value) {
+        String moduleFqn = moduleFqn(packageName);
         String source = sourceOf(result, moduleFqn);
-        String methodName = Introspector.decapitalize(applicationSimpleName) + "Registration";
         assertContainsNormalized(
                 source,
-                "static GeneratedJaxRsApplicationRegistration " + methodName + "(@VertxConfig JsonObject config) {",
-                "the " + methodName + " signature in " + moduleFqn);
-        assertContainsNormalized(
-                source,
-                "return GeneratedJaxRsApplicationRegistration.of(" + applicationSimpleName + ".class, \"" + value
-                        + "\", true, " + applicationSimpleName + "::new);",
-                "the " + methodName + " body in " + moduleFqn);
+                "static GeneratedRestApplicationRegistration " + REGISTRATION_METHOD
+                        + "(@VertxConfig JsonObject config) {"
+                        + " return GeneratedRestApplicationRegistration.of(Api.class, \"api\", \"" + value + "\","
+                        + " List.of(PathResource.class), false, \"\", true); }",
+                "the " + REGISTRATION_METHOD + " method in " + moduleFqn);
+
+        Class<?> module = result.loadGeneratedClass(moduleFqn);
+        List<Method> registrationMethods = registrationMethods(module);
+        assertEquals(
+                List.of(REGISTRATION_METHOD),
+                registrationMethods.stream().map(Method::getName).toList(),
+                () -> "Expected exactly Api's registration method in " + moduleFqn + "\n" + source);
+        GeneratedRestApplicationRegistration registration = invokeRegistration(registrationMethods.get(0));
+        assertEquals(
+                result.loadGeneratedClass(declarationBinaryName(packageName)),
+                registration.declaringType(),
+                "declaringType()");
+        assertEquals(value, registration.path(), "path()");
+    }
+
+    /**
+     * Asserts that the opted-out declaration in {@code packageName} gets no error and exactly one
+     * diagnostic naming it, T022's opt-out warning, that no diagnostic reports a path rule, and that
+     * the module written for {@code PathResource} declares no registration method.
+     */
+    private static void assertOnlyTheOptOutWarning(ProcessorTestHarness.Result result, String packageName) {
+        assertEquals(
+                List.of(),
+                describeAll(result.compilation().errors()),
+                () -> "Expected no ERROR diagnostic for the @NoAutoWire declaration." + diagnosticsSummary(result));
+        String declaration = declarationBinaryName(packageName);
+        List<Diagnostic<? extends JavaFileObject>> naming = result.compilation().diagnostics().stream()
+                .filter(d -> {
+                    String message = d.getMessage(null);
+                    return message != null && message.contains(declaration);
+                })
+                .toList();
+        assertEquals(
+                1,
+                naming.size(),
+                () -> "Expected exactly one diagnostic naming " + declaration + diagnosticsSummary(result));
+        Diagnostic<? extends JavaFileObject> only = naming.get(0);
+        String message = only.getMessage(null);
+        assertTrue(
+                (only.getKind() == Diagnostic.Kind.WARNING || only.getKind() == Diagnostic.Kind.MANDATORY_WARNING)
+                        && message.contains("is annotated @NoAutoWire")
+                        && message.contains("not registered")
+                        && message.contains("not validated"),
+                () -> "Expected the one diagnostic naming " + declaration + " to be T022's opt-out warning."
+                        + diagnosticsSummary(result));
+        assertTrue(
+                result.compilation().diagnostics().stream()
+                        .map(d -> d.getMessage(null))
+                        .noneMatch(m -> m != null && m.contains("(rule: ")),
+                () -> "Expected no diagnostic reporting a path rule." + diagnosticsSummary(result));
+
+        Class<?> module = result.loadGeneratedClass(moduleFqn(packageName));
+        assertEquals(
+                List.of(),
+                registrationMethods(module).stream().map(Method::getName).toList(),
+                () -> "Expected no registration method for the @NoAutoWire declaration."
+                        + sourceOf(result, moduleFqn(packageName)));
+    }
+
+    /** The declared methods of {@code module} returning {@code GeneratedRestApplicationRegistration}. */
+    private static List<Method> registrationMethods(Class<?> module) {
+        return Arrays.stream(module.getDeclaredMethods())
+                .filter(m -> GeneratedRestApplicationRegistration.class.equals(m.getReturnType()))
+                .toList();
+    }
+
+    private static GeneratedRestApplicationRegistration invokeRegistration(Method method) {
+        assertEquals(
+                List.of(JsonObject.class),
+                List.of(method.getParameterTypes()),
+                () -> "Expected '" + method.getName() + "' to take only a JsonObject (@VertxConfig)");
+        method.setAccessible(true);
+        try {
+            return (GeneratedRestApplicationRegistration) method.invoke(null, new JsonObject());
+        } catch (IllegalAccessException | InvocationTargetException e) {
+            throw new AssertionFailedError(
+                    "Failed to invoke registration method '" + method.getName() + "': " + e.getMessage(), e);
+        }
     }
 
     /**
@@ -271,13 +330,13 @@ class ApplicationPathGrammarTest {
     }
 
     private static String normalizeWhitespace(String text) {
-        return text.replaceAll("\\s+", " ").replaceAll(" ?([(),<>]) ?", "$1").trim();
+        return text.replaceAll("\\s+", " ").replaceAll(" ?([(),<>{};]) ?", "$1").trim();
     }
 
     /**
      * Asserts that {@code actual} contains {@code expectedSnippet} once both are collapsed to
-     * single-space-separated tokens with no space beside a parenthesis, comma, or angle bracket, so
-     * JavaPoet's column-100 wrapping cannot break an otherwise correct match.
+     * single-space-separated tokens with no space beside a parenthesis, comma, angle bracket, brace,
+     * or semicolon, so JavaPoet's column-100 wrapping cannot break an otherwise correct match.
      */
     private static void assertContainsNormalized(String actual, String expectedSnippet, String context) {
         String normalizedActual = normalizeWhitespace(actual);
@@ -286,6 +345,12 @@ class ApplicationPathGrammarTest {
                 normalizedActual.contains(normalizedExpected),
                 () -> "Expected " + context + " to contain (after whitespace normalization):\n" + normalizedExpected
                         + "\nActual (normalized):\n" + normalizedActual);
+    }
+
+    private static List<String> describeAll(List<Diagnostic<? extends JavaFileObject>> diagnostics) {
+        return diagnostics.stream()
+                .map(d -> "[" + d.getKind() + "] " + d.getMessage(null))
+                .toList();
     }
 
     private static void logDiagnostics(String label, ProcessorTestHarness.Result result) {
