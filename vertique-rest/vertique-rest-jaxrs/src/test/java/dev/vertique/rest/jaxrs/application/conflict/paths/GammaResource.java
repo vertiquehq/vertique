@@ -11,10 +11,10 @@ import jakarta.ws.rs.core.MediaType;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * TP-003 conflict fixture (T004): the counting resource {@link GammaApplication} lists in
- * {@code getClasses()}, cataloged by this unit's {@code GeneratedJaxRsResourcesModule}. Because
- * {@link GammaApplication}'s conflicting case fails at composer step 1b, before step 4, this
- * resource's {@link #CONSTRUCTIONS} counter must stay {@code 0} in every case that names it.
+ * TP-003 conflict fixture (T004): the counting resource {@link PathConflictApis.GammaApi} lists as
+ * its resource, cataloged by this unit's {@code GeneratedJaxRsResourcesModule}. Because
+ * {@link PathConflictApis.GammaApi}'s conflicting case fails at composer step 1b, before step 4,
+ * this resource's {@link #CONSTRUCTIONS} counter must stay {@code 0} in every case that names it.
  */
 @Path("/conflict/gamma")
 public class GammaResource {

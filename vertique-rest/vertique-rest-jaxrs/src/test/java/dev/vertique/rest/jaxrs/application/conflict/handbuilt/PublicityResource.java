@@ -11,7 +11,7 @@ import jakarta.ws.rs.core.MediaType;
 /**
  * TP-004 (T004) fixture: the sole resource of {@link PublicityMountModule}'s hand-built
  * {@code /api/publicity/*} mount (case (b), the control), which does NOT conflict with
- * {@code PublicApplication}'s {@code /api/public/*} mount: neither {@code /api/public/} nor
+ * {@code unitb.PublicApi}'s {@code /api/public/*} mount: neither {@code /api/public/} nor
  * {@code /api/publicity/} is a prefix of the other. Its resource method's name is unique across
  * every T004 conflict fixture.
  */

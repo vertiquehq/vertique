@@ -22,7 +22,7 @@ import jakarta.inject.Singleton;
 /**
  * Dagger components for {@link JaxRsApplicationMountConflictIT} (TP-004): six named nested
  * compositions, one per lettered case (a) to (f), each pairing an application (T002's
- * {@code unitb} fixtures, reused unchanged, or T004's {@code conflict.paths.RootApplication} for
+ * {@code unitb} fixtures, reused unchanged, or T004's {@code conflict.paths.RootApi} for
  * case (f)) or no application at all (case (c)) with one or two hand-built
  * {@code conflict.handbuilt} JAX-RS mounts, plus {@link ConflictSpyModule}'s two counting spies in
  * every composition. Every component's factory takes the deployment configuration as a
@@ -46,7 +46,7 @@ public final class ConflictDeploymentComponents {
     }
 
     /**
-     * Case (a): {@code ManagementApplication} at {@code /api/mgmt} beside a hand-built
+     * Case (a): {@code unitb.ManagementApi} at {@code /api/mgmt} beside a hand-built
      * {@code /api/*} mount ({@link ApiPrefixMountModule}) — a conflicting pair, since
      * {@code /api/} is a prefix of {@code /api/mgmt/}.
      */
@@ -77,7 +77,7 @@ public final class ConflictDeploymentComponents {
     }
 
     /**
-     * Case (b), the control: {@code PublicApplication} at {@code /api/public} beside a hand-built
+     * Case (b), the control: {@code unitb.PublicApi} at {@code /api/public} beside a hand-built
      * {@code /api/publicity/*} mount ({@link PublicityMountModule}) — does not conflict.
      */
     @Singleton
@@ -86,7 +86,9 @@ public final class ConflictDeploymentComponents {
                 RestModule.class,
                 ApplicationTestSupportModule.class,
                 dev.vertique.rest.jaxrs.application.unita.GeneratedJaxRsResourcesModule.class,
+                dev.vertique.rest.jaxrs.application.unita.scoped.GeneratedJaxRsResourcesModule.class,
                 dev.vertique.rest.jaxrs.application.unitb.GeneratedJaxRsResourcesModule.class,
+                dev.vertique.rest.jaxrs.application.manual.ManualResourceModule.class,
                 PublicityMountModule.class,
                 ConflictSpyModule.class
             })
@@ -137,7 +139,7 @@ public final class ConflictDeploymentComponents {
     }
 
     /**
-     * Case (d): {@code PublicApplication} at {@code /api/public} beside a hand-built
+     * Case (d): {@code unitb.PublicApi} at {@code /api/public} beside a hand-built
      * {@code /:tenant/*} pattern-path mount ({@link TenantPatternMountModule}) — conflicts with
      * every application under C-CONFLICT's pattern-path rule, regardless of any literal prefix
      * relation.
@@ -148,7 +150,9 @@ public final class ConflictDeploymentComponents {
                 RestModule.class,
                 ApplicationTestSupportModule.class,
                 dev.vertique.rest.jaxrs.application.unita.GeneratedJaxRsResourcesModule.class,
+                dev.vertique.rest.jaxrs.application.unita.scoped.GeneratedJaxRsResourcesModule.class,
                 dev.vertique.rest.jaxrs.application.unitb.GeneratedJaxRsResourcesModule.class,
+                dev.vertique.rest.jaxrs.application.manual.ManualResourceModule.class,
                 TenantPatternMountModule.class,
                 ConflictSpyModule.class
             })
@@ -169,9 +173,9 @@ public final class ConflictDeploymentComponents {
     }
 
     /**
-     * Case (e): {@code PublicApplication} at {@code /api/public} beside a hand-built
+     * Case (e): {@code unitb.PublicApi} at {@code /api/public} beside a hand-built
      * {@code /api/public/admin/*} mount ({@link PublicAdminMountModule}), which
-     * {@code PublicApplication}'s own mount contains — the reverse direction from case (a), which
+     * {@code unitb.PublicApi}'s own mount contains — the reverse direction from case (a), which
      * a one-direction-only conflict check would miss.
      */
     @Singleton
@@ -180,7 +184,9 @@ public final class ConflictDeploymentComponents {
                 RestModule.class,
                 ApplicationTestSupportModule.class,
                 dev.vertique.rest.jaxrs.application.unita.GeneratedJaxRsResourcesModule.class,
+                dev.vertique.rest.jaxrs.application.unita.scoped.GeneratedJaxRsResourcesModule.class,
                 dev.vertique.rest.jaxrs.application.unitb.GeneratedJaxRsResourcesModule.class,
+                dev.vertique.rest.jaxrs.application.manual.ManualResourceModule.class,
                 PublicAdminMountModule.class,
                 ConflictSpyModule.class
             })
@@ -201,7 +207,7 @@ public final class ConflictDeploymentComponents {
     }
 
     /**
-     * Case (f): the reused {@code conflict.paths.RootApplication} at the root path beside a
+     * Case (f): the reused {@code conflict.paths.RootApi} at the root path beside a
      * hand-built {@code /other/*} mount ({@link OtherMountModule}) — the root application
      * conflicts with every other mount.
      */

@@ -10,7 +10,7 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * TP-005 (T004) case (a) fixture: {@link OpidAlphaApplication}'s sole listed resource, at its own
+ * TP-005 (T004) case (a) fixture: {@link OpidApis.OpidAlphaApi}'s sole listed resource, at its own
  * {@code @Path}. Its {@link #list()} method's default operationId ({@code "list"}) collides with
  * {@link OpidBetaListResource#list()}'s, but the two resource classes are unrelated (neither is
  * the other's superclass), so they have no common owner — the collision must fail deployment.

@@ -9,8 +9,8 @@ import dagger.multibindings.ElementsIntoSet;
 import dagger.multibindings.IntoSet;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.rest.core.dagger.JaxRsResources;
-import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsApplicationRegistration;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsResourceEntry;
+import dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Provider;
 import java.util.Set;
@@ -42,7 +42,7 @@ public final class GeneratedJaxRsResourcesModule {
     @JaxRsResources
     static Set<Object> scopedResourceBinding(
             @VertxConfig JsonObject config,
-            Set<GeneratedJaxRsApplicationRegistration> applications,
+            Set<GeneratedRestApplicationRegistration> applications,
             Provider<ScopedResource> provider) {
         return applications.isEmpty() ? Set.of(provider.get()) : Set.of();
     }

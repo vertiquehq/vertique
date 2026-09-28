@@ -11,19 +11,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.jaxrs.application.ConflictCompositionComponents.ConflictPathsComponent;
-import dev.vertique.rest.jaxrs.application.conflict.paths.AlphaApplication;
 import dev.vertique.rest.jaxrs.application.conflict.paths.AlphaResource;
-import dev.vertique.rest.jaxrs.application.conflict.paths.BetaApplication;
 import dev.vertique.rest.jaxrs.application.conflict.paths.BetaResource;
-import dev.vertique.rest.jaxrs.application.conflict.paths.DeltaApplication;
 import dev.vertique.rest.jaxrs.application.conflict.paths.DeltaResource;
-import dev.vertique.rest.jaxrs.application.conflict.paths.GammaApplication;
 import dev.vertique.rest.jaxrs.application.conflict.paths.GammaResource;
-import dev.vertique.rest.jaxrs.application.conflict.paths.PublicProbeApplication;
+import dev.vertique.rest.jaxrs.application.conflict.paths.PathConflictApis;
 import dev.vertique.rest.jaxrs.application.conflict.paths.PublicProbeResource;
-import dev.vertique.rest.jaxrs.application.conflict.paths.PublicityProbeApplication;
 import dev.vertique.rest.jaxrs.application.conflict.paths.PublicityProbeResource;
-import dev.vertique.rest.jaxrs.application.conflict.paths.RootApplication;
 import dev.vertique.rest.jaxrs.application.conflict.paths.RootResource;
 import io.vertx.core.json.JsonObject;
 import java.util.List;
@@ -39,25 +33,16 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * TP-003 (T004): proves composer step 1b — conflicting active application paths fail before any
- * application is constructed or any resource is resolved. Every case pairs two overriding
- * applications from the self-contained {@code conflict.paths} compilation unit (T002's
- * {@code unita}/{@code unitb}/{@code manual} fixtures are never involved), so the only possible
- * violation is the deliberate path conflict, never an unrelated membership violation.
+ * TP-016 (ported): proves composer step 1b — conflicting active application paths fail before any
+ * resource is resolved. Every case pairs two applications from the self-contained
+ * {@code conflict.paths} compilation unit, so the only possible violation is the deliberate path
+ * conflict, never an unrelated membership violation. The only changed expectations from the
+ * pre-port {@code Application}-based suite are that failure messages name the application by its
+ * registered name and declaring interface where they named the {@code Application} class.
  */
 class JaxRsApplicationMountConflictTest {
 
     private static final Logger LOG = LoggerFactory.getLogger(JaxRsApplicationMountConflictTest.class);
-
-    /** Every conflict fixture's application construction counter, for the "zero constructions" assertion. */
-    private static final List<AtomicInteger> ALL_APPLICATION_COUNTERS = List.of(
-            AlphaApplication.CONSTRUCTIONS,
-            BetaApplication.CONSTRUCTIONS,
-            GammaApplication.CONSTRUCTIONS,
-            DeltaApplication.CONSTRUCTIONS,
-            RootApplication.CONSTRUCTIONS,
-            PublicProbeApplication.CONSTRUCTIONS,
-            PublicityProbeApplication.CONSTRUCTIONS);
 
     /** Every conflict fixture's resource construction counter, for the "zero resolutions" assertion. */
     private static final List<AtomicInteger> ALL_RESOURCE_COUNTERS = List.of(
@@ -71,30 +56,23 @@ class JaxRsApplicationMountConflictTest {
 
     @BeforeEach
     void resetCounters() {
-        AlphaApplication.reset();
         AlphaResource.reset();
-        BetaApplication.reset();
         BetaResource.reset();
-        GammaApplication.reset();
         GammaResource.reset();
-        DeltaApplication.reset();
         DeltaResource.reset();
-        RootApplication.reset();
         RootResource.reset();
-        PublicProbeApplication.reset();
         PublicProbeResource.reset();
-        PublicityProbeApplication.reset();
         PublicityProbeResource.reset();
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("conflictCases")
-    @DisplayName("Conflicting application paths fail before any application is constructed; the control composes")
+    @DisplayName("Conflicting application paths fail before any resource is resolved; the control composes")
     void conflictingApplicationPathsFailBeforeResolution(ConflictCase testCase) {
         if (testCase.expectConflict()) {
             RestConfigurationException ex = assertThrows(
                     RestConfigurationException.class, testCase.action()::get, testCase.name() + " must fail");
-            LOG.info("TP-003 {} failure: {}", testCase.name(), ex.getMessage());
+            LOG.info("TP-016 {} failure: {}", testCase.name(), ex.getMessage());
 
             for (String fragment : testCase.expectedMessageFragments()) {
                 assertTrue(
@@ -105,15 +83,11 @@ class JaxRsApplicationMountConflictTest {
 
             assertEquals(
                     0,
-                    sum(ALL_APPLICATION_COUNTERS),
-                    testCase.name() + ": no application is constructed before a step 1b violation fails");
-            assertEquals(
-                    0,
                     sum(ALL_RESOURCE_COUNTERS),
                     testCase.name() + ": no resource is resolved before a step 1b violation fails");
         } else {
             Set<RouterMount> mounts = assertDoesNotThrow(testCase.action()::get, testCase.name() + " must compose");
-            LOG.info("TP-003 {} composed {} mount(s)", testCase.name(), mounts.size());
+            LOG.info("TP-016 {} composed {} mount(s)", testCase.name(), mounts.size());
             assertEquals(2, mounts.size(), testCase.name() + ": both non-conflicting applications must mount");
         }
     }
@@ -127,40 +101,42 @@ class JaxRsApplicationMountConflictTest {
     }
 
     /**
-     * TP-003's four cases, named 1 to 4 per the contract's case list: three conflicting pairs
-     * (same normalized path; {@code /api} beside {@code /api/mgmt}; root {@code /} beside
-     * {@code /api/mgmt}) and the control ({@code /api/public} beside {@code /api/publicity}).
+     * TP-016's four cases: three conflicting pairs (same normalized path; {@code /api} beside
+     * {@code /api/mgmt}; root {@code /} beside {@code /api/mgmt}) and the control ({@code
+     * /api/public} beside {@code /api/publicity}). Each failure names both applications' registered
+     * name and declaring interface.
      *
-     * @return the four TP-003 cases, in contract order
+     * @return the four cases, in contract order
      */
     private static Stream<ConflictCase> conflictCases() {
         return Stream.of(
                 new ConflictCase(
-                        "case 1: two application classes with the same normalized path",
+                        "case 1: two applications with the same normalized path",
                         () -> conflictPathsComponent(activate("alpha", "beta")).routerMounts(),
                         true,
                         List.of(
-                                "Application " + AlphaApplication.class.getName() + " at '" + AlphaApplication.PATH
-                                        + "'",
-                                "Application " + BetaApplication.class.getName() + " at '" + BetaApplication.PATH
-                                        + "'")),
+                                "paths-alpha",
+                                PathConflictApis.AlphaApi.class.getName(),
+                                "paths-beta",
+                                PathConflictApis.BetaApi.class.getName())),
                 new ConflictCase(
                         "case 2: /api beside /api/mgmt",
                         () -> conflictPathsComponent(activate("gamma", "delta")).routerMounts(),
                         true,
                         List.of(
-                                "Application " + GammaApplication.class.getName() + " at '" + GammaApplication.PATH
-                                        + "'",
-                                "Application " + DeltaApplication.class.getName() + " at '" + DeltaApplication.PATH
-                                        + "'")),
+                                "paths-gamma",
+                                PathConflictApis.GammaApi.class.getName(),
+                                "paths-delta",
+                                PathConflictApis.DeltaApi.class.getName())),
                 new ConflictCase(
                         "case 3: root / beside /api/mgmt",
                         () -> conflictPathsComponent(activate("root", "delta")).routerMounts(),
                         true,
                         List.of(
-                                "Application " + RootApplication.class.getName() + " at '" + RootApplication.PATH + "'",
-                                "Application " + DeltaApplication.class.getName() + " at '" + DeltaApplication.PATH
-                                        + "'")),
+                                "paths-root",
+                                PathConflictApis.RootApi.class.getName(),
+                                "paths-delta",
+                                PathConflictApis.DeltaApi.class.getName())),
                 new ConflictCase(
                         "case 4 (control): /api/public beside /api/publicity",
                         () -> conflictPathsComponent(activate("publicProbe", "publicityProbe"))
@@ -193,9 +169,8 @@ class JaxRsApplicationMountConflictTest {
     }
 
     /**
-     * One TP-003 case: its name (shown by {@code @ParameterizedTest(name = "{0}")} and so in
-     * {@code TEST-*.xml}), the {@code Set<RouterMount>} resolution to run, whether it must fail
-     * with a conflict, and (for a conflicting case) the message fragments the thrown
+     * One TP-016 case: its name, the {@code Set<RouterMount>} resolution to run, whether it must
+     * fail with a conflict, and (for a conflicting case) the message fragments the thrown
      * {@link RestConfigurationException} must contain.
      *
      * @param name                     the case's display name

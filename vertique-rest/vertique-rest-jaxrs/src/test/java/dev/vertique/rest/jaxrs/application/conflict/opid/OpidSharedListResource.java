@@ -10,8 +10,8 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 
 /**
- * TP-005 (T004) case (b) fixture: one resource, listed by both {@link OpidShareOneApplication} and
- * {@link OpidShareTwoApplication}. C-COMPOSE step 6.6 resolves this catalog entry once and shares
+ * TP-005 (T004) case (b) fixture: one resource, listed by both {@link OpidApis.OpidShareOneApi} and
+ * {@link OpidApis.OpidShareTwoApi}. C-COMPOSE step 6.6 resolves this catalog entry once and shares
  * the same instance across both mounts, so the {@link #list()} operation each mount exposes has
  * the same owner (the same resource class, method name, and parameter types) — the cross-mount
  * operationId collision must not fail deployment.

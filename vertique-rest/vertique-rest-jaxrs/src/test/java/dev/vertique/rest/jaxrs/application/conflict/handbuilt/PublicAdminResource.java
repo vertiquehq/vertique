@@ -10,7 +10,7 @@ import jakarta.ws.rs.core.MediaType;
 
 /**
  * TP-004 (T004) fixture: the sole resource of {@link PublicAdminMountModule}'s hand-built
- * {@code /api/public/admin/*} mount (case (e)), nested INSIDE {@code PublicApplication}'s
+ * {@code /api/public/admin/*} mount (case (e)), nested INSIDE {@code unitb.PublicApi}'s
  * {@code /api/public/*} mount: the application's prefix, {@code /api/public/}, is a prefix of the
  * hand-built mount's prefix, {@code /api/public/admin/}, the reverse direction from case (a). Its
  * resource method's name is unique across every T004 conflict fixture.

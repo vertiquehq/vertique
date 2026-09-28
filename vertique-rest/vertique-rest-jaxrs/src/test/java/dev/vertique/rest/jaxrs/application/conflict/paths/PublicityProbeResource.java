@@ -11,8 +11,8 @@ import jakarta.ws.rs.core.MediaType;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * TP-003 control fixture (T004): the counting resource {@link PublicityProbeApplication} lists in
- * {@code getClasses()}, cataloged by this unit's {@code GeneratedJaxRsResourcesModule}. The
+ * TP-003 control fixture (T004): the counting resource {@link PathConflictApis.PublicityProbeApi}
+ * lists as its resource, cataloged by this unit's {@code GeneratedJaxRsResourcesModule}. The
  * control case 4 composes successfully, so this resource IS resolved, and
  * {@link #CONSTRUCTIONS} counts that resolution.
  */

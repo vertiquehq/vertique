@@ -3,12 +3,12 @@
 
 package dev.vertique.rest.jaxrs.synthetic;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
+import dev.vertique.config.parser.DefaultConfigMapper;
+import dev.vertique.config.parser.DefaultConfigParser;
 import dev.vertique.core.config.ConfigParser;
-import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.rest.core.interceptor.ErrorInterceptor;
 import dev.vertique.rest.core.router.OperationHandlerContributor;
 import dev.vertique.rest.core.router.RouterMount;
@@ -18,11 +18,9 @@ import dev.vertique.rest.core.security.SecurityPolicyValidator;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
 import dev.vertique.rest.jaxrs.JaxRsRouterMount;
 import dev.vertique.rest.jaxrs.publication.SyntheticOperations;
-import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Singleton;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 /**
@@ -184,29 +182,6 @@ final class SyntheticFixtureModule {
 
     @Provides
     static ConfigParser configParser() {
-        return new ConfigParser() {
-            private final ObjectMapper mapper = new ObjectMapper();
-
-            @Override
-            public <T> T parse(JsonObject section, Class<T> type) {
-                JsonObject json = section != null ? section : new JsonObject();
-                try {
-                    return mapper.readValue(json.encode(), type);
-                } catch (Exception e) {
-                    throw new ConfigurationException("failed to parse test config into " + type.getName(), e);
-                }
-            }
-
-            @Override
-            public <T> List<T> parseKeyedObject(JsonObject section, String identityProp, Class<T> elementType) {
-                throw new UnsupportedOperationException("not needed by this suite");
-            }
-
-            @Override
-            public <T> List<T> parseKeyedObject(
-                    JsonObject section, String identityProp, Class<T> elementType, Map<String, Object> fixedProps) {
-                throw new UnsupportedOperationException("not needed by this suite");
-            }
-        };
+        return new DefaultConfigParser(DefaultConfigMapper.lenient());
     }
 }

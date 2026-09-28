@@ -58,7 +58,6 @@ import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.handler.AuthenticationHandler;
 import io.vertx.ext.web.handler.ChainAuthHandler;
 import jakarta.annotation.Nullable;
-import jakarta.ws.rs.core.Application;
 import jakarta.ws.rs.core.EntityPart;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.ParameterizedType;
@@ -257,19 +256,19 @@ public class JaxRsRouteRegistrar {
 
     /**
      * Scans all resource instances and registers handlers on a plain {@link Router}, recording every
-     * implicit-policy operation into {@code implicitOperations} while this call serves
-     * {@code applicationType}.
+     * implicit-policy operation into {@code implicitOperations} while this call serves an
+     * application whose declaring interface is {@code declaringType}.
      *
      * <p>Package-private: the package-private application-mount composition
      * ({@code JaxRsRouterMount#createRouter}) is the sole caller that serves a declared application,
-     * passing its own type and a fresh sink it reads after this call returns; every other caller
-     * uses the public {@link #registerAll(Set, Router, RequestValidationStrategy, MountMeta,
+     * passing its own declaring type and a fresh sink it reads after this call returns; every other
+     * caller uses the public {@link #registerAll(Set, Router, RequestValidationStrategy, MountMeta,
      * Optional, SecuritySchemeHandlerCollector, List, List, ErrorPipeline, ResponsePipeline,
      * RestContextResolution, ParamConversionResolver, SecurityPolicyValidator, boolean, List, List,
      * String, BeanValidator, InputObjectProcessor, List, ActionRegistry, boolean, JaxRsConfig,
      * JsonMapperProfileRegistry, JsonConfig) overload}, which delegates here with a {@code null}
-     * application type and a sink it discards. This registrar keeps no state of its own between
-     * calls: {@code applicationType} and {@code implicitOperations} are this call's own, never
+     * declaring type and a sink it discards. This registrar keeps no state of its own between
+     * calls: {@code declaringType} and {@code implicitOperations} are this call's own, never
      * instance fields.
      *
      * @param resources               JAX-RS annotated resource instances
@@ -329,13 +328,13 @@ public class JaxRsRouteRegistrar {
      * @param jsonConfig             global JSON configuration; supplies the {@code json.jsonProfile} default
      *                                applied when a resource method and {@code jaxrs.jsonProfile} both select
      *                                no profile of their own
-     * @param applicationType         the declared {@code jakarta.ws.rs.core.Application} this call's
-     *                                mount was built for, or {@code null} for a mount not built from a
-     *                                declared application. The only uses of this parameter are the
-     *                                opt-in-off recording condition below; the opt-in failure itself
-     *                                applies regardless of it.
+     * @param declaringType           the declared {@code @RestApplication}'s declaring interface this
+     *                                call's mount was built for, or {@code null} for a mount not built
+     *                                from a declared application. The only uses of this parameter are
+     *                                the opt-in-off recording condition below; the opt-in failure
+     *                                itself applies regardless of it.
      * @param implicitOperations      the sink every implicit-policy operation is recorded into, while
-     *                                {@code applicationType} is non-{@code null} and the {@code
+     *                                {@code declaringType} is non-{@code null} and the {@code
      *                                jaxrs.security.requireExplicitPolicy} opt-in is off; untouched
      *                                otherwise
      */
@@ -365,7 +364,7 @@ public class JaxRsRouteRegistrar {
             JaxRsConfig jaxRsConfig,
             JsonMapperProfileRegistry jsonMapperProfileRegistry,
             JsonConfig jsonConfig,
-            @Nullable Class<? extends Application> applicationType,
+            @Nullable Class<?> declaringType,
             List<ImplicitOperation> implicitOperations) {
         List<OperationInterceptor> sortedInterceptors =
                 operationInterceptors != null ? Collections.unmodifiableList(operationInterceptors) : List.of();
@@ -528,7 +527,7 @@ public class JaxRsRouteRegistrar {
                             RouteRegistrationViolation.ViolationType.NO_EXPLICIT_SECURITY_POLICY,
                             meta.httpMethod() + " " + fullPath + " has no explicit security policy, which "
                                     + "jaxrs.security.requireExplicitPolicy requires"));
-                } else if (applicationType != null) {
+                } else if (declaringType != null) {
                     // Recording condition: only when this registrar serves an application mount.
                     // The owning JaxRsRouterMount reads its own implicitOperations sink after this
                     // call returns and logs the warning; a non-application mount never warns.

@@ -15,7 +15,7 @@ import java.util.Set;
  * G-06 fixture: a manually contributed resource (not a declared {@code Application}) whose
  * {@code @Inject} constructor takes {@code Set<RouterMount>} directly — the mistake C-COMPOSE's
  * threading rule forbids, applied to a resource instead of an application (TP-015's
- * {@code ReentrantApplication} covers the application-construction re-entry; G-06 covers a
+ * {@code ReentrantExplicitApi} covers the application-construction re-entry; G-06 covers a
  * resource resolved through {@code @JaxRsResources Provider<Set<Object>> resources} — in the
  * zero-declaration default mount's own body ({@code RestModule.jaxRsRouterMount}) or in the
  * composer's step 4 manual-resource resolution, both of which the component-scoped re-entry guard

@@ -12,7 +12,7 @@ import jakarta.ws.rs.core.MediaType;
  * TP-004 (T004) fixture: the sole resource of {@link TenantPatternMountModule}'s hand-built
  * {@code /:tenant/*} pattern-path mount (case (d)). C-CONFLICT treats a non-application JAX-RS
  * mount whose prefix contains a colon or curly brace as conflicting with every application mount,
- * regardless of any literal prefix relation to {@code PublicApplication}'s {@code /api/public/*}.
+ * regardless of any literal prefix relation to {@code unitb.PublicApi}'s {@code /api/public/*}.
  * Its resource method's name is unique across every T004 conflict fixture.
  */
 @Path("/tenant-pattern-probe")
