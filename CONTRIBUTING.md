@@ -9,7 +9,25 @@ Thank you for contributing to Vertique.
 
 ## Local verification
 
-Vertique requires Java 21 or later. Before submitting a change, run:
+The full build and its integration tests need:
+
+- a JDK at `pom.xml`'s `<java.version>` (Java 21) or later;
+- Go at the version the MCP Go interop fixture's `go.mod` requires (1.25);
+- Node.js 22 or later with npm, for the MCP TypeScript interop and conformance tests;
+- a running Docker-compatible engine, for the Testcontainers-based integration tests.
+
+The MCP interop tests download their pinned Go modules and npm packages, so the
+full build also needs network access. Check the tools with:
+
+```bash
+scripts/doctor.sh
+```
+
+It inspects the effective tools rather than any installer or version manager, and
+also catches a `JAVA_HOME` that a Java version manager points at a missing JDK,
+which otherwise fails only the nested Maven builds of the integration tests.
+
+Before submitting a change, run:
 
 ```bash
 ./mvnw -ntp clean verify
