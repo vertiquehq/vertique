@@ -108,6 +108,24 @@ jobs:
         with:
           node-version: "22"
 
+      # McpGoClientInteropIT runs `go run` against the Go fixture, whose go.mod
+      # states the toolchain it needs. Installing exactly that version keeps the
+      # build off whichever Go the runner image happens to ship. The fixture
+      # runs with its own throwaway module cache, so setup-go's cache would
+      # never be read.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: vertique-mcp/vertique-mcp-server/src/test/resources/mcp/clients/go/go.mod
+          cache: false
+
+      # Every toolchain the build launches is now in place; prove it in seconds
+      # rather than partway through the build. The harness runs first so a
+      # broken doctor cannot pass by accident.
+      - name: Verify build prerequisites
+        run: |
+          bash scripts/test-doctor.sh
+          bash scripts/doctor.sh
+
       # A glob, never an enumeration. A hand-maintained list silently skips
       # every test file nobody remembers to add, and `node --test` exits 0 when
       # a listed path does not exist as long as another one resolves, so an
