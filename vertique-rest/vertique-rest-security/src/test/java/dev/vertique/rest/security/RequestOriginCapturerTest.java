@@ -353,6 +353,23 @@ class RequestOriginCapturerTest {
 
             assertFalse(origin.forwardedForChainRejected());
         }
+
+        @Test
+        @DisplayName("a resolvable hostname entry is rejected as a non-literal, never resolved into the chain")
+        void resolvableHostnameEntryRejectedNotResolved() {
+            // "localhost" resolves without DNS (hosts file), so only the IP-literal guard keeps it out.
+            // The peer is trusted: had the hostname entered the chain, it would be the rightmost
+            // untrusted entry and become the derived clientIp — as itself or as a resolved 127.0.0.1.
+            HttpServerRequest request = stubRequest("10.0.0.5", 0, "http", "example.com", "198.51.100.5, localhost");
+            RequestOrigin origin = capturerWithTrustedProxies("10.0.0.0/8").capture(request);
+
+            assertEquals(
+                    List.of("198.51.100.5"),
+                    origin.forwardedFor(),
+                    "the hostname entry must be dropped, neither kept verbatim nor resolved to an address");
+            assertEquals(1, origin.forwardedForRejectedCount(), "the hostname entry is counted as rejected");
+            assertEquals("198.51.100.5", origin.clientIp(), "a hostname must never become the derived client IP");
+        }
     }
 
     // --- AC-RO-7: Untrusted peer + forwarded headers ---
@@ -523,6 +540,39 @@ class RequestOriginCapturerTest {
             RequestOrigin origin = capturer.capture(request);
 
             assertEquals("198.51.100.1", origin.clientIp());
+        }
+
+        // A /12 prefix ends four bits into the second octet — the only shape here that exercises the
+        // partial-octet mask. 172.16.0.0/12 spans 172.16.0.0 through 172.31.255.255.
+
+        @Test
+        @DisplayName("172.20.0.1 and 172.31.255.254 match 172.16.0.0/12 (prefix ends mid-octet)")
+        void ipInsidePartialOctetPrefixTrusted() {
+            RequestOriginCapturer capturer = capturerWithTrustedProxies("172.16.0.0/12");
+
+            for (String peer : List.of("172.20.0.1", "172.31.255.254")) {
+                HttpServerRequest request = stubRequest(peer, 0, "http", "example.com", "198.51.100.1");
+
+                assertEquals(
+                        "198.51.100.1",
+                        capturer.capture(request).clientIp(),
+                        peer + " is inside 172.16.0.0/12, so its X-Forwarded-For must be honoured");
+            }
+        }
+
+        @Test
+        @DisplayName("172.32.0.1 and 172.15.255.254 do not match 172.16.0.0/12 (differ only in masked bits)")
+        void ipOutsidePartialOctetPrefixNotTrusted() {
+            RequestOriginCapturer capturer = capturerWithTrustedProxies("172.16.0.0/12");
+
+            for (String peer : List.of("172.32.0.1", "172.15.255.254")) {
+                HttpServerRequest request = stubRequest(peer, 0, "http", "example.com", "198.51.100.1");
+
+                assertEquals(
+                        peer,
+                        capturer.capture(request).clientIp(),
+                        peer + " is outside 172.16.0.0/12, so its X-Forwarded-For must be ignored");
+            }
         }
     }
 
