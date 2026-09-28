@@ -705,6 +705,20 @@ before the resource method.
 `requiredAction()` (`Optional<ActionRef>`), `operation()` (`RestOperationDescriptor`), and `route()`
 (`RouteRegistration`, whose `addHandler(...)` returns itself for chaining).
 
+Contributors may also run for framework-owned synthetic operations — routes installed outside normal
+resource-method discovery. A synthetic route runs the same contributor chain, with the same inputs,
+as an equally-secured resource route: the same contributors, in the same order, with the same
+effective security policy. A synthetic operation's id lives in the reserved `apidocs:` namespace, its
+`operation()` descriptor reports a literal route template with no consumed or produced media types,
+and the descriptor's annotations are the synthetic security annotations its effective policy was
+built from — so a contributor that reads annotations sees exactly what an equally annotated resource
+method would show. No signature, default, or behavior of this interface changes for a synthetic
+operation.
+
+A synthetic route renders a failure from its status alone (`ctx.fail(status)` or an
+`HttpException`), without the application's exception mapping or interceptors; a contributor
+rejecting a synthetic operation fails with an explicit 4xx or 5xx status.
+
 ### `RequestInterceptor`, `OperationInterceptor`, `ErrorInterceptor`
 
 Three pipelines with distinct scopes. Every callback has a default, so implement only what you need.

@@ -26,6 +26,7 @@ import dev.vertique.rest.core.response.ResponseBodyEncoder;
 import dev.vertique.rest.core.router.MountMeta;
 import dev.vertique.rest.core.router.OperationHandlerContributor;
 import dev.vertique.rest.core.router.OperationRegistrationContext;
+import dev.vertique.rest.core.routing.RestOperationDescriptor;
 import dev.vertique.rest.core.routing.RouteRegistration;
 import dev.vertique.rest.core.routing.SecurityRequirement;
 import dev.vertique.rest.core.routing.SecurityRequirementSet;
@@ -616,14 +617,8 @@ public class JaxRsRouteRegistrar {
             // (finding C2 / SH-4). A scopeless set leaves the annotation-derived policy unchanged. The
             // shapes the fold cannot handle (multi-scheme, scoped-OR, both-scopes) were already rejected
             // by the always-on gate above, so the fold only ever sees the supported single scoped set.
-            if (!sortedContributors.isEmpty()) {
-                RouteRegistration routeReg = new PlainRouteRegistration(route, descriptor);
-                OperationRegistrationContext ctx = new OperationRegistrationContext(
-                        meta.operationId(), effectivePolicy, requiredAction, descriptor, routeReg);
-                for (OperationHandlerContributor contributor : sortedContributors) {
-                    contributor.contribute(ctx);
-                }
-            }
+            contributeOperationHandlers(
+                    route, meta.operationId(), descriptor, effectivePolicy, requiredAction, sortedContributors);
 
             // (c-1) Wire → Java name projection for this route's object bodies, composed HERE rather
             // than on the request path. InputFieldNameResolver publishes that an implementation never
@@ -1152,6 +1147,46 @@ public class JaxRsRouteRegistrar {
         // must not record a spurious rejection from an earlier one. Single-scheme routes (above) are
         // left unwrapped, so their rejections still emit immediately.
         route.handler(new DeferredCredentialRejectionAuthHandler(orChain));
+    }
+
+    /**
+     * Calls every {@link OperationHandlerContributor} for one operation's route, in the given order,
+     * so each can append its handlers through a {@link PlainRouteRegistration} over {@code route}.
+     *
+     * <p>All contributors receive one shared {@link OperationRegistrationContext} built from the
+     * arguments; the order of {@code contributors} is the order their handlers are appended, and so
+     * the order they run at request time. An empty {@code contributors} list builds no context and
+     * appends nothing.
+     *
+     * <p>Package-private and static so every route the framework builds through the resource security
+     * chain, a resource method's or a framework-owned synthetic operation's, runs this one contributor
+     * loop: the two can never diverge in order or inputs.
+     *
+     * @param route          the Vert.x route the contributors append their handlers to
+     * @param operationId    the operation's id, handed to the contributors unchanged
+     * @param descriptor     the operation's transport-neutral descriptor, exposed through both the
+     *                       context and the route registration
+     * @param policy         the operation's effective security policy
+     * @param requiredAction the operation's resolved action gate, or {@link Optional#empty()} when it
+     *                       declares none
+     * @param contributors   the contributors, already sorted into the order they must run in
+     */
+    static void contributeOperationHandlers(
+            Route route,
+            String operationId,
+            RestOperationDescriptor descriptor,
+            SecurityPolicy policy,
+            Optional<ActionRef> requiredAction,
+            List<OperationHandlerContributor> contributors) {
+        if (contributors.isEmpty()) {
+            return;
+        }
+        RouteRegistration routeReg = new PlainRouteRegistration(route, descriptor);
+        OperationRegistrationContext ctx =
+                new OperationRegistrationContext(operationId, policy, requiredAction, descriptor, routeReg);
+        for (OperationHandlerContributor contributor : contributors) {
+            contributor.contribute(ctx);
+        }
     }
 
     /**

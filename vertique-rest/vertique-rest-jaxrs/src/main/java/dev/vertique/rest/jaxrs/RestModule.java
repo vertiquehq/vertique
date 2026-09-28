@@ -35,6 +35,7 @@ import dev.vertique.rest.core.response.ResponseSerializer;
 import dev.vertique.rest.core.router.MountCompositionValidator;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.core.sse.SseChannelFactory;
+import dev.vertique.rest.jaxrs.publication.SyntheticOperations;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsApplicationRegistration;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsResourceEntry;
 import dev.vertique.rest.jaxrs.validation.FileContentVerifier;
@@ -162,6 +163,19 @@ public abstract class RestModule {
     @Binds
     @IntoSet
     abstract RequestValidationStrategy noneValidationStrategy(NoneValidationStrategy strategy);
+
+    /**
+     * Binds the INTERNAL {@link SyntheticOperations} seam to its package-private implementation.
+     *
+     * <p>Consumed by sibling framework modules (starting with the OpenAPI documentation module) to
+     * install a framework-owned route that runs exactly the chain an equally annotated JAX-RS
+     * resource method gets.
+     *
+     * @param installer the package-private implementation
+     * @return the bound {@link SyntheticOperations} seam
+     */
+    @Binds
+    abstract SyntheticOperations syntheticOperations(SyntheticOperationInstaller installer);
 
     /**
      * Declares an optional binding for {@link OperationSchemaSource}.

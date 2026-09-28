@@ -268,9 +268,7 @@ public class JaxRsRouterMount implements RouterMount {
         List<RequestInterceptor> sortedRequestInterceptors = factory.requestInterceptors.stream()
                 .sorted(OrderedExtension.comparator())
                 .toList();
-        List<OperationHandlerContributor> sortedContributors = factory.operationHandlerContributors.stream()
-                .sorted(OrderedExtension.comparator())
-                .toList();
+        List<OperationHandlerContributor> sortedContributors = factory.sortedOperationHandlerContributors();
         List<RestServerRequestEvidenceCapturer> sortedCapturers = factory.evidenceCapturers.stream()
                 .sorted(OrderedExtension.comparator())
                 .toList();
@@ -348,11 +346,7 @@ public class JaxRsRouterMount implements RouterMount {
         // Configure security scheme handlers, collecting each scheme's auth handler. No contract gating
         // (FR-014): every handler is configured once; the registrar applies the collected handler per
         // each operation's effective security requirements.
-        SecuritySchemeHandlerCollector securityHandlers = new SecuritySchemeHandlerCollector();
-        for (SecuritySchemeHandler handler : factory.securitySchemeHandlers) {
-            log.info("Configuring security scheme: {}", handler.schemeName());
-            handler.configure(new CollectingSecuritySchemeRegistry(handler, securityHandlers));
-        }
+        SecuritySchemeHandlerCollector securityHandlers = configureSecuritySchemes(factory.securitySchemeHandlers);
 
         for (RouterLifecycleHook hook : sortedRouterHooks) {
             hook.afterAuthSetup(routerSetup);
@@ -448,6 +442,33 @@ public class JaxRsRouterMount implements RouterMount {
                 .failureHandler(ctx -> handleFailure(ctx, errorPipeline, responsePipeline, noMethodDefaultMapper));
 
         return Future.succeededFuture(apiRouter);
+    }
+
+    /**
+     * Configures every security scheme handler once, collecting the authentication handler each one
+     * registers for its scheme.
+     *
+     * <p>No contract gating applies: every handler is configured, in the iteration order of {@code
+     * handlers}, and the caller installs the collected handler on each route whose effective security
+     * requirements name its scheme. A scheme whose handler registers nothing has no entry, which the
+     * registrar's security application turns into a startup failure for any route requiring it.
+     *
+     * <p>Package-private and static so a router that carries framework-owned synthetic operations
+     * configures its scheme handlers exactly as a JAX-RS mount's router does, through this one
+     * implementation. Call it once per router: each call configures every handler again.
+     *
+     * @param handlers the registered security scheme handlers
+     * @return a new collector holding the authentication handler each scheme registered
+     * @throws RestConfigurationException if two handlers register an authentication handler for the
+     *     same scheme name
+     */
+    static SecuritySchemeHandlerCollector configureSecuritySchemes(Set<SecuritySchemeHandler> handlers) {
+        SecuritySchemeHandlerCollector securityHandlers = new SecuritySchemeHandlerCollector();
+        for (SecuritySchemeHandler handler : handlers) {
+            log.info("Configuring security scheme: {}", handler.schemeName());
+            handler.configure(new CollectingSecuritySchemeRegistry(handler, securityHandlers));
+        }
+        return securityHandlers;
     }
 
     /**
@@ -838,6 +859,21 @@ public class JaxRsRouterMount implements RouterMount {
             this.fileContentVerifiers = fileContentVerifiers;
             this.validationStrategies = validationStrategies;
             this.operationSchemaSource = operationSchemaSource;
+        }
+
+        /**
+         * Returns the registered operation handler contributors in the order their handlers run on a
+         * route: sorted by {@link OrderedExtension#comparator()}.
+         *
+         * <p>Package-private so every route built from this factory's contributors, a JAX-RS
+         * operation's or a framework-owned synthetic operation's, calls them in this one order.
+         *
+         * @return a new unmodifiable list of the contributors in their run order
+         */
+        List<OperationHandlerContributor> sortedOperationHandlerContributors() {
+            return operationHandlerContributors.stream()
+                    .sorted(OrderedExtension.comparator())
+                    .toList();
         }
 
         /**

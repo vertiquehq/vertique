@@ -1460,9 +1460,17 @@ Beyond what `RestCoreModule` and `JsonRuntimeModule` contribute:
 | `MountCompositionValidator` (`JaxRsApplicationMountValidator`) | `@IntoSet`; INTERNAL; validates application mounts against hand-built JAX-RS mounts and against each other, and cross-mount operationIds — see [Mount conflicts](#mount-conflicts) |
 | `ComposeValidator` (`JaxRsDefaultProfileValidator`) | `@IntoSet`; fails the `VALIDATE` phase on an unknown `jaxrs.jsonProfile` (`json.systemProfile` is validated earlier, by the `CONFIGURE`-phase install step) |
 | `OperationSchemaSource`, `BeanValidator`, `InputObjectProcessor` (`dev.vertique.input.processing.InputObjectProcessor`), `ActionRegistry`, `Authorizer` | `@BindsOptionalOf`; satisfied by `rest-validation`, `validation`, `sanitization`, and `rest-security` respectively |
+| `SyntheticOperations` | `@Binds` to a package-private implementation; INTERNAL; framework documentation module only |
 
 `dev.vertique.rest.jaxrs.runtime.MagicBytesVerifierModule` is a separate opt-in `@Module` that
 contributes the built-in magic-byte `FileContentVerifier`.
+
+`dev.vertique.rest.jaxrs.publication` is an INTERNAL framework seam: it is public only so sibling
+framework modules can install a framework-owned route through the resource security chain, outside
+the maturity promise and not a stable application API. An installed route deliberately bypasses two
+things a resource route would normally go through: the API-scoped middleware, request interceptor,
+router-lifecycle-hook, and mount-customizer chains of a JAX-RS mount never run for it, and its own
+failure handler ends every failure itself rather than handing it to the application's error pipeline.
 
 ---
 

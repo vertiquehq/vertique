@@ -13,6 +13,8 @@ import dev.vertique.rest.core.middleware.Middleware;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
 import dev.vertique.rest.core.response.ResponseBodyEncoder;
 import dev.vertique.rest.core.router.OperationHandlerContributor;
+import dev.vertique.rest.core.security.AuthEnforcementCapability;
+import dev.vertique.rest.core.security.SecurityPolicyValidator;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
 import dev.vertique.rest.jaxrs.validation.FileContentVerifier;
 import dev.vertique.rest.jaxrs.validation.NoneValidationStrategy;
@@ -62,6 +64,8 @@ final class TestFactories {
         private ExceptionMapperRegistry exceptionMapperRegistry = null;
         private ParamConversionResolver paramConversionResolver =
                 ParamConversionResolver.of(ParamConverterRegistry.of(Set.of()), Set.of());
+        private SecurityPolicyValidator securityPolicyValidator = null;
+        private Optional<AuthEnforcementCapability> authEnforcementCapability = Optional.empty();
 
         /**
          * Sets the registered validation strategies.
@@ -217,6 +221,31 @@ final class TestFactories {
         }
 
         /**
+         * Sets the optional {@link SecurityPolicyValidator} (defaults to {@code null}, today's
+         * value: no auth module).
+         *
+         * @param validator the security policy validator, or {@code null}
+         * @return this builder
+         */
+        Builder securityPolicyValidator(SecurityPolicyValidator validator) {
+            this.securityPolicyValidator = validator;
+            return this;
+        }
+
+        /**
+         * Sets the optional {@link AuthEnforcementCapability} marker (defaults to {@link
+         * Optional#empty()}, today's value: the auth-enforcement runtime is not installed).
+         *
+         * @param capability the capability marker, present when the auth-enforcement runtime is
+         *                   installed
+         * @return this builder
+         */
+        Builder authEnforcementCapability(Optional<AuthEnforcementCapability> capability) {
+            this.authEnforcementCapability = capability;
+            return this;
+        }
+
+        /**
          * Builds the factory with the accumulated collaborators and inert defaults for the rest.
          *
          * @return a fully constructed factory
@@ -245,8 +274,8 @@ final class TestFactories {
                     responseSerializer,
                     restContextResolution,
                     paramConversionResolver,
-                    null, // securityPolicyValidator (nullable)
-                    Optional.empty(), // authEnforcementCapability
+                    securityPolicyValidator, // securityPolicyValidator (nullable)
+                    authEnforcementCapability, // authEnforcementCapability
                     sortedDecoders, // sortedDecoders — needed for body binding
                     encoders, // sortedEncoders
                     httpConfig,
