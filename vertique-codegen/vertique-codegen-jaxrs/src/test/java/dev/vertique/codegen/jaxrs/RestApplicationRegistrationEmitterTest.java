@@ -10,7 +10,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
-import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsApplicationRegistration;
 import dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration;
 import io.vertx.core.json.JsonObject;
 import java.io.IOException;
@@ -39,10 +38,12 @@ import org.opentest4j.AssertionFailedError;
  * {@link ProcessorTestHarness}, then loads the generated {@code GeneratedJaxRsResourcesModule}
  * through the harness's generated class loader and invokes every registration method reflectively
  * with a {@code @VertxConfig JsonObject} argument, comparing the resulting registrations'
- * accessor tuples against the expected shape. It also reads rest-024's presence-gated resource
- * bindings' reflective parameter types, to prove they still gate on
- * {@code Set<GeneratedJaxRsApplicationRegistration>}, and checks that {@code Application} and
- * {@code @RestApplication} registration methods sharing a simple name share one name counter.
+ * accessor tuples against the expected shape. It also reads the presence-gated resource bindings'
+ * reflective parameter types, to prove they gate on the native registration set,
+ * {@code Set<GeneratedRestApplicationRegistration>} (T028), and checks that {@code @RestApplication}
+ * registration methods sharing a simple name share one name counter, which a
+ * {@code jakarta.ws.rs.core.Application} subclass of the same simple name, never registered since
+ * T028, does not advance.
  */
 class RestApplicationRegistrationEmitterTest {
 
@@ -183,7 +184,8 @@ class RestApplicationRegistrationEmitterTest {
             """);
 
     // -----------------------------------------------------------------------------------------
-    // Fixture (4) — two declarations and a rest-024 Application sharing the simple name Api
+    // Fixture (4) — two declarations and an unregistered Application subclass sharing the simple
+    // name Api
     // -----------------------------------------------------------------------------------------
 
     private static final String NAMES_PKG = "dev.vertique.test.tp007.names";
@@ -318,10 +320,9 @@ class RestApplicationRegistrationEmitterTest {
         result.assertGeneratedSourceDoesNotContain(MIXED_MODULE, "PublicApi::new");
         result.assertGeneratedSourceDoesNotContain(MIXED_MODULE, "Provider<PublicApi>");
 
-        // rest-024's presence-gated bindings are unchanged: each still gates on the
-        // Set<GeneratedJaxRsApplicationRegistration>, not on the native registrations.
-        assertResourceBindingGatesOnApplicationRegistrations(module, "pathResourceBinding");
-        assertResourceBindingGatesOnApplicationRegistrations(module, "orderResourceBinding");
+        // The presence-gated bindings gate on the native registration set (T028).
+        assertResourceBindingGatesOnNativeRegistrations(module, "pathResourceBinding");
+        assertResourceBindingGatesOnNativeRegistrations(module, "orderResourceBinding");
     }
 
     private void tp007DiscoveryOnlyFixture() {
@@ -349,10 +350,12 @@ class RestApplicationRegistrationEmitterTest {
     }
 
     /**
-     * One unit holds {@code a.Api} and {@code b.Api} declarations and a rest-024
-     * {@code c.Api extends Application}: all three registration methods derive the base name
-     * {@code apiRegistration}, and share one counter. The {@code Application} registration is
-     * named first, then the declarations in fully-qualified-name order.
+     * One unit holds {@code a.Api} and {@code b.Api} declarations and a {@code c.Api extends
+     * Application} subclass: the subclass is not registered (T028), so it takes no registration
+     * method and no counter value, and the two declarations' registration methods derive the base
+     * name {@code apiRegistration} and share one counter, named in fully-qualified-name order. Every
+     * declared method returning any {@code Generated…Registration} type counts, so a registration
+     * of the subclass under any type would change the names.
      */
     private void tp007SharedRegistrationNameCounterFixture() {
         var result = ProcessorTestHarness.run(
@@ -363,39 +366,30 @@ class RestApplicationRegistrationEmitterTest {
         Class<?> module = result.loadGeneratedClass(NAMES_MODULE);
         Class<?> aApiType = result.loadGeneratedClass(NAMES_PKG + ".a.Api");
         Class<?> bApiType = result.loadGeneratedClass(NAMES_PKG + ".b.Api");
-        Class<?> cApiType = result.loadGeneratedClass(NAMES_PKG + ".c.Api");
 
         List<String> registrationMethodNames = Arrays.stream(module.getDeclaredMethods())
-                .filter(m -> GeneratedJaxRsApplicationRegistration.class.equals(m.getReturnType())
-                        || GeneratedRestApplicationRegistration.class.equals(m.getReturnType()))
+                .filter(m -> m.getReturnType().getSimpleName().matches("Generated\\w*Registration"))
                 .map(Method::getName)
                 .sorted()
                 .toList();
         assertEquals(
-                List.of("apiRegistration", "apiRegistration_2", "apiRegistration_3"),
+                List.of("apiRegistration", "apiRegistration_2"),
                 registrationMethodNames,
-                "Expected three distinctly named registration methods sharing one counter");
+                "Expected two distinctly named registration methods sharing one counter, none for c.Api");
 
-        Object applicationRegistration = invokeRegistrationMethod(module, "apiRegistration", EMPTY_CONFIG);
-        GeneratedJaxRsApplicationRegistration first = assertInstanceOf(
-                GeneratedJaxRsApplicationRegistration.class,
-                applicationRegistration,
-                "Expected 'apiRegistration' to be rest-024's Application registration");
-        assertEquals(cApiType, first.type(), "apiRegistration type()");
+        GeneratedRestApplicationRegistration first = assertInstanceOf(
+                GeneratedRestApplicationRegistration.class,
+                invokeRegistrationMethod(module, "apiRegistration", EMPTY_CONFIG),
+                "Expected 'apiRegistration' to be a native registration");
+        assertEquals(aApiType, first.declaringType(), "apiRegistration declaringType()");
+        assertEquals("api-a", first.name(), "apiRegistration name()");
 
         GeneratedRestApplicationRegistration second = assertInstanceOf(
                 GeneratedRestApplicationRegistration.class,
                 invokeRegistrationMethod(module, "apiRegistration_2", EMPTY_CONFIG),
                 "Expected 'apiRegistration_2' to be a native registration");
-        assertEquals(aApiType, second.declaringType(), "apiRegistration_2 declaringType()");
-        assertEquals("api-a", second.name(), "apiRegistration_2 name()");
-
-        GeneratedRestApplicationRegistration third = assertInstanceOf(
-                GeneratedRestApplicationRegistration.class,
-                invokeRegistrationMethod(module, "apiRegistration_3", EMPTY_CONFIG),
-                "Expected 'apiRegistration_3' to be a native registration");
-        assertEquals(bApiType, third.declaringType(), "apiRegistration_3 declaringType()");
-        assertEquals("api-b", third.name(), "apiRegistration_3 name()");
+        assertEquals(bApiType, second.declaringType(), "apiRegistration_2 declaringType()");
+        assertEquals("api-b", second.name(), "apiRegistration_2 name()");
     }
 
     // -----------------------------------------------------------------------------------------
@@ -457,16 +451,16 @@ class RestApplicationRegistrationEmitterTest {
     }
 
     /**
-     * Asserts that rest-024's presence-gated resource binding {@code methodName} still takes a
-     * {@code Set<GeneratedJaxRsApplicationRegistration>} parameter, read from its reflective
-     * generic parameter types.
+     * Asserts that the presence-gated resource binding {@code methodName} takes exactly one
+     * {@code Set} parameter, a {@code Set<GeneratedRestApplicationRegistration>}, read from its
+     * reflective generic parameter types.
      */
-    private static void assertResourceBindingGatesOnApplicationRegistrations(Class<?> moduleClass, String methodName) {
+    private static void assertResourceBindingGatesOnNativeRegistrations(Class<?> moduleClass, String methodName) {
         Method binding = Arrays.stream(moduleClass.getDeclaredMethods())
                 .filter(m -> methodName.equals(m.getName()))
                 .findFirst()
                 .orElseThrow(() -> new AssertionFailedError(
-                        "Expected rest-024's resource binding '" + methodName + "' in " + moduleClass.getName()));
+                        "Expected the resource binding '" + methodName + "' in " + moduleClass.getName()));
         List<Type> setParameterArguments = Arrays.stream(binding.getGenericParameterTypes())
                 .filter(ParameterizedType.class::isInstance)
                 .map(ParameterizedType.class::cast)
@@ -474,10 +468,10 @@ class RestApplicationRegistrationEmitterTest {
                 .flatMap(p -> Arrays.stream(p.getActualTypeArguments()))
                 .toList();
         assertEquals(
-                List.of(GeneratedJaxRsApplicationRegistration.class),
+                List.of(GeneratedRestApplicationRegistration.class),
                 setParameterArguments,
                 () -> "Expected '" + methodName + "' to take exactly one Set parameter, a"
-                        + " Set<GeneratedJaxRsApplicationRegistration>; generic parameter types: "
+                        + " Set<GeneratedRestApplicationRegistration>; generic parameter types: "
                         + Arrays.toString(binding.getGenericParameterTypes()));
     }
 

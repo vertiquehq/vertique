@@ -32,7 +32,7 @@ import javax.lang.model.util.Types;
  *
  * <p>Scanning happens in two phases, because the second phase needs the generated module's package
  * (resolved by {@link JaxRsPipelineProcessor} from the compilation unit's DI-eligible resources
- * when it has any, and otherwise from its applications and declarations):
+ * when it has any, and otherwise from its declarations):
  *
  * <ol>
  *   <li>{@link #scan(RoundEnvironment, CodegenContext)} walks the round's root elements, top-level
