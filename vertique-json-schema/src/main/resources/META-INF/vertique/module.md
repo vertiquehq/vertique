@@ -868,7 +868,25 @@ misdescribes the wire:
   boolean isActive` behind `isActive()` and `setActive(...)`, or an `mName` field behind
   `getName()` and `setName(...)`, publishes `active` or `name` as before. So is a rename to the
   member's own property name, or to a name no property carries. Where a field name and its accessor
-  property differ, `@JsonProperty("active")` on the field joins the two for Jackson as well.
+  property differ, `@JsonProperty("active")` on the field joins the two for Jackson as well. A
+  rename that does not fail generation can still publish a member under a name other than the one
+  Jackson serializes — `@Schema(name = ...)` onto a name no property carries is the ordinary case.
+  `AnnotationJsonSchemaGenerator#outputRenames(Type)` reports every such member reachable from
+  `type`'s output document — its root and every nested object, collection element, or shared
+  definition it describes, each member once however often it is reached — as an
+  `OutputRename(declaringType, member, serializedName, schemaName)`, ordered by `declaringType` then
+  `member` (`String.compareTo`); it returns an empty list when no reachable member's published name
+  diverges. The document itself is unchanged: `outputRenames` only detects the divergence, under the
+  same accepted type grammar, bounded `JsonSchemaGenerationException` failure contract, and
+  per-instance lock as `generateCanonical`. When a member carries both `@JsonProperty` and
+  `@Schema(name = ...)`, only a non-empty `@JsonProperty` value naming a name other than the
+  member's own takes precedence: `@JsonProperty("wire") @Schema(name = "label") String code`
+  publishes `wire`, the name Jackson serializes, and is not reported. A bare `@JsonProperty`, or
+  `@JsonProperty("code")` naming the member itself, does not take precedence:
+  `@Schema(name = "label")` still publishes `label` while Jackson serializes `code`, and the member
+  is reported as `(…, code, code, label)`. `outputRenames` answers only for a generator built by
+  `forOutputProfile(JsonMapperProfile)`; calling it on an input-direction generator
+  (`forInputProfile`) or one built by `withVictoolsDefaults()` throws `IllegalStateException`.
 
 `@Schema(type = ...)` has no effect in this module; `implementation` is the supported way for a
 property to contribute a type shape.
@@ -915,7 +933,9 @@ above still fails generation.
 The single entry point. Construct with `withVictoolsDefaults()`, `forInputProfile(profile)`, or
 `forOutputProfile(profile)`, then call `generateCanonical(Type)` for each type that needs a schema,
 or `describe(Type)` for the same document paired with its `RedactionManifest` (see `CanonicalSchema`
-below).
+below). An instance built by `forOutputProfile(profile)` also answers `outputRenames(Type)`, the
+list of published members whose schema name diverges from what the profile mapper serializes (see
+`OutputRename` below); every other construction mode throws `IllegalStateException` from that call.
 
 ```java
 AnnotationJsonSchemaGenerator generator = AnnotationJsonSchemaGenerator.withVictoolsDefaults();
@@ -958,6 +978,20 @@ lowercase hexadecimal characters; `matches(schemaJson)` parses, canonicalizes, d
 compares, returning `false` for any unparsable or malformed input — a document repeating a key in
 one object included — and throwing `NullPointerException` for a `null` argument. `toString()` prints the pointers and the digest only — a pointer names a
 schema location, never a reserved name, and no schema content is printed.
+
+### OutputRename
+
+One member `outputRenames(Type)` (on a `forOutputProfile` generator only) reports: `declaringType`
+is the binary class name (`Class#getName()`) declaring the member, `member` is the Java member's own
+name (`java.lang.reflect.Member#getName()`), `serializedName` is the name the profile mapper's
+serialization introspection gives it, and `schemaName` is the property name the output document
+publishes it under. The record carries names only, never a schema fragment.
+
+```java
+AnnotationJsonSchemaGenerator outputGenerator = AnnotationJsonSchemaGenerator.forOutputProfile(profile);
+List<OutputRename> renames = outputGenerator.outputRenames(MyResponseBody.class);
+// renames is empty unless some published member's schema name differs from its serialized name
+```
 
 ### JsonSchemaGenerationException
 

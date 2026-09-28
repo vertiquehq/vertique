@@ -89,12 +89,16 @@ class ModuleStructureTest {
             "io.opentelemetry.");
 
     /**
-     * The only four types this module may expose publicly (PRD §6.2, plan §3a): the generator, its
-     * bounded failure type, and the canonical schema and redaction manifest the generator's {@code
-     * describe} returns.
+     * The only five types this module may expose publicly (PRD §6.2, plan §3a): the generator, its
+     * bounded failure type, the canonical schema and redaction manifest the generator's {@code
+     * describe} returns, and the output rename its {@code outputRenames} reports.
      */
     private static final Set<String> ALLOWED_PUBLIC_TYPES = Set.of(
-            "AnnotationJsonSchemaGenerator", "JsonSchemaGenerationException", "CanonicalSchema", "RedactionManifest");
+            "AnnotationJsonSchemaGenerator",
+            "JsonSchemaGenerationException",
+            "CanonicalSchema",
+            "RedactionManifest",
+            "OutputRename");
 
     // --- #1: dependency allowlist ---
 
@@ -243,7 +247,7 @@ class ModuleStructureTest {
     @Test
     @DisplayName(
             "dev.vertique.json.schema exposes exactly AnnotationJsonSchemaGenerator, JsonSchemaGenerationException,"
-                    + " CanonicalSchema, and RedactionManifest as public")
+                    + " CanonicalSchema, RedactionManifest, and OutputRename as public")
     void publicSurfaceIsFrozen() throws IOException {
         Path packageDir =
                 Path.of(System.getProperty("user.dir"), "target", "classes", "dev", "vertique", "json", "schema");
@@ -273,7 +277,8 @@ class ModuleStructureTest {
                 ALLOWED_PUBLIC_TYPES,
                 actualPublicTypes,
                 "dev.vertique.json.schema must expose exactly AnnotationJsonSchemaGenerator,"
-                        + " JsonSchemaGenerationException, CanonicalSchema, and RedactionManifest as public types");
+                        + " JsonSchemaGenerationException, CanonicalSchema, RedactionManifest, and OutputRename as"
+                        + " public types");
 
         if (!signatureViolations.isEmpty()) {
             fail("No public member of dev.vertique.json.schema may expose a com.github.victools or"
