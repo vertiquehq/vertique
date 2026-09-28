@@ -1452,8 +1452,11 @@ SPDX-License-Identifier: EUPL-1.2
                         <excludedMethods>
                             <!-- Mutants run with real side effects. Removing the working-directory
                                  guard in RestTestMounts.deleteRecursively let its own test delete the
-                                 module's source tree. Never mutate recursive-delete code. -->
+                                 module's source tree. Never mutate recursive-delete code or the
+                                 guards that protect it: a mutated condition in the guard is as
+                                 destructive as a removed call. -->
                             <param>deleteRecursively</param>
+                            <param>requireDeletableTarget</param>
                         </excludedMethods>
                         <excludedTestClasses>
                             <!-- Unit tests only, matching Surefire; ITs belong to Failsafe. -->
