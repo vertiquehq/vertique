@@ -21,7 +21,7 @@
  * identity-only {@code RestOperationDescriptor}s for unit tests of completion listeners and other
  * descriptor consumers; like framework-built descriptors, they compare by identity, never by value.
  *
- * <p>A consumer never calls the 29-argument {@link dev.vertique.rest.jaxrs.JaxRsRouterMount.Factory}
+ * <p>A consumer never calls the 28-argument {@link dev.vertique.rest.jaxrs.JaxRsRouterMount.Factory}
  * constructor directly and never sorts encoder or decoder lists itself: Dagger builds the graph, so
  * ordering and serializer coherence hold by construction. Contributions are additive only — a test
  * overrides a framework default by contributing one that out-ranks it (see {@link

@@ -14,8 +14,6 @@ import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.json.JacksonFieldNameResolver;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.rest.core.RestConfigurationException;
-import dev.vertique.rest.core.capture.HttpOperationMeta;
-import dev.vertique.rest.core.capture.RestServerRequestEvidenceCapturer;
 import dev.vertique.rest.core.config.JaxRsConfig;
 import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.convert.ParamConversionResolver;
@@ -177,9 +175,6 @@ public class JaxRsRouteRegistrar {
      *                                {@code ValidationModule} is not included — validation is skipped
      * @param objectProcessor         optional input object processor for canonicalization and
      *                                sanitization; {@code null} when input processing is not configured
-     * @param evidenceCapturers       pre-sorted list of request-evidence capturers; each validates every
-     *                                registered route at router build and is invoked once per request
-     *                                after body materialisation; empty list is the no-op default
      * @param actionRegistry          the framework {@link ActionRegistry} used to validate
      *                                {@code @RequiresAction} values at startup; {@code null} when the
      *                                authz engine is not installed — in which case any operation that
@@ -226,7 +221,6 @@ public class JaxRsRouteRegistrar {
             String mediaTypeValidation,
             @Nullable BeanValidator beanValidator,
             @Nullable InputObjectProcessor objectProcessor,
-            List<RestServerRequestEvidenceCapturer> evidenceCapturers,
             @Nullable ActionRegistry actionRegistry,
             boolean authorizerAvailable,
             JaxRsConfig jaxRsConfig,
@@ -252,7 +246,6 @@ public class JaxRsRouteRegistrar {
                 mediaTypeValidation,
                 beanValidator,
                 objectProcessor,
-                evidenceCapturers,
                 actionRegistry,
                 authorizerAvailable,
                 jaxRsConfig,
@@ -273,7 +266,7 @@ public class JaxRsRouteRegistrar {
      * uses the public {@link #registerAll(Set, Router, RequestValidationStrategy, MountMeta,
      * Optional, SecuritySchemeHandlerCollector, List, List, ErrorPipeline, ResponsePipeline,
      * RestContextResolution, ParamConversionResolver, SecurityPolicyValidator, boolean, List, List,
-     * String, BeanValidator, InputObjectProcessor, List, ActionRegistry, boolean, JaxRsConfig,
+     * String, BeanValidator, InputObjectProcessor, ActionRegistry, boolean, JaxRsConfig,
      * JsonMapperProfileRegistry, JsonConfig) overload}, which delegates here with a {@code null}
      * application type and a sink it discards. This registrar keeps no state of its own between
      * calls: {@code applicationType} and {@code implicitOperations} are this call's own, never
@@ -309,8 +302,6 @@ public class JaxRsRouteRegistrar {
      *                                {@code ValidationModule} is not included — validation is skipped
      * @param objectProcessor         optional input object processor for canonicalization and
      *                                sanitization; {@code null} when input processing is not configured
-     * @param evidenceCapturers       pre-sorted list of request-evidence capturers to invoke once
-     *                                per request after body materialisation; empty list is the no-op default
      * @param actionRegistry          the framework {@link ActionRegistry} used to validate
      *                                {@code @RequiresAction} values at startup; {@code null} when the
      *                                authz engine is not installed — in which case any operation that
@@ -366,7 +357,6 @@ public class JaxRsRouteRegistrar {
             String mediaTypeValidation,
             @Nullable BeanValidator beanValidator,
             @Nullable InputObjectProcessor objectProcessor,
-            List<RestServerRequestEvidenceCapturer> evidenceCapturers,
             @Nullable ActionRegistry actionRegistry,
             boolean authorizerAvailable,
             JaxRsConfig jaxRsConfig,
@@ -485,13 +475,6 @@ public class JaxRsRouteRegistrar {
             // a bean field of an unresolvable type would otherwise pass startup and only fail (opaquely)
             // on the first request. Walk each @BeanParam's convertible fields here too.
             validateBeanParamFields(meta, paramConversionResolver, routeViolations);
-
-            // Let each request-evidence capturer validate the route with the descriptor its requests will
-            // carry — built by the same function ResourceMethodInvoker uses, so the key a capturer
-            // warms here is the key it sees per request. A capturer that throws rejects the route as
-            // a collected violation instead of failing every request.
-            validateRouteWithCapturers(
-                    meta, ResourceMethodInvoker.operationMetaFor(meta, descriptor), evidenceCapturers, routeViolations);
 
             // ALWAYS-ON fail-closed gate (ADR-0124). Compute the operation's effective security policy
             // up front, unconditionally — accessing it runs EffectiveSecurityPolicy.enforceSupportedShape
@@ -677,7 +660,6 @@ public class JaxRsRouteRegistrar {
                     decoders,
                     beanValidator,
                     objectProcessor,
-                    evidenceCapturers != null ? evidenceCapturers : List.of(),
                     resolvedBodyMapper,
                     paramConversionResolver,
                     bodyNameResolver));
@@ -1534,43 +1516,6 @@ public class JaxRsRouteRegistrar {
         if (!violations.isEmpty()) {
             throw new RestConfigurationException(
                     "SSE return type validation failed:\n  " + String.join("\n  ", violations));
-        }
-    }
-
-    /**
-     * Lets every request-evidence capturer validate a route
-     * ({@link RestServerRequestEvidenceCapturer#validateRoute}) and records an
-     * {@link RouteRegistrationViolation.ViolationType#EVIDENCE_CAPTURE_REJECTED} violation for each
-     * capturer that throws; the throwable is logged with its stack trace.
-     *
-     * @param meta              the route's method metadata
-     * @param operation         the operation descriptor the route's requests will carry
-     * @param evidenceCapturers the capturers, in invocation order; may be {@code null}
-     * @param routeViolations   the collected startup violations
-     */
-    private static void validateRouteWithCapturers(
-            ResourceMethodMeta meta,
-            HttpOperationMeta operation,
-            @Nullable List<RestServerRequestEvidenceCapturer> evidenceCapturers,
-            List<RouteRegistrationViolation> routeViolations) {
-        if (evidenceCapturers == null || evidenceCapturers.isEmpty()) {
-            return;
-        }
-        for (RestServerRequestEvidenceCapturer capturer : evidenceCapturers) {
-            try {
-                capturer.validateRoute(operation);
-            } catch (RuntimeException e) {
-                log.error(
-                        "Request-evidence capturer {} rejected operationId={}",
-                        capturer.getClass().getName(),
-                        meta.operationId(),
-                        e);
-                routeViolations.add(new RouteRegistrationViolation(
-                        meta.operationId(),
-                        RouteRegistrationViolation.ViolationType.EVIDENCE_CAPTURE_REJECTED,
-                        "Request-evidence capturer " + capturer.getClass().getName() + " rejected operationId '"
-                                + meta.operationId() + "': " + e));
-            }
         }
     }
 

@@ -142,9 +142,9 @@ class ContributorOrderGoldenTest {
     @DisplayName("handlers are added in sorted-priority order; the terminal invoker is added last")
     @SuppressWarnings("unchecked")
     void handlerChainOrderMatchesSortedPriorityWithInvokerLast() {
-        // Use the same priority bands as the framework's real contributors:
-        // ActionGateAuthentication(40), JwtClaimsValidator(50), IdentityResolution(80),
-        // Authorization(100), OperationIdCapture(350).
+        // Use the priority bands of the framework's real contributors, ActionGateAuthentication(40),
+        // JwtClaimsValidator(50), IdentityResolution(80) and Authorization(100), plus an arbitrary
+        // later band (350).
         TestContributor c40 = new TestContributor(ExtensionPhase.APPLICATION, 40);
         TestContributor c50 = new TestContributor(ExtensionPhase.APPLICATION, 50);
         TestContributor c80 = new TestContributor(ExtensionPhase.APPLICATION, 80);

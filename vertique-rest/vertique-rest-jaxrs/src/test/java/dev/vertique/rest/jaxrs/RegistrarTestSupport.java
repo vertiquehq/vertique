@@ -165,53 +165,8 @@ final class RegistrarTestSupport {
                 mediaTypeValidation,
                 beanValidator,
                 objectProcessor,
-                List.of(),
                 actionRegistry,
                 authorizerAvailable,
-                JaxRsConfig.builder().build(),
-                new DefaultJsonMapperProfileRegistry(Set.of()),
-                JsonConfig.defaults());
-    }
-
-    /**
-     * Variant for tests of the request-evidence capturer seam: registers {@code resources} with the
-     * given capturers and the same inert defaults as the overloads above.
-     *
-     * @param registrar the registrar under test
-     * @param resources the resource instances to scan
-     * @param apiRouter the plain Vert.x router to register routes on
-     * @param mount     the mount metadata threaded to the registrar
-     * @param capturers the request-evidence capturers, already in invocation order
-     */
-    static void registerAllWithCapturers(
-            JaxRsRouteRegistrar registrar,
-            Set<Object> resources,
-            Router apiRouter,
-            MountMeta mount,
-            List<dev.vertique.rest.core.capture.RestServerRequestEvidenceCapturer> capturers) {
-        registrar.registerAll(
-                resources,
-                apiRouter,
-                new NoneValidationStrategy(),
-                mount,
-                Optional.<OperationSchemaSource>empty(),
-                new SecuritySchemeHandlerCollector(),
-                List.of(),
-                List.of(),
-                mock(ErrorPipeline.class),
-                mock(ResponsePipeline.class),
-                new RestContextResolution(Set.of()),
-                dev.vertique.rest.jaxrs.convert.ConversionContexts.defaultResolver(),
-                null,
-                false,
-                List.of(),
-                List.of(),
-                "OFF",
-                null,
-                null,
-                capturers,
-                null,
-                false,
                 JaxRsConfig.builder().build(),
                 new DefaultJsonMapperProfileRegistry(Set.of()),
                 JsonConfig.defaults());
@@ -222,8 +177,8 @@ final class RegistrarTestSupport {
      * three arguments the overloads above hard-code — the {@link OperationSchemaSource}, the
      * {@link JaxRsConfig} carrying {@code jaxrs.jsonProfile}, and the {@link JsonConfig} carrying
      * {@code json.jsonProfile} — and fills everything else with the same inert defaults they use: the
-     * {@code none} validation strategy, an empty security collector, no interceptors, contributors or
-     * evidence capturers, no security policy validator, auth disabled, no decoders or encoders,
+     * {@code none} validation strategy, an empty security collector, no interceptors or contributors,
+     * no security policy validator, auth disabled, no decoders or encoders,
      * {@code "OFF"} media-type validation, no bean validator, object processor or action registry, and
      * a profile registry holding only the built-in {@code system}, {@code vertique} and
      * {@code vertique-strict} profiles.
@@ -265,7 +220,6 @@ final class RegistrarTestSupport {
                 "OFF",
                 null,
                 null,
-                List.of(),
                 null,
                 false,
                 jaxRsConfig,

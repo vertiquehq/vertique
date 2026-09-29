@@ -514,7 +514,6 @@ public class VertxFailureStatusPreservationIT {
                 JsonConfig.defaults(),
                 Optional.empty(), // beanValidator
                 Optional.empty(), // objectProcessor
-                Set.of(), // evidenceCapturers
                 Optional.empty(), // actionRegistry
                 Optional.empty(), // authorizer
                 Set.of(), // fileContentVerifiers

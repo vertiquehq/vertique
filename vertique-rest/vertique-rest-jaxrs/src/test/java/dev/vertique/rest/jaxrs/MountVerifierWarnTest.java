@@ -154,7 +154,6 @@ class MountVerifierWarnTest {
                 JsonConfig.defaults(),
                 Optional.empty(),
                 Optional.empty(),
-                Set.of(),
                 Optional.empty(),
                 Optional.empty(),
                 verifiers,

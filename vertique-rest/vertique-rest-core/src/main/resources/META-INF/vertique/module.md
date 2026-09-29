@@ -1116,21 +1116,6 @@ of the exceptions it throws. The obligation is audit-safe by contract rather tha
 exactly as `AuthorizationDecision.safeAttributes()` is — the framework does not inspect or scrub
 what an implementation throws.
 
-The `dev.vertique.rest.core.capture` SPI `RestServerRequestEvidenceCapturer` is the
-boundary-evidence hook the audit adapter implements. If you implement it, keep evidence in an
-implementation-private, identity-keyed side table — never in `RoutingContext.data()`, which is
-keyed by public string constants and is readable and writable by every component sharing the
-context.
-
-`RestServerRequestEvidenceCapturer#validateRoute(HttpOperationMeta)` validates each route at router
-build, with the same descriptor value its requests will carry. Resolve and validate
-per-route state there — throwing rejects the route with an `EVIDENCE_CAPTURE_REJECTED` startup
-violation — so a misconfiguration fails startup rather than silently failing `captureRequest` on
-every request. The default accepts every route. It runs once per route per router build (every mount
-and every HTTP verticle instance), possibly concurrently, so it must be idempotent, thread-safe, and
-non-blocking. Read type-level policy from `HttpOperationMeta#resourceClass()`, not
-from the method's declaring class, which is the superclass or interface for an inherited method.
-
 ### `SecuritySchemeHandler` and `RouteAuthHandler`
 
 ```java
@@ -1200,10 +1185,10 @@ Bind `HmacCursorCodec` (or your own) as a `@Singleton` and pass it to `CursorPag
 
 ### Framework seams
 
-Twelve public types are named nowhere above because no application uses one — `RestContextMessages`,
-`RestContextModule`, `RestContextTypes`, `HttpOperationMeta`, `RequestCompletionRecorder`,
-`MountCompositionValidator`, `SecurityRequirementSet`, `AuthEnforcementCapability`,
-`SecurityPolicyViolation`, `RequiresActionResolver`, `DeferredCredentialRejectionAuthHandler`, and
+Eleven public types are named nowhere above because no application uses one — `RestContextMessages`,
+`RestContextModule`, `RestContextTypes`, `RequestCompletionRecorder`, `MountCompositionValidator`,
+`SecurityRequirementSet`, `AuthEnforcementCapability`, `SecurityPolicyViolation`,
+`RequiresActionResolver`, `DeferredCredentialRejectionAuthHandler`, and
 `AnnotationSecurityPolicyResolver`. They are public because sibling framework modules call them
 across package boundaries: the JAX-RS route registrar, the security enforcement modules, the
 WebSocket transport, the OpenTelemetry integration, and the annotation processors that emit against

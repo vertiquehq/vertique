@@ -14,7 +14,6 @@ import dev.vertique.core.config.JsonConfigPaths;
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.correlation.CorrelationContextModule;
 import dev.vertique.logging.LoggingContextModule;
-import dev.vertique.rest.core.capture.RestServerRequestEvidenceCapturer;
 import dev.vertique.rest.core.config.CorsConfig;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.config.JaxRsConfig;
@@ -139,9 +138,6 @@ public abstract class RestCoreModule {
 
     @Multibinds
     abstract Set<HttpRequestCompletedListener> httpRequestCompletedListeners();
-
-    @Multibinds
-    abstract Set<RestServerRequestEvidenceCapturer> restServerRequestEvidenceCapturers();
 
     /**
      * Declares the empty {@link ParamConverterProvider} multibinding set.

@@ -232,14 +232,14 @@ JSON-RPC id and the caller's principal id), below the payload-free `McpRequestOb
 `McpToolValueObservation`: the server delivers a raw-evidence callback only to a session that is an
 instance of this interface.
 
-This is the boundary-evidence hook the audit adapter implements, mirroring REST's `dev.vertique.rest
-.core.capture` capture SPIs — a private, audit-owned seam, not a general-purpose extension point. It
-exists so an audit adapter can reach the raw envelope it needs without widening the public
-`McpRequestObservation`/`McpToolValueObservation` contract every other neutral observer (Micrometer,
-OpenTelemetry) also implements. `onRequestAdmitted` fires once per `tools/call` request, before
-tool-name resolution or authorization, so it fires even for a request rejected before the input
-pipeline runs; `onResponseWritten` fires once, immediately before the single shared terminal writer
-sends the response to the wire, for every terminal write on that surface.
+This is the boundary-evidence hook the audit adapter implements — a private, audit-owned seam, not a
+general-purpose extension point. It exists so an audit adapter can reach the raw envelope it needs
+without widening the public `McpRequestObservation`/`McpToolValueObservation` contract every other
+neutral observer (Micrometer, OpenTelemetry) also implements. `onRequestAdmitted` fires once per
+`tools/call` request, before tool-name resolution or authorization, so it fires even for a request
+rejected before the input pipeline runs; `onResponseWritten` fires once, immediately before the
+single shared terminal writer sends the response to the wire, for every terminal write on that
+surface.
 
 ## Opt-in completion scope
 
