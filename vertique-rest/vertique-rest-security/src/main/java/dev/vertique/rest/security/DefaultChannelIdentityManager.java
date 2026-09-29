@@ -395,10 +395,13 @@ public final class DefaultChannelIdentityManager implements ChannelIdentityManag
      * Cancels a previously-scheduled Vert.x timer. No-ops when {@code timerId} is {@code -1L}
      * (sentinel for "no timer scheduled").
      *
+     * <p>{@code 0} is a real timer id, not a sentinel: Vert.x numbers timers from a counter that
+     * starts at zero, so the first timer a {@link Vertx} instance schedules has id {@code 0}.
+     *
      * @param timerId the timer id to cancel, or {@code -1L} if no timer was scheduled
      */
     private void cancelTimer(long timerId) {
-        if (timerId > 0) {
+        if (timerId >= 0) {
             vertx.cancelTimer(timerId);
         }
     }

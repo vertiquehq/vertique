@@ -20,8 +20,11 @@ import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import java.io.IOException;
+import java.nio.file.FileSystem;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.time.Duration;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -227,41 +230,81 @@ class RestTestMountsTest {
         assertThatCode(() -> RestTestMounts.deleteRecursively(missing)).doesNotThrowAnyException();
     }
 
+    // The degenerate-target cases below call the guard directly, never deleteRecursively: handing the
+    // real working directory or a real filesystem root to the deleting method would delete real files
+    // the moment the guard regressed (a mutation-testing run once removed the guard call and the test
+    // deleted this module's own source tree). Only the wiring test calls deleteRecursively with a
+    // degenerate target, and that target is the root of a throwaway zip filesystem under @TempDir.
+
     @Test
-    @DisplayName("deleteRecursively refuses a blank or empty path instead of deleting the working directory")
-    void deleteRecursivelyRejectsAPathResolvingToTheWorkingDirectory() {
+    @DisplayName("the deletion guard refuses a blank or empty path, which would resolve to the working directory")
+    void deletionGuardRejectsBlankPaths() {
         // The accident this guards: an unset configured uploads directory arrives as "", which
         // Path.of resolves to the current working directory — under Maven, the module source tree.
-        assertThatThrownBy(() -> RestTestMounts.deleteRecursively(java.nio.file.Path.of("")))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("must not be blank");
-
-        assertThatThrownBy(() -> RestTestMounts.deleteRecursively(java.nio.file.Path.of("   ")))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("must not be blank");
-
-        // Spelling the same location a different way must not slip past the blank check.
-        assertThatThrownBy(() -> RestTestMounts.deleteRecursively(java.nio.file.Path.of(".")))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("current working directory");
-
-        assertThat(Files.isDirectory(java.nio.file.Path.of("").toAbsolutePath().normalize()))
-                .as("the working directory must be untouched by the rejected calls")
-                .isTrue();
+        for (String blank : new String[] {"", "   "}) {
+            assertThatThrownBy(() -> RestTestMounts.requireDeletableTarget(java.nio.file.Path.of(blank)))
+                    .as("blank path [%s]", blank)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("must not be blank");
+        }
     }
 
     @Test
-    @DisplayName("deleteRecursively refuses a filesystem root")
-    void deleteRecursivelyRejectsAFilesystemRoot(@TempDir java.nio.file.Path tempDir) {
+    @DisplayName("the deletion guard refuses the working directory however it is spelled")
+    void deletionGuardRejectsTheWorkingDirectory() {
+        // Spelling the same location a different way must not slip past the blank check.
+        for (java.nio.file.Path cwd : new java.nio.file.Path[] {
+            java.nio.file.Path.of("."),
+            java.nio.file.Path.of("uploads", ".."),
+            java.nio.file.Path.of("").toAbsolutePath()
+        }) {
+            assertThatThrownBy(() -> RestTestMounts.requireDeletableTarget(cwd))
+                    .as("working-directory spelling [%s]", cwd)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("current working directory");
+        }
+    }
+
+    @Test
+    @DisplayName("the deletion guard refuses a filesystem root")
+    void deletionGuardRejectsAFilesystemRoot(@TempDir java.nio.file.Path tempDir) {
         java.nio.file.Path root = tempDir.toAbsolutePath().getRoot();
 
-        assertThatThrownBy(() -> RestTestMounts.deleteRecursively(root))
+        assertThatThrownBy(() -> RestTestMounts.requireDeletableTarget(root))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("filesystem root");
+    }
 
-        assertThat(Files.isDirectory(tempDir))
-                .as("nothing below the root may have been walked")
-                .isTrue();
+    @Test
+    @DisplayName("the deletion guard accepts an ordinary directory, whether or not it exists")
+    void deletionGuardAcceptsAnOrdinaryDirectory(@TempDir java.nio.file.Path tempDir) {
+        assertThatCode(() -> RestTestMounts.requireDeletableTarget(tempDir.resolve("uploads")))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> RestTestMounts.requireDeletableTarget(java.nio.file.Path.of("uploads")))
+                .as("a relative path below the working directory is not the working directory")
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("deleteRecursively runs the deletion guard before walking anything")
+    void deleteRecursivelyRunsTheGuardBeforeWalking(@TempDir java.nio.file.Path tempDir) throws IOException {
+        // A zip filesystem's root has no parent, so the guard classifies it as a filesystem root — but
+        // it lives in a throwaway archive under @TempDir. Were deleteRecursively to skip the guard, it
+        // would only empty this archive, and the surviving-entry assertion below would catch it.
+        java.nio.file.Path archive = tempDir.resolve("guard-wiring.zip");
+        try (FileSystem zip = FileSystems.newFileSystem(archive, Map.of("create", "true"))) {
+            java.nio.file.Path zipRoot = zip.getPath("/");
+            java.nio.file.Path entry = zip.getPath("/uploads/keep.bin");
+            Files.createDirectories(entry.getParent());
+            Files.writeString(entry, "payload");
+
+            assertThatThrownBy(() -> RestTestMounts.deleteRecursively(zipRoot))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("filesystem root");
+            assertThat(Files.exists(entry))
+                    .as("a rejected target must not have been walked")
+                    .isTrue();
+        }
     }
 
     // --- Helpers ---

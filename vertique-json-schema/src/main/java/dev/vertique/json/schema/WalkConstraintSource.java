@@ -79,9 +79,9 @@ final class WalkConstraintSource implements ConstraintSource {
      * Translates the walk vocabulary declared on a value position's own {@link AnnotatedType} — the same
      * annotation set {@link #forUnscopedMember} translates off a member's merged annotation map, read
      * through the very same {@link #translateWalkVocabulary} block both methods share — into a
-     * {@link ResolvedConstraints}, for the type-use constraint overlay step rest-023 T003 ({@code D001})
-     * activates ({@link ValuePositionRenderer}). A composed (meta-annotated) constraint resolves exactly
-     * as {@link #forUnscopedMember} already resolves one: this method reads the same direct annotation
+     * {@link ResolvedConstraints}, for {@link ValuePositionRenderer}'s type-use constraint overlay step.
+     * A composed (meta-annotated) constraint resolves exactly as {@link #forUnscopedMember} already
+     * resolves one: this method reads the same direct annotation
      * types off {@code annotatedType}, with no additional traversal of its own.
      *
      * <p>Every translated keyword is carried as an <em>addition</em> — there is nothing preceding this

@@ -39,6 +39,7 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
@@ -263,6 +264,47 @@ class SecurityPolicyEnforcerDecisionTest {
                 "shouldRequireBothGatesWhenRolesAndActionAreCombined",
                 "shouldFailClosedOnThrowNullFutureFailedFutureAndNullDecision",
                 "shouldEmitExactlyOneCombinedEventPerRestrictiveEvaluation");
+    }
+
+    // --- Invalid input: a Constrained policy with neither roles nor scopes ---
+
+    @Test
+    void shouldFailClosedOnAnEmptyConstrainedPolicyWithoutConsultingEitherGate() {
+        // An empty Constrained policy breaks the role/scope invariant — the policy factory produces
+        // AuthenticatedOnly for that shape. Handed to decide() anyway it must deny, not throw. Both gates
+        // here would PERMIT it (an empty required-role list is trivially satisfied, and the authorizer
+        // permits everything), so a decide() that skipped the invariant check would fail open.
+        SecurityPolicy.Constrained empty = new SecurityPolicy.Constrained(List.of(), List.of(), false);
+
+        for (Optional<ActionRef> requiredAction : List.of(Optional.<ActionRef>empty(), Optional.of(SAMPLE_ACTION))) {
+            List<AuthorizationDecisionEvent> events = new ArrayList<>();
+            RecordingDecisionPoint dp = RecordingDecisionPoint.roleChecking();
+            RecordingAuthorizer authorizer =
+                    RecordingAuthorizer.returning(AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED));
+            SecurityPolicyEnforcer enforcer = enforcerWith(dp, authorizer, events);
+
+            Future<AuthorizationDecision> result =
+                    enforcer.decide(aliceContext(Set.of("ops")), empty, requiredAction, TOOL_RESOURCE, MCP_ORIGIN);
+
+            assertThat(result.succeeded())
+                    .as("decide() must resolve a deny, never fail the future (requiredAction=%s)", requiredAction)
+                    .isTrue();
+            AuthorizationDecision decision = result.result();
+            assertThat(decision.permitted())
+                    .as("an empty Constrained policy must fail closed (requiredAction=%s)", requiredAction)
+                    .isFalse();
+            assertThat(decision.reasonCode()).isEqualTo(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR);
+            assertThat(decision.safeAttributes().get("actionEvaluated")).isEqualTo(Boolean.FALSE);
+            assertThat(dp.callCount())
+                    .as("the role/scope gate must not be consulted with an invalid policy")
+                    .isZero();
+            assertThat(authorizer.callCount())
+                    .as("the action gate must not be consulted with an invalid policy")
+                    .isZero();
+            assertThat(events)
+                    .as("no AuthorizationRequest could be built, so no event is emitted")
+                    .isEmpty();
+        }
     }
 
     // --- Fail-closed sub-case assertions shared by the fail-closed row only ---

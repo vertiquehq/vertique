@@ -438,6 +438,15 @@ public class SecurityPolicyEnforcer {
      *       {@link Authorizer} — resolves a fail-closed {@link AuthzReasonCodes#INTERNAL_AUTHZ_ERROR}
      *       deny (via {@link #combinedDecision}) with exactly one event, rather than propagating or
      *       failing the returned future.</li>
+     *   <li>An invalid input — a {@link SecurityPolicy.Constrained} with both empty roles and empty
+     *       scopes (an invariant violation; the policy factory produces
+     *       {@link SecurityPolicy.AuthenticatedOnly} for that shape), or any other input from which the
+     *       role/scope-gate {@link AuthorizationRequest} cannot be built — resolves a fail-closed
+     *       {@link AuthzReasonCodes#INTERNAL_AUTHZ_ERROR} deny without consulting either gate. It is
+     *       logged at WARN and emits <strong>no</strong> event, because there is no request to attach
+     *       one to. Unlike the {@code createHandler} factories, which reject an empty
+     *       {@code Constrained} with an {@link IllegalStateException} at startup, this operation does
+     *       not throw: one bad candidate must not abort a caller's whole evaluation loop.</li>
      * </ul>
      *
      * @param securityContext the already-resolved security context of the caller; must not be
@@ -451,10 +460,8 @@ public class SecurityPolicyEnforcer {
      * @param origin          the invocation origin the caller was raised through; must not be
      *                        {@code null}
      * @return a future carrying the composed {@link AuthorizationDecision}; never {@code null} and
-     *     never a failed future — an ordinary deny and a fail-closed contract violation both resolve
-     *     a succeeded future carrying a deny decision
-     * @throws IllegalStateException if {@code policy} is a {@link SecurityPolicy.Constrained} with
-     *     both empty roles and empty scopes (invariant violation)
+     *     never a failed future — an ordinary deny, an invalid input, and a fail-closed contract
+     *     violation all resolve a succeeded future carrying a deny decision
      */
     public Future<AuthorizationDecision> decide(
             SecurityContext securityContext,

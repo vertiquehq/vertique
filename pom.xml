@@ -190,6 +190,13 @@ SPDX-License-Identifier: EUPL-1.2
              consumes, so the ~90 per-module report renderings are waste there.
              Local builds keep them for browsable per-module HTML. -->
         <jacoco.module.report.skip>false</jacoco.module.report.skip>
+        <!-- PIT mutation testing is opt-in and advisory: nothing binds the goal to a
+             lifecycle phase, and invoking it directly is a no-op until pitest.skip=false.
+             scripts/pit-pr-scope.sh is the supported entry point. -->
+        <pitest.version>1.30.0</pitest.version>
+        <pitest.junit5.version>1.2.3</pitest.junit5.version>
+        <pitest.skip>true</pitest.skip>
+        <pitest.threads>2</pitest.threads>
 
         <!-- Default for Surefire/Failsafe late replacement when JaCoCo is skipped. -->
         <argLine/>
@@ -1405,6 +1412,64 @@ SPDX-License-Identifier: EUPL-1.2
                             </goals>
                         </execution>
                     </executions>
+                </plugin>
+                <!-- Invoke as: -pl <modules> -am process-test-classes
+                     org.pitest:pitest-maven:mutationCoverage -Dpitest.skip=false
+                     -DtargetClasses=a.B,a.B$*  (process-test-classes copies the Mockito agent
+                     that PIT reads from the Surefire argLine; -am keeps upstream modules on
+                     reactor output). targetClasses is deliberately NOT configured here: a
+                     comma list inside one <param> is not split and silently matches nothing. -->
+                <plugin>
+                    <groupId>org.pitest</groupId>
+                    <artifactId>pitest-maven</artifactId>
+                    <version>${pitest.version}</version>
+                    <dependencies>
+                        <dependency>
+                            <groupId>org.pitest</groupId>
+                            <artifactId>pitest-junit5-plugin</artifactId>
+                            <version>${pitest.junit5.version}</version>
+                        </dependency>
+                    </dependencies>
+                    <configuration>
+                        <skip>${pitest.skip}</skip>
+                        <threads>${pitest.threads}</threads>
+                        <!-- Explicit: with no <mutators> PIT 1.30 applies a different operator set
+                             (NEGATE_CONDITIONALS instead of the REMOVE_CONDITIONALS family), and the
+                             spike's cost and survivor triage were measured with DEFAULTS. -->
+                        <mutators>
+                            <mutator>DEFAULTS</mutator>
+                        </mutators>
+                        <!-- Hanging async mutants dominate run time; 1 s over PIT's scaled
+                             normal test time detected the same mutants as the 3 s default. -->
+                        <timeoutConstant>1000</timeoutConstant>
+                        <excludedClasses>
+                            <!-- Dagger-generated code, as for JaCoCo -->
+                            <param>*_Factory</param>
+                            <param>*_MembersInjector</param>
+                            <param>*.Dagger*</param>
+                            <param>*Module_*</param>
+                        </excludedClasses>
+                        <excludedMethods>
+                            <!-- Mutants run with real side effects. Removing the working-directory
+                                 guard in RestTestMounts.deleteRecursively let its own test delete the
+                                 module's source tree. Never mutate recursive-delete code or the
+                                 guards that protect it: a mutated condition in the guard is as
+                                 destructive as a removed call. -->
+                            <param>deleteRecursively</param>
+                            <param>requireDeletableTarget</param>
+                        </excludedMethods>
+                        <excludedTestClasses>
+                            <!-- Unit tests only, matching Surefire; ITs belong to Failsafe. -->
+                            <param>*IT</param>
+                        </excludedTestClasses>
+                        <timestampedReports>false</timestampedReports>
+                        <!-- Upstream reactor modules match no targetClasses and must not fail. -->
+                        <failWhenNoMutations>false</failWhenNoMutations>
+                        <outputFormats>
+                            <param>XML</param>
+                            <param>HTML</param>
+                        </outputFormats>
+                    </configuration>
                 </plugin>
             </plugins>
         </pluginManagement>

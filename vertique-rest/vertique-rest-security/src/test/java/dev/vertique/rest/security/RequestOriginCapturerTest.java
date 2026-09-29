@@ -353,6 +353,77 @@ class RequestOriginCapturerTest {
 
             assertFalse(origin.forwardedForChainRejected());
         }
+
+        @Test
+        @DisplayName("a resolvable hostname entry is rejected as a non-literal, never resolved into the chain")
+        void resolvableHostnameEntryRejectedNotResolved() {
+            // "localhost" resolves without DNS (hosts file), so only the IP-literal guard keeps it out.
+            // The peer is trusted: had the hostname entered the chain, it would be the rightmost
+            // untrusted entry and become the derived clientIp — as itself or as a resolved 127.0.0.1.
+            HttpServerRequest request = stubRequest("10.0.0.5", 0, "http", "example.com", "198.51.100.5, localhost");
+            RequestOrigin origin = capturerWithTrustedProxies("10.0.0.0/8").capture(request);
+
+            assertEquals(
+                    List.of("198.51.100.5"),
+                    origin.forwardedFor(),
+                    "the hostname entry must be dropped, neither kept verbatim nor resolved to an address");
+            assertEquals(1, origin.forwardedForRejectedCount(), "the hostname entry is counted as rejected");
+            assertEquals("198.51.100.5", origin.clientIp(), "a hostname must never become the derived client IP");
+        }
+    }
+
+    // --- IP-literal guard ---
+
+    /**
+     * The guard in front of every {@code InetAddress.getByName} call on the request path. Anything it
+     * passes that the JDK does not treat as a literal goes to the OS resolver — a blocking lookup on
+     * the event loop, triggered by an unauthenticated {@code X-Forwarded-For} header. The chain outcome
+     * cannot catch such a regression (a failed lookup also drops and counts the entry), so these tests
+     * assert on the guard itself.
+     */
+    @Nested
+    @DisplayName("IP-literal guard — nothing it passes reaches the DNS resolver")
+    class IpLiteralGuard {
+
+        @Test
+        @DisplayName("hex-only names and dotted quads with an octet above 255 are not IP literals")
+        void lookalikesAreNotIpLiterals() {
+            // A hex-only label is a hostname; an octet above 255 makes the JDK treat a dotted quad as
+            // one. Both used to pass the guard and trigger a real lookup.
+            for (String lookalike : List.of("cafe", "a1", "deadbeef", "999.1.1.1", "256.256.256.256", "1.2.3.256")) {
+                assertFalse(RequestOriginCapturer.isIpLiteral(lookalike), lookalike + " must not pass the guard");
+            }
+        }
+
+        @Test
+        @DisplayName("a dotted quad passes exactly when every octet is at most 255, in every position")
+        void dottedQuadPassesExactlyWhenEveryOctetIsInRange() {
+            for (int position = 0; position < 4; position++) {
+                for (int octet = 0; octet < 1000; octet++) {
+                    String[] parts = {"1", "1", "1", "1"};
+                    parts[position] = Integer.toString(octet);
+                    String quad = String.join(".", parts);
+
+                    assertEquals(octet <= 255, RequestOriginCapturer.isIpLiteral(quad), quad);
+                }
+            }
+        }
+
+        @Test
+        @DisplayName("IPv4, IPv6, scoped IPv6 and IPv4-mapped literals still pass")
+        void realLiteralsPass() {
+            for (String literal : List.of(
+                    "0.0.0.0",
+                    "1.2.3.4",
+                    "255.255.255.255",
+                    "::",
+                    "::1",
+                    "2001:db8::1",
+                    "fe80::1%lo0",
+                    "::ffff:1.2.3.4")) {
+                assertTrue(RequestOriginCapturer.isIpLiteral(literal), literal + " must pass the guard");
+            }
+        }
     }
 
     // --- AC-RO-7: Untrusted peer + forwarded headers ---
@@ -523,6 +594,39 @@ class RequestOriginCapturerTest {
             RequestOrigin origin = capturer.capture(request);
 
             assertEquals("198.51.100.1", origin.clientIp());
+        }
+
+        // A /12 prefix ends four bits into the second octet — the only shape here that exercises the
+        // partial-octet mask. 172.16.0.0/12 spans 172.16.0.0 through 172.31.255.255.
+
+        @Test
+        @DisplayName("172.20.0.1 and 172.31.255.254 match 172.16.0.0/12 (prefix ends mid-octet)")
+        void ipInsidePartialOctetPrefixTrusted() {
+            RequestOriginCapturer capturer = capturerWithTrustedProxies("172.16.0.0/12");
+
+            for (String peer : List.of("172.20.0.1", "172.31.255.254")) {
+                HttpServerRequest request = stubRequest(peer, 0, "http", "example.com", "198.51.100.1");
+
+                assertEquals(
+                        "198.51.100.1",
+                        capturer.capture(request).clientIp(),
+                        peer + " is inside 172.16.0.0/12, so its X-Forwarded-For must be honoured");
+            }
+        }
+
+        @Test
+        @DisplayName("172.32.0.1 and 172.15.255.254 do not match 172.16.0.0/12 (differ only in masked bits)")
+        void ipOutsidePartialOctetPrefixNotTrusted() {
+            RequestOriginCapturer capturer = capturerWithTrustedProxies("172.16.0.0/12");
+
+            for (String peer : List.of("172.32.0.1", "172.15.255.254")) {
+                HttpServerRequest request = stubRequest(peer, 0, "http", "example.com", "198.51.100.1");
+
+                assertEquals(
+                        peer,
+                        capturer.capture(request).clientIp(),
+                        peer + " is outside 172.16.0.0/12, so its X-Forwarded-For must be ignored");
+            }
         }
     }
 

@@ -326,6 +326,213 @@ gains nothing extra. A body the validator reports valid still produces no detail
 This is what makes a schema rule published as `oneOf`, `anyOf`, or `not` branches — the strict
 one-spelling alias rule above among them — enforceable at the gate.
 
+**Pattern and bounded-format input is bounded.** A regular expression can take far longer to
+evaluate than its input is long, so the gate limits the client text that reaches one. It rejects a
+string value or object key longer than `jaxrs.validationPatternMaxChars` (default 4,096 UTF-16 code
+units) before any of these checks runs on it, with one schema-shape exception listed under "What the
+limits leave open" below:
+
+- a `pattern`, including one under `propertyNames`, which applies it to object keys;
+- the key expressions of a non-empty `patternProperties`, for every key of that object; and
+- the three bounded formats: `idn-hostname`, `idn-email`, and `regex`.
+
+The gate also adds up the lengths of the strings and keys reaching those checks across the whole
+request — every parameter and the body — and rejects the request once the total exceeds
+`jaxrs.validationPatternMaxTotalChars` (default 262,144). A string checked at two positions counts
+at each: two `pattern` schemas that both apply to it, or one schema carrying both a `pattern` and a
+bounded format. The total covers one request's parameter and body validation and starts at zero for
+every request.
+
+No other format is bounded or counted. The date, time, duration, email, hostname, IP-address, and
+UUID formats, and an application-defined format, are checked exactly as the validator checks them
+without the limits. `iri` and `iri-reference` are not checked by the validator at all: any string
+passes them. A body of dates, timestamps, or identifiers with no `pattern` is therefore never
+rejected by the limits, however large it is. Only the `web-validation` strategy applies the limits;
+`openapi-contract` does not.
+
+**The `uri`, `uri-reference`, `url`, `uri-template`, `json-pointer`, `relative-json-pointer`, and
+`json-pointer-uri-fragment` formats are decided by reused implementations, never by the validator's
+own expressions for them,** with one schema-shape exception listed under "What the limits leave
+open" below. Those seven expressions can overflow the stack or take far longer than
+their input is long, so the gate keeps them from ever running: in its private compiled copy of each
+schema it renames every `format` value among the seven to `x-vertique-format-<name>` — for example
+`format: uri` becomes `format: x-vertique-format-uri` — a name the validator does not recognize and
+therefore passes unconditionally, and the gate's own format check then decides that renamed name.
+The rename happens only in the gate's private copy: the schema an `OperationSchemaSource` returns,
+and every published document built from it, keep the standard format names throughout. No regular
+expression decides any of the seven. `uri`, `uri-reference`, and `url` are decided by parsing the
+value with `java.net.URI`; `json-pointer` and `relative-json-pointer` are decided by one
+left-to-right pass over the string; `json-pointer-uri-fragment` is decided by percent-decoding its
+fragment through `java.net.URI` and then running the same left-to-right pass over the result; and
+`uri-template` is decided by the framework's own single-forward-pass syntax scanner for RFC 6570
+template syntax, written for this project.
+
+Because these reused implementations are not the validator's own expressions, a small number of
+values judge differently than the validator alone would judge them; every difference found against
+the pinned corpora — the JSON Schema Test Suite files and the tested corpus below — is recorded here,
+as tested, so no new check is ever added to chase it. Against the tested corpus, each format's
+recorded differences are:
+
+- `uri`: `http://` (rejected here); a value that is valid only without its trailing line feed, for
+  example `http://foo.bar/\n` (rejected here); `http://a.com/?x[0]=1` (accepted here); and
+  `http://[v1.x]/` (rejected here).
+- `uri-reference`: `http://` and `a:` (rejected here); a value that is valid only without its
+  trailing line feed, for example `/p\n` (rejected here); `http://a.com/?x[0]=1` and `#[0]`
+  (accepted here); and `http://[v1.x]/` (rejected here).
+- `json-pointer`: a value that is valid only without its trailing line feed, for example `\n`
+  (rejected here).
+- `relative-json-pointer`: a value that is valid only without its trailing line feed, for example
+  `0\n` (rejected here).
+- `json-pointer-uri-fragment`: a value that is valid only without its trailing line feed, for
+  example `#/a\n` (rejected here); `#/%7E2` and a trailing `#/%7E` (rejected here); and `#/ä`,
+  `#/a?b`, and `#/a[0]` (accepted here).
+- `uri-template`: `{a.b}`, `{a.%41}`, and `a'b` (accepted here); a value that is valid only without
+  its trailing line feed, for example `{a}\n` (rejected here); and `a\u0085b`, a lone high surrogate
+  (`a\uD800b` or a trailing `a\uD800`), a lone low surrogate (`a\uDC00b`), U+FFFF, U+E0001, U+EFFFE,
+  and U+FFFFE (rejected here).
+
+Against the JSON Schema Test Suite's own format cases, `uri` differs only on the suite's "non-numeric
+port is invalid" and "leading zero in an embedded IPv4 address is invalid" cases — both accepted by
+`java.net.URI` where the suite expects rejection; `uri-reference` differs only on the suite's "a
+network-path reference with an empty authority" case — rejected by `java.net.URI` where the suite
+expects acceptance — and, more leniently than the suite, its "a non-numeric port in a network-path
+reference", "more than one at-sign in the authority", and "a leading zero in the IPv4 part of an IPv6
+literal" cases; `json-pointer`, `relative-json-pointer`, `json-pointer-uri-fragment`, and
+`uri-template` have no recorded suite difference.
+
+`url` keeps the validator's own scheme and host filtering: an absolute value is accepted only when
+its scheme is `http`, `https`, or `ftp`; its host is present and is not an IPv6 literal; a
+dotted-quad host is rejected in `0/8`, `10/8`, `127/8`, `169.254/16`, `192.168/16`, `172.16/12`, and
+`224/4` and above, and a dotted-quad octet longer than one character that starts with `0` is
+rejected outright, for example `0177.0.0.1`: common URL and address parsers read such an octet as
+octal, so `0177.0.0.1` is `127.0.0.1` to them, and rejecting it here keeps the loopback and
+private-range filtering above from being bypassed by an octal-looking octet; a host that is not a
+dotted quad is rejected unless it contains a dot and ends in an alphabetic label of two or more
+letters, so `localhost` and `intranet` are rejected; and a port, when present, is rejected outside 2
+to 5 digits. That filtering matches the validator's own verdict, `[::1]` and every `file:`, `jar:`,
+and `mailto:` value included. Outside that filtering, fifteen inputs are recorded as differing from
+the validator: `http://bücher.de/` and `http://例え.テスト/` (`java.net.URI` cannot parse a non-ASCII
+host at all, so the gate rejects both; an application that needs to accept one should convert it to
+punycode first), `http://a--b.com/`, `http://xn--bcher-kva.de/`, `http://a.com./`,
+`http://1.2.3.0/`, `http://1.2.3.255/`, `http://example.com?x=1`, `http://example.com#f`,
+`http://example.com/a|b`, `http://example.com/%zz`, `http://us"er@example.com/`, and
+`http://8.08.8.8/` (accepted by the validator's own expression; rejected here by the
+leading-zero-octet rule above); `http://@example.com/` (rejected by the validator's own expression;
+accepted here, the host unchanged); and a value that is valid only without its trailing line feed,
+for example `http://foo.bar/\n` (accepted by the validator's own expression; rejected here).
+`format: url` is not an SSRF control: it resolves no names (for example `127.0.0.1.nip.io`) and
+follows no redirects; validate the resolved address at the outbound call.
+
+Each of the seven formats was also proved at the longest value the default `http.maxBodySize` (2
+MiB) and the default HTTP header-size limit (8 KiB) admit, with grammar-shaped worst-case values.
+Every one stayed within a pre-decided budget — at most 250 ms and at most 16 bytes allocated per
+character plus 1 MiB — with no stack overflow and no fallback to a bounded-and-counted check; the
+highest figures observed were 26.2 ms (a `url` value built from many host labels) and about 21.8 MB
+allocated (a `json-pointer-uri-fragment` value built from escaped segments, about 10.4 bytes per
+character against the 16-byte budget). That is the tested envelope: these proofs claim nothing for a
+value an application admits by raising `http.maxBodySize` or the header-size limit above these
+defaults.
+
+A Hibernate `@URL`-annotated property publishes as `format: uri` plus the pattern `@URL` composes on
+top of it, so the pattern bound above still applies there even though `uri` itself is not a bounded
+format: a value longer than `jaxrs.validationPatternMaxChars` at that position is rejected before
+the composed pattern runs, with the same value-free per-string detail any other `pattern` position
+gets.
+
+Either rejection is a 400 `RestValidationException` carrying one `ValidationErrorDetail` for the
+rejected validation call:
+
+| Field | Per-string limit | Per-request limit |
+|---|---|---|
+| `path` | `""` for the body, else the parameter name | same |
+| `location` | `body`, `path`, `query`, `header`, `cookie`, or `form` | same |
+| `type` | `patternInputLength` | `patternInputTotalLength` |
+| `detail` | `exceeds the maximum length of <N> characters for pattern validation` | `exceeds the maximum total length of <N> characters for pattern validation` |
+| `args` | `{"maxChars": <N>}` | `{"maxTotalChars": <N>}` |
+
+`<N>` is the configured limit. The detail reads "pattern validation" for a bounded format too, and
+it never contains the value, the key, or the pattern. Validation of the request stops at the
+rejection in both `aggregate` and `failFast` modes: nothing after the rejected call is evaluated —
+no later parameter, no body after a rejected parameter, no `@FilePart` constraint, and no
+`FileContentVerifier`. In `aggregate` mode the details that earlier parameters already contributed
+stay in the response, ahead of the rejection's detail.
+
+The gate never modifies the schemas an `OperationSchemaSource` returns. It compiles a private copy
+of each body and parameter schema in which a length check precedes every pattern and bounded-format
+position, and every detail it reports refers to the original schema. For input within both limits,
+the verdict and the violations are exactly those of the schema without the limits. Both statements
+hold for every schema but the draft-7 shape listed under "What the limits leave open".
+
+Under the default limits, a request with longer input at these positions is rejected with 400 even
+when its schema accepts the values. An application that must accept such input raises
+`jaxrs.validationPatternMaxChars`, `jaxrs.validationPatternMaxTotalChars`, or both;
+`vertique-rest-core` validates both at startup, and its reference lists the failure messages.
+
+The `uri`, `uri-reference`, `url`, `uri-template`, `json-pointer`, `relative-json-pointer`, and
+`json-pointer-uri-fragment` formats now judge every value, however long, with one schema-shape
+exception listed under "What the limits leave open" below. A value long enough to overflow the
+validator's own check for one of them previously could overflow the stack and fail the request with
+a 500 error; outside that exception it is now judged, valid or invalid, by the reused implementation
+described above, including its recorded verdict differences from the validator's own expressions.
+
+What the limits leave open:
+
+- With the default limits, one request can still spend about 5.7 seconds of validator time on
+  `idn-hostname` and `idn-email` values: 64 values of 4,096 characters fill the total, at about
+  89 ms each. Lower `jaxrs.validationPatternMaxTotalChars` where that matters.
+- A `patternProperties` object with P patterns matches each of its K keys against every pattern —
+  P × K matches — while each key counts once. The folded patterns the schema generator writes for a
+  case-insensitively bound type are anchored and linear, so that cost is harmless there; the cost of
+  an application-authored `patternProperties` is the application's responsibility.
+- A key of a case-insensitively bound body type (for example one annotated
+  `@JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)`) is counted once at
+  each position that checks it — the reserved-name guard, the folded `patternProperties` key, and
+  the non-ASCII-key refusal — three positions at one nesting level, so an unnested key counts three
+  times toward the total. A case-insensitive type also publishes every member's schema twice, once
+  under `properties` and once under its folded `patternProperties` key, so each additional nested
+  case-insensitive level doubles both the number of keys counted and the number of pattern-bearing
+  member values counted beneath it: a key at nesting depth `d` counts `3 × 2^d` times (a probe
+  measured 6× at depth 1 and 12× at depth 2). Operators sizing
+  `jaxrs.validationPatternMaxTotalChars` should budget for that compounding, not only for the flat
+  per-key count.
+- On a case-insensitive type, the validator checks a member's whole subtree twice at every nesting
+  level — once reached through `properties`, once through its folded `patternProperties` key — so
+  a value nested `d` case-insensitive levels deep is checked `2^(d+1)` times. The seven reused
+  formats (`uri`, `uri-reference`, `url`, `uri-template`, `json-pointer`, `relative-json-pointer`,
+  and `json-pointer-uri-fragment`), every other format, and every length and type check are
+  bounded only per check, never toward `jaxrs.validationPatternMaxTotalChars`, so nothing caps how
+  many times this doubling repeats within one request: at the default limits, a 2 MB `uri` value
+  nine levels deep took about 7 seconds to validate and was still accepted. Keep case-insensitive
+  DTO trees shallow, or bound the request body size, where this matters; this is a documented
+  limit, not a change this module commits to making.
+- The limits bound the length of the input, not the cost of a pattern. An application-authored
+  pattern whose matching time is super-linear — quadratic or exponential backtracking — can still
+  be slow on input within the limits; an exponential one can take seconds on a few dozen
+  characters. Keeping its patterns linear is the application's responsibility.
+- A linear pattern built from a repeated group — for example `^(a|b)*$` or `^([a-z0-9]+[-.]?)*$` —
+  can exhaust the thread stack within the default 4,096-character
+  `jaxrs.validationPatternMaxChars` limit, because Java's regular-expression engine recurses once
+  per repetition of the group; the length bound only limits how much input the pattern sees, not
+  how deep that recursion goes. The gate's rejection path catches only `RuntimeException`, and a
+  `StackOverflowError` is not one, so it escapes uncaught and the request fails with an unhandled
+  500 carrying no input value. Prefer a possessive or non-capturing pattern that does not repeat a
+  group, or lower `jaxrs.validationPatternMaxChars` where the pattern cannot be rewritten.
+- An application-authored schema that uses the draft-7 container `dependencies` or `definitions`
+  with a member named like a JSON Schema keyword — `const`, `enum`, `default`, `examples`,
+  `example`, `properties`, `patternProperties`, `$defs`, or `dependentSchemas` — is not bounded at
+  that member: a pattern or bounded format inside it can run on input of any length, whether or
+  not anything reaches that member through a `$ref`. A `dependencies` member named
+  `patternProperties` also changes the verdict: an object validated there that has a property
+  named `allOf` fails the request with a 500. Reaching a `definitions` or `dependencies` member
+  through a local `$ref` — from the schema's root, from a property, or from another such member —
+  does not by itself create a residual: that member is otherwise walked, bounded, and renamed
+  exactly like any other schema position; only a member whose own name is one of the keywords
+  above, for example `definitions/enum` or `definitions/const`, keeps the engine's own `format`
+  and its own unbounded pattern. Generated schemas are unaffected. Schemas the
+  `vertique-json-schema` generator writes use `$defs` only; an application-authored schema stays
+  fully bounded and fully renamed when it uses `$defs` and `dependentSchemas` instead, or other
+  member names.
+
 ---
 
 ## Extension Points
@@ -420,6 +627,8 @@ validation; unmapped declared types are accepted without I/O.
 |-----|---------|-------------|
 | `jaxrs.validationStrategy` | `"web-validation"` | ID of the `RequestValidationStrategy` to activate |
 | `jaxrs.validationMode` | `"aggregate"` | `"aggregate"` (collect all violations, default) or `"failFast"` (stop on first); any other value fails startup |
+| `jaxrs.validationPatternMaxChars` | `4096` | Most UTF-16 code units one string value or object key may have at a pattern or bounded-format check (see [WebValidationStrategy](#webvalidationstrategy)); a longer one is rejected with 400; at least `1`, else startup fails |
+| `jaxrs.validationPatternMaxTotalChars` | `262144` | Most UTF-16 code units the strings and keys at those checks may add up to in one request; a request over it is rejected with 400; at least `1` and no smaller than `jaxrs.validationPatternMaxChars`, else startup fails |
 | `http.maxBodySize` | `2097152` | Global ingress body limit; the only pre-validation upload-size limit |
 | `http.maxFormFields` | `256` | Pre-validation ingress limit on part count, shared across multipart file parts, multipart text parts, and URL-encoded attributes |
 | `http.uploadsDirectory` | `"file-uploads"` | Non-blank Vert.x multipart spool directory; temporary files are always deleted at request end |

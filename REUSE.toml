@@ -24,3 +24,15 @@ path = [
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Koivisto Capital Oy"
 SPDX-License-Identifier = "EUPL-1.2"
+
+[[annotations]]
+path = [
+  "vertique-rest/vertique-rest-validation/src/test/resources/json-schema-test-suite/draft2020-12/optional/format/uri.json",
+  "vertique-rest/vertique-rest-validation/src/test/resources/json-schema-test-suite/draft2020-12/optional/format/uri-reference.json",
+  "vertique-rest/vertique-rest-validation/src/test/resources/json-schema-test-suite/draft2020-12/optional/format/uri-template.json",
+  "vertique-rest/vertique-rest-validation/src/test/resources/json-schema-test-suite/draft2020-12/optional/format/json-pointer.json",
+  "vertique-rest/vertique-rest-validation/src/test/resources/json-schema-test-suite/draft2020-12/optional/format/relative-json-pointer.json",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2012 Julian Berman"
+SPDX-License-Identifier = "MIT"
