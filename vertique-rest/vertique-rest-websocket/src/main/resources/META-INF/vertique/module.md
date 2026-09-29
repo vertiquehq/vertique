@@ -688,6 +688,17 @@ binds a `RouteAuthHandler` without the pipeline would authenticate but never aut
 | Peer closed while channel registration was still in flight | `@OnOpen` is skipped entirely and the connection is torn down |
 | Normal `session.close()` | Close code `1000` |
 
+**No request completion event for an upgraded connection.** This module claims each successfully
+upgraded request for its own lifecycle, so rest-core's completion emitter publishes no completion
+event for it — neither a `RestRequestCompletedEvent` nor an `HttpRequestCompletedEvent` — not at
+the 101 and not when the connection later closes. Observe the connection through `@OnOpen` and
+`@OnClose` instead and, when `AuthModule` registers it as a channel (see
+[Identity refresh](#identity-refresh)), through the channel events `ChannelOpenedEvent` and
+`ChannelClosedEvent` (from `dev.vertique:vertique-security-core`) delivered to every
+`SecurityEventObserver`. A rejected or failed upgrade is not claimed: a handshake the security layer
+rejects with 401 or 403, or one answered with 400 because `toWebSocket()` failed, completes as an
+ordinary HTTP request and produces exactly one `HttpRequestCompletedEvent`.
+
 ### Common mistakes
 
 - **Expecting per-message authorization.** There is none. A `@RequiresAction` on a lifecycle method
@@ -725,7 +736,7 @@ binds a `RouteAuthHandler` without the pipeline would authenticate but never aut
 
 | Dependency | Why |
 |---|---|
-| `dev.vertique:vertique-rest-core` | `RouterMount`, request-lifecycle handle, `SecurityRuntime`, `RouteAuthHandler` |
+| `dev.vertique:vertique-rest-core` | `RouterMount`, request-lifecycle handle, `SecurityRuntime`, `RouteAuthHandler`, the request-completion claim for a successful upgrade |
 | `dev.vertique:vertique-input-processing` | the neutral `InputObjectProcessor` / `EffectiveInputPolicies` contracts message and path-parameter processing are typed against |
 | `dev.vertique:vertique-json` | `JacksonFieldNameResolver` — the wire-name projection that lets a declared policy reach a renamed message field |
 | `dev.vertique:vertique-rest-security` | Policy enforcement, identity resolution, claim mapping |

@@ -17,6 +17,7 @@ import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.input.processing.InvocationPolicyConflictException;
 import dev.vertique.input.processing.ReflectiveInvocationPolicies;
 import dev.vertique.json.JacksonFieldNameResolver;
+import dev.vertique.rest.core.events.RequestCompletionRecorder;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.core.security.SecurityPolicy;
@@ -722,13 +723,18 @@ class WebSocketEndpointRegistrar {
     /**
      * Handles the HTTP upgrade to WebSocket.
      *
-     * <p>On success: pauses the socket, captures a {@link ContextSnapshot}, stores it on the
-     * session, registers an {@code afterClose} task on the {@link RequestContextLifecycle.Handle}
-     * that binds the snapshot and installs frame/close handlers, then drives the lifecycle to
-     * completion via {@link RequestContextLifecycle.Handle#completeNow()}.
+     * <p>On success: first claims the request through
+     * {@link RequestCompletionRecorder#claimForOtherTransport}, so rest-core's completion emitter
+     * reports no completion event for it, neither at the 101 nor on a later close. Then pauses the
+     * socket, captures a {@link ContextSnapshot}, stores it on the session, registers an
+     * {@code afterClose} task on the {@link RequestContextLifecycle.Handle} that binds the snapshot
+     * and installs frame/close handlers, then drives the lifecycle to completion via
+     * {@link RequestContextLifecycle.Handle#completeNow()}.
      *
      * <p>On failure: logs the error and responds with HTTP 400 if the response has not already
-     * ended.
+     * ended. A failed upgrade is not claimed, because no connection takes the request over: it
+     * completes as an ordinary HTTP request (the 400 written here, or the 401 or 403 the security
+     * handlers wrote) with one unclaimed completion event.
      *
      * @param ctx  the Vert.x routing context for the upgrade request
      * @param meta the endpoint metadata (includes the pre-compiled path matcher)
@@ -737,6 +743,8 @@ class WebSocketEndpointRegistrar {
         ctx.request()
                 .toWebSocket()
                 .onSuccess(ws -> {
+                    // Claim the upgraded request so rest-core's emitter reports no completion event.
+                    RequestCompletionRecorder.claimForOtherTransport(ctx);
                     var pathParams = meta.pathMatcher().extractParams(ws.path());
                     DefaultWebSocketSession session = new DefaultWebSocketSession(
                             ws, pathParams, ctx.queryParams(), ctx.request().headers());
