@@ -16,10 +16,14 @@ import dev.vertique.rest.core.router.OperationHandlerContributor;
 import dev.vertique.rest.core.security.AuthEnforcementCapability;
 import dev.vertique.rest.core.security.SecurityPolicyValidator;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
+import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
 import dev.vertique.rest.jaxrs.validation.FileContentVerifier;
 import dev.vertique.rest.jaxrs.validation.NoneValidationStrategy;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
 import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
+import dev.vertique.security.authz.ActionRegistry;
+import dev.vertique.security.authz.Authorizer;
+import jakarta.annotation.Nullable;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -66,6 +70,16 @@ final class TestFactories {
                 ParamConversionResolver.of(ParamConverterRegistry.of(Set.of()), Set.of());
         private SecurityPolicyValidator securityPolicyValidator = null;
         private Optional<AuthEnforcementCapability> authEnforcementCapability = Optional.empty();
+        private Optional<ActionRegistry> actionRegistry = Optional.empty();
+        private Optional<Authorizer> authorizer = Optional.empty();
+
+        /**
+         * {@code null} (the default) keeps the retained public {@code Factory} constructor path, with
+         * no sink set threaded through at all. A non-{@code null} value — including an empty set —
+         * selects the package-private {@code @Inject} constructor and is passed as its 30th and last
+         * parameter (T006).
+         */
+        private @Nullable Set<OperationPublicationSink> publicationSinks;
 
         /**
          * Sets the registered validation strategies.
@@ -246,6 +260,45 @@ final class TestFactories {
         }
 
         /**
+         * Sets the optional {@link ActionRegistry} (defaults to {@link Optional#empty()}: the
+         * authorization engine is not installed, so any {@code @RequiresAction} operation fails
+         * startup).
+         *
+         * @param registry the action registry, present when the authorization engine is installed
+         * @return this builder
+         */
+        Builder actionRegistry(Optional<ActionRegistry> registry) {
+            this.actionRegistry = registry;
+            return this;
+        }
+
+        /**
+         * Sets the optional core {@link Authorizer} (defaults to {@link Optional#empty()}: no
+         * authorizer is installed, so any {@code @RequiresAction} operation fails startup).
+         *
+         * @param authorizer the authorizer, present when the authorization engine is installed
+         * @return this builder
+         */
+        Builder authorizer(Optional<Authorizer> authorizer) {
+            this.authorizer = authorizer;
+            return this;
+        }
+
+        /**
+         * Sets the {@code Set<OperationPublicationSink>} multibinding (T006). Leaving this unset
+         * (the default, {@code null}) keeps the factory built through the retained public
+         * constructor, exactly today's behavior; passing a set — including {@link Set#of()} — selects
+         * the package-private {@code @Inject} constructor and threads it through as the sink set.
+         *
+         * @param sinks the sink set, or {@code null} to keep the public-constructor path
+         * @return this builder
+         */
+        Builder publicationSinks(@Nullable Set<OperationPublicationSink> sinks) {
+            this.publicationSinks = sinks;
+            return this;
+        }
+
+        /**
          * Builds the factory with the accumulated collaborators and inert defaults for the rest.
          *
          * @return a fully constructed factory
@@ -260,6 +313,42 @@ final class TestFactories {
             DefaultResponseSerializer responseSerializer = new DefaultResponseSerializer(List.of(), encoders);
             HttpConfig httpConfig = HttpConfig.builder().build();
 
+            if (publicationSinks == null) {
+                return new JaxRsRouterMount.Factory(
+                        Set.of(), // routerLifecycleHooks
+                        Set.of(), // operationInterceptors
+                        Set.of(), // errorInterceptors
+                        middlewares,
+                        operationHandlerContributors,
+                        securitySchemeHandlers,
+                        requestInterceptors,
+                        restExceptionMapper,
+                        registry,
+                        Set.of(), // responseProducerBindings
+                        responseSerializer,
+                        restContextResolution,
+                        paramConversionResolver,
+                        securityPolicyValidator, // securityPolicyValidator (nullable)
+                        authEnforcementCapability, // authEnforcementCapability
+                        sortedDecoders, // sortedDecoders — needed for body binding
+                        encoders, // sortedEncoders
+                        httpConfig,
+                        jaxRsConfig,
+                        jsonMapperProfileRegistry, // jsonMapperProfileRegistry
+                        dev.vertique.json.JsonConfig
+                                .defaults(), // jsonConfig (json.jsonProfile unset => vertique floor)
+                        Optional.empty(), // beanValidator
+                        Optional.empty(), // objectProcessor
+                        Set.of(), // evidenceCapturers
+                        actionRegistry,
+                        authorizer,
+                        fileContentVerifiers,
+                        validationStrategies,
+                        operationSchemaSource);
+            }
+
+            // A non-null publicationSinks (including an empty set) selects the package-private
+            // 30-parameter @Inject constructor T006 adds, with the sink set as its last parameter.
             return new JaxRsRouterMount.Factory(
                     Set.of(), // routerLifecycleHooks
                     Set.of(), // operationInterceptors
@@ -285,11 +374,12 @@ final class TestFactories {
                     Optional.empty(), // beanValidator
                     Optional.empty(), // objectProcessor
                     Set.of(), // evidenceCapturers
-                    Optional.empty(), // actionRegistry
-                    Optional.empty(), // authorizer
+                    actionRegistry,
+                    authorizer,
                     fileContentVerifiers,
                     validationStrategies,
-                    operationSchemaSource);
+                    operationSchemaSource,
+                    publicationSinks);
         }
     }
 }

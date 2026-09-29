@@ -38,6 +38,10 @@ import dev.vertique.rest.core.security.SecurityPolicyViolation;
 import dev.vertique.rest.core.security.SecurityPolicyViolationException;
 import dev.vertique.rest.core.sse.SseEvent;
 import dev.vertique.rest.jaxrs.convert.ConversionContexts;
+import dev.vertique.rest.jaxrs.publication.CapturedSchemas;
+import dev.vertique.rest.jaxrs.publication.InputKey;
+import dev.vertique.rest.jaxrs.publication.OperationDetail;
+import dev.vertique.rest.jaxrs.publication.OperationPublication;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
 import dev.vertique.rest.jaxrs.routing.ParamDescriptor;
@@ -50,6 +54,7 @@ import dev.vertique.security.authz.ActionRef;
 import dev.vertique.security.authz.ActionRegistry;
 import io.vertx.core.Handler;
 import io.vertx.core.http.HttpMethod;
+import io.vertx.core.json.JsonObject;
 import io.vertx.core.streams.ReadStream;
 import io.vertx.ext.web.FileUpload;
 import io.vertx.ext.web.Route;
@@ -125,7 +130,8 @@ public class JaxRsRouteRegistrar {
      * <p>Delegates to the package-private overload below with a {@code null} application type and a
      * sink this call discards, so it records no implicit-policy operation — every public caller,
      * including a hand-built {@link JaxRsRouterMount.Factory#create} mount and the zero-declaration
-     * legacy default mount, serves no declared application.
+     * legacy default mount, serves no declared application. It also passes no publication list and
+     * no detail request, so it builds no operation publication and copies no schema.
      *
      * <p>If a {@code securityPolicyValidator} is provided, it is run for every discovered operation.
      * Any violations found cause startup to fail immediately with a {@link
@@ -251,7 +257,9 @@ public class JaxRsRouteRegistrar {
                 jsonMapperProfileRegistry,
                 jsonConfig,
                 null,
-                new ArrayList<>());
+                new ArrayList<>(),
+                null,
+                false);
     }
 
     /**
@@ -267,9 +275,21 @@ public class JaxRsRouteRegistrar {
      * RestContextResolution, ParamConversionResolver, SecurityPolicyValidator, boolean, List, List,
      * String, BeanValidator, InputObjectProcessor, List, ActionRegistry, boolean, JaxRsConfig,
      * JsonMapperProfileRegistry, JsonConfig) overload}, which delegates here with a {@code null}
-     * declaring type and a sink it discards. This registrar keeps no state of its own between
-     * calls: {@code declaringType} and {@code implicitOperations} are this call's own, never
-     * instance fields.
+     * declaring type, a sink it discards, no publication list, and no detail request. This
+     * registrar keeps no state of its own between calls: {@code declaringType},
+     * {@code implicitOperations}, and {@code publications} are this call's own, never instance
+     * fields.
+     *
+     * <p>When {@code publications} is non-{@code null}, every registered operation appends one
+     * {@link OperationPublication} in registration order, recording the route value and regex flag
+     * the route was registered with, the effective security policy, the security requirement sets,
+     * and whether an action is required. When {@code captureDetail} is also {@code true}, each
+     * publication carries an {@link OperationDetail} whose {@link CapturedSchemas} are deep copies
+     * of the body schema and of every descriptor parameter's schema, taken after the schema source
+     * resolved them and before the strategy's {@code gateFor} receives the same, unmodified
+     * {@link OperationSchemas} instance; the body schema's provenance is carried by reference. A
+     * {@code null} list builds no publication and copies nothing, whatever {@code captureDetail}
+     * says.
      *
      * @param resources               JAX-RS annotated resource instances
      * @param apiRouter               the plain Vert.x web router to register routes on
@@ -337,6 +357,11 @@ public class JaxRsRouteRegistrar {
      *                                {@code declaringType} is non-{@code null} and the {@code
      *                                jaxrs.security.requireExplicitPolicy} opt-in is off; untouched
      *                                otherwise
+     * @param publications            the list every registered operation's publication is appended
+     *                                to, in registration order, or {@code null} to build none
+     * @param captureDetail           whether each publication carries the operation's detail with
+     *                                detached schema copies; ignored when {@code publications} is
+     *                                {@code null}
      */
     void registerAll(
             Set<Object> resources,
@@ -365,7 +390,9 @@ public class JaxRsRouteRegistrar {
             JsonMapperProfileRegistry jsonMapperProfileRegistry,
             JsonConfig jsonConfig,
             @Nullable Class<?> declaringType,
-            List<ImplicitOperation> implicitOperations) {
+            List<ImplicitOperation> implicitOperations,
+            @Nullable List<OperationPublication> publications,
+            boolean captureDetail) {
         List<OperationInterceptor> sortedInterceptors =
                 operationInterceptors != null ? Collections.unmodifiableList(operationInterceptors) : List.of();
         List<OperationHandlerContributor> sortedContributors =
@@ -500,8 +527,10 @@ public class JaxRsRouteRegistrar {
             SecurityPolicy effectivePolicy = descriptor.effectiveSecurityPolicy();
             effectivePolicies.put(meta.operationId(), effectivePolicy);
 
-            // Create the Vert.x route from the translated JAX-RS path template.
-            Route route = createRoute(apiRouter, meta);
+            // Create the Vert.x route from the translated JAX-RS path template. The template is
+            // translated once, so a publication records exactly the value the route registered with.
+            JaxRsPathTemplate routeTemplate = JaxRsPathTemplate.translate(meta.path());
+            Route route = createRoute(apiRouter, meta, routeTemplate);
 
             // Run security policy validation
             if (securityPolicyValidator != null) {
@@ -594,8 +623,31 @@ public class JaxRsRouteRegistrar {
             OperationSchemas schemas = schemaSource
                     .map(source -> source.schemasFor(descriptor, resolvedProfile.profile()))
                     .orElseGet(OperationSchemas::empty);
+            // Detach the gate's exact inputs before the strategy receives them, so neither an edit the
+            // strategy makes to its schemas nor a later change to the source's objects reaches the
+            // publication, and no decoration of the copy reaches the gate. The gate still receives the
+            // original instance, and the source is not called again.
+            CapturedSchemas capturedSchemas =
+                    publications != null && captureDetail ? captureSchemas(descriptor, schemas) : null;
             Optional<Handler<RoutingContext>> gate = strategy.gateFor(descriptor, schemas, mount);
             gate.ifPresent(route::handler);
+
+            if (publications != null) {
+                OperationDetail detail = capturedSchemas != null
+                        ? new OperationDetail(
+                                descriptor, resolvedProfile.profile().id().value(), capturedSchemas, gate.isPresent())
+                        : null;
+                publications.add(new OperationPublication(
+                        meta.operationId(),
+                        meta.httpMethod(),
+                        meta.path(),
+                        routeTemplate.vertxValue(),
+                        routeTemplate.isRegex(),
+                        effectivePolicy,
+                        descriptor.securityRequirementSets(),
+                        requiredAction.isPresent(),
+                        detail));
+            }
 
             // Router-build diagnostic for the profile-aware schema seam: which profile this operation
             // resolved to, whether that profile's mapper is the process codec's (so no stash is
@@ -1027,14 +1079,36 @@ public class JaxRsRouteRegistrar {
      *
      * @param apiRouter the plain router to register on
      * @param meta      the resource-method metadata (HTTP verb and JAX-RS path)
+     * @param template  the translation of {@code meta.path()} the route registers with
      * @return the created route
      */
-    private static Route createRoute(Router apiRouter, ResourceMethodMeta meta) {
+    private static Route createRoute(Router apiRouter, ResourceMethodMeta meta, JaxRsPathTemplate template) {
         HttpMethod httpMethod = HttpMethod.valueOf(meta.httpMethod());
-        JaxRsPathTemplate template = JaxRsPathTemplate.translate(meta.path());
         return template.isRegex()
                 ? apiRouter.routeWithRegex(httpMethod, template.vertxValue())
                 : apiRouter.route(httpMethod, template.vertxValue());
+    }
+
+    /**
+     * Deep-copies exactly the schemas a gate consumes: the body schema and the schema for every
+     * descriptor parameter key {@code (location, name)} that has one. A schema the source returned
+     * for any other key is not copied. The body schema's provenance is carried by reference and
+     * never inspected.
+     *
+     * @param descriptor the operation descriptor whose parameters key the lookup
+     * @param schemas    the schemas about to be handed to the gate; only read
+     * @return detached copies sharing no JSON container with {@code schemas}
+     */
+    private static CapturedSchemas captureSchemas(JaxRsOperationDescriptor descriptor, OperationSchemas schemas) {
+        Map<InputKey, JsonObject> parameters = new HashMap<>();
+        for (ParamDescriptor param : descriptor.parameters()) {
+            schemas.parameterSchema(param.location(), param.name())
+                    .ifPresent(schema -> parameters.put(new InputKey(param.location(), param.name()), schema.copy()));
+        }
+        return new CapturedSchemas(
+                schemas.bodySchema().map(JsonObject::copy).orElse(null),
+                schemas.bodySchemaProvenance(Object.class).orElse(null),
+                parameters);
     }
 
     /**

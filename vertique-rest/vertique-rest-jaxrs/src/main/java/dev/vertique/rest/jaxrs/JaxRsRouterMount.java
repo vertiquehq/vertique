@@ -32,6 +32,9 @@ import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.core.security.AuthEnforcementCapability;
 import dev.vertique.rest.core.security.SecurityPolicyValidator;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
+import dev.vertique.rest.jaxrs.publication.MountPublication;
+import dev.vertique.rest.jaxrs.publication.OperationPublication;
+import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
 import dev.vertique.rest.jaxrs.validation.FileContentVerifier;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
@@ -260,8 +263,10 @@ public class JaxRsRouterMount implements RouterMount {
      * subclass — must not host it. This check runs first, before the early return below for a mount
      * with no resources, so an all-disabled application is refused too.
      *
-     * <p>If no resources are registered, an empty router is returned immediately. Otherwise the
-     * pipeline is:
+     * <p>If no resources are registered, an empty router is returned: immediately when no {@link
+     * OperationPublicationSink} is bound, otherwise after the publication step at the end of the
+     * pipeline below, with no operations and the configured request-validation strategy id. Otherwise
+     * the pipeline is:
      * <ol>
      *   <li>Create a plain {@link Router} via {@link Router#router(Vertx)}.</li>
      *   <li>Select the request-validation strategy by id via
@@ -274,15 +279,33 @@ public class JaxRsRouterMount implements RouterMount {
      *   <li>Configure {@link dev.vertique.rest.core.security.SecuritySchemeHandler} instances, recording
      *       each scheme's authentication handler into a {@link SecuritySchemeHandlerCollector}.</li>
      *   <li>Run {@link RouterLifecycleHook#afterAuthSetup} hooks.</li>
+     *   <li>When any {@link OperationPublicationSink} is bound, ask every sink, in the injected order and
+     *       once each, whether it wants detail for this mount's application name ({@code null} for a
+     *       mount that serves no declared application); detail is captured when any sink wants it.</li>
      *   <li>Scan and register all JAX-RS resource methods via {@link JaxRsRouteRegistrar}, installing per
      *       operation: the collected auth handler(s) → the validation gate → the sorted contributors →
-     *       the {@link ResourceMethodInvoker}.</li>
+     *       the {@link ResourceMethodInvoker}. When a sink is bound, the registrar also records one
+     *       {@link OperationPublication} per registered operation, with detached schema copies when
+     *       detail is captured.</li>
      *   <li>When this mount serves a declared application, log the no-explicit-security-policy warning
      *       for the operations {@link JaxRsRouteRegistrar} recorded, if any.</li>
      *   <li>Run {@link RouterLifecycleHook#afterRouterCreated} hooks.</li>
      *   <li>Mount {@link MiddlewareScope#API} middlewares on the API router.</li>
      *   <li>Attach the router-level failure handler.</li>
+     *   <li>When any {@link OperationPublicationSink} is bound, build one {@link MountPublication} for
+     *       this mount and hand that same instance to every sink's {@link
+     *       OperationPublicationSink#mountBuilt}, calling every sink before any returned future is
+     *       awaited.</li>
      * </ol>
+     *
+     * <p>With no sink bound, no publication is built, no sink is asked, no schema is copied, and the
+     * returned future is already succeeded. With sinks bound, the returned future succeeds with the
+     * router once every sink's future has succeeded, and fails with a sink future's failure, so the
+     * mount's {@code MountCustomizer}s never run. A {@link RuntimeException} thrown by a sink's
+     * {@link OperationPublicationSink#wantsDetail} or {@link OperationPublicationSink#mountBuilt}
+     * propagates out of this method unwrapped, and no later sink is called. No sink's {@link
+     * OperationPublicationSink#mountBuilt} is called when this method throws before the publication
+     * step.
      *
      * <p>An application mount whose registration left one or more operations with no explicit
      * security policy logs exactly one WARN, naming every such operation — sorted by full path, then
@@ -295,7 +318,8 @@ public class JaxRsRouterMount implements RouterMount {
      * so an {@code openapi.json} (when present) is documentation only (PRD-REST-017 FR-001).
      *
      * @param vertx the Vert.x instance
-     * @return a future resolving to the configured API router
+     * @return a future resolving to the configured API router, once every bound sink's future has
+     *     succeeded
      */
     @Override
     public Future<Router> createRouter(Vertx vertx) {
@@ -308,7 +332,12 @@ public class JaxRsRouterMount implements RouterMount {
         }
 
         if (resources.isEmpty()) {
-            return Future.succeededFuture(Router.router(vertx));
+            Router emptyRouter = Router.router(vertx);
+            if (factory.publicationSinks.isEmpty()) {
+                return Future.succeededFuture(emptyRouter);
+            }
+            // No strategy is selected for an empty mount, so the publication carries the configured id.
+            return publish(emptyRouter, factory.jaxRsConfig.validationStrategy(), List.of());
         }
 
         List<RouterLifecycleHook> sortedRouterHooks = factory.routerLifecycleHooks.stream()
@@ -407,6 +436,19 @@ public class JaxRsRouterMount implements RouterMount {
             hook.afterAuthSetup(routerSetup);
         }
 
+        // With no sink bound, nothing is published and no schema is copied. Otherwise every sink is
+        // asked once, in order, with no short-circuit; detail is captured when any sink wants it.
+        List<OperationPublication> publications = null;
+        boolean captureDetail = false;
+        if (!factory.publicationSinks.isEmpty()) {
+            publications = new ArrayList<>();
+            for (OperationPublicationSink sink : factory.publicationSinks) {
+                if (sink.wantsDetail(applicationName())) {
+                    captureDetail = true;
+                }
+            }
+        }
+
         JaxRsRouteRegistrar registrar = new JaxRsRouteRegistrar();
         // This mount's own sink for registerAll's implicit-policy recording: the registrar carries
         // no state between calls, so createRouter creates and reads this list itself.
@@ -438,7 +480,9 @@ public class JaxRsRouterMount implements RouterMount {
                 factory.jsonMapperProfileRegistry,
                 factory.jsonConfig,
                 declaringType,
-                implicitOperations);
+                implicitOperations,
+                publications,
+                captureDetail);
 
         // registerAll recorded one entry per implicit-policy operation into this mount's own sink,
         // but only while THIS mount serves a declared application and the requireExplicitPolicy
@@ -496,7 +540,33 @@ public class JaxRsRouterMount implements RouterMount {
                 .route()
                 .failureHandler(ctx -> handleFailure(ctx, errorPipeline, responsePipeline, noMethodDefaultMapper));
 
-        return Future.succeededFuture(apiRouter);
+        if (publications == null) {
+            return Future.succeededFuture(apiRouter);
+        }
+        return publish(apiRouter, strategy.id(), publications);
+    }
+
+    /**
+     * Builds this mount's one {@link MountPublication} and hands that same instance to every bound
+     * sink's {@link OperationPublicationSink#mountBuilt}, in the injected order. Every sink is called
+     * before any returned future is awaited; a {@link RuntimeException} thrown by a sink propagates
+     * unwrapped and no later sink is called.
+     *
+     * @param router     the router this mount built, completing the returned future
+     * @param strategyId the selected request-validation strategy's id, or the configured id for an
+     *                   empty mount
+     * @param operations every registered operation's publication, in registration order
+     * @return a future that succeeds with {@code router} once every sink's future has succeeded, and
+     *     fails with a sink future's failure
+     */
+    private Future<Router> publish(Router router, String strategyId, List<OperationPublication> operations) {
+        MountPublication publication = new MountPublication(
+                mountPath, meta().mountId(), applicationName(), declaringType(), strategyId, operations);
+        List<Future<Void>> futures = new ArrayList<>(factory.publicationSinks.size());
+        for (OperationPublicationSink sink : factory.publicationSinks) {
+            futures.add(sink.mountBuilt(publication));
+        }
+        return Future.all(futures).map(v -> router);
     }
 
     /**
@@ -788,7 +858,15 @@ public class JaxRsRouterMount implements RouterMount {
         final boolean authorizerAvailable;
 
         /**
-         * Creates the factory with all shared framework services.
+         * Publication sinks contributed to the {@code Set<OperationPublicationSink>} multibinding,
+         * in the set's injected iteration order. Empty when the factory was built through the
+         * public constructor.
+         */
+        final List<OperationPublicationSink> publicationSinks;
+
+        /**
+         * Creates the factory with all shared framework services and an empty
+         * {@code OperationPublicationSink} set.
          *
          * @param routerLifecycleHooks         hooks for router creation phases
          * @param operationInterceptors        interceptors for per-operation invocation lifecycle
@@ -854,7 +932,6 @@ public class JaxRsRouterMount implements RouterMount {
          *                                     when a module providing an {@link OperationSchemaSource}
          *                                     (e.g. {@code vertique-rest-validation}) is included
          */
-        @Inject
         public Factory(
                 Set<RouterLifecycleHook> routerLifecycleHooks,
                 Set<OperationInterceptor> operationInterceptors,
@@ -885,6 +962,141 @@ public class JaxRsRouterMount implements RouterMount {
                 Set<FileContentVerifier> fileContentVerifiers,
                 Set<RequestValidationStrategy> validationStrategies,
                 Optional<OperationSchemaSource> operationSchemaSource) {
+            this(
+                    routerLifecycleHooks,
+                    operationInterceptors,
+                    errorInterceptors,
+                    middlewares,
+                    operationHandlerContributors,
+                    securitySchemeHandlers,
+                    requestInterceptors,
+                    restExceptionMapper,
+                    exceptionMapperRegistry,
+                    responseProducerBindings,
+                    responseSerializer,
+                    restContextResolution,
+                    paramConversionResolver,
+                    securityPolicyValidator,
+                    authEnforcementCapability,
+                    sortedDecoders,
+                    sortedEncoders,
+                    httpConfig,
+                    jaxRsConfig,
+                    jsonMapperProfileRegistry,
+                    jsonConfig,
+                    beanValidator,
+                    objectProcessor,
+                    evidenceCapturers,
+                    actionRegistry,
+                    authorizer,
+                    fileContentVerifiers,
+                    validationStrategies,
+                    operationSchemaSource,
+                    Set.of());
+        }
+
+        /**
+         * Creates the factory with all shared framework services and the
+         * {@code Set<OperationPublicationSink>} multibinding.
+         *
+         * @param routerLifecycleHooks         hooks for router creation phases
+         * @param operationInterceptors        interceptors for per-operation invocation lifecycle
+         * @param errorInterceptors            interceptors for the error mapping pipeline
+         * @param middlewares                  auto-registered scoped request handlers
+         * @param operationHandlerContributors contributors for per-operation handler chains
+         * @param securitySchemeHandlers       OpenAPI security scheme handlers to configure on the router
+         * @param requestInterceptors          HTTP-level request/response interceptors (router-wide)
+         * @param restExceptionMapper          REST-layer exception mapper for pre-translation
+         * @param exceptionMapperRegistry      JAX-RS exception-to-Response mapper
+         * @param responseProducerBindings     user-contributed response producer bindings
+         * @param responseSerializer           response body serializer
+         * @param restContextResolution        coordinator for the {@link RestContextResolution} resolver chain
+         * @param paramConversionResolver      the framework parameter-conversion resolver (native registry +
+         *                                     JAX-RS provider bridge); threaded into the binding path and used
+         *                                     for fail-fast startup validation of declared parameter types
+         * @param securityPolicyValidator      optional policy validator; {@code null} when auth module is absent
+         * @param authEnforcementCapability    present when the auth enforcement runtime is installed; its
+         *                                     presence is the typed signal that restrictive security
+         *                                     annotations have proper runtime support
+         * @param sortedDecoders               priority-sorted request body decoders
+         * @param sortedEncoders               priority-sorted response body encoders
+         * @param httpConfig                   HTTP server configuration, used to apply {@code maxBodySize}
+         *                                     and {@code uploadsDirectory} to the body handler
+         * @param jaxRsConfig                  JAX-RS routing configuration (operationId strictness, media type validation mode)
+         * @param jsonMapperProfileRegistry    registry of named JSON mapper profiles, used to resolve the
+         *                                     effective request-body {@code ObjectMapper} per resource method
+         *                                     ({@code @JsonProfile} method/class &rarr; {@code jaxrs.jsonProfile}
+         *                                     &rarr; {@code json.jsonProfile} &rarr; {@code vertx}); always present via
+         *                                     {@link dev.vertique.json.JsonRuntimeModule}
+         * @param jsonConfig                  global JSON configuration; supplies the {@code json.jsonProfile}
+         *                                     default used when a resource method and {@code jaxrs.jsonProfile}
+         *                                     both select no profile; always present via
+         *                                     {@link dev.vertique.json.JsonRuntimeModule}
+         * @param beanValidator                optional Bean Validation implementation; present when {@code ValidationModule} is included
+         * @param objectProcessor              optional input object processor for canonicalization and sanitization;
+         *                                     present when a module providing {@code InputObjectProcessor} is included
+         * @param evidenceCapturers            set of {@link RestServerRequestEvidenceCapturer} instances
+         *                                     contributed via Dagger multibinding; empty when no audit
+         *                                     adapter is installed — the capturer loop is a pure no-op
+         * @param actionRegistry               optional framework {@link ActionRegistry}; present when the
+         *                                     authorization engine is installed. Used to validate
+         *                                     {@code @RequiresAction} values at startup; when empty, any
+         *                                     operation declaring {@code @RequiresAction} fails startup
+         * @param authorizer                   optional core action {@link Authorizer}; present when the
+         *                                     authorization engine is installed. Its presence is the
+         *                                     signal that the {@code @RequiresAction} gate can actually be
+         *                                     enforced. Because the {@link ActionRegistry} and the
+         *                                     {@code Authorizer} are bound through separate optional seams,
+         *                                     a non-default graph can have the registry present while the
+         *                                     {@code Authorizer} is absent; when empty, any operation
+         *                                     declaring {@code @RequiresAction} fails startup (fail-closed)
+         * @param fileContentVerifiers         file-content verifier extensions bound in the application
+         *                                     graph; used to warn when the selected validation strategy
+         *                                     does not run file verifiers
+         * @param validationStrategies         the registered request-validation strategies (the
+         *                                     {@code Set<RequestValidationStrategy>} multibinding); always
+         *                                     contains at least the {@code none} strategy. The configured
+         *                                     strategy is resolved against this set by id when the router
+         *                                     is built (slice 9c)
+         * @param operationSchemaSource        optional source of per-operation validation schemas, present
+         *                                     when a module providing an {@link OperationSchemaSource}
+         *                                     (e.g. {@code vertique-rest-validation}) is included
+         * @param publicationSinks             the {@code Set<OperationPublicationSink>} multibinding, in
+         *                                     its injected iteration order; empty when no sink is
+         *                                     contributed
+         */
+        @Inject
+        Factory(
+                Set<RouterLifecycleHook> routerLifecycleHooks,
+                Set<OperationInterceptor> operationInterceptors,
+                Set<ErrorInterceptor> errorInterceptors,
+                Set<Middleware> middlewares,
+                Set<OperationHandlerContributor> operationHandlerContributors,
+                Set<SecuritySchemeHandler> securitySchemeHandlers,
+                Set<RequestInterceptor> requestInterceptors,
+                RestExceptionMapper restExceptionMapper,
+                ExceptionMapperRegistry exceptionMapperRegistry,
+                Set<dev.vertique.rest.core.response.ResponseProducerBinding<?>> responseProducerBindings,
+                dev.vertique.rest.core.response.ResponseSerializer responseSerializer,
+                RestContextResolution restContextResolution,
+                ParamConversionResolver paramConversionResolver,
+                @Nullable SecurityPolicyValidator securityPolicyValidator,
+                Optional<AuthEnforcementCapability> authEnforcementCapability,
+                List<RequestBodyDecoder> sortedDecoders,
+                List<ResponseBodyEncoder> sortedEncoders,
+                HttpConfig httpConfig,
+                JaxRsConfig jaxRsConfig,
+                JsonMapperProfileRegistry jsonMapperProfileRegistry,
+                JsonConfig jsonConfig,
+                Optional<BeanValidator> beanValidator,
+                Optional<InputObjectProcessor> objectProcessor,
+                Set<RestServerRequestEvidenceCapturer> evidenceCapturers,
+                Optional<ActionRegistry> actionRegistry,
+                Optional<Authorizer> authorizer,
+                Set<FileContentVerifier> fileContentVerifiers,
+                Set<RequestValidationStrategy> validationStrategies,
+                Optional<OperationSchemaSource> operationSchemaSource,
+                Set<OperationPublicationSink> publicationSinks) {
             this.routerLifecycleHooks = routerLifecycleHooks;
             this.operationInterceptors = operationInterceptors;
             this.errorInterceptors = errorInterceptors;
@@ -914,6 +1126,7 @@ public class JaxRsRouterMount implements RouterMount {
             this.fileContentVerifiers = fileContentVerifiers;
             this.validationStrategies = validationStrategies;
             this.operationSchemaSource = operationSchemaSource;
+            this.publicationSinks = List.copyOf(publicationSinks);
         }
 
         /**
