@@ -51,6 +51,7 @@ import dev.vertique.mcp.tool.McpToolDescriptor;
 import dev.vertique.mcp.tool.McpToolInvoker;
 import dev.vertique.mcp.tool.McpToolResult;
 import dev.vertique.rest.core.config.HttpConfig;
+import dev.vertique.rest.core.events.RequestCompletionRecorder;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.security.SecurityContext;
@@ -553,10 +554,42 @@ final class McpRequestDispatcher {
      * request is scoped to the coordinator constructed here, so — like the cheap-admission rejections
      * above it — nothing before this point (a disallowed method/Origin/Content-Type/Accept, or a
      * body-limit rejection) ever produces a lifecycle observation.
+     *
+     * <p><strong>No completion claim here.</strong> MCP claims a request from rest-core's completion
+     * emitter ({@link RequestCompletionRecorder#claimForOtherTransport}) only where it commits to
+     * reporting that request's completion itself: in the terminal writer, the private five-argument
+     * {@code write} every MCP response goes through, a {@code reject} after this method included; and
+     * in the end handler {@link #registerSettlementHooks} registers, for a disconnect or a reset. This
+     * method makes no claim, because admitting a request does not commit MCP to settling it: a failure
+     * raised after this point can be taken by the failure handler of an earlier mount that matches
+     * the path, and an application {@code RouteAuthHandler} can reroute the request out of this
+     * mount. MCP then never settles the request, and a claim made here would leave it with no
+     * completion event from either side. An admission rejection makes no claim either: it is written
+     * before this method runs, so the writer finds no coordinator of the request, and the request
+     * completes as an ordinary rest-core request with one completion event.
+     *
+     * <p><strong>Re-entry.</strong> A reroute back to this mount's path re-enters the MCP router at its
+     * first route, so this method runs again for the same request, with the same routing-context data.
+     * When {@link #ownedCoordinator} returns the coordinator an earlier pass built for this request,
+     * this method binds the pass's correlation and then only continues the route: it builds no second
+     * coordinator, so no second lifecycle observation opens; it binds no terminal fallback, writes no
+     * request key and registers no second settlement hook. The earlier pass's hook stays registered,
+     * because a reroute keeps the routing context's end handlers, so the request still gets exactly
+     * one completion, whether it then completes normally, disconnects or is reset.
+     *
+     * <p><strong>Ownership.</strong> Anything else under the coordinator key — nothing, a coordinator
+     * that belongs to another request, or a value of another type — is no coordinator for this
+     * request. This method then runs as on a first entry: it builds the request's own coordinator,
+     * overwrites the request keys and registers the request's own settlement hook, and never calls
+     * anything on the value it replaces.
      */
     void begin(RoutingContext context) {
         Instant startedAt = startedAt(context);
         bindCorrelation(context);
+        if (ownedCoordinator(context) != null) {
+            context.next();
+            return;
+        }
         Context owningContext = context.vertx().getOrCreateContext();
         McpCompletionCoordinator coordinator = new McpCompletionCoordinator(
                 owningContext,
@@ -574,6 +607,36 @@ final class McpRequestDispatcher {
         context.put(REQUEST_CONTEXT_KEY, owningContext);
         registerSettlementHooks(context, coordinator, startedAt);
         context.next();
+    }
+
+    /**
+     * Returns the completion coordinator {@link #begin} built for this context's request, or {@code
+     * null} when the request has none.
+     *
+     * <p><strong>Ownership.</strong> The slot under {@link #COMPLETION_COORDINATOR_KEY} is read as an
+     * {@code Object}, and its value is returned only when it is a {@link McpCompletionCoordinator}
+     * that {@linkplain McpCompletionCoordinator#belongsTo belongs to} {@code context.request()}. The
+     * key is a predictable string in the request's shared routing-context data, so other code can copy
+     * a value into it: a coordinator of another request, whether that request is still in flight or
+     * has already settled, or a value of another type. Each counts as no coordinator here, and nothing
+     * is ever called on it, so the other request's observation and completion stay unchanged. A typed
+     * read would instead fail with a {@link ClassCastException} on a value of another type.
+     *
+     * <p>{@link #begin} and the terminal writer read the slot through this method: {@link #begin} to
+     * recognize a reroute back into this mount, and the writer because it is the slot's only reader
+     * before {@link #begin} runs, for an admission rejection or a body-limit rejection. The other
+     * reads of the slot run after {@link #begin}, which leaves the request's own coordinator there.
+     *
+     * @param context the request context
+     * @return the request's own coordinator, or {@code null} when the slot is empty, holds another
+     *     request's coordinator, or holds a value of another type
+     */
+    @Nullable
+    private static McpCompletionCoordinator ownedCoordinator(RoutingContext context) {
+        Object slot = context.get(COMPLETION_COORDINATOR_KEY);
+        return slot instanceof McpCompletionCoordinator existing && existing.belongsTo(context.request())
+                ? existing
+                : null;
     }
 
     /**
@@ -3079,6 +3142,23 @@ final class McpRequestDispatcher {
      * cause's class" technique {@code RestRequestCompletionEmitter} already uses, and it is strictly
      * more accurate than what it replaces: through the response handlers an orderly FIN close reached
      * {@code exceptionHandler} first and was recorded as {@code RESET}.
+     *
+     * <p><strong>Completion claim.</strong> This hook is one of MCP's two claim points, where MCP claims
+     * the request from rest-core's completion emitter ({@link
+     * RequestCompletionRecorder#claimForOtherTransport}) so that the emitter reports no completion
+     * event for a request MCP reports itself; the other is the terminal writer, the private
+     * five-argument {@code write}. The hook claims on every failed outcome, before it settles, and
+     * also when the coordinator has already settled: MCP's completion then already exists, from a
+     * write that won or from a failed progress write. It never claims on a succeeded outcome, because
+     * MCP settles a normal end only through its own write path, which has already claimed: a request
+     * that ended normally without that write, because an earlier mount's failure handler took it or a
+     * reroute took it out of this mount, is not MCP's to report, and rest-core reports it instead.
+     * Neither {@link #begin} nor an admission rejection claims: {@link #begin} runs before MCP knows it
+     * will settle the request, and an admission rejection is written before any coordinator or hook
+     * exists. The claim reaches the emitter in time, because this hook is registered in {@link #begin},
+     * after the emitter's own end handler, and Vert.x Web runs end handlers in reverse registration
+     * order. A reroute back into this mount registers no second hook (see {@link #begin}), so this one
+     * hook, with the coordinator of the request's first pass, claims and settles the request.
      */
     private void registerSettlementHooks(
             RoutingContext context, McpCompletionCoordinator coordinator, Instant startedAt) {
@@ -3087,6 +3167,7 @@ final class McpRequestDispatcher {
                 // A normal response end: the two-phase write path owns this settlement.
                 return;
             }
+            RequestCompletionRecorder.claimForOtherTransport(context);
             McpRequestTerminalEvent terminal = settlementTerminal(context, startedAt, McpErrorType.TRANSPORT);
             boolean responseCommitted = context.response().headWritten();
             if (outcome.cause() instanceof HttpClosedException) {
@@ -3268,13 +3349,37 @@ final class McpRequestDispatcher {
         return write(context, status, body, terminal, terminalFallbackBody);
     }
 
+    /**
+     * MCP's one terminal writer: every MCP response, success, bounded error or rejection, is written
+     * and ended here, and no other code in this class ends the response.
+     *
+     * <p><strong>Ownership.</strong> The writer reads the request's coordinator through {@link
+     * #ownedCoordinator}, so it uses only a coordinator that {@link #begin} built for this request. An
+     * empty slot, another request's coordinator, or a value of another type is no coordinator: the
+     * writer then makes no claim, publishes no terminal, settles nothing and writes the response
+     * directly, as it writes an admission rejection, and the other request's coordinator is never
+     * touched.
+     *
+     * <p><strong>Completion claim.</strong> When the request has its own coordinator, the writer
+     * claims the request from rest-core's completion emitter ({@link
+     * RequestCompletionRecorder#claimForOtherTransport}) before {@code beginWrite}, and so before the
+     * response ends and any end handler runs. This is the start of MCP's terminal write path, one of
+     * MCP's two claim points; the other is the end handler {@link #registerSettlementHooks} registers,
+     * for a disconnect or a reset. A {@code reject} after {@link #begin}, such as an authentication
+     * rejection taken by MCP's own failure handler, writes through here, so it is claimed with no
+     * claim call of its own. An admission rejection (a disallowed method, {@code Origin}, {@code
+     * Content-Type} or {@code Accept}) and the body-limit rejection are written before {@link #begin}
+     * runs, so the writer finds no coordinator and makes no claim: MCP opens no observation for such
+     * a request, and rest-core reports it as an ordinary request with one completion event. {@link
+     * #begin} makes no claim, because a request it admits can still leave MCP unsettled.
+     */
     private static boolean write(
             RoutingContext context,
             int status,
             @Nullable byte[] body,
             McpRequestTerminalEvent terminal,
             @Nullable byte[] terminalFallbackBody) {
-        McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
+        McpCompletionCoordinator coordinator = ownedCoordinator(context);
         byte[] effectiveBody = body;
         McpRequestTerminalEvent effectiveTerminal = terminal;
         if (coordinator != null
@@ -3284,6 +3389,9 @@ final class McpRequestDispatcher {
                 && coordinator.canReserveResponseBytes(terminalFallbackBody.length)) {
             effectiveBody = terminalFallbackBody;
             effectiveTerminal = terminalForResponseBudget(terminal);
+        }
+        if (coordinator != null) {
+            RequestCompletionRecorder.claimForOtherTransport(context);
         }
         // Logical settlement precedes the byte write: beginWrite publishes the terminal and claims
         // the shared first-observed latch. If a settlement (disconnect or reset) already won, the
