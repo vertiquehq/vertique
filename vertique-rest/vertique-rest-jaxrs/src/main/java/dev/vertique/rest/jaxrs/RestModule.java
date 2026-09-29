@@ -40,6 +40,7 @@ import dev.vertique.rest.core.router.MountCompositionValidator;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.core.sse.SseChannelFactory;
 import dev.vertique.rest.jaxrs.publication.ApiDocsInstalled;
+import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
 import dev.vertique.rest.jaxrs.publication.RestApplications;
 import dev.vertique.rest.jaxrs.publication.SyntheticOperations;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsResourceEntry;
@@ -113,6 +114,17 @@ public abstract class RestModule {
      */
     @Multibinds
     abstract Set<RequestValidationStrategy> requestValidationStrategies();
+
+    /**
+     * Declares the {@link OperationPublicationSink} multibinding set. Empty by default; a
+     * framework documentation module contributes to it through {@code @ElementsIntoSet}. Every
+     * JAX-RS mount hands its completed publication to each sink in this set once its router is
+     * built.
+     *
+     * @return the publication sink set (populated by {@code @ElementsIntoSet} contributions)
+     */
+    @Multibinds
+    abstract Set<OperationPublicationSink> operationPublicationSinks();
 
     /**
      * Declares the empty {@link FileContentVerifier} multibinding set. Applications contribute

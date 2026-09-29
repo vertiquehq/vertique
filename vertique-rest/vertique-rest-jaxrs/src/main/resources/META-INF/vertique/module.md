@@ -1640,18 +1640,28 @@ Beyond what `RestCoreModule` and `JsonRuntimeModule` contribute:
 | `ComposeValidator` (`JaxRsDefaultProfileValidator`) | `@IntoSet`; fails the `VALIDATE` phase on an unknown `jaxrs.jsonProfile` (`json.systemProfile` is validated earlier, by the `CONFIGURE`-phase install step) |
 | `OperationSchemaSource`, `BeanValidator`, `InputObjectProcessor` (`dev.vertique.input.processing.InputObjectProcessor`), `ActionRegistry`, `Authorizer` | `@BindsOptionalOf`; satisfied by `rest-validation`, `validation`, `sanitization`, and `rest-security` respectively |
 | `SyntheticOperations` | `@Binds` to a package-private implementation; INTERNAL; framework documentation module only |
+| `Set<OperationPublicationSink>` | `@Multibinds`; INTERNAL; empty by default; a framework documentation module contributes through `@ElementsIntoSet` |
 
 `dev.vertique.rest.jaxrs.runtime.MagicBytesVerifierModule` is a separate opt-in `@Module` that
 contributes the built-in magic-byte `FileContentVerifier`.
 
 `dev.vertique.rest.jaxrs.publication` is an INTERNAL framework seam, outside the maturity promise and
-not a stable application API, with two unrelated purposes. `SyntheticOperations` lets a sibling
+not a stable application API, with three unrelated purposes. `SyntheticOperations` lets a sibling
 framework module install a framework-owned route through the resource security chain; an installed
 route deliberately bypasses two things a resource route would normally go through: the API-scoped
 middleware, request interceptor, router-lifecycle-hook, and mount-customizer chains of a JAX-RS mount
 never run for it, and its own failure handler ends every failure itself rather than handing it to the
-application's error pipeline. `RestApplications` and `ApiDocsInstalled` are unrelated to synthetic
-operations: they are the composition view and the docs-module marker described under
+application's error pipeline. `OperationPublicationSink` is bound only through the `@Multibinds`
+`Set<OperationPublicationSink>` multibinding above — empty by default, never an optional binding —
+which a framework documentation module contributes to through `@ElementsIntoSet`; application
+developers must not implement it. Once one or more sinks are bound, every JAX-RS mount hands each sink
+one `MountPublication` at the end of `createRouter`, naming an application mount's `@RestApplication`
+name and declaring interface (`null` for every other mount) and carrying one `OperationPublication` per
+registered operation with the route value exactly as registered and the operation's effective security
+facts; a mount at least one sink wants detail for also carries an `OperationDetail` of deep-copied
+`CapturedSchemas`, keyed by `InputKey`, taken before the validation gate runs. `RestApplications` and
+`ApiDocsInstalled` are unrelated to synthetic operations and to the publication sink: they are the
+composition view and the docs-module marker described under
 [`@RestApplication`](#restapplication) above, public only so the JAX-RS application composer, the
 mount composition validator, and the OpenAPI documentation module can read or bind them.
 
