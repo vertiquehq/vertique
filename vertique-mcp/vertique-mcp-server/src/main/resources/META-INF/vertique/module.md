@@ -999,6 +999,15 @@ application handler ever runs:
    [Tool runtime](#tool-runtime) resolved for this tool's schema.
 4. **Bean Validation** on the materialized carrier.
 
+**Known limit — no pattern-input bound.** The `Validator` this stage runs is compiled straight
+from the tool's generated schema, with none of `vertique-rest-validation`'s pattern-input guard: a
+`pattern`, a `patternProperties` key, or a bounded format position (`idn-hostname`, `idn-email`,
+`regex`) in a tool's input schema is judged by vertx-json-schema's own expression with no
+per-string or per-request length bound (see `vertique-rest-validation`'s own `module.md`, "Pattern
+and bounded-format input is bounded"). A long value at such a position therefore reaches that
+expression unchecked. Until this stage adopts an equivalent bound, keep a tool's pattern- or
+format-bearing input arguments small, or constrain them with `maxLength`.
+
 A failure at any of the four stages yields the same bounded outcome: one text-only, `isError=true`
 `CallToolResult` — never a JSON-RPC protocol error, and never a detail of which schema keyword,
 policy, or constraint failed. Stage 1 failures are written directly by the dispatcher; a stage 2–4

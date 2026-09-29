@@ -110,6 +110,36 @@ public class JaxRsConfig {
     private final String validationMode = "aggregate";
 
     /**
+     * Maximum length, in UTF-16 code units, of one string value or object key that the {@code
+     * web-validation} gate lets reach a {@code pattern}, {@code patternProperties}, or pattern-bearing
+     * {@code propertyNames} position, or an {@code idn-hostname}, {@code idn-email}, or {@code regex}
+     * format (config key {@code jaxrs.validationPatternMaxChars}). A longer string is rejected with a 400
+     * {@link dev.vertique.rest.core.RestValidationException} before that check runs, and validation of the
+     * request stops there. No other format is bounded.
+     *
+     * <p>Must be at least {@code 1}; otherwise startup fails with a {@code ConfigurationException} naming
+     * this setting. Defaults to {@code 4096}: a security-hardening default that rejects longer input,
+     * which operators opt out of by raising the limit.
+     */
+    @Builder.Default
+    private final int validationPatternMaxChars = 4096;
+
+    /**
+     * Maximum total length, in UTF-16 code units, of the strings and keys one request lets reach the
+     * positions {@code jaxrs.validationPatternMaxChars} bounds (config key {@code
+     * jaxrs.validationPatternMaxTotalChars}). A string checked at two positions counts twice. The request
+     * is rejected with a 400 {@link dev.vertique.rest.core.RestValidationException} once the running total
+     * crosses the limit, and validation of the request stops there.
+     *
+     * <p>Must be at least {@code 1} and no smaller than {@code jaxrs.validationPatternMaxChars}; otherwise
+     * startup fails with a {@code ConfigurationException} naming this setting. Defaults to {@code 262144}:
+     * a security-hardening default that rejects larger input, which operators opt out of by raising the
+     * limit.
+     */
+    @Builder.Default
+    private final int validationPatternMaxTotalChars = 262_144;
+
+    /**
      * Default security and cache-control headers applied to every HTTP response by
      * {@link dev.vertique.rest.core.middleware.DefaultHeadersMiddleware}. Defaults to the
      * standard set ({@code Cache-Control: no-store}, {@code X-Content-Type-Options: nosniff},

@@ -31,11 +31,11 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.FileUpload;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.json.schema.Draft;
-import io.vertx.json.schema.JsonSchema;
 import io.vertx.json.schema.JsonSchemaOptions;
 import io.vertx.json.schema.OutputFormat;
 import io.vertx.json.schema.OutputUnit;
 import io.vertx.json.schema.Validator;
+import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.io.ByteArrayOutputStream;
@@ -64,6 +64,8 @@ import java.util.stream.Collectors;
  * <p><strong>Validators are built once, at {@code gateFor} time (startup).</strong> For NFR-002
  * efficiency the body validator and each per-parameter validator are compiled when the gate is
  * produced and closed over by the returned handler, so no schema is compiled on the request hot path.
+ * Each is compiled from a private copy of its schema; the objects {@link OperationSchemas} holds are
+ * never compiled or modified.
  *
  * <p><strong>Regular expressions are compiled once, at the same point.</strong> Beside the body
  * validator's compilation, {@link #gateFor(JaxRsOperationDescriptor, OperationSchemas)} walks the
@@ -75,6 +77,18 @@ import java.util.stream.Collectors;
  * {@code patternProperties} key whether or not that key is the failing one, naming its ordinal
  * instead, because a key is a regular expression however well it compiles. A schema this strategy
  * never gates keeps its unparseable pattern: the check lives here and nowhere else.
+ *
+ * <p><strong>Pattern input is bounded.</strong> A string value or object key that reaches a
+ * {@code pattern}, {@code patternProperties}, or pattern-bearing {@code propertyNames} position, or an
+ * {@code idn-hostname}, {@code idn-email}, or {@code regex} format, is rejected before that check runs
+ * when it is longer than {@link JaxRsConfig#validationPatternMaxChars()} UTF-16 code units, and a request
+ * is rejected once the strings reaching such positions exceed {@link
+ * JaxRsConfig#validationPatternMaxTotalChars()} in total, a string checked at two positions counting
+ * twice. No other format is bounded or counted. Either rejection is one value-free detail of type
+ * {@code patternInputLength} or {@code patternInputTotalLength}, whose {@code args} name only the
+ * configured limit, and validation of the request stops there in both modes. The bound is enforced by
+ * {@code PatternInputGuard}, whose entries each private copy carries; an input within both limits gets
+ * exactly the verdict and violations it would get without them.
  *
  * <p><strong>Body</strong> validation uses the shared per-request {@link BoundRequest}: the gate
  * obtains it from the routing context (binding and stashing one if absent) so the gate and downstream
@@ -135,24 +149,26 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
     public static final String ID = "web-validation";
 
     /** The JSON Schema keyword whose string value is a regular expression. */
-    private static final String PATTERN_KEYWORD = "pattern";
+    static final String PATTERN_KEYWORD = "pattern";
 
     /** The JSON Schema keyword whose object keys are regular expressions. */
-    private static final String PATTERN_PROPERTIES_KEYWORD = "patternProperties";
+    static final String PATTERN_PROPERTIES_KEYWORD = "patternProperties";
 
     /**
      * The keywords whose value is JSON data rather than schema. The regex walk never descends into
      * one, so a {@code pattern} member inside a {@code const} or {@code enum} value is not compiled.
      * An exclusion rather than an allowlist of subschema keywords, so the walk still reaches every
-     * schema position, including an annotation keyword a profile fragment carries.
+     * schema position, including an annotation keyword a profile fragment carries. The pattern-input
+     * guard's rewrite walks with the same rule.
      */
-    private static final Set<String> LITERAL_KEYWORDS = Set.of("const", "enum", "default", "examples", "example");
+    static final Set<String> LITERAL_KEYWORDS = Set.of("const", "enum", "default", "examples", "example");
 
     /**
      * The keywords whose value is an object keyed by names rather than by keywords: each member is a
-     * schema whatever it is called, so a property named {@code const} is still walked.
+     * schema whatever it is called, so a property named {@code const} is still walked. The pattern-input
+     * guard's rewrite walks with the same rule.
      */
-    private static final Set<String> NAMED_MEMBER_KEYWORDS =
+    static final Set<String> NAMED_MEMBER_KEYWORDS =
             Set.of("properties", PATTERN_PROPERTIES_KEYWORD, "$defs", "dependentSchemas");
 
     /** FR-JSON-075's message bound, applied at this module's boundary, in UTF-16 code units. */
@@ -173,6 +189,12 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
      * message, so no keyword argument and no submitted request value can reach the response through it.
      */
     private static final String VALUE_FREE_DETAIL_MESSAGE = "does not satisfy the schema";
+
+    /** The detail {@code type} of a string rejected by the per-string pattern-input limit. */
+    private static final String PATTERN_INPUT_LENGTH_TYPE = "patternInputLength";
+
+    /** The detail {@code type} of a request rejected by the per-request pattern-input limit. */
+    private static final String PATTERN_INPUT_TOTAL_LENGTH_TYPE = "patternInputTotalLength";
 
     /**
      * The number of local {@code $ref} hops followed while deciding whether an instance-location
@@ -250,6 +272,13 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
     private final List<FileContentVerifier> fileContentVerifiers;
 
     /**
+     * The pattern-input guard every body and parameter validator is compiled with, carrying the configured
+     * {@link JaxRsConfig#validationPatternMaxChars()} and {@link JaxRsConfig#validationPatternMaxTotalChars()}
+     * limits. The rest-core {@code JaxRsConfig} provider has already validated both at startup.
+     */
+    private final PatternInputGuard patternInputGuard;
+
+    /**
      * Creates the web-validation strategy, parsing the validation mode from {@code config} <strong>once
      * at startup</strong> (this is a {@link Singleton}, constructed during Dagger component creation).
      *
@@ -260,9 +289,13 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
      * fails startup with a {@link RestConfigurationException} rather than silently changing validation
      * behaviour. Parsing here, not per request, keeps the request hot path free of mode resolution.
      *
+     * <p>The pattern-input limits {@link JaxRsConfig#validationPatternMaxChars()} and {@link
+     * JaxRsConfig#validationPatternMaxTotalChars()} are read here too, once; they are validated where
+     * {@link JaxRsConfig} is provided, not again here.
+     *
      * @param config the JAX-RS runtime configuration; {@link JaxRsConfig#validationMode()} selects
      *     either {@code "aggregate"} (collect all violations) or {@code "failFast"} (stop at first
-     *     violation)
+     *     violation), and the two pattern-input limits bound pattern and bounded-format input
      * @param paramConversionResolver the framework parameter-conversion resolver, threaded into the
      *     gate's {@link DefaultBoundRequest} construction
      * @param fileContentVerifiers the bound deep file-content verifiers
@@ -279,6 +312,8 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
         this.fileContentVerifiers = fileContentVerifiers.stream()
                 .sorted(OrderedExtension.comparator())
                 .toList();
+        this.patternInputGuard =
+                new PatternInputGuard(config.validationPatternMaxChars(), config.validationPatternMaxTotalChars());
     }
 
     /**
@@ -344,7 +379,9 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
      *
      * <p>Compiles the body and parameter validators, and — beside the body validator — every regular
      * expression the body document declares, so an unparseable pattern fails the router build rather
-     * than the first request that reaches the route.
+     * than the first request that reaches the route. Each validator is compiled from a private copy the
+     * pattern-input guard rewrites; the schemas {@code schemas} holds are never compiled or modified, and
+     * the regex check and constraint-argument resolution read those originals.
      *
      * @param op      the operation to gate
      * @param schemas the operation's synthesized schemas
@@ -354,8 +391,7 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
      */
     @Override
     public Optional<Handler<RoutingContext>> gateFor(JaxRsOperationDescriptor op, OperationSchemas schemas) {
-        Validator bodyValidator =
-                schemas.bodySchema().map(WebValidationStrategy::compile).orElse(null);
+        Validator bodyValidator = schemas.bodySchema().map(this::compile).orElse(null);
         JsonObject bodySchema = schemas.bodySchema().orElse(null);
         if (bodySchema != null) {
             precompilePatterns(op.operationId(), bodySchema);
@@ -387,18 +423,70 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                 fileParts,
                 fileContentVerifiers,
                 failFast,
-                paramConversionResolver));
+                paramConversionResolver,
+                patternInputGuard));
     }
 
     /**
-     * Compiles a vertx-json-schema {@link Validator} from a schema {@link JsonObject} using the
-     * spike-proven DRAFT 2020-12 options.
+     * Compiles a vertx-json-schema {@link Validator} for a schema {@link JsonObject} using the
+     * spike-proven DRAFT 2020-12 options: the pattern-input guard rewrites a private copy of
+     * {@code schema} and compiles that copy with itself as the format validator, so {@code schema}
+     * itself is never compiled or modified.
      *
-     * @param schema the schema to compile
+     * @param schema the shared schema to compile a guarded copy of
      * @return a reusable validator
      */
-    private static Validator compile(JsonObject schema) {
-        return Validator.create(JsonSchema.of(schema), SCHEMA_OPTIONS);
+    private Validator compile(JsonObject schema) {
+        return patternInputGuard.compile(schema, SCHEMA_OPTIONS);
+    }
+
+    /**
+     * Converts a pattern-input guard exception, thrown directly or as the cause of the thrown exception, into
+     * the one value-free detail of the rejected validator call: {@code path} {@code ""} for the body and the
+     * parameter name otherwise; the location token; {@code type} {@code patternInputLength} or {@code
+     * patternInputTotalLength}; the fixed detail naming the configured limit; and {@code args} {@code
+     * {"maxChars": N}} or {@code {"maxTotalChars": N}}. The value, the key, and the pattern never appear.
+     *
+     * @param thrown        the exception a validator call threw
+     * @param location      the call's location token ({@code body}, {@code path}, {@code query}, {@code
+     *     header}, {@code cookie}, or {@code form})
+     * @param parameterName the parameter name, or {@code null} for the body
+     * @return the detail, or {@link Optional#empty()} when neither {@code thrown} nor its cause is a guard
+     *     exception
+     */
+    static Optional<ValidationErrorDetail> patternInputBoundDetail(
+            Throwable thrown, String location, @Nullable String parameterName) {
+        Throwable guardFailure = isPatternInputGuardFailure(thrown) ? thrown : thrown.getCause();
+        String path = parameterName == null ? "" : parameterName;
+        if (guardFailure instanceof PatternInputGuard.PatternInputTooLong tooLong) {
+            return Optional.of(new ValidationErrorDetail(
+                    path,
+                    "exceeds the maximum length of " + tooLong.maxChars() + " characters for pattern validation",
+                    location,
+                    PATTERN_INPUT_LENGTH_TYPE,
+                    Map.of("maxChars", tooLong.maxChars())));
+        }
+        if (guardFailure instanceof PatternInputGuard.PatternInputTotalExceeded totalExceeded) {
+            return Optional.of(new ValidationErrorDetail(
+                    path,
+                    "exceeds the maximum total length of " + totalExceeded.maxTotalChars()
+                            + " characters for pattern validation",
+                    location,
+                    PATTERN_INPUT_TOTAL_LENGTH_TYPE,
+                    Map.of("maxTotalChars", totalExceeded.maxTotalChars())));
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Returns whether {@code thrown} is one of the pattern-input guard's two exceptions.
+     *
+     * @param thrown the exception
+     * @return {@code true} for a per-string or per-request rejection
+     */
+    private static boolean isPatternInputGuardFailure(Throwable thrown) {
+        return thrown instanceof PatternInputGuard.PatternInputTooLong
+                || thrown instanceof PatternInputGuard.PatternInputTotalExceeded;
     }
 
     // --- Regex precompilation (FR-008) ---
@@ -844,6 +932,12 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
     /**
      * The per-request gate handler closing over the operation descriptor and the pre-compiled body and
      * parameter validators. Supports both aggregate and fail-fast collection modes.
+     *
+     * <p>All of a request's parameter and body validation runs synchronously inside one pattern-input
+     * counting window, which closes before any failure is reported, any file part is checked, any
+     * file-content verifier runs, or the next handler is called. A pattern-input rejection stops validation
+     * of the request in both modes: its one detail follows the details earlier validator calls contributed,
+     * and nothing after it runs.
      */
     private static final class GateHandler implements Handler<RoutingContext> {
 
@@ -856,6 +950,7 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
         private final List<FileContentVerifier> fileContentVerifiers;
         private final boolean failFast;
         private final ParamConversionResolver paramConversionResolver;
+        private final PatternInputGuard patternInputGuard;
 
         private GateHandler(
                 JaxRsOperationDescriptor op,
@@ -865,7 +960,8 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                 List<FilePartDescriptor> fileParts,
                 List<FileContentVerifier> fileContentVerifiers,
                 boolean failFast,
-                ParamConversionResolver paramConversionResolver) {
+                ParamConversionResolver paramConversionResolver,
+                PatternInputGuard patternInputGuard) {
             this.op = op;
             this.bodyValidator = bodyValidator;
             this.bodySchema = bodySchema;
@@ -885,18 +981,21 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
             this.fileContentVerifiers = fileContentVerifiers;
             this.failFast = failFast;
             this.paramConversionResolver = paramConversionResolver;
+            this.patternInputGuard = patternInputGuard;
         }
 
         @Override
         public void handle(RoutingContext ctx) {
             List<ValidationErrorDetail> failures = new ArrayList<>();
-            validateParams(ctx, failures);
-            if (failFast && !failures.isEmpty()) {
-                ctx.fail(new RestValidationException("Request validation failed", failures));
-                return;
+            boolean stopped;
+            PatternInputGuard.Window window = patternInputGuard.openWindow();
+            try {
+                stopped = validateSchemas(ctx, failures);
+            } finally {
+                // Closed before anything else runs, so no tally outlives this request's validation.
+                window.close();
             }
-            validateBody(ctx, failures);
-            if (failFast && !failures.isEmpty()) {
+            if (stopped) {
                 ctx.fail(new RestValidationException("Request validation failed", failures));
                 return;
             }
@@ -1236,6 +1335,22 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
         }
 
         /**
+         * Validates the declared parameters and then the body, and reports whether validation of the
+         * request stops here: after a pattern-input rejection in either mode, or after any violation in
+         * {@code failFast} mode.
+         *
+         * @param ctx      the routing context
+         * @param failures the accumulating failure list
+         * @return {@code true} when the request fails with {@code failures} and nothing after them runs
+         */
+        private boolean validateSchemas(RoutingContext ctx, List<ValidationErrorDetail> failures) {
+            if (validateParams(ctx, failures) || (failFast && !failures.isEmpty())) {
+                return true;
+            }
+            return validateBody(ctx, failures) || (failFast && !failures.isEmpty());
+        }
+
+        /**
          * Validates the request body, when a body validator is present, against the shared
          * {@link BoundRequest}'s underlying JSON value. The bound request is obtained from the routing
          * context, binding and stashing one if absent, so the body buffer is read once for both the gate
@@ -1243,10 +1358,11 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
          *
          * @param ctx      the routing context
          * @param failures the accumulating failure list
+         * @return {@code true} when the pattern-input guard rejected the body, so validation stops
          */
-        private void validateBody(RoutingContext ctx, List<ValidationErrorDetail> failures) {
+        private boolean validateBody(RoutingContext ctx, List<ValidationErrorDetail> failures) {
             if (bodyValidator == null) {
-                return;
+                return false;
             }
             BoundRequest bound = ctx.get(BoundRequest.KEY_META_DATA_BOUND_REQUEST);
             if (bound == null) {
@@ -1254,7 +1370,43 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                 ctx.put(BoundRequest.KEY_META_DATA_BOUND_REQUEST, bound);
             }
             Object instance = bound.body().get();
-            collectFailures(bodyValidator.validate(instance), "body", null, bodySchema, failures, failFast);
+            return validateAndCollect(bodyValidator, instance, "body", null, bodySchema, failures);
+        }
+
+        /**
+         * Runs one validator call and collects what it reports, as {@link #collectFailures} describes. A
+         * pattern-input guard exception, thrown directly or as the cause of the thrown exception, becomes the
+         * call's one value-free bound detail instead, appended after the details earlier calls contributed;
+         * any other exception propagates unchanged.
+         *
+         * @param validator    the compiled validator
+         * @param instance     the value to validate
+         * @param location     the location token for the call's details
+         * @param fallbackPath the parameter name, or {@code null} for the body
+         * @param schema       the original schema, for constraint-value resolution
+         * @param failures     the accumulating failure list
+         * @return {@code true} when the pattern-input guard rejected the call, so validation stops
+         */
+        private boolean validateAndCollect(
+                Validator validator,
+                Object instance,
+                String location,
+                String fallbackPath,
+                JsonObject schema,
+                List<ValidationErrorDetail> failures) {
+            OutputUnit result;
+            try {
+                result = validator.validate(instance);
+            } catch (RuntimeException thrown) {
+                Optional<ValidationErrorDetail> rejection = patternInputBoundDetail(thrown, location, fallbackPath);
+                if (rejection.isEmpty()) {
+                    throw thrown;
+                }
+                failures.add(rejection.get());
+                return true;
+            }
+            collectFailures(result, location, fallbackPath, schema, failures, failFast);
+            return false;
         }
 
         /**
@@ -1263,12 +1415,14 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
          * non-coercible value yields a schema {@code type} violation rather than a binding exception.
          *
          * <p>In fail-fast mode, stops validating further parameters as soon as the first violation is
-         * found. In aggregate mode, continues through all parameters.
+         * found. In aggregate mode, continues through all parameters. In both modes, stops at a
+         * pattern-input rejection.
          *
          * @param ctx      the routing context
          * @param failures the accumulating failure list
+         * @return {@code true} when the pattern-input guard rejected a parameter, so validation stops
          */
-        private void validateParams(RoutingContext ctx, List<ValidationErrorDetail> failures) {
+        private boolean validateParams(RoutingContext ctx, List<ValidationErrorDetail> failures) {
             for (ParamValidator pv : paramValidators) {
                 if (pv.componentType() != null) {
                     // Collection parameter (List<T>/Set<T>/array): validate ALL request values as a JSON
@@ -1282,15 +1436,12 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                     for (String value : all) {
                         array.add(lenientCoerce(value, pv.componentType()));
                     }
-                    collectFailures(
-                            pv.validator().validate(array),
-                            locationToken(pv.location()),
-                            pv.name(),
-                            pv.schema(),
-                            failures,
-                            failFast);
+                    if (validateAndCollect(
+                            pv.validator(), array, locationToken(pv.location()), pv.name(), pv.schema(), failures)) {
+                        return true;
+                    }
                     if (failFast && !failures.isEmpty()) {
-                        return;
+                        return false;
                     }
                     continue;
                 }
@@ -1299,17 +1450,15 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                     continue;
                 }
                 Object instance = lenientCoerce(raw, pv.type());
-                collectFailures(
-                        pv.validator().validate(instance),
-                        locationToken(pv.location()),
-                        pv.name(),
-                        pv.schema(),
-                        failures,
-                        failFast);
+                if (validateAndCollect(
+                        pv.validator(), instance, locationToken(pv.location()), pv.name(), pv.schema(), failures)) {
+                    return true;
+                }
                 if (failFast && !failures.isEmpty()) {
-                    return;
+                    return false;
                 }
             }
+            return false;
         }
 
         /**
