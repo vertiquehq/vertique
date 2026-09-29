@@ -485,26 +485,53 @@ What the limits leave open:
   case-insensitively bound type are anchored and linear, so that cost is harmless there; the cost of
   an application-authored `patternProperties` is the application's responsibility.
 - A key of a case-insensitively bound body type (for example one annotated
-  `@JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)`) counts up to three
-  times toward the total — at the refusal of non-ASCII keys, at the folded `patternProperties`, and
-  at the refusal of reserved names — so a bulk payload of such objects can reach 262,144 counted
-  characters and be rejected. Raise `jaxrs.validationPatternMaxTotalChars` where that matters.
+  `@JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)`) is counted once at
+  each position that checks it — the reserved-name guard, the folded `patternProperties` key, and
+  the non-ASCII-key refusal — three positions at one nesting level, so an unnested key counts three
+  times toward the total. A case-insensitive type also publishes every member's schema twice, once
+  under `properties` and once under its folded `patternProperties` key, so each additional nested
+  case-insensitive level doubles both the number of keys counted and the number of pattern-bearing
+  member values counted beneath it: a key at nesting depth `d` counts `3 × 2^d` times (a probe
+  measured 6× at depth 1 and 12× at depth 2). Operators sizing
+  `jaxrs.validationPatternMaxTotalChars` should budget for that compounding, not only for the flat
+  per-key count.
+- On a case-insensitive type, the validator checks a member's whole subtree twice at every nesting
+  level — once reached through `properties`, once through its folded `patternProperties` key — so
+  a value nested `d` case-insensitive levels deep is checked `2^(d+1)` times. The seven reused
+  formats (`uri`, `uri-reference`, `url`, `uri-template`, `json-pointer`, `relative-json-pointer`,
+  and `json-pointer-uri-fragment`), every other format, and every length and type check are
+  bounded only per check, never toward `jaxrs.validationPatternMaxTotalChars`, so nothing caps how
+  many times this doubling repeats within one request: at the default limits, a 2 MB `uri` value
+  nine levels deep took about 7 seconds to validate and was still accepted. Keep case-insensitive
+  DTO trees shallow, or bound the request body size, where this matters; this is a documented
+  limit, not a change this module commits to making.
 - The limits bound the length of the input, not the cost of a pattern. An application-authored
   pattern whose matching time is super-linear — quadratic or exponential backtracking — can still
   be slow on input within the limits; an exponential one can take seconds on a few dozen
   characters. Keeping its patterns linear is the application's responsibility.
+- A linear pattern built from a repeated group — for example `^(a|b)*$` or `^([a-z0-9]+[-.]?)*$` —
+  can exhaust the thread stack within the default 4,096-character
+  `jaxrs.validationPatternMaxChars` limit, because Java's regular-expression engine recurses once
+  per repetition of the group; the length bound only limits how much input the pattern sees, not
+  how deep that recursion goes. The gate's rejection path catches only `RuntimeException`, and a
+  `StackOverflowError` is not one, so it escapes uncaught and the request fails with an unhandled
+  500 carrying no input value. Prefer a possessive or non-capturing pattern that does not repeat a
+  group, or lower `jaxrs.validationPatternMaxChars` where the pattern cannot be rewritten.
 - An application-authored schema that uses the draft-7 container `dependencies` or `definitions`
   with a member named like a JSON Schema keyword — `const`, `enum`, `default`, `examples`,
   `example`, `properties`, `patternProperties`, `$defs`, or `dependentSchemas` — is not bounded at
-  that member: a pattern or bounded format inside it can run on input of any length. A
-  `dependencies` member named `patternProperties` also changes the verdict: an object validated
-  there that has a property named `allOf` fails the request with a 500. A draft-7 schema's
-  `definitions` container, reached through a local `$ref`, escapes the format rename the same way:
-  one of the seven reused formats placed there is still judged by the validator's own expression,
-  so a long enough value can overflow the stack there — the same residual patterns and bounded
-  formats have above. Generated schemas are unaffected. Schemas the `vertique-json-schema`
-  generator writes use `$defs` only; an application-authored schema stays fully bounded and fully
-  renamed when it uses `$defs` and `dependentSchemas` instead, or other member names.
+  that member: a pattern or bounded format inside it can run on input of any length, whether or
+  not anything reaches that member through a `$ref`. A `dependencies` member named
+  `patternProperties` also changes the verdict: an object validated there that has a property
+  named `allOf` fails the request with a 500. Reaching a `definitions` or `dependencies` member
+  through a local `$ref` — from the schema's root, from a property, or from another such member —
+  does not by itself create a residual: that member is otherwise walked, bounded, and renamed
+  exactly like any other schema position; only a member whose own name is one of the keywords
+  above, for example `definitions/enum` or `definitions/const`, keeps the engine's own `format`
+  and its own unbounded pattern. Generated schemas are unaffected. Schemas the
+  `vertique-json-schema` generator writes use `$defs` only; an application-authored schema stays
+  fully bounded and fully renamed when it uses `$defs` and `dependentSchemas` instead, or other
+  member names.
 
 ---
 
