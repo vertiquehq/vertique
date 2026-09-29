@@ -12,6 +12,8 @@ package dev.vertique.json.schema;
  * name: the document describes the member under {@code schemaName}, while a serialized payload
  * carries it under {@code serializedName}. The record carries names only, never a schema fragment.
  *
+ * <p><strong>Provisional.</strong> This report may change before the OpenAPI publication wires it.
+ *
  * @param declaringType  the binary name ({@link Class#getName()}) of the class declaring the member
  * @param member         the Java member's own name ({@link java.lang.reflect.Member#getName()})
  * @param serializedName the name the profile mapper's serialization introspection gives the member

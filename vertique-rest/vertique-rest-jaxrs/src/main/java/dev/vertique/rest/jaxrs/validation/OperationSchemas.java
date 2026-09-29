@@ -86,9 +86,9 @@ public final class OperationSchemas {
      * Returns a new {@link Builder} holding this instance's body schema, the body's provenance, and
      * every parameter schema.
      *
-     * <p><strong>INTERNAL.</strong> Public only for cross-module use by framework modules and outside
-     * this module's maturity promise: it may change or disappear without notice. Building the returned
-     * builder unchanged gives an instance with equal content and the same provenance object; no call
+     * <p><strong>Beta.</strong> Application-facing API for decorating an
+     * {@link OperationSchemaSource}: a decorator derives a modified copy of the schemas its delegate
+     * returned. Building the returned builder unchanged gives an instance with equal content and the same provenance object; no call
      * on the builder ever changes this instance. The body and parameter schemas are shared by
      * reference, not copied. Replacing the body through the builder's one-argument
      * {@link Builder#bodySchema(JsonObject)} drops the copied provenance, so a decorating source that

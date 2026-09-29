@@ -887,6 +887,7 @@ misdescribes the wire:
   is reported as `(…, code, code, label)`. `outputRenames` answers only for a generator built by
   `forOutputProfile(JsonMapperProfile)`; calling it on an input-direction generator
   (`forInputProfile`) or one built by `withVictoolsDefaults()` throws `IllegalStateException`.
+  This report is provisional and may change before the OpenAPI publication wires it.
 
 `@Schema(type = ...)` has no effect in this module; `implementation` is the supported way for a
 property to contribute a type shape.
@@ -1084,7 +1085,8 @@ One member `outputRenames(Type)` (on a `forOutputProfile` generator only) report
 is the binary class name (`Class#getName()`) declaring the member, `member` is the Java member's own
 name (`java.lang.reflect.Member#getName()`), `serializedName` is the name the profile mapper's
 serialization introspection gives it, and `schemaName` is the property name the output document
-publishes it under. The record carries names only, never a schema fragment.
+publishes it under. The record carries names only, never a schema fragment. The record is provisional
+and may change before the OpenAPI publication wires it.
 
 ```java
 AnnotationJsonSchemaGenerator outputGenerator = AnnotationJsonSchemaGenerator.forOutputProfile(profile);

@@ -1011,6 +1011,8 @@ public final class AnnotationJsonSchemaGenerator {
      * name is not reported, and neither is a member the mapper's serialization introspection does not
      * know.
      *
+     * <p><strong>Provisional.</strong> This report may change before the OpenAPI publication wires it.
+     *
      * <p>The list is ordered by {@link OutputRename#declaringType() declaringType}, then by {@link
      * OutputRename#member() member}, each by {@link String#compareTo(String)}, and is unmodifiable.
      *
