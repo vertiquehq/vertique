@@ -487,24 +487,28 @@ What the limits leave open:
 - A key of a case-insensitively bound body type (for example one annotated
   `@JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)`) is counted once at
   each position that checks it — the reserved-name guard, the folded `patternProperties` key, and
-  the non-ASCII-key refusal — three positions at one nesting level, so an unnested key counts three
-  times toward the total. A case-insensitive type also publishes every member's schema twice, once
-  under `properties` and once under its folded `patternProperties` key, so each additional nested
-  case-insensitive level doubles both the number of keys counted and the number of pattern-bearing
-  member values counted beneath it: a key at nesting depth `d` counts `3 × 2^d` times (a probe
-  measured 6× at depth 1 and 12× at depth 2). Operators sizing
-  `jaxrs.validationPatternMaxTotalChars` should budget for that compounding, not only for the flat
-  per-key count.
-- On a case-insensitive type, the validator checks a member's whole subtree twice at every nesting
-  level — once reached through `properties`, once through its folded `patternProperties` key — so
-  a value nested `d` case-insensitive levels deep is checked `2^(d+1)` times. The seven reused
-  formats (`uri`, `uri-reference`, `url`, `uri-template`, `json-pointer`, `relative-json-pointer`,
-  and `json-pointer-uri-fragment`), every other format, and every length and type check are
-  bounded only per check, never toward `jaxrs.validationPatternMaxTotalChars`, so nothing caps how
-  many times this doubling repeats within one request: at the default limits, a 2 MB `uri` value
-  nine levels deep took about 7 seconds to validate and was still accepted. Keep case-insensitive
-  DTO trees shallow, or bound the request body size, where this matters; this is a documented
-  limit, not a change this module commits to making.
+  the non-ASCII-key refusal — so it counts up to three times toward the total per validation of its
+  object, and once per `anyOf` branch for a polymorphic type: the three-count applies to a key of a
+  type that carries a reserved-name guard (hidden or ignored names described through an any-setter),
+  at any nesting depth; a key of a case-insensitive type with no reserved names has no guard and
+  counts twice. Outside `anyOf` branches, nesting does not multiply the count. A polymorphic type is
+  checked once per branch at each polymorphic level, so nested polymorphic types still multiply the
+  count and the reused-format checks. The folded `patternProperties` key excludes the exact
+  spelling, which `properties` validates, so each key is validated at most once per
+  case-insensitive level. Operators sizing `jaxrs.validationPatternMaxTotalChars` should budget
+  the per-object count times the number of objects, not a count that grows with depth; keep
+  polymorphic trees shallow and bound the body size.
+- Outside `anyOf` branches, a member's value is checked once per case-insensitive level, whatever
+  the casing of its key, so a value nested `d` case-insensitive levels deep is checked once, not
+  repeatedly. The seven reused formats (`uri`, `uri-reference`, `url`, `uri-template`,
+  `json-pointer`, `relative-json-pointer`, and `json-pointer-uri-fragment`) therefore run once per
+  nested value, and once per branch at each polymorphic level. Every other format, and
+  every length and type check, remains bounded only per check, never toward
+  `jaxrs.validationPatternMaxTotalChars`. The folded key's copy is the member's resolved schema,
+  so a non-exact casing of a member described through a definition reference — a nested DTO, a
+  map, an enum, a polymorphic base, or a list or optional of those — is validated against that
+  schema and is rejected when the exact spelling would be; verdicts for exact spellings are
+  unchanged, and `failFast` lists change only where such a casing lies on the violating path.
 - The limits bound the length of the input, not the cost of a pattern. An application-authored
   pattern whose matching time is super-linear — quadratic or exponential backtracking — can still
   be slow on input within the limits; an exponential one can take seconds on a few dozen

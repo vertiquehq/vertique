@@ -119,8 +119,15 @@ class BuilderCaptureAndPatternAnchorTest {
                         + " immediately before a single trailing line terminator even without MULTILINE,"
                         + " which would wrongly accept \"name\\n\" as the property \"name\"; pattern was: "
                         + regex);
-        assertTrue(
+        assertFalse(
                 Pattern.compile(regex).matcher("name").find(),
-                "the fold must still match the exact key; pattern was: " + regex);
+                "the fold key must not match the exact key, which the canonical property already covers;"
+                        + " pattern was: " + regex);
+        assertTrue(
+                Pattern.compile(regex).matcher("NAME").find(),
+                "the fold must still match an upper-case spelling; pattern was: " + regex);
+        assertTrue(
+                Pattern.compile(regex).matcher("Name").find(),
+                "the fold must still match a mixed-case spelling; pattern was: " + regex);
     }
 }

@@ -564,7 +564,7 @@ listed — the generator itself never writes a `propertyNames` alongside one alr
 entry described below, are guards `AnnotationJsonSchemaGenerator` marks as it emits them.
 `describe(Type)` returns, beside the canonical document, a `RedactionManifest` whose sorted RFC 6901
 pointers name every such guard in the finished document — including every copy alias expansion or
-case-fold publication makes of one — so removing exactly those locations leaves no reserved name in
+folded-copy resolution makes of one — so removing exactly those locations leaves no reserved name in
 any spelling or fold, while every other assertion, including the non-ASCII refusal below, remains. A
 `propertyNames` a profile override fragment declares carries no guard and is never listed. The mark
 is a generator-private keyword, `x-vertique-reserved-name-guard`, removed before the document is
@@ -576,9 +576,25 @@ keyword and the profile. See "Canonical output" below.
 
 **Case-insensitive binding and Unicode code folding.** A type bound case-insensitively (mapper-wide,
 class-level, or member-level `@JsonFormat`) is described with `patternProperties` — one ASCII
-case-folding pattern per bound name (`name` folds to `^[nN][aA][mM][eE](?![\s\S])`), since Jackson's
+case-folding pattern per bound name that has an ASCII letter, since Jackson's
 own case-insensitive lookup measurably uses `String#toLowerCase()`/`toUpperCase()` with no explicit
-`Locale`, which a fold pinned to any one locale could silently drift from. The fold is anchored with
+`Locale`, which a fold pinned to any one locale could silently drift from. The key matches every
+other ASCII casing of the name and never the exact spelling, which `properties` validates, so a
+value is checked once whatever the casing of its key: a negative lookahead excludes the exact name,
+then the fold follows (`name` gives `^(?!name(?![\s\S]))[nN][aA][mM][eE](?![\s\S])`; `a.b` gives
+`^(?!a\.b(?![\s\S]))[aA]\.[bB](?![\s\S])`). The entry's value is a copy of that member's own
+resolved schema, whatever its type, so a differently cased key carries the same constraints as the
+exact spelling — including a member described through a definition reference (a nested DTO, a
+map, an enum, a polymorphic base, or a list, array, or `Optional` of those). A name with no ASCII
+letter has no other spelling and gets no entry; a name Jackson folds beyond ASCII is still refused
+when the schema is generated. The copy is made by the generator and its private placeholder keyword,
+`x-vertique-folded-copy`, never appears in a generated document; a profile override fragment that
+carries it as a member of a schema object is refused when the generator is constructed, like the
+guard keyword above. A body spelling such a member in a non-exact casing with a value its schema
+rejects is now rejected, as the exact spelling already is (before, that copy was an unresolved,
+near-empty schema and the value was accepted); verdicts for the exact spelling are unchanged. The
+published input schema text of every case-insensitively bound type differs from earlier releases.
+The fold is anchored with
 `(?![\s\S])`, not `$`: `io.vertx.json.schema` 5.1.6 compiles the `pattern` keyword with plain
 `java.util.regex.Pattern`, whose `$` — without `Pattern.MULTILINE` — still matches immediately
 before a single trailing line terminator, not only at the true end of input; a key ending in a

@@ -456,7 +456,7 @@ class CreatorAndCaseInsensitivityDescriptionTest {
             Pattern pattern = Pattern.compile(entry.getKey());
             if (pattern.matcher(canonicalName.toUpperCase(java.util.Locale.ROOT))
                             .matches()
-                    && pattern.matcher(canonicalName).matches()) {
+                    && !pattern.matcher(canonicalName).matches()) {
                 assertEquals(
                         expectedSchemaText,
                         entry.getValue().toString(),
@@ -466,7 +466,8 @@ class CreatorAndCaseInsensitivityDescriptionTest {
         }
         assertTrue(
                 found,
-                "no patternProperties entry matched every casing of \"" + canonicalName + "\"; document: " + document);
+                "no patternProperties entry matched the upper-case spelling but not the exact spelling of \""
+                        + canonicalName + "\"; document: " + document);
     }
 
     // --- Fixtures: Change 1 ---

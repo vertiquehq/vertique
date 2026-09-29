@@ -679,7 +679,7 @@ class ReservedNameManifestTest {
                         "a guard copied under patternProperties by case-fold publication",
                         FoldCopiedGuardHolder.class,
                         List.of(
-                                "/patternProperties/^[iI][nN]~1[oO][uU][tT](?![\\s\\S])/propertyNames/allOf/1",
+                                "/patternProperties/^(?!in~1out(?![\\s\\S]))[iI][nN]~1[oO][uU][tT](?![\\s\\S])/propertyNames/allOf/1",
                                 "/properties/in~1out/propertyNames/allOf/1"),
                         SECRET_GUARD),
                 Arguments.of(
