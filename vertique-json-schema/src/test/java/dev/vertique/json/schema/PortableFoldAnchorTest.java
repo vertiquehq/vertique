@@ -121,8 +121,8 @@ class PortableFoldAnchorTest {
 
     // ---------------------------------------------------------------- expected literals
 
-    private static final String NAME_FOLD_PATTERN = "^[nN][aA][mM][eE](?![\\s\\S])";
-    private static final String DOTTED_FOLD_PATTERN = "^[aA]\\.[bB](?![\\s\\S])";
+    private static final String NAME_FOLD_PATTERN = "^(?!name(?![\\s\\S]))[nN][aA][mM][eE](?![\\s\\S])";
+    private static final String DOTTED_FOLD_PATTERN = "^(?!a\\.b(?![\\s\\S]))[aA]\\.[bB](?![\\s\\S])";
     private static final String SECRET_REFUSAL_PATTERN = "^(?:[sS][eE][cC][rR][eE][tT])(?![\\s\\S])";
     private static final String TWO_RESERVED_REFUSAL_PATTERN =
             "^(?:[fF][iI][rR][sS][tT]|[sS][eE][cC][oO][nN][dD])(?![\\s\\S])";

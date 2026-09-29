@@ -655,7 +655,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             published.add(name);
             recordHiddenOnly(property, builtClass);
             if (caseInsensitive) {
-                publishFolded(definition, patternProperties, name, schema, builtClass);
+                publishFolded(definition, patternProperties, name, builtClass);
             }
         }
 
@@ -747,7 +747,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                         published.add(name);
                         recordHiddenOnly(childProperty, sibling.childClass());
                         if (caseInsensitive) {
-                            publishFolded(definition, patternProperties, name, schema, builtClass);
+                            publishFolded(definition, patternProperties, name, builtClass);
                         }
                     }
                 }
@@ -900,9 +900,10 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * The generator-private keyword marking a reserved-name guard: the {@code propertyNames} rule
      * refusing a case-sensitively bound type's reserved names, or the {@code allOf} entry refusing a
      * case-insensitively bound type's reserved-name folds. It is set where the guard is emitted, travels
-     * with every copy case-fold publication or alias expansion later makes of the enclosing schema, and
-     * is read and removed by {@link #listReservedNameGuards(JsonNode)} once the document is otherwise
-     * finished, so it never survives into a generated document.
+     * with every copy alias expansion or folded-copy resolution ({@link #resolveFoldedCopies(JsonNode)})
+     * later makes of the enclosing schema, and is read and removed by {@link
+     * #listReservedNameGuards(JsonNode)} once the document is otherwise finished, so it never survives
+     * into a generated document.
      */
     static final String RESERVED_NAME_GUARD_MARKER = "x-vertique-reserved-name-guard";
 
@@ -2620,6 +2621,14 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      */
     static final String NULLABLE_MARKER = "x-vertique-nullable";
 
+    /**
+     * The generator-private keyword marking a folded {@code patternProperties} entry until {@link
+     * #resolveFoldedCopies(JsonNode)} replaces it with the member's finished schema. Its value is the
+     * member's wire name. It never reaches a published document, and a profile override fragment
+     * carrying it is refused.
+     */
+    static final String FOLDED_COPY_MARKER = "x-vertique-folded-copy";
+
     /** The keywords beside which the library wraps a nullable schema in {@code anyOf} instead of extending its type. */
     private static final List<String> WRAPPING_KEYWORDS = List.of("$ref", "allOf", "anyOf", "oneOf", "const", "enum");
 
@@ -2691,6 +2700,46 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             wrapped.setAll(schema);
             schema.removeAll();
             schema.putArray("anyOf").add(nullSchema).add(wrapped);
+        });
+    }
+
+    /**
+     * Resolves every folded entry in a finished document: each {@code patternProperties} entry carrying
+     * {@link #FOLDED_COPY_MARKER} is replaced by a deep copy of the same object's {@code properties}
+     * entry for the wire name the keyword names, so the folded entry validates exactly what the
+     * canonical entry validates.
+     *
+     * <p>Objects are visited parent before children, and a replacing copy is visited after it is set,
+     * so a placeholder inside a copied member schema is resolved against that copy's own {@code
+     * properties}. No placeholder remains once the pass returns.
+     *
+     * @param document the generated document, after nullability and alias expansion, while every
+     *                 reference node is final
+     * @throws JsonSchemaGenerationException when an object has no {@code properties} entry for the wire
+     *                                       name a placeholder names; the placeholder is left in place
+     */
+    static void resolveFoldedCopies(JsonNode document) {
+        AnnotationJsonSchemaGenerator.AliasExpansion.walkSchemaPositions(document, schema -> {
+            if (!(schema.get("patternProperties") instanceof ObjectNode folded)) {
+                return;
+            }
+            JsonNode properties = schema.path("properties");
+            for (Map.Entry<String, JsonNode> entry : new ArrayList<>(folded.properties())) {
+                JsonNode name = entry.getValue().get(FOLDED_COPY_MARKER);
+                if (name == null) {
+                    continue;
+                }
+                JsonNode own = properties.get(name.asText());
+                if (own == null) {
+                    throw Diagnostics.failure(
+                            "JSON Schema generation failed: the folded entry for the case-insensitively bound"
+                                    + " property \""
+                                    + Diagnostics.truncate(name.asText(), Diagnostics.MAX_SHORT_IDENTITY_LENGTH)
+                                    + "\" has no published schema to copy in its object",
+                            null);
+                }
+                folded.set(entry.getKey(), own.deepCopy());
+            }
         });
     }
 
@@ -2964,7 +3013,10 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
 
     // ---------------------------------------------------------------- case-insensitive folding
 
-    /** The regular-expression metacharacters {@link #asciiFoldPattern} escapes in a literal segment. */
+    /**
+     * The regular-expression metacharacters {@link #asciiFoldPattern} and {@link #literalPattern} escape
+     * in a literal segment.
+     */
     private static final String REGEX_METACHARACTERS = ".^$|?*+()[]{}\\";
 
     /**
@@ -3032,21 +3084,54 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     }
 
     /**
-     * Publishes a bound property's schema a second time under {@code patternProperties}, keyed by its
-     * ASCII case-folding pattern, for a case-insensitively bound type — beside the canonical-name entry
-     * already published under {@code properties}.
+     * The regular-expression literal for a property name: every character copied, and each of {@link
+     * #REGEX_METACHARACTERS} prefixed with a backslash — the escaping {@link #asciiFoldPattern} gives a
+     * name's non-letters. {@code a.b} yields {@code a\.b}.
+     *
+     * @param name the property's canonical wire name
+     * @return the escaped literal, unanchored
+     */
+    private static String literalPattern(String name) {
+        StringBuilder literal = new StringBuilder(name.length() * 2);
+        for (int index = 0; index < name.length(); index++) {
+            char character = name.charAt(index);
+            if (REGEX_METACHARACTERS.indexOf(character) >= 0) {
+                literal.append('\\');
+            }
+            literal.append(character);
+        }
+        return literal.toString();
+    }
+
+    /**
+     * Publishes a folded entry for a bound property of a case-insensitively bound type under {@code
+     * patternProperties}, beside the canonical-name entry already published under {@code properties}.
+     *
+     * <p>The entry's key matches every other ASCII casing of the name and never the name itself, which
+     * {@code properties} validates: a negative lookahead excluding the exact spelling, followed by the
+     * ASCII case fold — {@code name} yields {@code ^(?!name(?![\s\S]))[nN][aA][mM][eE](?![\s\S])}. Both
+     * parts end in the portable end-of-input anchor, and every construct in the key behaves the same
+     * under {@code java.util.regex} and ECMA-262.
+     *
+     * <p>The entry's value is a placeholder carrying {@link #FOLDED_COPY_MARKER} with the wire name as
+     * its value. A member schema built here may still be a reference the schema library fills in only
+     * after generation, so the member's schema cannot be copied yet; {@link
+     * #resolveFoldedCopies(JsonNode)} replaces the placeholder with a copy of the finished {@code
+     * properties} entry.
+     *
+     * <p>A name the fold refuses fails generation. A name the fold accepts but that has no ASCII letter
+     * has no spelling besides the exact one, so it is given no folded entry.
      *
      * @param definition               the object schema being built
      * @param patternPropertiesHolder  a one-element holder for the lazily created {@code
      *     patternProperties} object, shared across every call for the same definition
      * @param name                     the property's canonical wire name
-     * @param schema                   the property's already-built schema
      * @param type                     the type being described, for the diagnostic
      * @throws JsonSchemaGenerationException when the name carries a non-ASCII letter this fold does not
      *     cover
      */
     private static void publishFolded(
-            ObjectNode definition, ObjectNode[] patternPropertiesHolder, String name, JsonNode schema, Class<?> type) {
+            ObjectNode definition, ObjectNode[] patternPropertiesHolder, String name, Class<?> type) {
         String pattern = asciiFoldPattern(name);
         if (pattern == null) {
             throw Diagnostics.failure(
@@ -3058,10 +3143,17 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                             + " profile, or bind it case-sensitively",
                     null);
         }
+        if (name.chars().noneMatch(c -> (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))) {
+            return; // no other casing exists: the exact spelling is validated through properties alone
+        }
+        String literal = literalPattern(name);
+        String key = "^(?!" + literal + PORTABLE_END_ANCHOR + ")" + pattern.substring(1);
+        ObjectNode placeholder = JsonNodeFactory.instance.objectNode();
+        placeholder.put(FOLDED_COPY_MARKER, name);
         if (patternPropertiesHolder[0] == null) {
             patternPropertiesHolder[0] = definition.putObject("patternProperties");
         }
-        patternPropertiesHolder[0].set(pattern, schema.deepCopy());
+        patternPropertiesHolder[0].set(key, placeholder);
     }
 
     /**

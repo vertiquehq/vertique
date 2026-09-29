@@ -916,7 +916,7 @@ public final class AnnotationJsonSchemaGenerator {
             ObjectNode generated;
             try {
                 generated = generator.generateSchema(type);
-                // Applied first of the three post-generation passes, once the underlying schema library
+                // Applied first of the four post-generation passes, once the underlying schema library
                 // has fully finished writing to every node (a scoped-member correction — "pattern" under
                 // INCLUDE_PATTERN_EXPRESSIONS in particular — cannot be applied any earlier without the
                 // library's own later write treating it as a conflicting value; see
@@ -932,6 +932,11 @@ public final class AnnotationJsonSchemaGenerator {
                 // Expanded only now, once every reference node is final, so each alias spelling carries
                 // an exact copy of the schema its property is published with.
                 AliasExpansion.expand(generated);
+                // Resolved only now, for the same reason: each folded entry of a case-insensitively bound
+                // type becomes an exact copy of its member's finished schema. Before the reserved-name
+                // guards are listed, so every guard such a copy carries is listed too; a no-op in every
+                // mode but the input direction, which alone writes the placeholder.
+                InputPropertyDescriber.resolveFoldedCopies(generated);
             } catch (RuntimeException | StackOverflowError aborted) {
                 // StackOverflowError is caught with the runtime failures on purpose: exhausting the
                 // stack is how a pathologically deep type graph fails inside the generator's own
@@ -972,7 +977,7 @@ public final class AnnotationJsonSchemaGenerator {
                     AllOfFold.fold(generated);
                 }
                 // Last, in every construction mode, over the otherwise finished document: every copy of
-                // a reserved-name guard that alias expansion or case-fold publication made is in place
+                // a reserved-name guard that alias expansion or folded-copy resolution made is in place
                 // by now, and removing the guard markers here keeps them out of the canonical text.
                 reservedNameGuards = InputPropertyDescriber.listReservedNameGuards(generated);
             } catch (JsonSchemaGenerationException alreadyBounded) {
@@ -1227,7 +1232,8 @@ public final class AnnotationJsonSchemaGenerator {
                 MARKER,
                 InputPropertyDescriber.NULLABLE_MARKER,
                 InputPropertyDescriber.SCOPED_CONSTRAINTS_MARKER,
-                InputPropertyDescriber.RESERVED_NAME_GUARD_MARKER);
+                InputPropertyDescriber.RESERVED_NAME_GUARD_MARKER,
+                InputPropertyDescriber.FOLDED_COPY_MARKER);
 
         private AliasExpansion() {}
 
@@ -1282,11 +1288,14 @@ public final class AnnotationJsonSchemaGenerator {
          * generator wrote: expansion would silently strip it, or execute it as a plan against the
          * enclosing schema, so the fragment is refused when the profile is validated. The describer's
          * own private keywords — {@link InputPropertyDescriber#NULLABLE_MARKER}, {@link
-         * InputPropertyDescriber#SCOPED_CONSTRAINTS_MARKER}, and {@link
-         * InputPropertyDescriber#RESERVED_NAME_GUARD_MARKER} — are refused the same way, for the same
-         * reason; the last would also make the redaction manifest list an assertion the generator did
-         * not emit as a reserved-name guard. Literal data is not inspected, so a {@code const} or
-         * {@code enum} value may carry the keyword as an ordinary member.
+         * InputPropertyDescriber#SCOPED_CONSTRAINTS_MARKER}, {@link
+         * InputPropertyDescriber#RESERVED_NAME_GUARD_MARKER}, and {@link
+         * InputPropertyDescriber#FOLDED_COPY_MARKER} — are refused the same way, for the same reason; the
+         * reserved-name guard keyword would also make the redaction manifest list an assertion the
+         * generator did not emit as a reserved-name guard, and the folded-copy keyword would have its
+         * schema object replaced by a copy of a published member's schema, or fail generation. Literal
+         * data is not inspected, so a {@code const} or {@code enum} value may carry the keyword as an
+         * ordinary member.
          *
          * @param fragment the parsed fragment
          * @return the first such keyword found, visiting schema objects parent before children and
