@@ -79,6 +79,31 @@ class RetryBackoffTest {
     }
 
     @Test
+    @DisplayName("runtime overload accepts the inclusive zero lower bound of the random source")
+    void runtimeOverloadAcceptsZeroRandomSample() {
+        RetryBackoff backoff = RetryBackoff.exponential(10L, 2.0d, 25L, 4L);
+
+        assertEquals(10L, backoff.delayMs(0, () -> 0.0d));
+    }
+
+    @Test
+    @DisplayName("exponential backoff accepts zero initial and maximum delays")
+    void exponentialBackoffAcceptsZeroDelays() {
+        assertEquals(0L, RetryBackoff.exponential(0L, 2.0d, 25L, 0L).delayMs(3));
+        assertEquals(0L, RetryBackoff.exponential(10L, 2.0d, 0L, 0L).delayMs(3));
+    }
+
+    @Test
+    @DisplayName("zero-jitter exponential backoff never consults the random source")
+    void zeroJitterExponentialBackoffNeverConsultsRandomSource() {
+        RetryBackoff backoff = RetryBackoff.exponential(10L, 2.0d, 25L, 0L);
+
+        assertEquals(25L, backoff.delayMs(2, () -> {
+            throw new AssertionError("random source consulted without a jitter bound");
+        }));
+    }
+
+    @Test
     @DisplayName("zero-jitter exponential backoff is deterministic")
     void zeroJitterExponentialBackoffIsDeterministic() {
         RetryBackoff backoff = RetryBackoff.exponential(10L, 2.0d, 25L, 0L);
