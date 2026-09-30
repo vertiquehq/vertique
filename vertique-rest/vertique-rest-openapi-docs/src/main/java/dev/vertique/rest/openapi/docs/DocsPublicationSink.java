@@ -26,8 +26,9 @@ import java.util.Map;
  *
  * <p>The publication a sink receives must not be retained past the call. The sink therefore takes a
  * detached copy during {@link #mountBuilt}: every schema {@link JsonObject} is copied and the
- * operation descriptor is left out, so nothing the store's worker threads read later is shared with
- * the router being built.
+ * operation descriptor is dropped. The copy shares only immutable records with the publication (the
+ * input bindings, response shapes, policies, requirement sets and the body provenance manifest).
+ * The stored document retains only the byte arrays, entity tags and the string snapshot.
  */
 final class DocsPublicationSink implements OperationPublicationSink {
 

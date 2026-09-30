@@ -18,6 +18,11 @@ import java.lang.annotation.Target;
  *
  * <p>The annotation is read at runtime by the fully qualified name {@link #ANNOTATION_NAME}, which
  * is the name {@code ApiDocsInstalled.ANNOTATION_NAME} carries in the JAX-RS module.
+ *
+ * <p>No configuration changes the effect of {@link #access()}. The annotation is honored only on
+ * the declaring interface itself; the same annotation on a superinterface fails compilation. The
+ * JAX-RS module and {@code vertique-codegen-jaxrs} recognize the annotation by its fully qualified
+ * name and do not depend on this module.
  */
 @Documented
 @Retention(RetentionPolicy.RUNTIME)
