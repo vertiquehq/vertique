@@ -30,6 +30,7 @@ import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.json.DefaultJsonMapperProfileRegistry;
 import dev.vertique.json.JsonMapperProfiles;
 import dev.vertique.json.VertxJsonSupport;
+import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.core.config.JaxRsConfig;
 import dev.vertique.rest.jaxrs.publication.InputBinding;
 import dev.vertique.rest.jaxrs.publication.InputBinding.Origin;
@@ -41,6 +42,7 @@ import dev.vertique.rest.jaxrs.publication.ResponseShape;
 import dev.vertique.rest.jaxrs.publication.fixture.CountingSchemaSource;
 import dev.vertique.rest.jaxrs.publication.fixture.RecordingSink;
 import dev.vertique.rest.jaxrs.publication.fixture.RecordingValidationStrategy;
+import dev.vertique.rest.jaxrs.publication.inventory.BlankHiddenInputResource;
 import dev.vertique.rest.jaxrs.publication.inventory.BodyOnlyResource;
 import dev.vertique.rest.jaxrs.publication.inventory.Conversions;
 import dev.vertique.rest.jaxrs.publication.inventory.CrudBase;
@@ -48,6 +50,10 @@ import dev.vertique.rest.jaxrs.publication.inventory.Filters;
 import dev.vertique.rest.jaxrs.publication.inventory.Item;
 import dev.vertique.rest.jaxrs.publication.inventory.ItemCrudResource;
 import dev.vertique.rest.jaxrs.publication.inventory.KindsResource;
+import dev.vertique.rest.jaxrs.publication.inventory.LocationHiddenInputsResource;
+import dev.vertique.rest.jaxrs.publication.inventory.MethodHiddenBean;
+import dev.vertique.rest.jaxrs.publication.inventory.MethodHiddenInputsResource;
+import dev.vertique.rest.jaxrs.publication.inventory.MismatchedHiddenInputResource;
 import dev.vertique.rest.jaxrs.publication.inventory.NoViolationsBeanValidator;
 import dev.vertique.rest.jaxrs.publication.inventory.Order;
 import dev.vertique.rest.jaxrs.publication.inventory.OrdersResource;
@@ -58,8 +64,10 @@ import dev.vertique.rest.jaxrs.publication.inventory.ResponsesResource;
 import dev.vertique.rest.jaxrs.publication.inventory.SearchParams;
 import dev.vertique.rest.jaxrs.publication.inventory.SequencedResource;
 import dev.vertique.rest.jaxrs.publication.inventory.UnloadableGroup;
+import dev.vertique.rest.jaxrs.publication.inventory.UnmatchedHiddenInputResource;
 import dev.vertique.rest.jaxrs.publication.inventory.UnprofiledResponsesResource;
 import dev.vertique.rest.jaxrs.publication.inventory.UnreadableGroupsResource;
+import dev.vertique.rest.jaxrs.publication.inventory.UnsafeNameHiddenInputResource;
 import dev.vertique.rest.jaxrs.routing.ParamLocation;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsBeanParamRegistry;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsDescriptorRegistry;
@@ -90,10 +98,12 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.function.Executable;
 
 /**
  * Unit proofs for the operation inventory and response shape a mount's {@code OperationDetail}
@@ -757,6 +767,278 @@ class OperationInventoryTest {
                 return defined;
             }
         }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Method-level hiding entries
+    // ---------------------------------------------------------------------------------------
+
+    @Test
+    @DisplayName("A method-level hidden entry hides the input it names by name and location")
+    void methodLevelHiddenEntriesHideTheInputsTheyName(Vertx vertx) throws Exception {
+        // Given: a reflection-path resource whose operations hide inputs from the method only: a
+        // method-level @Parameter, a @Parameters container, @Operation(parameters = ...), and a
+        // method-level @Parameter naming a composite's field; the inputs themselves are unmarked
+        assertTrue(GeneratedJaxRsDescriptorRegistry.shared()
+                .lookup(MethodHiddenInputsResource.class)
+                .isEmpty());
+        assertTrue(GeneratedJaxRsBeanParamRegistry.shared()
+                .lookup(MethodHiddenBean.class)
+                .isEmpty());
+
+        // When: the mount is built with a sink that wants detail
+        MountPublication publication =
+                buildMount(vertx, TestFactories.builder(), Set.of(new MethodHiddenInputsResource()));
+
+        // Then: every operation is published, including the one whose visible entry names no input
+        assertEquals(
+                Set.of(
+                        "hideHeaderByMethod",
+                        "hideByContainer",
+                        "hideByOperation",
+                        "hideCompositeField",
+                        "declareVisibleUnbound"),
+                operationsById(publication).keySet(),
+                "operation ids");
+
+        // Then: each input is bound where the fixture says, so each entry's location is a real match
+        Map<String, Map<String, ParamLocation>> expectedLocations = new LinkedHashMap<>();
+        expectedLocations.put("hideHeaderByMethod", orderedMap("X-Debug-Token", HEADER, "page", QUERY));
+        expectedLocations.put("hideByContainer", orderedMap("a", QUERY, "b", QUERY));
+        expectedLocations.put("hideByOperation", orderedMap("c", QUERY, "d", QUERY));
+        expectedLocations.put("hideCompositeField", orderedMap("internal", QUERY, "external", QUERY));
+        expectedLocations.put("declareVisibleUnbound", Map.of("w", QUERY));
+
+        // Then: exactly the named inputs are hidden; every sibling input stays visible
+        Map<String, Map<String, Boolean>> expectedHidden = new LinkedHashMap<>();
+        // method-level @Parameter(name = "X-Debug-Token", in = HEADER, hidden = true)
+        expectedHidden.put("hideHeaderByMethod", orderedMap("X-Debug-Token", true, "page", false));
+        // @Parameters: a (QUERY) hidden = true, b (QUERY) hidden = false
+        expectedHidden.put("hideByContainer", orderedMap("a", true, "b", false));
+        // @Operation(parameters = @Parameter(name = "c", in = QUERY, hidden = true))
+        expectedHidden.put("hideByOperation", orderedMap("c", true, "d", false));
+        // method-level @Parameter(name = "internal", in = QUERY, hidden = true) on a composite field
+        expectedHidden.put("hideCompositeField", orderedMap("internal", true, "external", false));
+        // method-level @Parameter(name = "v", in = QUERY, hidden = false) names no input
+        expectedHidden.put("declareVisibleUnbound", Map.of("w", false));
+
+        Map<String, Origin> compositeOrigins = Map.of("internal", COMPOSITE_FIELD, "external", COMPOSITE_FIELD);
+        List<Executable> checks = new ArrayList<>();
+        for (String operationId : expectedHidden.keySet()) {
+            List<InputBinding> inputs = inputsOf(publication, operationId, "method-level hiding");
+            Map<String, ParamLocation> locations = new LinkedHashMap<>();
+            Map<String, Boolean> hidden = new LinkedHashMap<>();
+            Map<String, Origin> origins = new LinkedHashMap<>();
+            for (InputBinding binding : inputs) {
+                locations.put(binding.name(), binding.location());
+                hidden.put(binding.name(), binding.hidden());
+                origins.put(binding.name(), binding.origin());
+            }
+            Map<String, Origin> expectedOrigins = new LinkedHashMap<>();
+            for (String name : expectedHidden.get(operationId).keySet()) {
+                expectedOrigins.put(name, compositeOrigins.getOrDefault(name, PARAMETER));
+            }
+            checks.add(() -> assertEquals(expectedLocations.get(operationId), locations, operationId + ": locations"));
+            checks.add(() -> assertEquals(expectedOrigins, origins, operationId + ": origins"));
+            checks.add(() -> assertEquals(expectedHidden.get(operationId), hidden, operationId + ": name → hidden"));
+        }
+        assertAll("method-level hiding", checks);
+    }
+
+    @Test
+    @DisplayName("A hidden entry whose location matches no input fails the mount build")
+    void hiddenEntryWithMismatchedLocationFailsTheMountBuild(Vertx vertx) {
+        // Given: @Parameter(name = "q", in = HEADER, hidden = true) while q is bound from the query
+        assertTrue(GeneratedJaxRsDescriptorRegistry.shared()
+                .lookup(MismatchedHiddenInputResource.class)
+                .isEmpty());
+        RecordingSink sink = new RecordingSink(applicationName -> true);
+
+        // When: the mount is built with a sink that wants detail
+        RestConfigurationException failure =
+                assertMountBuildFails(vertx, sink, Set.of(new MismatchedHiddenInputResource()));
+
+        // Then: the failure names the operation and the entry, and nothing is published
+        String message = String.valueOf(failure.getMessage());
+        assertAll(
+                () -> assertTrue(message.contains("hideQueryAsHeader"), "names the operation: " + message),
+                () -> assertTrue(Pattern.compile("\\bq\\b").matcher(message).find(), "names the entry q: " + message),
+                () -> assertTrue(
+                        Pattern.compile("\\bheader\\b", Pattern.CASE_INSENSITIVE)
+                                .matcher(message)
+                                .find(),
+                        "names the entry's location: " + message),
+                () -> assertTrue(sink.received().isEmpty(), "nothing is published"));
+    }
+
+    @Test
+    @DisplayName("A hidden entry naming no input fails the mount build")
+    void hiddenEntryNamingNoInputFailsTheMountBuild(Vertx vertx) {
+        // Given: @Parameter(name = "ghost", hidden = true), no location, and no input named ghost
+        assertTrue(GeneratedJaxRsDescriptorRegistry.shared()
+                .lookup(UnmatchedHiddenInputResource.class)
+                .isEmpty());
+        RecordingSink sink = new RecordingSink(applicationName -> true);
+
+        // When: the mount is built with a sink that wants detail
+        RestConfigurationException failure =
+                assertMountBuildFails(vertx, sink, Set.of(new UnmatchedHiddenInputResource()));
+
+        // Then: the failure names the operation and the entry, and nothing is published
+        String message = String.valueOf(failure.getMessage());
+        assertAll(
+                () -> assertTrue(message.contains("hideGhost"), "names the operation: " + message),
+                () -> assertTrue(message.contains("ghost"), "names the entry: " + message),
+                () -> assertTrue(sink.received().isEmpty(), "nothing is published"));
+    }
+
+    @Test
+    @DisplayName("A hidden entry without a location hides every same-named input; a cookie or path entry only its own")
+    void hiddenEntriesMatchByLocationOrEverywhereWithoutOne(Vertx vertx) throws Exception {
+        // Given: a reflection-path resource whose hidden entries either omit the location or name
+        // COOKIE or PATH; the inputs themselves are unmarked
+        assertTrue(GeneratedJaxRsDescriptorRegistry.shared()
+                .lookup(LocationHiddenInputsResource.class)
+                .isEmpty());
+
+        // When: the mount is built with a sink that wants detail
+        MountPublication publication =
+                buildMount(vertx, TestFactories.builder(), Set.of(new LocationHiddenInputsResource()));
+
+        // Then: every binding, in declaration order, with its location and hidden flag
+        Map<String, List<HiddenFact>> expected = new LinkedHashMap<>();
+        // @Parameter(name = "dq", hidden = true): no location, hides the query input
+        expected.put(
+                "hideDefaultQuery", List.of(new HiddenFact(QUERY, "dq", true), new HiddenFact(QUERY, "keep", false)));
+        // @Parameter(name = "dup", hidden = true): one entry hides the query and the header input
+        expected.put(
+                "hideSharedName",
+                List.of(
+                        new HiddenFact(QUERY, "dup", true),
+                        new HiddenFact(HEADER, "dup", true),
+                        new HiddenFact(QUERY, "other", false)));
+        // @Parameter(name = "fq", hidden = true): no location, hides the form input
+        expected.put("hideForm", List.of(new HiddenFact(FORM, "fq", true), new HiddenFact(FORM, "fk", false)));
+        // @Parameter(name = "ck", in = COOKIE, hidden = true): the query input ck stays visible
+        expected.put("hideCookie", List.of(new HiddenFact(COOKIE, "ck", true), new HiddenFact(QUERY, "ck", false)));
+        // @Parameter(name = "pid", in = PATH, hidden = true): the query input pid stays visible
+        expected.put("hidePath", List.of(new HiddenFact(PATH, "pid", true), new HiddenFact(QUERY, "pid", false)));
+
+        List<Executable> checks = new ArrayList<>();
+        for (Map.Entry<String, List<HiddenFact>> operation : expected.entrySet()) {
+            List<InputBinding> inputs = inputsOf(publication, operation.getKey(), "location matching");
+            checks.add(() -> assertEquals(operation.getValue(), hiddenFacts(inputs), operation.getKey()));
+            for (InputBinding binding : inputs) {
+                checks.add(() -> assertSame(PARAMETER, binding.origin(), operation.getKey() + ": origin"));
+            }
+        }
+        assertAll("location matching", checks);
+    }
+
+    @Test
+    @DisplayName("A visible method-level entry never un-hides an input its own marker hides")
+    void visibleEntryKeepsAnInputHiddenByItsOwnMarker(Vertx vertx) throws Exception {
+        // Given: @Parameter(name = "own", in = QUERY, hidden = false) on the method, while the query
+        // input own carries @Parameter(hidden = true) itself
+        assertTrue(GeneratedJaxRsDescriptorRegistry.shared()
+                .lookup(LocationHiddenInputsResource.class)
+                .isEmpty());
+
+        // When: the mount is built with a sink that wants detail
+        MountPublication publication =
+                buildMount(vertx, TestFactories.builder(), Set.of(new LocationHiddenInputsResource()));
+
+        // Then: own stays hidden and its sibling seen stays visible
+        assertEquals(
+                List.of(new HiddenFact(QUERY, "own", true), new HiddenFact(QUERY, "seen", false)),
+                hiddenFacts(inputsOf(publication, "keepOwnHidden", "own marker")));
+    }
+
+    @Test
+    @DisplayName("A hidden entry with a blank name fails the mount build")
+    void hiddenEntryWithBlankNameFailsTheMountBuild(Vertx vertx) {
+        // Given: @Parameter(name = "", hidden = true), no location, beside query input present
+        assertTrue(GeneratedJaxRsDescriptorRegistry.shared()
+                .lookup(BlankHiddenInputResource.class)
+                .isEmpty());
+        RecordingSink sink = new RecordingSink(applicationName -> true);
+
+        // When: the mount is built with a sink that wants detail
+        RestConfigurationException failure = assertMountBuildFails(vertx, sink, Set.of(new BlankHiddenInputResource()));
+
+        // Then: the failure names the operation and the blank entry, and nothing is published
+        String message = String.valueOf(failure.getMessage());
+        assertAll(
+                () -> assertTrue(message.contains("'hideBlank'"), "names the operation: " + message),
+                () -> assertTrue(message.contains("named ''"), "names the blank entry: " + message),
+                () -> assertTrue(sink.received().isEmpty(), "nothing is published"));
+    }
+
+    @Test
+    @DisplayName("A failing hidden entry's name is bounded and free of control characters in the message")
+    void hiddenEntryNameIsBoundedAndSanitizedInTheFailure(Vertx vertx) {
+        // Given: a hidden entry, no location, named "bell", BEL (octal 007), 123 'a', "TAIL", 168 'z'
+        assertTrue(GeneratedJaxRsDescriptorRegistry.shared()
+                .lookup(UnsafeNameHiddenInputResource.class)
+                .isEmpty());
+        String name = UnsafeNameHiddenInputResource.NAME;
+        assertEquals(300, name.length(), "fixture name length");
+        assertEquals('\007', name.charAt(4), "fixture name carries BEL at index 4");
+        assertEquals(128, name.indexOf("TAIL"), "fixture marker starts at index 128");
+        RecordingSink sink = new RecordingSink(applicationName -> true);
+
+        // When: the mount is built with a sink that wants detail
+        RestConfigurationException failure =
+                assertMountBuildFails(vertx, sink, Set.of(new UnsafeNameHiddenInputResource()));
+
+        // Then: the name appears cut to its first 128 characters, BEL shown as '?', marked "..."
+        String expectedName = "bell?" + "a".repeat(123) + "...";
+        String message = String.valueOf(failure.getMessage());
+        assertAll(
+                () -> assertTrue(message.contains("'hideUnsafeName'"), "names the operation: " + message),
+                () -> assertTrue(message.contains("named '" + expectedName + "'"), "bounded name: " + message),
+                () -> assertFalse(message.contains("TAIL"), "text past the bound is cut: " + message),
+                () -> assertFalse(message.contains("z"), "text past the bound is cut: " + message),
+                // 193 characters of fixed text and operation id, plus the 131-character bounded name
+                () -> assertTrue(message.length() <= 324, "message length " + message.length() + ": " + message),
+                () -> assertTrue(
+                        message.chars().noneMatch(Character::isISOControl), "no control characters: " + message),
+                () -> assertTrue(sink.received().isEmpty(), "nothing is published"));
+    }
+
+    /** One binding's location, name, and hidden flag. */
+    private record HiddenFact(
+            @Nullable ParamLocation location, @Nullable String name, boolean hidden) {}
+
+    private static List<HiddenFact> hiddenFacts(List<InputBinding> inputs) {
+        List<HiddenFact> facts = new ArrayList<>(inputs.size());
+        for (InputBinding binding : inputs) {
+            facts.add(new HiddenFact(binding.location(), binding.name(), binding.hidden()));
+        }
+        return facts;
+    }
+
+    /**
+     * Builds one mount at {@code /*} with the given sink and asserts that the build fails at startup
+     * with a {@link RestConfigurationException}.
+     */
+    private static RestConfigurationException assertMountBuildFails(
+            Vertx vertx, RecordingSink sink, Set<Object> resources) {
+        JaxRsRouterMount.Factory factory = TestFactories.builder()
+                .publicationSinks(new LinkedHashSet<>(List.of(sink)))
+                .build();
+        JaxRsRouterMount mount = factory.create("/*", "openapi.json", resources);
+        return assertThrows(RestConfigurationException.class, () -> mount.createRouter(vertx)
+                .toCompletionStage()
+                .toCompletableFuture()
+                .get(BUILD_TIMEOUT_SECONDS, TimeUnit.SECONDS));
+    }
+
+    private static <V> Map<String, V> orderedMap(String firstKey, V firstValue, String secondKey, V secondValue) {
+        Map<String, V> map = new LinkedHashMap<>();
+        map.put(firstKey, firstValue);
+        map.put(secondKey, secondValue);
+        return map;
     }
 
     private static Map<String, Requiredness> requirednessByName(List<InputBinding> inputs) {

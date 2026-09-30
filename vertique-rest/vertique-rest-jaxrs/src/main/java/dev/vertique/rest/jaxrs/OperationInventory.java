@@ -3,6 +3,7 @@
 
 package dev.vertique.rest.jaxrs;
 
+import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.jaxrs.publication.CapturedSchemas;
 import dev.vertique.rest.jaxrs.publication.InputBinding;
 import dev.vertique.rest.jaxrs.publication.InputBinding.Origin;
@@ -12,6 +13,9 @@ import dev.vertique.rest.jaxrs.publication.ResponseShape;
 import dev.vertique.rest.jaxrs.routing.ParamLocation;
 import dev.vertique.rest.jaxrs.runtime.BeanParamFieldMeta;
 import io.swagger.v3.oas.annotations.Hidden;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameters;
+import io.swagger.v3.oas.annotations.enums.ParameterIn;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.annotation.Nullable;
 import java.lang.annotation.Annotation;
@@ -35,6 +39,14 @@ import java.util.List;
  * the annotation types' own meta-annotations. No branch depends on which descriptor path produced
  * the metadata.
  *
+ * <p>An input is hidden by its own {@code @Hidden}, {@code @Parameter(hidden = true)}, or
+ * {@code @Schema(hidden = true)}; by the composite that binds it; or by a hidden method-level parameter
+ * entry, read from {@link ResourceMethodMeta#methodAnnotations()}: a {@code @Parameter} on the
+ * method, an entry of a {@code @Parameters} container, or an entry of {@code @Operation(parameters =
+ * ...)}. Such an entry names a parameter or composite-field input by exact name and by location, and
+ * an entry that declares no location names that input at every location. A hidden entry that names
+ * no input fails the build of the inventory; a visible entry is ignored.
+ *
  * <p>Bean Validation annotations and groups are matched by type name in the {@code
  * jakarta.validation} namespace only, so this module needs no validation dependency; {@code
  * javax.validation} annotations are not recognized. Hiding markers are matched by class.
@@ -51,6 +63,9 @@ final class OperationInventory {
     private static final String NOT_BLANK = "jakarta.validation.constraints.NotBlank";
     private static final String NOT_EMPTY = "jakarta.validation.constraints.NotEmpty";
 
+    /** The longest annotation-supplied text a startup message quotes before cutting it. */
+    private static final int MAX_MESSAGE_NAME_LENGTH = 128;
+
     private OperationInventory() {}
 
     /**
@@ -65,6 +80,8 @@ final class OperationInventory {
      * @param gateInstalled  whether a request-validation gate was installed for the operation
      * @param validatorBound whether a Bean Validation implementation checks the method's arguments
      * @return the inventory, in declaration order
+     * @throws RestConfigurationException when a hidden method-level parameter entry names no input the
+     *                                    method binds
      */
     static List<InputBinding> inputs(
             ResourceMethodMeta meta, CapturedSchemas schemas, boolean gateInstalled, boolean validatorBound) {
@@ -112,6 +129,7 @@ final class OperationInventory {
                 }
             }
         }
+        applyMethodHiding(meta, inputs);
         return Collections.unmodifiableList(inputs);
     }
 
@@ -236,6 +254,110 @@ final class OperationInventory {
     /** Whether the composite class itself carries {@code @Hidden}; a superclass's does not count. */
     private static boolean compositeTypeHidden(Class<?> compositeType) {
         return compositeType.getAnnotation(Hidden.class) != null;
+    }
+
+    /**
+     * Hides every parameter and composite-field input a hidden method-level parameter entry names,
+     * matching by name, exactly, and by location, where an entry without a location matches every
+     * location; an entry that matches several inputs hides each of them. A visible entry changes
+     * nothing, and an input hidden by its own markers stays hidden.
+     *
+     * @throws RestConfigurationException when a hidden entry matches no input
+     */
+    private static void applyMethodHiding(ResourceMethodMeta meta, List<InputBinding> inputs) {
+        for (io.swagger.v3.oas.annotations.Parameter entry : methodParameterEntries(meta.methodAnnotations())) {
+            if (!entry.hidden()) {
+                continue;
+            }
+            boolean matched = false;
+            for (int i = 0; i < inputs.size(); i++) {
+                InputBinding binding = inputs.get(i);
+                if ((binding.origin() == Origin.PARAMETER || binding.origin() == Origin.COMPOSITE_FIELD)
+                        && entry.name().equals(binding.name())
+                        && locationMatches(entry.in(), binding.location())) {
+                    matched = true;
+                    inputs.set(i, hidden(binding));
+                }
+            }
+            if (!matched) {
+                throw new RestConfigurationException("Operation '" + bounded(meta.operationId())
+                        + "' declares a hidden method-level @Parameter named '" + bounded(entry.name()) + "' "
+                        + describeLocation(entry.in())
+                        + ", but binds no input of that name and location; name an input the method binds,"
+                        + " or remove the entry.");
+            }
+        }
+    }
+
+    /**
+     * The swagger parameter entries declared on the method: each {@code @Parameter}, each entry of a
+     * {@code @Parameters} container, and each entry of {@code @Operation(parameters = ...)}.
+     */
+    private static List<io.swagger.v3.oas.annotations.Parameter> methodParameterEntries(
+            List<Annotation> methodAnnotations) {
+        List<io.swagger.v3.oas.annotations.Parameter> entries = new ArrayList<>();
+        for (Annotation annotation : methodAnnotations) {
+            if (annotation instanceof io.swagger.v3.oas.annotations.Parameter parameter) {
+                entries.add(parameter);
+            }
+            if (annotation instanceof Parameters container) {
+                Collections.addAll(entries, container.value());
+            }
+            if (annotation instanceof Operation operation) {
+                Collections.addAll(entries, operation.parameters());
+            }
+        }
+        return entries;
+    }
+
+    /** Whether an entry's location matches a bound location; the default location matches every one. */
+    private static boolean locationMatches(ParameterIn in, @Nullable ParamLocation location) {
+        return switch (in) {
+            case DEFAULT -> true;
+            case QUERY -> location == ParamLocation.QUERY;
+            case HEADER -> location == ParamLocation.HEADER;
+            case COOKIE -> location == ParamLocation.COOKIE;
+            case PATH -> location == ParamLocation.PATH;
+        };
+    }
+
+    private static String describeLocation(ParameterIn in) {
+        return in == ParameterIn.DEFAULT ? "at any location" : "in " + in.name();
+    }
+
+    /** The binding with its hidden flag set; every other component is unchanged. */
+    private static InputBinding hidden(InputBinding binding) {
+        return new InputBinding(
+                binding.origin(),
+                binding.location(),
+                binding.name(),
+                binding.type(),
+                binding.defaultValue(),
+                binding.requiredness(),
+                true,
+                binding.schemaEnforced(),
+                binding.annotations(),
+                binding.methodParameterIndex(),
+                binding.compositeType());
+    }
+
+    /**
+     * Annotation-supplied text made safe for a startup message: control characters become {@code ?},
+     * and text beyond {@value #MAX_MESSAGE_NAME_LENGTH} characters is cut and marked with {@code ...}.
+     */
+    private static String bounded(@Nullable String text) {
+        if (text == null) {
+            return "null";
+        }
+        StringBuilder out = new StringBuilder(Math.min(text.length(), MAX_MESSAGE_NAME_LENGTH) + 3);
+        for (int i = 0; i < text.length() && i < MAX_MESSAGE_NAME_LENGTH; i++) {
+            char c = text.charAt(i);
+            out.append(Character.isISOControl(c) ? '?' : c);
+        }
+        if (text.length() > MAX_MESSAGE_NAME_LENGTH) {
+            out.append("...");
+        }
+        return out.toString();
     }
 
     // ---------------------------------------------------------------------------------------------
