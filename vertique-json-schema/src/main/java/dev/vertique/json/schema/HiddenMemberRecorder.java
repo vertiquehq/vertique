@@ -81,14 +81,16 @@ import java.util.function.Supplier;
  * exactly as the mapper reads them, directly or through a Jackson annotation bundle ({@link
  * JacksonAnnotationsInside}) at any depth: a type's view holds its own annotations and those of the
  * mix-in the mapper registers for it and that mix-in's superclasses, never those of the type's own
- * supertypes; a field's view, within the type it is described in, adds those of the mix-in the mapper
- * registers for the field's own class; a creator parameter's view adds those of the mix-in's matching
- * creator. A method declaration is read by itself, never through the mapper's merged view of its
- * signature: its own annotations and those of the matching method of the mix-in the mapper registers
- * for its own class and that mix-in's superclasses, each directly or through a bundle at any depth, a
- * mix-in's {@code @Schema} taking precedence over the declaration's own. A member the introspection
- * holds no view of is read the same way. The mapper's merge across a property's accessors, which
- * copies one accessor's annotations onto another, is never read. A mix-in's marker is reported at its
+ * supertypes, except that a type whose view holds no {@code @Schema} takes the one it inherits from a
+ * superclass, since {@code @Schema} is {@code @Inherited}, while {@code @Hidden}, which is not, counts
+ * only where the view holds it; a field's view, within the type it is described in, adds those of the
+ * mix-in the mapper registers for the field's own class; a creator parameter's view adds those of the
+ * mix-in's matching creator. A method declaration is read by itself, never through the mapper's merged
+ * view of its signature: its own annotations and those of the matching method of the mix-in the mapper
+ * registers for its own class and that mix-in's superclasses, each directly or through a bundle at any
+ * depth, a mix-in's {@code @Schema} taking precedence over the declaration's own. A member the
+ * introspection holds no view of is read the same way. The mapper's merge across a property's
+ * accessors, which copies one accessor's annotations onto another, is never read. A mix-in's marker is reported at its
  * target; a mix-in is never recorded, since the generation never describes one.
  *
  * <p>A described type is recorded when it carries a marker; an enum type it describes also has each of
@@ -326,7 +328,7 @@ final class HiddenMemberRecorder {
             return;
         }
         AnnotatedClass view = AnnotatedClassResolver.resolveWithoutSuperTypes(config, type);
-        HidingMarker typeMarker = markerOf(view);
+        HidingMarker typeMarker = typeMarkerOf(view, type);
         if (typeMarker != null) {
             record(type.getName(), null, typeMarker, false);
         }
@@ -822,6 +824,20 @@ final class HiddenMemberRecorder {
     /** The marker a merged view carries, or {@code null} when it carries neither. */
     private static HidingMarker markerOf(Annotated view) {
         Schema schema = view.getAnnotation(Schema.class);
+        return markerOf(view.hasAnnotation(Hidden.class), schema != null && schema.hidden());
+    }
+
+    /**
+     * The marker a type carries: that of its own view, whose {@code @Schema} is a mix-in's before the
+     * type's own, except that when the view holds no {@code @Schema} the one {@code type} inherits from a
+     * superclass decides, as {@link Class#getAnnotation} reads it. {@code @Hidden} is not inherited, so
+     * only the view's counts. {@code null} when the type carries neither marker.
+     */
+    private static HidingMarker typeMarkerOf(AnnotatedClass view, Class<?> type) {
+        Schema schema = view.getAnnotation(Schema.class);
+        if (schema == null) {
+            schema = type.getAnnotation(Schema.class);
+        }
         return markerOf(view.hasAnnotation(Hidden.class), schema != null && schema.hidden());
     }
 

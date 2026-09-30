@@ -2630,6 +2630,57 @@ class HiddenMemberReportTest {
             List.of(hidden(ClassMarkedShape.ClassMarked.class, null, SCHEMA_HIDDEN, false));
 
     /**
+     * {@code @Schema(hidden = true)} on a class that {@link InheritedMarkShape.InheritedMarked} extends.
+     * {@code @Schema} is {@code @Inherited}, so the subclass carries it too. Held outside any shape: its
+     * inherited property is described wherever the subclass is, while no document describes it as a type
+     * of its own.
+     */
+    @Schema(hidden = true)
+    static class InheritedMarkBase {
+        public String inheritedBaseValue;
+    }
+
+    /** {@code @Schema(hidden = true)} inherited, not declared, by a class, described as a root and through a member. */
+    static final class InheritedMarkShape {
+        static final class InheritedMarkHolder {
+            public InheritedMarked inheritedNested;
+        }
+
+        static final class InheritedMarked extends InheritedMarkBase {
+            public String inheritedMarkedValue;
+        }
+    }
+
+    /** Either direction: the subclass, as a type carrying the inherited marker, never hideable. */
+    private static final List<HiddenMember> INHERITED_MARK_REPORT =
+            List.of(hidden(InheritedMarkShape.InheritedMarked.class, null, SCHEMA_HIDDEN, false));
+
+    /**
+     * {@code @Schema(hidden = true)} declared on a class and inherited by its subclass, both described in one
+     * document through members of one holder.
+     */
+    static final class InheritedBesideBaseShape {
+        static final class BesideHolder {
+            public BesideBase besideBase;
+            public BesideSub besideSub;
+        }
+
+        @Schema(hidden = true)
+        static class BesideBase {
+            public String besideBaseValue;
+        }
+
+        static final class BesideSub extends BesideBase {
+            public String besideSubValue;
+        }
+    }
+
+    /** Either direction: the declaring class and its subclass, each as a type, never hideable. */
+    private static final List<HiddenMember> INHERITED_BESIDE_BASE_REPORT = List.of(
+            hidden(InheritedBesideBaseShape.BesideBase.class, null, SCHEMA_HIDDEN, false),
+            hidden(InheritedBesideBaseShape.BesideSub.class, null, SCHEMA_HIDDEN, false));
+
+    /**
      * {@code @Schema(hidden = true)} on a public field only through the mix-in {@link #MIX_IN_TARGET_PROFILE}'s
      * mapper registers for its type, which itself declares nothing.
      */
@@ -4366,6 +4417,42 @@ class HiddenMemberReportTest {
                         ClassMarkedShape.ClassMarkedHolder.class,
                         CLASS_MARKED_REPORT),
                 shape(
+                        "input: @Schema(hidden) inherited by a root class",
+                        Direction.INPUT,
+                        InheritedMarkShape.class,
+                        InheritedMarkShape.InheritedMarked.class,
+                        INHERITED_MARK_REPORT),
+                shape(
+                        "output: @Schema(hidden) inherited by a root class",
+                        Direction.OUTPUT,
+                        InheritedMarkShape.class,
+                        InheritedMarkShape.InheritedMarked.class,
+                        INHERITED_MARK_REPORT),
+                shape(
+                        "input: @Schema(hidden) inherited by a class reached through a member",
+                        Direction.INPUT,
+                        InheritedMarkShape.class,
+                        InheritedMarkShape.InheritedMarkHolder.class,
+                        INHERITED_MARK_REPORT),
+                shape(
+                        "output: @Schema(hidden) inherited by a class reached through a member",
+                        Direction.OUTPUT,
+                        InheritedMarkShape.class,
+                        InheritedMarkShape.InheritedMarkHolder.class,
+                        INHERITED_MARK_REPORT),
+                shape(
+                        "input: @Schema(hidden) on a class and inherited by its subclass, both described",
+                        Direction.INPUT,
+                        InheritedBesideBaseShape.class,
+                        InheritedBesideBaseShape.BesideHolder.class,
+                        INHERITED_BESIDE_BASE_REPORT),
+                shape(
+                        "output: @Schema(hidden) on a class and inherited by its subclass, both described",
+                        Direction.OUTPUT,
+                        InheritedBesideBaseShape.class,
+                        InheritedBesideBaseShape.BesideHolder.class,
+                        INHERITED_BESIDE_BASE_REPORT),
+                shape(
                         "input: mix-in @Schema(hidden) on a public field",
                         Direction.INPUT,
                         MIX_IN_TARGET_PROFILE,
@@ -4642,6 +4729,30 @@ class HiddenMemberReportTest {
                         ClassMarkedShape.ClassMarkedHolder.class,
                         "markedValue",
                         CLASS_MARKED_REPORT),
+                position(
+                        "input: a root class inheriting the marker",
+                        Direction.INPUT,
+                        InheritedMarkShape.InheritedMarked.class,
+                        "inheritedMarkedValue",
+                        INHERITED_MARK_REPORT),
+                position(
+                        "output: a root class inheriting the marker",
+                        Direction.OUTPUT,
+                        InheritedMarkShape.InheritedMarked.class,
+                        "inheritedMarkedValue",
+                        INHERITED_MARK_REPORT),
+                position(
+                        "input: a class inheriting the marker, reached through a member",
+                        Direction.INPUT,
+                        InheritedMarkShape.InheritedMarkHolder.class,
+                        "inheritedMarkedValue",
+                        INHERITED_MARK_REPORT),
+                position(
+                        "output: a class inheriting the marker, reached through a member",
+                        Direction.OUTPUT,
+                        InheritedMarkShape.InheritedMarkHolder.class,
+                        "inheritedMarkedValue",
+                        INHERITED_MARK_REPORT),
                 position(
                         "input: a public field marked through the mapper's mix-in",
                         Direction.INPUT,
@@ -5447,8 +5558,10 @@ class HiddenMemberReportTest {
      * class's superclasses declare; a field, what a same-named field of that chain declares; a method,
      * what a method of the same name and parameter types declares in the mix-in chain of its type or of
      * any supertype. {@code @Hidden} is carried when any of them declares it; the nearest {@code @Schema}
-     * decides whether {@code @Schema(hidden = true)} is; a mix-in class, or a superclass of one, is never
-     * a carrier. An overridden method is read by itself, under its own name and declaring type, whether
+     * decides whether {@code @Schema(hidden = true)} is, and a type none of whose own or mix-in
+     * declarations has one takes the {@code @Schema} it inherits from a superclass ({@code @Schema} is
+     * {@code @Inherited}, {@code @Hidden} is not); a mix-in class, or a superclass of one, is never a
+     * carrier. An overridden method is read by itself, under its own name and declaring type, whether
      * its override keeps its raw parameter types or, for a generic declaration, bridges to different ones;
      * an override carries only what it declares. A creator parameter is read by itself, directly and
      * through bundles. It reads only the document, the fixture types, and the mapper's mix-in
@@ -5486,7 +5599,7 @@ class HiddenMemberReportTest {
             if (mixIns.contains(type)) {
                 continue;
             }
-            HidingMarker typeMarker = marker(type, typeMixIns(mapper, type));
+            HidingMarker typeMarker = typeMarker(type, typeMixIns(mapper, type));
             if (typeMarker != null && isDescribed(type, names)) {
                 carriers.add(new MarkedDeclaration(type.getName(), null, typeMarker));
             }
@@ -5858,16 +5971,37 @@ class HiddenMemberReportTest {
      * the first counterpart's, else its own, directly or through a bundle — says hidden.
      */
     private static HidingMarker marker(AnnotatedElement element, List<? extends AnnotatedElement> mixIns) {
-        boolean hidden = carriesHidden(element, new HashSet<>());
-        Schema schema = null;
+        return marker(element, mixIns, nearestSchema(element, mixIns));
+    }
+
+    /**
+     * The marker the type {@code type} carries: as {@link #marker(AnnotatedElement, List)} reads it, except
+     * that when neither {@code type} nor its mix-in counterparts declare a {@code @Schema}, directly or
+     * through a bundle, the {@code @Schema} it inherits from a superclass decides, as {@link
+     * Class#getAnnotation} reads it. {@code @Hidden} is not inherited, so only a declared one counts.
+     */
+    private static HidingMarker typeMarker(Class<?> type, List<Class<?>> mixIns) {
+        Schema schema = nearestSchema(type, mixIns);
+        return marker(type, mixIns, schema != null ? schema : type.getAnnotation(Schema.class));
+    }
+
+    /** The first counterpart's {@code @Schema}, else {@code element}'s own, directly or through a bundle. */
+    private static Schema nearestSchema(AnnotatedElement element, List<? extends AnnotatedElement> mixIns) {
         for (AnnotatedElement mixIn : mixIns) {
-            hidden |= carriesHidden(mixIn, new HashSet<>());
-            if (schema == null) {
-                schema = findSchema(mixIn, new HashSet<>());
+            Schema schema = findSchema(mixIn, new HashSet<>());
+            if (schema != null) {
+                return schema;
             }
         }
-        if (schema == null) {
-            schema = findSchema(element, new HashSet<>());
+        return findSchema(element, new HashSet<>());
+    }
+
+    /** The marker {@code element} carries given the {@code @Schema} that decides for it, {@code null} if none. */
+    private static HidingMarker marker(
+            AnnotatedElement element, List<? extends AnnotatedElement> mixIns, Schema schema) {
+        boolean hidden = carriesHidden(element, new HashSet<>());
+        for (AnnotatedElement mixIn : mixIns) {
+            hidden |= carriesHidden(mixIn, new HashSet<>());
         }
         boolean schemaHidden = schemaHidden(schema);
         if (hidden && schemaHidden) {
