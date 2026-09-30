@@ -25,15 +25,15 @@ import java.util.List;
  *                             Requiredness#UNKNOWN} for {@link Origin#BODY}, since an absent body
  *                             binds as {@code null} and whether the request-validation gate rejects
  *                             it depends on the body schema, which this module does not evaluate
- * @param hidden               whether the input carries a hiding marker, or belongs to a composite
- *                             that does
+ * @param hidden               whether the input carries a hiding marker, belongs to a composite that
+ *                             does, or is named by a hidden method-level parameter entry
  * @param schemaEnforced       {@code true} only when the request-validation gate was installed and
  *                             received a schema for this input
  * @param annotations          the annotations the input's requiredness and hidden flag were
  *                             judged on, without duplicates and in first-occurrence order; for a
  *                             {@link Origin#COMPOSITE_FIELD}, the field's own annotations followed
  *                             by those of the record component, its accessor, and its backing
- *                             field
+ *                             field; method-level parameter entries are not included
  * @param methodParameterIndex the index of the method parameter the input binds through; for a
  *                             {@link Origin#COMPOSITE_FIELD}, the composite parameter's index
  * @param compositeType        the composite type declaring a {@link Origin#COMPOSITE_FIELD} input,
