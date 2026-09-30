@@ -64,7 +64,7 @@ class ModuleStructureTest {
      * both Jackson databind and {@code com.fasterxml.classmate}, which Victools pulls in
      * transitively and the generator internals reference directly. {@code java.} covers every JDK
      * package the generator uses (reflection types, collections). {@code jakarta.annotation.} covers
-     * the {@code jakarta.annotation.Nullable} on {@code HiddenOnlyMember#member}; it reaches this
+     * the {@code jakarta.annotation.Nullable} on {@code HiddenMember#member}; it reaches this
      * module through {@code vertique-core}'s compile dependency on {@code jakarta.annotation-api}, so
      * the compile-scope dependency allowlist is unchanged.
      */
@@ -93,10 +93,10 @@ class ModuleStructureTest {
             "io.opentelemetry.");
 
     /**
-     * The only six types this module may expose publicly (PRD §6.2, plan §3a): the generator, its
+     * The only seven types this module may expose publicly (PRD §6.2, plan §3a): the generator, its
      * bounded failure type, the canonical schema and redaction manifest the generator's {@code
-     * describe} returns, the output rename its {@code outputRenames} reports, and the hidden-only
-     * member its {@code hiddenOnlyMembers} reports.
+     * describe} returns, the output rename its {@code outputRenames} reports, and the hidden member
+     * and hiding marker its {@code hiddenMembers} reports.
      */
     private static final Set<String> ALLOWED_PUBLIC_TYPES = Set.of(
             "AnnotationJsonSchemaGenerator",
@@ -104,7 +104,8 @@ class ModuleStructureTest {
             "CanonicalSchema",
             "RedactionManifest",
             "OutputRename",
-            "HiddenOnlyMember");
+            "HiddenMember",
+            "HidingMarker");
 
     // --- #1: dependency allowlist ---
 
@@ -253,7 +254,7 @@ class ModuleStructureTest {
     @Test
     @DisplayName(
             "dev.vertique.json.schema exposes exactly AnnotationJsonSchemaGenerator, JsonSchemaGenerationException,"
-                    + " CanonicalSchema, RedactionManifest, OutputRename, and HiddenOnlyMember as public")
+                    + " CanonicalSchema, RedactionManifest, OutputRename, HiddenMember, and HidingMarker as public")
     void publicSurfaceIsFrozen() throws IOException {
         Path packageDir =
                 Path.of(System.getProperty("user.dir"), "target", "classes", "dev", "vertique", "json", "schema");
@@ -283,8 +284,8 @@ class ModuleStructureTest {
                 ALLOWED_PUBLIC_TYPES,
                 actualPublicTypes,
                 "dev.vertique.json.schema must expose exactly AnnotationJsonSchemaGenerator,"
-                        + " JsonSchemaGenerationException, CanonicalSchema, RedactionManifest, OutputRename, and"
-                        + " HiddenOnlyMember as public types");
+                        + " JsonSchemaGenerationException, CanonicalSchema, RedactionManifest, OutputRename,"
+                        + " HiddenMember, and HidingMarker as public types");
 
         if (!signatureViolations.isEmpty()) {
             fail("No public member of dev.vertique.json.schema may expose a com.github.victools or"

@@ -18,6 +18,8 @@ import com.fasterxml.jackson.databind.introspect.AnnotatedClassResolver;
 import com.fasterxml.jackson.databind.introspect.AnnotatedField;
 import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
 import com.fasterxml.jackson.databind.introspect.AnnotatedMethod;
+import com.fasterxml.jackson.databind.introspect.AnnotatedParameter;
+import com.fasterxml.jackson.databind.introspect.AnnotatedWithParams;
 import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.victools.jsonschema.generator.AnnotationHelper;
@@ -30,10 +32,13 @@ import io.swagger.v3.oas.annotations.Hidden;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.AnnotatedElement;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Executable;
 import java.lang.reflect.Field;
 import java.lang.reflect.Member;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.Parameter;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -51,8 +56,8 @@ import java.util.function.Supplier;
 
 /**
  * Records, while a recording is open, every member and every type a canonical generator describes
- * that carries {@link Hidden} without {@code @Schema(hidden = true)}: the entries {@link
- * AnnotationJsonSchemaGenerator#hiddenOnlyMembers(java.lang.reflect.Type)} reports.
+ * that carries {@link Hidden}, {@code @Schema(hidden = true)}, or both: the entries {@link
+ * AnnotationJsonSchemaGenerator#hiddenMembers(java.lang.reflect.Type)} reports.
  *
  * <p>A generation reaches it through entry points none of which modifies a node, so it changes no
  * document: a type attribute hook the schema library calls for every type it describes, in both
@@ -64,25 +69,35 @@ import java.util.function.Supplier;
  * describes; and the input direction's describer, which records each property it describes, an
  * unwrapped member included, each any-setter whose extras it describes, and each type it describes
  * without the schema library traversing it. Every entry point does nothing unless a recording is open.
+ * Describedness comes from these entry points alone: a member a generator leaves out, because it
+ * honors {@code @Schema(hidden = true)} there or because the profile mapper does not bind (input) or
+ * serialize (output) it, reaches none of them.
  *
- * <p>Whether a type, a constant, or a member carries {@code @Hidden} or {@code @Schema} is read from the
- * annotations the profile mapper merges into it, in the recorder's direction — its deserialization view
- * for the input direction, its serialization view for the output direction — exactly as the mapper
- * reads them, directly or through a Jackson annotation bundle ({@link JacksonAnnotationsInside}) at any
- * depth: a type's view holds its own annotations and those of the mix-in the mapper registers for it and
- * that mix-in's superclasses, never those of the type's own supertypes; a field's or a method's view,
- * within the type it is described in, adds those of each same-signature declaration the type inherits
- * and of the mix-ins the mapper registers across the type's hierarchy. A mix-in's {@code @Schema} takes
- * precedence over its target's own, as the mapper merges them. The mapper's merge across a property's
- * accessors, which copies one accessor's annotations onto another, is never read.
+ * <p>One predicate reads both markers on a declaration: {@code HIDDEN} when only {@code @Hidden} is
+ * present, {@code SCHEMA_HIDDEN} when only {@code @Schema(hidden = true)} is, {@code BOTH} when both
+ * are. Neither marker excludes the other. A type, a constant, a field, and a creator parameter are
+ * read from the annotations the profile mapper merges into them, in the recorder's direction — its
+ * deserialization view for the input direction, its serialization view for the output direction —
+ * exactly as the mapper reads them, directly or through a Jackson annotation bundle ({@link
+ * JacksonAnnotationsInside}) at any depth: a type's view holds its own annotations and those of the
+ * mix-in the mapper registers for it and that mix-in's superclasses, never those of the type's own
+ * supertypes; a field's view, within the type it is described in, adds those of the mix-in the mapper
+ * registers for the field's own class; a creator parameter's view adds those of the mix-in's matching
+ * creator. A method declaration is read by itself, never through the mapper's merged view of its
+ * signature: its own annotations and those of the matching method of the mix-in the mapper registers
+ * for its own class and that mix-in's superclasses, each directly or through a bundle at any depth, a
+ * mix-in's {@code @Schema} taking precedence over the declaration's own. A member the introspection
+ * holds no view of is read the same way. The mapper's merge across a property's accessors, which
+ * copies one accessor's annotations onto another, is never read. A mix-in's marker is reported at its
+ * target; a mix-in is never recorded, since the generation never describes one.
  *
- * <p>A described type is recorded when it carries {@code @Hidden}; an enum type it describes also has
- * each of its constants carrying {@code @Hidden} recorded, under the constant's name. Each member hook,
- * in either direction, also walks the member's declared type through the positions the generator
- * describes as the member's value — an array's element type, the payload of an {@code Optional} or a
- * {@code Supplier}, which the schema library flattens, an {@code Iterable}'s element type, and, in the
- * input direction only, a map's value type, at any depth — and records each type the walk reaches that
- * the member is described as, or as a subtype of: the schema library's Jackson module describes a
+ * <p>A described type is recorded when it carries a marker; an enum type it describes also has each of
+ * its constants carrying one recorded, under the constant's name. Each member hook, in either
+ * direction, also walks the member's declared type through the positions the generator describes as
+ * the member's value — an array's element type, the payload of an {@code Optional} or a {@code
+ * Supplier}, which the schema library flattens, an {@code Iterable}'s element type, and, in the input
+ * direction only, a map's value type, at any depth — and records each type the walk reaches that the
+ * member is described as, or as a subtype of: the schema library's Jackson module describes a
  * polymorphic member, or a polymorphic container element, through its subtypes, so the declared base
  * never reaches the type hook. The member's own scope walks its value down to the first array or
  * collection the schema library describes as a container, and that container's item view walks on from
@@ -101,43 +116,41 @@ import java.util.function.Supplier;
  * own and only carrier. A type the profile overrides is skipped, since the override replaces its
  * definition and nothing is flattened into it.
  *
- * <p>A property's carriers are its field, its getter, and its setter, as the profile mapper's
- * introspection of the type the member is described in links them, together with the member the
- * generation describes it through. The type the member is described in is a subclass of the member's
- * declaring type when the member is inherited, so a getter or setter the subclass overrides is the
- * carrier the mapper links. In the input direction, a field the schema library describes that the
+ * <p>A property's carriers are its field, its getter, its setter, and its creator parameter, as the
+ * profile mapper's introspection of the type the member is described in links them, together with the
+ * member the generation describes it through. The type the member is described in is a subclass of the
+ * member's declaring type when the member is inherited, so a getter or setter the subclass overrides is
+ * the carrier the mapper links. In the input direction, a field the schema library describes that the
  * deserialization introspection links to no property — a private field the mapper drops from a
  * property it binds through a setter — belongs to the property of the field's own name, whose setter
- * is a carrier. A field carrying {@code @Hidden} is recorded under its own name and declaring type. A
- * method carrier is read together with each method of its name whose parameter types resolve, within
- * the type the member is described in, to its own — the declarations it overrides or implements, a
- * generic one included; for each of them carrying {@code @Hidden}, each declaration of that signature
- * in the type's hierarchy that declares {@code @Hidden} itself, or through the mix-in the mapper
- * registers for its own class, is recorded under its own name and declaring type, and when none does,
- * since a mix-in registered for another class of the hierarchy put it there, the method the mapper
- * binds that signature to is recorded only when its merged view is hidden-only. A property whose
- * {@code @Schema} — read on the member the generation describes it through when that is its getter,
- * otherwise on its field and then its getter, and on the described member alone when the
- * introspection links neither and it is a field or a parameterless method — a setter-only property
- * reads none, since neither generator honors {@code @Schema(hidden = true)} on a setter — the first
- * annotation found deciding — says {@code hidden = true} is not recorded, since the generator hides
- * it. Each declaration is judged by its own markers: a field carrier is left out when its merged view
- * carries {@code @Schema(hidden = true)}, and a method declaration carrying {@code @Hidden} is left
- * out only when its own {@code @Schema}, or the one its own class's mix-in declares for it, says
- * hidden. A method declaration's own {@code @Schema} is read from its direct annotations and from the
- * mix-in the mapper registers for its own declaring class, which takes precedence, without expanding
- * an annotation bundle. A type or constant is recorded unless it also carries {@code @Schema(hidden =
- * true)}. An entry is recorded once however often a generation reaches it; a mix-in is never
- * recorded, since the generation never describes one.
+ * is a carrier. A field is recorded under its own name and declaring type; a creator parameter under
+ * its creator's name, {@code <init>} for a constructor, then {@code #} and its zero-based index, and
+ * the creator's declaring type. A method carrier is read together with each method of its name whose
+ * parameter types resolve, within the type the member is described in, to its own — the declarations
+ * it overrides or implements, a generic one included; for each of them whose merged view carries a
+ * marker, each declaration of that signature in the type's hierarchy that carries a marker by itself
+ * is recorded under its own name and declaring type, and when none does, since a mix-in registered for
+ * another class of the hierarchy put the marker there, the method the mapper binds the signature to is
+ * recorded with the marker of its merged view.
+ *
+ * <p>Each recording carries whether declaring {@code @Schema(hidden = true)} directly on the property's
+ * own field, or on its getter when the mapper sees no field, makes the generator leave the property
+ * out at the position recorded: the caller computes it from the path it describes the property through.
+ * The output direction's member hook records {@code true}; a type, a constant, an unwrapped member, and
+ * an any-setter are recorded {@code false}; the input direction's member hook records {@code true},
+ * except while the describer borrows a field's attributes for a property it describes through a setter
+ * or a builder method (see {@link #setBorrowing}), when it records {@code false}; and the describer
+ * passes its own path's value for each property it describes. An entry is recorded once per declaring
+ * type and member however often a generation reaches it, carrying the conjunction of the values
+ * recorded for it, so the advice holds at every position.
  *
  * <p>Recording state is read and written only under the owning generator's instance lock.
  */
-final class HiddenOnlyMemberRecorder {
+final class HiddenMemberRecorder {
 
     /** The report's order: declaring type, then member, the type-level entry first. */
-    private static final Comparator<HiddenOnlyMember> REPORT_ORDER = Comparator.comparing(
-                    HiddenOnlyMember::declaringType)
-            .thenComparing(HiddenOnlyMember::member, Comparator.nullsFirst(Comparator.naturalOrder()));
+    private static final Comparator<HiddenMember> REPORT_ORDER = Comparator.comparing(HiddenMember::declaringType)
+            .thenComparing(HiddenMember::member, Comparator.nullsFirst(Comparator.naturalOrder()));
 
     /** Matches an annotation bundle, which Jackson and the schema library's Jackson module both read through. */
     private static final Predicate<Annotation> JACKSON_BUNDLE =
@@ -155,9 +168,16 @@ final class HiddenOnlyMemberRecorder {
     private final ValidatedProfile profile;
 
     /**
-     * The entries of the generation being recorded, or {@code null} when no recording is open.
+     * The entries of the generation being recorded, keyed by declaring type and member, or {@code null}
+     * when no recording is open.
      */
-    private Set<HiddenOnlyMember> recording;
+    private Map<Key, HiddenMember> recording;
+
+    /**
+     * Whether the input describer is borrowing a field's attributes for a property it describes through a
+     * setter or a builder method, so the input member hook records {@code false}.
+     */
+    private boolean borrowing;
 
     /** Each type's introspection in the recorder's direction. */
     private final ClassValue<Introspection> introspections = new ClassValue<>() {
@@ -170,6 +190,22 @@ final class HiddenOnlyMemberRecorder {
                             : mapper.getSerializationConfig().introspect(javaType));
         }
     };
+
+    /**
+     * Each type's own annotated view in the recorder's direction, with its creators: resolved apart from
+     * the introspection, whose property merge replaces a creator parameter's annotations in place with
+     * those merged from the property's other accessors.
+     */
+    private final ClassValue<AnnotatedClass> creatorViews = new ClassValue<>() {
+        @Override
+        protected AnnotatedClass computeValue(Class<?> type) {
+            return AnnotatedClassResolver.resolve(
+                    config, mapper.getTypeFactory().constructType(type), config);
+        }
+    };
+
+    /** An entry's identity: the report holds one entry per declaring type and member. */
+    private record Key(String declaringType, String member) {}
 
     /**
      * A type's introspection in the recorder's direction.
@@ -215,7 +251,7 @@ final class HiddenOnlyMemberRecorder {
      * @param direction the direction the owning generator describes, {@link Direction#INPUT} or {@link
      *                  Direction#OUTPUT}, which selects the mapper's deserialization or serialization view
      */
-    HiddenOnlyMemberRecorder(ValidatedProfile profile, Direction direction) {
+    HiddenMemberRecorder(ValidatedProfile profile, Direction direction) {
         this.mapper = profile.mapper();
         this.profile = profile;
         this.input = direction == Direction.INPUT;
@@ -224,7 +260,7 @@ final class HiddenOnlyMemberRecorder {
 
     /** Opens a recording for the generation about to run, discarding any earlier one. */
     void beginRecording() {
-        recording = new HashSet<>();
+        recording = new HashMap<>();
     }
 
     /**
@@ -241,13 +277,27 @@ final class HiddenOnlyMemberRecorder {
      *
      * @return an unmodifiable list, empty when nothing was recorded
      */
-    List<HiddenOnlyMember> recordedMembers() {
-        return recording.stream().sorted(REPORT_ORDER).toList();
+    List<HiddenMember> recordedMembers() {
+        return recording.values().stream().sorted(REPORT_ORDER).toList();
     }
 
     /** Closes the recording, whether the generation it recorded succeeded or failed. */
     void endRecording() {
         recording = null;
+    }
+
+    /**
+     * Sets whether the input describer is borrowing a field's attributes for a property it describes
+     * through a setter or a builder method: while it is, the input member hook records {@code false},
+     * since that field's {@code @Schema(hidden = true)} does not leave such a property out.
+     *
+     * @param borrowing whether a borrow is in progress
+     * @return the previous value, which the caller restores when its borrow ends
+     */
+    boolean setBorrowing(boolean borrowing) {
+        boolean previous = this.borrowing;
+        this.borrowing = borrowing;
+        return previous;
     }
 
     /**
@@ -266,8 +316,8 @@ final class HiddenOnlyMemberRecorder {
     }
 
     /**
-     * Records a described type when it carries {@code @Hidden} and not {@code @Schema(hidden = true)},
-     * and, for an enum type, each of its constants that does.
+     * Records a described type when it carries a marker, and, for an enum type, each of its constants that
+     * does. Neither is hideable by {@code @Schema(hidden = true)} on a field or getter.
      *
      * @param type the described type
      */
@@ -276,15 +326,17 @@ final class HiddenOnlyMemberRecorder {
             return;
         }
         AnnotatedClass view = AnnotatedClassResolver.resolveWithoutSuperTypes(config, type);
-        if (hiddenOnly(view)) {
-            recording.add(new HiddenOnlyMember(type.getName(), null));
+        HidingMarker typeMarker = markerOf(view);
+        if (typeMarker != null) {
+            record(type.getName(), null, typeMarker, false);
         }
         if (type.isEnum()) {
             JavaType enumType = mapper.getTypeFactory().constructType(type);
             for (AnnotatedField constant :
                     AnnotatedClassResolver.resolve(config, enumType, config).fields()) {
-                if (constant.getAnnotated().isEnumConstant() && hiddenOnly(constant)) {
-                    recording.add(new HiddenOnlyMember(type.getName(), constant.getName()));
+                HidingMarker constantMarker = constant.getAnnotated().isEnumConstant() ? markerOf(constant) : null;
+                if (constantMarker != null) {
+                    record(type.getName(), constant.getName(), constantMarker, false);
                 }
             }
         }
@@ -296,7 +348,8 @@ final class HiddenOnlyMemberRecorder {
      * modifies {@code attributes}. Either scope records the types its declared type reaches, map values
      * excepted, since the output direction describes none (see {@link #recordReachedTypes}); the
      * member's own scope also records its property's carriers, read from the profile mapper's
-     * serialization introspection of the type it is described in.
+     * serialization introspection of the type it is described in, as hideable: the output direction
+     * honors {@code @Schema(hidden = true)} on the field or getter of every member it publishes.
      *
      * @param attributes the member's collected attributes, left untouched
      * @param scope      the published member, or a container's item view of it
@@ -308,18 +361,19 @@ final class HiddenOnlyMemberRecorder {
         }
         recordReachedTypes(scope, false, context);
         if (!scope.isFakeContainerItemScope()) {
-            recordIntrospectedMember(describedIn(scope), scope.getRawMember());
+            recordIntrospectedMember(describedIn(scope), scope.getRawMember(), true);
         }
     }
 
     /**
      * The input direction's member attribute hook: the schema library calls it for each member it
      * describes, after its ignore checks have run, for a container's item view of it, and for each member
-     * scope the input describer builds a property's schema from. It never modifies {@code attributes}.
-     * Either scope records the types its declared type reaches, map values included (see {@link
-     * #recordReachedTypes}); the member's own scope also records its property's carriers, read from the
-     * profile mapper's deserialization introspection of the type it is described in (see {@link
-     * #boundProperty}).
+     * scope the input describer builds a property's schema from or borrows a field's attributes through.
+     * It never modifies {@code attributes}. Either scope records the types its declared type reaches, map
+     * values included (see {@link #recordReachedTypes}); the member's own scope also records its
+     * property's carriers, read from the profile mapper's deserialization introspection of the type it is
+     * described in (see {@link #boundProperty}), as hideable unless a borrow is in progress (see {@link
+     * #setBorrowing}).
      *
      * @param attributes the member's collected attributes, left untouched
      * @param scope      the described member, or a container's item view of it
@@ -333,7 +387,7 @@ final class HiddenOnlyMemberRecorder {
         if (!scope.isFakeContainerItemScope()) {
             Class<?> type = describedIn(scope);
             Member member = scope.getRawMember();
-            recordProperty(type, member, boundProperty(type, member));
+            recordProperty(type, member, boundProperty(type, member), !borrowing);
         }
     }
 
@@ -460,7 +514,8 @@ final class HiddenOnlyMemberRecorder {
      * Jackson annotation bundle, is recorded as described through the content the schema library's
      * Jackson module flattens into the type, unless the profile overrides the type. The members are
      * selected from the type's own members, so one the profile mapper's introspection drops in the
-     * recorder's direction is still recorded, as its own and only carrier.
+     * recorder's direction is still recorded, as its own and only carrier. An unwrapped member is never
+     * hideable by {@code @Schema(hidden = true)}, which neither generator honors on it.
      *
      * @param attributes the type's collected attributes, left untouched
      * @param scope      the described type
@@ -477,7 +532,7 @@ final class HiddenOnlyMemberRecorder {
             if (AnnotationHelper.resolveAnnotation(candidate, JsonUnwrapped.class, JACKSON_BUNDLE)
                     .filter(JsonUnwrapped::enabled)
                     .isPresent()) {
-                recordIntrospectedMember(scope.getType().getErasedType(), candidate.getRawMember());
+                recordIntrospectedMember(scope.getType().getErasedType(), candidate.getRawMember(), false);
             }
         }
     }
@@ -486,16 +541,19 @@ final class HiddenOnlyMemberRecorder {
      * Records a described member, with its property's carriers read from the profile mapper's
      * introspection of {@code type} in the recorder's direction.
      *
-     * @param type   the type the member is described in
-     * @param member the field or method the generation describes the property through
+     * @param type     the type the member is described in
+     * @param member   the field or method the generation describes the property through
+     * @param hideable whether {@code @Schema(hidden = true)} on the property's field or getter leaves it
+     *                 out at this position
      */
-    private void recordIntrospectedMember(Class<?> type, Member member) {
-        recordProperty(type, member, introspections.get(type).properties().get(member));
+    private void recordIntrospectedMember(Class<?> type, Member member, boolean hideable) {
+        recordProperty(type, member, introspections.get(type).properties().get(member), hideable);
     }
 
     /**
-     * Records a described property's carriers that carry {@code @Hidden}, each method carrier together
-     * with the declarations it overrides or implements, unless its {@code @Schema} reading hides it.
+     * Records a described property's carriers that carry a marker: its field, getter, setter, and creator
+     * parameter, and the member it is described through, each method carrier together with the
+     * declarations it overrides or implements.
      *
      * @param type      the type the property is described in; a carrier declared by a type that is not
      *                  one of its supertypes, such as a builder's method, is read within its own
@@ -504,74 +562,139 @@ final class HiddenOnlyMemberRecorder {
      *                  null} when it is described through neither (a creator parameter)
      * @param property  the property as the profile mapper's introspection links it, or {@code null} when
      *                  the introspection does not know it
+     * @param hideable  whether {@code @Schema(hidden = true)} declared directly on the property's field, or
+     *                  on its getter when the mapper sees no field, leaves the property out at the
+     *                  position the caller describes it at
      */
-    void recordProperty(Class<?> type, Member described, BeanPropertyDefinition property) {
+    void recordProperty(Class<?> type, Member described, BeanPropertyDefinition property, boolean hideable) {
         if (recording == null) {
             return;
         }
         Member field = property == null ? null : memberOf(property.getField());
         Member getter = property == null ? null : memberOf(property.getGetter());
         Member setter = property == null ? null : memberOf(property.getSetter());
-        if (hiddenBySchema(type, described, field, getter)) {
-            return;
-        }
         for (Member carrier : new Member[] {described, field, getter, setter}) {
             if (carrier instanceof Field fieldCarrier) {
-                recordField(type, fieldCarrier);
+                recordField(type, fieldCarrier, hideable);
             } else if (carrier instanceof Method methodCarrier) {
-                recordMethod(type, methodCarrier);
+                recordMethod(type, methodCarrier, hideable);
             }
         }
+        AnnotatedParameter parameter = property == null ? null : property.getConstructorParameter();
+        if (parameter != null) {
+            recordParameter(parameter, hideable);
+        }
+    }
+
+    /**
+     * Records an any-setter declared on a creator parameter, whose extras the input direction's describer
+     * has described, when the parameter carries a marker. The parameter is its own and only carrier: the
+     * profile mapper's introspection links it to no property. It is recorded {@code false}, since {@code
+     * @Schema(hidden = true)} never leaves an any-setter's extras out.
+     *
+     * @param parameter the creator parameter the any-setter binds
+     */
+    void recordAnySetterParameter(AnnotatedParameter parameter) {
+        if (recording == null) {
+            return;
+        }
+        recordParameter(parameter, false);
     }
 
     /**
      * Records a field carrier when its merged view within {@code type}, or, when the mapper's
-     * introspection holds no view of it, the field itself, carries {@code @Hidden} without also
-     * carrying {@code @Schema(hidden = true)}.
+     * introspection holds no view of it, the field itself, carries a marker.
      */
-    private void recordField(Class<?> type, Field field) {
+    private void recordField(Class<?> type, Field field, boolean hideable) {
         Annotated view = view(type, field);
-        if (view != null ? hiddenOnly(view) : declaresHiddenOnly(field)) {
-            record(field);
+        HidingMarker marker = view != null ? markerOf(view) : declarationMarker(field);
+        if (marker != null) {
+            record(field, marker, hideable);
         }
     }
 
     /**
-     * Records the declarations that give a method carrier {@code @Hidden}. Each member method of the type
-     * the carrier is read within whose name and resolved parameter types are the carrier's own — the
-     * carrier itself, and a generic declaration it overrides with concrete parameter types — is read for
-     * {@code @Hidden} through its merged view; for each one carrying it, each declaration of that method's
-     * signature in the type's hierarchy that declares {@code @Hidden} itself, or through the mix-in the
-     * mapper registers for its own class, is recorded unless its own {@code @Schema}, or the one its own
-     * class's mix-in declares for it, says {@code hidden = true}, and when none does, since a mix-in
-     * registered for another class of the hierarchy put it there, the method the mapper binds the
-     * signature to is recorded only when its merged view carries {@code @Hidden} without also carrying
-     * {@code @Schema(hidden = true)}.
+     * Records a creator parameter carrier when it carries a marker, under its creator's name — {@code
+     * <init>} for a constructor — followed by {@code #} and its zero-based index, and the creator's
+     * declaring type. The parameter is read through its own view of the creator, never the property's,
+     * which carries the annotations the mapper merges onto it from the property's other accessors; when
+     * no view holds the creator, the parameter's own declarations are read.
      */
-    private void recordMethod(Class<?> type, Method method) {
+    private void recordParameter(AnnotatedParameter parameter, boolean hideable) {
+        Member creator = parameter.getOwner().getMember();
+        int index = parameter.getIndex();
+        Annotated view = creatorParameterView(creator, index);
+        HidingMarker marker = view != null ? markerOf(view) : declaredParameterMarker(creator, index);
+        if (marker == null) {
+            return;
+        }
+        String creatorName = creator instanceof Constructor<?> ? "<init>" : creator.getName();
+        record(creator.getDeclaringClass().getName(), creatorName + "#" + index, marker, hideable);
+    }
+
+    /**
+     * The view of parameter {@code index} of {@code creator} within the creator's declaring type (see
+     * {@link #creatorViews}), with its own annotations and its mix-in's, or {@code null} when that view
+     * holds no such creator.
+     */
+    private Annotated creatorParameterView(Member creator, int index) {
+        AnnotatedClass members = creatorViews.get(creator.getDeclaringClass());
+        List<? extends AnnotatedWithParams> creators =
+                creator instanceof Constructor<?> ? members.getConstructors() : members.getFactoryMethods();
+        for (AnnotatedWithParams candidate : creators) {
+            if (candidate.getMember().equals(creator) && index < candidate.getParameterCount()) {
+                return candidate.getParameter(index);
+            }
+        }
+        return null;
+    }
+
+    /** The marker parameter {@code index} of {@code creator} declares by itself, directly or through a bundle. */
+    private static HidingMarker declaredParameterMarker(Member creator, int index) {
+        Parameter[] parameters = ((Executable) creator).getParameters();
+        if (index >= parameters.length) {
+            return null;
+        }
+        Annotation[] own = parameters[index].getDeclaredAnnotations();
+        Schema schema = declared(own, Schema.class, new HashSet<>());
+        return markerOf(declared(own, Hidden.class, new HashSet<>()) != null, schema != null && schema.hidden());
+    }
+
+    /**
+     * Records the declarations that give a method carrier a marker. Each member method of the type the
+     * carrier is read within whose name and resolved parameter types are the carrier's own — the carrier
+     * itself, and a generic declaration it overrides with concrete parameter types — is read for a marker
+     * through its merged view; for each one carrying one, each declaration of that method's signature in
+     * the type's hierarchy that carries a marker by itself (see {@link #declarationMarker}) is recorded
+     * with that marker, and when none does, since a mix-in registered for another class of the hierarchy
+     * put it there, the method the mapper binds the signature to is recorded with the marker of its merged
+     * view.
+     */
+    private void recordMethod(Class<?> type, Method method, boolean hideable) {
         Class<?> owner = owner(type, method);
         Introspection introspection = introspections.get(owner);
         if (!(introspection.byMember().get(method) instanceof AnnotatedMethod carrier)) {
-            if (declaresHiddenOnly(method)) {
-                record(method);
+            HidingMarker marker = declarationMarker(method);
+            if (marker != null) {
+                record(method, marker, hideable);
             }
             return;
         }
         for (AnnotatedMethod related : introspection.members().memberMethods()) {
-            if (!related.hasAnnotation(Hidden.class) || !sameResolvedSignature(related, carrier)) {
+            HidingMarker merged = markerOf(related);
+            if (merged == null || !sameResolvedSignature(related, carrier)) {
                 continue;
             }
             boolean declared = false;
             for (Method declaration : declarations(owner, related)) {
-                if (declaresHidden(declaration) || mixInDeclaresHidden(declaration)) {
+                HidingMarker marker = declarationMarker(declaration);
+                if (marker != null) {
                     declared = true;
-                    if (!declaresSchemaHidden(declaration)) {
-                        record(declaration);
-                    }
+                    record(declaration, marker, hideable);
                 }
             }
-            if (!declared && hiddenOnly(related)) {
-                record(related.getAnnotated());
+            if (!declared) {
+                record(related.getAnnotated(), merged, hideable);
             }
         }
     }
@@ -620,72 +743,64 @@ final class HiddenOnlyMemberRecorder {
     }
 
     /**
-     * Whether the mix-in the mapper registers for {@code declaration}'s own class, or one of that
-     * mix-in's supertypes, declares a method of its name and parameter types carrying {@code @Hidden}:
-     * the mapper merges it into the declaration, the mix-in's target.
+     * The marker a field or method declaration carries by itself: its own annotations, and those of the
+     * same-named field, or the method of the same name and parameter types, that the mix-in the mapper
+     * registers for the declaration's own class, or one of that mix-in's supertypes, declares — each read
+     * directly or through a Jackson annotation bundle at any depth. The first mix-in {@code @Schema} found
+     * takes precedence over the declaration's own, as the mapper merges them. {@code null} when neither
+     * marker is present.
      */
-    private boolean mixInDeclaresHidden(Method declaration) {
+    private HidingMarker declarationMarker(Member declaration) {
+        Annotation[] own = ((AnnotatedElement) declaration).getDeclaredAnnotations();
+        boolean hidden = declared(own, Hidden.class, new HashSet<>()) != null;
+        Schema schema = null;
         Class<?> mixIn = config.findMixInClassFor(declaration.getDeclaringClass());
-        if (mixIn == null) {
-            return false;
+        Deque<Class<?>> pending = new ArrayDeque<>();
+        if (mixIn != null) {
+            pending.add(mixIn);
         }
         Set<Class<?>> visited = new HashSet<>();
-        Deque<Class<?>> pending = new ArrayDeque<>(List.of(mixIn));
         while (!pending.isEmpty()) {
             Class<?> type = pending.removeFirst();
             if (type == Object.class || !visited.add(type)) {
                 continue;
             }
-            for (Method candidate : type.getDeclaredMethods()) {
-                if (candidate.getName().equals(declaration.getName())
-                        && Arrays.equals(candidate.getParameterTypes(), declaration.getParameterTypes())
-                        && declaresHidden(candidate)) {
-                    return true;
+            for (AnnotatedElement counterpart : counterparts(type, declaration)) {
+                Annotation[] annotations = counterpart.getDeclaredAnnotations();
+                hidden |= declared(annotations, Hidden.class, new HashSet<>()) != null;
+                if (schema == null) {
+                    schema = declared(annotations, Schema.class, new HashSet<>());
                 }
             }
             addSupertypes(type, pending);
         }
-        return false;
+        if (schema == null) {
+            schema = declared(own, Schema.class, new HashSet<>());
+        }
+        return markerOf(hidden, schema != null && schema.hidden());
     }
 
     /**
-     * Whether the property's {@code @Schema} says {@code hidden = true}: read on its getter and then its
-     * field when the generation describes it through the getter, otherwise on its field and then its
-     * getter, and on the described member alone when the introspection links neither and it is a field or
-     * a parameterless method — a setter-only property reads none, since neither generator honors
-     * {@code @Schema(hidden = true)} on a setter — the first annotation found deciding. Each member's
-     * {@code @Schema} is read from its merged view within {@code type}.
+     * The members {@code type} declares that match {@code declaration}: the field of its name, or each
+     * method of its name and parameter types.
      */
-    private boolean hiddenBySchema(Class<?> type, Member described, Member field, Member getter) {
-        Member[] reading;
-        if (field == null && getter == null) {
-            reading = described instanceof Method method && method.getParameterCount() > 0
-                    ? new Member[0]
-                    : new Member[] {described};
-        } else if (getter != null && getter.equals(described)) {
-            reading = new Member[] {getter, field};
-        } else {
-            reading = new Member[] {field, getter};
-        }
-        for (Member member : reading) {
-            Schema schema = schemaOf(type, member);
-            if (schema != null) {
-                return schema.hidden();
+    private static List<AnnotatedElement> counterparts(Class<?> type, Member declaration) {
+        List<AnnotatedElement> counterparts = new ArrayList<>();
+        if (declaration instanceof Field) {
+            for (Field candidate : type.getDeclaredFields()) {
+                if (candidate.getName().equals(declaration.getName())) {
+                    counterparts.add(candidate);
+                }
+            }
+        } else if (declaration instanceof Method method) {
+            for (Method candidate : type.getDeclaredMethods()) {
+                if (candidate.getName().equals(method.getName())
+                        && Arrays.equals(candidate.getParameterTypes(), method.getParameterTypes())) {
+                    counterparts.add(candidate);
+                }
             }
         }
-        return false;
-    }
-
-    /** The {@code @Schema} {@code member}'s merged view within {@code type} carries, or {@code null}. */
-    private Schema schemaOf(Class<?> type, Member member) {
-        if (member == null) {
-            return null;
-        }
-        Annotated view = view(type, member);
-        if (view != null) {
-            return view.getAnnotation(Schema.class);
-        }
-        return member instanceof AnnotatedElement element ? element.getDeclaredAnnotation(Schema.class) : null;
+        return counterparts;
     }
 
     /**
@@ -704,73 +819,60 @@ final class HiddenOnlyMemberRecorder {
         return member.getDeclaringClass().isAssignableFrom(type) ? type : member.getDeclaringClass();
     }
 
-    /** Whether a merged view carries {@code @Hidden} and not {@code @Schema(hidden = true)}. */
-    private static boolean hiddenOnly(Annotated view) {
+    /** The marker a merged view carries, or {@code null} when it carries neither. */
+    private static HidingMarker markerOf(Annotated view) {
         Schema schema = view.getAnnotation(Schema.class);
-        return view.hasAnnotation(Hidden.class) && (schema == null || !schema.hidden());
+        return markerOf(view.hasAnnotation(Hidden.class), schema != null && schema.hidden());
     }
 
-    private void record(Member member) {
-        recording.add(new HiddenOnlyMember(member.getDeclaringClass().getName(), member.getName()));
+    /** The marker for the markers present, or {@code null} when neither is. */
+    private static HidingMarker markerOf(boolean hidden, boolean schemaHidden) {
+        if (hidden) {
+            return schemaHidden ? HidingMarker.BOTH : HidingMarker.HIDDEN;
+        }
+        return schemaHidden ? HidingMarker.SCHEMA_HIDDEN : null;
     }
 
     /**
-     * Whether {@code element} declares {@code @Hidden}, directly or through a Jackson annotation bundle
-     * at any depth, as the profile mapper's introspection expands a bundle. Only the element's own
-     * declarations are read.
+     * The annotation of {@code type} among {@code annotations}, declared directly or, when none is,
+     * through a Jackson annotation bundle at any depth, the first bundle in declaration order that holds
+     * one deciding, as the profile mapper's introspection expands a bundle; {@code null} when absent.
      */
-    private static boolean declaresHidden(AnnotatedElement element) {
-        return declaresHidden(element.getDeclaredAnnotations(), new HashSet<>());
-    }
-
-    private static boolean declaresHidden(Annotation[] annotations, Set<Class<?>> visitedBundles) {
+    private static <A extends Annotation> A declared(
+            Annotation[] annotations, Class<A> type, Set<Class<?>> visitedBundles) {
         for (Annotation annotation : annotations) {
-            if (annotation instanceof Hidden) {
-                return true;
-            }
-            if (JACKSON_BUNDLE.test(annotation)
-                    && visitedBundles.add(annotation.annotationType())
-                    && declaresHidden(annotation.annotationType().getDeclaredAnnotations(), visitedBundles)) {
-                return true;
+            if (type.isInstance(annotation)) {
+                return type.cast(annotation);
             }
         }
-        return false;
-    }
-
-    /**
-     * Whether {@code element} declares {@code @Hidden} without also declaring {@code @Schema(hidden =
-     * true)}, each read from {@code element}'s own declarations only, for a carrier the mapper's
-     * introspection holds no merged view of.
-     */
-    private static boolean declaresHiddenOnly(AnnotatedElement element) {
-        Schema schema = element.getDeclaredAnnotation(Schema.class);
-        return declaresHidden(element) && (schema == null || !schema.hidden());
-    }
-
-    /** Whether {@code declaration}'s own {@code @Schema}, its own class's mix-in's taking precedence, says hidden. */
-    private boolean declaresSchemaHidden(Method declaration) {
-        Class<?> mixIn = config.findMixInClassFor(declaration.getDeclaringClass());
-        Deque<Class<?>> pending = new ArrayDeque<>();
-        if (mixIn != null) {
-            pending.add(mixIn);
-        }
-        Set<Class<?>> visited = new HashSet<>();
-        while (!pending.isEmpty()) {
-            Class<?> type = pending.removeFirst();
-            if (type == Object.class || !visited.add(type)) {
-                continue;
-            }
-            for (Method candidate : type.getDeclaredMethods()) {
-                if (candidate.getName().equals(declaration.getName())
-                        && Arrays.equals(candidate.getParameterTypes(), declaration.getParameterTypes())
-                        && candidate.getDeclaredAnnotation(Schema.class) != null) {
-                    return candidate.getDeclaredAnnotation(Schema.class).hidden();
+        for (Annotation annotation : annotations) {
+            if (JACKSON_BUNDLE.test(annotation) && visitedBundles.add(annotation.annotationType())) {
+                A bundled = declared(annotation.annotationType().getDeclaredAnnotations(), type, visitedBundles);
+                if (bundled != null) {
+                    return bundled;
                 }
             }
-            addSupertypes(type, pending);
         }
-        Schema own = declaration.getDeclaredAnnotation(Schema.class);
-        return own != null && own.hidden();
+        return null;
+    }
+
+    private void record(Member member, HidingMarker marker, boolean hideable) {
+        record(member.getDeclaringClass().getName(), member.getName(), marker, hideable);
+    }
+
+    /**
+     * Records one entry; an entry already recorded keeps one place in the report, its hideable value
+     * becomes the conjunction of both, and differing markers combine into {@code BOTH}.
+     */
+    private void record(String declaringType, String member, HidingMarker marker, boolean hideable) {
+        recording.merge(
+                new Key(declaringType, member),
+                new HiddenMember(declaringType, member, marker, hideable),
+                (recorded, added) -> new HiddenMember(
+                        declaringType,
+                        member,
+                        recorded.marker() == added.marker() ? recorded.marker() : HidingMarker.BOTH,
+                        recorded.hideableBySchemaHidden() && added.hideableBySchemaHidden()));
     }
 
     private static void addSupertypes(Class<?> type, Deque<Class<?>> pending) {

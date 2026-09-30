@@ -200,13 +200,14 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     private final Set<JavaType> inlineInProgress = new HashSet<>();
 
     /**
-     * The recorder of described members and types that carry {@code @Hidden} without {@code
-     * @Schema(hidden = true)}, or {@code null} when nothing records. Recording never changes what this
-     * describer describes: it is told each property right after its schema is built, each unwrapped
-     * member once its content is accepted for folding into the parent, each any-setter once its extras
-     * are described, and each type this describer describes itself.
+     * The recorder of described members and types that carry {@code @Hidden}, {@code @Schema(hidden =
+     * true)}, or both, or {@code null} when nothing records. Recording never changes what this describer
+     * describes: it is told each property right after its schema is built, with whether that path
+     * consulted the {@code @Schema(hidden = true)} check, each unwrapped member once its content is
+     * accepted for folding into the parent, each any-setter once its extras are described, each type this
+     * describer describes itself, and when a setter or builder method borrows a field's attributes.
      */
-    private final HiddenOnlyMemberRecorder hiddenMembers;
+    private final HiddenMemberRecorder hiddenMembers;
 
     /**
      * @param mapper          the profile's mapper, which the binder parses a body with
@@ -233,7 +234,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             boolean strictSpellings,
             ConstraintSource supplement,
             ValidatedProfile validatedProfile,
-            HiddenOnlyMemberRecorder hiddenMembers) {
+            HiddenMemberRecorder hiddenMembers) {
         this.mapper = mapper;
         this.strictSpellings = strictSpellings;
         this.supplement = supplement;
@@ -362,7 +363,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             }
             throw refuseCustomDeserializer(javaType, deserializer);
         }
-        recordHiddenOnly(javaType.getRawClass());
+        recordHiddenType(javaType.getRawClass());
         ObjectNode definition = context.getGeneratorConfig().createObjectNode();
         ValueInstantiator instantiator = bean.getValueInstantiator();
         requireNotDelegating(javaType, instantiator);
@@ -555,6 +556,19 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             List<SettableBeanProperty> childBound) {}
 
     /**
+     * One bound property's schema, with the fact the hidden-member recorder needs about the path that
+     * built it.
+     *
+     * @param schema   the property's schema
+     * @param hideable whether the path consulted the generator's {@code @Schema(hidden = true)} check on
+     *                 the property's own field or getter, so declaring that marker there would leave the
+     *                 property out: {@code true} for a field-bound property, a constructor creator's
+     *                 parameter with a backing field, and a getter-described property; {@code false} for
+     *                 every other path
+     */
+    private record DescribedProperty(JsonNode schema, boolean hideable) {}
+
+    /**
      * Whether a type built from {@code builder} would itself describe extras on its own object schema:
      * its own any-setter, or one declared by a {@code @JsonUnwrapped} member of its own. The one place
      * this "would this type describe extras?" question is answered, so {@link
@@ -647,13 +661,13 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 excludedFromReservation.add(name);
                 continue;
             }
-            JsonNode schema = propertySchema(property, builtClass, resolved, context, required);
-            if (schema == null) {
+            DescribedProperty described = propertySchema(property, builtClass, resolved, context, required);
+            if (described == null) {
                 continue; // hidden on purpose: reserved below, never published
             }
-            properties.set(name, schema);
+            properties.set(name, described.schema());
             published.add(name);
-            recordHiddenOnly(property, builtClass);
+            recordHiddenProperty(property, builtClass, described.hideable());
             if (caseInsensitive) {
                 publishFolded(definition, patternProperties, name, builtClass);
             }
@@ -703,8 +717,9 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 unwrappedChildren.add(new UnwrappedChild(
                         property.getName(), transformer, childClass, childBuilder, childResolved, childBound));
                 // The unwrapped member is described through its content, which the sibling loop below
-                // folds in for every child accepted here, so the recorder is told about the member itself.
-                recordHiddenOnly(property, builtClass);
+                // folds in for every child accepted here, so the recorder is told about the member itself,
+                // which @Schema(hidden = true) on its field or getter does not leave out.
+                recordHiddenProperty(property, builtClass, false);
             }
 
             // C1 (spike/deserializer-driven-schema round 4, CRITICAL): whether extras will be described
@@ -723,7 +738,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             boolean extrasWillBeDescribed = !extrasSuppressed && wouldDescribeExtras(builder);
 
             for (UnwrappedChild sibling : unwrappedChildren) {
-                recordHiddenOnly(sibling.childClass());
+                recordHiddenType(sibling.childClass());
                 if (extrasWillBeDescribed) {
                     // F2 (security review round 1, HIGH): a nested @JsonUnwrapped chain (this unwrapped
                     // child itself declares another unwrapped member) is refused rather than folded
@@ -740,12 +755,12 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                     if (name.isEmpty() || published.contains(name)) {
                         continue;
                     }
-                    JsonNode schema = propertySchema(
+                    DescribedProperty described = propertySchema(
                             childProperty, sibling.childClass(), sibling.childResolved(), context, required);
-                    if (schema != null) {
-                        properties.set(name, schema);
+                    if (described != null) {
+                        properties.set(name, described.schema());
                         published.add(name);
-                        recordHiddenOnly(childProperty, sibling.childClass());
+                        recordHiddenProperty(childProperty, sibling.childClass(), described.hideable());
                         if (caseInsensitive) {
                             publishFolded(definition, patternProperties, name, builtClass);
                         }
@@ -1011,10 +1026,14 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     }
 
     /**
-     * The schema of one bound property, or {@code null} when the member is hidden from the document
-     * on purpose ({@code @Schema(hidden = true)}).
+     * The schema of one bound property, with whether its path consulted the {@code @Schema(hidden =
+     * true)} check on the property's own field or getter; {@code null} when the member is hidden from
+     * the document on purpose ({@code @Schema(hidden = true)}). The field path, a constructor creator's
+     * backing-field path, and the getter path consult it; the setter path (a setter, a builder method,
+     * or a static factory creator's parameter), the map-member overlay path, the inline nested-bean and
+     * converter paths, and every path without a schema-library member scope do not.
      */
-    private JsonNode propertySchema(
+    private DescribedProperty propertySchema(
             SettableBeanProperty property,
             Class<?> builtClass,
             ResolvedType resolved,
@@ -1078,7 +1097,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                     translateConstraints(
                             member, builtClass, (ObjectNode) schema, property.getName(), property.getType(), required);
                 }
-                return schema;
+                return new DescribedProperty(schema, false);
             }
         }
         if (valueDeserializer instanceof StdDelegatingDeserializer<?> converting
@@ -1091,7 +1110,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 translateConstraints(
                         member, builtClass, (ObjectNode) schema, property.getName(), property.getType(), required);
             }
-            return schema;
+            return new DescribedProperty(schema, false);
         }
         // A Map-typed member is a distinct position — see mapMemberSchema's own Javadoc for the WARN on
         // an ignored @Schema(additionalProperties) and for the shared-definition leakage control. Checked
@@ -1100,7 +1119,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         if (property.getType().isMapLikeType()) {
             JsonNode mapSchema = mapMemberSchema(property, member, raw, builtClass, context);
             if (mapSchema != null) {
-                return mapSchema;
+                return new DescribedProperty(mapSchema, false);
             }
         }
         if (raw instanceof Field field) {
@@ -1112,13 +1131,18 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         if (member instanceof AnnotatedParameter parameter) {
             Field backing = backingField(builtClass, parameter, property.getName());
             if (backing != null) {
-                JsonNode schema = fieldSchema(
+                DescribedProperty described = fieldSchema(
                         backing, builtClass, resolved, property.getName(), property.getType(), context, required);
-                if (schema != null && member != null) {
+                if (described != null && member != null) {
                     translateConstraints(
-                            member, builtClass, (ObjectNode) schema, property.getName(), property.getType(), required);
+                            member,
+                            builtClass,
+                            (ObjectNode) described.schema(),
+                            property.getName(),
+                            property.getType(),
+                            required);
                 }
-                return schema;
+                return described;
             }
         }
         // A member the schema library has no scope for: the type from the deserializer, the
@@ -1133,7 +1157,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 && Boolean.TRUE.equals(property.getMetadata().getRequired())) {
             required.add(property.getName());
         }
-        return schema;
+        return new DescribedProperty(schema, false);
     }
 
     /**
@@ -1242,7 +1266,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         return schema != null && schema.additionalProperties() == Schema.AdditionalPropertiesValue.FALSE;
     }
 
-    private JsonNode fieldSchema(
+    private DescribedProperty fieldSchema(
             Field field,
             Class<?> builtClass,
             ResolvedType resolved,
@@ -1275,10 +1299,11 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 markNullable(schema);
             }
             applyScopedConstraints(schema, builtClass, field.getName(), propertyType.getRawClass(), name, required);
-            return schema;
+            return new DescribedProperty(schema, true);
         }
         // A field the library's member resolution does not list (a static or synthetic one): by type.
-        return context.createDefinitionReference(typeContext.resolve(field.getGenericType()));
+        return new DescribedProperty(
+                context.createDefinitionReference(typeContext.resolve(field.getGenericType())), false);
     }
 
     /**
@@ -1442,7 +1467,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         });
     }
 
-    private JsonNode methodSchema(
+    private DescribedProperty methodSchema(
             Method method,
             SettableBeanProperty property,
             Class<?> builtClass,
@@ -1480,7 +1505,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                 // constraints the developer wrote for the value.
                 borrowFieldAttributes(builtClass, property.getName(), schema, context, required);
             }
-            return schema;
+            return new DescribedProperty(schema, false);
         }
         ResolvedTypeWithMembers members = membersOf(typeContext, resolved, method.getDeclaringClass());
         for (ResolvedMethod candidate : members.getMemberMethods()) {
@@ -1513,11 +1538,11 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                         property.getName(),
                         required);
             }
-            return schema;
+            return new DescribedProperty(schema, true);
         }
         ObjectNode schema = context.createDefinitionReference(resolve(context, property.getType()));
         translateConstraints(member, builtClass, schema, property.getName(), property.getType(), required);
-        return schema;
+        return new DescribedProperty(schema, false);
     }
 
     /**
@@ -1614,8 +1639,13 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         }
     }
 
-    /** Merges one field's schema-library attributes onto {@code schema}, shared by both borrow paths above. */
-    private static void applyFieldScopeAttributes(
+    /**
+     * Merges one field's schema-library attributes onto {@code schema}, shared by both borrow paths above.
+     * The member attribute hooks run for the field while its attributes are collected; the hidden-member
+     * recorder is told a borrow is in progress for that time, since the field's {@code @Schema(hidden =
+     * true)} does not leave the borrowing property out.
+     */
+    private void applyFieldScopeAttributes(
             Field field,
             Class<?> declaringClass,
             String wireName,
@@ -1628,8 +1658,15 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
             if (candidate.getRawMember().equals(field)) {
                 FieldScope scope = typeContext.createFieldScope(
                         candidate, new MemberScope.DeclarationDetails(candidate.getDeclaringType(), members));
-                AttributeCollector.mergeMissingAttributes(
-                        schema, AttributeCollector.collectFieldAttributes(scope, context));
+                boolean borrowing = hiddenMembers != null && hiddenMembers.setBorrowing(true);
+                try {
+                    AttributeCollector.mergeMissingAttributes(
+                            schema, AttributeCollector.collectFieldAttributes(scope, context));
+                } finally {
+                    if (hiddenMembers != null) {
+                        hiddenMembers.setBorrowing(borrowing);
+                    }
+                }
                 if (context.getGeneratorConfig().isRequired(scope)) {
                     required.add(wireName);
                 }
@@ -1655,7 +1692,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      *
      * @param type the described type
      */
-    private void recordHiddenOnly(Class<?> type) {
+    private void recordHiddenType(Class<?> type) {
         if (hiddenMembers != null) {
             hiddenMembers.recordType(type);
         }
@@ -1668,27 +1705,36 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      *
      * @param property  the described property
      * @param declaring the type whose own properties include it
+     * @param hideable  whether the path that described the property consulted the {@code @Schema(hidden =
+     *                  true)} check on its own field or getter (see {@link DescribedProperty})
      */
-    private void recordHiddenOnly(SettableBeanProperty property, Class<?> declaring) {
+    private void recordHiddenProperty(SettableBeanProperty property, Class<?> declaring, boolean hideable) {
         if (hiddenMembers == null || !hiddenMembers.isRecording()) {
             return;
         }
         AnnotatedMember member = property.getMember();
         Member described = (member == null || member instanceof AnnotatedParameter) ? null : member.getMember();
-        hiddenMembers.recordProperty(declaring, described, introspectedProperty(declaring, member, property.getName()));
+        hiddenMembers.recordProperty(
+                declaring, described, introspectedProperty(declaring, member, property.getName()), hideable);
     }
 
     /**
      * Tells the recorder, while it records, about an any-setter whose extras this describer has just
-     * described: the any-setter is its own and only carrier. Changes nothing this describer describes.
+     * described: the any-setter is its own and only carrier, and {@code @Schema(hidden = true)} never
+     * leaves its extras out. Changes nothing this describer describes.
      *
-     * @param anySetter the any-setter's method or field; a creator parameter, which {@code @Hidden}
-     *                  cannot annotate, records nothing
+     * @param anySetter the any-setter's method, field, or creator parameter; a creator parameter is
+     *                  recorded under its creator's name and index
      * @param described the type whose extras the any-setter binds
      */
-    private void recordHiddenOnly(AnnotatedMember anySetter, Class<?> described) {
-        if (hiddenMembers != null && !(anySetter instanceof AnnotatedParameter)) {
-            hiddenMembers.recordProperty(described, anySetter.getMember(), null);
+    private void recordHiddenAnySetter(AnnotatedMember anySetter, Class<?> described) {
+        if (hiddenMembers == null) {
+            return;
+        }
+        if (anySetter instanceof AnnotatedParameter parameter) {
+            hiddenMembers.recordAnySetterParameter(parameter);
+        } else {
+            hiddenMembers.recordProperty(described, anySetter.getMember(), null, false);
         }
     }
 
@@ -2304,7 +2350,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                     applyCorrection(definition, "minProperties", swagger.minProperties());
                 }
             }
-            recordHiddenOnly(member, builtClass);
+            recordHiddenAnySetter(member, builtClass);
         }
         return true;
     }
@@ -2436,7 +2482,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         try {
             ValueInstantiator instantiator = nestedBean.getValueInstantiator();
             requireNotDelegating(memberType, instantiator);
-            recordHiddenOnly(memberType.getRawClass());
+            recordHiddenType(memberType.getRawClass());
             ObjectNode inline = context.getGeneratorConfig().createObjectNode();
             // S2 (spike/deserializer-driven-schema round 4 ruling): describe()'s own root path checks
             // scalarCreator(instantiator) before ever building an object schema, so a from-string
