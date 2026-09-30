@@ -411,6 +411,11 @@ SPDX-License-Identifier: EUPL-1.2
             </dependency>
             <dependency>
                 <groupId>dev.vertique</groupId>
+                <artifactId>vertique-rest-openapi-docs</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
                 <artifactId>vertique-rest-openapi-validation</artifactId>
                 <version>${project.version}</version>
             </dependency>
