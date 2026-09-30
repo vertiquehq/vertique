@@ -42,10 +42,11 @@ import java.util.List;
  * <p>An input is hidden by its own {@code @Hidden}, {@code @Parameter(hidden = true)}, or
  * {@code @Schema(hidden = true)}; by the composite that binds it; or by a hidden method-level parameter
  * entry, read from {@link ResourceMethodMeta#methodAnnotations()}: a {@code @Parameter} on the
- * method, an entry of a {@code @Parameters} container, or an entry of {@code @Operation(parameters =
- * ...)}. Such an entry names a parameter or composite-field input by exact name and by location, and
- * an entry that declares no location names that input at every location. A hidden entry that names
- * no input fails the build of the inventory; a visible entry is ignored.
+ * method, an entry of a {@code @Parameters} container, an entry of {@code @Operation(parameters =
+ * ...)}, or an entry carried by a composed annotation (one meta level deep). Such an entry names a
+ * parameter or composite-field input by exact name and by location, and an entry that declares no
+ * location names that input at every location. A hidden entry that names no input fails the build of the
+ * inventory; a visible entry is ignored.
  *
  * <p>Bean Validation annotations and groups are matched by type name in the {@code
  * jakarta.validation} namespace only, so this module needs no validation dependency; {@code
@@ -284,14 +285,22 @@ final class OperationInventory {
                         + "' declares a hidden method-level @Parameter named '" + bounded(entry.name()) + "' "
                         + describeLocation(entry.in())
                         + ", but binds no input of that name and location; name an input the method binds,"
-                        + " or remove the entry.");
+                        + " or remove the entry"
+                        + (entry.in() == ParameterIn.HEADER
+                                ? "; header names are matched case-sensitively, write the name exactly as in"
+                                        + " @HeaderParam"
+                                : "")
+                        + ".");
             }
         }
     }
 
     /**
      * The swagger parameter entries declared on the method: each {@code @Parameter}, each entry of a
-     * {@code @Parameters} container, and each entry of {@code @Operation(parameters = ...)}.
+     * {@code @Parameters} container, and each entry of {@code @Operation(parameters = ...)}, plus
+     * those carried by a composed annotation, one meta level deep: the {@code @Parameter} and {@code
+     * @Parameters} entries and the {@code @Operation(parameters = ...)} entries present on the
+     * method annotation's own type.
      */
     private static List<io.swagger.v3.oas.annotations.Parameter> methodParameterEntries(
             List<Annotation> methodAnnotations) {
@@ -299,12 +308,18 @@ final class OperationInventory {
         for (Annotation annotation : methodAnnotations) {
             if (annotation instanceof io.swagger.v3.oas.annotations.Parameter parameter) {
                 entries.add(parameter);
-            }
-            if (annotation instanceof Parameters container) {
+            } else if (annotation instanceof Parameters container) {
                 Collections.addAll(entries, container.value());
-            }
-            if (annotation instanceof Operation operation) {
+            } else if (annotation instanceof Operation operation) {
                 Collections.addAll(entries, operation.parameters());
+            } else {
+                Class<? extends Annotation> composed = annotation.annotationType();
+                Collections.addAll(
+                        entries, composed.getAnnotationsByType(io.swagger.v3.oas.annotations.Parameter.class));
+                Operation meta = composed.getAnnotation(Operation.class);
+                if (meta != null) {
+                    Collections.addAll(entries, meta.parameters());
+                }
             }
         }
         return entries;

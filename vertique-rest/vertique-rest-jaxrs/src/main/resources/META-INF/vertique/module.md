@@ -1613,6 +1613,12 @@ as proof of a complete body.
   exactly, is the only key an entry accepts; any other key fails startup instead of being ignored.
 - **Spelling the section `jaxrs.Applications` or another case variant.** Only `jaxrs.applications`
   is read; a case variant is ignored like any unknown `jaxrs` key.
+- **Hiding an input the method does not bind, once a documentation module is bound.** A method-level
+  hiding entry — `@Parameter(name = ..., in = ..., hidden = true)` on the method, in `@Parameters`, in
+  `@Operation(parameters = ...)`, or carried by a composed annotation — must name an input the method
+  binds. Names match exactly and case-sensitively, header names included: write the name exactly as in
+  `@HeaderParam`. An unset `in` matches every location. A hidden entry that names no bound input fails
+  startup with a configuration exception, and only when such a sink is bound.
 
 ---
 
@@ -1661,8 +1667,9 @@ developers must not implement it. Once one or more sinks are bound, every JAX-RS
 one `MountPublication` at the end of `createRouter`, naming an application mount's `@RestApplication`
 name and declaring interface (`null` for every other mount) and carrying one `OperationPublication` per
 registered operation with the route value exactly as registered and the operation's effective security
-facts; a mount at least one sink wants detail for also carries an `OperationDetail` of deep-copied
-`CapturedSchemas`, keyed by `InputKey`, taken before the validation gate runs. `RestApplications` and
+facts; a mount at least one sink wants detail for also carries an `OperationDetail`: deep-copied
+`CapturedSchemas`, keyed by `InputKey`, taken before the validation gate is built, plus the operation's
+flattened input inventory and its response shape. `RestApplications` and
 `ApiDocsInstalled` are unrelated to synthetic operations and to the publication sink: they are the
 composition view and the docs-module marker described under
 [`@RestApplication`](#restapplication) above, public only so the JAX-RS application composer, the
