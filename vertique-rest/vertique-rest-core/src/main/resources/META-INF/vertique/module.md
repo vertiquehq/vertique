@@ -531,7 +531,15 @@ public interface RouterMount extends OrderedExtension {
 
 `mountPath()` must start with `/` and end with `/*`. `meta()` supplies the identity
 `MountCustomizer`s match on: `MountMeta(String mountId, String mountPath, @Nullable String openapiPath,
-Set<Class<?>> resourceTypes)`. Override it to publish a stable `mountId`.
+Set<Class<?>> resourceTypes, @Nullable String applicationName)`. Override it to publish a stable
+`mountId`. `applicationName` is the name of the application the mount serves and is `null` for a mount
+that belongs to no named application, including the default `meta()` above.
+
+`applicationName` is a nullable component appended after `resourceTypes`. The four-argument
+constructor `MountMeta(mountId, mountPath, openapiPath, resourceTypes)` remains and supplies `null`, so
+code that constructs a `MountMeta` with four arguments keeps compiling. A record pattern that
+deconstructs `MountMeta` into four components no longer compiles against the five-component record;
+read the components through the accessors instead.
 
 ```java
 @Provides
@@ -705,6 +713,14 @@ before the resource method.
 `requiredAction()` (`Optional<ActionRef>`), `operation()` (`RestOperationDescriptor`), and `route()`
 (`RouteRegistration`, whose `addHandler(...)` returns itself for chaining).
 
+`RestOperationDescriptor.applicationName()` is a `@Nullable String` default method that returns
+`null`. It names the application the operation belongs to or serves, which covers an application
+mount's operations and framework synthetic operations; it is `null` for every other operation. It is the
+one descriptor accessor exempt from the rule that the identity accessors are never `null`, and existing
+`RestOperationDescriptor` implementations keep compiling without overriding it. `operationId()` is
+unique within its mount; a contributor or interceptor that keys state per operation and must not
+depend on how a runtime treats ids across mounts includes the application name in the key.
+
 Contributors may also run for framework-owned synthetic operations — routes installed outside normal
 resource-method discovery. A synthetic route runs the same contributor chain, with the same inputs,
 as an equally-secured resource route: the same contributors, in the same order, with the same
@@ -751,9 +767,44 @@ public interface ErrorInterceptor extends OrderedExtension {
 ```
 
 `OperationContext` is immutable — `operationId()`, `routingContext()`, `methodAnnotations()`,
-`classAnnotations()`, `attributes()`, the typed lookups `methodAnnotation(Class)` /
-`classAnnotation(Class)`, and `withAttribute(String, Object)`, which returns a **new** context.
-Return that new instance from `beforeOperation` or the attribute is lost.
+`classAnnotations()`, `attributes()`, `operation()`, the typed lookups `methodAnnotation(Class)` /
+`classAnnotation(Class)`, and `withAttribute(String, Object)`, which returns a **new** context that
+carries every component, `operation` included. Return that new instance from `beforeOperation` or the
+attribute is lost.
+
+`operation()` is the operation's `RestOperationDescriptor`, the same instance the operation's
+`OperationHandlerContributor`s received as `OperationRegistrationContext.operation()` when the
+JAX-RS adapter registers the route. Read the
+application name from `ctx.operation().applicationName()`. `operation()` is `null` on a context built
+without a descriptor, such as one constructed with the five-argument constructor, so a key that uses it
+should handle `null` when the interceptor can see such contexts. An interceptor that keys state per
+operation includes the application name, so operations of different applications never share an
+entry:
+
+```java
+public Future<Object> recoverOperation(OperationContext ctx, Throwable cause) {
+    return cache.get(ctx.operation().applicationName() + ":" + ctx.operation().operationId())
+        .<Object>map(cached -> cached)
+        .orElse(Future.failedFuture(cause));
+}
+```
+
+Each interceptor's `beforeOperation` receives the context the previous one returned. The chain
+remembers the `operation()` of the context it starts with. After each `beforeOperation`, when the
+returned context's `operation()` is not that same instance (compared by reference), the chain replaces
+the returned context with a copy that carries the original operation and keeps every other component,
+so every later interceptor and every later hook (`onOperation`, `afterOperation`, `onSuccess`,
+`onError`, `recoverOperation`) observes the registration-time operation. The chain restores only the
+`operation` component; the `operationId()` of a context an interceptor rebuilt is left as returned, so
+read the operation's identity from `ctx.operation()`. A context an interceptor builds with the
+five-argument constructor carries a `null` operation, and the chain puts the operation back.
+
+`OperationContext` gains `operation` as a nullable component appended after `attributes`. The
+five-argument constructor `OperationContext(operationId, routingContext, methodAnnotations,
+classAnnotations, attributes)` remains and supplies `null`, so code that constructs an
+`OperationContext` with five arguments keeps compiling. A record pattern that deconstructs
+`OperationContext` into five components no longer compiles against the six-component record; read the
+components through the accessors instead.
 
 `recoverOperation` defaults to re-failing; returning a succeeded future turns a failure into a
 result. `ORIGINAL_ERROR_KEY` names the routing-context entry that carries the pre-mapping throwable.
@@ -1406,6 +1457,10 @@ multi-scheme AND requirement, scopes declared on an OR alternative, and scopes d
   above 1100 to sit behind them.
 - **Mutating `OperationContext` in place.** `withAttribute(...)` returns a new instance; the original
   is unchanged.
+- **Keying per-operation state on `operationId()` alone.** The id is unique within one mount; add
+  `ctx.operation().applicationName()` when the interceptor serves several applications.
+- **Destructuring `MountMeta` or `OperationContext` with a record pattern.** Both records gained a
+  trailing component; use the accessors.
 - **Putting sensitive evidence in `RoutingContext.data()`.** That map is keyed by public constants
   and is enumerable and writable by every component sharing the context.
 - **Expecting a completion event for a successful protocol upgrade.** There is none; a *failed*
