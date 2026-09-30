@@ -28,8 +28,8 @@ import java.util.Optional;
  * requirement sets from. It has no class annotations and no media types, and its route template is
  * the literal path the operation was installed at.
  *
- * <p>It also holds the name of the application whose document the operation serves, in a private
- * field with no accessor yet: {@code RestOperationDescriptor} does not define one.
+ * <p>{@link #applicationName()} reports the name of the application whose document the operation
+ * serves; the installer takes it from the synthetic operation.
  */
 final class SyntheticOperationDescriptor implements RestOperationDescriptor {
 
@@ -91,6 +91,11 @@ final class SyntheticOperationDescriptor implements RestOperationDescriptor {
     @Override
     public String operationId() {
         return operationId;
+    }
+
+    @Override
+    public String applicationName() {
+        return applicationName;
     }
 
     @Override

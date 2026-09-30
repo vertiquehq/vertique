@@ -245,7 +245,9 @@ scope.
 
 The `RouterMount` implementation, constructed only through its injected inner `Factory`. Default
 priority is `1000`; `meta()` reports `MountMeta("jaxrs:" + mountPath, mountPath, openapiPath,
-resourceTypes)`.
+resourceTypes, applicationName)`. `applicationName` is the declared `@RestApplication` name for a mount
+the framework's application composer created, and `null` for a mount built through `Factory.create` and
+for the zero-declaration default mount.
 
 ```java
 public static class Factory {
@@ -290,6 +292,38 @@ static Set<RouterMount> mounts(
 failure, connection close, and stream reset. The file stays readable while the response streams, but
 an application that needs it afterwards must move or copy it **before** the response completes.
 Retaining a `FileUpload` or a file-backed `EntityPart` does not extend the path's lifetime.
+
+### The application name on descriptors and interceptor contexts
+
+An application mount carries its `@RestApplication` name onto every operation it registers. The name
+is visible in these places:
+
+- **`MountMeta.applicationName()`** of the mount's `meta()`, including the `MountMeta` passed to
+  `MountCustomizer`s and to `RequestValidationStrategy.gateFor(op, schemas, mount)`.
+- **`RestOperationDescriptor.applicationName()`** of every operation descriptor of that mount. This is
+  the descriptor an `OperationHandlerContributor` receives as `OperationRegistrationContext.operation()`.
+- **`OperationContext.operation()`** of every `OperationInterceptor` callback for that mount's
+  operations. The route registration builds one descriptor per operation and hands that same instance
+  to contributors and to the operation's invoker, so the descriptor a contributor received and the one
+  `ctx.operation()` returns are the same object.
+- **Framework synthetic operations.** The descriptor of a synthetic operation reports the name of the
+  application whose document the operation serves from `applicationName()`. A synthetic route runs the
+  contributor chain but not the operation interceptors, so it has no `OperationContext`.
+
+The name is `null` on the mount metadata, the operation descriptors, and `ctx.operation()` for a mount
+built through `Factory.create` and for the zero-declaration default mount; nothing derives a name from the mount path or the mount id.
+Requests and configuration cannot set it, and it is not stored in the `RoutingContext` data map or
+published as a routing-context key.
+
+**Interceptor chain.** After each `beforeOperation` the chain compares the returned context's
+`operation()` with the operation of the context the chain started with, by reference. When they differ,
+whether an interceptor built a five-argument `OperationContext` (which carries `null`) or a context
+carrying another descriptor, the chain replaces the returned context with a copy that carries the
+registration-time descriptor and keeps every other component, `attributes` included. Every later
+`beforeOperation`, `onOperation`, `afterOperation`, `onSuccess`, `onError`, and `recoverOperation`
+therefore observes the registration-time operation. Only the descriptor is restored: the `operationId()`
+of a context an interceptor rebuilt stays as that interceptor returned it, so read identity from
+`ctx.operation()`.
 
 ### `ResourceMethodMeta`
 
