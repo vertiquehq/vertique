@@ -159,13 +159,13 @@ import java.util.function.Consumer;
  * every such member reachable from a type without changing the document; only a generator built by
  * {@link #forOutputProfile(JsonMapperProfile)} answers it.
  *
- * <p><strong>Members hidden only by {@code @Hidden}.</strong> Both directions honor {@code
- * @Schema(hidden = true)} alone: a member or type marked {@code io.swagger.v3.oas.annotations.Hidden}
- * without it stays in the document, so the input direction keeps validating it and the output
- * direction keeps publishing it. {@link #hiddenOnlyMembers(Type)} reports every such member and type
- * reachable from a type without changing the document; a generator built by either {@code
- * forInputProfile} overload or by {@link #forOutputProfile(JsonMapperProfile)} answers it for its own
- * direction.
+ * <p><strong>Hidden members.</strong> Neither direction honors {@code
+ * io.swagger.v3.oas.annotations.Hidden}, and each honors {@code @Schema(hidden = true)} only at some
+ * positions: a member or type carrying a hiding marker the generator ignores stays in the document, so
+ * the input direction keeps validating it and the output direction keeps publishing it. {@link
+ * #hiddenMembers(Type)} reports every member and type the document describes that carries either
+ * marker, without changing the document; a generator built by either {@code forInputProfile} overload
+ * or by {@link #forOutputProfile(JsonMapperProfile)} answers it for its own direction.
  *
  * <p><strong>How the input direction describes an alias spelling.</strong> Every {@code @JsonAlias}
  * spelling Jackson reports for a visible input property that does not back an any-accessor is listed
@@ -267,13 +267,13 @@ public final class AnnotationJsonSchemaGenerator {
     private final OutputPropertyNameResolver outputNames;
 
     /**
-     * The recorder of described members and types that carry {@code @Hidden} without {@code
-     * @Schema(hidden = true)}, or {@code null} in the victools-defaults and injected-generator modes. It
-     * is present exactly when the instance was built by {@link #forInputProfile(JsonMapperProfile)},
-     * {@link #forInputProfile(JsonMapperProfile, Validator)}, or {@link
-     * #forOutputProfile(JsonMapperProfile)}, the kinds {@link #hiddenOnlyMembers(Type)} answers for.
+     * The recorder of described members and types that carry {@code @Hidden}, {@code @Schema(hidden =
+     * true)}, or both, or {@code null} in the victools-defaults and injected-generator modes. It is
+     * present exactly when the instance was built by {@link #forInputProfile(JsonMapperProfile)}, {@link
+     * #forInputProfile(JsonMapperProfile, Validator)}, or {@link #forOutputProfile(JsonMapperProfile)},
+     * the kinds {@link #hiddenMembers(Type)} answers for.
      */
-    private final HiddenOnlyMemberRecorder hiddenMembers;
+    private final HiddenMemberRecorder hiddenMembers;
 
     /**
      * Whether {@link NumericDomainKeywordFilter} runs on every generated document from this instance.
@@ -340,7 +340,7 @@ public final class AnnotationJsonSchemaGenerator {
             boolean suppressInapplicableNumericKeywords,
             InputPropertyDescriber describer,
             OutputPropertyNameResolver outputNames,
-            HiddenOnlyMemberRecorder hiddenMembers) {
+            HiddenMemberRecorder hiddenMembers) {
         this.generator = requirePinnedDialect(generator);
         this.suppressInapplicableNumericKeywords = suppressInapplicableNumericKeywords;
         this.describer = describer;
@@ -491,7 +491,7 @@ public final class AnnotationJsonSchemaGenerator {
         }
         InputPropertyDescriber describer = null;
         OutputPropertyNameResolver outputNames = null;
-        HiddenOnlyMemberRecorder hiddenMembers = new HiddenOnlyMemberRecorder(validated, direction);
+        HiddenMemberRecorder hiddenMembers = new HiddenMemberRecorder(validated, direction);
         // Bean Validation metadata supplements the input direction only: it is the direction
         // InputPropertyDescriber already owns the join for, and the output direction's own
         // OutputPropertyNameResolver has no equivalent join to a Validator's property descriptors. The
@@ -547,7 +547,7 @@ public final class AnnotationJsonSchemaGenerator {
      * member it publishes, under the name it publishes it with, which is what {@link
      * #outputRenames(Type)} records.
      *
-     * <p>For profile-aware generation, a {@link HiddenOnlyMemberRecorder} for the generator's direction is
+     * <p>For profile-aware generation, a {@link HiddenMemberRecorder} for the generator's direction is
      * registered in both directions as a type attribute hook and as a second type attribute hook for the
      * {@code @JsonUnwrapped} members the Jackson module flattens into a type, which it drops from the
      * member walk; in the input direction as a member attribute hook, for the members the schema library
@@ -555,7 +555,7 @@ public final class AnnotationJsonSchemaGenerator {
      * the member scopes the describer builds properties from; and in the output direction as a second,
      * separate member attribute hook. None modifies a node, and the input direction's describer tells the same recorder
      * each property it describes, an unwrapped member included, and each any-setter whose extras it
-     * describes. They are what {@link #hiddenOnlyMembers(Type)} records.
+     * describes. They are what {@link #hiddenMembers(Type)} records.
      *
      * <p>The Jakarta Validation module ({@code NOT_NULLABLE_FIELD_IS_REQUIRED}, {@code
      * INCLUDE_PATTERN_EXPRESSIONS}) is installed <strong>unconditionally, in every mode</strong> — it
@@ -571,7 +571,7 @@ public final class AnnotationJsonSchemaGenerator {
             SchemaGeneratorConfigBuilder builder,
             InputPropertyDescriber describer,
             OutputPropertyNameResolver outputNames,
-            HiddenOnlyMemberRecorder hiddenMembers) {
+            HiddenMemberRecorder hiddenMembers) {
         builder.with(new JacksonModule());
         builder.with(new JakartaValidationModule(
                 JakartaValidationOption.NOT_NULLABLE_FIELD_IS_REQUIRED,
@@ -1053,34 +1053,38 @@ public final class AnnotationJsonSchemaGenerator {
     }
 
     /**
-     * Input- and output-direction generators alike: every member reachable from {@code type}, and
-     * every reachable type, that carries {@code io.swagger.v3.oas.annotations.Hidden} but not
-     * {@code @Schema(hidden = true)}, which is the only hiding marker the canonical generators
-     * honor. Empty when none.
+     * Input- and output-direction generators alike: every member and every type that the document
+     * {@link #generateCanonical(Type)} publishes for {@code type} in this generator's direction
+     * describes, and that carries {@code io.swagger.v3.oas.annotations.Hidden}, {@code
+     * @Schema(hidden = true)}, or both. Empty when none.
      *
-     * <p>Reachable means described by the document {@link #generateCanonical(Type)} publishes for
-     * {@code type} in this generator's own direction: the root and every type that document describes
-     * — a nested object, a collection or array element, an {@code Optional} payload, a shared
-     * definition, and, in the input direction, a map value — and every property it describes on them.
+     * <p>Described means the root and every type the document describes — a nested object, a
+     * collection or array element, an {@code Optional} payload, a shared definition, an input map
+     * value, a polymorphic base described through its subtypes, and a type reached through a profile
+     * override — every property it describes on them, every {@code @JsonUnwrapped} member whose
+     * flattened content it describes, and every constant of an enum it describes. A member the document
+     * does not describe is never reported: one whose {@code @Schema(hidden = true)} the generator honors
+     * (on a field-bound or getter-described property's field or getter, or on a record component), one
+     * the profile's mapper does not bind (input) or serialize (output), and a creator parameter the
+     * input direction leaves out as joined to no member.
      *
-     * <p>A reported member is a Java member, under its own name and declaring type: a described
-     * property's field, getter, or setter, however the mapper binds the property (a record component
-     * or a creator parameter included); in the input direction, a builder method, and an any-setter
-     * whose extra keys the document describes; a method a described getter or setter overrides or
-     * implements; a {@code @JsonUnwrapped} member whose flattened content the document describes; and
-     * an enum constant, under its enum. A reported type, whose {@code member} is {@code null},
-     * includes a polymorphic base the document describes only through its subtypes. {@code @Hidden}
-     * counts when declared directly, through a Jackson annotation bundle, or through a mix-in the
-     * profile's mapper registers, which reports the mix-in's target. A member the document does not
-     * describe is not reported: one that {@code @Schema(hidden = true)} hides, read on the field and
-     * its getter together as the generator reads it, and one the profile's mapper does not bind
-     * (input) or serialize (output). Neither is a member or type that {@code @Schema(hidden = true)}
-     * marks beside {@code @Hidden}, even where the document still describes it. Each entry is reported
-     * once however often the document reaches it.
+     * <p>A described property is reported under each of its declarations that carries a marker: its
+     * field, getter, setter, and creator parameter, as the profile mapper's introspection in this
+     * generator's direction links them; in the input direction, a builder method and an any-setter whose
+     * extra keys the document describes; and a method a described accessor overrides or implements, a
+     * generic declaration included, under the class declaring it. A {@code @JsonUnwrapped} member, an
+     * enum constant, and a type are reported as themselves. A marker counts when declared directly,
+     * through a Jackson annotation bundle at any depth, or through the mix-in the profile's mapper
+     * registers for the declaration's own class, which reports the mix-in's target. Each entry names its
+     * marker ({@link HidingMarker}) and whether {@code @Schema(hidden = true)} on the property's own field,
+     * or on its getter when the mapper sees no field, would leave the property out ({@link
+     * HiddenMember#hideableBySchemaHidden()}, provisional).
      *
-     * <p>The list is ordered by {@link HiddenOnlyMember#declaringType() declaringType}, then by {@link
-     * HiddenOnlyMember#member() member}, each by {@link String#compareTo(String)}, with a type's own
-     * entry, whose {@code member} is {@code null}, first within its declaring type; it is unmodifiable.
+     * <p>Each declaration is reported once however often the document reaches it; an entry reached at
+     * several positions is hideable only when it is at every one. The list is ordered by {@link
+     * HiddenMember#declaringType() declaringType}, then by {@link HiddenMember#member() member}, each by
+     * {@link String#compareTo(String)}, with a type's own entry, whose {@code member} is {@code null},
+     * first within its declaring type; it is unmodifiable.
      *
      * <p>The call runs one generation of {@code type}, exactly as {@link #generateCanonical(Type)} does,
      * under the same per-instance lock: it has the same accepted type grammar, the same bounded {@link
@@ -1089,18 +1093,20 @@ public final class AnnotationJsonSchemaGenerator {
      * instance publishes.
      *
      * @param type the resolved Java type whose document to inspect; must not be {@code null}
-     * @return the members and types hidden only by {@code @Hidden}, in the order above; empty when none
+     * @return the hidden members and types, ordered by {@link HiddenMember#declaringType()
+     *         declaringType}, then by {@link HiddenMember#member() member}, with a type's own entry
+     *         first; unmodifiable; empty when none
      * @throws IllegalStateException         on a victools-defaults generator (one built by neither
      *                                        forInputProfile nor forOutputProfile), before {@code
      *                                        type} is checked against the accepted grammar
      * @throws JsonSchemaGenerationException if {@code type} is outside the accepted grammar, or if
      *                                        generation of its document fails
      */
-    public List<HiddenOnlyMember> hiddenOnlyMembers(Type type) {
+    public List<HiddenMember> hiddenMembers(Type type) {
         if (hiddenMembers == null) {
-            throw new IllegalStateException("hiddenOnlyMembers answers only for a generator built by forInputProfile or"
+            throw new IllegalStateException("hiddenMembers answers only for a generator built by forInputProfile or"
                     + " forOutputProfile; this generator was built for another construction mode and records no"
-                    + " @Hidden-only members");
+                    + " hidden members");
         }
         synchronized (lock) {
             hiddenMembers.beginRecording();
