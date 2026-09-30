@@ -38,7 +38,7 @@ import io.vertx.ext.web.RoutingContext;
  * <p><b>Failure details are logged:</b> the caught exception reaches the application log, which is
  * what keeps the fan-out diagnosable. The exception, including its message and any cause, is logged,
  * so none of them may carry credentials, tokens, personal data, or raw request values. An
- * implementation MUST NOT put any of them into the exception, its message or its cause. The
+ * implementation MUST NOT put any of them into the exception it throws. The
  * obligation is audit-safe by contract rather than by enforcement, in the same way that
  * {@code AuthorizationDecision.safeAttributes()} is.
  *

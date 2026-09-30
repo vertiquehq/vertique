@@ -135,7 +135,7 @@ hardcoded constant — and is non-null only for a request whose protocol negotia
 rejected at or before negotiation carries `null`. When present it is bounded: non-blank, free of
 control characters, at most 64 characters. `authorization` is present only after an actual policy
 evaluation, and `correlation` is established for every request that reaches the completion coordinator
-(a cheap-admission rejection, which precedes that point, carries neither).
+(a cheap-admission rejection on a first entry, which precedes that point, carries neither).
 
 ## Observation extensions
 

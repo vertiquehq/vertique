@@ -264,8 +264,8 @@ final class McpRequestDispatcher {
      * every terminal-event construction site and every tool-interceptor context for the remainder of
      * the request through {@link #correlationOf}. Always a snapshot of the same live context bound onto
      * {@code ContextHolder} by {@link #bindCorrelation}, never an independently generated value. {@code
-     * null} (the key absent) only before {@link #begin} runs, i.e. for a cheap-admission rejection in
-     * {@link #admitCheap}.
+     * null} (the key absent) only before {@link #begin} runs, i.e. for a cheap-admission rejection on a request's first
+     * entry in {@link #admitCheap}.
      */
     private static final String CORRELATION_KEY = KEY_PREFIX + ".correlation";
 
@@ -296,7 +296,7 @@ final class McpRequestDispatcher {
      * {@link #settlementTerminal} through {@link #classifiedMethodOf} so a disconnect/reset abort
      * terminal reports the identity the dispatcher had legitimately already established, rather than
      * always inventing {@link McpMethod#OTHER}. {@code null} only before {@link #dispatch} ever ran
-     * for this request (e.g. a cheap-admission rejection); {@link #classifiedMethodOf} reports {@link
+     * for this request (e.g. a cheap-admission rejection on a first entry); {@link #classifiedMethodOf} reports {@link
      * McpMethod#OTHER} for that case, matching every other pre-dispatch abort's existing identity.
      */
     private static final String METHOD_KEY = KEY_PREFIX + ".method";
@@ -802,7 +802,7 @@ final class McpRequestDispatcher {
 
     /**
      * Returns this request's {@link CorrelationContextSnapshot}, or {@code null} when {@link #begin}
-     * has not yet run (a cheap-admission rejection).
+     * has not yet run (a cheap-admission rejection on a first entry).
      */
     @Nullable
     private static CorrelationContextSnapshot correlationOf(RoutingContext context) {

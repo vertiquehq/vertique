@@ -33,6 +33,8 @@ import java.util.Optional;
  *       simple class name), safe for use in metric labels.</li>
  *   <li>{@code path} is the raw, attacker-controlled request path, bounded only by the Vert.x HTTP
  *       server's request-line and header limits. It is not truncated here.</li>
+ *   <li>{@code method} comes from the request line and is likewise attacker-controlled and not
+ *       length-bounded here.</li>
  *   <li>{@code safeAttributes} is an unmodifiable map; consumers must not attempt to cast values
  *       to mutable types.</li>
  * </ul>

@@ -1199,7 +1199,7 @@ class RestRequestCompletionEmitterTest {
          * response, and that event is an {@link HttpRequestCompletedEvent}.
          *
          * <p>A successful WebSocket 101 upgrade calls {@code lifecycle.completeNow()} because
-         * Vert.x Web 5.1.2's {@code Http1xServerResponse.completeHandshake()} writes the 101
+         * Vert.x's {@code Http1xServerResponse.completeHandshake()} writes the 101
          * response without firing the normal response end handler. The end-to-end real-server proof
          * that a successful upgrade yields no completion event is
          * {@code WebSocketCompletionClaimIT} in {@code vertique-rest-websocket}.
@@ -1310,8 +1310,8 @@ class RestRequestCompletionEmitterTest {
         }
 
         /**
-         * A request another transport claimed gets neither event and no fact is built for it: the emitter
-         * takes no security snapshot, where a request no transport claimed takes one.
+         * No fact is built for a request another transport claimed: the emitter takes no security
+         * snapshot for it, where a request no transport claimed takes one.
          */
         @Test
         @DisplayName("Another transport's claim builds no facts: the security runtime is not consulted")

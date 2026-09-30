@@ -171,7 +171,7 @@ Unclaimed requests are:
 - requests that match no route (404 or 405);
 - JAX-RS mount-level rejections before any operation route matched: body 413 or 400,
   request-interceptor rejections, and the API-scope 415;
-- MCP admission rejections;
+- MCP admission rejections on a request's first entry into the MCP mount;
 - failed WebSocket upgrades.
 
 Entering a JAX-RS mount, or reaching its failure handler, does not claim a request. The last
