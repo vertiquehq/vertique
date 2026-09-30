@@ -51,6 +51,11 @@ schema synthesis while keeping REST-owned loose-parameter assembly to itself.
 Dependency direction stays one-way into the schema module: neither `vertique-core`
 nor `vertique-json` depends on it.
 
+`vertique-rest-openapi-docs` is the opt-in runtime OpenAPI documentation module: it depends on
+`vertique-rest-jaxrs`, `vertique-rest-core`, `vertique-core`, and `vertique-json-schema`, while
+`vertique-rest-jaxrs` recognizes its `@ApiDocs` annotation by fully qualified name and never
+depends on it.
+
 `vertique-mcp-core` owns the transport-neutral MCP lifecycle and extension contracts.
 It depends on foundation and security APIs, never HTTP, protocol, observability, or
 enterprise audit implementations. `vertique-mcp-server` owns the Router-mounted MCP
