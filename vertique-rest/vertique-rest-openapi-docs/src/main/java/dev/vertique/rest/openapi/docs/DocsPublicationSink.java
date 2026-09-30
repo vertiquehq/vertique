@@ -10,19 +10,44 @@ import dev.vertique.rest.jaxrs.publication.MountPublication;
 import dev.vertique.rest.jaxrs.publication.OperationDetail;
 import dev.vertique.rest.jaxrs.publication.OperationPublication;
 import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
+import dev.vertique.rest.jaxrs.publication.RestApplications;
+import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * The publication sink of the documentation module. It asks for operation detail only for the
  * applications that have an enabled document, and hands each such mount's publication to the
  * {@link DocumentStore}.
+ *
+ * <p>Before that, it checks every publication it receives, whether or not the mount serves a
+ * documented application and whether or not the mount is empty. The checks run in this order, and
+ * the first that finds a violation fails the mount with one {@link RestConfigurationException}
+ * listing all of that check's violations, one per line:
+ *
+ * <ol>
+ *   <li>no operation id equals a reserved document operation id, {@code apidocs:<name>:json} or
+ *       {@code apidocs:<name>:yaml} for an enabled document {@code <name>};
+ *   <li>no {@code GET} or {@code HEAD} operation can answer a document URL,
+ *       {@code <apidocs.path>/<name>/openapi.json} or {@code .yaml}, as decided by
+ *       {@link DocumentRouteMatcher}; only a mount whose path without its trailing {@code *} is a
+ *       prefix of the URL is tested, and violations are listed by URL, then method, then template;
+ *   <li>a documented application whose selected request-validation strategy resolves operations
+ *       from the mount's contract does not take that contract from the shared global location; a
+ *       strategy id that names no registered strategy counts as one that does not.
+ * </ol>
+ *
+ * <p>Only a mount that passes every check is published, so a refused mount never stores a document.
+ * The checks keep no state between publications.
  *
  * <p>The publication a sink receives must not be retained past the call. The sink therefore takes a
  * detached copy during {@link #mountBuilt}: every schema {@link JsonObject} is copied and the
@@ -34,10 +59,41 @@ final class DocsPublicationSink implements OperationPublicationSink {
 
     private final EnabledDocuments documents;
     private final DocumentStore store;
+    private final String prefix;
+    private final Set<RequestValidationStrategy> strategies;
+    private final RestApplications applications;
 
+    /**
+     * Creates a sink with the default documentation prefix, no registered request-validation
+     * strategy, and no declared application.
+     *
+     * @param documents the enabled documents
+     * @param store the document store of the component
+     */
     DocsPublicationSink(EnabledDocuments documents, DocumentStore store) {
+        this(documents, store, ApidocsConfig.DEFAULT_PATH, Set.of(), new RestApplications(List.of()));
+    }
+
+    /**
+     * Creates the sink.
+     *
+     * @param documents the enabled documents
+     * @param store the document store of the component
+     * @param prefix the configured documentation prefix, without a trailing slash
+     * @param strategies the registered request-validation strategies
+     * @param applications the declared applications of the component
+     */
+    DocsPublicationSink(
+            EnabledDocuments documents,
+            DocumentStore store,
+            String prefix,
+            Set<RequestValidationStrategy> strategies,
+            RestApplications applications) {
         this.documents = documents;
         this.store = store;
+        this.prefix = prefix;
+        this.strategies = strategies;
+        this.applications = applications;
     }
 
     /**
@@ -53,15 +109,28 @@ final class DocsPublicationSink implements OperationPublicationSink {
     }
 
     /**
-     * Publishes the mount of a documented application; every other mount completes at once.
+     * Checks the mount, then publishes it when it serves a documented application; every other mount
+     * that passes the checks completes at once.
      *
      * @param publication the publication of the mount
      * @return a future that completes on the calling context when this composition's part of the
-     *     publication is done, and fails with a {@link RestConfigurationException} when the calling
-     *     thread has no Vert.x context or the mount differs from the document already published
+     *     publication is done, and fails with a {@link RestConfigurationException} when the mount uses
+     *     a reserved operation id, has a route that can answer a document URL, or documents an
+     *     application on the shared global contract, when the calling thread has no Vert.x context,
+     *     or when the mount differs from the document already published
      */
     @Override
     public Future<Void> mountBuilt(MountPublication publication) {
+        List<String> violations = reservedIdViolations(publication);
+        if (violations.isEmpty()) {
+            violations = collisionViolations(publication);
+        }
+        if (violations.isEmpty()) {
+            violations = sharedContractViolations(publication);
+        }
+        if (!violations.isEmpty()) {
+            return Future.failedFuture(new RestConfigurationException(String.join("\n", violations)));
+        }
         String applicationName = publication.applicationName();
         if (applicationName == null) {
             return Future.succeededFuture();
@@ -84,6 +153,111 @@ final class DocsPublicationSink implements OperationPublicationSink {
                 () -> DocumentWriter.write(info, SnapshotRenderer.render(detached)),
                 () -> SnapshotRenderer.render(detached));
     }
+
+    /** Lists, sorted, each operation whose id is reserved for an enabled document. */
+    private List<String> reservedIdViolations(MountPublication publication) {
+        List<String> violations = new ArrayList<>();
+        for (OperationPublication operation : publication.operations()) {
+            String id = operation.operationId();
+            for (EnabledDocuments.EnabledDocument document : documents.all()) {
+                String name = document.name();
+                if (("apidocs:" + name + ":json").equals(id) || ("apidocs:" + name + ":yaml").equals(id)) {
+                    violations.add("Operation '" + id + "' (" + operation.httpMethod() + " "
+                            + operation.jaxRsPathTemplate() + ") on mount '" + publication.mountPath()
+                            + "' uses an operation id reserved for the document of application '" + name
+                            + "' (declared by " + document.declaringType().getName() + ", apidocs.documents."
+                            + name + ")");
+                }
+            }
+        }
+        violations.sort(null);
+        return violations;
+    }
+
+    /**
+     * Lists each route of the mount that can answer a document URL, ordered by URL, then method, then
+     * template.
+     */
+    private List<String> collisionViolations(MountPublication publication) {
+        String mountPath = publication.mountPath();
+        String mountPoint = mountPath.endsWith("*") ? mountPath.substring(0, mountPath.length() - 1) : mountPath;
+        List<Collision> collisions = new ArrayList<>();
+        for (EnabledDocuments.EnabledDocument document : documents.all()) {
+            for (String form : List.of("json", "yaml")) {
+                String url = prefix + "/" + document.name() + "/openapi." + form;
+                if (mountPoint.isEmpty() || !url.startsWith(mountPoint)) {
+                    continue;
+                }
+                for (OperationPublication operation : publication.operations()) {
+                    if (DocumentRouteMatcher.canAnswer(mountPath, operation, url)) {
+                        collisions.add(new Collision(url, document, operation));
+                    }
+                }
+            }
+        }
+        collisions.sort(Comparator.comparing(Collision::url)
+                .thenComparing(collision -> collision.operation().httpMethod())
+                .thenComparing(collision -> collision.operation().jaxRsPathTemplate()));
+        List<String> violations = new ArrayList<>(collisions.size());
+        for (Collision collision : collisions) {
+            OperationPublication operation = collision.operation();
+            EnabledDocuments.EnabledDocument document = collision.document();
+            violations.add("Route " + operation.httpMethod() + " " + operation.jaxRsPathTemplate() + " (operation '"
+                    + operation.operationId() + "') on mount '" + mountPath + "' can answer document URL '"
+                    + collision.url() + "' of application '" + document.name() + "' (declared by "
+                    + document.declaringType().getName() + "); choose an apidocs.path no such route can match,"
+                    + " or narrow or remove the route; a route that matches every path, such as"
+                    + " GET /{path: .*}, must be narrowed or removed");
+        }
+        return violations;
+    }
+
+    /**
+     * Lists the refusal of a documented application whose selected strategy resolves operations from
+     * the mount's contract while that contract is the shared global one.
+     */
+    private List<String> sharedContractViolations(MountPublication publication) {
+        String applicationName = publication.applicationName();
+        if (applicationName == null) {
+            return List.of();
+        }
+        EnabledDocuments.EnabledDocument document =
+                documents.byName(applicationName).orElse(null);
+        if (document == null) {
+            return List.of();
+        }
+        String strategyId = publication.strategyId();
+        boolean resolvesFromContract = strategies.stream()
+                .filter(strategy -> strategy.id().equals(strategyId))
+                .findFirst()
+                .map(RequestValidationStrategy::resolvesOperationsFromMountContract)
+                .orElse(false);
+        if (!resolvesFromContract) {
+            return List.of();
+        }
+        boolean sharedContract = applications
+                .byName(applicationName)
+                .map(entry -> entry.contractOrigin() == RestApplications.ContractOrigin.GLOBAL)
+                .orElse(false);
+        if (!sharedContract) {
+            return List.of();
+        }
+        return List.of("apidocs.documents." + applicationName + ": application '" + applicationName
+                + "' (declared by " + document.declaringType().getName() + ") at '" + publication.mountPath()
+                + "' uses request-validation strategy '" + strategyId
+                + "', which resolves operations from the shared global contract; that contract file already is"
+                + " the mount's OpenAPI document, so no document is generated for it: serve that file behind an"
+                + " access check at least as strict as the most restricted mount it describes");
+    }
+
+    /**
+     * One route that can answer a document URL.
+     *
+     * @param url the document URL
+     * @param document the document the URL belongs to
+     * @param operation the operation whose route can answer it
+     */
+    private record Collision(String url, EnabledDocuments.EnabledDocument document, OperationPublication operation) {}
 
     private static MountPublication detach(MountPublication publication) {
         List<OperationPublication> operations = publication.operations().stream()

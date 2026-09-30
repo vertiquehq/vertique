@@ -11,10 +11,18 @@ import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.config.JsonConfigPaths;
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.rest.core.config.JaxRsConfig;
+import dev.vertique.rest.core.interceptor.RequestInterceptor;
+import dev.vertique.rest.core.lifecycle.RouterLifecycleHook;
+import dev.vertique.rest.core.middleware.Middleware;
+import dev.vertique.rest.core.router.MountCompositionValidator;
+import dev.vertique.rest.core.router.MountCustomizer;
 import dev.vertique.rest.core.router.RouterMount;
+import dev.vertique.rest.core.security.AuthEnforcementCapability;
+import dev.vertique.rest.core.security.SecuritySchemeHandler;
 import dev.vertique.rest.jaxrs.publication.ApiDocsInstalled;
 import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
 import dev.vertique.rest.jaxrs.publication.RestApplications;
+import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 import java.util.ArrayList;
@@ -27,12 +35,13 @@ import java.util.Set;
 /**
  * Dagger module of the OpenAPI documentation feature. It provides the parsed {@code apidocs}
  * configuration, the documents enabled for the component, the publication sink and the router mount
- * that publish and serve them, and the marker that tells the JAX-RS module the documentation module
- * is installed.
+ * that publish and serve them, the composition validator that checks every composition before its
+ * mounts create their routers and warns about the mount-scoped controls the document routes bypass,
+ * and the marker that tells the JAX-RS module the documentation module is installed.
  *
- * <p>The sink and the mount are contributed only when at least one document is enabled; with none,
- * no publication is built and no documentation route exists. The marker is bound whatever the
- * configuration.
+ * <p>The sink, the validator, and the mount are contributed only when at least one document is
+ * enabled; with none, no publication is built and no documentation route exists. The marker is
+ * bound whatever the configuration.
  */
 @Module
 public abstract class OpenApiDocsModule {
@@ -58,12 +67,58 @@ public abstract class OpenApiDocsModule {
      *
      * @param documents the enabled documents
      * @param store the document store of the component
+     * @param apidocsConfig the parsed {@code apidocs} section, whose path is the documentation prefix
+     * @param strategies the registered request-validation strategies
+     * @param applications the declared applications of the component
      * @return the sink, or an empty set when no document is enabled
      */
     @Provides
     @ElementsIntoSet
-    static Set<OperationPublicationSink> publicationSinks(EnabledDocuments documents, DocumentStore store) {
-        return documents.isEmpty() ? Set.of() : Set.of(new DocsPublicationSink(documents, store));
+    static Set<OperationPublicationSink> publicationSinks(
+            EnabledDocuments documents,
+            DocumentStore store,
+            ApidocsConfig apidocsConfig,
+            Set<RequestValidationStrategy> strategies,
+            RestApplications applications) {
+        if (documents.isEmpty()) {
+            return Set.of();
+        }
+        return Set.of(new DocsPublicationSink(documents, store, apidocsConfig.path(), strategies, applications));
+    }
+
+    /**
+     * Contributes the documentation composition validator when at least one document is enabled.
+     *
+     * @param documents the enabled documents
+     * @param apidocsConfig the parsed {@code apidocs} section, whose path is the documentation prefix
+     * @param warnings the documentation module's warnings of the component
+     * @param mountCustomizers the registered mount customizers
+     * @param middlewares the registered middlewares
+     * @param lifecycleHooks the registered router lifecycle hooks
+     * @param requestInterceptors the registered request interceptors
+     * @return the validator, or an empty set when no document is enabled
+     */
+    @Provides
+    @ElementsIntoSet
+    static Set<MountCompositionValidator> compositionValidators(
+            EnabledDocuments documents,
+            ApidocsConfig apidocsConfig,
+            DocumentWarnings warnings,
+            Set<MountCustomizer> mountCustomizers,
+            Set<Middleware> middlewares,
+            Set<RouterLifecycleHook> lifecycleHooks,
+            Set<RequestInterceptor> requestInterceptors) {
+        if (documents.isEmpty()) {
+            return Set.of();
+        }
+        return Set.of(new DocsCompositionValidator(
+                documents,
+                apidocsConfig.path(),
+                warnings,
+                mountCustomizers,
+                middlewares,
+                lifecycleHooks,
+                requestInterceptors));
     }
 
     /**
@@ -75,16 +130,29 @@ public abstract class OpenApiDocsModule {
      * @param apidocsConfig the parsed {@code apidocs} section
      * @param jaxRsConfig the JAX-RS routing configuration, whose default headers decide the caching
      *     header of the documents
+     * @param securitySchemeHandlers the registered security scheme handlers
+     * @param authEnforcement the authentication enforcement capability, empty when not installed
      * @return the mount, or an empty set when no document is enabled
      */
     @Provides
     @ElementsIntoSet
     static Set<RouterMount> documentationMounts(
-            EnabledDocuments documents, DocumentStore store, ApidocsConfig apidocsConfig, JaxRsConfig jaxRsConfig) {
+            EnabledDocuments documents,
+            DocumentStore store,
+            ApidocsConfig apidocsConfig,
+            JaxRsConfig jaxRsConfig,
+            Set<SecuritySchemeHandler> securitySchemeHandlers,
+            Optional<AuthEnforcementCapability> authEnforcement) {
         if (documents.isEmpty()) {
             return Set.of();
         }
-        return Set.of(new DocsRouterMount(apidocsConfig.path(), documents, store, cacheControl(jaxRsConfig)));
+        return Set.of(new DocsRouterMount(
+                apidocsConfig.path(),
+                documents,
+                store,
+                cacheControl(jaxRsConfig),
+                securitySchemeHandlers,
+                authEnforcement));
     }
 
     /**
@@ -145,18 +213,29 @@ public abstract class OpenApiDocsModule {
     }
 
     /**
-     * Selects the documents enabled for the component. A document is enabled when the feature is
-     * enabled, the application is active, its declaring interface itself carries {@link ApiDocs},
-     * and its configuration entry is absent or does not say {@code enabled: false}. When at least one
-     * document is enabled, {@code apidocs.path} and the {@code info} of every enabled document are
-     * validated; disabled documents and applications without {@link ApiDocs} are never validated.
+     * Selects the documents enabled for the component and runs the configuration checks. With the
+     * feature disabled, nothing is selected or checked. Otherwise a document is enabled when the
+     * application is active, its declaring interface itself carries {@link ApiDocs}, and its
+     * configuration entry is absent or does not say {@code enabled: false}.
+     *
+     * <p>Every {@code apidocs.documents} entry is checked, whatever its {@code enabled} value: its key
+     * must follow the application-name grammar and name a declared application, active or not; it
+     * holds only {@code enabled}, {@code info}, and {@code serverUrl}; and {@code enabled: true}
+     * requires {@link ApiDocs} on the declaring interface. The {@link ApiDocs} of every active
+     * application is re-checked for its shape, whether or not its document is disabled. When at least
+     * one document is enabled, {@code apidocs.path} is checked, and each enabled document takes its
+     * {@code info} from configuration, else from an {@code OpenAPIDefinition} on its declaring
+     * interface itself, and has a valid {@code serverUrl} when one is configured.
      *
      * @param config the root configuration
      * @param apidocsConfig the parsed {@code apidocs} section
      * @param applications the declared applications of the component
-     * @return the enabled documents, ordered by application name
-     * @throws ConfigurationException when {@code apidocs.path} or the {@code info} of an enabled
-     *     document is invalid
+     * @return the enabled documents, ordered by application name, each with its resolved
+     *     {@code info}
+     * @throws ConfigurationException when a document entry, {@code apidocs.path}, or the
+     *     {@code info} or {@code serverUrl} of an enabled document is invalid, or, as the
+     *     {@code RestConfigurationException} subtype, when the {@link ApiDocs} of an active
+     *     application is malformed
      */
     @Provides
     @Singleton
@@ -181,63 +260,16 @@ public abstract class OpenApiDocsModule {
                 continue;
             }
             InfoConfig info = entry.map(DocumentConfig::info).orElse(null);
+            String serverUrl = entry.map(DocumentConfig::serverUrl).orElse(null);
             enabled.add(new EnabledDocuments.EnabledDocument(
                     application.name(),
                     application.declaringType(),
                     annotation.access(),
                     application.mountPath(),
                     application.contractOrigin(),
-                    info));
+                    info,
+                    serverUrl));
         }
-        if (enabled.isEmpty()) {
-            return new EnabledDocuments(List.of());
-        }
-        validatePath(apidocsConfig.path());
-        for (EnabledDocuments.EnabledDocument document : enabled) {
-            validateInfo(document);
-        }
-        return new EnabledDocuments(enabled);
-    }
-
-    private static void validatePath(String path) {
-        boolean valid = path != null
-                && path.startsWith("/")
-                && path.length() > 1
-                && !path.endsWith("/")
-                && !path.contains("//")
-                && path.chars().noneMatch(c -> c == '*' || c == ':' || c == '{' || c == '}' || c == '?' || c == '#')
-                && path.chars().noneMatch(Character::isWhitespace);
-        if (valid) {
-            for (String segment : path.substring(1).split("/", -1)) {
-                if (segment.equals(".") || segment.equals("..")) {
-                    valid = false;
-                    break;
-                }
-            }
-        }
-        if (!valid) {
-            throw new ConfigurationException("Invalid configuration 'apidocs.path': the prefix must be a literal "
-                    + "path that starts with '/', is not '/', has no trailing '/', contains none of "
-                    + "'*', ':', '{', '}', '?', '#', whitespace or '//', and has no '.' or '..' segment");
-        }
-    }
-
-    private static void validateInfo(EnabledDocuments.EnabledDocument document) {
-        String base = "apidocs.documents." + document.name() + ".info";
-        InfoConfig info = document.info();
-        if (info == null) {
-            throw infoFailure(document, base);
-        }
-        if (info.title() == null || info.title().isBlank()) {
-            throw infoFailure(document, base + ".title");
-        }
-        if (info.version() == null || info.version().isBlank()) {
-            throw infoFailure(document, base + ".version");
-        }
-    }
-
-    private static ConfigurationException infoFailure(EnabledDocuments.EnabledDocument document, String settingPath) {
-        return new ConfigurationException("Application '" + document.name() + "' (declared by "
-                + document.declaringType().getName() + ") needs a non-blank configured '" + settingPath + "'");
+        return new EnabledDocuments(DocumentConfigChecks.check(config, apidocsConfig, applications, enabled));
     }
 }
