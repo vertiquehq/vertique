@@ -6,6 +6,7 @@ package dev.vertique.rest.jaxrs;
 import dev.vertique.core.async.Combinators;
 import dev.vertique.rest.core.interceptor.OperationContext;
 import dev.vertique.rest.core.interceptor.OperationInterceptor;
+import dev.vertique.rest.core.routing.RestOperationDescriptor;
 import io.vertx.core.Future;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
@@ -47,13 +48,35 @@ final class OperationInterceptorChain {
      * Chains {@link OperationInterceptor#beforeOperation} handlers sequentially, threading the
      * (possibly updated) {@link OperationContext} through each interceptor.
      *
+     * <p>The chain captures the {@linkplain OperationContext#operation() operation} of the context it
+     * starts with. When an interceptor returns a context whose operation is not that same instance
+     * (compared by reference), the chain replaces the returned context with a copy that carries the
+     * captured operation and keeps every other component, so every later interceptor and every later
+     * hook observes the captured operation. The scalar {@link OperationContext#operationId()} of a
+     * returned context is not restored. A {@code null} returned context passes through unchanged.
+     *
      * @param opCtx the current operation context
      * @param index the index of the first interceptor to invoke
      * @return a {@link Future} completing with the final context after all interceptors have run
      */
     Future<OperationContext> chainBeforeOperationInterceptors(OperationContext opCtx, int index) {
+        RestOperationDescriptor registered = opCtx.operation();
         return Combinators.foldSequential(
-                interceptors.subList(index, interceptors.size()), opCtx, (i, ctx) -> i.beforeOperation(ctx));
+                interceptors.subList(index, interceptors.size()), opCtx, (i, ctx) -> i.beforeOperation(ctx)
+                        .map(returned -> restore(returned, registered)));
+    }
+
+    private static OperationContext restore(OperationContext returned, RestOperationDescriptor registered) {
+        if (returned == null || returned.operation() == registered) {
+            return returned;
+        }
+        return new OperationContext(
+                returned.operationId(),
+                returned.routingContext(),
+                returned.methodAnnotations(),
+                returned.classAnnotations(),
+                returned.attributes(),
+                registered);
     }
 
     /**

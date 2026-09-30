@@ -179,6 +179,58 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
             @Nullable ObjectMapper resolvedBodyMapper,
             ParamConversionResolver paramConversionResolver,
             InputFieldNameResolver bodyNameResolver) {
+        this(
+                meta,
+                interceptors,
+                errorPipeline,
+                responsePipeline,
+                restContextResolution,
+                decoders,
+                beanValidator,
+                objectProcessor,
+                evidenceCapturers,
+                resolvedBodyMapper,
+                paramConversionResolver,
+                bodyNameResolver,
+                ResourceMethodMetaToDescriptorAdapter.adapt(meta, null));
+    }
+
+    /**
+     * Creates a new invoker that uses the operation descriptor the router build already produced, so
+     * the descriptor the route was validated with, the descriptor request evidence is derived from,
+     * and the {@link OperationContext#operation()} every interceptor receives are one instance.
+     *
+     * @param meta                  metadata describing the JAX-RS resource method
+     * @param interceptors          sorted list of operation interceptors
+     * @param errorPipeline         shared error mapping pipeline
+     * @param responsePipeline      unified response pipeline for producing and sending responses
+     * @param restContextResolution coordinator for the {@link RestContextResolution} resolver chain
+     * @param decoders              priority-sorted list of request body decoders
+     * @param beanValidator         optional Bean Validation implementation; {@code null} skips validation
+     * @param objectProcessor       optional input object processor; {@code null} skips input processing
+     * @param evidenceCapturers     pre-sorted request-evidence capturers; empty list is the no-op default
+     * @param resolvedBodyMapper    effective request-body mapper, or {@code null} when the route's
+     *                              profile resolved to the process codec's own mapper
+     * @param paramConversionResolver the framework parameter-conversion resolver; must not be {@code null}
+     * @param bodyNameResolver      the wire &rarr; Java property-name projection for this route's OBJECT
+     *                              bodies
+     * @param descriptor            the route's operation descriptor, adapted from {@code meta}; must not
+     *                              be {@code null}
+     */
+    ResourceMethodInvoker(
+            ResourceMethodMeta meta,
+            List<OperationInterceptor> interceptors,
+            ErrorPipeline errorPipeline,
+            ResponsePipeline responsePipeline,
+            RestContextResolution restContextResolution,
+            List<RequestBodyDecoder> decoders,
+            @Nullable BeanValidator beanValidator,
+            @Nullable InputObjectProcessor objectProcessor,
+            List<RestServerRequestEvidenceCapturer> evidenceCapturers,
+            @Nullable ObjectMapper resolvedBodyMapper,
+            ParamConversionResolver paramConversionResolver,
+            InputFieldNameResolver bodyNameResolver,
+            JaxRsOperationDescriptor descriptor) {
         this.meta = meta;
         this.errorPipeline = errorPipeline;
         this.responsePipeline = responsePipeline;
@@ -203,9 +255,10 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
         // ExecutionPlanEmitter has produced a plan for this method).
         this.generatedSupport = new ParameterExtractorBackedSupport(this.parameterExtractor);
         this.evidenceCapturers = evidenceCapturers != null ? evidenceCapturers : List.of();
-        // FR-024: build the operation descriptor once so the reflective path can construct a
-        // DefaultBoundRequest per request without re-deriving the parameter model.
-        this.descriptor = ResourceMethodMetaToDescriptorAdapter.adapt(meta);
+        // The descriptor is built once, so the reflective path can construct a DefaultBoundRequest per
+        // request without re-deriving the parameter model, and the same instance is the operation
+        // every interceptor sees on its OperationContext.
+        this.descriptor = descriptor;
         this.operationMeta = operationMetaFor(meta, descriptor);
     }
 
@@ -313,7 +366,7 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
     @Override
     public void handle(RoutingContext ctx) {
         OperationContext opCtx = new OperationContext(
-                meta.operationId(), ctx, meta.methodAnnotations(), meta.classAnnotations(), Map.of());
+                meta.operationId(), ctx, meta.methodAnnotations(), meta.classAnnotations(), Map.of(), descriptor);
         interceptorChain
                 .chainBeforeOperationInterceptors(opCtx, 0)
                 .compose(finalOpCtx -> {

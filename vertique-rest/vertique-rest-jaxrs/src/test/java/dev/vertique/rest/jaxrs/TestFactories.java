@@ -9,6 +9,7 @@ import dev.vertique.rest.core.config.JaxRsConfig;
 import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.convert.ParamConversionResolver;
 import dev.vertique.rest.core.convert.ParamConverterRegistry;
+import dev.vertique.rest.core.interceptor.OperationInterceptor;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import dev.vertique.rest.core.middleware.Middleware;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
@@ -59,6 +60,7 @@ final class TestFactories {
         private Set<OperationHandlerContributor> operationHandlerContributors = Set.of();
         private Set<Middleware> middlewares = Set.of();
         private Set<RequestInterceptor> requestInterceptors = Set.of();
+        private Set<OperationInterceptor> operationInterceptors = Set.of();
         private List<RequestBodyDecoder> sortedDecoders = List.of(new JsonRequestBodyDecoder());
         private List<ResponseBodyEncoder> encoders = List.of(new StringBodyEncoder(), new JsonBodyEncoder());
         private JaxRsConfig jaxRsConfig = JaxRsConfig.builder()
@@ -157,6 +159,17 @@ final class TestFactories {
          */
         Builder requestInterceptors(Set<RequestInterceptor> interceptors) {
             this.requestInterceptors = interceptors;
+            return this;
+        }
+
+        /**
+         * Sets the operation interceptors (defaults to none).
+         *
+         * @param interceptors the operation interceptors
+         * @return this builder
+         */
+        Builder operationInterceptors(Set<OperationInterceptor> interceptors) {
+            this.operationInterceptors = interceptors;
             return this;
         }
 
@@ -330,7 +343,7 @@ final class TestFactories {
             if (publicationSinks == null) {
                 return new JaxRsRouterMount.Factory(
                         Set.of(), // routerLifecycleHooks
-                        Set.of(), // operationInterceptors
+                        operationInterceptors,
                         Set.of(), // errorInterceptors
                         middlewares,
                         operationHandlerContributors,
@@ -365,7 +378,7 @@ final class TestFactories {
             // 30-parameter @Inject constructor T006 adds, with the sink set as its last parameter.
             return new JaxRsRouterMount.Factory(
                     Set.of(), // routerLifecycleHooks
-                    Set.of(), // operationInterceptors
+                    operationInterceptors,
                     Set.of(), // errorInterceptors
                     middlewares,
                     operationHandlerContributors,

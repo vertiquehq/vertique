@@ -6,6 +6,7 @@ package dev.vertique.rest.core.routing;
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.core.security.EffectiveSecurityPolicy;
 import dev.vertique.rest.core.security.SecurityPolicy;
+import jakarta.annotation.Nullable;
 import java.lang.annotation.Annotation;
 import java.util.List;
 import java.util.Optional;
@@ -19,7 +20,8 @@ import java.util.Optional;
  * richer JAX-RS/schema view extends this base in rest-jaxrs.
  *
  * <p>The identity fields ({@link #operationId()}, {@link #httpMethod()}, {@link #routeTemplate()})
- * are never {@code null}. The collection accessors return immutable, possibly empty lists, never
+ * are never {@code null}; {@link #applicationName()} is the exception and is {@code null} when the
+ * operation has no application. The collection accessors return immutable, possibly empty lists, never
  * {@code null}. Custom contributors read the annotation accessors to branch on application
  * annotations.
  */
@@ -27,7 +29,7 @@ public interface RestOperationDescriptor {
 
     /**
      * Returns the operation identifier — the {@code @Operation(operationId)} value when present,
-     * otherwise the resource method name. Duplicate-validated at startup.
+     * otherwise the resource method name. The identifier is unique within its mount.
      *
      * @return the non-null operation identifier
      */
@@ -68,6 +70,16 @@ public interface RestOperationDescriptor {
      * @return the non-null security policy
      */
     SecurityPolicy securityPolicy();
+
+    /**
+     * Returns the application this operation belongs to or serves (application mounts and framework
+     * synthetic operations); {@code null} otherwise.
+     *
+     * @return the application name, or {@code null} when the operation has no application
+     */
+    default @Nullable String applicationName() {
+        return null;
+    }
 
     /**
      * Returns the effective security requirement sets, resolved operation-level-else-global, modelled
