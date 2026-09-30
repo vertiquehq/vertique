@@ -996,8 +996,13 @@ Each reported member is a Java member, reported under its own name and the class
 A type carrying a marker is reported with a `null` `member` wherever the document describes it: as
 the root, as a member's type, as a collection or array element, inside an `Optional`, as a map value
 in the input direction, and as a polymorphic base that the document describes only through its
-subtypes, reached through a member at any of those positions. A subtype of a marked class is not
-reported for that alone.
+subtypes, reached through a member at any of those positions. A described subtype of a class
+carrying a class-level `@Schema(hidden = true)` is reported for the subtype as a `SCHEMA_HIDDEN` type
+entry, because `@Schema` is `@Inherited`; `@Hidden` is not, so an inherited `@Hidden` never counts.
+The type's own view decides first (a mix-in's `@Schema`, then the declared one, then one reached
+through a bundle), and the inherited `@Schema` is read only when that view holds none. A class that
+declares `@Hidden` directly and inherits a hidden `@Schema` is reported as `BOTH`. The base type,
+when the document describes it as well, keeps its own entry.
 
 A marker counts as the profile's mapper sees it in the generator's direction: declared on the member
 or type directly, through a Jackson annotation bundle (an annotation meta-annotated
