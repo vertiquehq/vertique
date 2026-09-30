@@ -33,16 +33,18 @@ class RestOpenApiDocsHasNoOpenApiImportsTest {
         Path java = main.resolve("java");
         Path resources = main.resolve("resources");
 
+        // And both trees exist, so an empty scan cannot pass for lack of input
+        assertTrue(Files.isDirectory(java), "the production source directory does not exist: " + java);
+        assertTrue(Files.isDirectory(resources), "the resource directory does not exist: " + resources);
+
         // When they are scanned
-        List<Path> referencing = List.of();
-        if (Files.isDirectory(java)) {
-            try (Stream<Path> paths = Files.walk(java)) {
-                referencing = paths.filter(p -> p.toString().endsWith(".java"))
-                        .filter(RestOpenApiDocsHasNoOpenApiImportsTest::referencesPreviewOpenApi)
-                        .toList();
-            }
+        List<Path> referencing;
+        try (Stream<Path> paths = Files.walk(java)) {
+            referencing = paths.filter(p -> p.toString().endsWith(".java"))
+                    .filter(RestOpenApiDocsHasNoOpenApiImportsTest::referencesPreviewOpenApi)
+                    .toList();
         }
-        List<String> resourceFiles = Files.isDirectory(resources) ? relativeFiles(resources) : List.of();
+        List<String> resourceFiles = relativeFiles(resources);
 
         // Then no source references the preview packages, and no resource other than module.md exists
         assertTrue(

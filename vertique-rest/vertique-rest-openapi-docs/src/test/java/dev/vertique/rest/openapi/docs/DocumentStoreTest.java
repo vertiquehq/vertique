@@ -5,14 +5,19 @@ package dev.vertique.rest.openapi.docs;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.vertique.rest.core.RestConfigurationException;
+import dev.vertique.rest.jaxrs.publication.RestApplications;
 import dev.vertique.rest.openapi.docs.fixture.PublicApi;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -35,6 +40,9 @@ import org.junit.jupiter.api.Test;
  * <p>The store is driven as the publication sink drives it: each caller calls {@code publish} on
  * its own event-loop context. Every wait is bounded, so a future left incomplete fails the test
  * instead of hanging it.
+ *
+ * <p>It also proves the sink's guard for a mount built on a thread without a Vert.x context: the
+ * publication fails naming the application and the store is left untouched.
  */
 class DocumentStoreTest {
 
@@ -97,6 +105,34 @@ class DocumentStoreTest {
         } finally {
             gate.countDown();
         }
+    }
+
+    @Test
+    @DisplayName("A mount built outside a Vert.x context fails naming its application and publishes nothing")
+    void mountBuiltOutsideAVertxContextFailsAndStoresNothing() {
+        // Given: a sink for the enabled public document, and this JUnit thread, which has no Vert.x context
+        DocumentStore store = new DocumentStore();
+        EnabledDocuments.EnabledDocument document = new EnabledDocuments.EnabledDocument(
+                NAME,
+                PublicApi.class,
+                ApiDocs.Access.PUBLIC,
+                PublicApi.MOUNT_PATH,
+                RestApplications.ContractOrigin.ANNOTATION,
+                new InfoConfig("Catalog", "1.0", null));
+        DocsPublicationSink sink = new DocsPublicationSink(new EnabledDocuments(List.of(document)), store);
+        assertNull(Vertx.currentContext(), "the JUnit thread must have no Vert.x context");
+
+        // When: the sink is handed the public application's mount
+        Future<Void> result = sink.mountBuilt(new SnapshotRendererTest.PublicationSpec().build());
+
+        // Then: the future has already failed with a configuration exception naming the application
+        assertTrue(result.failed(), "the publication of a mount built outside a context must fail");
+        RestConfigurationException failure = assertInstanceOf(RestConfigurationException.class, result.cause());
+        assertTrue(failure.getMessage().contains(NAME), failure.getMessage());
+
+        // Then: no flight was started and nothing was stored
+        assertFalse(store.hasFlight(NAME), "a flight was started without a context");
+        assertTrue(store.names().isEmpty(), "a document was stored without a context");
     }
 
     /**

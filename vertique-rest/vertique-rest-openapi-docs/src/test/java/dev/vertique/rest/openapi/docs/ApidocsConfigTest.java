@@ -17,6 +17,7 @@ import io.vertx.core.json.JsonObject;
 import java.util.List;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -27,6 +28,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * one document is enabled. The declared applications come from the shared fixture's registrations
  * through the component's {@link RestApplications} view.
  */
+@DisplayName("The apidocs configuration and enabled-document validation")
 class ApidocsConfigTest {
 
     /** A marker no message may contain: it appears in every rejected value and description. */
@@ -69,11 +71,14 @@ class ApidocsConfigTest {
                 Arguments.of("/zq7/./docs", false),
                 Arguments.of("/zq7/../docs", false),
                 Arguments.of("/apidocs", true),
-                Arguments.of("/zq7/docs", true));
+                Arguments.of("/zq7/docs", true),
+                Arguments.of("/zq7 docs", false));
     }
 
     @ParameterizedTest(name = "apidocs.path {0} valid={1}")
     @MethodSource("prefixValues")
+    @DisplayName(
+            "An invalid apidocs.path fails startup naming the setting without echoing the value, and a valid one resolves")
     void invalidPrefixFailsNamingTheSetting(String value, boolean valid) {
         // Given the shared configuration with the prefix under test, and the same prefix with the
         // public document disabled
@@ -119,6 +124,8 @@ class ApidocsConfigTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("invalidInfo")
+    @DisplayName(
+            "An enabled document without a configured title or version fails naming its application, interface and the offending setting")
     void enabledDocumentNeedsConfiguredInfo(String variant, String expectedPath, String title, String version) {
         // Given the shared configuration changed by one rule
         JsonObject config = DocsConfigs.shared();
@@ -148,6 +155,7 @@ class ApidocsConfigTest {
     }
 
     @Test
+    @DisplayName("A disabled document is not validated")
     void disabledDocumentIsNotValidated() {
         // Given the public document disabled with no info
         JsonObject config = DocsConfigs.shared();
@@ -162,6 +170,7 @@ class ApidocsConfigTest {
     }
 
     @Test
+    @DisplayName("An application whose interface carries no @ApiDocs is not validated")
     void applicationWithoutApiDocsIsNotValidated() {
         // Given an entry for mgmt, whose interface carries no @ApiDocs, without info
         JsonObject config = DocsConfigs.shared();
@@ -179,6 +188,7 @@ class ApidocsConfigTest {
     }
 
     @Test
+    @DisplayName("An explicit null enabled keeps the annotation decision")
     void explicitNullEnabledKeepsTheAnnotationDecision() {
         // Given the public entry with an explicit JSON null for enabled
         JsonObject config = DocsConfigs.withDocumentEnabled(DocsConfigs.shared(), "public", null);
@@ -194,6 +204,7 @@ class ApidocsConfigTest {
     // ---- parsing ----
 
     @Test
+    @DisplayName("An absent apidocs section parses to the defaults")
     void absentSectionParsesToDefaults() {
         // Given a configuration without apidocs
         JsonObject config = DocsConfigs.loopback();
@@ -208,6 +219,7 @@ class ApidocsConfigTest {
     }
 
     @Test
+    @DisplayName("Document entries are parsed with every attribute and without validation")
     void documentEntriesAreParsedWithoutValidation() {
         // Given a document entry with every attribute
         JsonObject config = DocsConfigs.loopback();
@@ -231,6 +243,7 @@ class ApidocsConfigTest {
     }
 
     @Test
+    @DisplayName("An absent enabled on an entry parses to null rather than a default")
     void absentEnabledOnAnEntryParsesToNull() {
         // Given an entry without enabled
         JsonObject config = DocsConfigs.shared();
@@ -243,6 +256,7 @@ class ApidocsConfigTest {
     }
 
     @Test
+    @DisplayName("A globally disabled apidocs skips the rest of its subtree")
     void globallyDisabledSkipsTheRestOfTheSubtree() {
         // Given enabled false beside an invalid path and a malformed documents value
         JsonObject config = DocsConfigs.shared();
@@ -267,6 +281,7 @@ class ApidocsConfigTest {
 
     @ParameterizedTest
     @MethodSource("malformedEnabled")
+    @DisplayName("A non-boolean apidocs.enabled fails naming the setting")
     void malformedEnabledFailsNamingTheSetting(Object value) {
         // Given apidocs.enabled that is not a JSON boolean
         JsonObject config = DocsConfigs.shared();

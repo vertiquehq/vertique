@@ -11,13 +11,22 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import dev.vertique.rest.openapi.docs.OpenApi31Toolchain.Verdict;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+/**
+ * Verifies the test-only OpenAPI 3.1 validation toolchain the documentation tests rely on: it
+ * accepts a valid document without touching the caller's copy, and rejects documents whose
+ * {@code info.version}, component schemas or parameter schemas are invalid, naming the JSON
+ * pointer of the offending part.
+ */
+@DisplayName("The OpenAPI 3.1 validation toolchain")
 class OpenApi31ToolchainTest {
 
     private static final String PARAMETER_SCHEMA_POINTER = "/paths/~1things/get/parameters/0/schema";
 
     @Test
+    @DisplayName("validates a copy of the document and rejects invalid documents naming the offending pointer")
     void validatesACopyAndRejectsInvalidDocuments() {
         // Given four documents and a valid twin of the fourth
         JsonObject valid = minimalValid();

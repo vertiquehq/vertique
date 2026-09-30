@@ -122,7 +122,13 @@ class SnapshotRendererTest {
                 mountRow("declaring type", spec -> spec.declaringType = MgmtApi.class),
                 Arguments.of(
                         "rebuilt in reverse insertion order", Expectation.SNAPSHOT_EQUAL, (Consumer<PublicationSpec>)
-                                spec -> spec.reverseInsertionOrder = true));
+                                spec -> spec.reverseInsertionOrder = true),
+                // The base concatenates "/items" and "/items" into "/items/items"; moving the boundary
+                // gives the same concatenation, so only delimited text fields tell them apart.
+                operationRow("a boundary shift between the JAX-RS template and the route value", spec -> {
+                    spec.jaxRsPathTemplate = "/items/";
+                    spec.vertxRouteValue = "items";
+                }));
     }
 
     @ParameterizedTest(name = "{0}")
