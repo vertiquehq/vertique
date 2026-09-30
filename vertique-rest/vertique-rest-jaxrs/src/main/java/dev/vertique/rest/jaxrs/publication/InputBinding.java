@@ -26,7 +26,8 @@ import java.util.List;
  *                             binds as {@code null} and whether the request-validation gate rejects
  *                             it depends on the body schema, which this module does not evaluate
  * @param hidden               whether the input carries a hiding marker, belongs to a composite that
- *                             does, or is named by a hidden method-level parameter entry
+ *                             does, or is named by a hidden method-level parameter entry,
+ *                             declared directly or through a composed annotation
  * @param schemaEnforced       {@code true} only when the request-validation gate was installed and
  *                             received a schema for this input
  * @param annotations          the annotations the input's requiredness and hidden flag were

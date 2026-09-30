@@ -44,9 +44,12 @@ import dev.vertique.rest.jaxrs.publication.fixture.RecordingSink;
 import dev.vertique.rest.jaxrs.publication.fixture.RecordingValidationStrategy;
 import dev.vertique.rest.jaxrs.publication.inventory.BlankHiddenInputResource;
 import dev.vertique.rest.jaxrs.publication.inventory.BodyOnlyResource;
+import dev.vertique.rest.jaxrs.publication.inventory.CaseMismatchedHiddenHeaderResource;
+import dev.vertique.rest.jaxrs.publication.inventory.ComposedHiddenInputsResource;
 import dev.vertique.rest.jaxrs.publication.inventory.Conversions;
 import dev.vertique.rest.jaxrs.publication.inventory.CrudBase;
 import dev.vertique.rest.jaxrs.publication.inventory.Filters;
+import dev.vertique.rest.jaxrs.publication.inventory.InterfaceHiddenInputsResource;
 import dev.vertique.rest.jaxrs.publication.inventory.Item;
 import dev.vertique.rest.jaxrs.publication.inventory.ItemCrudResource;
 import dev.vertique.rest.jaxrs.publication.inventory.KindsResource;
@@ -64,6 +67,7 @@ import dev.vertique.rest.jaxrs.publication.inventory.ResponsesResource;
 import dev.vertique.rest.jaxrs.publication.inventory.SearchParams;
 import dev.vertique.rest.jaxrs.publication.inventory.SequencedResource;
 import dev.vertique.rest.jaxrs.publication.inventory.UnloadableGroup;
+import dev.vertique.rest.jaxrs.publication.inventory.UnmatchedComposedHiddenInputResource;
 import dev.vertique.rest.jaxrs.publication.inventory.UnmatchedHiddenInputResource;
 import dev.vertique.rest.jaxrs.publication.inventory.UnprofiledResponsesResource;
 import dev.vertique.rest.jaxrs.publication.inventory.UnreadableGroupsResource;
@@ -1003,6 +1007,109 @@ class OperationInventoryTest {
                 () -> assertTrue(message.length() <= 324, "message length " + message.length() + ": " + message),
                 () -> assertTrue(
                         message.chars().noneMatch(Character::isISOControl), "no control characters: " + message),
+                () -> assertTrue(sink.received().isEmpty(), "nothing is published"));
+    }
+
+    @Test
+    @DisplayName("A hidden entry carried by a composed annotation on the method hides the input it names")
+    void composedAnnotationHiddenEntriesHideTheInputsTheyName(Vertx vertx) throws Exception {
+        // Given: a reflection-path resource whose methods carry composed annotations whose own types
+        // declare @Parameter, @Parameters, or @Operation(parameters = ...); the inputs are unmarked
+        assertTrue(GeneratedJaxRsDescriptorRegistry.shared()
+                .lookup(ComposedHiddenInputsResource.class)
+                .isEmpty());
+
+        // When: the mount is built with a sink that wants detail
+        MountPublication publication =
+                buildMount(vertx, TestFactories.builder(), Set.of(new ComposedHiddenInputsResource()));
+
+        // Then: exactly the named inputs are hidden; every sibling input stays visible
+        Map<String, List<HiddenFact>> expected = new LinkedHashMap<>();
+        // composed @Parameter(name = "mx", in = HEADER, hidden = true)
+        expected.put(
+                "composedHeader", List.of(new HiddenFact(HEADER, "mx", true), new HiddenFact(QUERY, "page", false)));
+        // composed @Parameters: mq (QUERY) hidden = true, mv (QUERY) hidden = false
+        expected.put(
+                "composedContainer", List.of(new HiddenFact(QUERY, "mq", true), new HiddenFact(QUERY, "mv", false)));
+        // composed @Operation(parameters = @Parameter(name = "mo", in = QUERY, hidden = true))
+        expected.put(
+                "composedOperation", List.of(new HiddenFact(QUERY, "mo", true), new HiddenFact(QUERY, "keep", false)));
+
+        assertEquals(expected.keySet(), operationsById(publication).keySet(), "operation ids");
+        List<Executable> checks = new ArrayList<>();
+        for (Map.Entry<String, List<HiddenFact>> operation : expected.entrySet()) {
+            List<InputBinding> inputs = inputsOf(publication, operation.getKey(), "composed hiding");
+            checks.add(() -> assertEquals(operation.getValue(), hiddenFacts(inputs), operation.getKey()));
+        }
+        assertAll("composed hiding", checks);
+    }
+
+    @Test
+    @DisplayName("A hidden entry carried by a composed annotation that names no input fails the mount build")
+    void composedAnnotationHiddenEntryNamingNoInputFailsTheMountBuild(Vertx vertx) {
+        // Given: a composed annotation carrying @Parameter(name = "phantom", in = QUERY, hidden = true)
+        // on a method that binds only query present
+        assertTrue(GeneratedJaxRsDescriptorRegistry.shared()
+                .lookup(UnmatchedComposedHiddenInputResource.class)
+                .isEmpty());
+        RecordingSink sink = new RecordingSink(applicationName -> true);
+
+        // When: the mount is built with a sink that wants detail
+        RestConfigurationException failure =
+                assertMountBuildFails(vertx, sink, Set.of(new UnmatchedComposedHiddenInputResource()));
+
+        // Then: the failure names the operation and the entry, and nothing is published
+        String message = String.valueOf(failure.getMessage());
+        assertAll(
+                () -> assertTrue(message.contains("'hidePhantom'"), "names the operation: " + message),
+                () -> assertTrue(message.contains("'phantom'"), "names the entry: " + message),
+                () -> assertTrue(sink.received().isEmpty(), "nothing is published"));
+    }
+
+    @Test
+    @DisplayName("A hidden entry on the implemented interface method hides the input it names")
+    void interfaceMethodHiddenEntryHidesTheInputItNames(Vertx vertx) throws Exception {
+        // Given: an interface method carrying only @Parameter(name = "X-Trace-Token", in = HEADER,
+        // hidden = true), implemented by a resource that declares the JAX-RS annotations
+        assertTrue(GeneratedJaxRsDescriptorRegistry.shared()
+                .lookup(InterfaceHiddenInputsResource.class)
+                .isEmpty());
+
+        // When: the mount is built with a sink that wants detail
+        MountPublication publication =
+                buildMount(vertx, TestFactories.builder(), Set.of(new InterfaceHiddenInputsResource()));
+
+        // Then: the header is hidden and the query input stays visible
+        assertEquals(Set.of("readTrace"), operationsById(publication).keySet(), "operation ids");
+        assertEquals(
+                List.of(new HiddenFact(HEADER, "X-Trace-Token", true), new HiddenFact(QUERY, "page", false)),
+                hiddenFacts(inputsOf(publication, "readTrace", "interface hiding")));
+    }
+
+    @Test
+    @DisplayName("A hidden header entry differing from the bound header only in case fails and says names are exact")
+    void hiddenHeaderEntryDifferingOnlyInCaseFailsWithTheExactNameHint(Vertx vertx) {
+        // Given: @Parameter(name = "x-debug-token", in = HEADER, hidden = true) beside
+        // @HeaderParam("X-Debug-Token")
+        assertTrue(GeneratedJaxRsDescriptorRegistry.shared()
+                .lookup(CaseMismatchedHiddenHeaderResource.class)
+                .isEmpty());
+        RecordingSink sink = new RecordingSink(applicationName -> true);
+
+        // When: the mount is built with a sink that wants detail
+        RestConfigurationException failure =
+                assertMountBuildFails(vertx, sink, Set.of(new CaseMismatchedHiddenHeaderResource()));
+
+        // Then: the failure names the operation and the entry, says header names match exactly, and
+        // nothing is published
+        String message = String.valueOf(failure.getMessage());
+        assertAll(
+                () -> assertTrue(message.contains("'hideHeaderByOtherCase'"), "names the operation: " + message),
+                () -> assertTrue(message.contains("'x-debug-token'"), "names the entry: " + message),
+                () -> assertTrue(
+                        message.contains("; header names are matched case-sensitively, write the name exactly as in"
+                                + " @HeaderParam"),
+                        "states the case-sensitive header match: " + message),
                 () -> assertTrue(sink.received().isEmpty(), "nothing is published"));
     }
 
