@@ -4,6 +4,7 @@
 package dev.vertique.rest.jaxrs.publication;
 
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
+import java.util.List;
 
 /**
  * INTERNAL: the schema and validation detail captured for one operation, present on {@link
@@ -16,6 +17,23 @@ import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
  * @param profileId     the resolved JSON mapper profile id for this operation
  * @param schemas       the detached schema copies captured for this operation
  * @param gateInstalled whether a request-validation gate was installed for this operation
+ * @param inputs        the flattened input inventory, in method-parameter declaration order: each
+ *                      bound method parameter, the body, and each field of a {@code @BeanParam} or
+ *                      {@code @RequestParams} composite
+ * @param response      the operation's response shape
  */
 public record OperationDetail(
-        JaxRsOperationDescriptor descriptor, String profileId, CapturedSchemas schemas, boolean gateInstalled) {}
+        JaxRsOperationDescriptor descriptor,
+        String profileId,
+        CapturedSchemas schemas,
+        boolean gateInstalled,
+        List<InputBinding> inputs,
+        ResponseShape response) {
+
+    /**
+     * Compact constructor storing an unmodifiable copy of {@code inputs}.
+     */
+    public OperationDetail {
+        inputs = List.copyOf(inputs);
+    }
+}

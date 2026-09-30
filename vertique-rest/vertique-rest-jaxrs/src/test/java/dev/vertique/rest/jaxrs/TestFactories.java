@@ -3,6 +3,7 @@
 
 package dev.vertique.rest.jaxrs;
 
+import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.config.JaxRsConfig;
 import dev.vertique.rest.core.context.RestContextResolution;
@@ -72,6 +73,7 @@ final class TestFactories {
         private Optional<AuthEnforcementCapability> authEnforcementCapability = Optional.empty();
         private Optional<ActionRegistry> actionRegistry = Optional.empty();
         private Optional<Authorizer> authorizer = Optional.empty();
+        private Optional<BeanValidator> beanValidator = Optional.empty();
 
         /**
          * {@code null} (the default) keeps the retained public {@code Factory} constructor path, with
@@ -285,6 +287,18 @@ final class TestFactories {
         }
 
         /**
+         * Sets the optional {@link BeanValidator} (defaults to {@link Optional#empty()}: no Bean
+         * Validation implementation is bound, so the invoker never checks parameters).
+         *
+         * @param validator the bean validator, present when a Bean Validation implementation is bound
+         * @return this builder
+         */
+        Builder beanValidator(Optional<BeanValidator> validator) {
+            this.beanValidator = validator;
+            return this;
+        }
+
+        /**
          * Sets the {@code Set<OperationPublicationSink>} multibinding (T006). Leaving this unset
          * (the default, {@code null}) keeps the factory built through the retained public
          * constructor, exactly today's behavior; passing a set — including {@link Set#of()} — selects
@@ -337,7 +351,7 @@ final class TestFactories {
                         jsonMapperProfileRegistry, // jsonMapperProfileRegistry
                         dev.vertique.json.JsonConfig
                                 .defaults(), // jsonConfig (json.jsonProfile unset => vertique floor)
-                        Optional.empty(), // beanValidator
+                        beanValidator, // beanValidator
                         Optional.empty(), // objectProcessor
                         Set.of(), // evidenceCapturers
                         actionRegistry,
@@ -371,7 +385,7 @@ final class TestFactories {
                     jaxRsConfig,
                     jsonMapperProfileRegistry, // jsonMapperProfileRegistry
                     dev.vertique.json.JsonConfig.defaults(), // jsonConfig (json.jsonProfile unset => vertique floor)
-                    Optional.empty(), // beanValidator
+                    beanValidator, // beanValidator
                     Optional.empty(), // objectProcessor
                     Set.of(), // evidenceCapturers
                     actionRegistry,

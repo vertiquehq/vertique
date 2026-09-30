@@ -36,7 +36,11 @@
  * for, each operation also carries an {@link dev.vertique.rest.jaxrs.publication.OperationDetail}
  * whose {@link dev.vertique.rest.jaxrs.publication.CapturedSchemas} are deep copies of the schemas
  * the request-validation gate receives, taken before the gate is produced and keyed by {@link
- * dev.vertique.rest.jaxrs.publication.InputKey}. A sink must not retain a publication, or anything
- * reachable from it, past the call.
+ * dev.vertique.rest.jaxrs.publication.InputKey}. The detail also carries the operation's flattened
+ * input inventory, one {@link dev.vertique.rest.jaxrs.publication.InputBinding} per bound method
+ * parameter, body, and composite field with its location, bound name, type, default, requiredness,
+ * hidden flag, and whether the gate enforces a schema for it, and the operation's {@link
+ * dev.vertique.rest.jaxrs.publication.ResponseShape}. A sink must not retain a publication, or
+ * anything reachable from it, past the call.
  */
 package dev.vertique.rest.jaxrs.publication;
