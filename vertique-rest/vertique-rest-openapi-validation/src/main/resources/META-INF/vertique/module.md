@@ -184,6 +184,13 @@ The strategy also injects the framework's `ParamConversionResolver` (`vertique-r
   never falls back to an unvalidated route.
 - **File verification is inactive.** `openapi-contract` does not run `@FilePart` constraints or
   `FileContentVerifier`; bound verifiers cause a per-mount startup WARN.
+- **Known limit: pattern and format input is not bounded.** The pattern-input bound
+  (`jaxrs.validationPatternMaxChars` and `jaxrs.validationPatternMaxTotalChars`) and the reused
+  format checks belong to the `web-validation` gate only; those keys are scoped to `web-validation`,
+  and this strategy does not consult them. Under `openapi-contract`, a string or object key reaching a
+  `pattern`, `patternProperties`, or format position is handed to `vertx-openapi` at whatever length
+  the request carries, and is evaluated by that library's own keyword and format handling. An
+  application that needs the bound selects `web-validation`.
 - **`vertx-openapi` is a preview artifact.** Its API shape may change across Vert.x minor versions. This module pins the `vertx-openapi` version via the parent BOM.
 - **Security semantics.** The active security model is OR-of-AND-with-scopes. The `openapi-contract` strategy inherits the same security handling as all other strategies — security is applied by `JaxRsRouteRegistrar`, not by the validation strategy itself. The validation gate runs after the auth/authorization chain and is unaffected by the security model shape.
 
