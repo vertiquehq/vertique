@@ -3,6 +3,7 @@
 
 package dev.vertique.rest.core.interceptor;
 
+import dev.vertique.rest.core.routing.RestOperationDescriptor;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.annotation.Nullable;
 import java.lang.annotation.Annotation;
@@ -28,7 +29,21 @@ import java.util.Map;
  * communication within a single chain.
  *
  * <p>Uses copy-on-write semantics: {@link #withAttribute(String, Object)} returns a new instance
- * with the attribute added while leaving the original unchanged.
+ * with the attribute added while leaving the original unchanged. The copy carries every component,
+ * including {@code operation}.
+ *
+ * <p>{@code operation} is the operation's registration-time descriptor. The interceptor chain
+ * restores it after every {@link OperationInterceptor#beforeOperation} that returns a context
+ * carrying a different one, so later interceptors always see the registration-time operation.
+ * Consumers read the operation's identity, including {@link RestOperationDescriptor#applicationName()},
+ * from {@code ctx.operation()}; the chain does not restore the scalar {@code operationId} of a
+ * rebuilt context.
+ *
+ * <p>{@code operation} is a nullable component appended after {@code attributes}. The
+ * five-argument constructor remains and supplies {@code null} for it, so code that constructs an
+ * {@code OperationContext} with five arguments keeps compiling. Record patterns that deconstruct
+ * {@code OperationContext} with five components are not source-compatible with the six-component
+ * record.
  *
  * @param operationId       the {@code operationId} from the OpenAPI spec / {@code @Operation}
  *                          annotation, used to identify the resource method
@@ -39,13 +54,34 @@ import java.util.Map;
  *                          populated at boot time via {@code AnnotationResolver}
  * @param attributes        per-operation attribute bag for passing data between interceptors;
  *                          defensive copy is made on construction
+ * @param operation         the registration-time descriptor of the operation, or {@code null} when
+ *                          the context was built without one
  */
 public record OperationContext(
         String operationId,
         RoutingContext routingContext,
         List<Annotation> methodAnnotations,
         List<Annotation> classAnnotations,
-        Map<String, Object> attributes) {
+        Map<String, Object> attributes,
+        @Nullable RestOperationDescriptor operation) {
+
+    /**
+     * Creates a context without a registration-time descriptor; {@link #operation()} is {@code null}.
+     *
+     * @param operationId       the operation identifier
+     * @param routingContext    the Vert.x routing context (mutable — see class javadoc)
+     * @param methodAnnotations method-level annotations; copied to an unmodifiable list
+     * @param classAnnotations  class-level annotations; copied to an unmodifiable list
+     * @param attributes        attribute bag; copied to an unmodifiable map
+     */
+    public OperationContext(
+            String operationId,
+            RoutingContext routingContext,
+            List<Annotation> methodAnnotations,
+            List<Annotation> classAnnotations,
+            Map<String, Object> attributes) {
+        this(operationId, routingContext, methodAnnotations, classAnnotations, attributes, null);
+    }
 
     /**
      * Compact constructor that defensively copies all mutable inputs to enforce immutability of
@@ -57,6 +93,7 @@ public record OperationContext(
      * @param methodAnnotations method-level annotations; copied to an unmodifiable list
      * @param classAnnotations  class-level annotations; copied to an unmodifiable list
      * @param attributes        attribute bag; copied to an unmodifiable map
+     * @param operation         the registration-time descriptor, stored as given
      */
     public OperationContext {
         methodAnnotations = methodAnnotations != null ? List.copyOf(methodAnnotations) : List.of();
@@ -116,6 +153,7 @@ public record OperationContext(
     public OperationContext withAttribute(String key, Object value) {
         Map<String, Object> newAttrs = new HashMap<>(attributes);
         newAttrs.put(key, value);
-        return new OperationContext(operationId, routingContext, methodAnnotations, classAnnotations, newAttrs);
+        return new OperationContext(
+                operationId, routingContext, methodAnnotations, classAnnotations, newAttrs, operation);
     }
 }
