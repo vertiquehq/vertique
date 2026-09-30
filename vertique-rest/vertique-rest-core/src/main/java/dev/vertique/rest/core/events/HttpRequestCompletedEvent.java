@@ -52,7 +52,9 @@ import java.util.Optional;
  * @param endTime            the instant at which the request completion was observed; never
  *                           {@code null}
  * @param method             the HTTP method name (e.g., {@code "GET"}, {@code "POST"}); never
- *                           {@code null}
+ *                           {@code null}. It comes from the request line, so like {@code path} it
+ *                           is attacker-controlled and not length-bounded here; a consumer must
+ *                           bound it before storing it
  * @param path               the raw request path; never {@code null}
  * @param statusCode         the HTTP response status code actually sent
  * @param failureCode        a low-cardinality failure classification (e.g., the exception's simple

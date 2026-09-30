@@ -39,7 +39,8 @@ import io.vertx.ext.web.RoutingContext;
  *       {@link Exception}s — the emitter guards with its own {@code try/catch} (WARN + swallow)
  *       but good implementations do not rely on that guard. {@link Error}s from {@code close()}
  *       likewise propagate as fatal.</li>
- *   <li>Both {@code open} and {@code close} run on the Vert.x event loop — do not block.</li>
+ *   <li>Both {@code open} and {@code close} run on the thread that ended the response, usually but
+ *       not always the Vert.x event loop — do not block.</li>
  * </ul>
  *
  * @see RestRequestCompletionEmitter

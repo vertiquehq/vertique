@@ -50,10 +50,12 @@ import lombok.extern.slf4j.Slf4j;
  * complete out-of-band via {@code RequestContextLifecycle.completeNow()}, which writes the 101
  * response without firing the Vert.x response end handler. As a result
  * {@code ctx.addEndHandler(...)} never runs for a successful upgrade and no completion event is
- * emitted. Successful upgrades are audited as channel-lifecycle events ({@code CHANNEL_OPENED})
- * instead. A <em>failed</em> upgrade that ends with an HTTP error response DOES produce a completion
- * event, an {@link HttpRequestCompletedEvent}, because the error path goes through the normal
- * response end handler and no transport claimed the request.
+ * emitted. The WebSocket transport also claims a successfully upgraded request, as a guard against a
+ * late completion driven by the connection's close. Successful upgrades are audited as
+ * channel-lifecycle events ({@code CHANNEL_OPENED}) instead. A <em>failed</em> upgrade that ends
+ * with an HTTP error response DOES produce a completion event, an {@link HttpRequestCompletedEvent},
+ * because the error path goes through the normal response end handler and no transport claimed the
+ * request.
  *
  * <p><strong>Placement.</strong> This middleware runs in the {@link ExtensionPhase#SYSTEM_FIRST}
  * phase at {@code ORDER = RequestContextLifecycle.ORDER + 5}, right after
@@ -264,15 +266,17 @@ public final class RestRequestCompletionEmitter implements Middleware {
      * other call returns. The start time and the claim come from {@code state} alone, never from
      * routing-context data, and the claim is read once.
      *
-     * <p>The transport facts are built once. The claim then selects the dispatch:
+     * <p>An {@code OTHER} claim returns first, before any transport fact is built. For any other
+     * claim the transport facts are built once, and the claim selects the dispatch:
      * <ul>
      *   <li>{@code REST(op)}: a {@link RestRequestCompletedEvent} carrying {@code op}, to every
      *       {@link RestRequestCompletedListener}, inside the {@link RequestCompletionScope}
      *       bracket;</li>
      *   <li>{@code NONE}: an {@link HttpRequestCompletedEvent}, to every
      *       {@link HttpRequestCompletedListener}, inside the scope bracket;</li>
-     *   <li>{@code OTHER}: nothing, and no scope opens; one {@code DEBUG} line, logged only when
-     *       {@code DEBUG} is enabled, carries the method and status code, never the path.</li>
+     *   <li>{@code OTHER}: nothing, no security or correlation snapshot is taken, and no scope
+     *       opens; one {@code DEBUG} line, logged only when {@code DEBUG} is enabled, carries the
+     *       method and status code, never the path.</li>
      * </ul>
      * Every listener is called through its two-argument {@code onCompleted(event, RoutingContext)}
      * overload, with {@code ctx}.
@@ -296,6 +300,13 @@ public final class RestRequestCompletionEmitter implements Middleware {
 
         // --- Claim: one read of the state's single volatile (claim, operation) value ---
         RequestCompletionState.Claim claim = state.claim();
+
+        // --- Another transport reports this request's completion itself: build no facts ---
+        if (claim.kind() == RequestCompletionState.ClaimKind.OTHER) {
+            logSkippedForOtherTransport(
+                    ctx.request().method().name(), ctx.response().getStatusCode());
+            return;
+        }
 
         // --- Timing ---
         Instant endTime = Instant.now();
@@ -366,7 +377,9 @@ public final class RestRequestCompletionEmitter implements Middleware {
                                 corr,
                                 origin,
                                 Map.of()));
-            case OTHER -> logSkippedForOtherTransport(method, status);
+            case OTHER -> {
+                // Returned above, before any fact was built; not reachable here.
+            }
         }
     }
 

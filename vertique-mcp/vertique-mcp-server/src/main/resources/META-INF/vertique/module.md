@@ -141,9 +141,9 @@ request to any instance. Every request is admitted through the fixed pipeline be
 - **Session headers** — the stateless protocol has no session concept, so an unsupported session
   header (for example `Mcp-Session-Id`) is ignored and the request stays bounded.
 
-A request rejected at admission (HTTP `405`, `403`, `415`, `406`, or the body-limit `413`) produces
-no MCP lifecycle event, and completes as an ordinary unclaimed HTTP request with exactly one
-`HttpRequestCompletedEvent`.
+A request rejected at admission on its first entry into the mount (HTTP `405`, `403`, `415`, `406`,
+or the body-limit `413`) produces no MCP lifecycle event, and completes as an ordinary unclaimed
+HTTP request with exactly one `HttpRequestCompletedEvent`.
 
 Every admitted body is decoded exactly once through the strict codec — the single envelope
 authority — and `server/discover` is routed on that decoded result like every other method, so it
@@ -199,8 +199,8 @@ request-scoped upload cleanup — ran when a client vanished mid-request. It doe
 outcome classification also became more accurate as a result: an orderly client disconnect records
 `DISCONNECTED` where it previously recorded `RESET`. The method, `Origin`,
 `Content-Type`, and `Accept` admission checks all run before the completion coordinator is created,
-so — like a body-limit rejection — a request that fails admission produces no lifecycle observation;
-only an admitted request opens observation.
+so — like a body-limit rejection — a request that fails admission on its first entry into the mount
+produces no lifecycle observation; only an admitted request opens observation.
 
 **Completion events for MCP requests.** A request MCP settles — one it writes a response for, one it
 rejects after its completion coordinator exists, or one whose lost connection it settles as
@@ -228,7 +228,10 @@ another mount, and reroutes by an application `RouteAuthHandler`, work as follow
   mount keeps the one lifecycle observation MCP opened for it; MCP opens no second observation. It
   gets exactly one MCP completion, whether it then completes normally, disconnects, or is reset,
   and rest-core emits no completion event for it. That completion carries the identity established
-  on the request's last pass, even when the request authenticates only after the reroute.
+  on the request's last pass, even when the request authenticates only after the reroute. A request
+  that is then rejected at re-admission, for example because the reroute changed its method, owns
+  the first pass's coordinator and the writer claims it: it gets one MCP completion and no
+  `HttpRequestCompletedEvent`.
 
 **Known limitation: an observation MCP never settles stays open.** For a request MCP admitted but
 does not settle (the failure taken by another mount, or the reroute out of the mount that completes

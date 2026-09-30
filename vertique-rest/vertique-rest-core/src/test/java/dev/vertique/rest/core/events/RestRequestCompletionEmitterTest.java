@@ -15,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertThrowsExactly;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -1199,12 +1200,11 @@ class RestRequestCompletionEmitterTest {
          *
          * <p>A successful WebSocket 101 upgrade calls {@code lifecycle.completeNow()} because
          * Vert.x Web 5.1.2's {@code Http1xServerResponse.completeHandshake()} writes the 101
-         * response without firing the normal response end handler. No test in
-         * {@code vertique-rest-websocket} references {@link RestRequestCompletedEvent} or
-         * {@link RestRequestCompletionEmitter}; the end-to-end real-server upgrade-exclusion proof
-         * is deferred (release-triage ledger).
+         * response without firing the normal response end handler. The end-to-end real-server proof
+         * that a successful upgrade yields no completion event is
+         * {@code WebSocketCompletionClaimIT} in {@code vertique-rest-websocket}.
          *
-         * <p>Cross-reference: {@code WebSocketEndpointRegistrar.handleUpgrade()} (line ~298).
+         * <p>Cross-reference: {@code WebSocketEndpointRegistrar.handleUpgrade()}.
          */
         @Test
         @DisplayName("completeNow() neither emits nor suppresses the end-handler-driven completion event")
@@ -1307,6 +1307,34 @@ class RestRequestCompletionEmitterTest {
             emitterLogger.detachAppender(appender);
             appender.stop();
             emitterLogger.setLevel(previousLevel);
+        }
+
+        /**
+         * A request another transport claimed gets neither event and no fact is built for it: the emitter
+         * takes no security snapshot, where a request no transport claimed takes one.
+         */
+        @Test
+        @DisplayName("Another transport's claim builds no facts: the security runtime is not consulted")
+        void otherTransportClaimTakesNoSecuritySnapshot(VertxTestContext ctx) {
+            Published published = Published.capture();
+            SecurityRuntime runtime = mock(SecurityRuntime.class);
+            RestRequestCompletionEmitter em =
+                    emitter(runtime, new DefaultContextHolder(), Set.of(published.rest()::add));
+            PathBarriers barriers = new PathBarriers();
+
+            startServer(claimRouter(em, barriers))
+                    .compose(port -> getAndAwait(port, OTHER_PATH, barriers).compose(status -> {
+                        ctx.verify(() -> {
+                            assertEquals(200, status);
+                            verify(runtime, never()).current();
+                        });
+                        // Non-vacuous: a request no transport claimed does consult the runtime.
+                        return getAndAwait(port, PLAIN_PATH, barriers);
+                    }))
+                    .onComplete(ctx.succeeding(status -> {
+                        ctx.verify(() -> verify(runtime, times(1)).current());
+                        ctx.completeNow();
+                    }));
         }
 
         /** T003 TP-005. */
@@ -1871,7 +1899,31 @@ class RestRequestCompletionEmitterTest {
                         }
                     },
                     () -> assertEquals(1, delivered.size(), "the later, capturing listener receives exactly one event"),
-                    () -> assertEquals(1, warnings.size(), "exactly one WARN on the emitter's logger: " + warnings));
+                    () -> assertEquals(1, warnings.size(), "exactly one WARN on the emitter's logger: " + warnings),
+                    () -> assertWarningNamesListenerAndFailureButNotPath(isolationCase, warnings));
+        }
+
+        /**
+         * Asserts the row's single WARN starts with the failed listener type's name, carries the thrower's message,
+         * and does not carry the request path.
+         *
+         * @param isolationCase the row
+         * @param warnings      the emitter's WARN messages
+         */
+        private static void assertWarningNamesListenerAndFailureButNotPath(
+                IsolationCase isolationCase, List<String> warnings) {
+            if (warnings.size() != 1) {
+                return; // the count assertion reports it
+            }
+            String warning = warnings.get(0);
+            String expectedPrefix = isolationCase.path().equals(CLAIMED)
+                    ? "RestRequestCompletedListener failed: "
+                    : "HttpRequestCompletedListener failed: ";
+            assertAll(
+                    "the WARN: " + warning,
+                    () -> assertTrue(warning.startsWith(expectedPrefix), "it starts with " + expectedPrefix),
+                    () -> assertTrue(warning.contains(BOOM), "it carries the thrower's message " + BOOM),
+                    () -> assertFalse(warning.contains(isolationCase.path()), "it must not carry the request path"));
         }
 
         /**

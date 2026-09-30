@@ -564,24 +564,29 @@ final class McpRequestDispatcher {
      * raised after this point can be taken by the failure handler of an earlier mount that matches
      * the path, and an application {@code RouteAuthHandler} can reroute the request out of this
      * mount. MCP then never settles the request, and a claim made here would leave it with no
-     * completion event from either side. An admission rejection makes no claim either: it is written
-     * before this method runs, so the writer finds no coordinator of the request, and the request
-     * completes as an ordinary rest-core request with one completion event.
+     * completion event from either side. An admission rejection on a request's first entry into the
+     * mount makes no claim either: it is written before this method runs, so the writer finds no
+     * coordinator of the request, and the request completes as an ordinary rest-core request with one
+     * completion event. A request rejected at re-admission after a reroute back into the mount owns the
+     * first pass's coordinator instead, so the writer claims it: it gets one MCP completion and no
+     * rest-core completion event.
      *
      * <p><strong>Re-entry.</strong> A reroute back to this mount's path re-enters the MCP router at its
      * first route, so this method runs again for the same request, with the same routing-context data.
      * When {@link #ownedCoordinator} returns the coordinator an earlier pass built for this request,
      * this method binds the pass's correlation and then only continues the route: it builds no second
-     * coordinator, so no second lifecycle observation opens; it binds no terminal fallback, writes no
-     * request key and registers no second settlement hook. The earlier pass's hook stays registered,
+     * coordinator, so no second lifecycle observation opens; it binds no terminal fallback, writes none
+     * of the coordinator, terminal-fallback or request-context keys and registers no second settlement
+     * hook. The earlier pass's hook stays registered,
      * because a reroute keeps the routing context's end handlers, so the request still gets exactly
      * one completion, whether it then completes normally, disconnects or is reset.
      *
      * <p><strong>Ownership.</strong> Anything else under the coordinator key — nothing, a coordinator
      * that belongs to another request, or a value of another type — is no coordinator for this
      * request. This method then runs as on a first entry: it builds the request's own coordinator,
-     * overwrites the request keys and registers the request's own settlement hook, and never calls
-     * anything on the value it replaces.
+     * overwrites the request keys and registers the request's own settlement hook. No settlement,
+     * observation or write method is called on the value it replaces; {@code belongsTo} only reads its
+     * binding.
      */
     void begin(RoutingContext context) {
         Instant startedAt = startedAt(context);
@@ -618,9 +623,10 @@ final class McpRequestDispatcher {
      * that {@linkplain McpCompletionCoordinator#belongsTo belongs to} {@code context.request()}. The
      * key is a predictable string in the request's shared routing-context data, so other code can copy
      * a value into it: a coordinator of another request, whether that request is still in flight or
-     * has already settled, or a value of another type. Each counts as no coordinator here, and nothing
-     * is ever called on it, so the other request's observation and completion stay unchanged. A typed
-     * read would instead fail with a {@link ClassCastException} on a value of another type.
+     * has already settled, or a value of another type. Each counts as no coordinator here, and no
+     * settlement, observation or write method is called on it ({@code belongsTo} only reads its
+     * binding), so the other request's observation and completion stay unchanged. A typed read would
+     * instead fail with a {@link ClassCastException} on a value of another type.
      *
      * <p>{@link #begin} and the terminal writer read the slot through this method: {@link #begin} to
      * recognize a reroute back into this mount, and the writer because it is the slot's only reader
@@ -3148,14 +3154,15 @@ final class McpRequestDispatcher {
      * RequestCompletionRecorder#claimForOtherTransport}) so that the emitter reports no completion
      * event for a request MCP reports itself; the other is the terminal writer, the private
      * five-argument {@code write}. The hook claims on every failed outcome, before it settles, and
-     * also when the coordinator has already settled: MCP's completion then already exists, from a
-     * write that won or from a failed progress write. It never claims on a succeeded outcome, because
+     * also when the coordinator has already settled: MCP's completion then already exists (from a
+     * write that won or from a failed progress write), or this settlement completes the stalled write.
+     * It never claims on a succeeded outcome, because
      * MCP settles a normal end only through its own write path, which has already claimed: a request
      * that ended normally without that write, because an earlier mount's failure handler took it or a
      * reroute took it out of this mount, is not MCP's to report, and rest-core reports it instead.
-     * Neither {@link #begin} nor an admission rejection claims: {@link #begin} runs before MCP knows it
-     * will settle the request, and an admission rejection is written before any coordinator or hook
-     * exists. The claim reaches the emitter in time, because this hook is registered in {@link #begin},
+     * Neither {@link #begin} nor an admission rejection on a request's first entry into the mount
+     * claims: {@link #begin} runs before MCP knows it will settle the request, and such an admission
+     * rejection is written before any coordinator or hook exists. The claim reaches the emitter in time, because this hook is registered in {@link #begin},
      * after the emitter's own end handler, and Vert.x Web runs end handlers in reverse registration
      * order. A reroute back into this mount registers no second hook (see {@link #begin}), so this one
      * hook, with the coordinator of the request's first pass, claims and settles the request.
@@ -3367,11 +3374,14 @@ final class McpRequestDispatcher {
      * MCP's two claim points; the other is the end handler {@link #registerSettlementHooks} registers,
      * for a disconnect or a reset. A {@code reject} after {@link #begin}, such as an authentication
      * rejection taken by MCP's own failure handler, writes through here, so it is claimed with no
-     * claim call of its own. An admission rejection (a disallowed method, {@code Origin}, {@code
-     * Content-Type} or {@code Accept}) and the body-limit rejection are written before {@link #begin}
-     * runs, so the writer finds no coordinator and makes no claim: MCP opens no observation for such
-     * a request, and rest-core reports it as an ordinary request with one completion event. {@link
-     * #begin} makes no claim, because a request it admits can still leave MCP unsettled.
+     * claim call of its own. On a request's first entry into the mount, an admission rejection (a
+     * disallowed method, {@code Origin}, {@code Content-Type} or {@code Accept}) and the body-limit
+     * rejection are written before {@link #begin} runs, so the writer finds no coordinator and makes no
+     * claim: MCP opens no observation for such a request, and rest-core reports it as an ordinary
+     * request with one completion event. A request rejected at re-admission after a reroute back into
+     * the mount owns the first pass's coordinator, which the writer claims: it gets one MCP completion
+     * and no rest-core completion event. {@link #begin} makes no claim, because a request it admits
+     * can still leave MCP unsettled.
      */
     private static boolean write(
             RoutingContext context,

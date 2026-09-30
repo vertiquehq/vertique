@@ -1110,11 +1110,12 @@ are unordered: the framework promises no invocation order, and no implementation
 another's side effects. A listener that throws an `Exception` is logged at WARN and does not stop
 the remaining listeners; an `Error` propagates.
 
-The logged failure carries the exception's own message, which is what keeps the fan-out diagnosable.
-An implementation must therefore keep credentials, tokens, personal data, and raw request values out
-of the exceptions it throws. The obligation is audit-safe by contract rather than by enforcement,
-exactly as `AuthorizationDecision.safeAttributes()` is — the framework does not inspect or scrub
-what an implementation throws.
+The logged failure is what keeps the fan-out diagnosable. The exception, including its message and
+any cause, is logged, so none of them may carry credentials, tokens, personal data, or raw request
+values. An implementation must therefore keep them out of the exceptions it throws. The obligation
+is audit-safe by contract rather than by enforcement, exactly as
+`AuthorizationDecision.safeAttributes()` is — the framework does not inspect or scrub what an
+implementation throws.
 
 ### `SecuritySchemeHandler` and `RouteAuthHandler`
 

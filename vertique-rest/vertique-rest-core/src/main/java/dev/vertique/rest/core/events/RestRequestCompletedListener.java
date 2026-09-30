@@ -15,8 +15,9 @@ import io.vertx.ext.web.RoutingContext;
  * {@link HttpRequestCompletedListener}; a <em>failed</em> upgrade that ends with an HTTP error
  * response is such a request. A request that another transport claimed produces neither event.
  * Successful protocol upgrades (e.g. WebSocket 101) complete out-of-band via
- * {@code RequestContextLifecycle.completeNow()} and produce no completion event; channel lifecycle
- * observers receive those transitions separately.
+ * {@code RequestContextLifecycle.completeNow()} and produce no completion event; the WebSocket
+ * transport also claims a successfully upgraded request, as a guard against a late completion driven
+ * by the connection's close. Channel lifecycle observers receive those transitions separately.
  *
  * <p>Implementations are contributed via the Dagger {@code Set<RestRequestCompletedListener>}
  * multibinding. The emitter ({@link RestRequestCompletionEmitter}) reaches each one through
@@ -34,10 +35,11 @@ import io.vertx.ext.web.RoutingContext;
  * logged at {@code WARN}, and does not prevent the remaining listeners from receiving the event or
  * affect the HTTP response. An {@link Error} is not caught and propagates.
  *
- * <p><b>Failure messages are logged:</b> the caught exception's message reaches the application log,
- * which is what keeps the fan-out diagnosable. An implementation MUST NOT put credentials, tokens,
- * personal data, or raw request values into the exception message or type it throws. The obligation
- * is audit-safe by contract rather than by enforcement, in the same way that
+ * <p><b>Failure details are logged:</b> the caught exception reaches the application log, which is
+ * what keeps the fan-out diagnosable. The exception, including its message and any cause, is logged,
+ * so none of them may carry credentials, tokens, personal data, or raw request values. An
+ * implementation MUST NOT put any of them into the exception, its message or its cause. The
+ * obligation is audit-safe by contract rather than by enforcement, in the same way that
  * {@code AuthorizationDecision.safeAttributes()} is.
  *
  * <p>Invocation is fire-and-forget: the emitter does not wait for any asynchronous work a listener
@@ -54,8 +56,8 @@ public interface RestRequestCompletedListener {
      * implementation that overrides that overload without delegating never sees this call.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
-     * the enclosing operation. The exception message is logged, so it must carry no credentials,
-     * tokens, personal data, or raw request values.
+     * the enclosing operation. The exception, including its message and any cause, is logged, so none
+     * of them may carry credentials, tokens, personal data, or raw request values.
      *
      * @param event the completed-request event; never {@code null}
      */
@@ -82,8 +84,8 @@ public interface RestRequestCompletedListener {
      * returning.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
-     * the enclosing operation. The exception message is logged, so it must carry no credentials,
-     * tokens, personal data, or raw request values.
+     * the enclosing operation. The exception, including its message and any cause, is logged, so none
+     * of them may carry credentials, tokens, personal data, or raw request values.
      *
      * @param event          the completed-request event; never {@code null}
      * @param routingContext the live root routing context of the request; never {@code null}

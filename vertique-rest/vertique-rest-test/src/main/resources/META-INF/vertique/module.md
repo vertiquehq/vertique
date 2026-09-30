@@ -204,6 +204,9 @@ RestRequestCompletedEvent event = new RestRequestCompletedEvent(
 listener.onCompleted(event);
 ```
 
+The framework calls `onCompleted(event, routingContext)`, not the one-argument form, so call that
+overload when the listener overrides it.
+
 ---
 
 ## Extension Points

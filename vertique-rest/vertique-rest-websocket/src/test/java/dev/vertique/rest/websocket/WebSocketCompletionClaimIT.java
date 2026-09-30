@@ -90,9 +90,11 @@ import org.junit.jupiter.api.function.Executable;
  * sleep.
  *
  * <p><strong>Late close.</strong> Whether Vert.x runs an upgraded request's routing end handlers when the
- * connection later closes is observed, not assumed. The upgrade-and-close test prints the outcome, (a) the
- * end handlers ran after the close or (b) none ran, followed by the barrier's entry and completion records,
- * to its standard output. It asserts no event for the upgraded request under either outcome.
+ * connection later closes is observed, not assumed. The upgrade-and-close test prints the outcome, followed
+ * by the barrier's entry and completion records, to its standard output. The outcome is (a) the end handlers
+ * ran after the close, (b) none ran, neither (a) nor (b) because they ran before the client close, or
+ * undetermined because the upgrade, the barrier's sight of the request, or the close was not observed. It
+ * asserts no event for the upgraded request whatever the outcome.
  *
  * <p><strong>Waits and assertions.</strong> Every wait is bounded and never throws: it reports whether its
  * condition held, and the assertions report the rest. One wait lasts at most {@link #WAIT_BOUND}, and all
@@ -475,8 +477,11 @@ public class WebSocketCompletionClaimIT {
     // --- Evidence ---
 
     /**
-     * Prints which late-close outcome occurred for {@link #OPEN_PATH}, then the barrier's records. The
-     * outcome is decided only when the upgrade, the close and the barrier after it were all observed.
+     * Prints which late-close outcome occurred for {@link #OPEN_PATH}, then the barrier's records. Only
+     * outcome (b) needs the upgrade, the close and the barrier request after it all to have been observed. The
+     * other outcomes are decided as soon as the fact that fixes them is seen: that the upgrade failed or the
+     * barrier never saw the request, that the routing end handlers ran before the client close, or that they
+     * ran after it.
      */
     private static void reportLateCloseOutcome(
             boolean upgraded, boolean serverClosed, boolean barrierCloseRecorded, List<String> completedAfterUpgrade) {

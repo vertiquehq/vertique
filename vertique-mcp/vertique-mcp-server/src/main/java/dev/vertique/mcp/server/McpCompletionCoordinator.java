@@ -172,9 +172,9 @@ final class McpCompletionCoordinator {
      * has already settled. It compares the request rather than the routing context, because each
      * routing pass's sub-router context is a new object.
      *
-     * <p>A coordinator with no response context is unbound and belongs to every request. Only the
-     * constructors that take no routing context build one, and only tests call them: the dispatcher
-     * always builds a coordinator with the request's routing context.
+     * <p>A coordinator with no response context is unbound and belongs to every request. Only a
+     * constructor given no routing context builds one; only tests do: the dispatcher always builds a
+     * coordinator with the request's routing context.
      *
      * @param request the request of the routing context the coordinator was found on
      * @return {@code true} when this coordinator is unbound or was built for {@code request}

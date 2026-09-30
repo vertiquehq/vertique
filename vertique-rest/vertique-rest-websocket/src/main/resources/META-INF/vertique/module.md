@@ -683,7 +683,7 @@ binds a `RouteAuthHandler` without the pipeline would authenticate but never aut
 | Outcome | What the client sees |
 |---|---|
 | Authentication or authorization denied | The security layer's HTTP status (401 or 403) on the handshake; no 101 |
-| `toWebSocket()` failed | HTTP 400 |
+| `toWebSocket()` failed | HTTP 400, or Vert.x's own answer when it already ended the response (400, 405 or 426); either way the request is unclaimed and yields one `HttpRequestCompletedEvent` |
 | Session bootstrap threw, channel registration failed, or `@OnOpen` failed | Handshake succeeds, then an immediate close with code `1011` and no frames |
 | Peer closed while channel registration was still in flight | `@OnOpen` is skipped entirely and the connection is torn down |
 | Normal `session.close()` | Close code `1000` |
@@ -696,8 +696,9 @@ the 101 and not when the connection later closes. Observe the connection through
 [Identity refresh](#identity-refresh)), through the channel events `ChannelOpenedEvent` and
 `ChannelClosedEvent` (from `dev.vertique:vertique-security-core`) delivered to every
 `SecurityEventObserver`. A rejected or failed upgrade is not claimed: a handshake the security layer
-rejects with 401 or 403, or one answered with 400 because `toWebSocket()` failed, completes as an
-ordinary HTTP request and produces exactly one `HttpRequestCompletedEvent`.
+rejects with 401 or 403, or one whose `toWebSocket()` failed and was answered with 400 by this
+module or with 400, 405 or 426 by Vert.x itself, completes as an ordinary HTTP request and produces
+exactly one `HttpRequestCompletedEvent`.
 
 ### Common mistakes
 

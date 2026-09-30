@@ -70,7 +70,7 @@ import lombok.extern.slf4j.Slf4j;
  *       invokes {@link OnOpen}, and resumes the socket.</li>
  *   <li>Calls {@link RequestContextLifecycle.Handle#completeNow()} to synchronously run all
  *       {@code onClose} and {@code afterClose} registrations. This explicit completion is required
- *       because Vert.x Web 5.0.8's {@code Http1xServerResponse.completeHandshake()} writes the
+ *       because Vert.x Web 5.1.6's {@code Http1xServerResponse.completeHandshake()} writes the
  *       101 response without firing the normal response end handler.</li>
  * </ol>
  *
@@ -93,8 +93,8 @@ class WebSocketEndpointRegistrar {
 
     /**
      * RFC 6455 close code 1011 ("Internal Server Error"): used when bootstrap fails after the
-     * handshake completed but before frame handlers were installed. Vert.x 5.0.8 does not expose
-     * a public {@code WebSocketCloseStatus} enum; the constant is named locally.
+     * handshake completed but before frame handlers were installed. The constant is named locally;
+     * Vert.x exposes no public {@code WebSocketCloseStatus} enum.
      */
     private static final short CLOSE_CODE_INTERNAL_ERROR = 1011;
 
@@ -733,8 +733,9 @@ class WebSocketEndpointRegistrar {
      *
      * <p>On failure: logs the error and responds with HTTP 400 if the response has not already
      * ended. A failed upgrade is not claimed, because no connection takes the request over: it
-     * completes as an ordinary HTTP request (the 400 written here, or the 401 or 403 the security
-     * handlers wrote) with one unclaimed completion event.
+     * completes as an ordinary HTTP request (for example with the 400 written here, the 401 or 403 the
+     * security handlers wrote, or the status Vert.x itself answered) with one unclaimed completion
+     * event.
      *
      * @param ctx  the Vert.x routing context for the upgrade request
      * @param meta the endpoint metadata (includes the pre-compiled path matcher)
@@ -766,7 +767,7 @@ class WebSocketEndpointRegistrar {
                     lifecycle.afterClose(() -> bootstrapSession(session, ws, meta, snapshot));
 
                     // Explicitly drive the request lifecycle to completion. Required because
-                    // Vert.x Web 5.0.8's Http1xServerResponse.completeHandshake() writes the 101
+                    // Vert.x Web 5.1.6's Http1xServerResponse.completeHandshake() writes the 101
                     // response and marks the response complete without firing the response end
                     // handler, so the lifecycle's automatic closeAll() would never run.
                     lifecycle.completeNow();
