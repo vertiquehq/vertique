@@ -595,12 +595,80 @@ class OperationInventoryTest {
                         .is(UNKNOWN),
                 primitives
                         .field(1, QUERY, "region", String.class, PrimitiveLimits.class, "region")
+                        .withAnnotations(regionAnnotations())
                         .is(REQUIRED));
 
         assertAll(
                 () -> assertEquals(expectedWithValidator, requirednessByName(withValidator), "validator bound"),
                 () -> assertEquals(expectedWithoutValidator, requirednessByName(withoutValidator), "no validator"),
                 () -> assertEquals(expectedRows, rows(withValidator), "binding facts, validator bound"));
+    }
+
+    @Test
+    @DisplayName("A composite field binding carries the member annotations its requiredness was judged on")
+    void bindingAnnotationsCarryTheMemberAnnotationsRequirednessWasJudgedOn(Vertx vertx) throws Exception {
+        // Given: the record composite declares @NotNull on the components page and region; page's
+        // annotations propagate to its implicit accessor, while region has an explicit accessor
+        // that declares only @QueryParam("region"), so its @NotNull stays on the component/field
+        MountPublication mount = buildMount(
+                vertx,
+                TestFactories.builder()
+                        .validationStrategies(Set.of(new RecordingValidationStrategy()))
+                        .jaxRsConfig(JaxRsConfig.builder()
+                                .validationStrategy(RecordingValidationStrategy.ID)
+                                .build())
+                        .beanValidator(Optional.of(new NoViolationsBeanValidator())),
+                Set.of(new PrimitiveKindsResource()));
+
+        // When: the inventory of GET /primitive-kinds is read
+        List<InputBinding> inputs = inputsOf(mount, "listPrimitiveKinds", "member annotations");
+        InputBinding region = bindingNamed(inputs, "region");
+        InputBinding page = bindingNamed(inputs, "page");
+
+        // Then: region is judged REQUIRED from the component's @NotNull, and its annotations carry
+        // that @NotNull as well as the accessor's @QueryParam("region")
+        assertAll(
+                () -> assertEquals(REQUIRED, region.requiredness(), "region requiredness"),
+                () -> assertTrue(
+                        hasAnnotation(region, NotNull.class),
+                        "region annotations must carry @NotNull: " + region.annotations()),
+                () -> assertEquals(
+                        List.of("region"),
+                        queryParamValues(region),
+                        "region annotations must keep @QueryParam(\"region\")"),
+                // Then: page carries both its @NotNull and @QueryParam("page")
+                () -> assertTrue(
+                        hasAnnotation(page, NotNull.class),
+                        "page annotations must carry @NotNull: " + page.annotations()),
+                () -> assertEquals(List.of("page"), queryParamValues(page), "page annotations keep @QueryParam"));
+    }
+
+    private static InputBinding bindingNamed(List<InputBinding> inputs, String name) {
+        for (InputBinding binding : inputs) {
+            if (name.equals(binding.name())) {
+                return binding;
+            }
+        }
+        throw new AssertionError("no binding named " + name);
+    }
+
+    private static boolean hasAnnotation(InputBinding binding, Class<? extends Annotation> type) {
+        for (Annotation annotation : binding.annotations()) {
+            if (annotation.annotationType() == type) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static List<String> queryParamValues(InputBinding binding) {
+        List<String> values = new ArrayList<>();
+        for (Annotation annotation : binding.annotations()) {
+            if (annotation instanceof jakarta.ws.rs.QueryParam queryParam) {
+                values.add(queryParam.value());
+            }
+        }
+        return values;
     }
 
     @Test
@@ -815,6 +883,21 @@ class OperationInventoryTest {
             return withEnforced(true);
         }
 
+        Row withAnnotations(List<Annotation> value) {
+            return new Row(
+                    origin,
+                    location,
+                    name,
+                    type,
+                    defaultValue,
+                    requiredness,
+                    hidden,
+                    schemaEnforced,
+                    value,
+                    methodParameterIndex,
+                    compositeType);
+        }
+
         Row withEnforced(boolean value) {
             return new Row(
                     origin,
@@ -927,6 +1010,21 @@ class OperationInventoryTest {
                     memberAnnotations(compositeType, member),
                     index,
                     compositeType);
+        }
+    }
+
+    /**
+     * The declared annotations of {@code PrimitiveLimits.region}: the explicit accessor's
+     * {@code @QueryParam("region")} first, then the component's {@code @NotNull} carried by the
+     * backing field.
+     */
+    private static List<Annotation> regionAnnotations() {
+        try {
+            return List.of(
+                    PrimitiveLimits.class.getMethod("region").getAnnotation(jakarta.ws.rs.QueryParam.class),
+                    PrimitiveLimits.class.getDeclaredField("region").getAnnotation(NotNull.class));
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError("fixture member PrimitiveLimits.region", e);
         }
     }
 

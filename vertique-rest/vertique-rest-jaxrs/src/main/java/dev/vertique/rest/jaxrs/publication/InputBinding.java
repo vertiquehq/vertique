@@ -29,7 +29,11 @@ import java.util.List;
  *                             that does
  * @param schemaEnforced       {@code true} only when the request-validation gate was installed and
  *                             received a schema for this input
- * @param annotations          the annotations declared on the input
+ * @param annotations          the annotations the input's requiredness and hidden flag were
+ *                             judged on, without duplicates and in first-occurrence order; for a
+ *                             {@link Origin#COMPOSITE_FIELD}, the field's own annotations followed
+ *                             by those of the record component, its accessor, and its backing
+ *                             field
  * @param methodParameterIndex the index of the method parameter the input binds through; for a
  *                             {@link Origin#COMPOSITE_FIELD}, the composite parameter's index
  * @param compositeType        the composite type declaring a {@link Origin#COMPOSITE_FIELD} input,

@@ -149,9 +149,12 @@ final class OperationInventory {
                 continue;
             }
             ParamLocation location = toLocation(fieldMeta.source());
-            List<Annotation> annotations = annotationsOf(fieldMeta);
-            List<Annotation> memberAnnotations = new ArrayList<>(annotations);
-            memberAnnotations.addAll(recordMemberAnnotations(compositeType, field.name()));
+            List<Annotation> memberAnnotations = new ArrayList<>(annotationsOf(fieldMeta));
+            for (Annotation extra : recordMemberAnnotations(compositeType, field.name())) {
+                if (!memberAnnotations.contains(extra)) {
+                    memberAnnotations.add(extra);
+                }
+            }
             inputs.add(new InputBinding(
                     Origin.COMPOSITE_FIELD,
                     location,
@@ -161,7 +164,7 @@ final class OperationInventory {
                     requiredness(fieldMeta, location, memberAnnotations, compositeAnnotations, validation),
                     ownMarker(memberAnnotations) || compositeHidden,
                     false,
-                    annotations,
+                    memberAnnotations,
                     index,
                     compositeType));
         }
