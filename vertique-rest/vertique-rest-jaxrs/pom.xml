@@ -68,6 +68,14 @@ SPDX-License-Identifier: EUPL-1.2
             <type>test-jar</type>
             <scope>test</scope>
         </dependency>
+        <!-- Test-only: the inventory fixtures declare Bean Validation constraints, groups, and
+             group sequences. Main code matches those annotations by type name and gains no
+             validation dependency. -->
+        <dependency>
+            <groupId>jakarta.validation</groupId>
+            <artifactId>jakarta.validation-api</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>

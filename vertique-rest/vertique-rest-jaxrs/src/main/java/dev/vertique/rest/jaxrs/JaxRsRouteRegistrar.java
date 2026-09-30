@@ -199,7 +199,7 @@ public class JaxRsRouteRegistrar {
      * @param jsonMapperProfileRegistry registry of named JSON mapper profiles; used to resolve the
      *                                effective request-body {@code ObjectMapper} per resource method
      *                                ({@code @JsonProfile} method/class &rarr; config &rarr; {@code vertx}).
-     *                                Resolving an unknown profile id fails startup (fail-fast, FR-JSON-008)
+     *                                Resolving an unknown profile id fails startup (fail-fast)
      * @param jsonConfig             global JSON configuration; supplies the {@code json.jsonProfile} default
      *                                applied when a resource method and {@code jaxrs.jsonProfile} both select
      *                                no profile of their own
@@ -287,9 +287,10 @@ public class JaxRsRouteRegistrar {
      * publication carries an {@link OperationDetail} whose {@link CapturedSchemas} are deep copies
      * of the body schema and of every descriptor parameter's schema, taken after the schema source
      * resolved them and before the strategy's {@code gateFor} receives the same, unmodified
-     * {@link OperationSchemas} instance; the body schema's provenance is carried by reference. A
-     * {@code null} list builds no publication and copies nothing, whatever {@code captureDetail}
-     * says.
+     * {@link OperationSchemas} instance; the body schema's provenance is carried by reference. The
+     * detail also carries the operation's flattened input inventory and its response shape, built
+     * only then. A {@code null} list builds no publication and copies nothing, whatever {@code
+     * captureDetail} says.
      *
      * @param resources               JAX-RS annotated resource instances
      * @param apiRouter               the plain Vert.x web router to register routes on
@@ -344,7 +345,7 @@ public class JaxRsRouteRegistrar {
      * @param jsonMapperProfileRegistry registry of named JSON mapper profiles; used to resolve the
      *                                effective request-body {@code ObjectMapper} per resource method
      *                                ({@code @JsonProfile} method/class &rarr; config &rarr; {@code vertx}).
-     *                                Resolving an unknown profile id fails startup (fail-fast, FR-JSON-008)
+     *                                Resolving an unknown profile id fails startup (fail-fast)
      * @param jsonConfig             global JSON configuration; supplies the {@code json.jsonProfile} default
      *                                applied when a resource method and {@code jaxrs.jsonProfile} both select
      *                                no profile of their own
@@ -589,7 +590,7 @@ public class JaxRsRouteRegistrar {
             // (a-2) Resolved request-body JSON profile. Resolve the effective profile for this method
             // ONCE at router-build time (method @JsonProfile -> class @JsonProfile -> jaxrs.jsonProfile
             // -> json.jsonProfile -> the vertique floor); an unknown configured/annotated id fails
-            // startup here (fail-fast, FR-JSON-008). The resolution carries two things: the profile
+            // startup here (fail-fast). The resolution carries two things: the profile
             // itself, which the schema source at (b) needs so a synthesized body schema describes the
             // wire shape the profile's mapper actually parses, and the process-codec identity verdict,
             // from which the nullable STASH MAPPER is derived once here and threaded unchanged to every
@@ -601,7 +602,7 @@ public class JaxRsRouteRegistrar {
             // under the default web-validation strategy the gate's validateBody binds (and FIRST-PARSES)
             // the body BEFORE the invoker runs, so stashing the mapper only at the invoker would let the
             // gate first-parse through the process codec and silently bypass the profile's strict
-            // parse (FR-JSON-024). Placing the stash ahead of the gate guarantees the profile mapper owns
+            // parse. Placing the stash ahead of the gate guarantees the profile mapper owns
             // the first parse on every body path (gated or not).
             // JsonConfig is threaded as a method parameter to keep the resolver stateless/static; it is the
             // real injected global JsonConfig wired through the Factory, so the json.jsonProfile tier applies.
@@ -633,9 +634,18 @@ public class JaxRsRouteRegistrar {
             gate.ifPresent(route::handler);
 
             if (publications != null) {
+                // The inventory and the response shape are built only for detail, from the same
+                // metadata, captured schemas, gate result, and resolved profile as the rest of it.
+                String profileId = resolvedProfile.profile().id().value();
                 OperationDetail detail = capturedSchemas != null
                         ? new OperationDetail(
-                                descriptor, resolvedProfile.profile().id().value(), capturedSchemas, gate.isPresent())
+                                descriptor,
+                                profileId,
+                                capturedSchemas,
+                                gate.isPresent(),
+                                OperationInventory.inputs(
+                                        meta, capturedSchemas, gate.isPresent(), beanValidator != null),
+                                OperationInventory.response(meta, profileId))
                         : null;
                 publications.add(new OperationPublication(
                         meta.operationId(),
@@ -712,7 +722,7 @@ public class JaxRsRouteRegistrar {
                     paramConversionResolver,
                     bodyNameResolver));
 
-            // (e) Per-route ERROR-body profile decision (FR-JSON-058/058A). This closes the error-path
+            // (e) Per-route ERROR-body profile decision. This closes the error-path
             // profiling asymmetry: a failure that fires BEFORE the request-path stash at (a-2) runs
             // (auth rejection, @Consumes 415) — or a route whose effective profile is the reserved
             // vertx floor under a NON-vertx global default — would otherwise reach the router-level
