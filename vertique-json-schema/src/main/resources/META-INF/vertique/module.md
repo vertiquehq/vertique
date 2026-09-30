@@ -1004,6 +1004,13 @@ through a bundle), and the inherited `@Schema` is read only when that view holds
 declares `@Hidden` directly and inherits a hidden `@Schema` is reported as `BOTH`. The base type,
 when the document describes it as well, keeps its own entry.
 
+Only a `@Schema` declared on a superclass is inherited, and the nearest one wins, as Java's
+`@Inherited` defines it, so an intermediate class declaring `@Schema(hidden = false)` stops a hidden
+`@Schema` above it from reaching its subtypes. A `@Schema` on an interface is never inherited, which
+matches `Class#getAnnotation`; swagger-core reads only the declared annotation. A mix-in registered
+for a superclass is not inherited by a subtype either: the subtype's own mix-in is read through its
+own view. To publish a subtype of a hidden class, declare its own `@Schema` without `hidden`.
+
 A marker counts as the profile's mapper sees it in the generator's direction: declared on the member
 or type directly, through a Jackson annotation bundle (an annotation meta-annotated
 `@JacksonAnnotationsInside`) at any depth, or through a mix-in the mapper registers, that mix-in's

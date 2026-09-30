@@ -214,6 +214,19 @@ class HiddenMemberReportTest {
             JsonProfileId.of("hidden-member-report-test-subclass-mix-in-schema"), subclassMixInSchemaMapper());
 
     /**
+     * A profile whose mapper registers {@link MixOverShape.MixOverSubMixIn} as the mix-in of {@link
+     * MixOverShape.MixOverSub}.
+     */
+    private static final JsonMapperProfile MIX_OVER_PROFILE =
+            JsonMapperProfiles.of(JsonProfileId.of("hidden-member-report-test-mix-over"), mixOverMapper());
+
+    /**
+     * A profile whose mapper registers {@link MixBaseMixIn} as the mix-in of {@link MixBase}.
+     */
+    private static final JsonMapperProfile MIX_SUPER_PROFILE =
+            JsonMapperProfiles.of(JsonProfileId.of("hidden-member-report-test-mix-super"), mixSuperMapper());
+
+    /**
      * A profile whose mapper registers {@link MixInTargetShape.MixInTargetMixIn} as the mix-in of {@link
      * MixInTargetShape.MixInTarget}.
      */
@@ -2680,6 +2693,126 @@ class HiddenMemberReportTest {
             hidden(InheritedBesideBaseShape.BesideBase.class, null, SCHEMA_HIDDEN, false),
             hidden(InheritedBesideBaseShape.BesideSub.class, null, SCHEMA_HIDDEN, false));
 
+    /** {@code @Schema(hidden = true)} on a class that {@link NegatedInheritShape.NegSub}'s own {@code @Schema} overrides. */
+    @Schema(hidden = true)
+    static class NegBase {
+        public String negBaseValue;
+    }
+
+    /**
+     * A class whose own {@code @Schema} is present and not hidden, over a superclass that hides: the class's own
+     * view wins over the inherited one, and the superclass is described in no document.
+     */
+    static final class NegatedInheritShape {
+        static final class NegHolder {
+            public NegSub negNested;
+        }
+
+        @Schema(description = "x")
+        static final class NegSub extends NegBase {
+            public String negSubValue;
+        }
+    }
+
+    /** Either direction: nothing, the subclass's own {@code @Schema} does not hide. */
+    private static final List<HiddenMember> NEGATED_INHERIT_REPORT = List.of();
+
+    /** {@code @Schema(hidden = true)} two levels above the class the shape describes. */
+    @Schema(hidden = true)
+    static class LvlBase {
+        public String lvlBaseValue;
+    }
+
+    /** A class in the middle of a chain, declaring no {@code @Schema} of its own. */
+    static class LvlMid extends LvlBase {
+        public String lvlMidValue;
+    }
+
+    /** {@code @Schema(hidden = true)} inherited through an intermediate class that declares none. */
+    static final class LvlChainShape {
+        static final class LvlHolder {
+            public LvlSub lvlNested;
+        }
+
+        static final class LvlSub extends LvlMid {
+            public String lvlSubValue;
+        }
+    }
+
+    /** Either direction: the class at the end of the chain, as a type carrying the inherited marker. */
+    private static final List<HiddenMember> LVL_CHAIN_REPORT =
+            List.of(hidden(LvlChainShape.LvlSub.class, null, SCHEMA_HIDDEN, false));
+
+    /** {@code @Schema(hidden = true)} on the root of a chain. */
+    @Schema(hidden = true)
+    static class OvBase {
+        public String ovBaseValue;
+    }
+
+    /** The middle of the chain, whose own {@code @Schema(hidden = false)} is the nearest one its subclass inherits. */
+    @Schema(hidden = false)
+    static class OvMid extends OvBase {
+        public String ovMidValue;
+    }
+
+    /** A class inheriting the nearest {@code @Schema}, an intermediate class's, not the root's hiding one. */
+    static final class OverrideChainShape {
+        static final class OvHolder {
+            public OvSub ovNested;
+        }
+
+        static final class OvSub extends OvMid {
+            public String ovSubValue;
+        }
+    }
+
+    /** Either direction: nothing, the nearest inherited {@code @Schema} does not hide. */
+    private static final List<HiddenMember> OVERRIDE_CHAIN_REPORT = List.of();
+
+    /** A class whose mapper mix-in hides it, and which the mix-in's target's subclass therefore extends. */
+    static class MixBase {
+        public String mixBaseValue;
+    }
+
+    /** Never described itself: the profile mapper merges its annotations into {@link MixBase}'s only. */
+    @Schema(hidden = true)
+    abstract static class MixBaseMixIn {}
+
+    /** A subclass of a class that only a mix-in marks: a mix-in on a superclass is not inherited. */
+    static final class MixSuperShape {
+        static final class MixSuperHolder {
+            public MixSub mixNested;
+        }
+
+        static final class MixSub extends MixBase {
+            public String mixSubValue;
+        }
+    }
+
+    /** Either direction: nothing, a superclass's mix-in does not mark its subclass. */
+    private static final List<HiddenMember> MIX_SUPER_REPORT = List.of();
+
+    /**
+     * A subclass of the hiding {@link NegBase} that the profile mapper's mix-in gives a {@code @Schema} that does
+     * not hide: the mix-in's view of the type wins over the one it inherits.
+     */
+    static final class MixOverShape {
+        static final class MixOverHolder {
+            public MixOverSub mixOverNested;
+        }
+
+        static final class MixOverSub extends NegBase {
+            public String mixOverValue;
+        }
+
+        /** Never described itself: the profile mapper merges its annotations into {@link MixOverSub}'s. */
+        @Schema(description = "x")
+        abstract static class MixOverSubMixIn {}
+    }
+
+    /** Either direction: nothing, the mix-in's {@code @Schema} does not hide. */
+    private static final List<HiddenMember> MIX_OVER_REPORT = List.of();
+
     /**
      * {@code @Schema(hidden = true)} on a public field only through the mix-in {@link #MIX_IN_TARGET_PROFILE}'s
      * mapper registers for its type, which itself declares nothing.
@@ -4453,6 +4586,134 @@ class HiddenMemberReportTest {
                         InheritedBesideBaseShape.BesideHolder.class,
                         INHERITED_BESIDE_BASE_REPORT),
                 shape(
+                        "input: a class whose own @Schema does not hide, over a hiding superclass, as a root",
+                        Direction.INPUT,
+                        NegatedInheritShape.class,
+                        NegatedInheritShape.NegSub.class,
+                        NEGATED_INHERIT_REPORT),
+                shape(
+                        "input: a class whose own @Schema does not hide, over a hiding superclass, reached through a member",
+                        Direction.INPUT,
+                        NegatedInheritShape.class,
+                        NegatedInheritShape.NegHolder.class,
+                        NEGATED_INHERIT_REPORT),
+                shape(
+                        "output: a class whose own @Schema does not hide, over a hiding superclass, as a root",
+                        Direction.OUTPUT,
+                        NegatedInheritShape.class,
+                        NegatedInheritShape.NegSub.class,
+                        NEGATED_INHERIT_REPORT),
+                shape(
+                        "output: a class whose own @Schema does not hide, over a hiding superclass, reached through a member",
+                        Direction.OUTPUT,
+                        NegatedInheritShape.class,
+                        NegatedInheritShape.NegHolder.class,
+                        NEGATED_INHERIT_REPORT),
+                shape(
+                        "input: a class inheriting the marker through a class that declares none, as a root",
+                        Direction.INPUT,
+                        LvlChainShape.class,
+                        LvlChainShape.LvlSub.class,
+                        LVL_CHAIN_REPORT),
+                shape(
+                        "input: a class inheriting the marker through a class that declares none, reached through a member",
+                        Direction.INPUT,
+                        LvlChainShape.class,
+                        LvlChainShape.LvlHolder.class,
+                        LVL_CHAIN_REPORT),
+                shape(
+                        "output: a class inheriting the marker through a class that declares none, as a root",
+                        Direction.OUTPUT,
+                        LvlChainShape.class,
+                        LvlChainShape.LvlSub.class,
+                        LVL_CHAIN_REPORT),
+                shape(
+                        "output: a class inheriting the marker through a class that declares none, reached through a member",
+                        Direction.OUTPUT,
+                        LvlChainShape.class,
+                        LvlChainShape.LvlHolder.class,
+                        LVL_CHAIN_REPORT),
+                shape(
+                        "input: a class inheriting the nearest @Schema, which does not hide, as a root",
+                        Direction.INPUT,
+                        OverrideChainShape.class,
+                        OverrideChainShape.OvSub.class,
+                        OVERRIDE_CHAIN_REPORT),
+                shape(
+                        "input: a class inheriting the nearest @Schema, which does not hide, reached through a member",
+                        Direction.INPUT,
+                        OverrideChainShape.class,
+                        OverrideChainShape.OvHolder.class,
+                        OVERRIDE_CHAIN_REPORT),
+                shape(
+                        "output: a class inheriting the nearest @Schema, which does not hide, as a root",
+                        Direction.OUTPUT,
+                        OverrideChainShape.class,
+                        OverrideChainShape.OvSub.class,
+                        OVERRIDE_CHAIN_REPORT),
+                shape(
+                        "output: a class inheriting the nearest @Schema, which does not hide, reached through a member",
+                        Direction.OUTPUT,
+                        OverrideChainShape.class,
+                        OverrideChainShape.OvHolder.class,
+                        OVERRIDE_CHAIN_REPORT),
+                shape(
+                        "input: a class whose superclass is marked only by a mix-in, as a root",
+                        Direction.INPUT,
+                        MIX_SUPER_PROFILE,
+                        MixSuperShape.class,
+                        MixSuperShape.MixSub.class,
+                        MIX_SUPER_REPORT),
+                shape(
+                        "input: a class whose superclass is marked only by a mix-in, reached through a member",
+                        Direction.INPUT,
+                        MIX_SUPER_PROFILE,
+                        MixSuperShape.class,
+                        MixSuperShape.MixSuperHolder.class,
+                        MIX_SUPER_REPORT),
+                shape(
+                        "output: a class whose superclass is marked only by a mix-in, as a root",
+                        Direction.OUTPUT,
+                        MIX_SUPER_PROFILE,
+                        MixSuperShape.class,
+                        MixSuperShape.MixSub.class,
+                        MIX_SUPER_REPORT),
+                shape(
+                        "output: a class whose superclass is marked only by a mix-in, reached through a member",
+                        Direction.OUTPUT,
+                        MIX_SUPER_PROFILE,
+                        MixSuperShape.class,
+                        MixSuperShape.MixSuperHolder.class,
+                        MIX_SUPER_REPORT),
+                shape(
+                        "input: a class whose mix-in @Schema does not hide, over a hiding superclass, as a root",
+                        Direction.INPUT,
+                        MIX_OVER_PROFILE,
+                        MixOverShape.class,
+                        MixOverShape.MixOverSub.class,
+                        MIX_OVER_REPORT),
+                shape(
+                        "input: a class whose mix-in @Schema does not hide, over a hiding superclass, reached through a member",
+                        Direction.INPUT,
+                        MIX_OVER_PROFILE,
+                        MixOverShape.class,
+                        MixOverShape.MixOverHolder.class,
+                        MIX_OVER_REPORT),
+                shape(
+                        "output: a class whose mix-in @Schema does not hide, over a hiding superclass, as a root",
+                        Direction.OUTPUT,
+                        MIX_OVER_PROFILE,
+                        MixOverShape.class,
+                        MixOverShape.MixOverSub.class,
+                        MIX_OVER_REPORT),
+                shape(
+                        "output: a class whose mix-in @Schema does not hide, over a hiding superclass, reached through a member",
+                        Direction.OUTPUT,
+                        MIX_OVER_PROFILE,
+                        MixOverShape.class,
+                        MixOverShape.MixOverHolder.class,
+                        MIX_OVER_REPORT),
+                shape(
                         "input: mix-in @Schema(hidden) on a public field",
                         Direction.INPUT,
                         MIX_IN_TARGET_PROFILE,
@@ -4753,6 +5014,134 @@ class HiddenMemberReportTest {
                         InheritedMarkShape.InheritedMarkHolder.class,
                         "inheritedMarkedValue",
                         INHERITED_MARK_REPORT),
+                position(
+                        "input: a class whose own @Schema does not hide, over a hiding superclass, as a root",
+                        Direction.INPUT,
+                        NegatedInheritShape.NegSub.class,
+                        null,
+                        NEGATED_INHERIT_REPORT),
+                position(
+                        "input: a class whose own @Schema does not hide, over a hiding superclass, reached through a member",
+                        Direction.INPUT,
+                        NegatedInheritShape.NegHolder.class,
+                        null,
+                        NEGATED_INHERIT_REPORT),
+                position(
+                        "output: a class whose own @Schema does not hide, over a hiding superclass, as a root",
+                        Direction.OUTPUT,
+                        NegatedInheritShape.NegSub.class,
+                        null,
+                        NEGATED_INHERIT_REPORT),
+                position(
+                        "output: a class whose own @Schema does not hide, over a hiding superclass, reached through a member",
+                        Direction.OUTPUT,
+                        NegatedInheritShape.NegHolder.class,
+                        null,
+                        NEGATED_INHERIT_REPORT),
+                position(
+                        "input: a class inheriting the marker through a class that declares none, as a root",
+                        Direction.INPUT,
+                        LvlChainShape.LvlSub.class,
+                        "lvlSubValue",
+                        LVL_CHAIN_REPORT),
+                position(
+                        "input: a class inheriting the marker through a class that declares none, reached through a member",
+                        Direction.INPUT,
+                        LvlChainShape.LvlHolder.class,
+                        "lvlSubValue",
+                        LVL_CHAIN_REPORT),
+                position(
+                        "output: a class inheriting the marker through a class that declares none, as a root",
+                        Direction.OUTPUT,
+                        LvlChainShape.LvlSub.class,
+                        "lvlSubValue",
+                        LVL_CHAIN_REPORT),
+                position(
+                        "output: a class inheriting the marker through a class that declares none, reached through a member",
+                        Direction.OUTPUT,
+                        LvlChainShape.LvlHolder.class,
+                        "lvlSubValue",
+                        LVL_CHAIN_REPORT),
+                position(
+                        "input: a class inheriting the nearest @Schema, which does not hide, as a root",
+                        Direction.INPUT,
+                        OverrideChainShape.OvSub.class,
+                        null,
+                        OVERRIDE_CHAIN_REPORT),
+                position(
+                        "input: a class inheriting the nearest @Schema, which does not hide, reached through a member",
+                        Direction.INPUT,
+                        OverrideChainShape.OvHolder.class,
+                        null,
+                        OVERRIDE_CHAIN_REPORT),
+                position(
+                        "output: a class inheriting the nearest @Schema, which does not hide, as a root",
+                        Direction.OUTPUT,
+                        OverrideChainShape.OvSub.class,
+                        null,
+                        OVERRIDE_CHAIN_REPORT),
+                position(
+                        "output: a class inheriting the nearest @Schema, which does not hide, reached through a member",
+                        Direction.OUTPUT,
+                        OverrideChainShape.OvHolder.class,
+                        null,
+                        OVERRIDE_CHAIN_REPORT),
+                position(
+                        "input: a class whose superclass is marked only by a mix-in, as a root",
+                        Direction.INPUT,
+                        MIX_SUPER_PROFILE,
+                        MixSuperShape.MixSub.class,
+                        null,
+                        MIX_SUPER_REPORT),
+                position(
+                        "input: a class whose superclass is marked only by a mix-in, reached through a member",
+                        Direction.INPUT,
+                        MIX_SUPER_PROFILE,
+                        MixSuperShape.MixSuperHolder.class,
+                        null,
+                        MIX_SUPER_REPORT),
+                position(
+                        "output: a class whose superclass is marked only by a mix-in, as a root",
+                        Direction.OUTPUT,
+                        MIX_SUPER_PROFILE,
+                        MixSuperShape.MixSub.class,
+                        null,
+                        MIX_SUPER_REPORT),
+                position(
+                        "output: a class whose superclass is marked only by a mix-in, reached through a member",
+                        Direction.OUTPUT,
+                        MIX_SUPER_PROFILE,
+                        MixSuperShape.MixSuperHolder.class,
+                        null,
+                        MIX_SUPER_REPORT),
+                position(
+                        "input: a class whose mix-in @Schema does not hide, over a hiding superclass, as a root",
+                        Direction.INPUT,
+                        MIX_OVER_PROFILE,
+                        MixOverShape.MixOverSub.class,
+                        null,
+                        MIX_OVER_REPORT),
+                position(
+                        "input: a class whose mix-in @Schema does not hide, over a hiding superclass, reached through a member",
+                        Direction.INPUT,
+                        MIX_OVER_PROFILE,
+                        MixOverShape.MixOverHolder.class,
+                        null,
+                        MIX_OVER_REPORT),
+                position(
+                        "output: a class whose mix-in @Schema does not hide, over a hiding superclass, as a root",
+                        Direction.OUTPUT,
+                        MIX_OVER_PROFILE,
+                        MixOverShape.MixOverSub.class,
+                        null,
+                        MIX_OVER_REPORT),
+                position(
+                        "output: a class whose mix-in @Schema does not hide, over a hiding superclass, reached through a member",
+                        Direction.OUTPUT,
+                        MIX_OVER_PROFILE,
+                        MixOverShape.MixOverHolder.class,
+                        null,
+                        MIX_OVER_REPORT),
                 position(
                         "input: a public field marked through the mapper's mix-in",
                         Direction.INPUT,
@@ -5532,6 +5921,18 @@ class HiddenMemberReportTest {
     private static ObjectMapper subclassMixInSchemaMapper() {
         ObjectMapper mapper = new ObjectMapper();
         mapper.addMixIn(SubclassMixInSchemaShape.Root.class, SubclassMixInSchemaShape.RootMixIn.class);
+        return mapper;
+    }
+
+    private static ObjectMapper mixOverMapper() {
+        ObjectMapper mapper = new ObjectMapper();
+        mapper.addMixIn(MixOverShape.MixOverSub.class, MixOverShape.MixOverSubMixIn.class);
+        return mapper;
+    }
+
+    private static ObjectMapper mixSuperMapper() {
+        ObjectMapper mapper = new ObjectMapper();
+        mapper.addMixIn(MixBase.class, MixBaseMixIn.class);
         return mapper;
     }
 
