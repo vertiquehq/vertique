@@ -779,7 +779,9 @@ application name from `ctx.operation().applicationName()`. `operation()` is `nul
 without a descriptor, such as one constructed with the five-argument constructor, so a key that uses it
 should handle `null` when the interceptor can see such contexts. An interceptor that keys state per
 operation includes the application name, so operations of different applications never share an
-entry:
+entry. On a mount that belongs to no declared application the application name is `null`, so the
+key reads `null:<operationId>`, and the cross-mount operation-id uniqueness check runs only when
+applications are declared:
 
 ```java
 public Future<Object> recoverOperation(OperationContext ctx, Throwable cause) {
@@ -1221,9 +1223,11 @@ the documented request and failure behavior.
 Three top-level sections are parsed by `RestCoreModule` — `http`, `cors`, and `jaxrs` — plus
 `correlation.ingress` by `CorrelationIngressModule`. Every key is optional; omitted keys take the
 default below. Unknown keys are ignored except under `jaxrs.defaultHeaders`, where they become
-custom response headers, and except under `jaxrs.security`. That exception is a deliberate
-narrowing of this Stable module's "unknown keys are ignored" rule, limited to these reserved names:
-a non-object `jaxrs.security` value (including `null`), an unknown key under it, and — at the
+custom response headers, and except under `jaxrs.security` and `jaxrs.applications`. The
+`jaxrs.applications` section is parsed strictly by `vertique-rest-jaxrs`: a non-object section, a
+non-object entry, or an entry key other than `openapiPath` fails startup. The `jaxrs.security`
+exception is a deliberate narrowing of this Stable module's "unknown keys are ignored" rule,
+limited to these reserved names: a non-object `jaxrs.security` value (including `null`), an unknown key under it, and — at the
 `jaxrs` level — a case variant of `security` or a misplaced `requireExplicitPolicy` (in any case)
 each fail startup with a `ConfigurationException` naming the offending keys, sorted, never their
 values.
@@ -1295,7 +1299,7 @@ When `enabled` is `false` (the default) no CORS handler is installed and every o
 | Key | Default | Constraint / notes |
 |---|---:|---|
 | `jaxrs.basePath` | `"/*"` | mount path of the JAX-RS sub-router; not applied when one or more `@RestApplication` declarations are present — each is mounted at its own `@RestApplication.path` instead |
-| `jaxrs.openapiPath` | `"openapi.json"` | classpath spec; only used by the opt-in `openapi-contract` strategy |
+| `jaxrs.openapiPath` | `"openapi.json"` | classpath spec; used by the opt-in `openapi-contract` strategy, and the shared global contract location for every application that sets neither `@RestApplication.openapiPath` nor `jaxrs.applications.<name>.openapiPath`; `vertique-rest-openapi-docs` refuses to document an application whose strategy resolves operations from that shared global contract |
 | `jaxrs.applications` | *(none)* | per-application settings, keyed by application name; parsed strictly by `vertique-rest-jaxrs`; unknown keys fail startup — see that module's reference |
 | `jaxrs.mediaTypeValidation` | `"WARN"` | `WARN`, `STRICT` (fails startup on the first mismatch), or `OFF` |
 | `jaxrs.validationStrategy` | `"web-validation"` | must match a registered strategy id — built-ins are `web-validation`, `none`, `openapi-contract`; an unknown id fails startup |
