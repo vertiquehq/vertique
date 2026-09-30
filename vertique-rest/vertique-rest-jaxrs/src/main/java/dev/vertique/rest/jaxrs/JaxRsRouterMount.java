@@ -167,14 +167,15 @@ public class JaxRsRouterMount implements RouterMount {
     /**
      * Returns metadata for this mount. The {@code mountId} is {@code "jaxrs:"} followed by
      * the mount path; the {@code resourceTypes} set contains the classes of all registered
-     * resources.
+     * resources. Its {@code applicationName} is the declared {@code @RestApplication} name this mount
+     * was built for, or {@code null} for a mount built by {@link Factory#create}.
      *
      * @return mount metadata with a stable {@code "jaxrs:<mountPath>"} identifier
      */
     @Override
     public MountMeta meta() {
         Set<Class<?>> resourceTypes = resources.stream().map(Object::getClass).collect(Collectors.toUnmodifiableSet());
-        return new MountMeta("jaxrs:" + mountPath, mountPath, openapiPath, resourceTypes);
+        return new MountMeta("jaxrs:" + mountPath, mountPath, openapiPath, resourceTypes, applicationName());
     }
 
     /**

@@ -474,7 +474,10 @@ public class JaxRsRouteRegistrar {
             // validation, schema synthesis, and the operation-handler contributors all consume the
             // same instance. Its securityRequirementSets() are the annotation-sourced effective
             // requirements (an OR of single-scheme sets from annotations).
-            JaxRsOperationDescriptor descriptor = ResourceMethodMetaToDescriptorAdapter.adapt(meta);
+            // The descriptor reports the application name of the mount being registered, or null when
+            // the caller passes no mount. The invoker built below receives this same instance.
+            String applicationName = mount != null ? mount.applicationName() : null;
+            JaxRsOperationDescriptor descriptor = ResourceMethodMetaToDescriptorAdapter.adapt(meta, applicationName);
 
             // PRD-REST-018: fail-fast startup validation. Every declared parameter whose runtime
             // extraction uses string conversion must be resolvable by the FULL conversion chain (native
@@ -720,7 +723,8 @@ public class JaxRsRouteRegistrar {
                     evidenceCapturers != null ? evidenceCapturers : List.of(),
                     resolvedBodyMapper,
                     paramConversionResolver,
-                    bodyNameResolver));
+                    bodyNameResolver,
+                    descriptor));
 
             // (e) Per-route ERROR-body profile decision. This closes the error-path
             // profiling asymmetry: a failure that fires BEFORE the request-path stash at (a-2) runs
