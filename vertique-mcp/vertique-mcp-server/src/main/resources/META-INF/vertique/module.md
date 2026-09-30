@@ -239,8 +239,8 @@ normally, above), MCP emits no terminal or completion, so the lifecycle observat
 `begin`, when the request passed admission and before authentication, is never closed. Observers
 therefore see that observation opened with no completion, and the in-flight gauge
 `vertique.mcp.server.active` (`vertique-micrometer-mcp`) stays one higher for each such request.
-This behavior predates the completion claim, which neither causes nor changes it. A follow-up will
-close such an abandoned observation without firing completion listeners.
+This behavior predates the completion claim, which neither causes nor changes it. Nothing closes such
+an abandoned observation today.
 
 **Completion scope bracketing.** Immediately before the completion coordinator
 dispatches the one completion event to every retained observation and completion listener, it opens
