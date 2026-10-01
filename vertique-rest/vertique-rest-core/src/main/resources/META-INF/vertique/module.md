@@ -1224,8 +1224,9 @@ Three top-level sections are parsed by `RestCoreModule` — `http`, `cors`, and 
 `correlation.ingress` by `CorrelationIngressModule`. Every key is optional; omitted keys take the
 default below. Unknown keys are ignored except under `jaxrs.defaultHeaders`, where they become
 custom response headers, and except under `jaxrs.security` and `jaxrs.applications`. The
-`jaxrs.applications` section is parsed strictly by `vertique-rest-jaxrs`: a non-object section, a
-non-object entry, or an entry key other than `openapiPath` fails startup, as does a blank
+`jaxrs.applications` section is parsed strictly by `vertique-rest-jaxrs`: a case variant of
+`applications` at the `jaxrs` level (such as `Applications`), a non-object section, a non-object
+entry, or an entry key other than `openapiPath` fails startup, as does a blank
 `openapiPath` (empty or whitespace only; an absent or `null` value is accepted). An entry whose name
 matches no declared application also fails startup, reported with the application composition
 violations rather than by the section parse. The `jaxrs.security`

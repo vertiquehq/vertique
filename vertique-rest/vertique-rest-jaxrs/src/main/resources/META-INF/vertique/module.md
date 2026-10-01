@@ -1205,8 +1205,8 @@ At startup, before any resource resolves, every declared registration's declarin
 superinterfaces are re-checked by reflection against the same [declaration annotation
 allow list](#declaration-annotations) the annotation processor enforces at compile time — no
 superclass is walked, because the declaring interface is an interface, never constructed — whether or
-not the registration is active and whether it was generated or hand-written. Each violation carries
-the compile-time diagnostic's own message; when one or more are found, startup fails with a
+not the registration is active and whether it was generated or hand-written. Each violation applies
+the same rule as the compile-time check, with its own message; when one or more are found, startup fails with a
 `RestConfigurationException` that lists every violation found across all registrations, one per line,
 under `Invalid JAX-RS application composition:`, together with any other composition problem found at
 that point.
@@ -1468,6 +1468,10 @@ application's settings object. The section sits under `jaxrs`, but this module p
 
 The section is strict:
 
+- The section name is matched case-sensitively. A `jaxrs` key that equals `applications` ignoring
+  case but is spelled differently — `Applications`, `APPLICATIONS` — fails startup, whatever its
+  value, even when no exact `applications` key is present. A key that is not a case variant, such
+  as the singular `application`, is an unknown `jaxrs` key and stays ignored.
 - An absent `jaxrs.applications` and an empty object `{}` both configure no per-application
   settings. Any other value that is not a JSON object — a string, number, boolean, array, or
   `null` — fails startup.
@@ -1480,8 +1484,9 @@ The section is strict:
 That strictness is a deliberate narrowing of the "unknown keys are ignored" rule
 `vertique-rest-core` applies to `jaxrs`, limited to the reserved name `applications`. Each of those
 failures, and a blank `openapiPath`, raises a `ConfigurationException` naming the offending
-configuration paths, sorted, never their values. Shapes and keys are checked before any
-`openapiPath` value is parsed, so blank values are reported only when no shape or key problem
+configuration paths (for a miscased section name, the offending `jaxrs` keys), sorted, never their
+values. The section name is checked first, then shapes and keys, all before any `openapiPath`
+value is parsed, so blank values are reported only when no section-name, shape, or key problem
 remains (see [Startup failures](#startup-failures)).
 
 ---
@@ -1543,20 +1548,22 @@ mount, and with no application declared it remains the only operationId check th
 and refuses to create any application mount's router.
 
 Parsing `jaxrs.applications` (see [Per-application configuration](#per-application-configuration))
-raises `ConfigurationException`. The shape, key, and blank-value checks use the three messages
-below; `<paths>` lists every offending configuration path, single-quoted, sorted, and
-comma-separated. An entry that passes those checks but cannot be bound — an `openapiPath` that is a
-JSON object or array, or a blank entry key — fails instead with the configuration parser's own
+raises `ConfigurationException`. The section-name, shape, key, and blank-value checks use the four
+messages below; `<keys>` lists every offending `jaxrs` key and `<paths>` every offending
+configuration path, each single-quoted, sorted, and comma-separated. An entry that passes those
+checks but cannot be bound — an `openapiPath` that is a JSON object or array, or a blank entry
+key — fails instead with the configuration parser's own
 message, which does not name the full configuration path. No message contains a configured value.
 
 | Condition | Message |
 |---|---|
+| A `jaxrs` key equals `applications` ignoring case but is spelled differently | `Miscased applications keys under 'jaxrs': <keys>; per-application settings belong under 'jaxrs.applications'` |
 | `jaxrs.applications` is present but not a JSON object (`null` included) | `'jaxrs.applications' must be a JSON object` |
 | An entry is not a JSON object (`null` included), or an entry carries a key other than `openapiPath` | `Invalid entries or keys under 'jaxrs.applications': <paths>; each entry must be a JSON object whose only key is 'openapiPath'` |
 | A configured `openapiPath` is empty or only whitespace | `Blank values under 'jaxrs.applications': <paths>; set 'openapiPath' to a non-blank location or omit it` |
 
-In the second message a path is `jaxrs.applications.<name>` for an entry that is not an object and
-`jaxrs.applications.<name>.<key>` for a rejected key; in the third it is
+In the third message a path is `jaxrs.applications.<name>` for an entry that is not an object and
+`jaxrs.applications.<name>.<key>` for a rejected key; in the fourth it is
 `jaxrs.applications.<name>.openapiPath`.
 
 `SecurityPolicyViolationException` is thrown immediately when a `SecurityPolicyValidator` is bound and
@@ -1645,8 +1652,11 @@ as proof of a complete body.
 - **Adding `name`, a case variant such as `OpenapiPath`, or another setting inside a
   `jaxrs.applications` entry.** The entry key is the application's name, and `openapiPath`, spelled
   exactly, is the only key an entry accepts; any other key fails startup instead of being ignored.
-- **Spelling the section `jaxrs.Applications` or another case variant.** Only `jaxrs.applications`
-  is read; a case variant is ignored like any unknown `jaxrs` key.
+- **Spelling the section `jaxrs.Applications` or another case variant.** Only the exact spelling
+  `jaxrs.applications` configures applications. A case variant fails startup with
+  `Miscased applications keys under 'jaxrs': …`, even when no exact `applications` key is present.
+  A key that is not a case variant, such as the singular `application`, is still ignored like any
+  unknown `jaxrs` key.
 - **Hiding an input the method does not bind, once a documentation module is bound.** A method-level
   hiding entry — `@Parameter(name = ..., in = ..., hidden = true)` on the method, in `@Parameters`, in
   `@Operation(parameters = ...)`, or carried by a composed annotation — must name an input the method

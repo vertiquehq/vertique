@@ -38,6 +38,10 @@ import org.junit.jupiter.params.provider.MethodSource;
  * parsing. TP-003 proves a blank configured {@code openapiPath} fails naming its path. TP-004
  * proves {@link JaxRsConfig} still ignores the section and exposes no applications accessor.
  *
+ * <p>A key under {@code jaxrs} that equals {@code applications} ignoring case, but not exactly,
+ * fails startup naming every such key, before the section checks and whatever its value. An
+ * unknown singular {@code application} key is not a case variant and stays ignored.
+ *
  * <p>Every row calls the package-private parse method directly with the framework's real {@link
  * DefaultConfigParser}, as rest-core's {@code JaxRsSecurityConfigProviderTest} does. Rejections
  * assert the exact message, and that it never echoes a configuration value: every value that must
@@ -204,6 +208,66 @@ class JaxRsApplicationsConfigTest {
                         parsed(new RestApplicationConfig("api", null))));
     }
 
+    // --- Case variants of the applications key ---
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("miscasedApplicationsKeyRows")
+    @DisplayName("a case variant of applications under jaxrs fails startup naming the key, before the section checks")
+    void miscasedApplicationsKeyFailsNamingTheKey(String label, String configJson, Expected expected) {
+        switch (expected) {
+            case Rejected rejected -> assertConfigRejected(configJson, rejected.message());
+            case Parsed parsed ->
+                assertEquals(
+                        parsed.configs(), RestModule.parseJaxRsApplications(new JsonObject(configJson), PARSER), label);
+        }
+    }
+
+    private static Stream<Arguments> miscasedApplicationsKeyRows() {
+        return Stream.of(
+                arguments("(a) only a capitalized Applications section", """
+                        {"jaxrs":{"Applications":{"orders":{"openapiPath":"/zq7.yaml"}}}}
+                        """, rejected(miscasedKeys("'Applications'"))),
+                arguments("(b) only an upper-case APPLICATIONS section", """
+                        {"jaxrs":{"APPLICATIONS":{"orders":{"openapiPath":"/zq7.yaml"}}}}
+                        """, rejected(miscasedKeys("'APPLICATIONS'"))),
+                arguments("(c) a variant whose value is a string", """
+                        {"jaxrs":{"Applications":"zq7"}}
+                        """, rejected(miscasedKeys("'Applications'"))),
+                arguments("(d) a variant whose value is null", """
+                        {"jaxrs":{"Applications":null}}
+                        """, rejected(miscasedKeys("'Applications'"))),
+                arguments(
+                        "(e) a variant beside a valid exact applications section",
+                        """
+                        {"jaxrs":{"applications":{"api":{"openapiPath":"api.yaml"}},"Applications":{"orders":{"openapiPath":"/zq7.yaml"}}}}
+                        """,
+                        rejected(miscasedKeys("'Applications'"))),
+                arguments(
+                        "(f) two variants are named in one message, APPLICATIONS before Applications",
+                        """
+                        {"jaxrs":{"Applications":{},"APPLICATIONS":{"orders":{"openapiPath":"/zq7.yaml"}}}}
+                        """,
+                        rejected(miscasedKeys("'APPLICATIONS', 'Applications'"))),
+                arguments(
+                        "(g) a variant beside a non-object exact section fails the variant check first",
+                        """
+                        {"jaxrs":{"applications":"zq7","Applications":{}}}
+                        """,
+                        rejected(miscasedKeys("'Applications'"))),
+                arguments(
+                        "control: an unknown singular application key is not a case variant and stays ignored",
+                        """
+                        {"jaxrs":{"application":{"orders":{"openapiPath":"/zq7.yaml"}}}}
+                        """,
+                        parsed()),
+                arguments(
+                        "control: the exact applications key parses",
+                        """
+                        {"jaxrs":{"applications":{"orders":{"openapiPath":"/orders.yaml"}}}}
+                        """,
+                        parsed(new RestApplicationConfig("orders", "/orders.yaml"))));
+    }
+
     // --- TP-004 ---
 
     @Test
@@ -211,7 +275,7 @@ class JaxRsApplicationsConfigTest {
             "JaxRsConfig still parses the jaxrs section, ignoring applications, and exposes no applications accessor")
     void jaxRsConfigStillIgnoresTheApplicationsSection() {
         JsonObject section = new JsonObject("""
-                {"basePath":"/api/*","zq7Unknown":"zq7","applications":{"api":{"openapiPath":"api.yaml"}},"security":{"requireExplicitPolicy":true}}
+                {"basePath":"/api/*","zq7Unknown":"zq7","applications":{"api":{"openapiPath":"api.yaml"}},"Applications":{"api":{}},"security":{"requireExplicitPolicy":true}}
                 """);
 
         JaxRsConfig config = PARSER.parse(section, JaxRsConfig.class);
@@ -252,6 +316,26 @@ class JaxRsApplicationsConfigTest {
                 () -> assertFalse(
                         message.contains(MARKER), () -> "the message must not echo a configuration value: " + message),
                 () -> assertEquals(expectedMessage, message));
+    }
+
+    /**
+     * Asserts that parsing the whole {@code configJson} throws a {@link ConfigurationException} whose
+     * message equals {@code expectedMessage} and never contains {@link #MARKER}.
+     */
+    private static void assertConfigRejected(String configJson, String expectedMessage) {
+        ConfigurationException failure = assertThrows(
+                ConfigurationException.class,
+                () -> RestModule.parseJaxRsApplications(new JsonObject(configJson), PARSER));
+        String message = String.valueOf(failure.getMessage());
+        assertAll(
+                () -> assertFalse(
+                        message.contains(MARKER), () -> "the message must not echo a configuration value: " + message),
+                () -> assertEquals(expectedMessage, message));
+    }
+
+    private static String miscasedKeys(String quotedKeys) {
+        return "Miscased applications keys under 'jaxrs': " + quotedKeys
+                + "; per-application settings belong under 'jaxrs.applications'";
     }
 
     private static String invalidEntries(String quotedPaths) {
