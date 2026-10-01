@@ -88,8 +88,12 @@ public class OpenApiDocsServingIT {
      *       class tag), {@code summary} (from the operation annotation; no description or external
      *       documentation is set, so neither is written), {@code operationId}
      *       (the runtime id, the method name), then {@code parameters} (left out when empty), then
-     *       {@code requestBody} (left out when the operation has no body). Responses are not part
-     *       of this document yet.
+     *       {@code requestBody} (left out when the operation has no body), then {@code responses}.
+     *   <li>{@code responses}: the operations declare no response annotation, so each publishes the
+     *       inferred response. {@code listItems} and {@code getItem} return {@code String} and
+     *       produce {@code text/plain}: status {@code 200}, description {@code OK}, one {@code
+     *       text/plain} media type with no schema, because the body is raw text. {@code createItem}
+     *       returns {@code void}: status {@code 204}, description {@code No Content}, no content.
      *   <li>{@code tags}: the root list holds the one tag the resource class declares,
      *       {@code {"name":"catalog"}}; it has no description or external documentation, and unset
      *       members are never written.
@@ -123,14 +127,17 @@ public class OpenApiDocsServingIT {
             + "\"paths\":{"
             + "\"/items\":{"
             + "\"get\":{\"tags\":[\"catalog\"],\"summary\":\"List items\",\"operationId\":\"listItems\","
-            + "\"parameters\":[{\"name\":\"limit\",\"in\":\"query\",\"schema\":{\"type\":\"integer\"}}]},"
+            + "\"parameters\":[{\"name\":\"limit\",\"in\":\"query\",\"schema\":{\"type\":\"integer\"}}],"
+            + "\"responses\":{\"200\":{\"description\":\"OK\",\"content\":{\"text/plain\":{}}}}},"
             + "\"post\":{\"tags\":[\"catalog\"],\"summary\":\"Create an item\",\"operationId\":\"createItem\","
             + "\"parameters\":[{\"name\":\"dryRun\",\"in\":\"query\",\"schema\":{\"type\":\"boolean\"}}],"
             + "\"requestBody\":{\"content\":{\"application/json\":"
-            + "{\"schema\":{\"$ref\":\"#/components/schemas/createItem.request\"}}}}}},"
+            + "{\"schema\":{\"$ref\":\"#/components/schemas/createItem.request\"}}}},"
+            + "\"responses\":{\"204\":{\"description\":\"No Content\"}}}},"
             + "\"/items/{id}\":{"
             + "\"get\":{\"tags\":[\"catalog\"],\"summary\":\"Get an item\",\"operationId\":\"getItem\","
-            + "\"parameters\":[{\"name\":\"id\",\"in\":\"path\",\"required\":true,\"schema\":{\"type\":\"string\"}}]}}},"
+            + "\"parameters\":[{\"name\":\"id\",\"in\":\"path\",\"required\":true,\"schema\":{\"type\":\"string\"}}],"
+            + "\"responses\":{\"200\":{\"description\":\"OK\",\"content\":{\"text/plain\":{}}}}}}},"
             + "\"components\":{\"schemas\":{"
             + "\"createItem.request\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\","
             + "\"properties\":{\"name\":{\"type\":\"string\"},\"quantity\":{\"type\":\"integer\"}},"
