@@ -122,6 +122,15 @@ class MetadataEnrichmentTest {
     /** The operation of the form cases: {@code POST /forms}, whose inputs are form fields. */
     private static final String SUBMIT = "submitForm";
 
+    /** The operation of the parameter name case cases, whose one parameter is bound at a given location. */
+    private static final String BOUND = "readBound";
+
+    /**
+     * A header name equal to {@code X-Key} only under Unicode case folding: its {@code K} is U+212A
+     * KELVIN SIGN.
+     */
+    private static final String KELVIN_KEY = "X-\u212Aey";
+
     /** The media type of a form request body when the operation declares none. */
     private static final String FORM_MEDIA_TYPE = "application/x-www-form-urlencoded";
 
@@ -151,8 +160,10 @@ class MetadataEnrichmentTest {
      *
      * @param fragments texts the message must contain, besides the mount
      * @param words names the message must contain as whole words
+     * @param absent texts the message must not contain, compared case-sensitively, besides the
+     *     values no message may echo
      */
-    record Fails(List<String> fragments, List<String> words) implements Expected {}
+    record Fails(List<String> fragments, List<String> words, List<String> absent) implements Expected {}
 
     /**
      * The document publishes with exactly the given warnings, in any order, and the document passes
@@ -172,7 +183,15 @@ class MetadataEnrichmentTest {
     record WarningText(List<String> fragments, List<String> words) {}
 
     private static Fails fails(List<String> fragments, String... words) {
-        return new Fails(fragments, List.of(words));
+        return new Fails(fragments, List.of(words), List.of());
+    }
+
+    /**
+     * Publication fails naming the fragments and words, and the message contains none of the absent
+     * texts: an annotation value no sentinel can mark, such as a case variant of the bound name.
+     */
+    private static Fails failsWithout(List<String> fragments, List<String> absent, String... words) {
+        return new Fails(fragments, List.of(words), absent);
     }
 
     private static Publishes publishesWithoutWarning(Consumer<Rendering> document) {
@@ -204,7 +223,7 @@ class MetadataEnrichmentTest {
         switch (expected) {
             case Fails failing -> {
                 RestConfigurationException failure = outcome.failure();
-                assertFailureNames(label, failure, failing.fragments(), failing.words());
+                assertFailureNames(label, failure, failing.fragments(), failing.words(), failing.absent());
                 assertTrue(warnings.isEmpty(), () -> label + ": a refused document logged warnings: " + warnings);
             }
             case Publishes publishing -> {
@@ -216,7 +235,11 @@ class MetadataEnrichmentTest {
     }
 
     private static void assertFailureNames(
-            String label, RestConfigurationException failure, List<String> fragments, List<String> words) {
+            String label,
+            RestConfigurationException failure,
+            List<String> fragments,
+            List<String> words,
+            List<String> absent) {
         String message = failure.getMessage();
         assertNotNull(message, () -> label + ": the failure has no message");
         assertTrue(message.contains(MOUNT), () -> label + ": the mount is not named: " + message);
@@ -227,6 +250,9 @@ class MetadataEnrichmentTest {
             assertTrue(containsWord(message, word), () -> label + ": '" + word + "' is not named: " + message);
         }
         for (String value : UNECHOED) {
+            assertFalse(message.contains(value), () -> label + ": the message echoes '" + value + "': " + message);
+        }
+        for (String value : absent) {
             assertFalse(message.contains(value), () -> label + ": the message echoes '" + value + "': " + message);
         }
     }
@@ -383,6 +409,21 @@ class MetadataEnrichmentTest {
                         .schema(captured)
                         .build())
                 .annotate(SEARCH, fixture, method)
+                .build();
+    }
+
+    /**
+     * {@code GET} at the given path with one string parameter bound at the given location and name,
+     * annotated from an {@link AgreementResource} method. A path parameter's path must name it.
+     */
+    private static Supplier<MountPublication> bound(
+            String path, ParamLocation location, String name, Requiredness requiredness, String method) {
+        return () -> MetadataPublications.from(MetadataPublications.mount()
+                        .operation("GET", path, BOUND)
+                        .param(location, name, requiredness)
+                        .schema(stringSchema())
+                        .build())
+                .annotate(BOUND, AgreementResource.class, method)
                 .build();
     }
 
@@ -666,7 +707,84 @@ class MetadataEnrichmentTest {
                         publishesWithoutWarning(rendering -> assertEquals(
                                 "mZX",
                                 createRequestBody(rendering).path("description").asText(null),
-                                () -> "the request body: " + createRequestBody(rendering)))));
+                                () -> "the request body: " + createRequestBody(rendering)))),
+                // Parameter names that differ from the binding's only in case.
+                row(
+                        "a header name differing from the binding's only in ASCII case publishes under the bound name",
+                        bound(
+                                "/trace",
+                                ParamLocation.HEADER,
+                                "X-Trace",
+                                Requiredness.NOT_REQUIRED,
+                                "caseFoldedHeaderName"),
+                        publishesWithoutWarning(rendering -> {
+                            JsonNode trace = parameter(rendering, "/trace", "get", "X-Trace");
+                            assertTrue(trace.isObject(), () -> "X-Trace is not published: " + rendering.jsonText());
+                            assertEquals("header", trace.path("in").asText(null), () -> "X-Trace: " + trace);
+                            assertAbsent(rendering, "x-trace");
+                        })),
+                row(
+                        "control: the bound header name spelled exactly publishes",
+                        bound("/trace", ParamLocation.HEADER, "X-Trace", Requiredness.NOT_REQUIRED, "exactHeaderName"),
+                        publishesWithoutWarning(rendering -> {
+                            JsonNode trace = parameter(rendering, "/trace", "get", "X-Trace");
+                            assertTrue(trace.isObject(), () -> "X-Trace is not published: " + rendering.jsonText());
+                            assertEquals("header", trace.path("in").asText(null), () -> "X-Trace: " + trace);
+                        })),
+                row(
+                        "a header name differing from the binding's by more than case fails",
+                        bound(
+                                "/trace",
+                                ParamLocation.HEADER,
+                                "X-Trace",
+                                Requiredness.NOT_REQUIRED,
+                                "renamedHeaderName"),
+                        fails(List.of(BOUND, "@Parameter.name", "header parameter X-Trace"), "X-Trace")),
+                row(
+                        "a header name equal to the binding's only under Unicode case folding fails",
+                        bound("/key", ParamLocation.HEADER, "X-Key", Requiredness.NOT_REQUIRED, "kelvinHeaderName"),
+                        failsWithout(
+                                List.of(BOUND, "@Parameter.name", "header parameter X-Key"),
+                                List.of(KELVIN_KEY),
+                                "X-Key")),
+                row(
+                        "a query name differing from the binding's only in case fails",
+                        bound(
+                                "/search",
+                                ParamLocation.QUERY,
+                                "qname",
+                                Requiredness.NOT_REQUIRED,
+                                "caseFoldedQueryName"),
+                        failsWithout(
+                                List.of(BOUND, "@Parameter.name", "query parameter qname"), List.of("QNAME"), "qname")),
+                row(
+                        "a cookie name differing from the binding's only in case fails",
+                        bound(
+                                "/session",
+                                ParamLocation.COOKIE,
+                                "session",
+                                Requiredness.NOT_REQUIRED,
+                                "caseFoldedCookieName"),
+                        failsWithout(
+                                List.of(BOUND, "@Parameter.name", "cookie parameter session"),
+                                List.of("SESSION"),
+                                "session")),
+                row(
+                        "a path name differing from the binding's only in case fails",
+                        bound(
+                                "/items/{itemid}",
+                                ParamLocation.PATH,
+                                "itemid",
+                                Requiredness.REQUIRED,
+                                "caseFoldedPathName"),
+                        failsWithout(
+                                List.of(BOUND, "@Parameter.name", "path parameter itemid"),
+                                List.of("ITEMID"),
+                                "itemid")),
+                row(
+                        "a form field name differing from the binding's only in case fails",
+                        submit("caseFoldedFieldName"),
+                        failsWithout(List.of(SUBMIT, "@Parameter.name", "form field note"), List.of("NOTE"), "note")));
     }
 
     /** Asserts that no member named {@code example} or {@code examples} appears anywhere in a node. */

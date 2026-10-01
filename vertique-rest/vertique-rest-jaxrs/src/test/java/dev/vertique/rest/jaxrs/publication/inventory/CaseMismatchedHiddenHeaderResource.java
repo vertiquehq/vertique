@@ -13,8 +13,8 @@ import jakarta.ws.rs.core.MediaType;
 
 /**
  * Resource whose one operation hides header {@code x-debug-token} while binding header {@code
- * X-Debug-Token}: the names differ only in case, so the hiding entry matches no input. Used only by
- * the failing-mount proof.
+ * X-Debug-Token}: the names differ only in ASCII letter case, and header names match ignoring ASCII
+ * letter case, so the hiding entry hides the bound header and the mount builds.
  *
  * <p>No generated descriptor companion exists for this class, and none may be added: it is a
  * reflection-path fixture, and it is not part of any parity mount.
@@ -25,8 +25,8 @@ public class CaseMismatchedHiddenHeaderResource {
     /**
      * {@code GET /case-mismatched-hidden}.
      *
-     * @param token header {@code X-Debug-Token}; the method's hidden entry names {@code
-     *              x-debug-token} (index 0)
+     * @param token header {@code X-Debug-Token}, hidden by the method's entry {@code x-debug-token}
+     *              (index 0)
      * @return a fixed body
      */
     @GET

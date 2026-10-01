@@ -15,6 +15,7 @@ import static dev.vertique.rest.jaxrs.routing.ParamLocation.HEADER;
 import static dev.vertique.rest.jaxrs.routing.ParamLocation.PATH;
 import static dev.vertique.rest.jaxrs.routing.ParamLocation.QUERY;
 import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -44,14 +45,20 @@ import dev.vertique.rest.jaxrs.publication.fixture.RecordingSink;
 import dev.vertique.rest.jaxrs.publication.fixture.RecordingValidationStrategy;
 import dev.vertique.rest.jaxrs.publication.inventory.BlankHiddenInputResource;
 import dev.vertique.rest.jaxrs.publication.inventory.BodyOnlyResource;
+import dev.vertique.rest.jaxrs.publication.inventory.CaseMismatchedHiddenCookieResource;
+import dev.vertique.rest.jaxrs.publication.inventory.CaseMismatchedHiddenFormResource;
 import dev.vertique.rest.jaxrs.publication.inventory.CaseMismatchedHiddenHeaderResource;
+import dev.vertique.rest.jaxrs.publication.inventory.CaseMismatchedHiddenPathResource;
+import dev.vertique.rest.jaxrs.publication.inventory.CaseMismatchedHiddenQueryResource;
 import dev.vertique.rest.jaxrs.publication.inventory.ComposedHiddenInputsResource;
 import dev.vertique.rest.jaxrs.publication.inventory.Conversions;
 import dev.vertique.rest.jaxrs.publication.inventory.CrudBase;
+import dev.vertique.rest.jaxrs.publication.inventory.DefaultLocationCaseFoldedHiddenHeaderResource;
 import dev.vertique.rest.jaxrs.publication.inventory.Filters;
 import dev.vertique.rest.jaxrs.publication.inventory.InterfaceHiddenInputsResource;
 import dev.vertique.rest.jaxrs.publication.inventory.Item;
 import dev.vertique.rest.jaxrs.publication.inventory.ItemCrudResource;
+import dev.vertique.rest.jaxrs.publication.inventory.KelvinSignHiddenHeaderResource;
 import dev.vertique.rest.jaxrs.publication.inventory.KindsResource;
 import dev.vertique.rest.jaxrs.publication.inventory.LocationHiddenInputsResource;
 import dev.vertique.rest.jaxrs.publication.inventory.MethodHiddenBean;
@@ -103,11 +110,15 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.function.Executable;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * Unit proofs for the operation inventory and response shape a mount's {@code OperationDetail}
@@ -1087,29 +1098,140 @@ class OperationInventoryTest {
     }
 
     @Test
-    @DisplayName("A hidden header entry differing from the bound header only in case fails and says names are exact")
-    void hiddenHeaderEntryDifferingOnlyInCaseFailsWithTheExactNameHint(Vertx vertx) {
+    @DisplayName("A hidden header entry differing from the bound header only in ASCII letter case hides that header")
+    void hiddenHeaderEntryDifferingOnlyInCaseHidesTheBoundHeader(Vertx vertx) {
         // Given: @Parameter(name = "x-debug-token", in = HEADER, hidden = true) beside
         // @HeaderParam("X-Debug-Token")
         assertTrue(GeneratedJaxRsDescriptorRegistry.shared()
                 .lookup(CaseMismatchedHiddenHeaderResource.class)
                 .isEmpty());
+
+        // When: the mount is built with a sink that wants detail
+        MountPublication publication = assertDoesNotThrow(
+                () -> buildMount(vertx, TestFactories.builder(), Set.of(new CaseMismatchedHiddenHeaderResource())),
+                "the mount builds");
+
+        // Then: the bound header is hidden under its bound spelling
+        assertEquals(
+                Set.of("hideHeaderByOtherCase"), operationsById(publication).keySet(), "operation ids");
+        assertEquals(
+                List.of(new HiddenFact(HEADER, "X-Debug-Token", true)),
+                hiddenFacts(inputsOf(publication, "hideHeaderByOtherCase", "case-folded header hiding")));
+    }
+
+    @Test
+    @DisplayName("A hidden entry without a location differing from a bound header only in ASCII letter case hides"
+            + " that header")
+    void hiddenEntryWithoutLocationDifferingOnlyInCaseHidesTheBoundHeader(Vertx vertx) {
+        // Given: @Parameter(name = "x-trace", hidden = true), no location, beside @HeaderParam("X-Trace")
+        // and @QueryParam("page")
+        assertTrue(GeneratedJaxRsDescriptorRegistry.shared()
+                .lookup(DefaultLocationCaseFoldedHiddenHeaderResource.class)
+                .isEmpty());
+
+        // When: the mount is built with a sink that wants detail
+        MountPublication publication = assertDoesNotThrow(
+                () -> buildMount(
+                        vertx, TestFactories.builder(), Set.of(new DefaultLocationCaseFoldedHiddenHeaderResource())),
+                "the mount builds");
+
+        // Then: the header is hidden and the query input stays visible
+        assertEquals(Set.of("hideTraceByOtherCase"), operationsById(publication).keySet(), "operation ids");
+        assertEquals(
+                List.of(new HiddenFact(HEADER, "X-Trace", true), new HiddenFact(QUERY, "page", false)),
+                hiddenFacts(inputsOf(publication, "hideTraceByOtherCase", "case-folded default-location hiding")));
+    }
+
+    private static Stream<Arguments> caseOnlyMismatchedExactLocationRows() {
+        return Stream.of(
+                Arguments.of(
+                        "query entry sortKey against query SortKey",
+                        new CaseMismatchedHiddenQueryResource(),
+                        "hideQueryByOtherCase",
+                        CaseMismatchedHiddenQueryResource.ENTRY_NAME,
+                        CaseMismatchedHiddenQueryResource.BOUND_NAME),
+                Arguments.of(
+                        "path entry itemId against path ItemId",
+                        new CaseMismatchedHiddenPathResource(),
+                        "hidePathByOtherCase",
+                        CaseMismatchedHiddenPathResource.ENTRY_NAME,
+                        CaseMismatchedHiddenPathResource.BOUND_NAME),
+                Arguments.of(
+                        "cookie entry sessionTag against cookie SessionTag",
+                        new CaseMismatchedHiddenCookieResource(),
+                        "hideCookieByOtherCase",
+                        CaseMismatchedHiddenCookieResource.ENTRY_NAME,
+                        CaseMismatchedHiddenCookieResource.BOUND_NAME),
+                Arguments.of(
+                        "location-less entry noteText against form field NoteText",
+                        new CaseMismatchedHiddenFormResource(),
+                        "hideFormByOtherCase",
+                        CaseMismatchedHiddenFormResource.ENTRY_NAME,
+                        CaseMismatchedHiddenFormResource.BOUND_NAME));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("caseOnlyMismatchedExactLocationRows")
+    @DisplayName("A hidden entry differing only in case from a bound query, path, cookie, or form input fails the"
+            + " mount build")
+    void hiddenEntryDifferingOnlyInCaseFromANonHeaderInputFailsTheMountBuild(
+            String label, Object resource, String operationId, String entryName, String boundName, Vertx vertx) {
+        // Given: a reflection-path resource whose one hidden entry names its one bound input in a
+        // different letter case, at a location whose names match exactly
+        assertTrue(GeneratedJaxRsDescriptorRegistry.shared()
+                .lookup(resource.getClass())
+                .isEmpty());
+        assertTrue(
+                !entryName.equals(boundName) && entryName.equalsIgnoreCase(boundName),
+                "fixture names differ only in case: " + label);
+        RecordingSink sink = new RecordingSink(applicationName -> true);
+
+        // When: the mount is built with a sink that wants detail
+        RestConfigurationException failure = assertMountBuildFails(vertx, sink, Set.of(resource));
+
+        // Then: the failure names the operation and the entry, does not echo the bound spelling, and
+        // nothing is published
+        String message = String.valueOf(failure.getMessage());
+        assertAll(
+                label,
+                () -> assertTrue(message.contains("'" + operationId + "'"), "names the operation: " + message),
+                () -> assertTrue(message.contains("named '" + entryName + "'"), "names the entry: " + message),
+                () -> assertFalse(message.contains(boundName), "does not echo the bound name: " + message),
+                () -> assertTrue(sink.received().isEmpty(), "nothing is published"));
+    }
+
+    @Test
+    @DisplayName("A hidden header entry equal to the bound header only under Unicode case folding fails the mount"
+            + " build")
+    void hiddenHeaderEntryWithKelvinSignFailsTheMountBuild(Vertx vertx) {
+        // Given: @Parameter(name = "X-" + U+212A KELVIN SIGN + "ey", in = HEADER, hidden = true) beside
+        // @HeaderParam("X-Key")
+        assertTrue(GeneratedJaxRsDescriptorRegistry.shared()
+                .lookup(KelvinSignHiddenHeaderResource.class)
+                .isEmpty());
+        String entryName = KelvinSignHiddenHeaderResource.ENTRY_NAME;
+        assertEquals(0x212A, (int) entryName.charAt(2), "fixture entry carries KELVIN SIGN at index 2");
         RecordingSink sink = new RecordingSink(applicationName -> true);
 
         // When: the mount is built with a sink that wants detail
         RestConfigurationException failure =
-                assertMountBuildFails(vertx, sink, Set.of(new CaseMismatchedHiddenHeaderResource()));
+                assertMountBuildFails(vertx, sink, Set.of(new KelvinSignHiddenHeaderResource()));
 
-        // Then: the failure names the operation and the entry, says header names match exactly, and
-        // nothing is published
+        // Then: the failure names the operation and the entry, states the ASCII letter case header
+        // match, does not echo the bound name, and nothing is published
         String message = String.valueOf(failure.getMessage());
         assertAll(
-                () -> assertTrue(message.contains("'hideHeaderByOtherCase'"), "names the operation: " + message),
-                () -> assertTrue(message.contains("'x-debug-token'"), "names the entry: " + message),
+                () -> assertTrue(message.contains("'hideHeaderByKelvinSign'"), "names the operation: " + message),
+                () -> assertTrue(message.contains("named '" + entryName + "'"), "names the entry: " + message),
                 () -> assertTrue(
-                        message.contains("; header names are matched case-sensitively, write the name exactly as in"
-                                + " @HeaderParam"),
-                        "states the case-sensitive header match: " + message),
+                        message.contains("; header names are matched ignoring ASCII letter case."),
+                        "states the ASCII letter case header match: " + message),
+                () -> assertFalse(
+                        message.contains("matched case-sensitively"),
+                        "no longer states a case-sensitive header match: " + message),
+                () -> assertFalse(
+                        message.contains(KelvinSignHiddenHeaderResource.BOUND_NAME),
+                        "does not echo the bound name: " + message),
                 () -> assertTrue(sink.received().isEmpty(), "nothing is published"));
     }
 

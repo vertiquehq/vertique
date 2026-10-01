@@ -10,6 +10,7 @@ import static dev.vertique.rest.openapi.docs.OperationMetadata.isSet;
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.jaxrs.publication.InputBinding;
 import dev.vertique.rest.jaxrs.publication.InputKey;
+import dev.vertique.rest.jaxrs.routing.ParamLocation;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.enums.ParameterIn;
@@ -54,7 +55,8 @@ import java.util.Set;
  *       equal (on a form body, any implementation); and {@link RequestBody#required()} {@code true}
  *       while the published request body is not required (a form body never is);
  *   <li>on a parameter or form field, a {@link Parameter#content()}, which the runtime never binds; a
- *       non-blank {@link Parameter#name()} other than the binding name; an {@link Parameter#in()}
+ *       non-blank {@link Parameter#name()} other than the binding name, a header name compared
+ *       ignoring ASCII letter case and every other name exactly; an {@link Parameter#in()}
  *       other than {@link ParameterIn#DEFAULT} and the binding location (any on a form field); {@link
  *       Parameter#required()} {@code true} on a binding the runtime certainly binds when the value is
  *       missing; a {@link Schema#implementation()} in {@link Parameter#schema()} other than the bound
@@ -243,7 +245,10 @@ final class MetadataAgreement {
             if (parameter.content().length > 0) {
                 throw contradiction(operationId, "@Parameter.content on " + input, "a parameter's content");
             }
-            if (isSet(parameter.name()) && !parameter.name().equals(binding.name())) {
+            boolean sameName = binding.location() == ParamLocation.HEADER
+                    ? equalsIgnoreAsciiCase(parameter.name(), binding.name())
+                    : parameter.name().equals(binding.name());
+            if (isSet(parameter.name()) && !sameName) {
                 throw contradiction(operationId, "@Parameter.name on " + input, "its name");
             }
             if (parameter.in() != ParameterIn.DEFAULT
@@ -381,6 +386,27 @@ final class MetadataAgreement {
     /** Tells whether a bound type holds several values: a collection or an array. */
     private static boolean isMultiValued(Class<?> type) {
         return type.isArray() || Collection.class.isAssignableFrom(type);
+    }
+
+    /** Tells whether two header names are equal; HTTP field names are ASCII tokens, so only ASCII letters fold. */
+    private static boolean equalsIgnoreAsciiCase(String a, String b) {
+        if (a.length() != b.length()) {
+            return false;
+        }
+        for (int i = 0; i < a.length(); i++) {
+            char x = a.charAt(i);
+            char y = b.charAt(i);
+            if (x >= 'A' && x <= 'Z') {
+                x = (char) (x + ('a' - 'A'));
+            }
+            if (y >= 'A' && y <= 'Z') {
+                y = (char) (y + ('a' - 'A'));
+            }
+            if (x != y) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** Returns the erasure of a type; a type variable or wildcard erases to {@link Object}. */
