@@ -23,7 +23,6 @@ import io.vertx.json.schema.JsonSchema;
 import io.vertx.json.schema.JsonSchemaOptions;
 import io.vertx.json.schema.OutputFormat;
 import io.vertx.json.schema.Validator;
-import jakarta.annotation.Nullable;
 import java.lang.annotation.Annotation;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -436,31 +435,15 @@ final class InputAssembler {
          *
          * @param embedder the schema embedder that checked the schemas
          * @param metadata the operation's documentation metadata
+         * @param responses the checked response plan of the operation
          * @return the Operation Object with the metadata's {@code tags}, {@code summary}, {@code
          *     description}, and {@code externalDocs}, then {@code operationId}, {@code parameters}
-         *     when there are any, {@code requestBody} when there is one, and the metadata's {@code
-         *     deprecated}, in that order
-         * @throws RestConfigurationException when a component key is already taken in the document
-         */
-        ObjectNode publish(SchemaEmbedder embedder, OperationMetadata metadata) {
-            return publish(embedder, metadata, null);
-        }
-
-        /**
-         * Writes the Operation Object, publishing each checked schema once, with the operation's
-         * responses between the request body and the metadata's trailing members.
-         *
-         * @param embedder the schema embedder that checked the schemas
-         * @param metadata the operation's documentation metadata
-         * @param responses the checked response plan, or {@code null} when there is none
-         * @return the Operation Object, with {@code responses} after {@code requestBody} when the
-         *     plan publishes any
+         *     when there are any, {@code requestBody} when there is one, {@code responses} when the
+         *     response plan publishes any, and the metadata's {@code deprecated}, in that order
          * @throws RestConfigurationException when a component key is already taken in the document
          */
         ObjectNode publish(
-                SchemaEmbedder embedder,
-                OperationMetadata metadata,
-                @Nullable ResponseAssembler.ResponsePlan responses) {
+                SchemaEmbedder embedder, OperationMetadata metadata, ResponseAssembler.ResponsePlan responses) {
             ObjectNode node = NODES.objectNode();
             metadata.writeLeading(node);
             node.put("operationId", operationId);
@@ -475,11 +458,9 @@ final class InputAssembler {
             } else if (form != null) {
                 node.set("requestBody", form.publish(embedder));
             }
-            if (responses != null) {
-                ObjectNode published = responses.publish(embedder);
-                if (published != null) {
-                    node.set("responses", published);
-                }
+            ObjectNode published = responses.publish(embedder);
+            if (published != null) {
+                node.set("responses", published);
             }
             metadata.writeTrailing(node);
             return node;

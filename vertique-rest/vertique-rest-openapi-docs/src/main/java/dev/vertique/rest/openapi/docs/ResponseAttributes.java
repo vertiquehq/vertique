@@ -65,6 +65,8 @@ final class ResponseAttributes {
     private static final Set<String> SCHEMA_HONORED =
             Set.of("implementation", "description", "title", "example", "deprecated", "externalDocs");
 
+    private static final Method SCHEMA_EXTERNAL_DOCS = member(Schema.class, "externalDocs");
+
     private static final JsonNodeFactory NODES = JsonNodeFactory.instance;
 
     private ResponseAttributes() {}
@@ -195,8 +197,7 @@ final class ResponseAttributes {
         blank(schema.description(), "description", omitted);
         blank(schema.title(), "title", omitted);
         blank(schema.example(), "example", omitted);
-        if (OperationMetadata.externalDocs(schema.externalDocs()) == null
-                && !isDefault(schema, member(Schema.class, "externalDocs"))) {
+        if (OperationMetadata.externalDocs(schema.externalDocs()) == null && !isDefault(schema, SCHEMA_EXTERNAL_DOCS)) {
             omitted.add("@Schema.externalDocs");
         }
     }

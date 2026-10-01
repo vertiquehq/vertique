@@ -72,9 +72,6 @@ import java.util.TreeSet;
  */
 final class ResponseAssembler {
 
-    /** The media type of a response when the operation produces none. */
-    private static final String DEFAULT_MEDIA_TYPE = "application/json";
-
     private static final JsonNodeFactory NODES = JsonNodeFactory.instance;
 
     private ResponseAssembler() {}
@@ -114,12 +111,13 @@ final class ResponseAssembler {
         String prefix = "apidocs.documents." + document.name() + ": " + subject;
         ResponseInference.Inference inference = ResponseInference.classify(shape, context.producerBindings());
         SortedMap<String, ApiResponse> declared = DeclaredResponses.read(prefix, operationId, facts);
-        List<String> produces = shape.produces().isEmpty() ? List.of(DEFAULT_MEDIA_TYPE) : shape.produces();
+        List<String> produces = ResponseInference.producedMediaTypes(shape);
+        String profileId = shape.outputProfileId();
 
         Slot inferred = inference.outputType() == null
                 ? null
                 : new Slot(new OutputSchemas.Target(
-                        operationId, "200", null, ".response", inference.outputType(), shape.outputProfileId()));
+                        operationId, "200", null, ".response", inference.outputType(), profileId));
         List<PlannedResponse> responses = new ArrayList<>();
         Map<String, Set<String>> omitted = new LinkedHashMap<>();
         if (declared.isEmpty()) {
@@ -134,7 +132,14 @@ final class ResponseAssembler {
         } else {
             for (Map.Entry<String, ApiResponse> entry : declared.entrySet()) {
                 responses.add(declaredResponse(
-                        prefix, operationId, entry.getKey(), entry.getValue(), inference, inferred, produces, shape));
+                        prefix,
+                        operationId,
+                        entry.getKey(),
+                        entry.getValue(),
+                        inference,
+                        inferred,
+                        produces,
+                        profileId));
                 Set<String> attributes = ResponseAttributes.omitted(entry.getValue());
                 if (!attributes.isEmpty()) {
                     omitted.put(entry.getKey(), attributes);
@@ -171,7 +176,7 @@ final class ResponseAssembler {
             ResponseInference.Inference inference,
             @Nullable Slot inferred,
             List<String> produces,
-            ResponseShape shape) {
+            String profileId) {
         if (response.useReturnTypeSchema() && !inference.inferable()) {
             throw new RestConfigurationException(prefix + ": operation '" + operationId
                     + "' declares @ApiResponse.useReturnTypeSchema on status " + status
@@ -184,7 +189,7 @@ final class ResponseAssembler {
         List<Slot> slots = new ArrayList<>();
         List<PlannedMediaType> content;
         if (response.content().length > 0) {
-            content = declaredContent(prefix, operationId, status, response.content(), produces, shape, slots);
+            content = declaredContent(prefix, operationId, status, response.content(), produces, profileId, slots);
         } else if (inference.inferable()
                 && (response.useReturnTypeSchema() || ResponseStatuses.keepsInferredContent(status))) {
             content = inferredContent(inference, inferred);
@@ -202,14 +207,14 @@ final class ResponseAssembler {
                         + "' declares one header name more than once in status " + status
                         + " (@Header.name); declare each header once per status");
             }
-            Slot schema = implemented(header.schema().implementation())
+            Slot schema = ResponseAttributes.implemented(header.schema().implementation())
                     ? new Slot(new OutputSchemas.Target(
                             operationId,
                             status,
                             header.name(),
                             ".response." + status + ".header." + header.name(),
                             header.schema().implementation(),
-                            shape.outputProfileId()))
+                            profileId))
                     : null;
             headers.add(new PlannedHeader(header.name(), header, schema));
         }
@@ -227,7 +232,7 @@ final class ResponseAssembler {
             String status,
             Content[] declared,
             List<String> produces,
-            ResponseShape shape,
+            String profileId,
             List<Slot> slots) {
         List<Class<?>> implementations = new ArrayList<>();
         for (Content content : declared) {
@@ -240,8 +245,8 @@ final class ResponseAssembler {
         for (int i = 0; i < implementations.size(); i++) {
             Class<?> implementation = implementations.get(i);
             String suffix = ".response." + status + (implementations.size() > 1 ? "." + (i + 1) : "");
-            Slot slot = new Slot(new OutputSchemas.Target(
-                    operationId, status, null, suffix, implementation, shape.outputProfileId()));
+            Slot slot =
+                    new Slot(new OutputSchemas.Target(operationId, status, null, suffix, implementation, profileId));
             byImplementation.put(implementation, slot);
             slots.add(slot);
         }
@@ -250,9 +255,14 @@ final class ResponseAssembler {
         for (Content content : declared) {
             Class<?> implementation = implementation(content);
             Slot slot = implementation == null ? null : byImplementation.get(implementation);
-            SchemaForm form = slot == null
-                    ? SchemaForm.NONE
-                    : implemented(content.schema().implementation()) ? SchemaForm.REFERENCE : SchemaForm.ARRAY;
+            SchemaForm form;
+            if (slot == null) {
+                form = SchemaForm.NONE;
+            } else if (ResponseAttributes.implemented(content.schema().implementation())) {
+                form = SchemaForm.REFERENCE;
+            } else {
+                form = SchemaForm.ARRAY;
+            }
             ObjectNode examples =
                     Examples.render(prefix, operationId, "@Content.examples on status " + status, content.examples());
             List<String> applied =
@@ -263,10 +273,7 @@ final class ResponseAssembler {
                             + "' declares one media type more than once in the content of status " + status
                             + " (@Content.mediaType); declare each media type once per status");
                 }
-                mediaTypes.put(
-                        mediaType,
-                        new PlannedMediaType(
-                                mediaType, form, slot, content, examples == null ? null : examples.deepCopy()));
+                mediaTypes.put(mediaType, new PlannedMediaType(mediaType, form, slot, content, examples));
             }
         }
         return List.copyOf(mediaTypes.values());
@@ -291,18 +298,13 @@ final class ResponseAssembler {
      * element's, else {@code null}.
      */
     private static @Nullable Class<?> implementation(Content content) {
-        if (implemented(content.schema().implementation())) {
+        if (ResponseAttributes.implemented(content.schema().implementation())) {
             return content.schema().implementation();
         }
-        if (implemented(content.array().schema().implementation())) {
+        if (ResponseAttributes.implemented(content.array().schema().implementation())) {
             return content.array().schema().implementation();
         }
         return null;
-    }
-
-    /** Whether a {@code @Schema.implementation} member is set; its default is {@code Void}. */
-    private static boolean implemented(Class<?> implementation) {
-        return ResponseAttributes.implemented(implementation);
     }
 
     /** The checked responses of one operation. */

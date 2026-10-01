@@ -71,11 +71,22 @@ final class ResponseInference {
     }
 
     private static final Inference NO_CONTENT = new Inference(Row.NO_CONTENT, "204", List.of(), null);
-    private static final Inference RUNTIME = new Inference(Row.RUNTIME, "default", List.of(), null);
+    private static final Inference RUNTIME = new Inference(Row.RUNTIME, ResponseStatuses.DEFAULT, List.of(), null);
     private static final String DEFAULT_MEDIA_TYPE = "application/json";
     private static final String EVENT_STREAM = "text/event-stream";
 
     private ResponseInference() {}
+
+    /**
+     * Returns the media types a response is published under: the method's declared ones, or {@code
+     * application/json} when it declares none.
+     *
+     * @param shape the response facts of the method
+     * @return the declared media types in declaration order, or {@code application/json} alone
+     */
+    static List<String> producedMediaTypes(ResponseShape shape) {
+        return shape.produces().isEmpty() ? List.of(DEFAULT_MEDIA_TYPE) : shape.produces();
+    }
 
     /**
      * Classifies the response of a resource method.
@@ -112,19 +123,16 @@ final class ResponseInference {
         if (raw == null || isRuntimeDecided(raw) || isProducerBound(raw, bindings)) {
             return RUNTIME;
         }
-        List<String> produces = shape.produces();
+        List<String> produces = producedMediaTypes(shape);
         if (raw == String.class) {
-            return new Inference(
-                    Row.RAW_TEXT, "200", produces.isEmpty() ? List.of(DEFAULT_MEDIA_TYPE) : produces, null);
+            return new Inference(Row.RAW_TEXT, "200", produces, null);
         }
         if (produces.stream().anyMatch(mediaType -> mediaType.startsWith(EVENT_STREAM))) {
             return RUNTIME;
         }
-        List<String> json = produces.isEmpty()
-                ? List.of(DEFAULT_MEDIA_TYPE)
-                : produces.stream()
-                        .filter(mediaType -> mediaType.contains("json"))
-                        .toList();
+        List<String> json = produces.stream()
+                .filter(mediaType -> mediaType.contains("json"))
+                .toList();
         if (json.isEmpty()) {
             return RUNTIME;
         }
