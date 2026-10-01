@@ -130,7 +130,8 @@ The skeleton document for the example above is exactly:
 ### The docs mount
 
 All documents are served by one router mount at `<apidocs.path>/*`. It runs in the
-`SYSTEM_FIRST` phase, before every other mount, and carries the fixed mount metadata
+`SYSTEM_FIRST` phase (ordered among other `SYSTEM_FIRST` mounts by priority, then path), and carries
+the fixed mount metadata
 `new MountMeta("apidocs", "<path>/*", null, Set.of())`, so a `MountCustomizer` sees it like any other
 mount and applies to it unless its `matches` method filters it out. The module adds no filtering (see
 [Mount Customizers](#mount-customizers)). A component builds one docs mount per composition, and the
@@ -372,10 +373,13 @@ path does not match. A document with no such mount fails.
 
 **Mounts at or under the prefix.** No JAX-RS mount may lie at or under `apidocs.path`. Move the mount
 or choose another `apidocs.path`. Mounts that are not JAX-RS mounts, such as a UI mount, may lie under
-the prefix. The documentation mount is mounted first and answers the exact document URLs itself, so a
-route of a mount that is not a JAX-RS mount, a main-router customizer route, or an API middleware path
-at one of those URLs is never reached. Such routes are not checked for collisions; only published
-JAX-RS operations are.
+the prefix. The documentation mount runs in the `SYSTEM_FIRST` phase, so it answers the exact
+document URLs before every JAX-RS mount, every mount that sorts after it, `AFTER_MOUNTS` router
+customizers, and API-scoped middleware; their routes are never reached at those URLs. ROOT-scoped
+middleware and `BEFORE_MOUNTS` router customizers (the default customizer phase) run on the main router
+before any mount, so they see and can answer the document URLs, as can another `SYSTEM_FIRST` mount that
+sorts ahead of it (lower priority, or the same priority and a lower-sorting path such as `/*`). None of
+these routes is checked for collisions; only published JAX-RS operations are.
 
 **Pattern mount paths.** A JAX-RS mount whose path contains `:`, `{`, or `}` is refused while documents
 are enabled when its literal part before the first such character is a prefix of `apidocs.path`, as
@@ -434,7 +438,8 @@ through to later mounts. Keep such handlers pass-through, or have `matches` excl
 
 The module logs one WARN on logger `dev.vertique.rest.openapi.docs.DocumentWarnings` per enabled
 document, once per component. It is logged when the documentation module's composition checks pass, before any
-router is created, so it can appear even when a later startup check fails the deployment. A second
+router is created, so it can appear even when another startup check (including another module's
+composition validator in the same pass, or a later check) fails the deployment. A second
 composition or server instance of the same component does not repeat it.
 
 The warning starts with `apidocs.documents.<name>` and the described mount's path, and lists the
