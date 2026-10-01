@@ -780,7 +780,11 @@ class MetadataEnrichmentTest {
                         failsWithout(
                                 List.of(BOUND, "@Parameter.name", "path parameter itemid"),
                                 List.of("ITEMID"),
-                                "itemid")));
+                                "itemid")),
+                row(
+                        "a form field name differing from the binding's only in case fails",
+                        submit("caseFoldedFieldName"),
+                        failsWithout(List.of(SUBMIT, "@Parameter.name", "form field note"), List.of("NOTE"), "note")));
     }
 
     /** Asserts that no member named {@code example} or {@code examples} appears anywhere in a node. */

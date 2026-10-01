@@ -305,7 +305,8 @@ public final class AgreementResource {
 
     /**
      * A header name equal to the binding's only under Unicode case folding: its {@code K} is U+212A
-     * KELVIN SIGN, which folds to an ASCII {@code k} only outside ASCII.
+     * KELVIN SIGN, which Unicode case mapping folds to an ASCII {@code k} but an ASCII-only comparison
+     * does not.
      *
      * @param key the header parameter
      */
