@@ -44,8 +44,9 @@ import java.util.List;
  * entry, read from {@link ResourceMethodMeta#methodAnnotations()}: a {@code @Parameter} on the
  * method, an entry of a {@code @Parameters} container, an entry of {@code @Operation(parameters =
  * ...)}, or an entry carried by a composed annotation (one meta level deep). Such an entry names a
- * parameter or composite-field input by exact name and by location, and an entry that declares no
- * location names that input at every location. A hidden entry that names no input fails the build of the
+ * parameter or composite-field input by name and by location; names match exactly, except that a
+ * header input's name matches ignoring ASCII letter case. An entry that declares no location names
+ * that input at every location. A hidden entry that names no input fails the build of the
  * inventory; a visible entry is ignored.
  *
  * <p>Bean Validation annotations and groups are matched by type name in the {@code
@@ -259,8 +260,9 @@ final class OperationInventory {
 
     /**
      * Hides every parameter and composite-field input a hidden method-level parameter entry names,
-     * matching by name, exactly, and by location, where an entry without a location matches every
-     * location; an entry that matches several inputs hides each of them. A visible entry changes
+     * matching by name and by location: names match exactly, except that a header input's name
+     * matches ignoring ASCII letter case, and an entry without a location matches every location; an
+     * entry that matches several inputs hides each of them. A visible entry changes
      * nothing, and an input hidden by its own markers stays hidden.
      *
      * @throws RestConfigurationException when a hidden entry matches no input
@@ -274,7 +276,7 @@ final class OperationInventory {
             for (int i = 0; i < inputs.size(); i++) {
                 InputBinding binding = inputs.get(i);
                 if ((binding.origin() == Origin.PARAMETER || binding.origin() == Origin.COMPOSITE_FIELD)
-                        && entry.name().equals(binding.name())
+                        && namesMatch(entry.name(), binding)
                         && locationMatches(entry.in(), binding.location())) {
                     matched = true;
                     inputs.set(i, hidden(binding));
@@ -287,12 +289,46 @@ final class OperationInventory {
                         + ", but binds no input of that name and location; name an input the method binds,"
                         + " or remove the entry"
                         + (entry.in() == ParameterIn.HEADER
-                                ? "; header names are matched case-sensitively, write the name exactly as in"
-                                        + " @HeaderParam"
+                                ? "; header names are matched ignoring ASCII letter case"
                                 : "")
                         + ".");
             }
         }
+    }
+
+    /**
+     * Whether an entry's name names the input: a header input's name matches ignoring ASCII letter
+     * case, and every other input's name matches exactly.
+     */
+    private static boolean namesMatch(String entryName, InputBinding binding) {
+        return binding.location() == ParamLocation.HEADER
+                ? equalsIgnoreAsciiCase(entryName, binding.name())
+                : entryName.equals(binding.name());
+    }
+
+    /**
+     * Whether two names are equal when ASCII letters {@code A} to {@code Z} fold to {@code a} to
+     * {@code z}. HTTP field names are ASCII tokens, so only ASCII letters fold and a non-ASCII
+     * look-alike never matches an ASCII letter.
+     */
+    private static boolean equalsIgnoreAsciiCase(String a, String b) {
+        if (a.length() != b.length()) {
+            return false;
+        }
+        for (int i = 0; i < a.length(); i++) {
+            char x = a.charAt(i);
+            char y = b.charAt(i);
+            if (x >= 'A' && x <= 'Z') {
+                x = (char) (x + ('a' - 'A'));
+            }
+            if (y >= 'A' && y <= 'Z') {
+                y = (char) (y + ('a' - 'A'));
+            }
+            if (x != y) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

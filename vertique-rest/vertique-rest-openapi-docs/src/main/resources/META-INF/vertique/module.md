@@ -378,8 +378,9 @@ inventory flags an input hidden when:
 - the input itself carries `@Parameter(hidden = true)` or `@Schema(hidden = true)`, or, for a
   composite-bean field or component, `@Hidden`;
 - a hidden method-level entry names it: a `@Parameter(hidden = true)` on the method, an entry of
-  `@Parameters`, or an entry of `@Operation(parameters = ...)`, matched by exact name and by
-  location (an entry without a location matches every location);
+  `@Parameters`, or an entry of `@Operation(parameters = ...)`, matched by name (exactly, except
+  that a header name matches ignoring ASCII letter case) and by location (an entry without a
+  location matches every location);
 - it is a field of a `@BeanParam` or `@RequestParams` parameter that carries
   `@Parameter(hidden = true)` or `@Schema(hidden = true)`, or whose type carries `@Hidden`: hiding
   the composite hides all its fields.
@@ -744,8 +745,8 @@ first failure wins.
   exactly, case included. Header names are compared ignoring ASCII letter case, as HTTP does: a
   `@Parameter(name = "x-trace")` on a header bound as `X-Trace` agrees, and the document publishes
   `X-Trace`. Only ASCII letters fold, so a non-ASCII look-alike such as U+212A KELVIN SIGN never
-  matches `k`. A hidden method-level entry still names a header exactly, case included (see
-  [Hidden inputs](#hidden-inputs)).
+  matches `k`. A hidden method-level entry names a header the same way, ignoring ASCII letter case
+  (see [Hidden inputs](#hidden-inputs)).
 - **Types.** A primitive type and its wrapper are the same type.
 - **Message.** `<subject>: operation '<id>' declares <attribute> on <input>, which contradicts how the
   runtime binds it (<fact>); documentation metadata cannot change it, so remove the attribute or make
