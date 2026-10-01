@@ -17,8 +17,10 @@ import java.util.Map;
  * <p>An operation is hidden when its resolved method annotations or class annotations (resolved
  * through interfaces, interface methods, and superclasses) hold a {@link Hidden} instance, or when
  * any {@link Operation} instance among its resolved method annotations has {@link Operation#hidden()
- * hidden} set. Only direct instances count: an annotation that is itself annotated with {@code
- * @Hidden} does not hide an operation. An operation the documentation sink took no facts for is
+ * hidden} set. One level of composition counts too: a method annotation whose type is itself
+ * annotated with {@code @Hidden} or with an {@code @Operation} that has {@code hidden} set hides the
+ * operation, and so does a class annotation whose type is annotated with {@code @Hidden}. Deeper
+ * nesting does not count. An operation the documentation sink took no facts for is
  * never hidden. Removal affects the document only: the operation's route still answers.
  */
 final class HiddenOperations {
@@ -60,9 +62,17 @@ final class HiddenOperations {
             if (annotation instanceof Operation operation && operation.hidden()) {
                 return true;
             }
+            Class<? extends Annotation> type = annotation.annotationType();
+            if (type.isAnnotationPresent(Hidden.class)) {
+                return true;
+            }
+            Operation composed = type.getAnnotation(Operation.class);
+            if (composed != null && composed.hidden()) {
+                return true;
+            }
         }
         for (Annotation annotation : facts.classAnnotations()) {
-            if (annotation instanceof Hidden) {
+            if (annotation instanceof Hidden || annotation.annotationType().isAnnotationPresent(Hidden.class)) {
                 return true;
             }
         }
