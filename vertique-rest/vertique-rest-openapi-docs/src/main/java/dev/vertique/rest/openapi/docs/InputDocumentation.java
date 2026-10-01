@@ -186,6 +186,45 @@ final class InputDocumentation {
     }
 
     /**
+     * Checks the named examples of a form request body without publishing them: the document
+     * publishes no examples for a form media type, but a blank or repeated name, an example with both
+     * a value and an external value, and a reference still fail.
+     *
+     * @param subject the failure-message subject naming the application and its mount
+     * @param operationId the runtime operation id
+     * @param requestBody the documenting annotation, or {@code null} when there is none
+     * @throws RestConfigurationException when an example of one of the annotation's content entries
+     *     is malformed or sets a reference
+     */
+    static void checkFormBodyExamples(String subject, String operationId, @Nullable RequestBody requestBody) {
+        if (requestBody == null) {
+            return;
+        }
+        String where = "@RequestBody.content.examples on " + REQUEST_BODY;
+        for (Content content : requestBody.content()) {
+            Examples.render(subject, operationId, where, content.examples());
+        }
+    }
+
+    /**
+     * Checks the named examples of a form field without publishing them: the first {@link Parameter}
+     * on the field is read as it is for a Parameter Object, and a blank or repeated name, an example
+     * with both a value and an external value, and a reference fail.
+     *
+     * @param subject the failure-message subject naming the application and its mount
+     * @param operationId the runtime operation id
+     * @param binding the form field's binding
+     * @throws RestConfigurationException when one of the {@link Parameter}'s examples is malformed or
+     *     sets a reference
+     */
+    static void checkFormFieldExamples(String subject, String operationId, InputBinding binding) {
+        Parameter parameter = first(binding.annotations(), Parameter.class);
+        if (parameter != null) {
+            Examples.render(subject, operationId, "@Parameter.examples on " + phrase(binding), parameter.examples());
+        }
+    }
+
+    /**
      * Reads the description of a request body.
      *
      * @param requestBody the documenting annotation, or {@code null} when there is none

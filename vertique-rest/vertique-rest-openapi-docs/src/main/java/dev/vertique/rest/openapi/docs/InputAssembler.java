@@ -233,7 +233,8 @@ final class InputAssembler {
 
         // Annotations are checked and read once every schema of the operation is checked: the
         // operation id, then the request body, then the parameters in published order, then the form
-        // fields; each input is checked against the runtime before its documentation is read.
+        // fields; each input is checked against the runtime before its documentation is read;
+        // a form body's and a form field's named examples are checked after the input, and publish nothing.
         MetadataAgreement.OperationAgreement agreeing = agreement.operation(operationId, known);
         if (body != null || form != null) {
             RequestBody requestBody = InputDocumentation.requestBody(
@@ -243,6 +244,7 @@ final class InputAssembler {
                 body = body.documented(InputDocumentation.body(subject, operationId, requestBody, body.mediaTypes()));
             } else {
                 agreeing.requestBody(requestBody, form.mediaTypes(), null, false);
+                InputDocumentation.checkFormBodyExamples(subject, operationId, requestBody);
                 form = form.documented(InputDocumentation.bodyDescription(requestBody));
             }
         }
@@ -258,6 +260,7 @@ final class InputAssembler {
         if (form != null) {
             for (InputBinding binding : forms) {
                 agreeing.parameter(binding);
+                InputDocumentation.checkFormFieldExamples(subject, operationId, binding);
             }
         }
         agreeing.finish();
