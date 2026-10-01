@@ -946,6 +946,10 @@ declared.
   letters never fold).
 - **`@Header(hidden = true)` is not honored.** The header is published, and `@Header.hidden` is
   named in the [omitted-attribute warning](#omitted-response-attributes).
+- **`hidden = true` on a response's `@Schema` is not honored either.** On a content schema, an
+  `@ArraySchema`'s `schema` or `arraySchema`, or a header schema, the implementation is still
+  generated and published in full, and only `@Schema.hidden` (or `@ArraySchema.arraySchema`) is
+  warned. To keep a type out of a document, remove the declaration or hide the operation.
 
 **Documentation members.** The `description`, `title`, `example`, `deprecated` (only `true`), and
 `externalDocs` (only with a `url`) of a `@Schema` that sets `implementation` are published beside the
@@ -1558,6 +1562,9 @@ and its message can quote that value.
   `@Schema(name)`.
 - **Hiding a response header with `@Header(hidden = true)`.** It is not honored: the header is
   published and the attribute is warned. Remove the `@Header` instead.
+- **Hiding a response body with `@Schema(hidden = true)` on its `@Content`.** It is not honored:
+  the implementation is published in full and the attribute is warned. Remove the content
+  declaration or hide the operation.
 - **Expecting a response schema's `example` on the Media Type Object.** It stays beside the `$ref`
   in the Schema Object; use `@Content.examples` for media-type examples.
 - **Expecting a server URL from the request.** `servers[0].url` is the configured `serverUrl` or the
