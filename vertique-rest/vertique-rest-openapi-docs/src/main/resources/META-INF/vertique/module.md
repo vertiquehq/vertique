@@ -828,7 +828,9 @@ The rules apply in this order, the first match winning:
    unwrapped, so `Future<Response>` classifies as `Response` and `Future<String>` as `String`. A raw
    `Future` without a type argument is decided at runtime, and so is a subtype of `Future` (for
    example `interface MyFuture<T> extends Future<T>`): only `io.vertx.core.Future` itself is
-   unwrapped, so a subtype publishes the runtime-determined `default` response with no content.
+   unwrapped, so a subtype publishes the runtime-determined `default` response with no content. A
+   `Future` or a subtype inside the unwrapped `Future` (`Future<Future<T>>`, `Future<MyFuture<T>>`)
+   publishes that `default` response too.
 3. **Still open.** A type that still holds a type variable or a wildcard is decided at runtime and
    is never handed to the generator.
 4. **Handled by the runtime.** `Response`, `CompletionStage`, `ReadStream`, `Buffer`, and their
@@ -948,8 +950,8 @@ declared.
   named in the [omitted-attribute warning](#omitted-response-attributes).
 - **`hidden = true` on a response's `@Schema` is not honored either.** On a content schema, an
   `@ArraySchema`'s `schema` or `arraySchema`, or a header schema, the implementation is still
-  generated and published in full, and only `@Schema.hidden` (or `@ArraySchema.arraySchema`) is
-  warned. To keep a type out of a document, remove the declaration or hide the operation.
+  generated and published in full, and `hidden` is merely warned (as `@Schema.hidden`, or
+  `@ArraySchema.arraySchema`), not refused. To keep a type out of a document, remove the declaration or hide the operation.
 
 **Documentation members.** The `description`, `title`, `example`, `deprecated` (only `true`), and
 `externalDocs` (only with a `url`) of a `@Schema` that sets `implementation` are published beside the

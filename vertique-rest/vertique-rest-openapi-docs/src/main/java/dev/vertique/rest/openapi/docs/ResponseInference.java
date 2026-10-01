@@ -94,9 +94,11 @@ final class ResponseInference {
      * <p>A method returning {@code void}, {@code Void}, or {@code Future<Void>} produces no content.
      * Otherwise every type variable of the return type is resolved against the generic supertypes
      * of the resource class, one level of {@code io.vertx.core.Future} itself is unwrapped (a subtype
-     * of {@code Future} is decided at runtime), and the resulting type is classified: a type still holding a type variable or wildcard, a type the runtime turns into a
-     * response itself ({@code Response}, {@code CompletionStage}, {@code Optional}, {@code
-     * ReadStream}, {@code Buffer}, {@code byte[]}, or a type with a registered response producer)
+     * of {@code Future} is decided at runtime), and the resulting type is classified: a type still
+     * holding a type variable or wildcard, a type the runtime turns into a response itself ({@code
+     * Response}, {@code CompletionStage}, {@code Optional}, {@code ReadStream}, {@code Buffer},
+     * {@code byte[]}, a {@code Future} or subtype of it left inside the unwrapped one, or a type
+     * with a registered response producer)
      * is decided at runtime; a {@code String} is raw text under every declared media type; an
      * event stream is decided at runtime; any other type is a JSON entity under the JSON-compatible
      * declared media types, and is decided at runtime when none is declared.
@@ -148,6 +150,7 @@ final class ResponseInference {
     /** Whether the runtime turns a value of the class into a response without an entity encoder. */
     private static boolean isRuntimeDecided(Class<?> raw) {
         return Response.class.isAssignableFrom(raw)
+                || Future.class.isAssignableFrom(raw)
                 || CompletionStage.class.isAssignableFrom(raw)
                 || raw == Optional.class
                 || ReadStream.class.isAssignableFrom(raw)
