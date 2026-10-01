@@ -12,7 +12,6 @@ import dev.vertique.rest.core.routing.SecurityRequirementSet;
 import dev.vertique.rest.core.security.SecuritySchemeDescription;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
 import dev.vertique.rest.jaxrs.publication.OperationPublication;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -61,7 +60,7 @@ final class DocumentSecurityAssembler {
      */
     static SortedMap<String, ObjectNode> schemes(
             String prefix, List<LocatedOperation> operations, Set<SecuritySchemeHandler> handlers) {
-        Map<String, LocatedOperation> firstReferences = new LinkedHashMap<>();
+        SortedMap<String, LocatedOperation> firstReferences = new TreeMap<>();
         for (LocatedOperation operation : operations) {
             for (SecurityRequirementSet set : operation.publication().securityRequirementSets()) {
                 for (SecurityRequirement requirement : set.schemes()) {
@@ -70,9 +69,10 @@ final class DocumentSecurityAssembler {
             }
         }
         SortedMap<String, ObjectNode> schemes = new TreeMap<>();
-        for (String schemeName : new TreeMap<>(firstReferences).keySet()) {
-            LocatedOperation referencing = firstReferences.get(schemeName);
-            String requires = prefix + ": " + referencing.label() + " requires security scheme '" + schemeName + "'";
+        for (Map.Entry<String, LocatedOperation> reference : firstReferences.entrySet()) {
+            String schemeName = reference.getKey();
+            String requires =
+                    prefix + ": " + reference.getValue().label() + " requires security scheme '" + schemeName + "'";
             SecuritySchemeHandler handler = handlers.stream()
                     .filter(candidate -> schemeName.equals(candidate.schemeName()))
                     .findFirst()

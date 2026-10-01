@@ -125,9 +125,8 @@ final class DocumentAssembler {
             for (OperationPublication operation : item.getValue()) {
                 OperationFacts operationFacts = facts.get(operation.operationId());
                 planned.add(new PlannedOperation(
-                        item.getKey(),
+                        new DocumentSecurityAssembler.LocatedOperation(item.getKey(), operation),
                         RenderedPaths.methodKey(operation),
-                        operation,
                         InputAssembler.check(
                                 subject,
                                 embedder,
@@ -156,10 +155,8 @@ final class DocumentAssembler {
             rootTags.add(operation.plan().operationId(), operation.metadata());
         }
 
-        List<DocumentSecurityAssembler.LocatedOperation> located = planned.stream()
-                .map(operation ->
-                        new DocumentSecurityAssembler.LocatedOperation(operation.path(), operation.operation()))
-                .toList();
+        List<DocumentSecurityAssembler.LocatedOperation> located =
+                planned.stream().map(PlannedOperation::located).toList();
         SortedMap<String, ObjectNode> securitySchemes = DocumentSecurityAssembler.schemes(
                 "apidocs.documents." + document.name() + ": " + subject, located, context.securitySchemeHandlers());
         PublicRestrictionWarning.add(document, publication.mountPath(), located, warnings);
@@ -170,7 +167,8 @@ final class DocumentAssembler {
                     ? (ObjectNode) paths.get(operation.path())
                     : paths.putObject(operation.path());
             ObjectNode published = operation.plan().publish(embedder, operation.metadata(), operation.responses());
-            ArrayNode security = DocumentSecurityAssembler.security(operation.operation());
+            ArrayNode security =
+                    DocumentSecurityAssembler.security(operation.located().publication());
             if (security != null) {
                 published.set("security", security);
             }
@@ -185,17 +183,11 @@ final class DocumentAssembler {
         root.put("jsonSchemaDialect", JSON_SCHEMA_DIALECT);
         root.putArray("servers").addObject().put("url", serverUrl(document, publication));
         root.set("paths", paths);
-        SortedMap<String, JsonNode> schemas = embedder.components();
-        if (!schemas.isEmpty() || !securitySchemes.isEmpty()) {
-            ObjectNode components = root.putObject("components");
-            if (!schemas.isEmpty()) {
-                ObjectNode componentSchemas = components.putObject("schemas");
-                schemas.forEach(componentSchemas::set);
-            }
-            if (!securitySchemes.isEmpty()) {
-                ObjectNode componentSecuritySchemes = components.putObject("securitySchemes");
-                securitySchemes.forEach(componentSecuritySchemes::set);
-            }
+        ObjectNode components = NODES.objectNode();
+        putMembers(components, "schemas", embedder.components());
+        putMembers(components, "securitySchemes", securitySchemes);
+        if (!components.isEmpty()) {
+            root.set("components", components);
         }
         ArrayNode tags = rootTags.render();
         if (tags != null) {
@@ -253,21 +245,33 @@ final class DocumentAssembler {
         return mountPath.isEmpty() ? "/" : mountPath;
     }
 
+    /** Adds the members as an object member of the parent under the name, unless there are none. */
+    private static void putMembers(ObjectNode parent, String name, SortedMap<String, ? extends JsonNode> members) {
+        if (!members.isEmpty()) {
+            ObjectNode member = parent.putObject(name);
+            members.forEach(member::set);
+        }
+    }
+
     /**
      * One operation of the document, checked and waiting to be published.
      *
-     * @param path the rendered path key
+     * @param located the operation's publication with its rendered path key
      * @param method the lowercase method key
-     * @param operation the operation's publication
      * @param plan the checked plan of its Operation Object
      * @param responses the checked plan of its responses
      * @param metadata the operation's documentation metadata
      */
     private record PlannedOperation(
-            String path,
+            DocumentSecurityAssembler.LocatedOperation located,
             String method,
-            OperationPublication operation,
             InputAssembler.Plan plan,
             ResponseAssembler.ResponsePlan responses,
-            OperationMetadata metadata) {}
+            OperationMetadata metadata) {
+
+        /** Returns the rendered path key. */
+        String path() {
+            return located.path();
+        }
+    }
 }
