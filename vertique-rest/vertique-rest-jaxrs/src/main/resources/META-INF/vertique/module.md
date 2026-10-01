@@ -1205,8 +1205,8 @@ At startup, before any resource resolves, every declared registration's declarin
 superinterfaces are re-checked by reflection against the same [declaration annotation
 allow list](#declaration-annotations) the annotation processor enforces at compile time — no
 superclass is walked, because the declaring interface is an interface, never constructed — whether or
-not the registration is active and whether it was generated or hand-written. Each violation carries
-the compile-time diagnostic's own message; when one or more are found, startup fails with a
+not the registration is active and whether it was generated or hand-written. Each violation applies
+the same rule as the compile-time check, with its own message; when one or more are found, startup fails with a
 `RestConfigurationException` that lists every violation found across all registrations, one per line,
 under `Invalid JAX-RS application composition:`, together with any other composition problem found at
 that point.
