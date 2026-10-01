@@ -35,5 +35,14 @@ final class RestSpanKeys {
      */
     static final AttributeKey<String> VERTIQUE_OPERATION_ID = AttributeKey.stringKey("vertique.operation.id");
 
+    /**
+     * OpenTelemetry {@link AttributeKey} for the name of the REST application the operation belongs
+     * to, recorded on the server span by {@link ServerSpanEnrichmentContributor}.
+     *
+     * <p>Absent for operations that belong to no application. Distinct from the resource attribute
+     * {@code service.name}.
+     */
+    static final AttributeKey<String> VERTIQUE_APPLICATION_NAME = AttributeKey.stringKey("vertique.application.name");
+
     private RestSpanKeys() {}
 }

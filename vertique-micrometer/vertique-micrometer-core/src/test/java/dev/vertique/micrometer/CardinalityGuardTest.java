@@ -10,8 +10,10 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.vertx.core.json.JsonObject;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
@@ -71,6 +73,15 @@ class CardinalityGuardTest {
     @Nested
     class TagValueCap {
 
+        /** Registries created by tests in this class, closed after each test. */
+        private final List<SimpleMeterRegistry> registries = new ArrayList<>();
+
+        @AfterEach
+        void closeRegistries() {
+            registries.forEach(SimpleMeterRegistry::close);
+            registries.clear();
+        }
+
         @Test
         @DisplayName("cap=5: first 5 tag values register and accumulate; 6th value is denied (counter is no-op)")
         void firstFiveAllowedSixthDenied() {
@@ -99,6 +110,101 @@ class CardinalityGuardTest {
                     denied == null || denied.count() == 0.0,
                     "counter for method=v6 must be absent or accumulate nothing (got: "
                             + (denied == null ? "null" : denied.count()) + ")");
+        }
+
+        @Test
+        @DisplayName("'rest.application' is appended to the guarded keys; values capped on vertique meters only")
+        void restApplicationIsAGuardedGrowthOnlyKey() {
+            // Given: the guarded keys as they stood before 'rest.application' was introduced
+            List<String> baseline = List.of(
+                    "method",
+                    "route",
+                    "operation",
+                    "status",
+                    "outcome",
+                    "error.type",
+                    "client",
+                    "target",
+                    "target.host",
+                    "target.port",
+                    "oneway",
+                    "type",
+                    "queue",
+                    "state",
+                    "topic",
+                    "consumer",
+                    "workflow",
+                    "transition",
+                    "destination.type",
+                    "result.kind",
+                    "stage",
+                    "sink",
+                    "decision",
+                    "tool",
+                    "result.type",
+                    "transport.outcome",
+                    "circuit",
+                    "from",
+                    "to",
+                    "mode",
+                    "policy",
+                    "code");
+            List<String> expectedKeys = new ArrayList<>(baseline);
+            expectedKeys.add("rest.application");
+
+            // And: a registry guarded with a cap of 3 values per key and no global meter cap
+            SimpleMeterRegistry registry = registryWithGuard(cardinalityConfig(3, 0));
+            registries.add(registry);
+
+            // When: four application values are recorded on a vertique meter and on a non-vertique meter
+            List<String> applications = List.of("a", "b", "c", "d");
+            for (String application : applications) {
+                registry.timer("vertique.rest.server.requests", "rest.application", application)
+                        .record(Duration.ofMillis(1));
+                registry.timer("app.requests", "rest.application", application).record(Duration.ofMillis(1));
+            }
+
+            // Then
+            assertAll(
+                    () -> assertEquals(
+                            expectedKeys,
+                            CardinalityGuard.GUARDED_TAG_KEYS,
+                            "guarded keys must be the unchanged baseline followed by 'rest.application'"),
+                    () -> {
+                        for (String application : List.of("a", "b", "c")) {
+                            Timer allowed = registry.find("vertique.rest.server.requests")
+                                    .tag("rest.application", application)
+                                    .timer();
+                            assertNotNull(
+                                    allowed,
+                                    "vertique timer for rest.application=" + application + " must be registered");
+                            assertEquals(
+                                    1,
+                                    allowed.count(),
+                                    "vertique timer for rest.application=" + application + " must record");
+                        }
+                        Timer denied = registry.find("vertique.rest.server.requests")
+                                .tag("rest.application", "d")
+                                .timer();
+                        assertTrue(
+                                denied == null || denied.count() == 0,
+                                "vertique timer for rest.application=d must be absent or record nothing (got: "
+                                        + (denied == null ? "null" : denied.count()) + ")");
+                    },
+                    () -> {
+                        for (String application : applications) {
+                            Timer exempt = registry.find("app.requests")
+                                    .tag("rest.application", application)
+                                    .timer();
+                            assertNotNull(
+                                    exempt,
+                                    "non-vertique timer for rest.application=" + application + " must be registered");
+                            assertEquals(
+                                    1,
+                                    exempt.count(),
+                                    "non-vertique timer for rest.application=" + application + " must record");
+                        }
+                    });
         }
     }
 
