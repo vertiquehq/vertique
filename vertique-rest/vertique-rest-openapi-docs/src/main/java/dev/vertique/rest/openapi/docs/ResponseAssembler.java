@@ -50,9 +50,10 @@ import java.util.TreeSet;
  * status declares several different implementations, each component key gains the suffix {@code
  * .<n>}, numbered from 1 in declaration order; one implementation used by several media types of a
  * status is one component. A {@link Header} with a blank name is left out, and one header name
- * declared twice in one status, compared ignoring ASCII letter case, fails publication; a header's schema implementation is published as
- * a reference to the component {@code <operationId>.response.<status>.header.<name>}, and a header
- * without one publishes the empty schema.
+ * declared twice in one status, compared ignoring ASCII letter case, fails publication; a header's
+ * schema implementation is published as a reference to the component {@code
+ * <operationId>.response.<status>.header.<name>}, and a header without one publishes the empty
+ * schema.
  *
  * <p>The documentation members of an implemented {@code @Schema} are published beside the reference
  * they document (the content or header schema's reference, or an array's {@code items} reference),
@@ -68,7 +69,9 @@ import java.util.TreeSet;
  * then each header implementation. A failure names the status of the content or header; the
  * inferred type is always named as status {@code 200}. The declared statuses, {@code
  * useReturnTypeSchema}, and the media types of every status are checked before any type is
- * generated. Every refusal starts with the document's configuration path.
+ * generated. Every refusal raised here or by {@link OutputSchemas} starts with the document's
+ * configuration path; a refused schema construct or a component-key collision is reported by the
+ * shared schema checks and starts with the application subject.
  */
 final class ResponseAssembler {
 
