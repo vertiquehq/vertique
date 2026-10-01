@@ -36,7 +36,7 @@ import java.util.stream.Collectors;
  * order, from the description its registered {@link SecuritySchemeHandler} returns from {@link
  * SecuritySchemeHandler#openApiDescription()}, which is asked once per referenced scheme and
  * assembly; a registered handler whose scheme no published operation references is not asked. A
- * referenced scheme with no registered handler, with more than one registered handler (no handler is
+ * referenced scheme with no registered handler, with more than one registered handler (neither is
  * asked then), with a handler that describes nothing, or with a description of a kind this module
  * cannot render fails the document, naming the first operation in document order that references the
  * scheme. The failure echoes no description content,

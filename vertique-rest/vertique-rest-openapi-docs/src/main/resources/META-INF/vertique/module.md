@@ -1237,8 +1237,8 @@ disable the document
   operation, before any document is assembled.
 - **More than one handler provides the scheme.** The same start, ending `, which more than one
   SecuritySchemeHandler provides: <class names>; each security scheme must be provided by exactly
-  one handler`, with the binary class names sorted. No handler is asked for a description. Fix it
-  by providing each scheme from exactly one handler: put the description on the enforcing handler.
+  one handler`, with the binary class names sorted. Neither of the scheme's handlers is asked for a
+  description. Fix it by providing each scheme from exactly one handler: put the description on the enforcing handler.
 - **A kind this module does not know.** The same start, ending `, whose SecuritySchemeHandler
   describes it as <class name>, a kind of security scheme this documentation module cannot
   publish`, naming the description's class.
