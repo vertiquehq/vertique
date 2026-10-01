@@ -512,6 +512,12 @@ final class MetadataConstraintSource implements ConstraintSource {
      * is in effect at the end of the regexp — otherwise the {@code #} would not have swallowed the
      * parenthesis — so the line break is ignored whitespace there, and {@code \n} ends a comment with or
      * without {@code UNIX_LINES}.
+     *
+     * <p>The chosen group is then compiled without flags, as the validator compiles it. A regexp valid
+     * with its flags can still be impossible to embed — an open {@code \Q} quote swallows the closing
+     * parenthesis, and comments turned on inline (for example {@code (?x)}) can hide it behind a
+     * {@code #} comment — and such a group fails generation with a bounded diagnostic that names the
+     * property but never echoes the expression.
      */
     private static String renderPattern(Map<String, Object> attributes, String label) {
         String regexp = (String) attributes.get("regexp");
@@ -543,10 +549,25 @@ final class MetadataConstraintSource implements ConstraintSource {
                     null);
         }
         String plain = "(?" + modifiers + ":" + regexp + ")";
-        if (modifiers.indexOf("x") < 0 || compiles(plain, 0)) {
-            return plain;
+        String rendered =
+                modifiers.indexOf("x") < 0 || compiles(plain, 0) ? plain : "(?" + modifiers + ":" + regexp + "\n)";
+        if (!compiles(rendered, 0)) {
+            throw Diagnostics.failure(
+                    "the @Pattern constraint on " + label
+                            + " declares a regular expression that cannot be embedded with its flags;"
+                            + " fix the expression",
+                    null);
         }
-        return "(?" + modifiers + ":" + regexp + "\n)";
+        return rendered;
+    }
+
+    /**
+     * Whether {@code modifier} is the inline Java regex modifier character of an embeddable
+     * {@code jakarta.validation.constraints.Pattern.Flag} — a character a rendered {@code @Pattern}
+     * modifier group can contain.
+     */
+    static boolean isEmbeddablePatternModifier(char modifier) {
+        return EMBEDDABLE_PATTERN_FLAGS.containsValue(modifier);
     }
 
     /**

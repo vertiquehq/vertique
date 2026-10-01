@@ -2108,7 +2108,10 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * {@code (?} and the first {@code :}) includes comments mode,
      * {@link MetadataConstraintSource#renderPattern}'s own shapes for a single {@code @Pattern}'s
      * embedded flags — meaning both values render the very same {@code @Pattern} annotation, not two
-     * different ones in conflict.
+     * different ones in conflict. In both shapes the modifier group must be a non-empty run of
+     * embeddable modifier characters ending exactly where {@code plainRegexp} begins, so a
+     * non-capturing group ({@code (?:...)}) or another group construct that merely ends in
+     * {@code plainRegexp} never matches.
      */
     private static boolean embedsFlaggedRegexp(String flagged, String plainRegexp) {
         if (!flagged.startsWith("(?")) {
@@ -2116,12 +2119,30 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         }
         String suffix = ":" + plainRegexp + ")";
         String commentsSuffix = ":" + plainRegexp + "\n)";
-        if (flagged.length() > suffix.length() && flagged.endsWith(suffix)) {
+        if (flagged.endsWith(suffix)
+                && isEmbeddableModifierGroup(flagged.substring(2, flagged.length() - suffix.length()))) {
             return true;
         }
-        return flagged.length() > commentsSuffix.length()
-                && flagged.endsWith(commentsSuffix)
-                && flagged.substring(2, flagged.indexOf(':')).indexOf('x') >= 0;
+        if (flagged.endsWith(commentsSuffix)) {
+            String modifiers = flagged.substring(2, flagged.length() - commentsSuffix.length());
+            return isEmbeddableModifierGroup(modifiers) && modifiers.indexOf('x') >= 0;
+        }
+        return false;
+    }
+
+    /**
+     * Whether {@code modifiers} is a non-empty run of embeddable inline Java regex modifier characters.
+     */
+    private static boolean isEmbeddableModifierGroup(String modifiers) {
+        if (modifiers.isEmpty()) {
+            return false;
+        }
+        for (int i = 0; i < modifiers.length(); i++) {
+            if (!MetadataConstraintSource.isEmbeddablePatternModifier(modifiers.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
