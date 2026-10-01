@@ -319,7 +319,8 @@ class InputAssemblyTest {
     void equivalentRenderedPathsFailPublication() {
         // Given: (a) two GET routes whose templates differ only in their regular expressions;
         // (b) GET and DELETE routes whose templates name the variable differently;
-        // (c) the control: GET and DELETE routes with the same variable name, one carrying a regex.
+        // (c) the control: DELETE and then GET routes with the same variable name, the GET template
+        // carrying a regex.
         Publications.Built sameMethod = publicMount()
                 .operation("GET", "/items/{id: \\d+}", "getItemByNumber")
                 .operation("GET", "/items/{id: [a-z]+}", "getItemBySlug")
@@ -329,8 +330,8 @@ class InputAssemblyTest {
                 .operation("DELETE", "/items/{name}", "deleteItemByName")
                 .build();
         Publications.Built control = publicMount()
-                .operation("GET", "/items/{id: \\d+}", "getItem")
                 .operation("DELETE", "/items/{id}", "deleteItem")
+                .operation("GET", "/items/{id: \\d+}", "getItem")
                 .build();
 
         // When: each document is assembled.
@@ -346,10 +347,13 @@ class InputAssemblyTest {
         assertRenderedPathCollision(
                 differentNamesFailure, routeFragment("GET", "getItem"), routeFragment("DELETE", "deleteItemByName"));
 
-        // Then (c): both routes share one path item, each under its own method.
+        // Then (c): both routes share one path item, each under its own method, and the methods are
+        // written in method order, GET before DELETE, although DELETE was declared first.
         JsonObject paths = controlDocument.getJsonObject("paths");
         assertEquals(Set.of("/items/{id}"), paths.fieldNames());
-        assertEquals(Set.of("get", "delete"), paths.getJsonObject("/items/{id}").fieldNames());
+        assertEquals(
+                List.of("get", "delete"),
+                new ArrayList<>(paths.getJsonObject("/items/{id}").fieldNames()));
         assertEquals("getItem", operation(controlDocument, "/items/{id}", "get").getString("operationId"));
         assertEquals(
                 "deleteItem",
@@ -474,6 +478,69 @@ class InputAssemblyTest {
                 List.of("caption", "file"),
                 new ArrayList<>(filesSchema.getJsonObject("properties").fieldNames()));
         OpenApi31Toolchain.assertValid(doc);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Inputs sharing a name and location
+    // ---------------------------------------------------------------------------------------------
+
+    /** The fragment explaining why inputs sharing a name and location fail publication. */
+    private static final String ONE_PARAMETER_FRAGMENT = "one parameter per name and location";
+
+    @Test
+    @DisplayName("Two inputs sharing a name and location fail publication; one name in two locations publishes both")
+    void duplicateInputsFailPublication() {
+        // Given: (a) 'searchItems' binding the query parameter 'q' both as a method parameter and as a
+        // composite field; (b) 'submitTitles' binding two form fields named 'title'; (c) the control:
+        // 'getItem' binding 'id' once in the path and once in the query.
+        Publications.Built queryTwice = publicMount()
+                .operation("GET", "/items", "searchItems")
+                .param(ParamLocation.QUERY, "q", Requiredness.NOT_REQUIRED)
+                .compositeField(ParamLocation.QUERY, "q", Requiredness.NOT_REQUIRED)
+                .build();
+        Publications.Built formTwice = publicMount()
+                .operation("POST", "/forms/titles", "submitTitles")
+                .consumes(URL_ENCODED)
+                .formField("title")
+                .formField("title")
+                .build();
+        Publications.Built pathAndQuery = publicMount()
+                .operation("GET", "/items/{id}", "getItem")
+                .param(ParamLocation.PATH, "id", Requiredness.REQUIRED)
+                .param(ParamLocation.QUERY, "id", Requiredness.NOT_REQUIRED)
+                .build();
+
+        // When: each document is assembled.
+        RestConfigurationException queryFailure = assembleExpectingFailure(PUBLIC_DOCUMENT, queryTwice);
+        RestConfigurationException formFailure = assembleExpectingFailure(PUBLIC_DOCUMENT, formTwice);
+        JsonObject controlDocument = assemble(PUBLIC_DOCUMENT, pathAndQuery);
+
+        // Then (a): the failure names the mount, the operation, the input, and its location, and says
+        // a document describes one parameter per name and location.
+        String queryMessage = queryFailure.getMessage();
+        assertTrue(queryMessage.contains(MOUNT_FRAGMENT), () -> "(a): the mount is not named: " + queryMessage);
+        assertTrue(queryMessage.contains("'searchItems'"), () -> "(a): the operation is not named: " + queryMessage);
+        assertTrue(queryMessage.contains("'q'"), () -> "(a): the input is not named: " + queryMessage);
+        assertTrue(queryMessage.contains("in query"), () -> "(a): the location is not named: " + queryMessage);
+        assertTrue(queryMessage.contains(ONE_PARAMETER_FRAGMENT), () -> "(a): the rule is not stated: " + queryMessage);
+
+        // Then (b): the failure names the mount, the operation, the form input, and the form location.
+        String formMessage = formFailure.getMessage();
+        assertTrue(formMessage.contains(MOUNT_FRAGMENT), () -> "(b): the mount is not named: " + formMessage);
+        assertTrue(formMessage.contains("'submitTitles'"), () -> "(b): the operation is not named: " + formMessage);
+        assertTrue(formMessage.contains("'title'"), () -> "(b): the input is not named: " + formMessage);
+        assertTrue(formMessage.contains("in form"), () -> "(b): the location is not named: " + formMessage);
+        assertTrue(formMessage.contains(ONE_PARAMETER_FRAGMENT), () -> "(b): the rule is not stated: " + formMessage);
+
+        // Then (c): two Parameter Objects are published, the path 'id' and then the query 'id'.
+        JsonArray parameters = operation(controlDocument, "/items/{id}", "get").getJsonArray("parameters");
+        assertNotNull(parameters, () -> "(c) publishes no parameters: " + controlDocument.encode());
+        List<String> published = new ArrayList<>();
+        for (int i = 0; i < parameters.size(); i++) {
+            JsonObject parameter = parameters.getJsonObject(i);
+            published.add(parameter.getString("name") + " in " + parameter.getString("in"));
+        }
+        assertEquals(List.of("id in path", "id in query"), published);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -875,7 +942,8 @@ class InputAssemblyTest {
     void refusedConstructsFailPublication() {
         // Given: captured schemas of findItem's query parameter 'code'. Each failing row names the
         // pointer of the keyword member at fault. Identifiers, anchors, and nested $defs are found
-        // before any reference is checked, so (e) names its $anchor, not the reference to it.
+        // before any reference is checked, so (e) names its $anchor, not the reference to it, although
+        // the reference is written first.
         List<RefusedSchema> refused = List.of(
                 new RefusedSchema("(a) network reference", """
                         {"$ref": "https://schemas.example.test/a.json"}""", "/$ref"),
@@ -884,7 +952,7 @@ class InputAssemblyTest {
                 new RefusedSchema("(c) anchor-name fragment", """
                         {"$ref": "#missing-anchor"}""", "/$ref"),
                 new RefusedSchema("(e) anchor", """
-                        {"$anchor": "item", "$ref": "#item"}""", "/$anchor"),
+                        {"$ref": "#item", "$anchor": "item"}""", "/$anchor"),
                 new RefusedSchema("(g) identifier inside a definition", """
                         {"$defs": {"Item": {"$id": "urn:example:item", "type": "string"}},
                          "$ref": "#/$defs/Item"}""", "/$defs/Item/$id"),
@@ -1024,6 +1092,43 @@ class InputAssemblyTest {
         everyFormBefore.assertUnchanged();
         encodedNamesBefore.assertUnchanged();
         collidingNamesBefore.assertUnchanged();
+    }
+
+    @Test
+    @DisplayName("Rewritten references keep the escaped and percent-encoded form of the tokens they carry over")
+    void rewrittenReferencesKeepTheirEscaping() {
+        // Given: findItem's parameter 'code' captured with properties 'a/b' and 'c d', a definition 'W'
+        // with a property 'x y', and references into each: one needing '~1', one '%20' into the root,
+        // and one '%20' below a definition.
+        JsonObject escaped = new JsonObject("""
+                {"properties": {"a/b": {"type": "string"}, "c d": {"type": "string"}},
+                 "$defs": {"W": {"properties": {"x y": {"type": "integer"}}}},
+                 "anyOf": [{"$ref": "#/properties/a~1b"},
+                           {"$ref": "#/properties/c%20d"},
+                           {"$ref": "#/$defs/W/properties/x%20y"}]}""");
+        Publications.Built built = findItemWithCode(escaped);
+        Snapshots.Snapshot before = Snapshots.of(built.publication());
+
+        // When: the document is assembled.
+        JsonObject doc = assemble(PUBLIC_DOCUMENT, built);
+
+        // Then: the parameter references its component; the component is the root without $defs, the
+        // definition is its own component, and each rewritten reference re-escapes '/' as '~1' and
+        // percent-encodes the space.
+        assertEquals(new JsonObject("""
+                        {"name": "code", "in": "query",
+                         "schema": {"$ref": "#/components/schemas/findItem.query.code"}}"""), findItemParameter(doc));
+        assertEquals(new JsonObject("""
+                        {"findItem.query.code": {
+                            "properties": {"a/b": {"type": "string"}, "c d": {"type": "string"}},
+                            "anyOf": [{"$ref": "#/components/schemas/findItem.query.code/properties/a~1b"},
+                                      {"$ref": "#/components/schemas/findItem.query.code/properties/c%20d"},
+                                      {"$ref": "#/components/schemas/findItem.query.code.W/properties/x%20y"}]},
+                         "findItem.query.code.W": {"properties": {"x y": {"type": "integer"}}}}"""), componentSchemas(doc));
+        OpenApi31Toolchain.assertValid(doc);
+
+        // Then: the captured schema is unchanged.
+        before.assertUnchanged();
     }
 
     @Test

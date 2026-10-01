@@ -1013,8 +1013,13 @@ class ApidocsConfigTest {
         assertTrue(roles < scheme, "the rolesAllowed line comes before the securityScheme line: " + message);
     }
 
+    /**
+     * Strings the configuration parser reads as no boolean at all: empty and whitespace-only text, and
+     * single control characters that are not whitespace (start of heading, escape), which the parser
+     * also reads as {@code null} although {@code String.isBlank()} calls them not blank.
+     */
     static Stream<String> blankEnabledValues() {
-        return Stream.of("", " ", "\t");
+        return Stream.of("", " ", "\t", "\u0001", "\u001b");
     }
 
     @ParameterizedTest(name = "enabled given as a blank string, variant {index}")
@@ -1038,6 +1043,9 @@ class ApidocsConfigTest {
         assertTrue(message.contains("must be true or false"), message);
         assertFalse(message.contains("\"enabled\":"), message);
         assertFalse(message.contains("\"\""), message);
+        if (!blank.isBlank()) {
+            assertFalse(message.contains(blank), "the message echoes the control character: " + message);
+        }
     }
 
     @Test

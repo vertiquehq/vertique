@@ -170,7 +170,41 @@ class PatternFlagRenderingTest {
                 Arguments.of("escapedHash", List.of("a#b", "ab", "a #b", "a\\#b")),
                 Arguments.of("trailingBareHash", List.of("ab", "abc", "a b", "xab")),
                 Arguments.of("newlineTerminatedComment", List.of("ab", "a b", "a\nb", "acb")),
-                Arguments.of("caseInsensitiveComment", List.of("ab", "AB", "aB", "abc", "a b")));
+                Arguments.of("caseInsensitiveComment", List.of("ab", "AB", "aB", "abc", "a b")),
+                Arguments.of("commentsTurnedOffInline", List.of("abc", "abc\n")));
+    }
+
+    @Test
+    @DisplayName("a COMMENTS @Pattern whose regexp does not compile in comments mode fails generation without"
+            + " echoing the regexp")
+    void commentsFlagWithARegexpInvalidInCommentsModeIsRefused() {
+        // Given a member constrained by @Pattern(regexp = "a\\", flags = COMMENTS): a trailing
+        // backslash, which Pattern.compile(regexp, COMMENTS) rejects
+        String regexp = "a\\";
+        assertThrows(
+                java.util.regex.PatternSyntaxException.class,
+                () -> java.util.regex.Pattern.compile(regexp, java.util.regex.Pattern.COMMENTS),
+                "precondition: the declared regexp must not compile with its flags");
+        jakarta.validation.Validator bv = MetadataTestValidators.plain();
+
+        // When the validator-backed generator describes the type
+        JsonSchemaGenerationException failure =
+                assertThrows(JsonSchemaGenerationException.class, () -> AnnotationJsonSchemaGenerator.forInputProfile(
+                                vertiqueProfile(), bv)
+                        .generateCanonical(TrailingBackslashDto.class));
+
+        // Then the diagnostic names the constrained member and never echoes the regexp
+        String message = failure.getMessage();
+        assertTrue(
+                message.contains("TrailingBackslashDto.value"),
+                () -> "the diagnostic must name the constrained member: " + message);
+        assertFalse(message.contains(regexp), () -> "the diagnostic echoes the regexp: " + message);
+    }
+
+    /** A COMMENTS-mode regexp ending in a lone backslash, which comments mode cannot compile. */
+    static final class TrailingBackslashDto {
+        @Pattern(regexp = "a\\", flags = Pattern.Flag.COMMENTS)
+        public String value;
     }
 
     @Test
@@ -215,6 +249,11 @@ class PatternFlagRenderingTest {
                 regexp = "^ab$ # mixed case",
                 flags = {Pattern.Flag.COMMENTS, Pattern.Flag.CASE_INSENSITIVE})
         public String caseInsensitiveComment;
+
+        // An inline (?-x) turns comments mode off for the rest of the regexp, so whatever the
+        // rendering appends after the regexp is no longer ignorable whitespace.
+        @Pattern(regexp = "(?-x)abc", flags = Pattern.Flag.COMMENTS)
+        public String commentsTurnedOffInline;
     }
 
     /** A flagged regexp without COMMENTS, whose rendering must stay as it is. */
