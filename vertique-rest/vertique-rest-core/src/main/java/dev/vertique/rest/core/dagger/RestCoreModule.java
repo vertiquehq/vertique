@@ -14,8 +14,6 @@ import dev.vertique.core.config.JsonConfigPaths;
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.correlation.CorrelationContextModule;
 import dev.vertique.logging.LoggingContextModule;
-import dev.vertique.rest.core.capture.RestRequestCaptureCoordinator;
-import dev.vertique.rest.core.capture.RestServerRequestEvidenceCapturer;
 import dev.vertique.rest.core.config.CorsConfig;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.config.JaxRsConfig;
@@ -25,7 +23,7 @@ import dev.vertique.rest.core.convert.ParamConversionResolver;
 import dev.vertique.rest.core.convert.ParamConverterBinding;
 import dev.vertique.rest.core.convert.ParamConverterRegistry;
 import dev.vertique.rest.core.correlation.CorrelationIngressModule;
-import dev.vertique.rest.core.events.OperationIdCaptureContributor;
+import dev.vertique.rest.core.events.HttpRequestCompletedListener;
 import dev.vertique.rest.core.events.RequestCompletionScope;
 import dev.vertique.rest.core.events.RestRequestCompletedListener;
 import dev.vertique.rest.core.events.RestRequestCompletionEmitter;
@@ -139,10 +137,7 @@ public abstract class RestCoreModule {
     abstract Set<RestRequestCompletedListener> restRequestCompletedListeners();
 
     @Multibinds
-    abstract Set<RestServerRequestEvidenceCapturer> restServerRequestEvidenceCapturers();
-
-    @Multibinds
-    abstract Set<RestRequestCaptureCoordinator> restRequestCaptureCoordinators();
+    abstract Set<HttpRequestCompletedListener> httpRequestCompletedListeners();
 
     /**
      * Declares the empty {@link ParamConverterProvider} multibinding set.
@@ -497,9 +492,14 @@ public abstract class RestCoreModule {
     }
 
     /**
-     * Provides {@link RestRequestCompletionEmitter} (ROOT, order={@link RequestContextLifecycle#ORDER}+5).
-     * Emits exactly one {@link dev.vertique.rest.core.events.RestRequestCompletedEvent} per handled
-     * request, covering all success and failure paths.
+     * Provides {@link RestRequestCompletionEmitter} (ROOT, phase {@code SYSTEM_FIRST},
+     * order={@link RequestContextLifecycle#ORDER}+5), which runs right after
+     * {@link RequestContextLifecycle} and ahead of every application-phase ROOT middleware. It emits
+     * exactly one completion event for each request that completes through the response lifecycle,
+     * covering all success and failure paths, owned by the transport that claimed the request: a
+     * {@link dev.vertique.rest.core.events.RestRequestCompletedEvent} when a JAX-RS operation route
+     * claimed it, a {@link dev.vertique.rest.core.events.HttpRequestCompletedEvent} when no transport
+     * claimed it, and none when another transport claimed it.
      *
      * @param emitter the singleton emitter middleware
      * @return the emitter contributed to the middleware set
@@ -509,20 +509,5 @@ public abstract class RestCoreModule {
     @Singleton
     static Middleware restRequestCompletionEmitter(RestRequestCompletionEmitter emitter) {
         return emitter;
-    }
-
-    /**
-     * Provides {@link OperationIdCaptureContributor} (priority=350).
-     * Stores the OpenAPI {@code operationId} and route template on the routing context for each
-     * operation-dispatched request so the emitter can include them in the completion event.
-     *
-     * @param contributor the singleton contributor
-     * @return the contributor contributed to the operation handler contributor set
-     */
-    @Provides
-    @IntoSet
-    @Singleton
-    static OperationHandlerContributor operationIdCaptureContributor(OperationIdCaptureContributor contributor) {
-        return contributor;
     }
 }

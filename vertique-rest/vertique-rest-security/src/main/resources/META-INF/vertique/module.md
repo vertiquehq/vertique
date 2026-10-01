@@ -72,7 +72,6 @@ own contributor relative to them:
 | 50 | JWT claims validator | `vertique-rest-auth-jwt` |
 | 80 | `IdentityResolutionContributor` | `vertique-rest-security` |
 | 100 | `AuthorizationContributor` | `vertique-rest-security` |
-| 350 | operation-id capture | `vertique-rest-core` |
 
 `OriginCaptureMiddleware` is the module's one ROOT-scoped `Middleware`. It runs before any
 authentication handler and stashes the resolved `RequestOrigin` so identity resolution and every

@@ -17,17 +17,22 @@ import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * Records a per-request timer ({@value #METER_NAME}) for every completed HTTP server request.
+ * Records a per-request timer ({@value #METER_NAME}) for every JAX-RS operation request: one sample
+ * per {@link RestRequestCompletedEvent}, including a request denied on its matched operation route.
  *
  * <p>Subscribed to the {@link RestRequestCompletedListener} multibinding. Contributed automatically
- * when {@link MicrometerRestModule} is installed.
+ * when {@link MicrometerRestModule} is installed. A request that no JAX-RS operation route claimed,
+ * such as a ROOT rejection, a 404 or 405, or a rejection before any operation route matched, produces
+ * no {@link RestRequestCompletedEvent} and is not timed; Vert.x's native HTTP server metrics
+ * ({@code metrics.vertx.httpServer}) cover every request at the transport level.
  *
  * <p>Meter tags:
  * <ul>
  *   <li>{@code method} — HTTP method (e.g. {@code GET})</li>
- *   <li>{@code route} — OpenAPI path template (e.g. {@code /orders/{id}}), or {@code UNKNOWN} when
- *       the request did not reach operation dispatch</li>
- *   <li>{@code operation} — OpenAPI operationId, or {@code UNKNOWN} when unavailable</li>
+ *   <li>{@code route} — the operation's OpenAPI path template (e.g. {@code /orders/{id}}), read
+ *       from {@code event.operation().routeTemplate()}</li>
+ *   <li>{@code operation} — the operation's OpenAPI operationId, read from
+ *       {@code event.operation().operationId()}</li>
  *   <li>{@code status} — HTTP response status code as a string (e.g. {@code 200})</li>
  *   <li>{@code outcome} — low-cardinality {@link HttpOutcome} bucket (e.g. {@code SUCCESS})</li>
  *   <li>{@code error.type} — {@code failureCode} when present, else {@code wireFailureCode}
@@ -72,7 +77,7 @@ public final class RestServerRequestMetricsListener implements RestRequestComple
     /** Tag name for the low-cardinality error type. */
     static final String TAG_ERROR_TYPE = "error.type";
 
-    /** Sentinel value used for route and operation tags when the value is unavailable. */
+    /** Sentinel value used for the method tag when the value is unavailable. */
     static final String UNKNOWN = "UNKNOWN";
 
     /** Sentinel value used for error.type when no failure was recorded. */
@@ -111,8 +116,8 @@ public final class RestServerRequestMetricsListener implements RestRequestComple
         }
         try {
             String method = event.method() != null ? event.method() : UNKNOWN;
-            String route = event.routeTemplate() != null ? event.routeTemplate() : UNKNOWN;
-            String operation = event.operationId() != null ? event.operationId() : UNKNOWN;
+            String route = event.operation().routeTemplate();
+            String operation = event.operation().operationId();
             String status = String.valueOf(event.statusCode());
             String outcome = HttpOutcome.from(event.statusCode()).name();
             // error.type (D1=A): failureCode wins when present; otherwise fall back to

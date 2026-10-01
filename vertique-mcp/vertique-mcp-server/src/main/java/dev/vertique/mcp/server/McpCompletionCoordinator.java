@@ -27,6 +27,7 @@ import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
+import io.vertx.core.http.HttpServerRequest;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.annotation.Nullable;
 import java.time.Instant;
@@ -156,6 +157,30 @@ final class McpCompletionCoordinator {
         this.progressWriteFailureTerminal = progressWriteFailureTerminal;
         this.progressReporter = responseContext == null ? McpProgressReporter.noop() : this::reportProgress;
         this.cancellationSignal = new McpRequestCancellationSignal(this.progressReporter);
+    }
+
+    /**
+     * Reports whether this coordinator belongs to {@code request}.
+     *
+     * <p><strong>The binding.</strong> A coordinator the dispatcher builds holds the routing context
+     * of the request it was built for, and belongs to the request that context's {@link
+     * RoutingContext#request()} returns, compared by reference. Every routing context of one request,
+     * the root context and each routing pass's sub-router context alike, returns the same request
+     * instance, before and after a reroute, and a routing context of another request never returns
+     * it. So the check holds when a reroute re-enters the MCP mount, and fails for a coordinator
+     * copied from another request's routing-context data, whether that request is still in flight or
+     * has already settled. It compares the request rather than the routing context, because each
+     * routing pass's sub-router context is a new object.
+     *
+     * <p>A coordinator with no response context is unbound and belongs to every request. Only a
+     * constructor given no routing context builds one; only tests do: the dispatcher always builds a
+     * coordinator with the request's routing context.
+     *
+     * @param request the request of the routing context the coordinator was found on
+     * @return {@code true} when this coordinator is unbound or was built for {@code request}
+     */
+    boolean belongsTo(HttpServerRequest request) {
+        return responseContext == null || responseContext.request() == request;
     }
 
     /**

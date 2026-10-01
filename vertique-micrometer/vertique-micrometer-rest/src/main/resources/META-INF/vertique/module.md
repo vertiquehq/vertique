@@ -11,8 +11,8 @@ SPDX-License-Identifier: EUPL-1.2
 > **Depends on:** io.micrometer:micrometer-core (library), vertique-micrometer-core, vertique-rest-core
 
 Observe-only REST server metrics adapter. When installed alongside `RestCoreModule` (or `RestModule`)
-and `MicrometerModule`, it emits a per-request timer (`vertique.rest.server.requests`) and an
-in-flight-requests gauge (`vertique.rest.server.active`) for every completed HTTP server request.
+and `MicrometerModule`, it emits a per-request timer (`vertique.rest.server.requests`) that covers
+every JAX-RS operation request, and an in-flight-requests gauge (`vertique.rest.server.active`).
 
 The module compiles against `vertique-micrometer-core` for the `MetricsConfig` type. It also
 **requires a `MeterRegistry` binding on the Dagger graph** — normally supplied by `MicrometerModule`;
@@ -53,9 +53,14 @@ dispatch layer.
 **HTTP/2 extended-CONNECT limitation.** HTTP/2 extended-CONNECT (used by gRPC, WebTransport) is not
 detected; those requests are counted as regular requests. This is a documented limitation.
 
-**Auth-rejected and pre-dispatch requests.** When a request is rejected before operation dispatch
-(auth failure, 404 routing miss), the `route` and `operation` tags carry `UNKNOWN`. Tag enrichment
-runs post-auth via `OperationIdCaptureContributor`; tags are unavailable at rejection time.
+**Auth-rejected and pre-dispatch requests.** A request denied after it matched a JAX-RS operation
+route (401, 403, 415, or a validation 400) carries its real `route` and `operation` tags, because
+the framework records the operation before authentication. A request that no JAX-RS operation
+claimed is not timed: `ROOT` rejections, 404/405 routing misses, JAX-RS mount-level rejections
+before any operation route matched, MCP requests, and failed WebSocket upgrades. The timer therefore
+has no `UNKNOWN` `route` or `operation` series. For transport-wide counts, use Vert.x's native HTTP
+server metrics (`metrics.vertx.httpServer` in `vertique-micrometer-core`, default `true` when its
+Vert.x metrics are enabled).
 
 **Per-event registry lookup (no meter cache, D-L).** Both adapters call
 `Timer.builder(...).tags(...).register(registry)` on every event. Micrometer's internal registry
@@ -78,7 +83,7 @@ default to enabled — they record against whatever registry is injected.
 Dagger `@Module`. Contributes two bindings:
 
 - `RestServerRequestMetricsListener` into `Set<RestRequestCompletedListener>` — records the
-  per-request timer on each completed HTTP request.
+  per-request timer on each JAX-RS operation request.
 - `RestServerActiveRequestsInterceptor` into `Set<RequestInterceptor>` — maintains the
   in-flight-requests gauge.
 
@@ -100,9 +105,11 @@ interface AppComponent { /* ... */ }
 
 ### RestServerRequestMetricsListener
 
-`@Singleton` `RestRequestCompletedListener`. Records one timer sample per completed HTTP request.
-Meter name: `vertique.rest.server.requests`. When `MetricsConfig.enabled()` is `false` (i.e.,
-`metrics.enabled=false` in config), returns immediately without recording.
+`@Singleton` `RestRequestCompletedListener`. Records one timer sample per
+`RestRequestCompletedEvent`, so JAX-RS operations only. The `route` tag is the operation's route
+template and the `operation` tag its operationId, both read from `event.operation()`; neither falls
+back to `UNKNOWN`. Meter name: `vertique.rest.server.requests`. When `MetricsConfig.enabled()` is
+`false` (i.e., `metrics.enabled=false` in config), returns immediately without recording.
 
 ### RestServerActiveRequestsInterceptor
 
@@ -135,13 +142,13 @@ On `onRequest`:
 
 ### `vertique.rest.server.requests` — Timer
 
-Per-request timer. One sample is recorded per `RestRequestCompletedEvent`.
+Per-request timer. One sample is recorded per `RestRequestCompletedEvent`, JAX-RS operations only.
 
 | Tag | Values | Notes |
 |-----|--------|-------|
 | `method` | HTTP method string, e.g. `GET` | Falls back to `UNKNOWN` when unavailable |
-| `route` | OpenAPI path template, e.g. `/orders/{id}` | `UNKNOWN` for auth-rejected and pre-dispatch requests |
-| `operation` | OpenAPI operationId | `UNKNOWN` for auth-rejected and pre-dispatch requests |
+| `route` | OpenAPI path template, e.g. `/orders/{id}` | The operation's route template, `event.operation().routeTemplate()`; never `UNKNOWN` |
+| `operation` | OpenAPI operationId | The operation's operationId, `event.operation().operationId()`; never `UNKNOWN` |
 | `status` | HTTP response status code as a string, e.g. `200` | Always a numeric string |
 | `outcome` | Low-cardinality bucket: `INFORMATIONAL`, `SUCCESS`, `REDIRECTION`, `CLIENT_ERROR`, `SERVER_ERROR`, `UNKNOWN` | Derived by integer division of the status code by 100; status 0 or outside 100–599 → `UNKNOWN` |
 | `error.type` | `failureCode`, else `wireFailureCode`, else `none` | Simple class name of the pipeline-mapped failure (e.g. `IllegalStateException`); when absent, falls back to the post-handoff wire-failure classification on `RestRequestCompletedEvent` (e.g. `ConnectionClosed`) |

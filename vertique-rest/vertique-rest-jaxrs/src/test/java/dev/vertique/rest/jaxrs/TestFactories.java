@@ -255,7 +255,6 @@ final class TestFactories {
                     dev.vertique.json.JsonConfig.defaults(), // jsonConfig (json.jsonProfile unset => vertique floor)
                     Optional.empty(), // beanValidator
                     Optional.empty(), // objectProcessor
-                    Set.of(), // evidenceCapturers
                     Optional.empty(), // actionRegistry
                     Optional.empty(), // authorizer
                     fileContentVerifiers,

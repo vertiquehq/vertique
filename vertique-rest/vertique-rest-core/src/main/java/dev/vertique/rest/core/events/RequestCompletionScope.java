@@ -7,7 +7,9 @@ import io.vertx.ext.web.RoutingContext;
 
 /**
  * SPI for establishing an ambient scope around the synchronous completion-listener dispatch loop
- * in {@link RestRequestCompletionEmitter}.
+ * in {@link RestRequestCompletionEmitter}, for either event type it dispatches: a
+ * {@link RestRequestCompletedEvent} to the {@link RestRequestCompletedListener}s, or an
+ * {@link HttpRequestCompletedEvent} to the {@link HttpRequestCompletedListener}s.
  *
  * <p>Integrations implement this interface to re-establish a thread- or context-local at
  * completion time — for example, re-making the request's traced span current so that
@@ -20,6 +22,10 @@ import io.vertx.ext.web.RoutingContext;
  * no implementation is bound the set is empty and the emitter's behavior is identical to the
  * pre-SPI baseline (no bracket overhead).
  *
+ * <p><strong>Bracketed dispatch.</strong> The scopes bracket the dispatch of either event type.
+ * A request another transport claimed gets no rest-core completion event, so the emitter
+ * dispatches nothing for it and opens no scope.
+ *
  * <p><strong>Contract.</strong>
  * <ul>
  *   <li>{@link #open(RoutingContext)} is called once before the first listener dispatches.
@@ -29,11 +35,12 @@ import io.vertx.ext.web.RoutingContext;
  *       (e.g. {@link OutOfMemoryError}) are <em>not</em> caught by the emitter and propagate
  *       as fatal — this is consistent with standard event-loop practice.</li>
  *   <li>The returned {@link AutoCloseable} is closed (via {@code try/finally}) after all
- *       listeners and capture coordinators have run. Its {@code close()} should also not throw
+ *       listeners of the dispatched event type have run. Its {@code close()} should also not throw
  *       {@link Exception}s — the emitter guards with its own {@code try/catch} (WARN + swallow)
  *       but good implementations do not rely on that guard. {@link Error}s from {@code close()}
  *       likewise propagate as fatal.</li>
- *   <li>Both {@code open} and {@code close} run on the Vert.x event loop — do not block.</li>
+ *   <li>Both {@code open} and {@code close} run on the thread that ended the response, usually but
+ *       not always the Vert.x event loop — do not block.</li>
  * </ul>
  *
  * @see RestRequestCompletionEmitter

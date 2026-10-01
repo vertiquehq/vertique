@@ -6,8 +6,7 @@ package dev.vertique.rest.core.events;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.correlation.CorrelationContext;
 import dev.vertique.core.correlation.CorrelationContextSnapshot;
-import dev.vertique.core.extension.OrderedExtension;
-import dev.vertique.rest.core.capture.RestRequestCaptureCoordinator;
+import dev.vertique.core.extension.ExtensionPhase;
 import dev.vertique.rest.core.middleware.Middleware;
 import dev.vertique.rest.core.middleware.MiddlewareScope;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
@@ -30,43 +29,92 @@ import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * ROOT-scoped middleware that emits a {@link RestRequestCompletedEvent} exactly once per handled
- * request, covering all success and failure paths through the normal HTTP response lifecycle.
+ * ROOT-scoped middleware that emits exactly one completion event for each HTTP request that
+ * completes through the normal HTTP response lifecycle, covering all success and failure paths. The
+ * transport that claimed the request (see {@link RequestCompletionRecorder}) decides what is
+ * emitted:
+ * <ul>
+ *   <li>a request a JAX-RS operation route claimed produces a {@link RestRequestCompletedEvent}
+ *       carrying that route's operation, dispatched to every {@link RestRequestCompletedListener};</li>
+ *   <li>a request no transport claimed produces an {@link HttpRequestCompletedEvent}, dispatched to
+ *       every {@link HttpRequestCompletedListener};</li>
+ *   <li>a request another transport claimed produces neither event, because that transport reports
+ *       its completion itself. The emitter logs one {@code DEBUG} line for it, carrying the request
+ *       method and status code only, so an unexpected claim is diagnosable.</li>
+ * </ul>
+ * The transport facts are built once per request and shared by either event type. The
+ * {@link RequestCompletionScope}s bracket the dispatch of either event; none opens for a request
+ * another transport claimed, because nothing is dispatched for it.
  *
  * <p><strong>Protocol-upgrade exclusion.</strong> Successful protocol upgrades (e.g. WebSocket 101)
  * complete out-of-band via {@code RequestContextLifecycle.completeNow()}, which writes the 101
  * response without firing the Vert.x response end handler. As a result
- * {@code ctx.addEndHandler(...)} never runs for a successful upgrade and no
- * {@link RestRequestCompletedEvent} is emitted. Successful upgrades are audited as
+ * {@code ctx.addEndHandler(...)} never runs for a successful upgrade and no completion event is
+ * emitted. The WebSocket transport also claims a successfully upgraded request, as a guard against a
+ * late completion driven by the connection's close. Successful upgrades are audited as
  * channel-lifecycle events ({@code CHANNEL_OPENED}) instead. A <em>failed</em> upgrade that ends
- * with an HTTP error response DOES produce a completion event because the error path goes through
- * the normal response end handler.
+ * with an HTTP error response DOES produce a completion event, an {@link HttpRequestCompletedEvent},
+ * because the error path goes through the normal response end handler and no transport claimed the
+ * request.
  *
- * <p>Placement ({@code ORDER = RequestContextLifecycle.ORDER + 5}) is chosen so that:
+ * <p><strong>Placement.</strong> This middleware runs in the {@link ExtensionPhase#SYSTEM_FIRST}
+ * phase at {@code ORDER = RequestContextLifecycle.ORDER + 5}, right after
+ * {@link RequestContextLifecycle} and ahead of every application-phase ROOT middleware, so that:
  * <ul>
- *   <li>This middleware runs after {@link RequestContextLifecycle} (which provides the per-request
- *       handle) but before {@code CorrelationIngressMiddleware} (ORDER + 10). The earlier placement
- *       ensures the end handler is registered even for requests that are short-circuited by the
- *       correlation middleware's REJECT policy.</li>
- *   <li>{@link RequestContextLifecycle} registers its end handler first (at {@code ORDER =
- *       Integer.MIN_VALUE}), and because Vert.x Web fires end handlers in reverse registration
- *       order, its end handler fires <em>last</em>. This means this middleware's end handler fires
- *       <em>before</em> {@link RequestContextLifecycle}'s own end handler — the lifecycle closes its
- *       scopes last — which is why holder-bound values ({@link SecurityContext},
- *       {@link CorrelationContext}) are still accessible at emit time.</li>
+ *   <li>An application ROOT middleware that ends the response without calling {@code next()}, at
+ *       any priority, runs only after this middleware has registered its end handler, so the
+ *       request still yields exactly one completion event. The same holds for the framework's
+ *       application-phase {@code CorrelationIngressMiddleware}
+ *       ({@code RequestContextLifecycle.ORDER + 10}): the end handler is registered even for
+ *       requests that are short-circuited by its REJECT policy.</li>
+ *   <li>When {@link RequestContextLifecycle} is mounted, it runs first and registers its end handler
+ *       first (at {@code ORDER = Integer.MIN_VALUE}, in the same phase), and because Vert.x Web fires
+ *       end handlers in reverse registration order, its end handler fires <em>last</em>. This
+ *       middleware's end handler therefore fires <em>before</em> the lifecycle closes its scopes,
+ *       which is why holder-bound values ({@link SecurityContext}, {@link CorrelationContext}) are
+ *       still accessible at emit time. Inside the shared phase the priority keeps that order; a
+ *       priority tie would not, because the class-name tie-break sorts this class first.</li>
+ *   <li>This middleware calls no {@link RequestContextLifecycle} API and does not require it: its
+ *       exactly-once emission holds with or without the lifecycle.</li>
  * </ul>
+ * The phase is a trusted ordering hint, not a security boundary: a {@code SYSTEM_FIRST} middleware
+ * that another framework or platform module orders ahead of this one, and that ends the response,
+ * is outside this guarantee.
  *
- * <p>Exactly-once guarantee: an idempotent flag ({@code KEY_EMITTED}) is stored on the routing
- * context so that even if the end handler fires more than once, only the first invocation emits an
- * event.
+ * <p>Exactly-once guarantee: on a request's first pass, this middleware creates the request's
+ * framework-owned completion state (start time, a compare-and-set emitted flag, and the claim) and
+ * registers one end handler whose closure holds it. No public routing-context data key exposes that
+ * state. A reroute, or this middleware mounted twice, re-enters on the same request: the state is
+ * reused, no second end handler is registered, the first pass's start time is kept, and the claim
+ * is cleared so the current pass's routes decide it. Emission reads only the closure-held state and
+ * wins its compare-and-set or returns, so even if the end handler fires more than once, only the
+ * first invocation emits an event. It runs inline on whichever thread ends the response.
  *
- * <p>Listener isolation: each {@link RestRequestCompletedListener} is invoked in its own
- * {@code try/catch}. A throwing listener is logged at {@code WARN} and does not prevent other
- * listeners from receiving the event or affect the HTTP response.
+ * <p>Claim: an identity handler that a route registrar installs first on every operation route,
+ * ahead of authentication, claims the request with that route's operation
+ * ({@link RequestCompletionRecorder#operationRouteHandler}); the last operation route matched in the
+ * current pass decides. A transport that reports the request's completion itself claims it through
+ * {@link RequestCompletionRecorder#claimForOtherTransport}. Emission reads the claim once, from the
+ * state's single (claim, operation) value, so the event type and its operation come from one
+ * consistent read. A {@link RestRequestCompletedEvent}'s {@code operation()} is the descriptor
+ * instance the identity handler recorded.
+ *
+ * <p>Listener dispatch: every {@link RestRequestCompletedListener} and
+ * {@link HttpRequestCompletedListener} is called through its two-argument
+ * {@code onCompleted(event, RoutingContext)} overload, with the request's live root routing
+ * context: the context this middleware received on the request's first pass, which its end
+ * handler holds. The emitter never calls the one-argument {@code onCompleted(event)} directly; a
+ * listener reaches it through the overload's default, which delegates to it. Listeners are
+ * unordered.
+ *
+ * <p>Listener isolation: each listener is invoked in its own {@code try/catch}. A throwing one is
+ * logged at {@code WARN} and does not prevent the others from receiving the event or affect the
+ * HTTP response. {@link Error}s are not caught and propagate.
  *
  * <p>Safety: {@code safeFailureMessage} is intentionally left {@code null}. Raw exception messages
  * may contain SQL errors, upstream service details, or PII and must never be placed in the event
- * directly (§10.3). A future curated source may populate this field.
+ * directly (§10.3). A future curated source may populate this field. The request path is carried
+ * raw on either event; this middleware never writes it to its log.
  */
 @Slf4j
 @Singleton
@@ -74,117 +122,98 @@ public final class RestRequestCompletionEmitter implements Middleware {
 
     // --- Routing context keys ---
 
-    /** Key under which the request start time ({@link Instant}) is stored on the routing context. */
-    static final String KEY_START_TIME = "rest.events.startTime";
-
-    /** Key under which the exactly-once emission flag ({@link Boolean}) is stored. */
-    static final String KEY_EMITTED = "rest.events.emitted";
-
-    /**
-     * Key under which the captured operationId ({@link String}) is stored by
-     * {@link OperationIdCaptureContributor}. Public so that external components such as
-     * {@code ResourceMethodInvoker} can read the value without depending on internal keys.
-     */
-    public static final String KEY_OPERATION_ID = "rest.events.operationId";
-
-    /**
-     * Key under which the route template ({@link String}) is stored by
-     * {@link OperationIdCaptureContributor}. Public so that external components such as
-     * {@code ResourceMethodInvoker} can read the value without depending on internal keys.
-     */
-    public static final String KEY_ROUTE_TEMPLATE = "rest.events.routeTemplate";
-
     /** Post-handoff wire-failure marker; value: Throwable; first writer wins. */
     public static final String KEY_WIRE_FAILURE = "vertique.rest.core.events.wireFailure";
 
     /**
-     * Execution order: runs after {@link RequestContextLifecycle} (ORDER = {@link Integer#MIN_VALUE})
-     * and before {@code CorrelationIngressMiddleware} (ORDER + 10) so the end handler is registered
-     * on all request paths including REJECT short-circuits.
+     * Execution priority inside the {@link ExtensionPhase#SYSTEM_FIRST} phase. It sorts this
+     * middleware right after {@link RequestContextLifecycle} (ORDER = {@link Integer#MIN_VALUE}, same
+     * phase), so the lifecycle registers its end handler first and that end handler fires after this
+     * one's. The priority, not the tie-break, keeps that order: the class-name {@code orderKey}
+     * tie-break would sort this middleware first. The {@code SYSTEM_FIRST} phase, not this priority,
+     * runs this middleware ahead of every application-phase ROOT middleware, including
+     * {@code CorrelationIngressMiddleware} ({@code RequestContextLifecycle.ORDER + 10}, default
+     * phase), so the end handler is registered on all request paths, including REJECT
+     * short-circuits and an application middleware that ends the response without calling
+     * {@code next()}. The phase is a trusted ordering hint, not a security boundary.
      */
     static final int ORDER = RequestContextLifecycle.ORDER + 5;
-
-    /** No-op {@link AutoCloseable} returned when a scope's open fails or the set is empty. */
-    private static final AutoCloseable NO_OP_SCOPE = () -> {};
 
     // --- Dependencies ---
 
     private final Optional<SecurityRuntime> securityRuntime;
     private final ContextHolder contextHolder;
     private final Set<RestRequestCompletedListener> listeners;
-    private final List<RestRequestCaptureCoordinator> coordinators;
+    private final Set<HttpRequestCompletedListener> httpListeners;
     private final Set<RequestCompletionScope> completionScopes;
 
     /**
-     * Creates the emitter with all required dependencies, including capture coordinators and a
-     * set of completion scopes.
-     *
-     * <p>This is the primary constructor used by Dagger. Coordinators are sorted once at
-     * construction time using {@link OrderedExtension#comparator()} so invocation order is
-     * deterministic and requires no per-request sorting.
+     * Creates the emitter with all its dependencies: both listener sets and the completion scopes.
+     * This is the constructor Dagger uses.
      *
      * @param securityRuntime  the optional security runtime; present when the security module is
      *                         active, empty otherwise
      * @param contextHolder    the request-scoped context holder for reading bound context values
-     * @param listeners        the set of safe listeners to notify on each request completion
-     * @param coordinators     the set of capture coordinators to invoke after the safe listener set;
-     *                         invoked in {@link OrderedExtension} order; may be empty
+     * @param restListeners    the set of {@link RestRequestCompletedListener}s notified for each
+     *                         request a JAX-RS operation route claimed; may be empty
+     * @param httpListeners    the set of {@link HttpRequestCompletedListener}s notified for each
+     *                         request no transport claimed; may be empty
      * @param completionScopes the set of {@link RequestCompletionScope} implementations opened around
-     *                         the listener-dispatch loop; empty when no integrations are bound —
-     *                         in that case behavior is identical to the pre-SPI baseline
+     *                         the dispatch of either event type; empty when no integrations are
+     *                         bound — in that case behavior is identical to the pre-SPI baseline
      */
     @Inject
     public RestRequestCompletionEmitter(
             Optional<SecurityRuntime> securityRuntime,
             ContextHolder contextHolder,
-            Set<RestRequestCompletedListener> listeners,
-            Set<RestRequestCaptureCoordinator> coordinators,
+            Set<RestRequestCompletedListener> restListeners,
+            Set<HttpRequestCompletedListener> httpListeners,
             Set<RequestCompletionScope> completionScopes) {
         this.securityRuntime = securityRuntime;
         this.contextHolder = contextHolder;
-        this.listeners = listeners;
-        this.coordinators =
-                coordinators.stream().sorted(OrderedExtension.comparator()).toList();
+        this.listeners = restListeners;
+        this.httpListeners = httpListeners;
         this.completionScopes = completionScopes;
     }
 
     /**
-     * Convenience constructor for use in tests and other non-Dagger construction sites where no
-     * capture coordinators or completion scopes are needed. Delegates to the primary constructor
-     * with an empty coordinator set and empty scopes.
+     * Convenience constructor for use in tests and other non-Dagger construction sites that need
+     * only {@link RestRequestCompletedListener}s. Delegates to the {@code @Inject} constructor with
+     * no {@link HttpRequestCompletedListener}s and no completion scopes.
      *
      * @param securityRuntime the optional security runtime; present when the security module is
      *                        active, empty otherwise
      * @param contextHolder   the request-scoped context holder for reading bound context values
-     * @param listeners       the set of safe listeners to notify on each request completion
+     * @param restListeners   the set of {@link RestRequestCompletedListener}s notified for each
+     *                        request a JAX-RS operation route claimed
      */
     public RestRequestCompletionEmitter(
             Optional<SecurityRuntime> securityRuntime,
             ContextHolder contextHolder,
-            Set<RestRequestCompletedListener> listeners) {
-        this(securityRuntime, contextHolder, listeners, Set.of(), Set.of());
+            Set<RestRequestCompletedListener> restListeners) {
+        this(securityRuntime, contextHolder, restListeners, Set.of(), Set.of());
     }
 
     /**
-     * Convenience constructor for use in tests and other non-Dagger construction sites where
-     * capture coordinators are provided but no completion scopes are needed.
+     * Returns {@link ExtensionPhase#SYSTEM_FIRST} — the emitter must register its end handler before
+     * any application middleware can end the response, so an application ROOT middleware that ends
+     * the response without calling {@code next()}, at any priority, still yields exactly one
+     * completion event. {@code SYSTEM_FIRST} enforces this independent of priority; inside the phase,
+     * {@link #ORDER} sorts the emitter right after {@link RequestContextLifecycle}, whose end handler
+     * must fire after this one's. The phase is a trusted ordering hint, not a security boundary: a
+     * {@code SYSTEM_FIRST} middleware that another framework or platform module orders ahead of the
+     * emitter, and that ends the response, is out of scope.
      *
-     * @param securityRuntime the optional security runtime; present when the security module is
-     *                        active, empty otherwise
-     * @param contextHolder   the request-scoped context holder for reading bound context values
-     * @param listeners       the set of safe listeners to notify on each request completion
-     * @param coordinators    the set of capture coordinators to invoke after the safe listener set
+     * @return {@link ExtensionPhase#SYSTEM_FIRST}
      */
-    public RestRequestCompletionEmitter(
-            Optional<SecurityRuntime> securityRuntime,
-            ContextHolder contextHolder,
-            Set<RestRequestCompletedListener> listeners,
-            Set<RestRequestCaptureCoordinator> coordinators) {
-        this(securityRuntime, contextHolder, listeners, coordinators, Set.of());
+    @Override
+    public ExtensionPhase phase() {
+        return ExtensionPhase.SYSTEM_FIRST;
     }
 
     /**
-     * Returns the execution priority for this middleware.
+     * Returns the execution priority for this middleware inside the
+     * {@link ExtensionPhase#SYSTEM_FIRST} phase.
      *
      * @return {@link RequestContextLifecycle#ORDER} + 5
      */
@@ -204,46 +233,84 @@ public final class RestRequestCompletionEmitter implements Middleware {
     }
 
     /**
-     * Records the request start time on the routing context, registers the end handler that will
-     * emit the completion event, and delegates to the next handler.
+     * Begins the request's completion state, or reuses it on re-entry, and delegates to the next
+     * handler.
+     *
+     * <p>On the request's first pass it creates the framework-owned completion state, starting now
+     * and bound to {@code ctx.request()}, and registers the one end handler that emits the
+     * completion event from that state. A reroute, or this middleware mounted twice, re-enters on the
+     * same request: it finds the state bound to {@code ctx.request()}, reuses it, and registers no
+     * second end handler; it keeps the start time and clears the claim, so the current pass decides
+     * the claim. A holder that is missing, of another type, or bound to another request is not
+     * re-entry: a fresh state replaces it.
      *
      * @param ctx the current routing context; must not be {@code null}
      */
     @Override
     public void handle(RoutingContext ctx) {
-        ctx.put(KEY_START_TIME, Instant.now());
-        ctx.addEndHandler(ar -> emit(ctx, ar));
+        RequestCompletionState reentered = RequestCompletionRecorder.boundState(ctx);
+        if (reentered != null) {
+            reentered.reroute();
+        } else {
+            RequestCompletionState state = RequestCompletionRecorder.begin(ctx);
+            ctx.addEndHandler(endResult -> emit(ctx, state, endResult));
+        }
         ctx.next();
     }
 
     // --- Emission ---
 
     /**
-     * Emits the {@link RestRequestCompletedEvent} exactly once for the given routing context.
-     * Protected against double-invocation by an idempotent flag stored on the context.
+     * Emits the request's completion event at most once, for the request whose completion state is
+     * {@code state}: the call that wins the state's compare-and-set emitted flag emits, and every
+     * other call returns. The start time and the claim come from {@code state} alone, never from
+     * routing-context data, and the claim is read once.
+     *
+     * <p>An {@code OTHER} claim returns first, before any transport fact is built. For any other
+     * claim the transport facts are built once, and the claim selects the dispatch:
+     * <ul>
+     *   <li>{@code REST(op)}: a {@link RestRequestCompletedEvent} carrying {@code op}, to every
+     *       {@link RestRequestCompletedListener}, inside the {@link RequestCompletionScope}
+     *       bracket;</li>
+     *   <li>{@code NONE}: an {@link HttpRequestCompletedEvent}, to every
+     *       {@link HttpRequestCompletedListener}, inside the scope bracket;</li>
+     *   <li>{@code OTHER}: nothing, no security or correlation snapshot is taken, and no scope
+     *       opens; one {@code DEBUG} line, logged only when {@code DEBUG} is enabled, carries the
+     *       method and status code, never the path.</li>
+     * </ul>
+     * Every listener is called through its two-argument {@code onCompleted(event, RoutingContext)}
+     * overload, with {@code ctx}.
      *
      * <p>Package-private (not {@code private}) so {@code RestRequestCompletionEmitterTest} can
      * drive it directly with a synthetic {@link AsyncResult} for wire-failure scenarios that
      * cannot be produced deterministically over a real socket (e.g. an HTTP/2-only
      * {@code StreamResetException} on an HTTP/1.1 test server).
      *
-     * @param ctx       the routing context for the completed request
+     * @param ctx       the request's root routing context, as the end-handler closure holds it;
+     *                  every listener receives it
+     * @param state     the request's completion state, as the end-handler closure holds it
      * @param endResult the outcome delivered to the response end handler; consulted for
      *                  {@code wireFailureCode} when the {@link #KEY_WIRE_FAILURE} marker is absent
      */
-    void emit(RoutingContext ctx, AsyncResult<Void> endResult) {
+    void emit(RoutingContext ctx, RequestCompletionState state, AsyncResult<Void> endResult) {
         // --- Exactly-once guard ---
-        if (Boolean.TRUE.equals(ctx.get(KEY_EMITTED))) {
+        if (!state.markEmitted()) {
             return;
         }
-        ctx.put(KEY_EMITTED, Boolean.TRUE);
+
+        // --- Claim: one read of the state's single volatile (claim, operation) value ---
+        RequestCompletionState.Claim claim = state.claim();
+
+        // --- Another transport reports this request's completion itself: build no facts ---
+        if (claim.kind() == RequestCompletionState.ClaimKind.OTHER) {
+            logSkippedForOtherTransport(
+                    ctx.request().method().name(), ctx.response().getStatusCode());
+            return;
+        }
 
         // --- Timing ---
         Instant endTime = Instant.now();
-        Instant startTime = ctx.get(KEY_START_TIME);
-        if (startTime == null) {
-            startTime = endTime;
-        }
+        Instant startTime = state.startTime();
 
         // --- Context values (still live: RequestContextLifecycle fires last) ---
         SecurityContext sec = securityRuntime.map(SecurityRuntime::current).orElse(null);
@@ -260,11 +327,9 @@ public final class RestRequestCompletionEmitter implements Middleware {
                 .orElse(null);
         Optional<RequestOrigin> origin = sec != null ? sec.origin() : Optional.empty();
 
-        // --- Operation metadata set by OperationIdCaptureContributor ---
-        String operationId = ctx.get(KEY_OPERATION_ID);
-        String routeTemplate = ctx.get(KEY_ROUTE_TEMPLATE);
-
         // --- HTTP facts ---
+        String method = ctx.request().method().name();
+        String path = ctx.request().path();
         int status = ctx.response().getStatusCode();
         // failureCode: class name only — safe, low-cardinality, suitable for metric labels.
         String failureCode = ctx.failure() != null ? ctx.failure().getClass().getSimpleName() : null;
@@ -277,43 +342,107 @@ public final class RestRequestCompletionEmitter implements Middleware {
         Throwable marker = ctx.get(KEY_WIRE_FAILURE);
         String wireFailureCode = wireFailureCode(marker, endResult);
 
-        RestRequestCompletedEvent event = new RestRequestCompletedEvent(
-                startTime,
-                endTime,
-                ctx.request().method().name(),
-                ctx.request().path(),
-                routeTemplate,
-                operationId,
-                status,
-                failureCode,
-                safeFailureMessage,
-                wireFailureCode,
-                secSnapshot,
-                corr,
-                origin,
-                Map.of());
+        // --- Dispatch by claim: exactly one event type, or nothing ---
+        switch (claim.kind()) {
+            case REST ->
+                dispatchRest(
+                        ctx,
+                        new RestRequestCompletedEvent(
+                                startTime,
+                                endTime,
+                                method,
+                                path,
+                                claim.operation(),
+                                status,
+                                failureCode,
+                                safeFailureMessage,
+                                wireFailureCode,
+                                secSnapshot,
+                                corr,
+                                origin,
+                                Map.of()));
+            case NONE ->
+                dispatchHttp(
+                        ctx,
+                        new HttpRequestCompletedEvent(
+                                startTime,
+                                endTime,
+                                method,
+                                path,
+                                status,
+                                failureCode,
+                                safeFailureMessage,
+                                wireFailureCode,
+                                secSnapshot,
+                                corr,
+                                origin,
+                                Map.of()));
+            case OTHER -> {
+                // Returned above, before any fact was built; not reachable here.
+            }
+        }
+    }
 
-        // --- Fan-out with listener isolation wrapped in composed completion scopes ---
+    /**
+     * Dispatches the event of a request a JAX-RS operation route claimed: opens the completion
+     * scopes, calls {@code onCompleted(event, ctx)} on every {@link RestRequestCompletedListener} in
+     * the set's own order, each isolated, and closes the scopes.
+     *
+     * @param ctx   the request's root routing context, passed to every listener
+     * @param event the request's REST completion event
+     */
+    private void dispatchRest(RoutingContext ctx, RestRequestCompletedEvent event) {
         List<AutoCloseable> opened = openScopesQuietly(ctx);
         try {
             for (RestRequestCompletedListener listener : listeners) {
                 try {
-                    listener.onCompleted(event);
+                    listener.onCompleted(event, ctx);
                 } catch (Exception e) {
                     log.warn("RestRequestCompletedListener failed: {}", e.toString(), e);
                 }
             }
+        } finally {
+            closeScopesQuietly(opened);
+        }
+    }
 
-            // --- Capture coordinator invocation (after safe listeners, in OrderedExtension order) ---
-            for (RestRequestCaptureCoordinator coordinator : coordinators) {
+    /**
+     * Dispatches the event of a request no transport claimed: opens the completion scopes, calls
+     * {@code onCompleted(event, ctx)} on every {@link HttpRequestCompletedListener} in the set's own
+     * order, each isolated, and closes the scopes.
+     *
+     * @param ctx   the request's root routing context, passed to every listener
+     * @param event the request's HTTP completion event
+     */
+    private void dispatchHttp(RoutingContext ctx, HttpRequestCompletedEvent event) {
+        List<AutoCloseable> opened = openScopesQuietly(ctx);
+        try {
+            for (HttpRequestCompletedListener listener : httpListeners) {
                 try {
-                    coordinator.onRequestCompletion(event, ctx);
+                    listener.onCompleted(event, ctx);
                 } catch (Exception e) {
-                    log.warn("RestRequestCaptureCoordinator failed: {}", e.toString(), e);
+                    log.warn("HttpRequestCompletedListener failed: {}", e.toString(), e);
                 }
             }
         } finally {
             closeScopesQuietly(opened);
+        }
+    }
+
+    /**
+     * Logs the one {@code DEBUG} line for a request another transport claimed, which gets no
+     * completion event here. It carries the method and status code only, never the path, a header
+     * or any other raw request value, and allocates nothing when {@code DEBUG} is disabled.
+     *
+     * @param method the request method
+     * @param status the response status code
+     */
+    private static void logSkippedForOtherTransport(String method, int status) {
+        if (log.isDebugEnabled()) {
+            log.debug(
+                    "Completion event skipped: request claimed by another transport (method={}, status={})",
+                    method,
+                    status);
         }
     }
 

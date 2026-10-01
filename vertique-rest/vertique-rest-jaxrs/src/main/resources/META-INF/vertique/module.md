@@ -59,8 +59,12 @@ builds a `ResourceMethodMeta`, validates the declaration, and installs the per-o
 chain:
 
 ```
-auth handler(s) → @Consumes 415 gate → validation gate → OperationHandlerContributors → ResourceMethodInvoker
+operation-route identity (PlatformHandler) → auth handler(s) → @Consumes 415 gate → validation gate → OperationHandlerContributors → ResourceMethodInvoker
 ```
+
+The operation-route identity handler records the operation's route template and operation id for
+the request's completion event; as a Vert.x `PlatformHandler` it runs ahead of authentication, and
+it never fails a request.
 
 The candidate methods are the ones the resource class and its superclasses declare, plus every
 interface `default` method the class inherits without overriding. An annotated default method is a
@@ -1335,7 +1339,6 @@ gate.
 | `REQUIRES_ACTION_POLICY_CONFLICT` | a `@RequiresAction` declaration conflicts with the operation's resolved security policy |
 | `UNRESOLVABLE_PARAM_CONVERTER` | a path/query/header/cookie/form parameter type — or a collection's element type, or a convertible `@BeanParam` field — has no converter resolvable by the `ParamConversionResolver` chain |
 | `NO_EXPLICIT_SECURITY_POLICY` | `jaxrs.security.requireExplicitPolicy` is `true` and the operation is implicit (see [Explicit security policy](#explicit-security-policy)); message `<METHOD> <full path> has no explicit security policy, which jaxrs.security.requireExplicitPolicy requires`; fix by annotating the operation with `@PermitAll` or a restricting declaration |
-| `EVIDENCE_CAPTURE_REJECTED` | a request-evidence capturer rejected the route when it validated it at router build (`RestServerRequestEvidenceCapturer#validateRoute` threw) — for example the audit adapter cannot resolve the capture policy the route selects |
 
 Once one or more `jakarta.ws.rs.core.Application` registrations are declared — even when none is
 active — the Dagger-built `HttpVerticle`'s composition validator additionally rejects a duplicate

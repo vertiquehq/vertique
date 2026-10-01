@@ -62,7 +62,7 @@ class ServerSpanEnrichmentContributorTest {
     // --- Test 5: priority ---
 
     @Test
-    @DisplayName("priority() returns 360 — one step after OperationIdCaptureContributor at 350")
+    @DisplayName("priority() returns 360")
     void priorityIs360() {
         assertEquals(360, contributor.priority());
     }

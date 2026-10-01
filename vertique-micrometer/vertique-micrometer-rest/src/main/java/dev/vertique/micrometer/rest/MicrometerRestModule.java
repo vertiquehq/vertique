@@ -35,7 +35,7 @@ import dev.vertique.micrometer.MetricsConfig;
  * <p>Contributed bindings:
  * <ul>
  *   <li>{@link RestServerRequestMetricsListener} into {@code Set<RestRequestCompletedListener>} —
- *       records a per-request timer on each completed HTTP request</li>
+ *       records a per-request timer on each JAX-RS operation request</li>
  *   <li>{@link RestServerActiveRequestsInterceptor} into {@code Set<RequestInterceptor>} —
  *       maintains a gauge tracking in-flight HTTP requests</li>
  * </ul>

@@ -72,8 +72,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * {@code RestCoreModule} contributes whether or not a test asks for them, and therefore the ones a
  * fixture that installs only the API tier drops without any test noticing. Two of the five are not
  * covered here and cannot be without new surface: {@code RestRequestCompletionEmitter} is observable
- * only through a {@code RestRequestCompletedListener}, for which {@link RestTestContributions} has no
- * seam, and {@code ContextualLoggingMiddleware} writes only to MDC, which is a no-op with no SLF4J
+ * only through a {@code RestRequestCompletedListener} or an {@code HttpRequestCompletedListener}, for which
+ * {@link RestTestContributions} has no seam, and {@code ContextualLoggingMiddleware} writes only to MDC, which is a no-op with no SLF4J
  * provider on this module's test classpath.
  *
  * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}

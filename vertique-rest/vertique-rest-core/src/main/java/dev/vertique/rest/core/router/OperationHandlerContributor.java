@@ -46,7 +46,7 @@ public interface OperationHandlerContributor extends OrderedExtension {
      *   <li>200–299: Post-authorization context bridging — e.g. exposing the already-bound
      *       {@code SecurityContext} to JAX-RS {@code @Context} injection (the context is bound earlier,
      *       in the pre-authorization band, not here)</li>
-     *   <li>300+: Post-context — auditing, metrics ({@code OperationIdCaptureContributor} at 350)</li>
+     *   <li>300+: Post-context — auditing, tracing</li>
      * </ul>
      *
      * @return the priority value; must be explicitly provided by every implementor

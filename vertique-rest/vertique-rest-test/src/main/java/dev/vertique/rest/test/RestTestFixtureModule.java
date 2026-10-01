@@ -28,7 +28,7 @@ import java.util.Set;
  * generated factories live in those packages, which is what makes them reachable here without
  * widening any production visibility.
  *
- * <p>Because Dagger builds the graph, the fixture never calls the 29-argument
+ * <p>Because Dagger builds the graph, the fixture never calls the 28-argument
  * {@code JaxRsRouterMount.Factory} constructor, and it <b>never constructs or reorders the
  * encoder/decoder lists</b>. Encoder and decoder order is produced by
  * {@code RestModule.sortedResponseBodyEncoders} and {@code RestModule.sortedRequestBodyDecoders},

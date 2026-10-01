@@ -46,12 +46,13 @@ request. This module renames that span to `"METHOD /route/template"` and adds th
 `http.route` and `vertique.operation.id` attributes once the OpenAPI route is known.
 
 **Band 300+ runs post-dispatch, post-auth.** `ServerSpanEnrichmentContributor` runs at priority 360
-— after the auth handlers and after `OperationIdCaptureContributor` at 350. Requests rejected
-before operation dispatch (auth failure, 404 routing miss) never reach this contributor. Those
-requests keep the default Vert.x-assigned span name and do not receive the `http.route` or
-`vertique.operation.id` attributes. Their span is still captured — `ServerSpanOutcomeInterceptor`
-stashes it on the way in, at the API-router mount — so outcome recording and exemplar attachment
-still work for them.
+— after the auth handlers and the authorization contributors. It captures the operation id and route
+template once, at registration, so it does not depend on any other contributor running first.
+Requests rejected before operation dispatch (auth failure, 404 routing miss) never reach this
+contributor. Those requests keep the default Vert.x-assigned span name and do not receive the
+`http.route` or `vertique.operation.id` attributes. Their span is still captured —
+`ServerSpanOutcomeInterceptor` stashes it on the way in, at the API-router mount — so outcome
+recording and exemplar attachment still work for them.
 
 **Span-end vs. end-handler ordering.** The Vert.x OTel tracer ends the server span and detaches its
 scope synchronously inside `conn.write()` — before any `ctx.addEndHandler` callback fires. As a
@@ -81,9 +82,9 @@ dependency.
 
 ### ServerSpanEnrichmentContributor
 
-`@Singleton` `OperationHandlerContributor`. Priority `360` — one step after
-`OperationIdCaptureContributor` at `350`, which guarantees the operationId is captured before this
-handler fires.
+`@Singleton` `OperationHandlerContributor`. Priority `360`, in the post-context band (300+) — after
+the route's auth handlers and the authorization contributors. It does not depend on any other
+contributor running first.
 
 The contributor's `contribute(OperationRegistrationContext)` method captures the `operationId` and
 `routeTemplate` (from `context.operation().routeTemplate()`) at registration

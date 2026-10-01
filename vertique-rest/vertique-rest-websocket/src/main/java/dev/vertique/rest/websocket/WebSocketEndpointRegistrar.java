@@ -17,6 +17,7 @@ import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.input.processing.InvocationPolicyConflictException;
 import dev.vertique.input.processing.ReflectiveInvocationPolicies;
 import dev.vertique.json.JacksonFieldNameResolver;
+import dev.vertique.rest.core.events.RequestCompletionRecorder;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.core.security.SecurityPolicy;
@@ -69,7 +70,7 @@ import lombok.extern.slf4j.Slf4j;
  *       invokes {@link OnOpen}, and resumes the socket.</li>
  *   <li>Calls {@link RequestContextLifecycle.Handle#completeNow()} to synchronously run all
  *       {@code onClose} and {@code afterClose} registrations. This explicit completion is required
- *       because Vert.x Web 5.0.8's {@code Http1xServerResponse.completeHandshake()} writes the
+ *       because Vert.x Web 5.1.6's {@code Http1xServerResponse.completeHandshake()} writes the
  *       101 response without firing the normal response end handler.</li>
  * </ol>
  *
@@ -92,8 +93,8 @@ class WebSocketEndpointRegistrar {
 
     /**
      * RFC 6455 close code 1011 ("Internal Server Error"): used when bootstrap fails after the
-     * handshake completed but before frame handlers were installed. Vert.x 5.0.8 does not expose
-     * a public {@code WebSocketCloseStatus} enum; the constant is named locally.
+     * handshake completed but before frame handlers were installed. The constant is named locally;
+     * Vert.x exposes no public {@code WebSocketCloseStatus} enum.
      */
     private static final short CLOSE_CODE_INTERNAL_ERROR = 1011;
 
@@ -722,13 +723,19 @@ class WebSocketEndpointRegistrar {
     /**
      * Handles the HTTP upgrade to WebSocket.
      *
-     * <p>On success: pauses the socket, captures a {@link ContextSnapshot}, stores it on the
-     * session, registers an {@code afterClose} task on the {@link RequestContextLifecycle.Handle}
-     * that binds the snapshot and installs frame/close handlers, then drives the lifecycle to
-     * completion via {@link RequestContextLifecycle.Handle#completeNow()}.
+     * <p>On success: first claims the request through
+     * {@link RequestCompletionRecorder#claimForOtherTransport}, so rest-core's completion emitter
+     * reports no completion event for it, neither at the 101 nor on a later close. Then pauses the
+     * socket, captures a {@link ContextSnapshot}, stores it on the session, registers an
+     * {@code afterClose} task on the {@link RequestContextLifecycle.Handle} that binds the snapshot
+     * and installs frame/close handlers, then drives the lifecycle to completion via
+     * {@link RequestContextLifecycle.Handle#completeNow()}.
      *
      * <p>On failure: logs the error and responds with HTTP 400 if the response has not already
-     * ended.
+     * ended. A failed upgrade is not claimed, because no connection takes the request over: it
+     * completes as an ordinary HTTP request (for example with the 400 written here, the 401 or 403 the
+     * security handlers wrote, or the status Vert.x itself answered) with one unclaimed completion
+     * event.
      *
      * @param ctx  the Vert.x routing context for the upgrade request
      * @param meta the endpoint metadata (includes the pre-compiled path matcher)
@@ -737,6 +744,8 @@ class WebSocketEndpointRegistrar {
         ctx.request()
                 .toWebSocket()
                 .onSuccess(ws -> {
+                    // Claim the upgraded request so rest-core's emitter reports no completion event.
+                    RequestCompletionRecorder.claimForOtherTransport(ctx);
                     var pathParams = meta.pathMatcher().extractParams(ws.path());
                     DefaultWebSocketSession session = new DefaultWebSocketSession(
                             ws, pathParams, ctx.queryParams(), ctx.request().headers());
@@ -758,7 +767,7 @@ class WebSocketEndpointRegistrar {
                     lifecycle.afterClose(() -> bootstrapSession(session, ws, meta, snapshot));
 
                     // Explicitly drive the request lifecycle to completion. Required because
-                    // Vert.x Web 5.0.8's Http1xServerResponse.completeHandshake() writes the 101
+                    // Vert.x Web 5.1.6's Http1xServerResponse.completeHandshake() writes the 101
                     // response and marks the response complete without firing the response end
                     // handler, so the lifecycle's automatic closeAll() would never run.
                     lifecycle.completeNow();
