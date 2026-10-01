@@ -49,6 +49,7 @@ import dev.vertique.rest.openapi.docs.fixture.responses.unit.ClassWithoutRespons
 import dev.vertique.rest.openapi.docs.fixture.responses.unit.ComponentNamingResource;
 import dev.vertique.rest.openapi.docs.fixture.responses.unit.DeclaredSuccessResource;
 import dev.vertique.rest.openapi.docs.fixture.responses.unit.GeneratorFailureResource;
+import dev.vertique.rest.openapi.docs.fixture.responses.unit.HeaderNameResource;
 import dev.vertique.rest.openapi.docs.fixture.responses.unit.HonoredAttributesResource;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
@@ -427,6 +428,43 @@ class ResponseAssemblyTest {
                 () -> assertTrue(
                         message.contains(attribute), () -> "the failure must name " + attribute + ": " + message),
                 () -> assertFalse(message.contains(SENTINEL), () -> "the failure quotes a value: " + message));
+    }
+
+    @Test
+    @DisplayName("header names declared in one status compare ignoring ASCII case")
+    void headerNamesInOneStatusCompareIgnoringAsciiCase() {
+        // Given: one status declaring X-Rate twice, one declaring X-Rate and x-rate, one declaring two names
+        ResponseOperation exact = ResponseOperation.of("dupExact", HeaderNameResource.class, "exactDuplicateHeader");
+        ResponseOperation caseVariant = ResponseOperation.of("dupCase", HeaderNameResource.class, "caseVariantHeader");
+        ResponseOperation distinct = ResponseOperation.of("distinct", HeaderNameResource.class, "distinctHeaders");
+
+        // When: each document is assembled
+        RestConfigurationException exactFailure = assemble(CLASSES, exact).failure();
+        RestConfigurationException caseFailure = assemble(CLASSES, caseVariant).failure();
+        JsonNode distinctDocument = assemble(CLASSES, distinct).rendering().jsonTree();
+
+        // Then
+        assertAll(
+                "(a) an exact duplicate fails publication",
+                () -> assertDuplicateHeaderFailure(exactFailure, "dupExact"));
+        assertAll(
+                "(b) a name differing only in ASCII case fails publication",
+                () -> assertDuplicateHeaderFailure(caseFailure, "dupCase"));
+        assertEquals(
+                List.of("X-Rate", "X-Limit"),
+                responseKeys(response(distinctDocument, "distinct", "200").path("headers")),
+                "(c) distinct names publish in declaration order");
+    }
+
+    private static void assertDuplicateHeaderFailure(RestConfigurationException failure, String operationId) {
+        assertInstanceOf(RestConfigurationException.class, failure, "publication must fail");
+        String message = String.valueOf(failure.getMessage());
+        assertAll(
+                () -> assertTrue(
+                        containsWord(message, operationId), () -> "the failure must name the operation: " + message),
+                () -> assertTrue(containsWord(message, "200"), () -> "the failure must name 200: " + message),
+                () -> assertTrue(
+                        message.contains("@Header.name"), () -> "the failure must name @Header.name: " + message));
     }
 
     // ---------------------------------------------------------------------------------------------
