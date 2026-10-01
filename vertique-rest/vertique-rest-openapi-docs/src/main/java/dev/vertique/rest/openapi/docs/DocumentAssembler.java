@@ -27,6 +27,11 @@ import java.util.SortedMap;
  * {@link RenderedPaths} from each operation's mount-relative JAX-RS template, in natural order, and
  * each operation is keyed by its lowercase method and carries its runtime operation id.
  *
+ * <p>Hidden operations ({@link HiddenOperations}) are removed first, before paths are rendered and
+ * before any input is checked: nothing of a hidden operation is rendered, verified, redacted,
+ * checked, or recorded in the root flags, and a path item whose operations are all hidden is not
+ * emitted. The snapshot still covers the whole publication.
+ *
  * <p>Inputs are assembled by {@link InputAssembler} in two phases over the whole document, both
  * visiting the operations in the order the document lists them (path keys in natural order, then
  * methods in Path Item order): every operation's inputs are first checked, so the first hidden path
@@ -73,7 +78,7 @@ final class DocumentAssembler {
         Objects.requireNonNull(context, "context");
         String subject = subject(document, publication);
         SortedMap<String, List<OperationPublication>> pathItems =
-                RenderedPaths.pathItems(subject, publication.operations());
+                RenderedPaths.pathItems(subject, HiddenOperations.visible(publication.operations(), facts));
         SchemaEmbedder embedder = new SchemaEmbedder(subject);
         DisclosureTally tally = new DisclosureTally();
         InputGenerators generators = new InputGenerators(context.profiles());
