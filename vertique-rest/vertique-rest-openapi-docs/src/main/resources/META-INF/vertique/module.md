@@ -744,7 +744,8 @@ first failure wins.
   exactly, case included. Header names are compared ignoring ASCII letter case, as HTTP does: a
   `@Parameter(name = "x-trace")` on a header bound as `X-Trace` agrees, and the document publishes
   `X-Trace`. Only ASCII letters fold, so a non-ASCII look-alike such as U+212A KELVIN SIGN never
-  matches `k`.
+  matches `k`. A hidden method-level entry still names a header exactly, case included (see
+  [Hidden inputs](#hidden-inputs)).
 - **Types.** A primitive type and its wrapper are the same type.
 - **Message.** `<subject>: operation '<id>' declares <attribute> on <input>, which contradicts how the
   runtime binds it (<fact>); documentation metadata cannot change it, so remove the attribute or make
@@ -1211,8 +1212,8 @@ and its message can quote that value.
   and a warning names them. Put the constraint on the input itself.
 - **Hiding an input with `@Parameter(schema = @Schema(hidden = true))`.** It does not hide the input;
   it is warned as an ignored member. Use `@Parameter(hidden = true)`.
-- **Spelling a query, path, or cookie name in another case.** Only header names ignore ASCII letter
-  case; `@Parameter(name = "ID")` on a query parameter bound as `id` fails startup.
+- **Spelling a query, path, cookie, or form-field name in another case.** Only header names ignore
+  ASCII letter case; `@Parameter(name = "ID")` on a query parameter bound as `id` fails startup.
 - **Expecting a hidden operation to stop routing.** `@Hidden` and `@Operation(hidden = true)` change
   the document only; the route still answers, and its id and route are still checked for reserved
   ids and document-URL collisions.
