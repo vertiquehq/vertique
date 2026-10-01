@@ -74,8 +74,8 @@ class DocsCompositionValidatorTest {
     /** The fragment stating that collision checks cover literal mount paths only. */
     private static final String LITERAL_PATHS_ONLY = "literal JAX-RS mount paths only";
 
-    /** The documentation prefix when {@code apidocs.path} is not configured. */
-    private static final String DEFAULT_PREFIX = "/apidocs";
+    /** The documentation prefix when {@code apidocs.path} is not configured, quoted as a violation names it. */
+    private static final String QUOTED_DEFAULT_PREFIX = "'/apidocs'";
 
     /** The mount order {@code HttpVerticle} validates and mounts in. */
     private static final Comparator<RouterMount> HTTP_VERTICLE_ORDER = Comparator.comparing(RouterMount::phase)
@@ -275,7 +275,7 @@ class DocsCompositionValidatorTest {
             case NO_VIOLATION -> assertEquals(List.of(), violations, "no violation");
             case UNDER_PREFIX -> {
                 assertEquals(1, violations.size(), () -> "exactly one violation: " + violations);
-                assertNames(violations.getFirst(), mountId, added.mountPath(), APIDOCS_PATH, DEFAULT_PREFIX);
+                assertNames(violations.getFirst(), mountId, added.mountPath(), APIDOCS_PATH, QUOTED_DEFAULT_PREFIX);
             }
             case PATTERN_REACHES_PREFIX -> {
                 assertEquals(1, violations.size(), () -> "exactly one violation: " + violations);

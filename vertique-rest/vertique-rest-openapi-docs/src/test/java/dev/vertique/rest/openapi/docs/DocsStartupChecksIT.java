@@ -17,6 +17,7 @@ import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.rest.core.router.HttpVerticle;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.openapi.docs.StartupTestComponents.CompositionExtensions;
+import dev.vertique.rest.openapi.docs.StartupTestComponents.ProtectedEnforcementOnlyVerticleInputsComponent;
 import dev.vertique.rest.openapi.docs.StartupTestComponents.RootApplicationStartupComponent;
 import dev.vertique.rest.openapi.docs.StartupTestComponents.StartupProvisions;
 import dev.vertique.rest.openapi.docs.StartupTestComponents.VerticleInputs;
@@ -122,6 +123,13 @@ public class DocsStartupChecksIT {
 
     /** The binary name of the protected declaration guarded by {@code bearerAuth} and the role {@code admin}. */
     private static final String PROTECTED_MGMT_API = "dev.vertique.rest.openapi.docs.fixture.ProtectedMgmtApi";
+
+    /** The second protected application, guarded by {@code otherAuth}. */
+    private static final String OPS = "ops";
+
+    /** The binary name of the protected declaration guarded by {@code otherAuth}. */
+    private static final String PROTECTED_OPS_API =
+            "dev.vertique.rest.openapi.docs.fixture.startup.startupit.ProtectedOpsApi";
 
     /** The binary name of the protected declaration guarded by {@code bearerAuth} with no roles. */
     private static final String AUTHENTICATED_MGMT_API =
@@ -1048,6 +1056,117 @@ public class DocsStartupChecksIT {
                 () -> assertTrue(message.contains(UNVALIDATED_CAUSE), label + ": names " + UNVALIDATED_CAUSE),
                 () -> assertTrue(message.contains(UNVALIDATED_REMEDY), label + ": names " + UNVALIDATED_REMEDY),
                 () -> assertFalse(message.contains(MARKER), label + ": never names " + MARKER));
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Supporting checks: several value violations, and the order of the mount's own checks
+    // ---------------------------------------------------------------------------------------------
+
+    @Test
+    @DisplayName(
+            "several protected documents whose schemes no handler has fail startup in one refusal, one line per document in name order")
+    void severalProtectedValueViolationsFailStartupTogether(Vertx vertx) throws Exception {
+        // Given: PublicApi, ProtectedMgmtApi (bearerAuth), and ProtectedOpsApi (otherAuth), the
+        // enforcement marker bound and no scheme handler, with both protected documents' info configured
+        JsonObject configuration = markedSharedWithMgmtInfo();
+        DocsConfigs.withDocumentInfo(configuration, OPS, "Ops", "1");
+        StartupProvisions component = DaggerStartupTestComponents_TwoProtectedEnforcementOnlyComponent.factory()
+                .create(configuration);
+
+        // When: it is deployed
+        Outcome outcome = deploy(vertx, component);
+        try {
+            // Then: startup failed before any JAX-RS router, naming both documents' missing handlers
+            String label = "two protected documents, no scheme handler";
+            assertStartupFailure(
+                    label,
+                    outcome,
+                    component,
+                    SpyCheck.HOOK_ONLY,
+                    MGMT,
+                    List.of(PROTECTED_MGMT_API, PROTECTED_OPS_API, SECURITY_SCHEME_ATTRIBUTE, NO_HANDLER),
+                    List.of(NO_ENFORCEMENT, NOT_SERVED_YET));
+
+            // and: in one message, the mgmt line before the ops line, one missing-handler line each
+            String message = outcome.failure().getMessage();
+            int mgmtLine = message.indexOf(PROTECTED_MGMT_API);
+            int opsLine = message.indexOf(PROTECTED_OPS_API);
+            assertAll(
+                    label + ": the refusal " + message,
+                    () -> assertTrue(mgmtLine < opsLine, label + ": the mgmt line comes before the ops line"),
+                    () -> assertEquals(
+                            2, occurrences(message, NO_HANDLER), label + ": one missing-handler line per document"));
+        } finally {
+            StartupDeployments.undeploy(vertx, outcome);
+        }
+    }
+
+    @Test
+    @DisplayName(
+            "an unmarked documentation mount refuses as unvalidated before it checks its protected documents' values")
+    void unvalidatedRefusalPrecedesTheProtectedValueChecks(Vertx vertx) throws Exception {
+        // Given: ProtectedMgmtApi, whose bearerAuth scheme no handler has, the enforcement marker bound,
+        // exposing what the five-argument constructor receives
+        ProtectedEnforcementOnlyVerticleInputsComponent component =
+                DaggerStartupTestComponents_ProtectedEnforcementOnlyVerticleInputsComponent.factory()
+                        .create(markedSharedWithMgmtInfo());
+        Outcome fiveArgument = null;
+        try {
+            // When (i): the documentation mount of a fresh provision creates its router directly
+            DocsRouterMount docsMount = onlyDocsMount(component.routerMounts());
+            Future<Router> router = null;
+            RuntimeException refusal = null;
+            try {
+                router = docsMount.createRouter(vertx);
+            } catch (RuntimeException thrown) {
+                refusal = thrown;
+            }
+
+            // Then (i): it throws the unvalidated-mount refusal, not the missing-handler violation
+            Future<Router> returned = router;
+            RuntimeException thrown = refusal;
+            assertAll(
+                    "(i) direct createRouter",
+                    () -> assertNull(returned, "(i): no router is returned"),
+                    () -> assertNotNull(thrown, "(i): createRouter throws"));
+            assertUnvalidatedMessage("(i) direct createRouter", thrown.getMessage());
+            assertNoValueViolation("(i) direct createRouter", thrown.getMessage());
+
+            // When (ii): a five-argument verticle from a fresh provision is deployed
+            component.routerSpy().reset();
+            int hookCallsBefore = component.lifecycleHook().beforeAuthSetupCalls();
+            fiveArgument =
+                    StartupDeployments.deploy(vertx, () -> fiveArgumentVerticle(component, component.routerMounts()));
+
+            // Then (ii): the same refusal before any JAX-RS router, not the missing-handler violation
+            assertUnvalidatedRefusal(
+                    "(ii) five-argument verticle",
+                    fiveArgument,
+                    component.lifecycleHook().beforeAuthSetupCalls() - hookCallsBefore);
+            assertNoValueViolation(
+                    "(ii) five-argument verticle", fiveArgument.failure().getMessage());
+        } finally {
+            StartupDeployments.undeploy(vertx, fiveArgument);
+        }
+    }
+
+    /** Asserts a refusal states no {@code @ApiDocs} value violation. */
+    private static void assertNoValueViolation(String label, String message) {
+        assertAll(
+                label + ": the refusal " + message,
+                () -> assertFalse(message.contains(NO_HANDLER), label + ": does not state " + NO_HANDLER),
+                () -> assertFalse(
+                        message.contains(SECURITY_SCHEME_ATTRIBUTE),
+                        label + ": does not name " + SECURITY_SCHEME_ATTRIBUTE));
+    }
+
+    /** Counts the non-overlapping occurrences of a fragment in a message. */
+    private static int occurrences(String message, String fragment) {
+        int count = 0;
+        for (int index = message.indexOf(fragment); index >= 0; index = message.indexOf(fragment, index + 1)) {
+            count++;
+        }
+        return count;
     }
 
     // ---------------------------------------------------------------------------------------------

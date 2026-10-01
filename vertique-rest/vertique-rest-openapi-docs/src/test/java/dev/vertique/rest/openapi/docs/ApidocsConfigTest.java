@@ -27,6 +27,7 @@ import dev.vertique.rest.openapi.docs.fixture.startup.config.OpsEmptyRoleEntryAp
 import dev.vertique.rest.openapi.docs.fixture.startup.config.OpsProtectedBlankSchemeApi;
 import dev.vertique.rest.openapi.docs.fixture.startup.config.OpsProtectedWithoutSchemeApi;
 import dev.vertique.rest.openapi.docs.fixture.startup.config.OpsPublicWithRolesApi;
+import dev.vertique.rest.openapi.docs.fixture.startup.config.OpsPublicWithSchemeAndRolesApi;
 import dev.vertique.rest.openapi.docs.fixture.startup.config.OpsPublicWithSchemeApi;
 import dev.vertique.rest.openapi.docs.fixture.startup.config.OpsValidProtectedApi;
 import io.vertx.core.json.JsonObject;
@@ -933,5 +934,82 @@ class ApidocsConfigTest {
             // Then the declaration is accepted and exactly the expected documents are enabled
             assertEquals(expectedDocuments, names(documents));
         }
+    }
+
+    // ---- supporting checks: key order, key escaping, several shape violations ----
+
+    /** The binary name of the public declaration that both names a scheme and lists a role. */
+    private static final String OPS_PUBLIC_WITH_SCHEME_AND_ROLES_INTERFACE =
+            "dev.vertique.rest.openapi.docs.fixture.startup.config.OpsPublicWithSchemeAndRolesApi";
+
+    /** The control character BEL (code point 7). */
+    private static final String BELL = String.valueOf((char) 7);
+
+    /** A single backslash. */
+    private static final String BACKSLASH = "\\";
+
+    @Test
+    @DisplayName("Among several invalid document entry keys, the failure names the first key in sorted order")
+    void invalidEntryKeysAreCheckedInSortedOrder() {
+        // Given the shared declarations and the shared configuration plus two entries breaking the
+        // grammar, inserted as Zz then Aa, so insertion order differs from sorted order
+        RestApplications view = sharedView();
+        JsonObject config = sharedWithEntry("Zz", infoEntry(MARKER + "Title", "1"));
+        DocsConfigs.document(config, "Aa").mergeIn(infoEntry(MARKER + "Title", "1"));
+        assertEquals(
+                List.of("public", "Zz", "Aa"),
+                List.copyOf(
+                        DocsConfigs.apidocs(config).getJsonObject("documents").fieldNames()),
+                "the entries keep their insertion order");
+
+        // When the providers run
+        ConfigurationException failure = assertThrows(ConfigurationException.class, () -> resolve(config, view));
+
+        // Then the message names only the sorted-first key's path and the grammar, and echoes no value
+        String message = failure.getMessage();
+        assertTrue(message.contains("apidocs.documents.Aa"), message);
+        assertFalse(message.contains("apidocs.documents.Zz"), message);
+        assertTrue(message.contains(NAME_GRAMMAR), message);
+        assertFalse(message.contains(MARKER), message);
+    }
+
+    @Test
+    @DisplayName("A control character in an echoed entry key appears as a four-digit Unicode escape, never raw")
+    void controlCharacterInAnEntryKeyIsEscaped() {
+        // Given the shared declarations and the shared configuration plus an entry whose key holds BEL
+        RestApplications view = sharedView();
+        String key = "a" + BELL + "b";
+        JsonObject config = sharedWithEntry(key, infoEntry(MARKER + "Title", "1"));
+
+        // When the providers run
+        ConfigurationException failure = assertThrows(ConfigurationException.class, () -> resolve(config, view));
+
+        // Then the path names the key with BEL written as backslash, u, 0007, and the raw BEL is absent
+        String message = failure.getMessage();
+        assertTrue(message.contains("apidocs.documents.a" + BACKSLASH + "u0007b"), message);
+        assertFalse(message.contains(BELL), message);
+        assertFalse(message.contains(MARKER), message);
+    }
+
+    @Test
+    @DisplayName("Several @ApiDocs shape violations of one application fail together, one sorted line each")
+    void severalShapeViolationsAreReportedTogetherInSortedOrder() {
+        // Given the shared declarations plus application ops, whose public document both names a
+        // scheme and lists a role, registered by hand as generated code would register it
+        RestApplications view = sharedViewWith(ConfigRegistrations.opsApi(OpsPublicWithSchemeAndRolesApi.class, true));
+
+        // When the providers run
+        RestConfigurationException failure =
+                assertThrows(RestConfigurationException.class, () -> resolve(sharedWithOpsInfo(), view));
+
+        // Then one failure names ops and its interface, and lists the rolesAllowed line before the
+        // securityScheme line, echoing neither attribute value
+        String message = failure.getMessage();
+        assertNamesApplication(message, "ops", OPS_PUBLIC_WITH_SCHEME_AND_ROLES_INTERFACE);
+        int roles = message.indexOf(ROLES_ALLOWED_ATTRIBUTE);
+        int scheme = message.indexOf(SECURITY_SCHEME_ATTRIBUTE);
+        assertTrue(roles >= 0, message);
+        assertTrue(scheme >= 0, message);
+        assertTrue(roles < scheme, "the rolesAllowed line comes before the securityScheme line: " + message);
     }
 }

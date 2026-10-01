@@ -26,6 +26,7 @@ import dev.vertique.rest.openapi.docs.fixture.startup.collision.CatchAllResource
 import dev.vertique.rest.openapi.docs.fixture.startup.collision.DocsNameResource;
 import dev.vertique.rest.openapi.docs.fixture.startup.collision.GetApidocsRestResource;
 import dev.vertique.rest.openapi.docs.fixture.startup.collision.GetDigitsIdResource;
+import dev.vertique.rest.openapi.docs.fixture.startup.collision.GetDottedDocumentNameResource;
 import dev.vertique.rest.openapi.docs.fixture.startup.collision.GetDottedNamesResource;
 import dev.vertique.rest.openapi.docs.fixture.startup.collision.GetIdResource;
 import dev.vertique.rest.openapi.docs.fixture.startup.collision.GetOpenapiExtensionResource;
@@ -54,6 +55,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.function.Executable;
@@ -396,6 +398,54 @@ public class DocumentRouteCollisionIT {
         }
     }
 
+    @Test
+    @DisplayName(
+            "Several colliding routes of one mount are listed one line each, by document URL, then method, then template")
+    void collidingRoutesAreListedByUrlThenMethodThenTemplate() throws Exception {
+        // Given: the documented root application api at / holding GET /apidocs/{rest: .+},
+        // GET /{rest: .*}, and GET /{a}/{b}/{c}; Vert.x registers the regex route /{rest: .*} before
+        // /{a}/{b}/{c} as the more specific one, the reverse of their template order
+        JsonObject config = DocsConfigs.withDocumentInfo(DocsConfigs.loopback(), "api", ROOT_TITLE, ROOT_VERSION);
+        DocumentedProvisions component = DaggerCollisionTestComponents_RootApplicationComponent.factory()
+                .create(
+                        config,
+                        new CaseResources(List.of(
+                                new GetApidocsRestResource(), new GetRestResource(), new GetThreeSegmentsResource())));
+
+        // When: the composition is deployed
+        StartupDeployments.Outcome outcome = StartupDeployments.deploy(vertx, component::httpVerticle);
+        try {
+            // Then: one refusal lists every route per document URL, the URLs in order, and within a
+            // URL the routes by method, then template
+            assertNotNull(outcome.failure(), "the composition is refused");
+            RestConfigurationException refusal = assertInstanceOf(
+                    RestConfigurationException.class, outcome.failure(), () -> "the failure: " + outcome.failure());
+            String message = refusal.getMessage();
+            assertNotNull(message, "the refusal has a message");
+            List<List<String>> expectedLines = List.of(
+                    List.of("GET /apidocs/{rest: .+}", "'/apidocs/api/openapi.json'"),
+                    List.of("GET /{a}/{b}/{c}", "'/apidocs/api/openapi.json'"),
+                    List.of("GET /{rest: .*}", "'/apidocs/api/openapi.json'"),
+                    List.of("GET /apidocs/{rest: .+}", "'/apidocs/api/openapi.yaml'"),
+                    List.of("GET /{a}/{b}/{c}", "'/apidocs/api/openapi.yaml'"),
+                    List.of("GET /{rest: .*}", "'/apidocs/api/openapi.yaml'"));
+            List<String> lines = List.of(message.split("\n"));
+            assertEquals(expectedLines.size(), lines.size(), () -> "one line per route and URL: " + message);
+            List<Executable> checks = new ArrayList<>();
+            for (int i = 0; i < expectedLines.size(); i++) {
+                String line = lines.get(i);
+                for (String fragment : expectedLines.get(i)) {
+                    int lineNumber = i + 1;
+                    checks.add(() -> assertTrue(line.contains(fragment), "line " + lineNumber + " names " + fragment));
+                }
+            }
+            checks.add(() -> assertFalse(message.contains(ZQ7), "does not contain " + ZQ7));
+            assertAll("the refusal's message: " + message, checks.stream());
+        } finally {
+            StartupDeployments.undeploy(vertx, outcome);
+        }
+    }
+
     /** The compositions of the startup table. */
     enum Composition {
 
@@ -608,6 +658,14 @@ public class DocumentRouteCollisionIT {
                         "/{a}/{b}/{c}",
                         HttpMethod.GET,
                         GetThreeSegmentsResource::new,
+                        Pinned.NEITHER),
+                new MatcherCase(
+                        "(16)",
+                        "/*",
+                        "/apidocs",
+                        "/{a}/public.openapi.json",
+                        HttpMethod.GET,
+                        GetDottedDocumentNameResource::new,
                         Pinned.NEITHER));
     }
 

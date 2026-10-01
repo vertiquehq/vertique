@@ -78,6 +78,9 @@ public class OpenApiContractRefusalIT {
     /** The id of the custom test strategy that resolves operations from the mount's contract. */
     private static final String CUSTOM_CONTRACT_TEST = "custom-contract-test";
 
+    /** A strategy id no registered strategy carries. */
+    private static final String UNKNOWN_STRATEGY = "no-such-strategy";
+
     /** The marker carried by the absent shared contract's location; no message may echo it. */
     private static final String MARKER = "zq7";
 
@@ -328,6 +331,34 @@ public class OpenApiContractRefusalIT {
                         served.contentType() != null && served.contentType().startsWith("application/json"),
                         "a JSON document"),
                 () -> assertTrue(new JsonObject(served.body()).containsKey("openapi"), "an OpenAPI document"));
+    }
+
+    @Test
+    @DisplayName(
+            "an empty documented mount whose configured strategy id names no registered strategy is not refused and serves its document")
+    void emptyMountWithAnUnknownStrategyIdServesItsDocument(Vertx vertx) throws Exception {
+        // Given: EmptyApi as the sole registration, the shared contract location absent, and a
+        // configured strategy id no registered strategy carries; an empty mount selects no strategy
+        JsonObject config = emptyConfig();
+        config.getJsonObject("jaxrs").put("validationStrategy", UNKNOWN_STRATEGY);
+        ContractCase contractCase = new ContractCase(
+                "an empty documented mount under an unknown strategy id",
+                (v, c) -> DaggerContractRefusalTestComponents_EmptyContractComponent.factory()
+                        .create(v, c),
+                () -> config,
+                EMPTY,
+                null);
+        DocsProvisions component =
+                contractCase.component().apply(vertx, contractCase.config().get());
+
+        // When: it is deployed
+        Outcome outcome = StartupDeployments.deploy(vertx, component::httpVerticle);
+        try {
+            // Then: it deploys and the documentation mount serves the empty document
+            assertServed(contractCase, outcome);
+        } finally {
+            StartupDeployments.undeploy(vertx, outcome);
+        }
     }
 
     // ---------------------------------------------------------------------------------------------

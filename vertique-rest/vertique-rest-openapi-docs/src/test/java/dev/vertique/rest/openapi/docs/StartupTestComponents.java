@@ -28,9 +28,11 @@ import dev.vertique.rest.openapi.docs.fixture.SharedResourcesModule;
 import dev.vertique.rest.openapi.docs.fixture.startup.RouterSpy;
 import dev.vertique.rest.openapi.docs.fixture.startup.SchemeBindings;
 import dev.vertique.rest.openapi.docs.fixture.startup.StartupRegistrations;
+import dev.vertique.rest.openapi.docs.fixture.startup.StartupResources;
 import dev.vertique.rest.openapi.docs.fixture.startup.startupit.AnnotatedPublicRegistrationModule;
 import dev.vertique.rest.openapi.docs.fixture.startup.startupit.ContributedResources;
 import dev.vertique.rest.openapi.docs.fixture.startup.startupit.HandBuiltMounts;
+import dev.vertique.rest.openapi.docs.fixture.startup.startupit.ProtectedOpsRegistrationModule;
 import dev.vertique.rest.openapi.docs.fixture.startup.startupit.PublicReservedRegistrationModule;
 import io.vertx.core.http.HttpServerOptions;
 import io.vertx.core.json.JsonObject;
@@ -254,6 +256,28 @@ public final class StartupTestComponents {
         interface ComponentFactory extends Factory<ProtectedBearerAuthWithEnforcementComponent> {}
     }
 
+    /**
+     * Two protected documents beside the shared {@code PublicApi}: {@code ProtectedMgmtApi}
+     * ({@code bearerAuth}) and {@code ProtectedOpsApi} ({@code otherAuth}), the enforcement marker
+     * bound, and no scheme handler, so each protected document names a scheme no handler has.
+     */
+    @Singleton
+    @Component(
+            modules = {
+                StartupBase.class,
+                ProtectedRegistrationModule.class,
+                ProtectedOpsRegistrationModule.class,
+                SharedResourcesModule.class,
+                StartupResources.Ops.class,
+                SchemeBindings.EnforcementOnly.class
+            })
+    public interface TwoProtectedEnforcementOnlyComponent extends StartupProvisions {
+
+        /** Factory taking the application configuration. */
+        @Component.Factory
+        interface ComponentFactory extends Factory<TwoProtectedEnforcementOnlyComponent> {}
+    }
+
     /** What a component exposes so a test can see which composition checks and sinks it holds. */
     public interface CompositionExtensions {
 
@@ -445,5 +469,25 @@ public final class StartupTestComponents {
         /** Factory taking the application configuration. */
         @Component.Factory
         interface ComponentFactory extends Factory<VerticleInputsStartupComponent> {}
+    }
+
+    /**
+     * The shared fixture with {@code ProtectedMgmtApi} in place of {@code MgmtApi}, the enforcement
+     * marker bound, and no scheme handler, exposing what the public five-argument
+     * {@link HttpVerticle} constructor receives.
+     */
+    @Singleton
+    @Component(
+            modules = {
+                StartupBase.class,
+                ProtectedRegistrationModule.class,
+                SharedResourcesModule.class,
+                SchemeBindings.EnforcementOnly.class
+            })
+    public interface ProtectedEnforcementOnlyVerticleInputsComponent extends StartupProvisions, VerticleInputs {
+
+        /** Factory taking the application configuration. */
+        @Component.Factory
+        interface ComponentFactory extends Factory<ProtectedEnforcementOnlyVerticleInputsComponent> {}
     }
 }
