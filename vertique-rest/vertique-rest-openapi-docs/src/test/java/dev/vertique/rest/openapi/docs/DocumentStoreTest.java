@@ -119,7 +119,8 @@ class DocumentStoreTest {
                 PublicApi.MOUNT_PATH,
                 RestApplications.ContractOrigin.ANNOTATION,
                 new InfoConfig("Catalog", "1.0", null));
-        DocsPublicationSink sink = new DocsPublicationSink(new EnabledDocuments(List.of(document)), store);
+        DocsPublicationSink sink =
+                new DocsPublicationSink(new EnabledDocuments(List.of(document)), store, TestContexts.noSource());
         assertNull(Vertx.currentContext(), "the JUnit thread must have no Vert.x context");
 
         // When: the sink is handed the public application's mount

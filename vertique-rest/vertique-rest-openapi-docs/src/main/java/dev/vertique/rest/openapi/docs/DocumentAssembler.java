@@ -11,6 +11,7 @@ import dev.vertique.rest.jaxrs.publication.OperationPublication;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.SortedMap;
 
 /**
@@ -53,6 +54,7 @@ final class DocumentAssembler {
      * @param document the enabled document of the application
      * @param publication the detached publication of the application's mount
      * @param facts the per-operation descriptor facts, keyed by operation id
+     * @param context the per-application inputs besides the publication
      * @return the published document
      * @throws dev.vertique.rest.core.RestConfigurationException when the publication cannot be
      *     described by one document
@@ -60,7 +62,9 @@ final class DocumentAssembler {
     static PublishedDocument assemble(
             EnabledDocuments.EnabledDocument document,
             MountPublication publication,
-            Map<String, OperationFacts> facts) {
+            Map<String, OperationFacts> facts,
+            AssemblyContext context) {
+        Objects.requireNonNull(context, "context");
         String subject = subject(document, publication);
         SortedMap<String, List<OperationPublication>> pathItems =
                 RenderedPaths.pathItems(subject, publication.operations());
