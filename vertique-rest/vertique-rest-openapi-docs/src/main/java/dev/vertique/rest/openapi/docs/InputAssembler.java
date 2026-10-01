@@ -67,14 +67,18 @@ import java.util.Set;
  *       that is not blank.
  * </ul>
  *
- * <p>Once every schema of an operation is checked, the documentation of its request body and then of
- * its Parameter Objects, in published order, is read from their Swagger annotations (see {@link
+ * <p>Once every schema of an operation is checked, its Swagger annotations are checked against how
+ * the runtime binds it and read, in this order: the operation id, then the request body, then the
+ * Parameter Objects in published order, then the form fields of a form request body (see {@link
+ * MetadataAgreement}). Each input is checked before its documentation is read (see {@link
  * InputDocumentation}): a Parameter Object's {@code deprecated}, {@code example}, and {@code
  * examples}, and a description its own schema annotation fills when the parameter has none; a
  * request body's {@code description} and, on a body binding's Media Type Objects, its examples. A
- * form binding publishes no documentation of its own; a form request body takes only its {@code
- * description}. A reference or a malformed example among them fails publication. Captured schemas
- * are never changed by it.
+ * form binding publishes no documentation of its own, but its {@link Parameter} is checked; a form
+ * request body takes only its {@code description}. A contradiction, a reference, or a malformed
+ * example among them fails publication, and the first in that order wins; the schema members the
+ * document does not publish and a requirement whose enforcement is unknown are collected as the
+ * operation's warnings. Captured schemas are never changed by it.
  *
  * <p>A captured request body is published only once its redaction manifest is verified against the
  * capture (see {@link ManifestVerifier}); the document's own copy is then checked for refused
@@ -129,13 +133,17 @@ final class InputAssembler {
      * @param tally the disclosure tally of the document's assembly
      * @param generators the input generators of the document's assembly
      * @param markInputs whether inputs no schema guards are marked
+     * @param agreement the document's checks of annotations against the runtime, which collect the
+     *     operation's warnings
      * @return the plan, to publish once every operation of the document is checked
      * @throws RestConfigurationException when the operation hides a path parameter, two visible
      *     inputs share a name and location, a published request body carries no matching redaction
      *     manifest or one that does not resolve in it, a published request body's type is described
      *     with a hidden member or type or cannot be inspected for one, a published parameter or
      *     form-field schema holds {@code propertyNames}, a published captured schema holds a refused
-     *     construct, or the documentation of a published input sets a reference or a malformed example
+     *     construct, an annotation of the operation or of a published input contradicts how the
+     *     runtime binds it, or the documentation of a published input sets a reference or a malformed
+     *     example
      */
     static Plan check(
             String subject,
@@ -145,13 +153,15 @@ final class InputAssembler {
             AssemblyContext context,
             DisclosureTally tally,
             InputGenerators generators,
-            boolean markInputs) {
-        OperationDetail detail = operation.detail();
-        if (detail == null) {
-            return new Plan(operation.operationId(), List.of(), null, null);
-        }
+            boolean markInputs,
+            MetadataAgreement agreement) {
         String operationId = operation.operationId();
         OperationFacts known = facts == null ? NO_FACTS : facts;
+        OperationDetail detail = operation.detail();
+        if (detail == null) {
+            agreement.operation(operationId, known).finish();
+            return new Plan(operationId, List.of(), null, null);
+        }
         CapturedSchemas schemas = detail.schemas();
         HiddenInputs.refusePath(subject, operationId, detail.inputs());
         List<InputBinding> inputs = HiddenInputs.visible(detail.inputs());
@@ -221,27 +231,36 @@ final class InputAssembler {
                     mediaTypes(known.consumes(), defaultMediaType), null, properties, markInputs && unenforced);
         }
 
-        // Documentation is read once every schema of the operation is checked: the request body
-        // first, then the parameters in published order.
+        // Annotations are checked and read once every schema of the operation is checked: the
+        // operation id, then the request body, then the parameters in published order, then the form
+        // fields; each input is checked against the runtime before its documentation is read.
+        MetadataAgreement.OperationAgreement agreeing = agreement.operation(operationId, known);
         if (body != null || form != null) {
             RequestBody requestBody = InputDocumentation.requestBody(
                     body != null ? bodyBinding.annotations() : List.of(), known.methodAnnotations());
             if (body != null) {
+                agreeing.requestBody(requestBody, body.mediaTypes(), bodyBinding.type(), body.required());
                 body = body.documented(InputDocumentation.body(subject, operationId, requestBody, body.mediaTypes()));
             } else {
+                agreeing.requestBody(requestBody, form.mediaTypes(), null, false);
                 form = form.documented(InputDocumentation.bodyDescription(subject, operationId, requestBody));
             }
         }
         for (int i = 0; i < parameters.size(); i++) {
             ParameterPlan plan = parameters.get(i);
+            InputBinding binding = parameterBindings.get(i);
+            agreeing.parameter(binding);
             parameters.set(
                     i,
                     plan.documented(InputDocumentation.parameter(
-                            subject,
-                            operationId,
-                            parameterBindings.get(i),
-                            plan.documentation().description())));
+                            subject, operationId, binding, plan.documentation().description())));
         }
+        if (form != null) {
+            for (InputBinding binding : forms) {
+                agreeing.parameter(binding);
+            }
+        }
+        agreeing.finish();
         return new Plan(operationId, parameters, body, form);
     }
 

@@ -30,9 +30,7 @@ import java.util.SortedMap;
  * each operation is keyed by its lowercase method and carries its runtime operation id.
  *
  * <p>The {@code info} is the configured one, else the complete {@code info} of the declaring
- * interface's annotation ({@link AnnotatedInfo}); once the document is written, the extensions of
- * that annotation not published for lacking the {@code x-} prefix are named in one warning per
- * document on the component's {@link DocumentWarnings}.
+ * interface's annotation ({@link AnnotatedInfo}).
  *
  * <p>Hidden operations ({@link HiddenOperations}) are removed first, before paths are rendered and
  * before any input is checked: nothing of a hidden operation is rendered, verified, redacted,
@@ -41,16 +39,27 @@ import java.util.SortedMap;
  *
  * <p>Inputs are assembled by {@link InputAssembler} in two phases over the whole document, both
  * visiting the operations in the order the document lists them (path keys in natural order, then
- * methods in Path Item order): every operation's inputs are first checked, so the first hidden path
- * parameter, duplicate input, unverified request body, refused construct, request body describing a
- * hidden member, or unresolved redaction of the document fails before anything is published; then
- * the tag declarations of every operation are merged in the same order, so a conflicting tag fails
- * before anything is published; then every operation is published, each checked schema once, with
- * its documentation metadata ({@link OperationMetadata}). Inputs the inventory flags hidden are left
+ * methods in Path Item order): every operation is first checked, so the first failure of the document
+ * in that order fails it before anything is published. Each operation's inputs are checked for a
+ * hidden path parameter, a duplicate input, an unverified request body, a refused construct, a request
+ * body describing a hidden member, or an unresolved redaction; then its annotations are checked
+ * against how the runtime binds it ({@link MetadataAgreement}: the operation id, then the request
+ * body, the parameters, and the form fields, each input for a contradiction, then for an unresolved
+ * reference or a malformed example). Then the tag declarations of every operation are merged in the
+ * same order, so a conflicting tag fails before anything is published; then every operation is
+ * published, each checked schema once, with its documentation metadata ({@link OperationMetadata}).
+ * Inputs the inventory flags hidden are left
  * out before any check reads them, and a {@link DisclosureTally} created for the assembly records
  * whether any was and whether a reserved name was removed from a published request body. The
  * input-direction schema generators that inspect request bodies are likewise created per assembly
  * ({@link InputGenerators}).
+ *
+ * <p>The warnings of the assembly are collected in document order and logged on the component's
+ * {@link DocumentWarnings} only once the document is fully assembled and written, so a document that
+ * fails publication warns about nothing: first the extensions of an annotated {@code info} not
+ * published for lacking the {@code x-} prefix, once per document; then, per operation, the schema
+ * members of its inputs the document does not publish, in one warning, and each requirement on an
+ * input whose enforcement the runtime leaves unknown.
  *
  * <p>Failures are thrown as {@link dev.vertique.rest.core.RestConfigurationException} so that
  * publication fails startup; each message starts with the {@linkplain #subject subject} naming the
@@ -95,6 +104,13 @@ final class DocumentAssembler {
         DisclosureTally tally = new DisclosureTally();
         InputGenerators generators = new InputGenerators(context.profiles());
         ValidationDisclosure disclosure = new ValidationDisclosure(document.access(), publication.strategyId());
+        PendingWarnings warnings = new PendingWarnings(document.name());
+        AnnotatedInfo annotatedInfo = document.annotatedInfo();
+        if (annotatedInfo != null) {
+            warnUnpublishedExtensions(document, annotatedInfo, warnings);
+        }
+        MetadataAgreement agreement =
+                new MetadataAgreement(subject, document.name(), publication.mountPath(), warnings);
 
         List<PlannedOperation> planned = new ArrayList<>();
         for (Map.Entry<String, List<OperationPublication>> item : pathItems.entrySet()) {
@@ -111,7 +127,8 @@ final class DocumentAssembler {
                                 context,
                                 tally,
                                 generators,
-                                disclosure.marksInputs()),
+                                disclosure.marksInputs(),
+                                agreement),
                         OperationMetadata.of(operationFacts)));
             }
         }
@@ -131,7 +148,6 @@ final class DocumentAssembler {
 
         ObjectNode root = NODES.objectNode();
         root.put("openapi", DocumentWriter.OPENAPI_VERSION);
-        AnnotatedInfo annotatedInfo = document.annotatedInfo();
         root.set(
                 "info",
                 annotatedInfo != null ? DocumentWriter.info(annotatedInfo) : DocumentWriter.info(document.info()));
@@ -149,25 +165,22 @@ final class DocumentAssembler {
         }
         root.set(ValidationDisclosure.MEMBER, disclosure.root(context, tally));
         PublishedDocument written = DocumentWriter.write(root, SnapshotRenderer.render(publication));
-        if (annotatedInfo != null) {
-            warnUnpublishedExtensions(document, annotatedInfo, context.warnings());
-        }
+        warnings.emit(context.warnings());
         return written;
     }
 
     /**
-     * Warns, once per document, about the extensions of the annotated {@code info} that are not
-     * published because their names do not start with {@code x-}. The warning names the keys only,
-     * never a property value.
+     * Holds back the warning, logged once per document, about the extensions of the annotated {@code
+     * info} that are not published because their names do not start with {@code x-}. The warning names
+     * the keys only, never a property value.
      */
     private static void warnUnpublishedExtensions(
-            EnabledDocuments.EnabledDocument document, AnnotatedInfo info, DocumentWarnings warnings) {
+            EnabledDocuments.EnabledDocument document, AnnotatedInfo info, PendingWarnings warnings) {
         if (info.unpublishedKeys().isEmpty()) {
             return;
         }
-        warnings.warnOnce(
+        warnings.add(
                 INFO_EXTENSIONS,
-                document.name(),
                 "apidocs.documents." + document.name() + ": application '" + document.name() + "' (declared by "
                         + document.declaringType().getName()
                         + ") has @OpenAPIDefinition.info extensions whose names do not start with 'x-', which"

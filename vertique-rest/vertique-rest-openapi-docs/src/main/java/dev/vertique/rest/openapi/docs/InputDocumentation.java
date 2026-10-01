@@ -217,9 +217,16 @@ final class InputDocumentation {
         return null;
     }
 
-    /** Returns the first annotation of a type, or {@code null}. */
+    /**
+     * Returns the first annotation of a type.
+     *
+     * @param annotations the annotations, in order
+     * @param type the annotation type
+     * @param <A> the annotation type
+     * @return the first annotation of the type, or {@code null} when there is none
+     */
     @Nullable
-    private static <A extends Annotation> A first(List<Annotation> annotations, Class<A> type) {
+    static <A extends Annotation> A first(List<Annotation> annotations, Class<A> type) {
         for (Annotation annotation : annotations) {
             if (type.isInstance(annotation)) {
                 return type.cast(annotation);
