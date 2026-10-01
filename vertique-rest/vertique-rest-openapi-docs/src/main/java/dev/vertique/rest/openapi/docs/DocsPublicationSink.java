@@ -289,7 +289,8 @@ final class DocsPublicationSink implements OperationPublicationSink {
         return Collections.unmodifiableMap(facts);
     }
 
-    private static MountPublication detach(MountPublication publication) {
+    /** Copies a publication without retaining descriptors, copying every captured schema so the copy is independent. */
+    static MountPublication detach(MountPublication publication) {
         List<OperationPublication> operations = publication.operations().stream()
                 .map(DocsPublicationSink::detach)
                 .toList();
