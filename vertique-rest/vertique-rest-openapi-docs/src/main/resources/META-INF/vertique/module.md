@@ -1165,7 +1165,8 @@ from its `SecuritySchemeHandler`.
   with one Security Requirement Object per requirement set, in declaration order. Alternatives,
   such as two repeated `@SecurityRequirement`s, are separate objects.
 - **Scopes as declared.** Each object is keyed by scheme name, and its value lists the
-  requirement's scopes in declaration order, or `[]` when it has none.
+  requirement's scopes in declaration order, or `[]` when it has none. Those scopes are published,
+  so a public document discloses the scopes its operations require.
 - **Last member.** `security` is the last member of the Operation Object.
 - **Only when declared.** An operation without a requirement has no `security` member, and the
   document never writes a root `security`.
@@ -1189,7 +1190,8 @@ operations logs one warning (see
   references, a scheme only hidden operations require included, is neither published nor asked for
   its description.
 - **Document access is separate.** `@ApiDocs(securityScheme)` names the scheme that would protect
-  the document routes. It is not an operation requirement and never enters `securitySchemes`.
+  the document routes. It is not an operation requirement and does not by itself enter
+  `securitySchemes`; it appears there only when a published operation also requires the scheme.
 
 Members are written in the Security Scheme Object's field order `type`, `description`, `name`, `in`,
 `scheme`, `bearerFormat`, `flows`, `openIdConnectUrl`; an empty optional field is left out, and
@@ -1209,8 +1211,10 @@ The JWT handler of `dev.vertique:vertique-rest-auth-jwt` describes its scheme as
 configured with.
 
 **Published as supplied.** Descriptions, OAuth2 flow URLs, scope names and scope descriptions, API
-key names, and the OpenID Connect URL are published exactly as the handler supplies them. This
-module performs no OAuth or OpenID Connect processing and checks no URL. Never put credentials,
+key names, and the OpenID Connect URL are published exactly as the handler supplies them. A
+scheme's OAuth2 flow scopes are published as the handler lists them, including scopes only hidden
+or unpublished operations use, so list only the scopes the document should reveal. This module
+performs no OAuth or OpenID Connect processing and checks no URL. Never put credentials,
 internal hosts, or other secrets in a description.
 
 ### Fail-closed publication
@@ -1231,6 +1235,10 @@ disable the document
 - **No registered handler.** The same start, ending `, but no SecuritySchemeHandler is registered
   for it`. In a deployment the route registration of `vertique-rest-jaxrs` already refuses such an
   operation, before any document is assembled.
+- **More than one handler provides the scheme.** The same start, ending `, which more than one
+  SecuritySchemeHandler provides: <class names>; each security scheme must be provided by exactly
+  one handler`, with the binary class names sorted. No handler is asked for a description. Fix it
+  by providing each scheme from exactly one handler: put the description on the enforcing handler.
 - **A kind this module does not know.** The same start, ending `, whose SecuritySchemeHandler
   describes it as <class name>, a kind of security scheme this documentation module cannot
   publish`, naming the description's class.
@@ -1624,6 +1632,9 @@ operations that restrict callers, and it is served without authentication: <entr
   document order (path keys in natural order, then methods), for example
   `GET /admin (adminReport), GET /scopeless (scopelessGet)`. Hidden operations are not listed.
 - **Names nothing secret.** The warning names no role, scope, action, or claim.
+- **Annotation-declared only.** The warning sees only restrictions declared by annotation:
+  security annotations, requirement sets, and required actions. Access checks added by router
+  hooks, middleware, or interceptors are not detected.
 - **Publication proceeds.** The document is served as usual.
 - **When.** Held back like the metadata warnings and logged last, after every other warning of the
   document, only once the document is written; once per document and component. A protected
@@ -1691,6 +1702,7 @@ names are quoted.
 | Two components of a document would have the same key | `RestConfigurationException` with the same start, naming the input or output of both components and the key; when either is a relocated definition, it says `one component` instead of the key, and states that component keys replace every character outside `[A-Za-z0-9._-]` with `_` |
 | A published operation requires a security scheme whose registered handler returns no `openApiDescription()` (see [Fail-closed publication](#fail-closed-publication)) | `RestConfigurationException` with the `apidocs.documents.<name>: ` start, naming the first operation requiring it by id, method, and path key, and the scheme, and stating the fix; no description content or configuration value |
 | A published operation requires a security scheme no registered handler provides | `RestConfigurationException` with the same start, naming the operation and the scheme; in a deployment the route registration refuses the operation first |
+| A published operation requires a security scheme that more than one registered handler provides | `RestConfigurationException` with the same start, naming the operation, the scheme, and the handlers' binary class names, sorted; provide the scheme from exactly one handler |
 | A referenced scheme's handler returns a description of a kind this module does not know | `RestConfigurationException` with the same start, naming the operation, the scheme, and the description's class |
 | A later server instance publishes a different mount or operation than the stored document | `RestConfigurationException` naming the application, its declaring interface, its mount path, and the first differing operation id |
 | A mount of a documented application is built outside a Vert.x context | `RestConfigurationException` naming the application |
