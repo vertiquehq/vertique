@@ -779,7 +779,9 @@ application name from `ctx.operation().applicationName()`. `operation()` is `nul
 without a descriptor, such as one constructed with the five-argument constructor, so a key that uses it
 should handle `null` when the interceptor can see such contexts. An interceptor that keys state per
 operation includes the application name, so operations of different applications never share an
-entry:
+entry. On a mount that belongs to no declared application the application name is `null`, so the
+key reads `null:<operationId>`, and the cross-mount operation-id uniqueness check runs only when
+applications are declared:
 
 ```java
 public Future<Object> recoverOperation(OperationContext ctx, Throwable cause) {
@@ -1221,9 +1223,14 @@ the documented request and failure behavior.
 Three top-level sections are parsed by `RestCoreModule` — `http`, `cors`, and `jaxrs` — plus
 `correlation.ingress` by `CorrelationIngressModule`. Every key is optional; omitted keys take the
 default below. Unknown keys are ignored except under `jaxrs.defaultHeaders`, where they become
-custom response headers, and except under `jaxrs.security`. That exception is a deliberate
-narrowing of this Stable module's "unknown keys are ignored" rule, limited to these reserved names:
-a non-object `jaxrs.security` value (including `null`), an unknown key under it, and — at the
+custom response headers, and except under `jaxrs.security` and `jaxrs.applications`. The
+`jaxrs.applications` section is parsed strictly by `vertique-rest-jaxrs`: a non-object section, a
+non-object entry, or an entry key other than `openapiPath` fails startup, as does a blank
+`openapiPath` (empty or whitespace only; an absent or `null` value is accepted). An entry whose name
+matches no declared application also fails startup, reported with the application composition
+violations rather than by the section parse. The `jaxrs.security`
+exception is a deliberate narrowing of this Stable module's "unknown keys are ignored" rule,
+limited to these reserved names: a non-object `jaxrs.security` value (including `null`), an unknown key under it, and — at the
 `jaxrs` level — a case variant of `security` or a misplaced `requireExplicitPolicy` (in any case)
 each fail startup with a `ConfigurationException` naming the offending keys, sorted, never their
 values.
@@ -1295,10 +1302,10 @@ When `enabled` is `false` (the default) no CORS handler is installed and every o
 | Key | Default | Constraint / notes |
 |---|---:|---|
 | `jaxrs.basePath` | `"/*"` | mount path of the JAX-RS sub-router; not applied when one or more `@RestApplication` declarations are present — each is mounted at its own `@RestApplication.path` instead |
-| `jaxrs.openapiPath` | `"openapi.json"` | classpath spec; only used by the opt-in `openapi-contract` strategy |
+| `jaxrs.openapiPath` | `"openapi.json"` | classpath spec; used by the opt-in `openapi-contract` strategy, and the shared global contract location for every application that sets neither `@RestApplication.openapiPath` nor `jaxrs.applications.<name>.openapiPath`; `vertique-rest-openapi-docs` refuses to document an application whose strategy resolves operations from that shared global contract |
 | `jaxrs.applications` | *(none)* | per-application settings, keyed by application name; parsed strictly by `vertique-rest-jaxrs`; unknown keys fail startup — see that module's reference |
 | `jaxrs.mediaTypeValidation` | `"WARN"` | `WARN`, `STRICT` (fails startup on the first mismatch), or `OFF` |
-| `jaxrs.validationStrategy` | `"web-validation"` | must match a registered strategy id — built-ins are `web-validation`, `none`, `openapi-contract`; an unknown id fails startup |
+| `jaxrs.validationStrategy` | `"web-validation"` | must match a registered strategy id — built-ins are `web-validation`, `none`, `openapi-contract`; an unknown id fails startup when any JAX-RS mount has resources; a mount with no resources never selects a strategy |
 | `jaxrs.validationMode` | `"aggregate"` | `aggregate` or `failFast` |
 | `jaxrs.validationPatternMaxChars` | `4096` | at least `1`, else startup fails; the most UTF-16 code units one string value or object key may have when it reaches a `pattern`, `patternProperties`, or pattern-bearing `propertyNames` position, or an `idn-hostname`, `idn-email`, or `regex` format, under the `web-validation` strategy — a longer one is rejected with 400 before that check runs |
 | `jaxrs.validationPatternMaxTotalChars` | `262144` | at least `1` and no smaller than `jaxrs.validationPatternMaxChars`, else startup fails; the most UTF-16 code units the strings and keys reaching those positions may add up to in one request — the request is rejected with 400 once the total exceeds it |

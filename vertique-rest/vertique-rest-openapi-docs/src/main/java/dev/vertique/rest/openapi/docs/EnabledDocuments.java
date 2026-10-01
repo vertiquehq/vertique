@@ -4,6 +4,7 @@
 package dev.vertique.rest.openapi.docs;
 
 import dev.vertique.rest.jaxrs.publication.RestApplications.ContractOrigin;
+import jakarta.annotation.Nullable;
 import java.util.List;
 import java.util.Optional;
 
@@ -51,6 +52,7 @@ record EnabledDocuments(List<EnabledDocument> all) {
      * @param mountPath the mount path of the application
      * @param contractOrigin where the application's contract comes from
      * @param info the {@code info} object of the document
+     * @param serverUrl the configured server URL of the document, or {@code null} when absent
      */
     record EnabledDocument(
             String name,
@@ -58,5 +60,27 @@ record EnabledDocuments(List<EnabledDocument> all) {
             ApiDocs.Access access,
             String mountPath,
             ContractOrigin contractOrigin,
-            InfoConfig info) {}
+            InfoConfig info,
+            @Nullable String serverUrl) {
+
+        /**
+         * Creates a document with no configured server URL.
+         *
+         * @param name the application name
+         * @param declaringType the declaring interface
+         * @param access the access policy of the document routes
+         * @param mountPath the mount path of the application
+         * @param contractOrigin where the application's contract comes from
+         * @param info the {@code info} object of the document
+         */
+        EnabledDocument(
+                String name,
+                Class<?> declaringType,
+                ApiDocs.Access access,
+                String mountPath,
+                ContractOrigin contractOrigin,
+                InfoConfig info) {
+            this(name, declaringType, access, mountPath, contractOrigin, info, null);
+        }
+    }
 }
