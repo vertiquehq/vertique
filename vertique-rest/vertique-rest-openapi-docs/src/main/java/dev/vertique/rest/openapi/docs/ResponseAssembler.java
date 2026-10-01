@@ -50,7 +50,7 @@ import java.util.TreeSet;
  * status declares several different implementations, each component key gains the suffix {@code
  * .<n>}, numbered from 1 in declaration order; one implementation used by several media types of a
  * status is one component. A {@link Header} with a blank name is left out, and one header name
- * declared twice in one status fails publication; a header's schema implementation is published as
+ * declared twice in one status, compared ignoring ASCII letter case, fails publication; a header's schema implementation is published as
  * a reference to the component {@code <operationId>.response.<status>.header.<name>}, and a header
  * without one publishes the empty schema.
  *
@@ -202,7 +202,7 @@ final class ResponseAssembler {
             if (!OperationMetadata.isSet(header.name())) {
                 continue;
             }
-            if (!headerNames.add(header.name())) {
+            if (!headerNames.add(asciiLowerCase(header.name()))) {
                 throw new RestConfigurationException(prefix + ": operation '" + operationId
                         + "' declares one header name more than once in status " + status
                         + " (@Header.name); declare each header once per status");
@@ -220,6 +220,16 @@ final class ResponseAssembler {
         }
         Map<String, JsonNode> extensions = AnnotatedInfo.readExtensions(response.extensions(), new TreeSet<>());
         return new PlannedResponse(status, description, headers, content, slots, extensions);
+    }
+
+    /** Lower-cases ASCII letters only, so non-ASCII characters never fold into ASCII ones. */
+    static String asciiLowerCase(String name) {
+        StringBuilder folded = new StringBuilder(name.length());
+        for (int i = 0; i < name.length(); i++) {
+            char c = name.charAt(i);
+            folded.append(c >= 'A' && c <= 'Z' ? (char) (c + ('a' - 'A')) : c);
+        }
+        return folded.toString();
     }
 
     /**

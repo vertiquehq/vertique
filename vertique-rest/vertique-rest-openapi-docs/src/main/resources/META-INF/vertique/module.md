@@ -940,7 +940,8 @@ declared.
   when `schema.implementation` is set, and the empty schema `{}` otherwise, since OpenAPI 3.1
   requires a header schema. A `@Header` with a blank name is left out and warned as `@Header.name`.
   One header name declared twice in one status fails startup naming `@Header.name`; names are
-  compared exactly, case included.
+  compared ignoring ASCII letter case, so `X-Rate` and `x-rate` are the same header (non-ASCII
+  letters never fold).
 - **`@Header(hidden = true)` is not honored.** The header is published, and `@Header.hidden` is
   named in the [omitted-attribute warning](#omitted-response-attributes).
 
@@ -1498,7 +1499,7 @@ names are quoted.
 | A declared `@ApiResponse` status is not `default`, a code from `100` to `599`, or an uppercase range key from `1XX` to `5XX` (see [Declared responses](#declared-responses)) | `RestConfigurationException` starting `apidocs.documents.<name>: ` and then the same start, naming the operation and quoting the declared status |
 | The method level or the class level declares one response status twice | `RestConfigurationException` with the `apidocs.documents.<name>: ` start, naming the operation, the status, and the level |
 | `@ApiResponse.useReturnTypeSchema` is `true` on a return type that is not inferable (see [A declared success status without content](#a-declared-success-status-without-content)) | `RestConfigurationException` with the `apidocs.documents.<name>: ` start, naming the operation, the status, and the attribute |
-| One status declares a media type twice, or one header name twice (see [Response content and headers](#response-content-and-headers)) | `RestConfigurationException` with the `apidocs.documents.<name>: ` start, naming the operation, the status, and `@Content.mediaType` or `@Header.name`; neither value is echoed |
+| One status declares a media type twice, or one header name twice, ignoring ASCII letter case (see [Response content and headers](#response-content-and-headers)) | `RestConfigurationException` with the `apidocs.documents.<name>: ` start, naming the operation, the status, and `@Content.mediaType` or `@Header.name`; neither value is echoed |
 | An `@ExampleObject` in `@Content.examples` has a blank or repeated name, both `value` and `externalValue`, or a `ref` | `RestConfigurationException` with the `apidocs.documents.<name>: ` start, naming the operation, the attribute, and the status |
 | A published output type cannot be generated or inspected under the operation's output profile (see [Refusals of output types](#refusals-of-output-types)) | `RestConfigurationException` with the `apidocs.documents.<name>: ` start, naming the operation, the content or header schema, and the status (`200` for the inferred type); the generator's exception is the cause; no schema text |
 | A published output type describes a member under a `@Schema(name)` that differs from its serialized name | `RestConfigurationException` with the `apidocs.documents.<name>: ` start, naming the operation, the status, the declaring type, the member, the serialized name, and the schema name |
