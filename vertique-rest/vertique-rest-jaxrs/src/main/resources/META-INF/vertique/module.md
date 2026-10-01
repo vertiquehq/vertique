@@ -1550,8 +1550,9 @@ and refuses to create any application mount's router.
 Parsing `jaxrs.applications` (see [Per-application configuration](#per-application-configuration))
 raises `ConfigurationException`. The section-name, shape, key, and blank-value checks use the four
 messages below; `<keys>` lists every offending `jaxrs` key and `<paths>` every offending
-configuration path, each single-quoted, sorted, and comma-separated. An entry that passes those checks but cannot be bound — an `openapiPath` that is a
-JSON object or array, or a blank entry key — fails instead with the configuration parser's own
+configuration path, each single-quoted, sorted, and comma-separated. An entry that passes those
+checks but cannot be bound — an `openapiPath` that is a JSON object or array, or a blank entry
+key — fails instead with the configuration parser's own
 message, which does not name the full configuration path. No message contains a configured value.
 
 | Condition | Message |
@@ -1651,8 +1652,11 @@ as proof of a complete body.
 - **Adding `name`, a case variant such as `OpenapiPath`, or another setting inside a
   `jaxrs.applications` entry.** The entry key is the application's name, and `openapiPath`, spelled
   exactly, is the only key an entry accepts; any other key fails startup instead of being ignored.
-- **Spelling the section `jaxrs.Applications` or another case variant.** Only `jaxrs.applications`
-  is read; a case variant is ignored like any unknown `jaxrs` key.
+- **Spelling the section `jaxrs.Applications` or another case variant.** Only the exact spelling
+  `jaxrs.applications` configures applications. A case variant fails startup with
+  `Miscased applications keys under 'jaxrs': …`, even when no exact `applications` key is present.
+  A key that is not a case variant, such as the singular `application`, is still ignored like any
+  unknown `jaxrs` key.
 - **Hiding an input the method does not bind, once a documentation module is bound.** A method-level
   hiding entry — `@Parameter(name = ..., in = ..., hidden = true)` on the method, in `@Parameters`, in
   `@Operation(parameters = ...)`, or carried by a composed annotation — must name an input the method
