@@ -399,9 +399,8 @@ public class DocumentRouteCollisionIT {
     }
 
     @Test
-    @DisplayName(
-            "Several colliding routes of one mount are listed one line each, by document URL, then method, then template")
-    void collidingRoutesAreListedByUrlThenMethodThenTemplate() throws Exception {
+    @DisplayName("Several colliding routes of one mount are listed one line each, by document URL, then template")
+    void collidingRoutesAreListedByUrlThenTemplate() throws Exception {
         // Given: the documented root application api at / holding GET /apidocs/{rest: .+},
         // GET /{rest: .*}, and GET /{a}/{b}/{c}; Vert.x registers the regex route /{rest: .*} before
         // /{a}/{b}/{c} as the more specific one, the reverse of their template order
@@ -416,7 +415,7 @@ public class DocumentRouteCollisionIT {
         StartupDeployments.Outcome outcome = StartupDeployments.deploy(vertx, component::httpVerticle);
         try {
             // Then: one refusal lists every route per document URL, the URLs in order, and within a
-            // URL the routes by method, then template
+            // URL the routes by template (every route here is a GET)
             assertNotNull(outcome.failure(), "the composition is refused");
             RestConfigurationException refusal = assertInstanceOf(
                     RestConfigurationException.class, outcome.failure(), () -> "the failure: " + outcome.failure());

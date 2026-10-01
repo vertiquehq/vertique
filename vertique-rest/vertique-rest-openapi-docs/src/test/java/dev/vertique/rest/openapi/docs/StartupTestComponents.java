@@ -257,6 +257,20 @@ public final class StartupTestComponents {
     }
 
     /**
+     * The shared fixture with {@code ProtectedMgmtApi} in place of {@code MgmtApi}, and neither a
+     * scheme handler nor the enforcement marker bound, so its protected document breaks both value
+     * rules at once.
+     */
+    @Singleton
+    @Component(modules = {StartupBase.class, ProtectedRegistrationModule.class, SharedResourcesModule.class})
+    public interface ProtectedWithoutBindingsComponent extends StartupProvisions {
+
+        /** Factory taking the application configuration. */
+        @Component.Factory
+        interface ComponentFactory extends Factory<ProtectedWithoutBindingsComponent> {}
+    }
+
+    /**
      * Two protected documents beside the shared {@code PublicApi}: {@code ProtectedMgmtApi}
      * ({@code bearerAuth}) and {@code ProtectedOpsApi} ({@code otherAuth}), the enforcement marker
      * bound, and no scheme handler, so each protected document names a scheme no handler has.

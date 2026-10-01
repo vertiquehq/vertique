@@ -1103,6 +1103,52 @@ public class DocsStartupChecksIT {
 
     @Test
     @DisplayName(
+            "a protected document breaking both value rules fails startup in one refusal listing its access line before its securityScheme line")
+    void bothProtectedValueViolationsOfOneDocumentAreSorted(Vertx vertx) throws Exception {
+        // Given: PublicApi and ProtectedMgmtApi (bearerAuth), with neither a scheme handler nor the
+        // enforcement marker bound, and the protected document's info configured
+        StartupProvisions component = DaggerStartupTestComponents_ProtectedWithoutBindingsComponent.factory()
+                .create(markedSharedWithMgmtInfo());
+
+        // When: it is deployed
+        Outcome outcome = deploy(vertx, component);
+        try {
+            // Then: startup failed before any JAX-RS router, naming both the missing enforcement and
+            // the missing handler of the one protected document
+            String label = "one protected document, no scheme handler, no enforcement marker";
+            assertStartupFailure(
+                    label,
+                    outcome,
+                    component,
+                    SpyCheck.HOOK_ONLY,
+                    MGMT,
+                    List.of(
+                            PROTECTED_MGMT_API,
+                            ACCESS_ATTRIBUTE,
+                            NO_ENFORCEMENT,
+                            SECURITY_SCHEME_ATTRIBUTE,
+                            BEARER_AUTH,
+                            NO_HANDLER),
+                    List.of(NOT_SERVED_YET));
+
+            // and: in one message, the access line before the securityScheme line
+            String message = outcome.failure().getMessage();
+            int accessLine = message.indexOf(ACCESS_ATTRIBUTE);
+            int schemeLine = message.indexOf(SECURITY_SCHEME_ATTRIBUTE);
+            assertAll(
+                    label + ": the refusal " + message,
+                    () -> assertTrue(
+                            accessLine < schemeLine, label + ": the access line comes before the securityScheme line"),
+                    () -> assertEquals(
+                            1, occurrences(message, NO_ENFORCEMENT), label + ": one missing-enforcement line"),
+                    () -> assertEquals(1, occurrences(message, NO_HANDLER), label + ": one missing-handler line"));
+        } finally {
+            StartupDeployments.undeploy(vertx, outcome);
+        }
+    }
+
+    @Test
+    @DisplayName(
             "an unmarked documentation mount refuses as unvalidated before it checks its protected documents' values")
     void unvalidatedRefusalPrecedesTheProtectedValueChecks(Vertx vertx) throws Exception {
         // Given: ProtectedMgmtApi, whose bearerAuth scheme no handler has, the enforcement marker bound,
