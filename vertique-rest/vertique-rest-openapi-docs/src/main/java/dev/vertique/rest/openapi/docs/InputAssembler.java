@@ -66,7 +66,8 @@ import java.util.Set;
  *
  * <p>A captured request body is published only once its redaction manifest is verified against the
  * capture (see {@link ManifestVerifier}); the document's own copy is then checked for refused
- * constructs, and the reserved-name assertions the manifest lists are removed from it (see {@link
+ * constructs, every published body, captured schema or not, is refused when its type is described
+ * with a hidden member or type (see {@link HiddenMemberRefusal}), and the reserved-name assertions the manifest lists are removed from it (see {@link
  * ReservedNameRedaction}) before it is relocated into a component. A method parameter or form field
  * with a captured schema may not hold {@code propertyNames} (see {@link ParameterPropertyNames}); it
  * publishes that schema unchanged, inline or as a component (see {@link SchemaEmbedder}). A
@@ -108,11 +109,14 @@ final class InputAssembler {
      * @param facts the operation's descriptor facts, or {@code null} when none were taken
      * @param context the per-application inputs, naming the bound schema source
      * @param tally the disclosure tally of the document's assembly
+     * @param generators the input generators of the document's assembly
      * @return the plan, to publish once every operation of the document is checked
      * @throws RestConfigurationException when the operation hides a path parameter, two visible
      *     inputs share a name and location, a published request body carries no matching redaction
-     *     manifest or one that does not resolve in it, a published parameter or form-field schema holds
-     *     {@code propertyNames}, or a published captured schema holds a refused construct
+     *     manifest or one that does not resolve in it, a published request body's type is described
+     *     with a hidden member or type or cannot be inspected for one, a published parameter or
+     *     form-field schema holds {@code propertyNames}, or a published captured schema holds a refused
+     *     construct
      */
     static Plan check(
             String subject,
@@ -120,7 +124,8 @@ final class InputAssembler {
             OperationPublication operation,
             OperationFacts facts,
             AssemblyContext context,
-            DisclosureTally tally) {
+            DisclosureTally tally,
+            InputGenerators generators) {
         OperationDetail detail = operation.detail();
         if (detail == null) {
             return new Plan(operation.operationId(), List.of(), null, null);
@@ -151,10 +156,13 @@ final class InputAssembler {
         if (bodyBinding != null) {
             JsonObject captured = schemas == null ? null : schemas.body();
             SchemaEmbedder.CheckedSchema checked = null;
+            RedactionManifest manifest = null;
             if (captured != null) {
-                RedactionManifest manifest =
-                        ManifestVerifier.verify(subject, operationId, captured, schemas.bodyProvenance(), context);
+                manifest = ManifestVerifier.verify(subject, operationId, captured, schemas.bodyProvenance(), context);
                 checked = embedder.check(InputDescription.body(operationId), captured);
+            }
+            HiddenMemberRefusal.refuse(subject, operationId, bodyBinding, detail.profileId(), generators);
+            if (checked != null) {
                 ReservedNameRedaction.redact(subject, operationId, manifest, checked.tree(), context, tally);
             }
             boolean required = detail.gateInstalled() && captured != null && rejectsNull(captured);
