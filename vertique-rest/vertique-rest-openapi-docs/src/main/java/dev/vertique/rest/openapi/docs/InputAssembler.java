@@ -435,13 +435,15 @@ final class InputAssembler {
          *
          * @param embedder the schema embedder that checked the schemas
          * @param metadata the operation's documentation metadata
+         * @param responses the checked response plan of the operation
          * @return the Operation Object with the metadata's {@code tags}, {@code summary}, {@code
          *     description}, and {@code externalDocs}, then {@code operationId}, {@code parameters}
-         *     when there are any, {@code requestBody} when there is one, and the metadata's {@code
-         *     deprecated}, in that order
+         *     when there are any, {@code requestBody} when there is one, {@code responses} when the
+         *     response plan publishes any, and the metadata's {@code deprecated}, in that order
          * @throws RestConfigurationException when a component key is already taken in the document
          */
-        ObjectNode publish(SchemaEmbedder embedder, OperationMetadata metadata) {
+        ObjectNode publish(
+                SchemaEmbedder embedder, OperationMetadata metadata, ResponseAssembler.ResponsePlan responses) {
             ObjectNode node = NODES.objectNode();
             metadata.writeLeading(node);
             node.put("operationId", operationId);
@@ -455,6 +457,10 @@ final class InputAssembler {
                 node.set("requestBody", body.publish(embedder));
             } else if (form != null) {
                 node.set("requestBody", form.publish(embedder));
+            }
+            ObjectNode published = responses.publish(embedder);
+            if (published != null) {
+                node.set("responses", published);
             }
             metadata.writeTrailing(node);
             return node;

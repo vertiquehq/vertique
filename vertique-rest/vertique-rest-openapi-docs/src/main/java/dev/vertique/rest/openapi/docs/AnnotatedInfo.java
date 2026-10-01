@@ -195,8 +195,13 @@ record AnnotatedInfo(
     /**
      * Reads extensions in declaration order: the {@code x-} ones become members, merged by name, and
      * the names of the others are added to {@code unpublished}.
+     *
+     * @param declared the extensions, in declaration order
+     * @param unpublished receives the name of every extension that is not published, a blank name as
+     *     {@value #UNNAMED}
+     * @return the published extensions by name, in declaration order
      */
-    private static Map<String, JsonNode> readExtensions(Extension[] declared, SortedSet<String> unpublished) {
+    static Map<String, JsonNode> readExtensions(Extension[] declared, SortedSet<String> unpublished) {
         Map<String, JsonNode> published = new LinkedHashMap<>();
         for (Extension extension : declared) {
             String name = extension.name();

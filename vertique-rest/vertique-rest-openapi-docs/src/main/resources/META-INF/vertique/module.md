@@ -17,14 +17,15 @@ server-level prefix (default `/apidocs`) at `<prefix>/<application name>/openapi
 startup, on a worker thread, and served from frozen bytes with strong entity tags, conditional
 `304` answers, `HEAD`, and `Cache-Control`.
 
-A document describes the application's inputs: `openapi` (`3.1.1`), the `info` object from
-configuration or from `@OpenAPIDefinition(info)`, the JSON Schema dialect, one server, every
-visible operation of the mount with its parameters and request body, the component schemas those
-inputs reference, the tags its operations declare, and the pattern dialect (see
-[Document Content](#document-content)). Operations, parameters, and request bodies carry the
-documentation of their Swagger annotations (see [Swagger annotations](#swagger-annotations)). It lists
-no responses or security schemes, although the module receives the response shape at startup and
-compares it across server instances (see [Several server instances](#several-server-instances)).
+A document describes the application's inputs and responses: `openapi` (`3.1.1`), the `info` object
+from configuration or from `@OpenAPIDefinition(info)`, the JSON Schema dialect, one server, every
+visible operation of the mount with its parameters, request body, and responses, the component
+schemas those inputs and responses reference, the tags its operations declare, and the pattern
+dialect (see [Document Content](#document-content)). Responses are inferred from each resource
+method's return type or taken from its `@ApiResponse` declarations (see
+[Operation Responses](#operation-responses)). Operations, parameters, request bodies, and responses
+carry the documentation of their Swagger annotations (see
+[Swagger annotations](#swagger-annotations)). It lists no security schemes.
 
 The module serves documents only. It has no UI, no assets, and no other route, and `@ApiDocs` is not
 API protection: it does not change who may call any operation of the application.
@@ -114,9 +115,12 @@ configuration entry alone.
 
 When an application's mount is built at startup, the module receives the mount's publication (the
 operations with their resolved inputs, schemas, and response shape), copies what it needs during
-that call, and assembles the document on a worker thread. The document is stored as immutable JSON
-and YAML bytes built from one tree, together with a strong entity tag for each form. Nothing is
-assembled per request, no schema source is called per request, and no event loop waits for another.
+that call, and assembles the document on a worker thread. The composition that assembles a
+document is the only one that generates its response schemas (see
+[Output profile and generation](#output-profile-and-generation)). The document is stored as
+immutable JSON and YAML bytes built from one tree, together with a strong entity tag for each form.
+Nothing is assembled per request, no schema source or schema generator is called per request, and no
+event loop waits for another.
 
 - **JSON:** compact UTF-8 with the root members in a fixed order (see
   [Document Content](#document-content)); `info` holds the configured `title`, `description`, and
@@ -126,11 +130,12 @@ assembled per request, no schema source is called per request, and no event loop
 - **Identical inputs produce identical bytes** and identical entity tags.
 
 For the example above, with no `serverUrl` configured, no request-validation gate installed, and a
-`CatalogResource` at `@Path("/items")` declaring `listItems(@QueryParam("limit") Integer limit)` on
-`GET`, `getItem(@PathParam("id") String id)` on `GET /{id}`, and
-`createItem(@QueryParam("dryRun") boolean dryRun, CreateItemRequest request)` on `POST` with
-`@Consumes(APPLICATION_JSON)`, where `CreateItemRequest` is `record CreateItemRequest(String name,
-int quantity)`, the JSON document is exactly (wrapped here for reading):
+`CatalogResource` at `@Path("/items")` declaring `String listItems(@QueryParam("limit") Integer
+limit)` on `GET` and `String getItem(@PathParam("id") String id)` on `GET /{id}`, both with
+`@Produces(TEXT_PLAIN)`, and `void createItem(@QueryParam("dryRun") boolean dryRun,
+CreateItemRequest request)` on `POST` with `@Consumes(APPLICATION_JSON)`, where `CreateItemRequest`
+is `record CreateItemRequest(String name, int quantity)`, the JSON document is exactly (wrapped here
+for reading):
 
 ```json
 {"openapi":"3.1.1","info":{"title":"Catalog","version":"1.0"},
@@ -139,14 +144,17 @@ int quantity)`, the JSON document is exactly (wrapped here for reading):
 "paths":{
 "/items":{
 "get":{"operationId":"listItems",
-"parameters":[{"name":"limit","in":"query","schema":{"type":"integer"}}]},
+"parameters":[{"name":"limit","in":"query","schema":{"type":"integer"}}],
+"responses":{"200":{"description":"OK","content":{"text/plain":{}}}}},
 "post":{"operationId":"createItem",
 "parameters":[{"name":"dryRun","in":"query","schema":{"type":"boolean"}}],
 "requestBody":{"content":{"application/json":
-{"schema":{"$ref":"#/components/schemas/createItem.request"}}}}}},
+{"schema":{"$ref":"#/components/schemas/createItem.request"}}}},
+"responses":{"204":{"description":"No Content"}}}},
 "/items/{id}":{
 "get":{"operationId":"getItem",
-"parameters":[{"name":"id","in":"path","required":true,"schema":{"type":"string"}}]}}},
+"parameters":[{"name":"id","in":"path","required":true,"schema":{"type":"string"}}],
+"responses":{"200":{"description":"OK","content":{"text/plain":{}}}}}}},
 "components":{"schemas":{
 "createItem.request":{"$schema":"https://json-schema.org/draft/2020-12/schema",
 "properties":{"name":{"type":"string"},"quantity":{"type":"integer"}},
@@ -156,7 +164,8 @@ int quantity)`, the JSON document is exactly (wrapped here for reading):
 
 The served bytes have no line breaks. `limit` and `dryRun` carry no `required` member because
 neither is certainly required, and the request body carries none because no validation gate is
-installed.
+installed. The two `String` operations publish raw text without a schema, and the `void` operation
+publishes `204` (see [Operation Responses](#operation-responses)).
 
 ### The docs mount
 
@@ -241,8 +250,10 @@ every annotated application is switched off, or no application is registered, th
 no publication sink and no docs mount. No publication is built, no composition validator runs, no
 startup warning is logged, and routes, validation, and schema-source calls are exactly as without
 the module. In particular, no request body is checked for a redaction manifest, so a schema source
-that binds none starts and routes unchanged. Only two configuration checks still run when
-`apidocs.enabled` is not `false`: the checks of every `apidocs.documents` entry and the `@ApiDocs`
+that binds none starts and routes unchanged, and no response is inferred, generated, or checked, so
+a renamed or hidden output member or an output type the generator rejects does not affect startup.
+The same holds for an application whose own document is disabled while another one is enabled.
+Only two configuration checks still run when `apidocs.enabled` is not `false`: the checks of every `apidocs.documents` entry and the `@ApiDocs`
 shape check of every active application (see [Configuration](#configuration)). With
 `apidocs.enabled` `false`, nothing runs.
 
@@ -258,8 +269,9 @@ shape check of every active application (see [Configuration](#configuration)). W
 
 ## Document Content
 
-A document is built from the operations its application's JAX-RS mount publishes and from the
-schemas the mount captured for their inputs. Nothing is read from a request.
+A document is built from the operations its application's JAX-RS mount publishes, from the
+schemas the mount captured for their inputs, and from the output schemas the module generates for
+their responses (see [Operation Responses](#operation-responses)). Nothing is read from a request.
 
 ### Root members
 
@@ -292,8 +304,8 @@ The root members are written in this order:
   `get`, `put`, `post`, `delete`, `options`, `head`, `patch`, `trace`.
 - **Operation Object.** `tags`, `summary`, `description`, and `externalDocs`, each only when set
   (see [Swagger annotations](#swagger-annotations)); then `operationId` (the runtime operation id),
-  `parameters` (left out when empty), `requestBody` (left out when the operation has none), and
-  `deprecated` (only `true`).
+  `parameters` (left out when empty), `requestBody` (left out when the operation has none),
+  `responses` (see [Operation Responses](#operation-responses)), and `deprecated` (only `true`).
 - **Hidden operations.** A hidden operation is not listed (see
   [Hidden operations](#hidden-operations)).
 
@@ -359,8 +371,8 @@ content is checked:
   left there, every component keyed by its operation id, and every root tag that only it declared
   are absent.
 - **Nothing of it is checked as content.** Its paths, inputs, schemas, redaction manifest, hidden
-  members, annotations, tags, and examples are neither verified nor checked, and it causes no
-  warning.
+  members, annotations, tags, examples, return type, and declared responses are neither verified
+  nor checked, no output schema is generated for it, and it causes no warning.
 - **It changes no disclosure.** The `reservedNamesRefused` and `hiddenInputs` members of
   [Validation disclosure](#validation-disclosure) are computed over the visible operations only.
 - **Its route still answers.** Hiding changes the document only: the route, its validation, and its
@@ -433,15 +445,18 @@ that order, and nothing else: no `example`, `examples`, or `deprecated`. Each Me
 
 Component keys are built from the runtime operation id:
 
-| Input | Component key |
+| Input or output | Component key |
 |---|---|
 | Request body | `<operationId>.request` |
 | Parameter | `<operationId>.<location>.<name>`, location in lowercase |
 | Form field | `<operationId>.form.<name>` |
+| Inferred response body | `<operationId>.response` |
+| Declared response content | `<operationId>.response.<status>`, or `<operationId>.response.<status>.<n>` (see [Response components](#response-components)) |
+| Declared response header | `<operationId>.response.<status>.header.<name>` |
 | Relocated definition | `<component>.<def>` |
 
 Every character outside `[A-Za-z0-9._-]` in a key is replaced by `_`. Two components with the same
-key fail startup.
+key fail startup. Response components are published after the operation's input components.
 
 ### Reserved-name redaction
 
@@ -509,8 +524,8 @@ request-validation gate uses are never changed.
 
 ### Refused constructs
 
-A captured schema that the document cannot publish fails startup. It is refused when, at a schema
-position, it holds:
+A captured input schema or a generated output schema that the document cannot publish fails
+startup. It is refused when, at a schema position, it holds:
 
 - `$id` anywhere, the root included;
 - `$anchor`, `$dynamicAnchor`, or `$dynamicRef`;
@@ -520,9 +535,10 @@ position, it holds:
   such as an anchor-name fragment, a pointer to a missing member, or a pointer to the `$defs` object
   itself.
 
-The failure names the application, its declaring interface, the mount, the operation, the input,
-and the JSON Pointer of the offending keyword. It never echoes a value, a reference, or schema text,
-and names a `patternProperties` member by its ordinal (`[key-N]`) rather than its pattern.
+The failure names the application, its declaring interface, the mount, the operation, the input
+(for a response, `the output schema of status <status>`, or `the output schema of header '<name>'
+of status <status>`), and the JSON Pointer of the offending keyword. It never echoes a value, a
+reference, or schema text, and names a `patternProperties` member by its ordinal (`[key-N]`) rather than its pattern.
 Identifiers, anchors, and nested definitions are reported before references.
 
 **`propertyNames` in a parameter.** Only a request body carries a redaction manifest, so a captured
@@ -545,8 +561,9 @@ order the document lists it. Within an operation, a hidden path parameter is che
 hidden inputs are left out, and the visible inputs are checked: duplicate inputs; the request body
 (its manifest, its refused constructs, its [hidden members](#hidden-members-of-a-request-body), and
 its redaction); the parameter schemas (`propertyNames`, then refused constructs); the form-field
-schemas, likewise; and then its Swagger annotations (see
-[Agreement with the runtime](#agreement-with-the-runtime)). Once every operation is checked, the
+schemas, likewise; then its Swagger annotations (see
+[Agreement with the runtime](#agreement-with-the-runtime)); and then its responses (see
+[Order of the response checks](#order-of-the-response-checks)). Once every operation is checked, the
 `@Tag` declarations of all operations are merged in the same order (see [Tags](#tags)). The first
 violation fails startup. Component key collisions are found as components are published.
 
@@ -656,6 +673,7 @@ operation fails startup (see [Agreement with the runtime](#agreement-with-the-ru
 | `@Parameter.examples` | `examples` | Wins over `example`; see [Examples](#examples) |
 | `@RequestBody.description` | The request body's `description` | From the selected `@RequestBody` (below); when blank, the `description` of the first `content` entry's schema that sets one |
 | `@RequestBody.content` examples | The Media Type Object's `examples` or `example` | See [Examples](#examples); never on the Request Body Object, never on a form body |
+| `@ApiResponse` and `@ApiResponses` on the method or the class | The operation's `responses` | See [Declared responses](#declared-responses); their `content.schema.implementation` is published, unlike a request body's |
 | `@Operation.operationId`, `@Parameter.name`, `in`, `required`, `content`, `schema.implementation`, `array.schema.implementation`, `@RequestBody.content.mediaType`, `content.schema.implementation`, `required` | Nothing | Checked against the runtime; see [Agreement with the runtime](#agreement-with-the-runtime) |
 | `ref` of `@Parameter`, `@RequestBody`, or `@ExampleObject` | Nothing | Fails startup: the document declares no reusable parameters, request bodies, or examples to reference |
 | Other members of `@Schema` and `@ArraySchema` on an input | Nothing | Named in a warning; see [Ignored schema members](#ignored-schema-members) |
@@ -678,7 +696,8 @@ operation fails startup (see [Agreement with the runtime](#agreement-with-the-ru
   name). The document adds, renames, and removes nothing there.
 - **Not applied and not checked.** Every member the table does not list, among them `@Parameter`
   `style`, `explode`, `allowReserved`, `allowEmptyValue`, and `extensions`; `@Operation`
-  `parameters`, `responses`, `security`, `servers`, and `extensions`; `@RequestBody.extensions`;
+  `parameters`, `responses` (declare responses with `@ApiResponse` on the method or the class
+  instead), `security`, `servers`, and `extensions`; `@RequestBody.extensions`;
   the `@Content` members other than `mediaType`, `examples`, `schema`, and `array`; and the
   extensions of `@Tag`, `@ExternalDocumentation`, and `@ExampleObject`. A method-level `@Parameter`
   or `@Parameters` entry is read only to hide an input (see [Hidden inputs](#hidden-inputs)).
@@ -779,6 +798,345 @@ The captured schema of an input stays authoritative. Every non-default member of
 `@Parameter(schema = @Schema(hidden = true))` does not hide an input: `hidden` there is an ignored
 member and is warned. Hide an input with `@Parameter(hidden = true)` or a `@Schema(hidden = true)` on
 the input itself (see [Hidden inputs](#hidden-inputs)).
+
+---
+
+## Operation Responses
+
+Every visible operation publishes a `responses` object. Without `@ApiResponse` it is inferred from
+the resource method's return type; with one, the declared responses replace the inferred one. The
+document describes responses only: the runtime never checks a returned value against it, and no
+error-body schema is ever inferred.
+
+### Inferred responses
+
+An operation that declares no `@ApiResponse`, on its method or its class, publishes exactly one
+response:
+
+| Return type of the resource method | Published `responses` |
+|---|---|
+| `void`, `Void`, or `Future<Void>` | `{"204": {"description": "No Content"}}` |
+| `Future<T>` or a plain type `T`, with a JSON-compatible produces type | `"200"` with description `OK` and, for each JSON-compatible produces type in declared order (`application/json` when the method declares none), a Media Type Object whose `schema` is a reference to the component `<operationId>.response`: the output schema of `T` under the operation's output profile |
+| `String` or `Future<String>` | `"200"` with description `OK` and one media type per declared produces type, in declared order (`application/json` when none), each `{}`: the body is raw text, not a JSON string, so no schema is published |
+| Everything decided at runtime (below) | `{"default": {"description": "Response determined at runtime"}}`, with no content |
+
+The rules apply in this order, the first match winning:
+
+1. **No content.** `void`, `Void`, and `Future<Void>` publish `204`.
+2. **Type variables.** Every type variable of the return type is resolved (see
+   [Type variables](#type-variables)); then exactly one level of `io.vertx.core.Future` is
+   unwrapped, so `Future<Response>` classifies as `Response` and `Future<String>` as `String`. A raw
+   `Future` without a type argument is decided at runtime, and so is a subtype of `Future` (for
+   example `interface MyFuture<T> extends Future<T>`): only `io.vertx.core.Future` itself is
+   unwrapped, so a subtype publishes the runtime-determined `default` response with no content. A
+   `Future` or a subtype inside the unwrapped `Future` (`Future<Future<T>>`, `Future<MyFuture<T>>`)
+   publishes that `default` response too.
+3. **Still open.** A type that still holds a type variable or a wildcard is decided at runtime and
+   is never handed to the generator.
+4. **Handled by the runtime.** `Response`, `CompletionStage`, `ReadStream`, `Buffer`, and their
+   subtypes, `Optional`, and `byte[]` are decided at runtime. So is a type bound to a
+   `ResponseProducerBinding`: the type itself, a superclass, or an interface of it equals a bound
+   `type()`, walked as the runtime looks a producer up. A producer binding wins before the `String`
+   and JSON rows, because the runtime consults producers before any body encoder.
+5. **`String`.** A `String` is raw text under every produces type, `application/json` and
+   `text/event-stream` included: the runtime writes a `String` entity as it is.
+6. **Event streams.** Any other type whose produces list holds a type starting with
+   `text/event-stream` is decided at runtime.
+7. **JSON entities.** Any other type publishes `200` under its JSON-compatible produces types. A
+   media type is JSON-compatible exactly when it contains `json`, compared case-sensitively as the
+   runtime's JSON encoder decides: `application/json` and `application/vnd.acme+json` are,
+   `application/JSON` is not. Other produces types are left out of the content. A type with no
+   JSON-compatible produces type, such as one producing only `text/plain`, is decided at runtime.
+
+The whole resolved type is generated: `Future<List<Item>>` publishes the output schema of
+`List<Item>`, an array.
+
+No `4XX`, `5XX`, or `default` response is ever added to an inferred response, and no error body is
+described. Declare them with `@ApiResponse` (see [Declared responses](#declared-responses)).
+
+### Type variables
+
+Before classification, every type variable of the return type is resolved against the generic
+superclasses and interfaces of the resource class the operation is registered on, the nearest
+binding winning. For `class ItemResource extends CrudResource<Item>`, an inherited `T find()`
+classifies as `Item` and an inherited `Future<List<T>> list()` as `Future<List<Item>>`.
+
+These stay open and publish `default`:
+
+- a method-level type variable, as in `<T> T any()`;
+- a type variable of a generic resource class registered itself, as `T get()` on
+  `GenericResource<T>`;
+- a wildcard, as in `List<?>`.
+
+### Declared responses
+
+`@ApiResponse` (or its container `@ApiResponses`; the two forms are equivalent) is read at two
+levels:
+
+- **Method level.** The resource method, the methods it overrides, and the interface methods it
+  implements, all together as one level.
+- **Class level.** The resource class, its superclasses, and its implemented interfaces.
+
+The declared set is the class level's responses plus the method level's, the method's declaration
+winning for a status both declare (as swagger-core merges them). A non-empty declared set replaces
+the inferred response entirely, also for an operation that declares nothing itself when its class
+does. `@Operation.responses` is not read.
+
+- **Valid statuses.** A status is `default`, a three-digit code from `100` to `599`, or an uppercase
+  range key from `1XX` to `5XX`. Anything else, such as `2xx`, `600`, or `20`, fails startup.
+- **One declaration per status and level.** A level that declares one status twice fails startup,
+  naming the level. Because the method level includes the implementation and its interface methods,
+  an implementation method and its interface method declaring one status differently fail too;
+  identical declarations count once.
+- **Order.** Response keys are published numeric codes ascending, then range keys ascending, then
+  `default`, whatever the declaration order or level.
+- **Descriptions.** A declared `description` is published as written. A blank one publishes the
+  status's reason phrase (`Accepted` for `202`); a code without a registered phrase publishes the
+  phrase of its class (`Success` for `299`); a range key publishes `Informational`, `Success`,
+  `Redirection`, `Client error`, or `Server error`; and `default` publishes
+  `Response determined at runtime`.
+- **Response Object.** `description`, `headers` (when any), `content` (when published), then its
+  `x-` extensions, in that order.
+
+### A declared success status without content
+
+A declared success status, a code from `200` to `299` other than `204` and `205` or the range key
+`2XX`, whose `@ApiResponse` declares no `content` receives the inferred content when the return type
+is inferable (the `200` rows of [Inferred responses](#inferred-responses)): the inferred media types
+and, for a JSON entity, a reference to the inferred component `<operationId>.response`. Its declared
+description and headers are kept:
+
+| Declared status | Return type | Published content |
+|---|---|---|
+| Success status without `content` | A JSON entity or a `String` | The inferred content |
+| Success status without `content` | Decided at runtime, or no content | None; startup does not fail |
+| Any status with `content` | Any | The declared content only, even on an inferable return |
+| Any other status without `content`: `204`, `205`, `3XX`, `404`, `default`, and so on | Any | None |
+
+So `@ApiResponse(responseCode = "200", description = "The catalog item")` on a method returning a
+plain `CatalogItem` publishes its description together with the `CatalogItem` schema.
+
+This is a deliberate difference from swagger-core, whose `useReturnTypeSchema` defaults to `false`,
+so swagger-core publishes such a status without content. A document generated at build time by a
+swagger-core based tool may therefore differ from the served document at such a status.
+
+**`useReturnTypeSchema = true`.** A status that sets it publishes the inferred content under any
+status when it declares no `content`; with `content` declared on an inferable return, the declared
+content wins. On a return type that is not inferable it fails startup, whether or not `content` is
+declared.
+
+### Response content and headers
+
+- **Media types.** A `@Content` with a `mediaType` applies to that media type. One with a blank
+  `mediaType` applies to each of the operation's produces types in declared order
+  (`application/json` when it declares none), JSON-compatible or not. A media type declared twice
+  in one status, also through a blank `mediaType`, fails startup naming `@Content.mediaType`.
+- **Schema.** `schema = @Schema(implementation = X)` publishes `{"$ref":
+  "#/components/schemas/<component>"}` (see [Response components](#response-components)).
+- **Arrays.** `array = @ArraySchema(schema = @Schema(implementation = X))` publishes
+  `{"items": {"$ref": "#/components/schemas/<component>"}, "type": "array"}`, members in that order,
+  the component describing `X`. When a `@Content` sets both, the `schema` is published and the
+  array's set members are warned as omitted.
+- **Neither.** A `@Content` with neither implementation publishes its media type as `{}`.
+- **Media Type Object.** `schema` (when published), then `examples` (when declared).
+- **Headers.** A Header Object holds `description` (when set), `required` and `deprecated` (only
+  `true`), then `schema`: a reference to the component `<operationId>.response.<status>.header.<name>`
+  when `schema.implementation` is set, and the empty schema `{}` otherwise, since OpenAPI 3.1
+  requires a header schema. A `@Header` with a blank name is left out and warned as `@Header.name`.
+  One header name declared twice in one status fails startup naming `@Header.name`; names are
+  compared ignoring ASCII letter case, so `X-Rate` and `x-rate` are the same header (non-ASCII
+  letters never fold).
+- **`@Header(hidden = true)` is not honored.** The header is published, and `@Header.hidden` is
+  named in the [omitted-attribute warning](#omitted-response-attributes).
+- **`hidden = true` on a response's `@Schema` is not honored either.** On a content schema, an
+  `@ArraySchema`'s `schema` or `arraySchema`, or a header schema, the implementation is still
+  generated and published in full, and `hidden` is merely warned (as `@Schema.hidden`, or
+  `@ArraySchema.arraySchema`), not refused. To keep a type out of a document, remove the declaration or hide the operation.
+
+**Documentation members.** The `description`, `title`, `example`, `deprecated` (only `true`), and
+`externalDocs` (only with a `url`) of a `@Schema` that sets `implementation` are published beside the
+reference they document, never in the component: beside the content or header schema's `$ref`, or
+beside the `items` reference of an array. Their keys are in natural order, for example
+`{"$ref": "#/components/schemas/getThing.response.200", "description": "The thing body", "title":
+"Thing"}`. An `example` is published as JSON when its trimmed text parses as exactly one JSON value,
+and as a string otherwise. Unlike a request body's, a response schema's `example` stays in the
+Schema Object and never becomes the Media Type Object's `example`. A member that is set to
+whitespace only counts as unset and is warned. A `@Schema` without `implementation` publishes
+nothing, and every member it sets is warned.
+
+**Examples.** `@Content.examples` becomes the Media Type Object's `examples` under the rules of
+[Examples](#examples): keyed by `name`, in declaration order, each with `summary`, `description`, and
+`value` or `externalValue`, a `value` that parses as JSON published as JSON. A blank or repeated
+name, both `value` and `externalValue`, or a non-blank `ref` fails startup naming the operation, the
+`@ExampleObject` attribute, and `@Content.examples on status <status>`. The extensions of an
+`@ExampleObject` are not published and are warned.
+
+**Extensions.** An `@ApiResponse.extensions` entry whose name starts with `x-` (case-sensitive)
+becomes a member of the Response Object, after `content`, rendered as an `info` extension is (see
+[`info`](#info)): `@Extension(name = "x-rate-limited", properties = @ExtensionProperty(name =
+"limit", value = "10"))` becomes `"x-rate-limited": {"limit": "10"}`. Any other extension is not
+published and is warned.
+
+### Response components
+
+| Schema | Component key |
+|---|---|
+| The inferred output type | `<operationId>.response`, one per operation, referenced from every media type and status that publishes the inferred content |
+| A declared `schema.implementation` or `array` element implementation | `<operationId>.response.<status>` |
+| Several different implementations in one status | `<operationId>.response.<status>.1`, `.2`, and so on, numbered from 1 in declaration order |
+| A header's `schema.implementation` | `<operationId>.response.<status>.header.<name>` |
+
+- **One implementation, one component.** One implementation used by several media types of a status,
+  or as both a `schema` and an `array` element, is one component and gets no number. The same type
+  under two statuses is two components.
+- **Sanitizing and collisions.** Every key is built as in [Components](#components): each character
+  outside `[A-Za-z0-9._-]` is replaced by `_`, and two components with the same key fail startup, as
+  do the components of operations `get:report` and `get_report`. The failure names the colliding
+  component as `the output schema of status <status> of operation '<id>'`, or
+  `the output schema of header '<name>' of status <status> of operation '<id>'`.
+- **Relocation and refused constructs.** Each component is the generated output schema, relocated
+  as in [Relocation of local definitions](#relocation-of-local-definitions) (each root `$defs` entry
+  becomes `<component>.<def>`) and checked as in [Refused constructs](#refused-constructs).
+- **Only what is referenced.** The inferred type is generated, checked, and published only when
+  some status publishes the inferred content, so an operation whose declared responses supply all
+  their content never generates its return type.
+
+### Omitted response attributes
+
+Every attribute of a declared response that is set to something other than its default and that the
+sections above do not publish is left out and does not fail startup. Among them:
+
+- `@ApiResponse.ref` and `@ApiResponse.links`;
+- `@Content.encoding` and every other `@Content` member except `mediaType`, `schema`, `array`, and
+  `examples`;
+- every `@Schema` member other than `implementation` and the documentation members, such as `type`,
+  `format`, or `maxProperties`, and every member of a `@Schema` without `implementation`;
+- every `@ArraySchema` member other than `schema`, such as `minItems` or `arraySchema`;
+- `@Header.ref`, `@Header.hidden`, and every other `@Header` member except `name`, `description`,
+  `required`, `deprecated`, and `schema`;
+- an extension whose name does not start with `x-`, named `@ApiResponse.extensions` without its name,
+  and `@ExampleObject.extensions`.
+
+One warning per operation names all of them, each as `<attribute> on status <status>`, in published
+status order; within a status the response's own members come first, then each header's, then
+each content's, members in name order. It is logged at WARN on the `DocumentWarnings` logger once
+the document is written (see [Metadata warnings](#metadata-warnings)), and quotes no attribute value:
+
+```text
+apidocs.documents.<name>: operation '<id>' at mount '<mount path>' declares response attributes the
+document does not publish: @ApiResponse.links on status 200, @Header.hidden on status 404
+```
+
+### Output profile and generation
+
+- **Output profile.** The operation's output profile is the JSON mapper profile the runtime
+  serializes its responses with, such as one selected with `@JsonProfile`, looked up in the
+  `JsonMapperProfileRegistry`. Each output type is described by the framework's output generator for
+  that profile (`AnnotationJsonSchemaGenerator.forOutputProfile`), so the component holds the names
+  and members a response carries: the profile's naming strategy applies, a read-only member appears,
+  and a write-only member does not.
+- **Only the framework's output generator.** Output schemas come from that generator alone. No
+  `OperationSchemaSource` is consulted for a response, and no schema is built from a Java type by
+  any other means.
+- **Once per document.** Output schemas are generated while a document is assembled, once per
+  document and component, by the composition that assembles it, with one generator per profile.
+  Another server instance that finds the document stored only compares its publication (see
+  [Several server instances](#several-server-instances)). Nothing is generated per request.
+
+### Refusals of output types
+
+Every published output type is checked: the inferred type (when some status publishes it), each
+declared content implementation, an `array` element implementation included, and each header
+implementation. Each is generated, then inspected for renamed members, then for hidden members,
+then checked for refused constructs; the first failure stops startup.
+
+These messages start with the document's configuration path, followed by the usual subject; below,
+`<prefix>` stands for
+`apidocs.documents.<name>: Application '<name>' (declared by <binary name>) at mount '<mount path>'`.
+Refused constructs and component collisions of an output schema start with the subject alone, as
+for inputs. No message carries schema text, an example, or a payload. Each message is one line; it is
+wrapped here for reading.
+
+**Generator failure.** An exception while resolving the profile, generating the schema, or
+inspecting it, for example a `JsonSchemaGenerationException` for a member whose
+`@Schema(implementation = ...)` redirects a type the profile overrides, fails startup:
+
+```text
+<prefix>: operation '<id>' cannot publish the output content schema of status <status>:
+generating it in output direction failed
+```
+
+A header type is named `header '<name>' schema` instead of `content schema`, and the reason is
+`inspecting it for renamed members failed` or `inspecting it for hidden members failed` when that
+step throws. The status is the declared status of the content or header; the inferred type is always
+named as status `200`, also when it is published under `201`, `2XX`, or a `useReturnTypeSchema`
+status. The generator's exception is kept as the cause.
+
+**Renamed output property.** A member that `@Schema(name = ...)` describes under a name other than
+the one the profile's mapper serializes fails startup, because the document would describe a
+property the response never carries:
+
+```text
+<prefix>: operation '<id>' publishes <declaring type> as an output type of status <status>; its member
+'<member>' is serialized as '<serialized name>' but described as '<schema name>', so the document
+would describe a property the response never carries; make @Schema(name) agree with the serialized
+name or remove it
+```
+
+The first renamed member reachable from the type is named. `@Schema(name)` loses to a non-empty
+`@JsonProperty` that names something other than the member itself, and the check reflects that:
+`@JsonProperty("wire") @Schema(name = "label") String code` publishes `wire` and is not refused, while
+a bare `@JsonProperty` or `@JsonProperty("code")` beside `@Schema(name = "label")` is.
+
+**Hidden output members.** The output generator ignores `@Hidden`, and honors
+`@Schema(hidden = true)` only on the property's own field or getter. A member or type that the
+output schema still describes while it carries either marker fails startup, because the response
+would publish what the marker is meant to hide:
+
+```text
+<prefix>: operation '<id>' publishes an output type of status <status> that describes <what>, which
+carries <marker>; <fix>
+```
+
+`<what>` and `<marker>` are as for a request body (see
+[Hidden members of a request body](#hidden-members-of-a-request-body)). The first entry, by
+declaring type and then member with a type before its members, is named, with the one fix its
+position implies:
+
+| Position of the marker | Fix |
+|---|---|
+| `@Hidden` on a property's field, getter, or setter, without an honored `@Schema(hidden = true)` | `the output generator ignores @Hidden; declare @Schema(hidden = true) on the property's own field or getter` |
+| `@Schema(hidden = true)` on a setter, on a creator parameter, through an annotation bundle or a mix-in, or at another position the output generator ignores | `the output generator ignores @Schema(hidden = true) where it is declared; declare it directly on the property's own field or getter, not through a bundle or mix-in` |
+| A type carrying either marker, a class-level `@Schema(hidden = true)` included | `the output generator does not hide a type; declare @Schema(hidden = true) on the field or getter of each member that references it, or hide the operation` |
+| An enum constant, or `@JsonUnwrapped` content | `the output generator cannot leave this member out where the document describes it (an enum constant or @JsonUnwrapped content); remove it from the published type, or hide the operation` |
+
+- **The fix that works.** A member carrying `@Schema(hidden = true)` on its own field or getter,
+  with or without `@Hidden`, is absent from the published schema, and startup succeeds.
+- **Input-only positions do not apply.** The input generator also ignores a marker on the field or
+  getter of a property bound through a setter, a builder, or a static factory's creator parameter,
+  of a case-insensitively bound nested bean described inline, of a converter-bound property, and of
+  a map member rendered through its value constraints (see
+  [Hidden members of a request body](#hidden-members-of-a-request-body)). These are ways of binding
+  a request; a response is serialized, and only the positions in the table are refused for it.
+- **Nothing is dropped.** The refusal never changes the generator's output or the response: the
+  member is still serialized at runtime. Hide the operation, or fix the marker.
+- **Hidden operations are never checked**, and with no enabled document nothing is checked (see
+  [Nothing is built without an enabled document](#nothing-is-built-without-an-enabled-document)).
+
+### Order of the response checks
+
+An operation's responses are checked after its inputs and their annotations, in this order:
+
+1. The declared statuses: each one's validity, then repeated statuses, at the method level and
+   then at the class level.
+2. Per declared status in published order: `useReturnTypeSchema` on a return type that is not
+   inferable, then each `@Content`'s examples and media types in declaration order, then the header
+   names.
+3. The output types: the inferred type first, when some status publishes it, then per status in
+   published order each content implementation in declaration order, then each header
+   implementation, each through the steps of [Refusals of output types](#refusals-of-output-types).
+
+Component collisions are found as the document is written, after every operation is checked.
 
 ---
 
@@ -1064,11 +1422,12 @@ nothing.
 
 ### Metadata warnings
 
-Three warnings report Swagger annotation content the document does not publish. Unlike the warning
+Four warnings report Swagger annotation content the document does not publish. Unlike the warning
 above, they are held back while the document is assembled and logged only once it is built
 successfully, so a document that fails startup logs none of them. They are logged in document order:
 the `info` warning first, then each operation's warnings in the order the document lists the
-operations. Hidden operations and hidden inputs cause none.
+operations, its input warnings before its response warning. Hidden operations and hidden inputs
+cause none.
 
 - **Unpublished `info` extensions.** One per document, when the annotated `info` declares an
   extension whose name does not start with `x-` (see [`info`](#info)). It names the application and
@@ -1088,6 +1447,11 @@ operations. Hidden operations and hidden inputs cause none.
   `apidocs.documents.<name>: operation '<id>' at mount '<mount path>' declares @Parameter.required on
   <input>, but whether the runtime rejects a missing value cannot be determined, so the document does
   not mark it required`.
+- **Omitted response attributes.** One per operation whose declared responses set attributes the
+  document does not publish, naming each as `<attribute> on status <status>` (see
+  [Omitted response attributes](#omitted-response-attributes)):
+  `apidocs.documents.<name>: operation '<id>' at mount '<mount path>' declares response attributes
+  the document does not publish: <attributes>`.
 
 Each message is one line; it is wrapped here for reading.
 
@@ -1100,8 +1464,11 @@ Each message is one line; it is wrapped here for reading.
 Every failure below stops startup. Each message names what is wrong and never echoes configuration
 values, schema text, references, pattern text, redaction locations, reserved names, or annotation
 values. Messages about the document's content name operation ids, rendered paths, input names,
-component keys, tag names, annotation attributes, the class of the bound schema source, and the
-declaring type and member of a hidden member.
+component keys, tag names, annotation attributes, the class of the bound schema source, the
+declaring type and member of a hidden member, response statuses and header names, and the declaring
+type, member, serialized name, and schema name of a renamed output member. Two quote what the
+developer declared: an invalid response status is quoted as declared, and a renamed output member's
+names are quoted.
 
 | Condition | Failure |
 |---|---|
@@ -1137,7 +1504,16 @@ declaring type and member of a hidden member.
 | A `@Parameter`, `@RequestBody`, or `@ExampleObject` of a visible operation sets `ref` | `RestConfigurationException` with the same start, naming the operation and the attribute with its input, and stating that the document declares no reusable parameters, request bodies, or examples |
 | An `@ExampleObject` of a visible input has a blank name, a name used twice in one array, or both `value` and `externalValue` (see [Examples](#examples)) | `RestConfigurationException` with the same start, naming the operation, the attribute, and where it is declared |
 | Two `@Tag` declarations of one name set a different `description` or `externalDocs` (see [Tags](#tags)) | `RestConfigurationException` with the same start, naming the tag, the member, and both operations, never either value |
-| Two components of a document would have the same key | `RestConfigurationException` with the same start, naming the input of both components and the key; when either is a relocated definition, it says `one component` instead of the key, and states that component keys replace every character outside `[A-Za-z0-9._-]` with `_` |
+| A declared `@ApiResponse` status is not `default`, a code from `100` to `599`, or an uppercase range key from `1XX` to `5XX` (see [Declared responses](#declared-responses)) | `RestConfigurationException` starting `apidocs.documents.<name>: ` and then the same start, naming the operation and quoting the declared status |
+| The method level or the class level declares one response status twice | `RestConfigurationException` with the `apidocs.documents.<name>: ` start, naming the operation, the status, and the level |
+| `@ApiResponse.useReturnTypeSchema` is `true` on a return type that is not inferable (see [A declared success status without content](#a-declared-success-status-without-content)) | `RestConfigurationException` with the `apidocs.documents.<name>: ` start, naming the operation, the status, and the attribute |
+| One status declares a media type twice, or one header name twice, ignoring ASCII letter case (see [Response content and headers](#response-content-and-headers)) | `RestConfigurationException` with the `apidocs.documents.<name>: ` start, naming the operation, the status, and `@Content.mediaType` or `@Header.name`; neither value is echoed |
+| An `@ExampleObject` in `@Content.examples` has a blank or repeated name, both `value` and `externalValue`, or a `ref` | `RestConfigurationException` with the `apidocs.documents.<name>: ` start, naming the operation, the attribute, and the status |
+| A published output type cannot be generated or inspected under the operation's output profile (see [Refusals of output types](#refusals-of-output-types)) | `RestConfigurationException` with the `apidocs.documents.<name>: ` start, naming the operation, the content or header schema, and the status (`200` for the inferred type); the generator's exception is the cause; no schema text |
+| A published output type describes a member under a `@Schema(name)` that differs from its serialized name | `RestConfigurationException` with the `apidocs.documents.<name>: ` start, naming the operation, the status, the declaring type, the member, the serialized name, and the schema name |
+| A published output type describes a member or type carrying `@Hidden` or a `@Schema(hidden = true)` the output generator ignores | `RestConfigurationException` with the `apidocs.documents.<name>: ` start, naming the operation, the status, the member or type, its marker, and the fix |
+| A generated output schema holds a refused construct | `RestConfigurationException` with the same start, naming the operation, the output schema and its status, the construct, and the JSON Pointer |
+| Two components of a document would have the same key | `RestConfigurationException` with the same start, naming the input or output of both components and the key; when either is a relocated definition, it says `one component` instead of the key, and states that component keys replace every character outside `[A-Za-z0-9._-]` with `_` |
 | A later server instance publishes a different mount or operation than the stored document | `RestConfigurationException` naming the application, its declaring interface, its mount path, and the first differing operation id |
 | A mount of a documented application is built outside a Vert.x context | `RestConfigurationException` naming the application |
 
@@ -1161,8 +1537,38 @@ and its message can quote that value.
   access is declared by `@ApiDocs` in code.
 - **Mounting a JAX-RS mount or a catch-all route under the prefix.** It fails startup. Choose another
   `apidocs.path`, or move, narrow, or remove the mount or route.
-- **Expecting responses or security schemes in the document.** A document describes operations and
-  their inputs only.
+- **Expecting security schemes in the document.** A document describes operations, their inputs,
+  and their responses only.
+- **Expecting a response for `Response`, `CompletionStage`, or a producer-bound type.** Their content
+  is decided at runtime, so they publish `default` only; declare the responses with `@ApiResponse`.
+  Return `Future<T>` instead of `CompletionStage<T>` to have `T` inferred.
+- **Expecting a schema for a `String` return.** A `String` is raw text under every media type,
+  `application/json` included, and publishes no schema.
+- **Expecting error responses to be inferred.** No `4XX`, `5XX`, or error body is ever inferred;
+  declare them with `@ApiResponse`.
+- **Declaring a `404` and losing the inferred `200`.** A declared set replaces the inferred response
+  entirely; also declare the success status. A success status declared without `content` keeps the
+  inferred content.
+- **Comparing with a build-time generated document.** A success status declared without `content`
+  keeps the inferred schema here, while swagger-core publishes it without content unless
+  `useReturnTypeSchema` is `true`.
+- **Declaring responses in `@Operation(responses = ...)`.** They are not read; use `@ApiResponse` on
+  the method or the class.
+- **Writing a range key in lowercase.** `2xx` fails startup; write `2XX`.
+- **Declaring one status differently on an implementation and its interface method.** Both are the
+  method level, so startup fails; declare it once.
+- **Hiding an output property with `@Hidden`.** The output generator ignores `@Hidden`, so startup
+  fails; declare `@Schema(hidden = true)` on the property's own field or getter.
+- **Renaming an output property with `@Schema(name = ...)`.** The response still carries the
+  serialized name, so startup fails; rename it on the wire with `@JsonProperty`, or remove the
+  `@Schema(name)`.
+- **Hiding a response header with `@Header(hidden = true)`.** It is not honored: the header is
+  published and the attribute is warned. Remove the `@Header` instead.
+- **Hiding a response body with `@Schema(hidden = true)` on its `@Content`.** It is not honored:
+  the implementation is published in full and the attribute is warned. Remove the content
+  declaration or hide the operation.
+- **Expecting a response schema's `example` on the Media Type Object.** It stays beside the `$ref`
+  in the Schema Object; use `@Content.examples` for media-type examples.
 - **Expecting a server URL from the request.** `servers[0].url` is the configured `serverUrl` or the
   mount path; behind a proxy that changes the path, configure `serverUrl`.
 - **Putting credentials in `serverUrl`.** It is published exactly as configured, user information
@@ -1248,9 +1654,10 @@ The module requires `@VertxConfig JsonObject`, `ConfigParser` (from `ConfigParsi
 `JaxRsConfig` and `RestApplications` (both from `RestModule` in `dev.vertique:vertique-rest-jaxrs`),
 and the component's multibound sets of `RequestValidationStrategy`, `SecuritySchemeHandler`,
 `MountCustomizer`, `Middleware`, `RouterLifecycleHook`, and `RequestInterceptor`, plus an optional
-`AuthEnforcementCapability`, the optional `OperationSchemaSource` that `RestModule` declares, and
-the `JsonMapperProfileRegistry` from `JsonRuntimeModule` (in `dev.vertique:vertique-json`), which
-`RestModule` includes.
+`AuthEnforcementCapability`, the optional `OperationSchemaSource` that `RestModule` declares, the
+multibound `Set<ResponseProducerBinding<?>>` (from `dev.vertique:vertique-rest-core`), which
+decides which return types publish `default`, and the `JsonMapperProfileRegistry` from
+`JsonRuntimeModule` (in `dev.vertique:vertique-json`), which `RestModule` includes.
 
 ---
 
@@ -1259,11 +1666,11 @@ the `JsonMapperProfileRegistry` from `JsonRuntimeModule` (in `dev.vertique:verti
 | Module | Why |
 |---|---|
 | `dev.vertique:vertique-rest-jaxrs` | The declared-application view, the operation publication seam the module consumes, and the `ApiDocsInstalled` marker |
-| `dev.vertique:vertique-rest-core` | `RouterMount`, `MountMeta`, the extension phases, `JaxRsConfig` default headers, and `RestConfigurationException` |
+| `dev.vertique:vertique-rest-core` | `RouterMount`, `MountMeta`, the extension phases, `JaxRsConfig` default headers, `ResponseProducerBinding`, and `RestConfigurationException` |
 | `dev.vertique:vertique-core` | `ConfigParser`, configuration path navigation, `ConfigurationException`, `@KeyedBy`, and `JsonMapperProfileRegistry` |
-| `dev.vertique:vertique-json-schema` | The redaction manifest each published request body is verified against and redacted by, and whose digest is part of the comparison between instances; the input generator that reports hidden members of a request body |
+| `dev.vertique:vertique-json-schema` | The redaction manifest each published request body is verified against and redacted by, and whose digest is part of the comparison between instances; the input generator that reports hidden members of a request body; the output generator that describes response types and reports their renamed and hidden members |
 | `io.vertx:vertx-json-schema` | Compile dependency; evaluates whether a captured request-body schema accepts an absent body, which decides the request body's `required` |
-| `io.swagger.core.v3:swagger-annotations-jakarta` | `@OpenAPIDefinition`, read for `info` on the declaring interface, and the operation, parameter, request-body, tag, example, and hiding annotations described in [Swagger annotations](#swagger-annotations) |
+| `io.swagger.core.v3:swagger-annotations-jakarta` | `@OpenAPIDefinition`, read for `info` on the declaring interface, and the operation, parameter, request-body, response, tag, example, and hiding annotations described in [Swagger annotations](#swagger-annotations) and [Operation Responses](#operation-responses) |
 | Jackson (`jackson-databind`, `jackson-dataformat-yaml`) | Writes the JSON and YAML forms; YAML brings SnakeYAML |
 | Dagger and `jakarta.inject-api` | Module bindings |
 
@@ -1304,3 +1711,18 @@ adds no route beyond the document URLs. It is not part of any starter.
   naming the operation and `@Parameter.required` on that parameter.
 - Put `@Parameter(schema = @Schema(maxLength = 5))` on a query parameter: expect its captured schema
   published unchanged and one `DocumentWarnings` warning naming `@Parameter.schema.maxLength`.
+- Return `Future<Item>` from a `@Produces(APPLICATION_JSON)` method without `@ApiResponse`: expect
+  exactly one response, `200` with description `OK`, whose `application/json` schema references
+  `<operationId>.response`, a component holding `Item`'s serialized property names; return `void`
+  and expect `204`; return `Response` and expect only `default`.
+- Add `@ApiResponse(responseCode = "200", description = "The item")` and
+  `@ApiResponse(responseCode = "404", description = "Missing")`: expect `200` with that description
+  and the inferred content, and `404` without content.
+- Put `@Hidden` alone on a field of the returned type: expect startup to fail naming the operation,
+  the member, `@Hidden`, and the fix; move to `@Schema(hidden = true)` on that field and expect the
+  property absent from the component and startup to succeed.
+- Put `@Schema(name = "remark")` on a returned field serialized as `note`: expect startup to fail
+  naming the member, `note`, and `remark`; set `apidocs.documents.<name>.enabled: false` and expect
+  startup to succeed.
+- Add `links` to a declared `@ApiResponse`: expect it in neither form of the document and one
+  `DocumentWarnings` warning naming `@ApiResponse.links on status <status>`.

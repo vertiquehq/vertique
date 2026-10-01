@@ -15,6 +15,7 @@ import dev.vertique.rest.core.config.JaxRsConfig;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import dev.vertique.rest.core.lifecycle.RouterLifecycleHook;
 import dev.vertique.rest.core.middleware.Middleware;
+import dev.vertique.rest.core.response.ResponseProducerBinding;
 import dev.vertique.rest.core.router.MountCompositionValidator;
 import dev.vertique.rest.core.router.MountCustomizer;
 import dev.vertique.rest.core.router.RouterMount;
@@ -75,6 +76,7 @@ public abstract class OpenApiDocsModule {
      * @param schemaSource the bound operation schema source, if any
      * @param profiles the JSON mapper profile registry
      * @param warnings the documentation module's warnings of the component
+     * @param producerBindings the registered response producer bindings
      * @return the sink, or an empty set when no document is enabled
      */
     @Provides
@@ -87,7 +89,8 @@ public abstract class OpenApiDocsModule {
             RestApplications applications,
             Optional<OperationSchemaSource> schemaSource,
             JsonMapperProfileRegistry profiles,
-            DocumentWarnings warnings) {
+            DocumentWarnings warnings,
+            Set<ResponseProducerBinding<?>> producerBindings) {
         if (documents.isEmpty()) {
             return Set.of();
         }
@@ -97,7 +100,7 @@ public abstract class OpenApiDocsModule {
                 apidocsConfig.path(),
                 strategies,
                 applications,
-                new AssemblyContext(schemaSource, profiles, warnings)));
+                new AssemblyContext(schemaSource, profiles, warnings, producerBindings)));
     }
 
     /**

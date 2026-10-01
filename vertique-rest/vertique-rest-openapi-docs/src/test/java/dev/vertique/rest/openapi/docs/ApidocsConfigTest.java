@@ -1015,16 +1015,18 @@ class ApidocsConfigTest {
 
     /**
      * Strings the configuration parser reads as no boolean at all: empty and whitespace-only text, the
-     * word {@code null} (which the parser maps to no value), and single control characters that are not whitespace (start of heading, escape), which the parser
-     * also reads as {@code null} although {@code String.isBlank()} calls them not blank.
+     * word {@code null} (which the parser maps to no value), and single control characters that are not
+     * whitespace (start of heading, escape), which the parser also reads as {@code null} although
+     * {@code String.isBlank()} calls them not blank.
      */
     static Stream<String> blankEnabledValues() {
         return Stream.of("", " ", "\t", "null", "\u0001", "\u001b");
     }
 
-    @ParameterizedTest(name = "enabled given as a blank string, variant {index}")
+    @ParameterizedTest(name = "enabled given as text that reads as no value, variant {index}")
     @MethodSource("blankEnabledValues")
-    @DisplayName("A blank apidocs.documents.<name>.enabled fails startup naming the setting, without echoing the value")
+    @DisplayName("An apidocs.documents.<name>.enabled that reads as no value (blank, null, or a control character)"
+            + " fails startup naming the setting, without echoing the value")
     void blankEnabledFailsNamingTheSetting(String blank) {
         // Given the shared declarations and the shared configuration whose documented public entry
         // gives enabled as a blank string

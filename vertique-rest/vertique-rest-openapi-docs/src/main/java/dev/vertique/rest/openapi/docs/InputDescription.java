@@ -33,6 +33,18 @@ record InputDescription(String operationId, String noun, String keySuffix, boole
     }
 
     /**
+     * Describes a response body of an operation, published as a component the way a request body is.
+     *
+     * @param operationId the runtime id of the operation
+     * @param noun the output as a failure message names it, for example {@code response body}
+     * @param keySuffix the part of the component key after the operation id, before replacement
+     * @return the description of the output, with body semantics
+     */
+    static InputDescription output(String operationId, String noun, String keySuffix) {
+        return new InputDescription(operationId, noun, keySuffix, true);
+    }
+
+    /**
      * Describes a parameter of an operation.
      *
      * @param operationId the runtime id of the operation
