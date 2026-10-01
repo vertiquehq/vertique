@@ -210,8 +210,8 @@ final class JaxRsApplicationComposer {
 
         // Step 1a: the annotation allow-list runtime backstop re-checks every registration's
         // declaring interface and superinterfaces by reflection, active or inactive, before any
-        // resource resolves. Each violation carries the compile-time validator's message and is
-        // reported with every other step-one problem.
+        // resource resolves. Each violation applies the same rule as the compile-time validator, with its own
+        // message, and is reported with every other step-one problem.
         for (GeneratedRestApplicationRegistration registration : sortedRegistrations) {
             RestApplications.Entry entry = view.byName(registration.name()).orElseThrow();
             stepOneViolations.addAll(ApplicationAnnotationAllowList.violations(entry.name(), entry.declaringType()));
