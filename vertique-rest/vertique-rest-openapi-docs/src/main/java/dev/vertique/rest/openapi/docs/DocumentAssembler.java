@@ -4,6 +4,7 @@
 package dev.vertique.rest.openapi.docs;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.vertique.rest.jaxrs.publication.MountPublication;
@@ -19,7 +20,8 @@ import java.util.SortedMap;
  *
  * <p>The root members are written in this order: {@code openapi}, {@code info}, {@code
  * jsonSchemaDialect} (JSON Schema draft 2020-12), {@code servers}, {@code paths}, {@code
- * components} (only when it holds a schema, with its keys in natural order), and {@code
+ * components} (only when it holds a schema, with its keys in natural order), {@code tags} (only when
+ * a published operation declares a tag; see {@link RootTags}), and {@code
  * x-vertique-validation}, which names the {@code java.util.regex} pattern dialect and, in a
  * protected document only, the validation authority (see {@link ValidationDisclosure}). The single server
  * is the configured server URL of the document, or else the mount path without its trailing {@code
@@ -42,7 +44,9 @@ import java.util.SortedMap;
  * methods in Path Item order): every operation's inputs are first checked, so the first hidden path
  * parameter, duplicate input, unverified request body, refused construct, request body describing a
  * hidden member, or unresolved redaction of the document fails before anything is published; then
- * every operation is published, each checked schema once. Inputs the inventory flags hidden are left
+ * the tag declarations of every operation are merged in the same order, so a conflicting tag fails
+ * before anything is published; then every operation is published, each checked schema once, with
+ * its documentation metadata ({@link OperationMetadata}). Inputs the inventory flags hidden are left
  * out before any check reads them, and a {@link DisclosureTally} created for the assembly records
  * whether any was and whether a reserved name was removed from a published request body. The
  * input-direction schema generators that inspect request bodies are likewise created per assembly
@@ -95,6 +99,7 @@ final class DocumentAssembler {
         List<PlannedOperation> planned = new ArrayList<>();
         for (Map.Entry<String, List<OperationPublication>> item : pathItems.entrySet()) {
             for (OperationPublication operation : item.getValue()) {
+                OperationFacts operationFacts = facts.get(operation.operationId());
                 planned.add(new PlannedOperation(
                         item.getKey(),
                         RenderedPaths.methodKey(operation),
@@ -102,12 +107,18 @@ final class DocumentAssembler {
                                 subject,
                                 embedder,
                                 operation,
-                                facts.get(operation.operationId()),
+                                operationFacts,
                                 context,
                                 tally,
                                 generators,
-                                disclosure.marksInputs())));
+                                disclosure.marksInputs()),
+                        OperationMetadata.of(operationFacts)));
             }
+        }
+
+        RootTags rootTags = new RootTags(subject);
+        for (PlannedOperation operation : planned) {
+            rootTags.add(operation.plan().operationId(), operation.metadata());
         }
 
         ObjectNode paths = NODES.objectNode();
@@ -115,7 +126,7 @@ final class DocumentAssembler {
             ObjectNode pathItem = paths.has(operation.path())
                     ? (ObjectNode) paths.get(operation.path())
                     : paths.putObject(operation.path());
-            pathItem.set(operation.method(), operation.plan().publish(embedder));
+            pathItem.set(operation.method(), operation.plan().publish(embedder, operation.metadata()));
         }
 
         ObjectNode root = NODES.objectNode();
@@ -131,6 +142,10 @@ final class DocumentAssembler {
         if (!schemas.isEmpty()) {
             ObjectNode componentSchemas = root.putObject("components").putObject("schemas");
             schemas.forEach(componentSchemas::set);
+        }
+        ArrayNode tags = rootTags.render();
+        if (tags != null) {
+            root.set("tags", tags);
         }
         root.set(ValidationDisclosure.MEMBER, disclosure.root(context, tally));
         PublishedDocument written = DocumentWriter.write(root, SnapshotRenderer.render(publication));
@@ -193,6 +208,7 @@ final class DocumentAssembler {
      * @param path the rendered path key
      * @param method the lowercase method key
      * @param plan the checked plan of its Operation Object
+     * @param metadata the operation's documentation metadata
      */
-    private record PlannedOperation(String path, String method, InputAssembler.Plan plan) {}
+    private record PlannedOperation(String path, String method, InputAssembler.Plan plan, OperationMetadata metadata) {}
 }

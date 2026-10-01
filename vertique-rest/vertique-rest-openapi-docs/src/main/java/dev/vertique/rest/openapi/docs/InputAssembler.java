@@ -36,7 +36,8 @@ import java.util.Set;
  * <p>Assembly runs in two phases over the whole document. {@link #check} first plans an operation and
  * checks every captured schema it will publish: the request body first, then the parameters in
  * published order, then the form fields. Only when every operation of the document is checked does
- * {@link Plan#publish} write the Operation Object, publishing each checked schema exactly once.
+ * {@link Plan#publish} write the Operation Object, with the operation's documentation metadata (see
+ * {@link OperationMetadata}), publishing each checked schema exactly once.
  *
  * <p>Before anything else, an operation that hides a path parameter fails publication (see {@link
  * HiddenInputs}). Every input the inventory flags hidden is then left out: it publishes nothing, and
@@ -361,12 +362,16 @@ final class InputAssembler {
          * Writes the Operation Object, publishing each checked schema once.
          *
          * @param embedder the schema embedder that checked the schemas
-         * @return the Operation Object with {@code operationId}, {@code parameters} when there are
-         *     any, and {@code requestBody} when there is one, in that order
+         * @param metadata the operation's documentation metadata
+         * @return the Operation Object with the metadata's {@code tags}, {@code summary}, {@code
+         *     description}, and {@code externalDocs}, then {@code operationId}, {@code parameters}
+         *     when there are any, {@code requestBody} when there is one, and the metadata's {@code
+         *     deprecated}, in that order
          * @throws RestConfigurationException when a component key is already taken in the document
          */
-        ObjectNode publish(SchemaEmbedder embedder) {
+        ObjectNode publish(SchemaEmbedder embedder, OperationMetadata metadata) {
             ObjectNode node = NODES.objectNode();
+            metadata.writeLeading(node);
             node.put("operationId", operationId);
             if (!parameters.isEmpty()) {
                 ArrayNode array = node.putArray("parameters");
@@ -379,6 +384,7 @@ final class InputAssembler {
             } else if (form != null) {
                 node.set("requestBody", form.publish(embedder));
             }
+            metadata.writeTrailing(node);
             return node;
         }
     }
