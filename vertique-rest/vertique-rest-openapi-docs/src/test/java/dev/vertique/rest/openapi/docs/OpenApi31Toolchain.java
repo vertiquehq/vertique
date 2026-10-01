@@ -20,6 +20,7 @@ import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.regex.Pattern;
 
 /**
  * Test-only OpenAPI 3.1 validator for documents produced by this module.
@@ -34,6 +35,22 @@ import java.util.concurrent.TimeoutException;
  *       contract loader does not check.
  * </ol>
  *
+ * <p>The contract loader (vertx-openapi) is stricter than OpenAPI 3.1.1 in two places, and only the
+ * copy handed to it is adjusted before loading:
+ *
+ * <ul>
+ *   <li>it rejects a relative server URL such as {@code /api}, which OpenAPI 3.1.1 allows (and which
+ *       this module publishes as the mount path): every {@code servers[].url} without a URI scheme,
+ *       at the root, on a path item or on an operation, is prefixed with the placeholder origin
+ *       {@code https://toolchain.invalid};
+ *   <li>it rejects an operation without {@code responses}, which OpenAPI 3.1.1 allows: such an
+ *       operation receives a placeholder {@code default} response.
+ * </ul>
+ *
+ * <p>The placeholders never hide a malformed value: an absolute server URL and a present {@code
+ * responses} member are loaded exactly as given, so a malformed one is still rejected. The Schema
+ * Object step validates its own untouched copy.
+ *
  * <p>Use {@link #assertValid(JsonObject)} to fail a test with every problem found, or {@link
  * #validate(JsonObject)} to inspect the {@link Verdict}.
  */
@@ -41,6 +58,13 @@ public final class OpenApi31Toolchain {
 
     private static final String META_SCHEMA_URI = "https://json-schema.org/draft/2020-12/schema";
     private static final long TIMEOUT_SECONDS = 60;
+
+    /** Origin prefixed to scheme-less server URLs in the contract-load copy only. */
+    static final String PLACEHOLDER_ORIGIN = "https://toolchain.invalid";
+
+    private static final Pattern URI_SCHEME = Pattern.compile("^[A-Za-z][A-Za-z0-9+.-]*:");
+    private static final List<String> OPERATION_METHODS =
+            List.of("get", "put", "post", "delete", "options", "head", "patch", "trace");
 
     private OpenApi31Toolchain() {}
 
@@ -96,6 +120,7 @@ public final class OpenApi31Toolchain {
         JsonObject forContract = document.copy();
         JsonObject forSchemas = document.copy();
         List<String> problems = new ArrayList<>();
+        adaptForContractLoader(forContract);
 
         try {
             Future<OpenAPIContract> loaded = OpenAPIContract.from(vertx, forContract);
@@ -124,6 +149,48 @@ public final class OpenApi31Toolchain {
             }
         });
         return new Verdict(problems.isEmpty(), problems);
+    }
+
+    /**
+     * Adjusts the contract-load copy for the two places where the loader is stricter than OpenAPI
+     * 3.1.1: scheme-less server URLs get the placeholder origin, and operations without {@code
+     * responses} get a placeholder default response. Present values are never replaced.
+     */
+    private static void adaptForContractLoader(JsonObject document) {
+        anchorServerUrls(document.getValue("servers"));
+        if (!(document.getValue("paths") instanceof JsonObject paths)) {
+            return;
+        }
+        for (String path : paths.fieldNames()) {
+            if (!(paths.getValue(path) instanceof JsonObject pathItem)) {
+                continue;
+            }
+            anchorServerUrls(pathItem.getValue("servers"));
+            for (String method : OPERATION_METHODS) {
+                if (!(pathItem.getValue(method) instanceof JsonObject operation)) {
+                    continue;
+                }
+                anchorServerUrls(operation.getValue("servers"));
+                if (!operation.containsKey("responses")) {
+                    operation.put(
+                            "responses",
+                            new JsonObject().put("default", new JsonObject().put("description", "placeholder")));
+                }
+            }
+        }
+    }
+
+    private static void anchorServerUrls(Object servers) {
+        if (!(servers instanceof JsonArray array)) {
+            return;
+        }
+        for (int i = 0; i < array.size(); i++) {
+            if (array.getValue(i) instanceof JsonObject server
+                    && server.getValue("url") instanceof String url
+                    && !URI_SCHEME.matcher(url).lookingAt()) {
+                server.put("url", url.startsWith("/") ? PLACEHOLDER_ORIGIN + url : PLACEHOLDER_ORIGIN + "/" + url);
+            }
+        }
     }
 
     private static String describe(OutputUnit out) {
