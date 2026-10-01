@@ -28,10 +28,13 @@ import dev.vertique.rest.openapi.docs.fixture.metadata.dto.ItemDto;
 import dev.vertique.rest.openapi.docs.fixture.metadata.unit.MetadataPublications;
 import dev.vertique.rest.openapi.docs.fixture.metadata.unit.enrichment.AgreementResource;
 import dev.vertique.rest.openapi.docs.fixture.metadata.unit.enrichment.ExampleResource;
+import dev.vertique.rest.openapi.docs.fixture.metadata.unit.enrichment.FormResource;
 import dev.vertique.rest.openapi.docs.fixture.metadata.unit.enrichment.HiddenContractResource;
 import dev.vertique.rest.openapi.docs.fixture.metadata.unit.enrichment.HiddenFirstResource;
+import dev.vertique.rest.openapi.docs.fixture.metadata.unit.enrichment.RequestBodySourceResource;
 import dev.vertique.rest.openapi.docs.fixture.metadata.unit.enrichment.SummaryOnlyResource;
 import dev.vertique.rest.openapi.docs.fixture.metadata.unit.enrichment.TaggedResource;
+import dev.vertique.rest.openapi.docs.fixture.metadata.unit.enrichment.WarningScopeResource;
 import io.vertx.core.json.JsonObject;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
@@ -104,6 +107,21 @@ class MetadataEnrichmentTest {
     /** The component key of {@value #CREATE}'s body. */
     private static final String CREATE_COMPONENT = CREATE + ".request";
 
+    /** The second operation with a query parameter: {@code GET /lookup}. */
+    private static final String LOOKUP = "lookupItems";
+
+    /** The operation checked first of a refused document: {@code GET /a}, which would warn. */
+    private static final String WARNED = "readFirst";
+
+    /** The operation that refuses the document: {@code GET /b}, checked after {@value #WARNED}. */
+    private static final String REFUSED = "readSecond";
+
+    /** The operation of the form cases: {@code POST /forms}, whose inputs are form fields. */
+    private static final String SUBMIT = "submitForm";
+
+    /** The media type of a form request body when the operation declares none. */
+    private static final String FORM_MEDIA_TYPE = "application/x-www-form-urlencoded";
+
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final MetadataDocuments.WarningCapture capture = new MetadataDocuments.WarningCapture();
@@ -126,7 +144,7 @@ class MetadataEnrichmentTest {
     sealed interface Expected permits Fails, Publishes {}
 
     /**
-     * Publication fails.
+     * Publication fails, and no warning is logged.
      *
      * @param fragments texts the message must contain, besides the mount
      * @param words names the message must contain as whole words
@@ -184,6 +202,7 @@ class MetadataEnrichmentTest {
             case Fails failing -> {
                 RestConfigurationException failure = outcome.failure();
                 assertFailureNames(label, failure, failing.fragments(), failing.words());
+                assertTrue(warnings.isEmpty(), () -> label + ": a refused document logged warnings: " + warnings);
             }
             case Publishes publishing -> {
                 Rendering rendering = outcome.rendering();
@@ -297,6 +316,10 @@ class MetadataEnrichmentTest {
         return operation(rendering, "/items", "post").path("requestBody");
     }
 
+    private static JsonNode submitRequestBody(Rendering rendering) {
+        return operation(rendering, "/forms", "post").path("requestBody");
+    }
+
     private static JsonNode component(Rendering rendering, String key) {
         return rendering.jsonTree().path("components").path("schemas").path(key);
     }
@@ -371,12 +394,34 @@ class MetadataEnrichmentTest {
 
     /** {@code POST /items} consuming only JSON, with a generated body, annotated from a fixture method. */
     private static Supplier<MountPublication> create(String method, GeneratedBody body) {
+        return create(AgreementResource.class, method, body);
+    }
+
+    /**
+     * {@code POST /items} consuming only JSON, with a generated body, annotated from a method of the
+     * given fixture class.
+     */
+    private static Supplier<MountPublication> create(Class<?> fixture, String method, GeneratedBody body) {
         return () -> MetadataPublications.from(MetadataPublications.mount()
                         .operation("POST", "/items", CREATE)
                         .consumes(JSON_MEDIA_TYPE)
                         .body(body)
                         .build())
-                .annotate(CREATE, AgreementResource.class, method)
+                .annotate(CREATE, fixture, method)
+                .build();
+    }
+
+    /**
+     * {@code POST /forms} declaring no consumed media type, whose only input is the form field {@code
+     * note}, annotated from a {@link FormResource} method.
+     */
+    private static Supplier<MountPublication> submit(String method) {
+        return () -> MetadataPublications.from(MetadataPublications.mount()
+                        .operation("POST", "/forms", SUBMIT)
+                        .formField("note")
+                        .schema(stringSchema())
+                        .build())
+                .annotate(SUBMIT, FormResource.class, method)
                 .build();
     }
 
@@ -430,7 +475,7 @@ class MetadataEnrichmentTest {
                 row(
                         "(f) a body implementation other than the bound type fails",
                         create("otherBodyImplementation", GeneratedBodies.describe(ItemDto.class)),
-                        fails(List.of(CREATE, "implementation"))),
+                        fails(List.of(CREATE, "@RequestBody.content.schema.implementation"))),
                 row(
                         "(k) a body media type the operation does not consume fails",
                         create("unconsumedBodyMediaType", GeneratedBodies.describe(ItemDto.class)),
@@ -521,7 +566,191 @@ class MetadataEnrichmentTest {
                                 json("{\"name\": \"q\", \"in\": \"query\","
                                         + " \"schema\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}}"),
                                 searchParameter(rendering, "q"),
-                                "(q) the Parameter Object"))));
+                                "(q) the Parameter Object"))),
+                // Warning scope.
+                ignoredMembersOfTwoOperationsWarnOncePerOperation(),
+                requirementsOfTwoUnknownParametersWarnOncePerParameter(),
+                failureBesideAWarnedOperationLogsNoWarning(),
+                // Request body sources.
+                row(
+                        "a method's request body description publishes",
+                        create(
+                                RequestBodySourceResource.class,
+                                "methodDescription",
+                                GeneratedBodies.describe(ItemDto.class)),
+                        publishesWithoutWarning(rendering -> assertEquals(
+                                "mZX",
+                                createRequestBody(rendering).path("description").asText(null),
+                                () -> "the request body: " + createRequestBody(rendering)))),
+                row(
+                        "an operation's request body description publishes",
+                        create(
+                                RequestBodySourceResource.class,
+                                "operationDescription",
+                                GeneratedBodies.describe(ItemDto.class)),
+                        publishesWithoutWarning(rendering -> assertEquals(
+                                "oZX",
+                                createRequestBody(rendering).path("description").asText(null),
+                                () -> "the request body: " + createRequestBody(rendering)))),
+                row(
+                        "the body parameter's request body wins over the method's, whose description appears nowhere",
+                        create(
+                                RequestBodySourceResource.class,
+                                "parameterAndMethodDescriptions",
+                                GeneratedBodies.describe(ItemDto.class)),
+                        publishesWithoutWarning(rendering -> {
+                            assertEquals(
+                                    "pZX",
+                                    createRequestBody(rendering)
+                                            .path("description")
+                                            .asText(null),
+                                    () -> "the request body: " + createRequestBody(rendering));
+                            assertAbsent(rendering, "mZX");
+                        })),
+                // Form fields and the form request body.
+                row(
+                        "a query location on a form field fails",
+                        submit("fieldQueryLocation"),
+                        fails(List.of(SUBMIT, "@Parameter.in", "form field note"))),
+                row(
+                        "a schema implementation on a form request body fails",
+                        submit("bodyImplementation"),
+                        fails(List.of(SUBMIT, "@RequestBody.content.schema.implementation", "request body"))),
+                row(
+                        "a requirement on a form request body fails",
+                        submit("requiredBody"),
+                        fails(List.of(SUBMIT, "@RequestBody.required", "request body"))),
+                requirementOnAFormFieldOfUnknownRequirednessIsWarnedAndNotPublished(),
+                row(
+                        "a form request body's description publishes, and no example is published on it",
+                        submit("describedBody"),
+                        publishesWithoutWarning(rendering -> {
+                            JsonNode requestBody = submitRequestBody(rendering);
+                            assertEquals(
+                                    "Form body",
+                                    requestBody.path("description").asText(null),
+                                    () -> "the request body: " + requestBody);
+                            assertTrue(
+                                    requestBody
+                                            .path("content")
+                                            .path(FORM_MEDIA_TYPE)
+                                            .isObject(),
+                                    () -> "the form media type is not published: " + requestBody);
+                            assertNoExample(requestBody, "the form request body");
+                        })));
+    }
+
+    /** Asserts that no member named {@code example} or {@code examples} appears anywhere in a node. */
+    private static void assertNoExample(JsonNode node, String where) {
+        assertTrue(node.findValues("example").isEmpty(), () -> where + " carries an example: " + node);
+        assertTrue(node.findValues("examples").isEmpty(), () -> where + " carries examples: " + node);
+    }
+
+    private static Arguments ignoredMembersOfTwoOperationsWarnOncePerOperation() {
+        // Given: two operations, each with an ignored schema member on its query parameter q.
+        JsonObject capturedSearch = stringSchema();
+        JsonObject capturedLookup = stringSchema();
+        Supplier<MountPublication> publication = () -> MetadataPublications.from(MetadataPublications.mount()
+                        .operation("GET", "/search", SEARCH)
+                        .param(ParamLocation.QUERY, "q", Requiredness.NOT_REQUIRED)
+                        .schema(capturedSearch)
+                        .operation("GET", "/lookup", LOOKUP)
+                        .param(ParamLocation.QUERY, "q", Requiredness.NOT_REQUIRED)
+                        .schema(capturedLookup)
+                        .build())
+                .annotate(SEARCH, AgreementResource.class, "parameterMaxLength")
+                .annotate(LOOKUP, AgreementResource.class, "parameterMaxLength")
+                .build();
+        return row(
+                "ignored members in two operations are warned about once per operation",
+                publication,
+                new Publishes(
+                        List.of(
+                                new WarningText(List.of(SEARCH, "@Parameter.schema.maxLength"), List.of("q")),
+                                new WarningText(List.of(LOOKUP, "@Parameter.schema.maxLength"), List.of("q"))),
+                        rendering -> {
+                            assertEquals(
+                                    json(capturedSearch),
+                                    searchParameter(rendering, "q").path("schema"),
+                                    "q of /search");
+                            assertEquals(
+                                    json(capturedLookup),
+                                    parameter(rendering, "/lookup", "get", "q").path("schema"),
+                                    "q of /lookup");
+                            assertAbsent(rendering, "maxLength");
+                        }));
+    }
+
+    private static Arguments requirementsOfTwoUnknownParametersWarnOncePerParameter() {
+        // Given: one operation whose primitive int query parameters q and r both have unknown requiredness.
+        JsonObject capturedQ = new JsonObject("{\"type\": \"integer\"}");
+        JsonObject capturedR = new JsonObject("{\"type\": \"integer\"}");
+        Supplier<MountPublication> publication = () -> MetadataPublications.from(MetadataPublications.mount()
+                        .operation("GET", "/search", SEARCH)
+                        .param(ParamLocation.QUERY, "q", Requiredness.UNKNOWN)
+                        .schema(capturedQ)
+                        .param(ParamLocation.QUERY, "r", Requiredness.UNKNOWN)
+                        .schema(capturedR)
+                        .build())
+                .annotate(SEARCH, WarningScopeResource.class, "twoUnknownRequirements")
+                .build();
+        return row(
+                "requirements on two parameters of unknown requiredness are warned about once per parameter",
+                publication,
+                new Publishes(
+                        List.of(
+                                new WarningText(List.of(SEARCH, "@Parameter.required"), List.of("q")),
+                                new WarningText(List.of(SEARCH, "@Parameter.required"), List.of("r"))),
+                        rendering -> {
+                            assertNoMember(searchParameter(rendering, "q"), "required", "the Parameter Object q");
+                            assertNoMember(searchParameter(rendering, "r"), "required", "the Parameter Object r");
+                        }));
+    }
+
+    private static Arguments failureBesideAWarnedOperationLogsNoWarning() {
+        // Given: GET /a would warn about an ignored member of q; GET /b, checked after it, renames q.
+        Supplier<MountPublication> publication = () -> MetadataPublications.from(MetadataPublications.mount()
+                        .operation("GET", "/a", WARNED)
+                        .param(ParamLocation.QUERY, "q", Requiredness.NOT_REQUIRED)
+                        .schema(stringSchema())
+                        .operation("GET", "/b", REFUSED)
+                        .param(ParamLocation.QUERY, "q", Requiredness.NOT_REQUIRED)
+                        .schema(stringSchema())
+                        .build())
+                .annotate(WARNED, AgreementResource.class, "parameterMaxLength")
+                .annotate(REFUSED, WarningScopeResource.class, "otherParameterName")
+                .build();
+        return row(
+                "a document refused after another operation's warning logs no warning",
+                publication,
+                fails(List.of(REFUSED, "@Parameter.name"), "q"));
+    }
+
+    private static Arguments requirementOnAFormFieldOfUnknownRequirednessIsWarnedAndNotPublished() {
+        // Given: a primitive int form field, whose requiredness the runtime leaves unknown.
+        JsonObject captured = new JsonObject("{\"type\": \"integer\"}");
+        Supplier<MountPublication> publication = () -> MetadataPublications.from(MetadataPublications.mount()
+                        .operation("POST", "/forms", SUBMIT)
+                        .formField("count", Requiredness.UNKNOWN)
+                        .schema(captured)
+                        .build())
+                .annotate(SUBMIT, FormResource.class, "requiredUnknownField")
+                .build();
+        return row(
+                "a requirement on a form field of unknown requiredness is warned about and not published",
+                publication,
+                publishesWithOneWarning(
+                        List.of(SUBMIT, "@Parameter.required", "form field count"), List.of(), rendering -> {
+                            JsonNode requestBody = submitRequestBody(rendering);
+                            assertNoMember(requestBody, "required", "the form request body");
+                            JsonNode schema = requestBody
+                                    .path("content")
+                                    .path(FORM_MEDIA_TYPE)
+                                    .path("schema");
+                            assertFalse(schema.has("required"), () -> "the form schema requires a field: " + schema);
+                            assertEquals(
+                                    json(captured), schema.path("properties").path("count"), "the count property");
+                        }));
     }
 
     private static Arguments parameterMaxLengthIsIgnoredWithAWarning() {
@@ -558,7 +787,7 @@ class MetadataEnrichmentTest {
         return row(
                 "(t) a requirement on a parameter of unknown requiredness is warned about and not published",
                 search(AgreementResource.class, "requiredUnknownParameter", Requiredness.UNKNOWN, captured),
-                publishesWithOneWarning(List.of(SEARCH), List.of("q"), rendering -> {
+                publishesWithOneWarning(List.of(SEARCH, "@Parameter.required"), List.of("q"), rendering -> {
                     JsonNode q = searchParameter(rendering, "q");
                     assertNoMember(q, "required", "(t) the Parameter Object");
                     assertEquals(json(captured), q.path("schema"), "(t) q's schema");
@@ -804,7 +1033,15 @@ class MetadataEnrichmentTest {
                                 "duplicateExampleNames",
                                 Requiredness.NOT_REQUIRED,
                                 stringSchema()),
-                        fails(List.of(SEARCH, "@ExampleObject.name"), "q")));
+                        fails(List.of(SEARCH, "@ExampleObject.name"), "q")),
+                row(
+                        "a form field's named example referencing a reusable example fails",
+                        submit("fieldExampleReference"),
+                        fails(List.of(SUBMIT, "@ExampleObject.ref", "form field note"))),
+                row(
+                        "a form request body's named example with a blank name fails",
+                        submit("bodyBlankExampleName"),
+                        fails(List.of(SUBMIT, "@ExampleObject.name", "request body"))));
     }
 
     @ParameterizedTest(name = "{0}")
