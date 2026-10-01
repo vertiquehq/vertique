@@ -150,6 +150,16 @@ All tags above are part of `vertique-micrometer-core`'s frozen cardinality-guard
 each key is capped at `metrics.cardinality.maxTagValuesPerKey` distinct values (default `200`)
 across the composite. See `vertique-micrometer-core`'s module reference for the guard mechanism.
 
+**Protected API document reads.** Reads of a protected API document, and their denials, that
+complete as REST operations count in `vertique.rest.server.requests` under framework synthetic
+operations: the `operation` tag is an id starting with `apidocs:` and the `route` tag is an
+absolute literal route template.
+
+**No application tag yet.** The timer does not carry the application name (`rest.application`).
+When one resource is mounted by more than one application with the same operationId and route, both
+mounts produce identical tags and their series merge until the meter adds the `rest.application`
+tag.
+
 **`error.type` on a 200-status series.** Because `error.type` falls back to `wireFailureCode`, a
 timer sample tagged `status=200` MAY carry a non-`none` `error.type` — that combination (`status`
 200 with a non-`none` `error.type`) is the truncated-response signature: the client received a 200

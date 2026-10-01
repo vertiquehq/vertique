@@ -223,9 +223,14 @@ Package-private static factory. Produces `MeterFilter` instances applied to the 
 any backend or binder is added. Guards `vertique.*` meters only (the `"vertique."` prefix argument
 in `maximumAllowableTags` handles this).
 
-The frozen `GUARDED_TAG_KEYS` list covers all tag keys planned across V1–V4 adapter phases. Adding
-a new `vertique.*` tag key to any adapter requires extending this list — this is a review-enforced
-constraint.
+`GUARDED_TAG_KEYS` is the union of every tag key a `vertique.*` meter emits or is reserved to emit.
+The list only grows: entries are never removed or reordered. Adding a new `vertique.*` tag key to
+any adapter requires extending this list — this is a review-enforced constraint.
+
+The list ends with `rest.application`, the key for the REST server request meter's application
+tag. It is guarded ahead of its emitter: no meter emits it yet, but any `rest.application` tag on a
+`vertique.*` meter already has its values capped at `metrics.cardinality.maxTagValuesPerKey`
+(default `200`), and `metrics.tags.extra` cannot claim the key (see `TagPolicyValidator`).
 
 ### TagPolicyValidator
 
@@ -235,7 +240,9 @@ key and violated rule but never any part of the value. Rules:
 
 - Extra map: at most 16 entries
 - Key format: `^[a-z][a-z0-9._-]{0,63}$`
-- Reserved keys: `service`, any `vertique.` prefix, any cardinality-guarded key
+- Reserved keys: `service`, any `vertique.` prefix, any cardinality-guarded key (including
+  `rest.application`); the message states that the key is a framework-managed cardinality-guarded
+  tag key
 - Secret-like keys: whole-segment match against
   `{password, passwd, secret, token, credential, apikey, authorization, bearer, accesskey, privatekey}`
   after splitting on `[._-]`; adjacent pairs `("api","key")`, `("access","key")`, `("private","key")`
@@ -243,6 +250,10 @@ key and violated rule but never any part of the value. Rules:
 - Value length: at most 256 characters
 - Credential-shape values: prefixes `eyJ`, `AKIA`, `ghp_`, `xoxb-`/`xoxp-`, and (case-insensitive)
   `Bearer `/`Basic ` rejected
+
+**Compatibility.** Every key added to `GUARDED_TAG_KEYS` becomes reserved. Configuration that sets
+`metrics.tags.extra.rest.application` now fails startup with a `ConfigurationException` naming the
+key; choose another key name (for example `application`, which is accepted).
 
 ### `@Timed` and `TimedAspect`
 
@@ -322,7 +333,7 @@ All keys live under the `metrics` section.
 | `metrics.vertx.namedPools` | boolean | `true` | Enable Vert.x named-pool metrics. |
 | `metrics.vertx.labels` | `List<String>` | `null` (Vert.x defaults; `HTTP_ROUTE` off) | Explicit list of `io.vertx.micrometer.Label` names to emit on Vert.x meters. `null` = use Vert.x default set. Empty list = suppress all labels. |
 | `metrics.tags.service` | string | `null` | Service name applied to all meters as a `service` common tag. Falls back to `OTEL_SERVICE_NAME` env var, then `"unknown-service"`. Validated at startup. |
-| `metrics.tags.extra` | `Map<String,String>` | `{}` | Additional common tags. Max 16 entries. Keys and values validated at startup (see Tag Policy). |
+| `metrics.tags.extra` | `Map<String,String>` | `{}` | Additional common tags. Max 16 entries. Keys and values validated at startup (see Tag Policy). Cardinality-guarded keys, including `rest.application`, are rejected and fail startup. |
 | `metrics.cardinality.maxTagValuesPerKey` | int | `200` | Max distinct values per guarded tag key on `vertique.*` meters. |
 | `metrics.cardinality.maxMeters` | int | `0` | Global max meter count across the composite. Name-agnostic: it counts every meter, `vertique.*` or not, so size it against the whole population rather than the framework's own subset. `0` = unlimited. |
 | `metrics.security.enabled` | boolean | `true` | Enable security-event metrics from `SecurityMetricsObserver`. |
