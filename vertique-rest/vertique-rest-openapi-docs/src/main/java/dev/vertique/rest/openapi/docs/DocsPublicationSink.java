@@ -13,6 +13,7 @@ import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
 import dev.vertique.rest.jaxrs.publication.RestApplications;
 import dev.vertique.rest.jaxrs.routing.FilePartDescriptor;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
+import dev.vertique.rest.jaxrs.routing.ParamDescriptor;
 import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
@@ -284,7 +285,20 @@ final class DocsPublicationSink implements OperationPublicationSink {
                     namedFileParts.add(part.partName());
                 }
             }
-            facts.put(operation.operationId(), new OperationFacts(consumes, namedFileParts));
+            Map<InputKey, Class<?>> elementTypes = new LinkedHashMap<>();
+            for (ParamDescriptor parameter : descriptor.parameters()) {
+                if (parameter.componentType() != null && parameter.location() != null && parameter.name() != null) {
+                    elementTypes.put(new InputKey(parameter.location(), parameter.name()), parameter.componentType());
+                }
+            }
+            facts.put(
+                    operation.operationId(),
+                    new OperationFacts(
+                            consumes,
+                            namedFileParts,
+                            descriptor.methodAnnotations(),
+                            descriptor.classAnnotations(),
+                            elementTypes));
         }
         return Collections.unmodifiableMap(facts);
     }

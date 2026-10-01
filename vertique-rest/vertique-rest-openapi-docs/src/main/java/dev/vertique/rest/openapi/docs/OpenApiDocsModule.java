@@ -74,6 +74,7 @@ public abstract class OpenApiDocsModule {
      * @param applications the declared applications of the component
      * @param schemaSource the bound operation schema source, if any
      * @param profiles the JSON mapper profile registry
+     * @param warnings the documentation module's warnings of the component
      * @return the sink, or an empty set when no document is enabled
      */
     @Provides
@@ -85,7 +86,8 @@ public abstract class OpenApiDocsModule {
             Set<RequestValidationStrategy> strategies,
             RestApplications applications,
             Optional<OperationSchemaSource> schemaSource,
-            JsonMapperProfileRegistry profiles) {
+            JsonMapperProfileRegistry profiles,
+            DocumentWarnings warnings) {
         if (documents.isEmpty()) {
             return Set.of();
         }
@@ -95,7 +97,7 @@ public abstract class OpenApiDocsModule {
                 apidocsConfig.path(),
                 strategies,
                 applications,
-                new AssemblyContext(schemaSource, profiles)));
+                new AssemblyContext(schemaSource, profiles, warnings)));
     }
 
     /**
