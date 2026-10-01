@@ -13,6 +13,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import dev.vertique.rest.openapi.docs.ResponseTestComponents.Served;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.responses.dto.Note;
+import dev.vertique.rest.openapi.docs.fixture.responses.it.ElsewhereApi;
+import dev.vertique.rest.openapi.docs.fixture.responses.it.FixedReceiptResource;
 import dev.vertique.rest.openapi.docs.fixture.responses.it.NoteExplicitResource;
 import dev.vertique.rest.openapi.docs.fixture.responses.it.NoteResource;
 import dev.vertique.rest.openapi.docs.fixture.responses.it.NotesApi;
@@ -56,6 +58,11 @@ import org.junit.jupiter.params.provider.MethodSource;
  * subject, name the operation, the declaring type, the member, the serialized name, and the schema
  * name, and hold no schema text. Every successful deployment is undeployed before the case's
  * assertions run.
+ *
+ * <p>The application's document is also disabled beside another application of the same
+ * composition whose document stays enabled: the deployment starts, the resource answers with the
+ * serialized name, and the enabled document describes neither the operation nor the schema name of
+ * the disabled one.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -63,11 +70,11 @@ public class OutputRenameRefusalIT {
 
     private static final String HOST = "127.0.0.1";
 
-    /** The mount every fixture application is served under. */
+    /** The mount the applications whose output type is {@code Note} are served under. */
     private static final String MOUNT = "/api/*";
 
-    /** The member of {@code Note} whose schema name differs. */
-    private static final String MEMBER = "note";
+    /** The clause naming the member of {@code Note}, its serialized name, and its schema name. */
+    private static final String RENAME_CLAUSE = "its member 'note' is serialized as 'note' but described as 'remark'";
 
     /** The name Jackson serializes the member under. */
     private static final String SERIALIZED_NAME = "note";
@@ -95,12 +102,15 @@ public class OutputRenameRefusalIT {
     /**
      * One deployment of the matrix.
      *
-     * @param application   the application, which also names its document
-     * @param declaringType the application's declaring interface
-     * @param components    creates the case's component from its configuration
-     * @param config        the case's configuration
-     * @param operationId   the operation a refusal must name, or {@code null} when the case deploys
-     * @param route         the path a deployed case is requested on
+     * @param application        the application, which also names its document
+     * @param declaringType      the application's declaring interface
+     * @param components         creates the case's component from its configuration
+     * @param config             the case's configuration
+     * @param operationId        the operation a refusal must name, or {@code null} when the case deploys
+     * @param route              the path a deployed case is requested on
+     * @param enabledDocument    the document of another application of the composition that stays
+     *     enabled and is fetched once the case deploys, or {@code null} when there is none
+     * @param enabledOperationId the operation {@code enabledDocument} must describe, or {@code null}
      */
     record Case(
             String application,
@@ -108,7 +118,19 @@ public class OutputRenameRefusalIT {
             Function<JsonObject, Served> components,
             JsonObject config,
             String operationId,
-            String route) {
+            String route,
+            String enabledDocument,
+            String enabledOperationId) {
+
+        Case(
+                String application,
+                Class<?> declaringType,
+                Function<JsonObject, Served> components,
+                JsonObject config,
+                String operationId,
+                String route) {
+            this(application, declaringType, components, config, operationId, route, null, null);
+        }
 
         boolean refused() {
             return operationId != null;
@@ -148,7 +170,22 @@ public class OutputRenameRefusalIT {
                                         .create(config),
                                 disabled,
                                 null,
-                                NotesApi.PATH + NoteResource.ROUTE))));
+                                NotesApi.PATH + NoteResource.ROUTE))),
+                Arguments.of(Named.of(
+                        "(d) disabled document beside an enabled one",
+                        new Case(
+                                NotesApi.NAME,
+                                NotesApi.class,
+                                config -> DaggerResponseTestComponents_NotesBesideElsewhereComponent.factory()
+                                        .create(config),
+                                DocsConfigs.withDocumentEnabled(
+                                        InputAssemblyIT.webValidationConfig(NotesApi.NAME, ElsewhereApi.NAME),
+                                        NotesApi.NAME,
+                                        false),
+                                null,
+                                NotesApi.PATH + NoteResource.ROUTE,
+                                ElsewhereApi.NAME,
+                                FixedReceiptResource.OPERATION_ID))));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -161,12 +198,21 @@ public class OutputRenameRefusalIT {
         Outcome outcome = deploy(row.components(), row.config());
         Integer status = null;
         String body = null;
+        Integer documentStatus = null;
+        String documentBody = null;
         try {
             if (!row.refused() && outcome.deployed() && outcome.port() != null) {
                 HttpResponse<Buffer> answer =
                         await(client.get(outcome.port(), HOST, row.route()).send());
                 status = answer.statusCode();
                 body = answer.bodyAsString();
+                if (row.enabledDocument() != null) {
+                    String documentUri = InputAssemblyIT.documentPath(row.enabledDocument(), InputAssemblyIT.JSON_FORM);
+                    HttpResponse<Buffer> document =
+                            await(client.get(outcome.port(), HOST, documentUri).send());
+                    documentStatus = document.statusCode();
+                    documentBody = document.bodyAsString();
+                }
             }
         } finally {
             undeploy(outcome);
@@ -177,7 +223,28 @@ public class OutputRenameRefusalIT {
             assertRefused(row, outcome);
         } else {
             assertStarted(outcome, status, body);
+            if (row.enabledDocument() != null) {
+                assertEnabledDocument(row, documentStatus, documentBody);
+            }
         }
+    }
+
+    /**
+     * The other application's enabled document is served and describes only its own operation: the
+     * application whose document is disabled contributes neither its operation nor its schema name.
+     */
+    private static void assertEnabledDocument(Case row, Integer status, String body) {
+        assertEquals(200, status, () -> "the document '" + row.enabledDocument() + "' is served: " + body);
+        assertNotNull(body, "the document has a body");
+        assertAll(
+                "the document '" + row.enabledDocument() + "': " + body,
+                () -> assertTrue(
+                        body.contains(row.enabledOperationId()),
+                        "it describes the operation " + row.enabledOperationId()),
+                () -> assertFalse(
+                        body.contains(NoteResource.OPERATION_ID),
+                        "it does not describe the operation " + NoteResource.OPERATION_ID),
+                () -> assertFalse(body.contains(SCHEMA_NAME), "it holds no " + SCHEMA_NAME));
     }
 
     /** An enabled document refuses the deployment before listening, naming the rename. */
@@ -194,9 +261,9 @@ public class OutputRenameRefusalIT {
                 message.contains(row.operationId()), "the message names the operation " + row.operationId()));
         checks.add(() -> assertTrue(
                 message.contains(Note.class.getName()), "the message names the type " + Note.class.getName()));
-        checks.add(() -> assertTrue(message.contains(MEMBER), "the message names the member " + MEMBER));
         checks.add(() -> assertTrue(
-                message.contains(SERIALIZED_NAME), "the message names the serialized name " + SERIALIZED_NAME));
+                message.contains(RENAME_CLAUSE),
+                "the message names the member, its serialized name, and its schema name: " + RENAME_CLAUSE));
         checks.add(() -> assertTrue(message.contains(SCHEMA_NAME), "the message names the schema name " + SCHEMA_NAME));
         for (String text : SCHEMA_TEXT) {
             checks.add(() -> assertFalse(message.contains(text), "the message holds no " + text));

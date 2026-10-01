@@ -36,10 +36,13 @@ import dev.vertique.rest.openapi.docs.MetadataDocuments.WarningCapture;
 import dev.vertique.rest.openapi.docs.ResponseDocuments.ResponseOperation;
 import dev.vertique.rest.openapi.docs.fixture.responses.dto.BadView;
 import dev.vertique.rest.openapi.docs.fixture.responses.dto.CatalogItem;
+import dev.vertique.rest.openapi.docs.fixture.responses.dto.CreatorZx;
 import dev.vertique.rest.openapi.docs.fixture.responses.dto.GoodView;
 import dev.vertique.rest.openapi.docs.fixture.responses.dto.ItemView;
+import dev.vertique.rest.openapi.docs.fixture.responses.dto.Note;
 import dev.vertique.rest.openapi.docs.fixture.responses.dto.Part;
 import dev.vertique.rest.openapi.docs.fixture.responses.dto.Problem;
+import dev.vertique.rest.openapi.docs.fixture.responses.dto.ReceiptZx;
 import dev.vertique.rest.openapi.docs.fixture.responses.dto.Thing;
 import dev.vertique.rest.openapi.docs.fixture.responses.dto.ViewA;
 import dev.vertique.rest.openapi.docs.fixture.responses.dto.ViewB;
@@ -51,6 +54,7 @@ import dev.vertique.rest.openapi.docs.fixture.responses.unit.DeclaredSuccessReso
 import dev.vertique.rest.openapi.docs.fixture.responses.unit.GeneratorFailureResource;
 import dev.vertique.rest.openapi.docs.fixture.responses.unit.HeaderNameResource;
 import dev.vertique.rest.openapi.docs.fixture.responses.unit.HonoredAttributesResource;
+import dev.vertique.rest.openapi.docs.fixture.responses.unit.RefusalPositionResource;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
@@ -589,6 +593,125 @@ class ResponseAssemblyTest {
                 () -> assertFalse(message.contains("{"), () -> "the failure quotes schema text: " + message),
                 () -> assertFalse(message.contains("\"type\""), () -> "the failure quotes schema text: " + message),
                 () -> assertInstanceOf(JsonSchemaGenerationException.class, failure.getCause()));
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Refusals at header, array-element, and creator-parameter positions
+    // ---------------------------------------------------------------------------------------------
+
+    @Test
+    @DisplayName("header schemas, array elements, and creator parameters are refused like content schemas")
+    void refusalsCoverHeaderAndArrayElementTypes() {
+        // Given: under the strict profile, BadView as the schema of header X-Bad on 200
+        ResponseOperation badHeader = ResponseOperation.of("badHeader", RefusalPositionResource.class, "badHeader")
+                .withProfile(STRICT_PROFILE);
+        // and ReceiptZx, whose field internalZx carries @Hidden only, as the array element of 206
+        ResponseOperation hiddenArrayElement =
+                ResponseOperation.of("hiddenArrayElement", RefusalPositionResource.class, "hiddenArrayElement");
+        // and Note, whose member note is described as remark, as the schema of header X-Note on 200
+        ResponseOperation renamedHeader =
+                ResponseOperation.of("renamedHeader", RefusalPositionResource.class, "renamedHeader");
+        // and the control GoodView as both the schema of header X-Good and the array element of 200
+        ResponseOperation goodHeaderAndArray =
+                ResponseOperation.of("goodHeaderAndArray", RefusalPositionResource.class, "goodHeaderAndArray");
+        // and the inferred CreatorZx, whose creator parameter carries @Schema(hidden = true)
+        ResponseOperation creatorParameterMarker =
+                ResponseOperation.of("creatorParameterMarker", RefusalPositionResource.class, "creatorParameterMarker");
+
+        // When / Then: each document is assembled, one assertion block per case
+        assertAll(
+                () -> {
+                    RestConfigurationException failure =
+                            assemble(REPORTS, badHeader).failure();
+                    String message = String.valueOf(failure.getMessage());
+                    assertAll(
+                            "(i) a header schema the generator refuses fails publication; message: " + message,
+                            () -> assertTrue(
+                                    message.contains("apidocs.documents."),
+                                    "the failure names the document's configuration path"),
+                            () -> assertTrue(containsWord(message, "badHeader"), "the failure names the operation"),
+                            () -> assertTrue(
+                                    message.contains("header 'X-Bad' schema"), "the failure names the header schema"),
+                            () -> assertTrue(message.contains("of status 200"), "the failure names status 200"),
+                            () -> assertFalse(message.contains("{"), "the failure quotes no schema text"),
+                            () -> assertFalse(message.contains("\"type\""), "the failure quotes no schema text"),
+                            () -> assertInstanceOf(JsonSchemaGenerationException.class, failure.getCause()));
+                },
+                () -> {
+                    String message = String.valueOf(
+                            assemble(REPORTS, hiddenArrayElement).failure().getMessage());
+                    assertAll(
+                            "(ii) an array element describing a @Hidden member fails publication; message: " + message,
+                            () -> assertTrue(message.contains("of status 206"), "the failure names status 206"),
+                            () -> assertTrue(
+                                    message.contains("member 'internalZx' of " + ReceiptZx.class.getName()),
+                                    "the failure names the member and its type"),
+                            () -> assertTrue(
+                                    message.contains(", which carries @Hidden; "), "the failure names the marker"),
+                            () -> assertTrue(
+                                    message.contains("the output generator ignores @Hidden; declare @Schema(hidden ="
+                                            + " true) on the property's own field or getter"),
+                                    "the failure carries the @Hidden fix"));
+                },
+                () -> {
+                    String message = String.valueOf(
+                            assemble(REPORTS, renamedHeader).failure().getMessage());
+                    assertAll(
+                            "(iii) a header schema describing a renamed member fails publication; message: " + message,
+                            () -> assertTrue(message.contains("of status 200"), "the failure names status 200"),
+                            () -> assertTrue(
+                                    message.contains(
+                                            "its member 'note' is serialized as 'note' but described as 'remark'"),
+                                    "the failure names the member, its serialized name, and its schema name"),
+                            () -> assertTrue(message.contains(Note.class.getName()), "the failure names the type"));
+                },
+                () -> {
+                    Rendering rendering = assemble(REPORTS, goodHeaderAndArray).rendering();
+                    JsonNode document = rendering.jsonTree();
+                    JsonNode ok = response(document, "goodHeaderAndArray", "200");
+                    assertAll(
+                            "(iv) a generable header schema and array element publish",
+                            () -> assertEquals(List.of("200"), responseKeys(responses(document, "goodHeaderAndArray"))),
+                            () -> assertEquals(
+                                    json(refJson("goodHeaderAndArray.response.200.header.X-Good")),
+                                    ok.path("headers").path("X-Good").path("schema")),
+                            () -> assertEquals(
+                                    json("{\"" + JSON_MEDIA_TYPE + "\": {\"schema\": {\"type\": \"array\", \"items\": "
+                                            + refJson("goodHeaderAndArray.response.200") + "}}}"),
+                                    ok.path("content")),
+                            () -> assertEquals(
+                                    Set.of(
+                                            "goodHeaderAndArray.response.200",
+                                            "goodHeaderAndArray.response.200.header.X-Good"),
+                                    componentKeys(document)),
+                            () -> assertComponentIsGenerated(
+                                    document, "goodHeaderAndArray.response.200", DEFAULT_PROFILE, GoodView.class),
+                            () -> assertComponentIsGenerated(
+                                    document,
+                                    "goodHeaderAndArray.response.200.header.X-Good",
+                                    DEFAULT_PROFILE,
+                                    GoodView.class),
+                            () -> assertValidates(rendering));
+                },
+                () -> {
+                    String message = String.valueOf(
+                            assemble(REPORTS, creatorParameterMarker).failure().getMessage());
+                    assertAll(
+                            "(v) an inferred type whose creator parameter carries @Schema(hidden = true) fails"
+                                    + " publication; message: " + message,
+                            () -> assertTrue(message.contains("of status 200"), "the failure names status 200"),
+                            () -> assertTrue(
+                                    message.contains("member '<init>#0' of " + CreatorZx.class.getName()),
+                                    "the failure names the creator parameter and its type"),
+                            () -> assertTrue(
+                                    message.contains(", which carries @Schema(hidden = true); "),
+                                    "the failure names the marker"),
+                            () -> assertTrue(
+                                    message.contains("the output generator ignores @Schema(hidden = true) where it is"
+                                            + " declared; declare it directly on the property's own field or getter,"
+                                            + " not through a bundle or mix-in"),
+                                    "the failure carries the misplaced-marker fix"));
+                });
     }
 
     // ---------------------------------------------------------------------------------------------

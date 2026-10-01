@@ -6,9 +6,11 @@ package dev.vertique.rest.openapi.docs;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+import dev.vertique.rest.core.response.ResponseProducerBinding;
 import dev.vertique.rest.jaxrs.publication.ResponseShape;
 import dev.vertique.rest.openapi.docs.ResponseInference.Inference;
 import dev.vertique.rest.openapi.docs.ResponseInference.Row;
+import dev.vertique.rest.openapi.docs.fixture.responses.shapes.CharSequenceProducers;
 import dev.vertique.rest.openapi.docs.fixture.responses.shapes.CustomProducers;
 import dev.vertique.rest.openapi.docs.fixture.responses.shapes.Dto;
 import dev.vertique.rest.openapi.docs.fixture.responses.shapes.GenericResource;
@@ -17,6 +19,7 @@ import dev.vertique.rest.openapi.docs.fixture.responses.shapes.ItemResource;
 import dev.vertique.rest.openapi.docs.fixture.responses.shapes.ShapeResource;
 import java.lang.reflect.Type;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -28,8 +31,9 @@ import org.junit.jupiter.params.provider.MethodSource;
  * documentation publishes for it: the status, the media types in published order, and the type the
  * body is described from, with a type only for a JSON entity.
  *
- * <p>Each row builds the response facts of a fixture method as the runtime captures them, with the
- * producer binding of {@code Custom} as the only other input.
+ * <p>Each row builds the response facts of a fixture method as the runtime captures them, with a
+ * producer-binding set as the only other input: the binding of {@code Custom} unless the row names
+ * another.
  */
 class ResponseInferenceTest {
 
@@ -76,7 +80,17 @@ class ResponseInferenceTest {
 
     private static Arguments row(
             String label, Class<?> resourceClass, String method, List<String> produces, Expected expected) {
-        return Arguments.of(label, resourceClass, method, produces, expected);
+        return row(label, resourceClass, method, produces, CustomProducers.bindings(), expected);
+    }
+
+    private static Arguments row(
+            String label,
+            Class<?> resourceClass,
+            String method,
+            List<String> produces,
+            Set<ResponseProducerBinding<?>> bindings,
+            Expected expected) {
+        return Arguments.of(label, resourceClass, method, produces, bindings, expected);
     }
 
     static Stream<Arguments> rows() {
@@ -132,19 +146,31 @@ class ResponseInferenceTest {
                 row("Custom, producer-bound", shapes, "custom", List.of(), runtime()),
                 row("SubCustom, subclass of a producer-bound type", shapes, "subCustom", List.of(), runtime()),
                 row("Dto, only text/plain", shapes, "dto", List.of(TEXT), runtime()),
-                row("raw Future", shapes, "rawFuture", List.of(), runtime()));
+                row("raw Future", shapes, "rawFuture", List.of(), runtime()),
+                row(
+                        "String, producer bound to its interface CharSequence",
+                        shapes,
+                        "stringReturn",
+                        List.of(),
+                        CharSequenceProducers.bindings(),
+                        runtime()));
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("rows")
     @DisplayName("classifies every return shape by its status, media types, and output type")
     void classifiesEveryReturnShape(
-            String label, Class<?> resourceClass, String method, List<String> produces, Expected expected) {
+            String label,
+            Class<?> resourceClass,
+            String method,
+            List<String> produces,
+            Set<ResponseProducerBinding<?>> bindings,
+            Expected expected) {
         // Given the response facts of the method, as the runtime captures them
         ResponseShape shape = ResponseDocuments.shape(resourceClass, method, produces);
 
-        // When the return shape is classified with the producer binding of Custom
-        Inference inference = ResponseInference.classify(shape, CustomProducers.bindings());
+        // When the return shape is classified with the row's producer bindings
+        Inference inference = ResponseInference.classify(shape, bindings);
 
         // Then the row, status, media types, and type to describe the body from are exactly expected
         assertEquals(expected.row(), inference.row(), label + ": row");

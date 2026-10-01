@@ -11,13 +11,15 @@ import dev.vertique.rest.core.router.HttpVerticle;
 import dev.vertique.rest.jaxrs.RestModule;
 import dev.vertique.rest.openapi.docs.fixture.DocsTestSupportModule;
 import dev.vertique.rest.openapi.docs.fixture.disclosure.sources.DisclosureSourceModules;
+import dev.vertique.rest.openapi.docs.fixture.responses.it.ElsewhereModule;
 import dev.vertique.rest.openapi.docs.fixture.responses.it.ResponseApplicationModules;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 
 /**
  * The Dagger components of the response integration tests: one component per deployment, each
- * serving exactly one application of {@link ResponseApplicationModules}.
+ * serving exactly one application of {@link ResponseApplicationModules}, except {@link
+ * NotesBesideElsewhereComponent}, which also serves the application of {@link ElsewhereModule}.
  *
  * <p>Every component lists {@code RestModule}, {@link OpenApiDocsModule}, the canonical {@link
  * ConfigParsingModule}, {@link DocsTestSupportModule}, the {@code web-validation} wiring with the
@@ -252,5 +254,28 @@ final class ResponseTestComponents {
         /** Factory taking the application configuration. */
         @Component.Factory
         interface ComponentFactory extends Factory<NoteReceiptsComponent> {}
+    }
+
+    /**
+     * The applications {@code notes} of {@code NotesApi} at {@code /api} and {@code elsewhere} of
+     * {@code ElsewhereApi} at {@code /elsewhere}, composed together: the one composition serving two
+     * applications.
+     */
+    @Singleton
+    @Component(
+            modules = {
+                RestModule.class,
+                OpenApiDocsModule.class,
+                ConfigParsingModule.class,
+                DocsTestSupportModule.class,
+                DisclosureSourceModules.Canonical.class,
+                ResponseApplicationModules.Notes.class,
+                ElsewhereModule.class
+            })
+    interface NotesBesideElsewhereComponent extends Served {
+
+        /** Factory taking the application configuration. */
+        @Component.Factory
+        interface ComponentFactory extends Factory<NotesBesideElsewhereComponent> {}
     }
 }

@@ -108,14 +108,17 @@ public class OutputHiddenMemberRefusalIT {
     /** Every fix wording; a refusal carries exactly one. */
     private static final List<String> FIXES = List.of(TYPE_FIX, HIDDEN_FIX, MISPLACED_FIX, CANNOT_FIX);
 
-    /** The {@code @Hidden} marker. */
-    private static final String HIDDEN_MARKER = "@Hidden";
+    /** The clause naming the {@code @Hidden} marker of the refused entry. */
+    private static final String HIDDEN_MARKER = ", which carries @Hidden; ";
 
-    /** The {@code @Schema(hidden = true)} marker. */
-    private static final String SCHEMA_HIDDEN_MARKER = "@Schema(hidden = true)";
+    /** The clause naming the {@code @Schema(hidden = true)} marker of the refused entry. */
+    private static final String SCHEMA_HIDDEN_MARKER = ", which carries @Schema(hidden = true); ";
 
     /** The member of {@code ReceiptZx} and {@code FixedReceiptZx} carrying a hiding marker. */
     private static final String INTERNAL_MEMBER = "internalZx";
+
+    /** How a refusal names the member {@code internalZx}, followed by its declaring type. */
+    private static final String INTERNAL_MEMBER_CLAUSE = "member 'internalZx' of ";
 
     /** Fragments only schema text would carry; no refusal message may contain one. */
     private static final List<String> SCHEMA_TEXT = List.of("\"properties\"", "\"type\"", "{");
@@ -187,7 +190,7 @@ public class OutputHiddenMemberRefusalIT {
                                 new Refusal(
                                         ReceiptResource.OPERATION_ID,
                                         HIDDEN_FIX,
-                                        List.of(ReceiptZx.class.getName(), INTERNAL_MEMBER, HIDDEN_MARKER)))),
+                                        List.of(ReceiptZx.class.getName(), INTERNAL_MEMBER_CLAUSE, HIDDEN_MARKER)))),
                 row(
                         "(b) declared ReceiptZx content, @Hidden-only field",
                         refused(
@@ -198,7 +201,7 @@ public class OutputHiddenMemberRefusalIT {
                                 new Refusal(
                                         ReceiptExplicitResource.OPERATION_ID,
                                         HIDDEN_FIX,
-                                        List.of(ReceiptZx.class.getName(), INTERNAL_MEMBER, HIDDEN_MARKER)))),
+                                        List.of(ReceiptZx.class.getName(), INTERNAL_MEMBER_CLAUSE, HIDDEN_MARKER)))),
                 row(
                         "(c) LedgerZx reaching the @Hidden type AuditZx",
                         refused(
