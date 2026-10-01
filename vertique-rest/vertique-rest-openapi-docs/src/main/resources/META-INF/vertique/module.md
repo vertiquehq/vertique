@@ -490,8 +490,11 @@ A hidden *input* is left out (see [Hidden inputs](#hidden-inputs)). A hidden *me
 type of a published request body is different: the input generator of the operation's JSON mapper
 profile describes the body type, and when that description still holds a member or type carrying
 `@Hidden` or `@Schema(hidden = true)` that the generator did not leave out, startup fails. The
-check runs for every published request body, whatever the schema source and whether or not a body
-schema was captured:
+check runs for every published request body, whether or not a body schema was captured. It inspects
+the bound Java type of the request body. A custom or decorating schema source must return the
+generated description of the bound type unchanged: `@Hidden` members of a different type it
+describes are not refused (such a document reports `inputSchemaSource: custom` when protected). A
+refusal reads:
 
 ```text
 <subject>: the request body of operation '<id>' describes <what>, which carries <marker>; <fix>
@@ -876,6 +879,9 @@ and its message can quote that value.
   binds and validates the input.
 - **A schema source that replaces or edits the generated body schema.** With an enabled document it
   fails startup; return the generated body schema and its redaction manifest unchanged.
+- **A schema source that describes a different type than the bound body type.** The hidden-member
+  check inspects the bound type only, so `@Hidden` members of the other type are not refused and
+  publish; return the generated description of the bound type unchanged.
 - **Hiding a body property with `@Hidden`.** The input generator ignores `@Hidden`, so startup
   fails; declare `@Schema(hidden = true)` on the property's own field or getter.
 - **Expecting `required: false`.** An input that is not certainly required carries no `required`
