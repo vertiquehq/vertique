@@ -772,12 +772,15 @@ public abstract class RestModule {
      * {@link RestApplicationConfig} per entry, in the section's order. Not a Dagger binding.
      *
      * <p>The section is checked in three steps. Steps 1 and 3 each fail with one aggregated message
-     * that names every offending configuration path, sorted, and never a configuration value:
+     * that names every offending configuration path (or, for a miscased section, every offending
+     * {@code jaxrs} key), sorted, and never a configuration value:
      * <ol>
-     *   <li>A raw-key check, before any parsing: {@code jaxrs.applications}, when present, must be a
-     *       JSON object ({@code null} included in the rejection); every entry
-     *       {@code jaxrs.applications.<name>} must be a JSON object; and {@code openapiPath},
-     *       compared case-sensitively, is the only key an entry may carry.</li>
+     *   <li>A raw-key check, before any parsing: it first rejects any {@code jaxrs} key that equals
+     *       {@code applications} ignoring case but is not spelled exactly {@code applications};
+     *       then {@code jaxrs.applications}, when present, must be a JSON object ({@code null}
+     *       included in the rejection); every entry {@code jaxrs.applications.<name>} must be a
+     *       JSON object; and {@code openapiPath}, compared case-sensitively, is the only key an
+     *       entry may carry.</li>
      *   <li>A keyed-object parse through {@link ConfigParser#parseKeyedObject(JsonObject, String,
      *       Class)}, which injects each entry's key into {@link RestApplicationConfig#name()}; an
      *       entry it cannot deserialize fails with the parser's own message.</li>
@@ -790,8 +793,10 @@ public abstract class RestModule {
      * @param parser the injected config parser
      * @return the parsed entries; empty when the section is absent or empty
      * @throws ConfigurationException when {@code jaxrs} or {@code jaxrs.applications} is present but
-     *     not a JSON object, an entry is not a JSON object, an entry carries a key other than
-     *     {@code openapiPath}, an entry cannot be parsed, or a configured {@code openapiPath} is blank
+     *     not a JSON object, a {@code jaxrs} key equals {@code applications} ignoring case but is
+     *     not spelled exactly {@code applications}, an entry is not a JSON object, an entry carries
+     *     a key other than {@code openapiPath}, an entry cannot be parsed, or a configured
+     *     {@code openapiPath} is blank
      */
     static List<RestApplicationConfig> parseJaxRsApplications(JsonObject config, ConfigParser parser) {
         JsonObject jaxrs = JsonConfigPaths.navigateObject(config, "jaxrs");
@@ -803,16 +808,30 @@ public abstract class RestModule {
     }
 
     /**
-     * Rejects a raw {@code jaxrs.applications} section that is not a JSON object, entries that are
-     * not JSON objects, and entry keys other than {@code openapiPath}. Reads only key names and
-     * whether each value is a JSON object; no configuration value is echoed.
+     * Rejects any {@code jaxrs} key that equals {@code applications} ignoring case but is not
+     * spelled exactly {@code applications}, then a raw {@code jaxrs.applications} section that is
+     * not a JSON object, entries that are not JSON objects, and entry keys other than
+     * {@code openapiPath}. Reads only key names and whether each value is a JSON object; no
+     * configuration value is echoed.
      *
      * @param jaxrs the {@code jaxrs} section, already navigated to a {@link JsonObject}
-     * @throws ConfigurationException when {@code jaxrs.applications} is present but not a JSON
-     *     object, or when any entry is not a JSON object or carries a key other than
-     *     {@code openapiPath}
+     * @throws ConfigurationException when a {@code jaxrs} key equals {@code applications} ignoring
+     *     case but is not spelled exactly {@code applications}, when {@code jaxrs.applications} is
+     *     present but not a JSON object, or when any entry is not a JSON object or carries a key
+     *     other than {@code openapiPath}
      */
     private static void checkApplicationKeys(JsonObject jaxrs) {
+        Set<String> miscased = new TreeSet<>();
+        for (String key : jaxrs.fieldNames()) {
+            if (key.equalsIgnoreCase("applications") && !key.equals("applications")) {
+                miscased.add(key);
+            }
+        }
+        if (!miscased.isEmpty()) {
+            throw new ConfigurationException("Miscased applications keys under 'jaxrs': "
+                    + quoteJoin(miscased)
+                    + "; per-application settings belong under 'jaxrs.applications'");
+        }
         if (!jaxrs.containsKey("applications")) {
             return;
         }
