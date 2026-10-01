@@ -348,6 +348,10 @@ A composed annotation also hides, one meta level deep:
 Nesting deeper than one level does not count: an annotation whose type is itself only annotated with
 a further annotation carrying `@Hidden` does not hide an operation.
 
+Hiding applies to the document this module serves only. A build-time specification generator may
+still list an operation hidden through a composed `@Hidden` (swagger-core's reader, for example,
+does not resolve it).
+
 A hidden operation is removed from the document before its paths are rendered and before any of its
 content is checked:
 

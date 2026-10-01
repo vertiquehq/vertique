@@ -223,7 +223,8 @@ final class DocumentConfigChecks {
     /**
      * Resolves the {@code info} of an enabled document: the configured one when present, which
      * replaces the annotation as a whole, else the complete {@code info} of an {@link
-     * OpenAPIDefinition} carried by the declaring interface itself (never by a superinterface).
+     * OpenAPIDefinition} read with {@link Class#getDeclaredAnnotation(Class)} from the declaring type
+     * itself: never inherited from a superclass, and never carried by a superinterface.
      *
      * @return {@code null} when the configured {@code info} is valid, else the annotated one
      * @throws ConfigurationException when neither source supplies a non-blank {@code title} and
