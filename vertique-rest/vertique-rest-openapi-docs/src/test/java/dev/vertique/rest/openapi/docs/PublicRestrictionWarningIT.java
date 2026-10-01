@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
+import dev.vertique.rest.openapi.docs.fixture.security.catalog.CatalogApi;
 import dev.vertique.rest.openapi.docs.fixture.security.catalog.WarningCapture;
 import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments;
 import io.vertx.core.DeploymentOptions;
@@ -73,8 +74,8 @@ public class PublicRestrictionWarningIT {
     /** The separator between two listed entries. */
     private static final String ENTRY_SEPARATOR = ", ";
 
-    /** The quoted mount, as the application registers it at {@code /api}. */
-    private static final String MOUNT_FRAGMENT = "'/api";
+    /** The exact mount as the warning names it: the application's path {@code /api} with its wildcard. */
+    private static final String MOUNT_FRAGMENT = "at mount '" + CatalogApi.PATH + "/*'";
 
     /** The restricting operations, sorted by path then method. */
     private static final List<String> RESTRICTED_ENTRIES =

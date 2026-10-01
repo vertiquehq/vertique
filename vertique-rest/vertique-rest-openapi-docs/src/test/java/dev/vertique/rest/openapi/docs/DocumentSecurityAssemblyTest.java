@@ -5,6 +5,7 @@ package dev.vertique.rest.openapi.docs;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -29,6 +30,14 @@ import dev.vertique.rest.jaxrs.publication.MountPublication;
 import dev.vertique.rest.jaxrs.publication.OperationPublication;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.StubSchemeHandler;
+import dev.vertique.rest.openapi.docs.fixture.security.catalog.WarningCapture;
+import dev.vertique.rest.openapi.docs.fixture.security.listing.AlphaResource;
+import dev.vertique.rest.openapi.docs.fixture.security.listing.BetaResource;
+import dev.vertique.rest.openapi.docs.fixture.security.listing.DaggerRosterCaptureComponent;
+import dev.vertique.rest.openapi.docs.fixture.security.listing.OpenResource;
+import dev.vertique.rest.openapi.docs.fixture.security.listing.RosterApi;
+import dev.vertique.rest.openapi.docs.fixture.security.listing.RosterCaptureComponent;
+import dev.vertique.rest.openapi.docs.fixture.security.listing.RosterSchemeModule;
 import dev.vertique.rest.openapi.docs.fixture.security.unit.DaggerGhostCaptureComponent;
 import dev.vertique.rest.openapi.docs.fixture.security.unit.GhostApi;
 import dev.vertique.rest.openapi.docs.fixture.security.unit.GhostCaptureComponent;
@@ -46,6 +55,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -72,6 +82,12 @@ import org.junit.jupiter.params.provider.MethodSource;
  * handler set that lacks {@value GhostResource#SCHEME}; a deployment never reaches this state, so the
  * rule is reachable only here.
  *
+ * <p>The order of the public restriction warning is checked the same way: a component without the
+ * documentation module deploys the public application {@code roster}, whose restricted operations'
+ * ids, registration order, and paths each sort differently and two of which share one path. The
+ * captured publication is assembled with a fresh warning guard while the documentation module's
+ * warning logger is captured, and the warning's list is compared with its expected literal.
+ *
  * <p>Expected values are hand-written literals. Failure messages are checked by fragment.
  */
 @DisplayName("Security schemes and requirements of assembled documents")
@@ -85,6 +101,21 @@ class DocumentSecurityAssemblyTest {
 
     /** The longest the capture's Vert.x instance is awaited while it closes. */
     private static final long CLOSE_TIMEOUT_SECONDS = 10;
+
+    /** The documentation module's warning logger. */
+    private static final String WARNINGS_LOGGER = "dev.vertique.rest.openapi.docs.DocumentWarnings";
+
+    /** The configuration path of the {@code roster} document, which starts each of its warnings. */
+    private static final String ROSTER_DOCUMENT_PATH = "apidocs.documents.roster";
+
+    /** The fragment that marks the restriction warning among a document's warnings. */
+    private static final String RESTRICT_FRAGMENT = "restrict callers";
+
+    /** The fragment after which the restriction warning lists its entries. */
+    private static final String LIST_FRAGMENT = "served without authentication: ";
+
+    /** The separator between two listed entries. */
+    private static final String ENTRY_SEPARATOR = ", ";
 
     // ---------------------------------------------------------------------------------------------
     // Rendering every description kind
@@ -333,6 +364,98 @@ class DocumentSecurityAssemblyTest {
                         .map(SecurityRequirement::schemeName)
                         .toList(),
                 "the schemes readGhost requires");
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // The order of the public restriction warning
+    // ---------------------------------------------------------------------------------------------
+
+    @Test
+    @DisplayName("the restriction warning lists operations by path, then by Path Item method order")
+    void restrictionWarningListsOperationsInPathThenMethodOrder() throws Exception {
+        // Given: the publication of a real mount build of the public application 'roster', whose
+        // restricted operations are zuluCreate (POST /alpha), yankeeRead (GET /alpha), and alphaList
+        // (GET /beta), so that operation-id order and registration order both differ from path order,
+        // beside the open operation openPing (GET /open); and its described scheme handler
+        MountPublication captured = captureRosterPublication();
+        assertEquals(
+                Set.of(
+                        AlphaResource.ZULU_CREATE,
+                        AlphaResource.YANKEE_READ,
+                        BetaResource.ALPHA_LIST,
+                        OpenResource.OPEN_PING),
+                captured.operations().stream()
+                        .map(OperationPublication::operationId)
+                        .collect(Collectors.toSet()),
+                "the operations of the captured roster mount");
+        Map<String, OperationFacts> facts = DocsPublicationSink.operationFacts(captured);
+        MountPublication detached = DocsPublicationSink.detach(captured);
+        EnabledDocuments.EnabledDocument document = MetadataDocuments.document(captured, ApiDocs.Access.PUBLIC);
+        AssemblyContext context = new AssemblyContext(
+                Optional.empty(),
+                ResponseDocuments.registry(),
+                new DocumentWarnings(),
+                Set.of(),
+                Set.of(RosterSchemeModule.rosterAuthHandler()));
+
+        // When: the public document is assembled while the warning logger is captured
+        List<String> warnings;
+        WarningCapture capture = WarningCapture.attach(WARNINGS_LOGGER);
+        try {
+            DocumentAssembler.assemble(document, detached, facts, context);
+            warnings = capture.warnings();
+        } finally {
+            capture.detach();
+        }
+
+        // Then: exactly one restriction warning for the roster document
+        List<String> restrictions = warnings.stream()
+                .filter(message -> message.startsWith(ROSTER_DOCUMENT_PATH) && message.contains(RESTRICT_FRAGMENT))
+                .toList();
+        assertEquals(1, restrictions.size(), () -> "the roster restriction warnings: " + warnings);
+        String warning = restrictions.get(0);
+
+        // Then: it lists the restricted operations by path in natural order, and within /alpha by Path
+        // Item method order (get before post), and never the open operation
+        assertAll(
+                () -> assertEquals(
+                        List.of("GET /alpha (yankeeRead)", "POST /alpha (zuluCreate)", "GET /beta (alphaList)"),
+                        listedEntries(warning),
+                        () -> "the listed entries: " + warning),
+                () -> assertFalse(
+                        warning.contains(OpenResource.OPEN_PING),
+                        () -> "the warning names the open operation: " + warning));
+    }
+
+    /**
+     * Deploys the roster capture component on a private Vert.x instance and returns the publication
+     * its mount build handed to the capture; the deployment is undone and the instance closed on
+     * every exit path.
+     */
+    private static MountPublication captureRosterPublication() throws Exception {
+        Vertx vertx = Vertx.vertx();
+        try {
+            RosterCaptureComponent component =
+                    DaggerRosterCaptureComponent.factory().create(DocsConfigs.loopback());
+            StartupDeployments.Outcome outcome = StartupDeployments.deploy(vertx, component::httpVerticle);
+            try {
+                assertTrue(outcome.deployed(), () -> "the roster capture must deploy: " + outcome.failure());
+                MountPublication captured = component.capture().publication(RosterApi.NAME);
+                assertNotNull(captured, "the mount of application 'roster' must have been published");
+                return captured;
+            } finally {
+                StartupDeployments.undeploy(vertx, outcome);
+            }
+        } finally {
+            vertx.close().toCompletionStage().toCompletableFuture().get(CLOSE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        }
+    }
+
+    /** Returns the entries a restriction warning lists: its suffix after the list fragment, split. */
+    private static List<String> listedEntries(String warning) {
+        int at = warning.indexOf(LIST_FRAGMENT);
+        assertTrue(at >= 0, () -> "the warning has no entry list after '" + LIST_FRAGMENT + "': " + warning);
+        return List.of(warning.substring(at + LIST_FRAGMENT.length()).split(ENTRY_SEPARATOR, -1));
     }
 
     /**

@@ -14,6 +14,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
+import dev.vertique.rest.openapi.docs.fixture.security.catalog.WarningCapture;
 import dev.vertique.rest.openapi.docs.fixture.security.orders.OrderResource;
 import dev.vertique.rest.openapi.docs.fixture.security.orders.OrderSchemeHandlers;
 import dev.vertique.rest.openapi.docs.fixture.security.orders.OrdersApi;
@@ -60,13 +61,17 @@ import org.junit.jupiter.params.provider.MethodSource;
  * unused}, described but never referenced. Its document publishes one Security Requirement Object
  * per declared requirement set, in declaration order, as the last member of each secured Operation
  * Object, and exactly the referenced schemes, from their handlers' descriptions, sorted by name.
- * Roles, hidden operations, and unreferenced handlers leave no trace. This deployment is shared by
- * the class and released in {@code AfterAll} on every path.
+ * Roles, hidden operations, and unreferenced handlers leave no trace. Deploying it logs one
+ * restriction warning listing its four restricted operations in document order, asks the referenced
+ * {@code apiKeyAuth} handler for its description once, and never asks {@code unused}; the warnings
+ * are captured around the deployment only. This deployment is shared by the class and released in
+ * {@code AfterAll} on every path.
  *
  * <p>The application {@code vault} references {@code vaultAuth}, whose counting handler describes
  * nothing. With its document enabled the deployment fails before listening, naming the document,
- * the mount, the operation, and the scheme, and echoing no configuration value; with the document
- * disabled it starts, the scheme still rejects an unauthenticated request, and the handler's
+ * the mount, the operation, and the scheme, and echoing no configuration value, after asking the
+ * handler for its description exactly once and without logging a warning of the document; with the
+ * document disabled it starts, the scheme still rejects an unauthenticated request, and the handler's
  * description is never requested. Each case is deployed through {@code deploy} and undeployed before
  * its assertions run. Expected values are fixed literals.
  */
@@ -118,9 +123,39 @@ public class DocumentSecurityIT {
     /** The sentinel every configured {@code vault} value carries, compared ignoring case. */
     private static final String VAULT_SENTINEL = "zx41";
 
+    /** The documentation module's warning logger. */
+    private static final String WARNINGS_LOGGER = "dev.vertique.rest.openapi.docs.DocumentWarnings";
+
+    /** The fragment that marks the restriction warning among a document's warnings. */
+    private static final String RESTRICT_FRAGMENT = "restrict callers";
+
+    /** The fragment after which the restriction warning lists its entries. */
+    private static final String LIST_FRAGMENT = "served without authentication: ";
+
+    /** The separator between two listed entries. */
+    private static final String ENTRY_SEPARATOR = ", ";
+
+    /**
+     * The restricted operations the {@code orders} restriction warning lists, in document order:
+     * paths in natural order, then methods; the open {@code /orders/ping} and the hidden operation
+     * are not among them.
+     */
+    private static final List<String> ORDERS_RESTRICTED_ENTRIES = List.of(
+            "GET /orders (listOrders)",
+            "GET /orders/admin (adminOrders)",
+            "GET /orders/read (readOrder)",
+            "GET /orders/search (searchOrders)");
+
+    /** What the {@code orders} restriction warning never names: the hidden and open operations, role, scope. */
+    private static final List<String> ORDERS_ABSENT_FROM_WARNING =
+            List.of("internalOrders", "ping", "order-admin", "orders.read");
+
     private static Vertx vertx;
     private static WebClient client;
     private static Outcome orders;
+
+    /** The documentation warnings logged while {@code orders} was deployed. */
+    private static List<String> ordersWarnings = List.of();
 
     @BeforeAll
     static void deployOrders(Vertx sharedVertx) throws Exception {
@@ -128,9 +163,17 @@ public class DocumentSecurityIT {
         client = WebClient.create(vertx);
         JsonObject config = ordersConfig();
         vertx.sharedData().getLocalMap(StartupDeployments.LOCAL_MAP).clear();
-        orders = StartupDeployments.deploy(vertx, () -> DaggerDocumentSecurityTestComponents_OrdersComponent.factory()
-                .create(vertx, config)
-                .httpVerticle());
+        OrderSchemeHandlers.resetDescriptionCalls();
+        WarningCapture capture = WarningCapture.attach(WARNINGS_LOGGER);
+        try {
+            orders = StartupDeployments.deploy(
+                    vertx, () -> DaggerDocumentSecurityTestComponents_OrdersComponent.factory()
+                            .create(vertx, config)
+                            .httpVerticle());
+            ordersWarnings = capture.warnings();
+        } finally {
+            capture.detach();
+        }
     }
 
     @AfterAll
@@ -151,8 +194,7 @@ public class DocumentSecurityIT {
      * unreferenced handlers, in two forms of one valid OpenAPI 3.1 document.
      */
     @Test
-    @DisplayName(
-            "Referenced schemes are published from their handlers' descriptions and each secured operation lists its requirement sets, with no role, hidden operation, or unreferenced handler in either form")
+    @DisplayName("Referenced schemes and requirement sets are published; roles and hidden or unused schemes are not")
     void referencedSchemesPublishedFromHandlerDescriptions() throws Exception {
         // Given: orders deployed with the JWT handler and the fixture handlers, its document enabled
         assertNull(orders.failure(), () -> "the orders deployment failed: " + orders.failure());
@@ -211,6 +253,34 @@ public class DocumentSecurityIT {
         stringsAbsent(json, "the JSON form", ORDERS_ABSENT);
         stringsAbsent(yaml, "the YAML form", ORDERS_ABSENT);
 
+        // Then: deploying logged exactly one restriction warning for orders, listing its four restricted
+        // operations in document order and naming no hidden or open operation, role, or scope
+        List<String> restrictions = ordersWarnings.stream()
+                .filter(message -> message.startsWith("apidocs.documents." + OrdersApi.NAME)
+                        && message.contains(RESTRICT_FRAGMENT))
+                .toList();
+        assertEquals(1, restrictions.size(), () -> "the orders restriction warnings: " + ordersWarnings);
+        String warning = restrictions.get(0);
+        assertEquals(ORDERS_RESTRICTED_ENTRIES, listedEntries(warning), () -> "the listed entries: " + warning);
+        assertAll(
+                "the orders restriction warning names none of " + ORDERS_ABSENT_FROM_WARNING,
+                ORDERS_ABSENT_FROM_WARNING.stream()
+                        .<Executable>map(text -> () -> assertFalse(
+                                warning.contains(text), () -> "the warning names '" + text + "': " + warning)));
+
+        // Then: after deploying and fetching both forms, the referenced apiKeyAuth's handler was asked
+        // for its description exactly once, and the unreferenced handler never
+        assertAll(
+                "the description calls of the fixture handlers",
+                () -> assertEquals(
+                        1,
+                        OrderSchemeHandlers.descriptionCalls(OrderSchemeHandlers.API_KEY_AUTH),
+                        "the description calls of apiKeyAuth"),
+                () -> assertEquals(
+                        0,
+                        OrderSchemeHandlers.descriptionCalls(OrderSchemeHandlers.UNUSED),
+                        "the description calls of unused"));
+
         // Then: both forms parse to the same tree, and the document is valid OpenAPI 3.1
         JsonNode jsonTree = new ObjectMapper().readTree(json);
         JsonNode yamlTree = new ObjectMapper(new YAMLFactory()).readTree(yaml);
@@ -235,8 +305,7 @@ public class DocumentSecurityIT {
      */
     @ParameterizedTest(name = "{0}")
     @MethodSource("vaultCases")
-    @DisplayName(
-            "A referenced scheme whose handler describes nothing fails an enabled document's deployment, and a disabled document leaves startup and the scheme untouched")
+    @DisplayName("An undescribed referenced scheme fails an enabled document; a disabled one leaves startup untouched")
     void undescribedReferencedSchemeFailsPublication(boolean documentEnabled) throws Exception {
         // Given: vault, whose operation requires the undescribed vaultAuth, and the case's configuration
         UndescribedVaultHandler.resetDescriptionCalls();
@@ -245,8 +314,19 @@ public class DocumentSecurityIT {
             DocsConfigs.withDocumentEnabled(config, VaultApi.NAME, false);
         }
 
-        // When: it is deployed and, when it deploys with the document disabled, the route is requested
-        Outcome outcome = deploy(config);
+        // When: it is deployed while the warning logger is captured and, when it deploys with the
+        // document disabled, the route is requested
+        Outcome outcome;
+        List<String> vaultWarnings;
+        WarningCapture capture = WarningCapture.attach(WARNINGS_LOGGER);
+        try {
+            outcome = deploy(config);
+            vaultWarnings = capture.warnings().stream()
+                    .filter(message -> message.startsWith("apidocs.documents." + VaultApi.NAME))
+                    .toList();
+        } finally {
+            capture.detach();
+        }
         Integer status = null;
         String body = null;
         try {
@@ -265,6 +345,10 @@ public class DocumentSecurityIT {
         // Then
         if (documentEnabled) {
             assertRefused(outcome);
+            assertAll(
+                    "the refused vault deployment's description calls and warnings",
+                    () -> assertEquals(1, descriptionCalls, "the description of vaultAuth is requested exactly once"),
+                    () -> assertEquals(List.of(), vaultWarnings, "no vault document warning is logged"));
         } else {
             assertStartedAndGuarded(outcome, status, body, descriptionCalls);
         }
@@ -332,6 +416,13 @@ public class DocumentSecurityIT {
         assertNotNull(operation, () -> "path " + path + " has get: " + item.encode());
         assertEquals(operationId, operation.getString("operationId"), "the operation id at " + path);
         return operation;
+    }
+
+    /** Returns the entries a restriction warning lists: its suffix after the list fragment, split. */
+    private static List<String> listedEntries(String warning) {
+        int at = warning.indexOf(LIST_FRAGMENT);
+        assertTrue(at >= 0, () -> "the warning has no entry list after '" + LIST_FRAGMENT + "': " + warning);
+        return List.of(warning.substring(at + LIST_FRAGMENT.length()).split(ENTRY_SEPARATOR, -1));
     }
 
     /** Checks that none of the strings occurs anywhere in a document's raw text. */
