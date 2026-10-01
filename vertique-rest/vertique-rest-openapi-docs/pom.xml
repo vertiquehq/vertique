@@ -83,6 +83,19 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-rest-validation</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Test scope only: a real Bean Validation implementation bound as the canonical source's
+             optional Validator, so authored @Pattern flags are rendered into the captured schema.
+             Versions are managed by vertique-bom. -->
+        <dependency>
+            <groupId>org.hibernate.validator</groupId>
+            <artifactId>hibernate-validator</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.glassfish.expressly</groupId>
+            <artifactId>expressly</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-rest-openapi-validation</artifactId>
