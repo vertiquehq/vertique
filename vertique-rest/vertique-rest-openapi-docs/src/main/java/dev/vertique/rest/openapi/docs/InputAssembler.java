@@ -37,7 +37,12 @@ import java.util.Set;
  * published order, then the form fields. Only when every operation of the document is checked does
  * {@link Plan#publish} write the Operation Object, publishing each checked schema exactly once.
  *
- * <p>Inputs are taken from the inventory as follows:
+ * <p>Before anything else, an operation that hides a path parameter fails publication (see {@link
+ * HiddenInputs}). Every input the inventory flags hidden is then left out: it publishes nothing, and
+ * no later step, the checks included, reads it or its captured schema. A hidden body adds no request
+ * body, and a form whose every binding is hidden adds none either.
+ *
+ * <p>The visible inputs are taken from the inventory as follows:
  *
  * <ul>
  *   <li>The binding whose origin is the body becomes the request body: one media type per consumed
@@ -61,8 +66,8 @@ import java.util.Set;
  * <p>A method parameter or form field with a captured schema publishes that schema unchanged, inline
  * or as a component (see {@link SchemaEmbedder}). A composite field, or an input with no captured
  * schema, is unenforced: it publishes {@code {"default": "<raw text>"}} when it declares a default
- * value, else the empty schema; nothing is derived from its Java type or annotations. Two inputs of
- * one operation with the same name and location fail publication.
+ * value, else the empty schema; nothing is derived from its Java type or annotations. Two visible
+ * inputs of one operation with the same name and location fail publication.
  */
 final class InputAssembler {
 
@@ -95,11 +100,17 @@ final class InputAssembler {
      * @param embedder the schema embedder of the document
      * @param operation the operation
      * @param facts the operation's descriptor facts, or {@code null} when none were taken
+     * @param tally the disclosure tally of the document's assembly
      * @return the plan, to publish once every operation of the document is checked
-     * @throws RestConfigurationException when two inputs share a name and location, or a captured
-     *     schema holds a refused construct
+     * @throws RestConfigurationException when the operation hides a path parameter, two visible
+     *     inputs share a name and location, or a published captured schema holds a refused construct
      */
-    static Plan check(String subject, SchemaEmbedder embedder, OperationPublication operation, OperationFacts facts) {
+    static Plan check(
+            String subject,
+            SchemaEmbedder embedder,
+            OperationPublication operation,
+            OperationFacts facts,
+            DisclosureTally tally) {
         OperationDetail detail = operation.detail();
         if (detail == null) {
             return new Plan(operation.operationId(), List.of(), null, null);
@@ -107,11 +118,16 @@ final class InputAssembler {
         String operationId = operation.operationId();
         OperationFacts known = facts == null ? NO_FACTS : facts;
         CapturedSchemas schemas = detail.schemas();
-        checkDuplicates(subject, operationId, detail.inputs());
+        HiddenInputs.refusePath(subject, operationId, detail.inputs());
+        List<InputBinding> inputs = HiddenInputs.visible(detail.inputs());
+        if (inputs.size() != detail.inputs().size()) {
+            tally.hiddenInputOmitted();
+        }
+        checkDuplicates(subject, operationId, inputs);
 
         InputBinding bodyBinding = null;
         List<InputBinding> forms = new ArrayList<>();
-        for (InputBinding binding : detail.inputs()) {
+        for (InputBinding binding : inputs) {
             if (binding.origin() == InputBinding.Origin.BODY) {
                 if (bodyBinding == null) {
                     bodyBinding = binding;
@@ -132,7 +148,7 @@ final class InputAssembler {
 
         List<ParameterPlan> parameters = new ArrayList<>();
         for (InputBinding.Origin origin : List.of(InputBinding.Origin.PARAMETER, InputBinding.Origin.COMPOSITE_FIELD)) {
-            for (InputBinding binding : detail.inputs()) {
+            for (InputBinding binding : inputs) {
                 if (binding.origin() == origin && binding.location() != ParamLocation.FORM) {
                     parameters.add(parameter(embedder, operationId, schemas, binding));
                 }

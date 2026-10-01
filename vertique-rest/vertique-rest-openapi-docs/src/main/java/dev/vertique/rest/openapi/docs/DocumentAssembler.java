@@ -28,9 +28,11 @@ import java.util.SortedMap;
  *
  * <p>Inputs are assembled by {@link InputAssembler} in two phases over the whole document, both
  * visiting the operations in the order the document lists them (path keys in natural order, then
- * methods in Path Item order): every operation's inputs are first checked, so the first refused
- * construct or duplicate input of the document fails before anything is published; then every
- * operation is published, each checked schema once.
+ * methods in Path Item order): every operation's inputs are first checked, so the first hidden path
+ * parameter, refused construct, or duplicate input of the document fails before anything is
+ * published; then every operation is published, each checked schema once. Inputs the inventory flags
+ * hidden are left out before any check reads them, and a {@link DisclosureTally} created for the
+ * assembly records whether any was.
  *
  * <p>Failures are thrown as {@link dev.vertique.rest.core.RestConfigurationException} so that
  * publication fails startup; each message starts with the {@linkplain #subject subject} naming the
@@ -69,6 +71,7 @@ final class DocumentAssembler {
         SortedMap<String, List<OperationPublication>> pathItems =
                 RenderedPaths.pathItems(subject, publication.operations());
         SchemaEmbedder embedder = new SchemaEmbedder(subject);
+        DisclosureTally tally = new DisclosureTally();
 
         List<PlannedOperation> planned = new ArrayList<>();
         for (Map.Entry<String, List<OperationPublication>> item : pathItems.entrySet()) {
@@ -76,7 +79,7 @@ final class DocumentAssembler {
                 planned.add(new PlannedOperation(
                         item.getKey(),
                         RenderedPaths.methodKey(operation),
-                        InputAssembler.check(subject, embedder, operation, facts.get(operation.operationId()))));
+                        InputAssembler.check(subject, embedder, operation, facts.get(operation.operationId()), tally)));
             }
         }
 
