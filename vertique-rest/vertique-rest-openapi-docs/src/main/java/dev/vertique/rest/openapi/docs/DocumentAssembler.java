@@ -27,6 +27,11 @@ import java.util.SortedMap;
  * {@link RenderedPaths} from each operation's mount-relative JAX-RS template, in natural order, and
  * each operation is keyed by its lowercase method and carries its runtime operation id.
  *
+ * <p>The {@code info} is the configured one, else the complete {@code info} of the declaring
+ * interface's annotation ({@link AnnotatedInfo}); once the document is written, the extensions of
+ * that annotation not published for lacking the {@code x-} prefix are named in one warning per
+ * document on the component's {@link DocumentWarnings}.
+ *
  * <p>Hidden operations ({@link HiddenOperations}) are removed first, before paths are rendered and
  * before any input is checked: nothing of a hidden operation is rendered, verified, redacted,
  * checked, or recorded in the root flags, and a path item whose operations are all hidden is not
@@ -54,6 +59,9 @@ final class DocumentAssembler {
 
     /** The regular-expression dialect of every pattern a document publishes. */
     static final String PATTERN_DIALECT = "java.util.regex";
+
+    /** The warning kind of the unpublished extensions of an annotated {@code info}. */
+    private static final String INFO_EXTENSIONS = "info-extensions";
 
     private static final JsonNodeFactory NODES = JsonNodeFactory.instance;
 
@@ -112,7 +120,10 @@ final class DocumentAssembler {
 
         ObjectNode root = NODES.objectNode();
         root.put("openapi", DocumentWriter.OPENAPI_VERSION);
-        root.set("info", DocumentWriter.info(document.info()));
+        AnnotatedInfo annotatedInfo = document.annotatedInfo();
+        root.set(
+                "info",
+                annotatedInfo != null ? DocumentWriter.info(annotatedInfo) : DocumentWriter.info(document.info()));
         root.put("jsonSchemaDialect", JSON_SCHEMA_DIALECT);
         root.putArray("servers").addObject().put("url", serverUrl(document, publication));
         root.set("paths", paths);
@@ -122,7 +133,30 @@ final class DocumentAssembler {
             schemas.forEach(componentSchemas::set);
         }
         root.set(ValidationDisclosure.MEMBER, disclosure.root(context, tally));
-        return DocumentWriter.write(root, SnapshotRenderer.render(publication));
+        PublishedDocument written = DocumentWriter.write(root, SnapshotRenderer.render(publication));
+        if (annotatedInfo != null) {
+            warnUnpublishedExtensions(document, annotatedInfo, context.warnings());
+        }
+        return written;
+    }
+
+    /**
+     * Warns, once per document, about the extensions of the annotated {@code info} that are not
+     * published because their names do not start with {@code x-}. The warning names the keys only,
+     * never a property value.
+     */
+    private static void warnUnpublishedExtensions(
+            EnabledDocuments.EnabledDocument document, AnnotatedInfo info, DocumentWarnings warnings) {
+        if (info.unpublishedKeys().isEmpty()) {
+            return;
+        }
+        warnings.warnOnce(
+                INFO_EXTENSIONS,
+                document.name(),
+                "apidocs.documents." + document.name() + ": application '" + document.name() + "' (declared by "
+                        + document.declaringType().getName()
+                        + ") has @OpenAPIDefinition.info extensions whose names do not start with 'x-', which"
+                        + " are not published: " + String.join(", ", info.unpublishedKeys()));
     }
 
     /**
