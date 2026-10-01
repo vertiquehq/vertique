@@ -339,8 +339,14 @@ An operation is hidden when either holds:
   superclass or implemented interface. Any of those `@Operation`s counts, not only the first one,
   which supplies the operation's other members.
 
-Only the annotation itself counts: an annotation that is meta-annotated with `@Hidden` does not hide
-an operation.
+A composed annotation also hides, one meta level deep:
+
+- an annotation on the resource method whose own type carries `@Hidden` or `@Operation(hidden = true)`
+  hides the operation; and
+- an annotation on the resource class whose own type carries `@Hidden` hides the operation.
+
+Nesting deeper than one level does not count: an annotation whose type is itself only annotated with
+a further annotation carrying `@Hidden` does not hide an operation.
 
 A hidden operation is removed from the document before its paths are rendered and before any of its
 content is checked:
@@ -879,7 +885,8 @@ Each enabled document needs an `info` with a non-blank `title` and `version`.
   the annotation's `info`: it publishes `title`, `description` (when present), and `version`, and no
   member of the annotation appears beside them.
 - **From `@OpenAPIDefinition`.** Otherwise the `@OpenAPIDefinition(info = ...)` on the declaring
-  interface itself. A superinterface's `@OpenAPIDefinition` is never read.
+  type itself. The annotation is never inherited: one on a superclass or a superinterface is never
+  read, even where `@OpenAPIDefinition` is `@Inherited`.
 - **Neither.** Startup fails naming `apidocs.documents.<name>.info`.
 
 No default `info` is invented. Other members of `@OpenAPIDefinition` are not published in this release.
@@ -896,6 +903,10 @@ written:
 
 An `@Info` that sets only `title`, `version`, and `description` therefore publishes exactly those
 three. Member values are published as declared and never echoed in a message.
+
+URLs (`termsOfService`, `contact.url`, `license.url`, every `externalDocs.url`, and
+`@ExampleObject.externalValue`) are published exactly as declared and are not checked; never put
+credentials, internal hosts, or non-`http(s)` schemes in them.
 
 - **Extensions.** An `@Extension` of the `@Info`, its `@Contact`, or its `@License` whose name
   starts with `x-` (case-sensitive) becomes a member of that name, written after the object's other
@@ -1147,6 +1158,9 @@ and its message can quote that value.
   mount path; behind a proxy that changes the path, configure `serverUrl`.
 - **Putting credentials in `serverUrl`.** It is published exactly as configured, user information
   included; keep credentials and other secrets out of it.
+- **Putting credentials, internal hosts, or other schemes in a documentation URL.** `termsOfService`,
+  `contact.url`, `license.url`, every `externalDocs.url`, and `@ExampleObject.externalValue` are
+  published exactly as declared and are not checked; use public `http(s)` URLs only.
 - **Hiding a path parameter.** It fails startup; a document describes every path variable.
 - **Expecting a hidden input to stop binding.** Hiding changes the document only; the request still
   binds and validates the input.
