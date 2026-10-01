@@ -15,8 +15,11 @@ import dev.vertique.rest.jaxrs.publication.InputBinding;
 import dev.vertique.rest.jaxrs.publication.InputBinding.Requiredness;
 import dev.vertique.rest.jaxrs.publication.OperationPublication;
 import dev.vertique.rest.jaxrs.routing.ParamLocation;
+import dev.vertique.rest.openapi.docs.fixture.disclosure.dto.AccountFormZx;
 import dev.vertique.rest.openapi.docs.fixture.disclosure.dto.AccountHiddenFieldZx;
+import dev.vertique.rest.openapi.docs.fixture.disclosure.dto.FlatZx;
 import dev.vertique.rest.openapi.docs.fixture.disclosure.dto.NotesZx;
+import dev.vertique.rest.openapi.docs.fixture.disclosure.sources.PassThroughSchemaSource;
 import dev.vertique.rest.openapi.docs.fixture.disclosure.unit.DisclosurePublications;
 import dev.vertique.rest.openapi.docs.fixture.input.GeneratedBodies;
 import dev.vertique.rest.openapi.docs.fixture.input.Publications;
@@ -365,6 +368,58 @@ class HiddenInputOmissionTest {
                     assertNoComponent(rendering, operationId + ".request");
                     assertAbsent(rendering, "backdoorZx");
                 });
+    }
+
+    /**
+     * Pins a recorded residual. The hidden-member check inspects the Java type the body is bound to.
+     * The verification of a custom schema source's result proves only that the body is an unmodified
+     * generator description (its schema matches its manifest); it does not prove that the description
+     * is of the bound type. A source that returns another type's generated description therefore
+     * publishes that type's {@code @Hidden} members, while the same description bound to its own type
+     * is refused.
+     */
+    @Test
+    @DisplayName(
+            "Documented limit: the hidden-member check inspects the bound type, so a source returning another type's generated description publishes that type's @Hidden members")
+    void bodyDescribingAnotherTypeIsInspectedAsTheBoundType() {
+        // Given a create operation whose captured body is AccountFormZx's generated description with
+        // its own manifest as provenance, bound to FlatZx, which has no @Hidden member, and a custom
+        // schema source
+        String operationId = "createNoteZx";
+        Supplier<Publications.Built> source = () -> mount().operation("POST", "/notes", operationId)
+                .consumes("application/json")
+                .body(GeneratedBodies.describe(AccountFormZx.class))
+                .build();
+        Publications.Built mismatched = DisclosurePublications.from(source.get())
+                .bodyType(operationId, FlatZx.class)
+                .build();
+        Publications.Built control = DisclosurePublications.from(source.get())
+                .bodyType(operationId, AccountFormZx.class)
+                .build();
+        assertTrue(
+                capturedBody(mismatched, operationId).encode().contains("backdoorZx"),
+                "positive control: the captured body describes AccountFormZx's hidden member");
+        AssemblyContext custom = DisclosureDocuments.withSource(new PassThroughSchemaSource());
+
+        // When the document is assembled in a public and in a protected rendering
+        DisclosureDocuments.Rendering publicDocument =
+                DisclosureDocuments.render(mismatched, ApiDocs.Access.PUBLIC, custom);
+        DisclosureDocuments.Rendering protectedDocument =
+                DisclosureDocuments.render(mismatched, ApiDocs.Access.PROTECTED, custom);
+
+        // Then publication succeeds and, as the recorded limit, the public document carries the member
+        assertTrue(publicDocument.jsonText().contains("backdoorZx"), "the limit: the member is published");
+        assertTrue(protectedDocument.jsonText().contains("backdoorZx"), "protected document carries the member");
+        JsonObject root = protectedDocument.rootValidation();
+        assertNotNull(root, "the protected document has no root x-vertique-validation");
+        assertEquals("custom", root.getString("inputSchemaSource"), "protected inputSchemaSource");
+
+        // And the control: the same body bound to its own type fails naming the member
+        RestConfigurationException failure = DisclosureDocuments.failure(control, ApiDocs.Access.PUBLIC, custom);
+        String message = failure.getMessage();
+        assertNotNull(message);
+        assertTrue(message.contains("'backdoorZx'"), message);
+        assertTrue(message.contains("@Hidden"), message);
     }
 
     // ---------------------------------------------------------------------------------------------

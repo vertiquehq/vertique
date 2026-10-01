@@ -129,6 +129,7 @@ class ValidationDisclosureTest {
     private static final String GUARDED_SECRET = "secretZx";
 
     /** The protected root under web-validation with a reserved name removed and an input left out. */
+    // The literal is intentional: it pins the wire value independently of the strategy constant.
     private static final String FULL_PROTECTED_ROOT =
             "{\"patternDialect\":\"java.util.regex\",\"strategy\":\"web-validation\","
                     + "\"inputSchemaSource\":\"generated\",\"enforcement\":\"active\","
