@@ -171,8 +171,7 @@ final class InputAssembler {
     /** Plans one Parameter Object, checking its captured schema when it publishes one. */
     private static ParameterPlan parameter(
             SchemaEmbedder embedder, String operationId, CapturedSchemas schemas, InputBinding binding) {
-        JsonObject captured =
-                binding.origin() == InputBinding.Origin.COMPOSITE_FIELD ? null : captured(schemas, binding);
+        JsonObject captured = captured(schemas, binding);
         SchemaEmbedder.CheckedSchema checked = captured == null
                 ? null
                 : embedder.check(InputDescription.parameter(operationId, binding.location(), binding.name()), captured);
@@ -195,8 +194,7 @@ final class InputAssembler {
         if (facts.namedFileParts().contains(binding.name())) {
             return new PropertyPlan(binding.name(), null, NODES.objectNode());
         }
-        JsonObject captured =
-                binding.origin() == InputBinding.Origin.COMPOSITE_FIELD ? null : captured(schemas, binding);
+        JsonObject captured = captured(schemas, binding);
         if (captured == null) {
             return new PropertyPlan(binding.name(), null, unenforced(binding));
         }
@@ -206,9 +204,15 @@ final class InputAssembler {
                 null);
     }
 
-    /** Returns the schema captured for a binding's location and name, or {@code null}. */
+    /**
+     * Returns the schema captured for a binding's location and name, or {@code null} for a composite
+     * field, which is never enforced, and for an input with no captured schema.
+     */
     private static JsonObject captured(CapturedSchemas schemas, InputBinding binding) {
-        if (schemas == null || binding.location() == null || binding.name() == null) {
+        if (binding.origin() == InputBinding.Origin.COMPOSITE_FIELD
+                || schemas == null
+                || binding.location() == null
+                || binding.name() == null) {
             return null;
         }
         return schemas.parameters().get(new InputKey(binding.location(), binding.name()));
@@ -248,6 +252,21 @@ final class InputAssembler {
     /** Returns a location as the lowercase {@code in} value of a Parameter Object. */
     private static String in(ParamLocation location) {
         return location.name().toLowerCase(Locale.ROOT);
+    }
+
+    /**
+     * Builds a request body holding one media type per entry, each with the schema: the schema itself
+     * under the first media type and a copy under each further one.
+     */
+    private static ObjectNode requestBody(List<String> mediaTypes, JsonNode schema) {
+        ObjectNode requestBody = NODES.objectNode();
+        ObjectNode content = requestBody.putObject("content");
+        boolean first = true;
+        for (String mediaType : mediaTypes) {
+            content.putObject(mediaType).set("schema", first ? schema : schema.deepCopy());
+            first = false;
+        }
+        return requestBody;
     }
 
     /**
@@ -340,14 +359,8 @@ final class InputAssembler {
     private record BodyPlan(List<String> mediaTypes, SchemaEmbedder.CheckedSchema checked, boolean required) {
 
         ObjectNode publish(SchemaEmbedder embedder) {
-            ObjectNode requestBody = NODES.objectNode();
-            ObjectNode content = requestBody.putObject("content");
             JsonNode schema = checked != null ? embedder.publish(checked) : NODES.objectNode();
-            boolean first = true;
-            for (String mediaType : mediaTypes) {
-                content.putObject(mediaType).set("schema", first ? schema : schema.deepCopy());
-                first = false;
-            }
+            ObjectNode requestBody = requestBody(mediaTypes, schema);
             if (required) {
                 requestBody.put("required", true);
             }
@@ -370,14 +383,7 @@ final class InputAssembler {
             for (PropertyPlan property : properties) {
                 members.set(property.name(), property.publish(embedder));
             }
-            ObjectNode requestBody = NODES.objectNode();
-            ObjectNode content = requestBody.putObject("content");
-            boolean first = true;
-            for (String mediaType : mediaTypes) {
-                content.putObject(mediaType).set("schema", first ? schema : schema.deepCopy());
-                first = false;
-            }
-            return requestBody;
+            return requestBody(mediaTypes, schema);
         }
     }
 

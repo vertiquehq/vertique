@@ -30,8 +30,9 @@ import java.util.stream.Collectors;
  * in sorted order and whatever the entry's {@code enabled} value, must follow the application-name
  * grammar, name a declared application (active or not), hold only {@code enabled}, {@code info},
  * and {@code serverUrl}, hold no blank {@code enabled} string (a blank string cannot be mapped to a
- * boolean, so it fails instead of keeping the annotation's decision), and set {@code enabled: true} only for an application whose declaring
- * interface carries {@link ApiDocs}; the first violation fails. Second, the {@link ApiDocs} of every
+ * boolean, so it fails instead of keeping the annotation's decision), and set {@code enabled: true}
+ * only for an application whose declaring interface carries {@link ApiDocs}; the first violation
+ * fails. Second, the {@link ApiDocs} of every
  * active application is re-checked for its shape, whether or not configuration disables its
  * document, and every violation is reported in one failure. Third, only when at least one document
  * is enabled, {@code apidocs.path} is checked, then the {@code info} and {@code serverUrl} of each
