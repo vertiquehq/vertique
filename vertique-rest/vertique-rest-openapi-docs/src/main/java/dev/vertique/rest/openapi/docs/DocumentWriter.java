@@ -7,6 +7,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import io.vertx.core.json.JsonObject;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
@@ -15,12 +16,11 @@ import java.util.HexFormat;
  * Writes the OpenAPI document of an application in its JSON and YAML forms and computes the entity
  * tag of each form.
  *
- * <p>The tree holds {@code openapi}, {@code info}, and {@code paths}, in the field order of the
- * OpenAPI 3.1.1 specification's tables: the root fields as {@code openapi}, {@code info}, {@code
- * paths}, and the info fields as {@code title}, {@code description}, {@code version}. The JSON form
- * is compact UTF-8. The YAML form is written from the same tree with the default settings of
- * Jackson's YAML factory, which quotes every string, so parsing it gives a tree equal to the JSON
- * tree. Equal inputs give equal bytes.
+ * <p>The document tree is built by {@link DocumentAssembler}; this class writes it with its members
+ * in insertion order and builds the {@code info} object with the fields {@code title}, {@code
+ * description}, {@code version}. The JSON form is compact UTF-8. The YAML form is written from the
+ * same tree with the default settings of Jackson's YAML factory, which quotes every string, so
+ * parsing it gives a tree equal to the JSON tree. Equal trees give equal bytes.
  */
 final class DocumentWriter {
 
@@ -34,24 +34,47 @@ final class DocumentWriter {
     private DocumentWriter() {}
 
     /**
-     * Writes a document.
+     * Builds the {@code info} object of a document.
      *
-     * @param info the {@code info} object of the document
-     * @param snapshot the snapshot of the mount the document is assembled from
-     * @return the document in both forms, with the entity tag of each
-     * @throws IllegalStateException when the tree cannot be serialized
+     * @param info the configured {@code info} of the document
+     * @return a new {@code info} object holding {@code title}, {@code description} when present, and
+     *     {@code version}, in that order
      */
-    static PublishedDocument write(InfoConfig info, Snapshot snapshot) {
+    static ObjectNode info(InfoConfig info) {
         ObjectNode infoNode = JSON.createObjectNode();
         infoNode.put("title", info.title());
         if (info.description() != null) {
             infoNode.put("description", info.description());
         }
         infoNode.put("version", info.version());
-        ObjectNode root = JSON.createObjectNode();
-        root.put("openapi", OPENAPI_VERSION);
-        root.set("info", infoNode);
-        root.set("paths", JSON.createObjectNode());
+        return infoNode;
+    }
+
+    /**
+     * Copies a captured schema into a document tree node. The captured object is only read: the
+     * returned tree is a new, independent copy, so changing it never reaches the captured object.
+     *
+     * @param captured the captured schema
+     * @return a new tree holding the same members, in the same order
+     * @throws IllegalStateException when the captured schema cannot be read as JSON
+     */
+    static ObjectNode tree(JsonObject captured) {
+        try {
+            return (ObjectNode) JSON.readTree(captured.encode());
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("A captured schema cannot be read as JSON", e);
+        }
+    }
+
+    /**
+     * Writes a document tree in both forms. The tree is not modified.
+     *
+     * @param root the root object of the document, members in the order they are written
+     * @param snapshot the snapshot of the mount the document is assembled from
+     * @return the document in both forms, with the entity tag of each
+     * @throws IllegalStateException when the tree cannot be serialized
+     */
+    static PublishedDocument write(ObjectNode root, Snapshot snapshot) {
         try {
             byte[] json = JSON.writeValueAsBytes(root);
             byte[] yaml = YAML.writeValueAsBytes(root);
