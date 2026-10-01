@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import dev.vertique.json.schema.RedactionManifest;
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.jaxrs.publication.CapturedSchemas;
 import dev.vertique.rest.jaxrs.publication.InputBinding;
@@ -37,7 +38,12 @@ import java.util.Set;
  * published order, then the form fields. Only when every operation of the document is checked does
  * {@link Plan#publish} write the Operation Object, publishing each checked schema exactly once.
  *
- * <p>Inputs are taken from the inventory as follows:
+ * <p>Before anything else, an operation that hides a path parameter fails publication (see {@link
+ * HiddenInputs}). Every input the inventory flags hidden is then left out: it publishes nothing, and
+ * no later step, the checks included, reads it or its captured schema. A hidden body adds no request
+ * body, and a form whose every binding is hidden adds none either.
+ *
+ * <p>The visible inputs are taken from the inventory as follows:
  *
  * <ul>
  *   <li>The binding whose origin is the body becomes the request body: one media type per consumed
@@ -48,21 +54,33 @@ import java.util.Set;
  *       is never read.
  *   <li>Every form binding, method parameter or composite field, becomes a property of the form
  *       request body, in inventory order: one media type per consumed type, or, when none is
- *       declared, {@code multipart/form-data} for an operation with a named file part and else
- *       {@code application/x-www-form-urlencoded}. A named file part's property is the empty schema.
- *       A form body never carries {@code required}. When an operation binds a body, its form
- *       bindings add no request body.
+ *       declared, {@code multipart/form-data} when a visible form binding is a named file part and
+ *       else {@code application/x-www-form-urlencoded}; a hidden file part never chooses it. A
+ *       named file part's property is the empty schema. A form body never carries {@code
+ *       required}. When an operation binds a body, its form bindings add no request body.
  *   <li>Every other binding becomes a Parameter Object: method parameters first, then composite
  *       fields, each in inventory order. A parameter carries {@code required: true} exactly when its
  *       binding is certainly required, and the description of its {@link Parameter} annotation when
  *       that is not blank.
  * </ul>
  *
- * <p>A method parameter or form field with a captured schema publishes that schema unchanged, inline
- * or as a component (see {@link SchemaEmbedder}). A composite field, or an input with no captured
- * schema, is unenforced: it publishes {@code {"default": "<raw text>"}} when it declares a default
- * value, else the empty schema; nothing is derived from its Java type or annotations. Two inputs of
- * one operation with the same name and location fail publication.
+ * <p>A captured request body is published only once its redaction manifest is verified against the
+ * capture (see {@link ManifestVerifier}); the document's own copy is then checked for refused
+ * constructs, every published body, captured schema or not, is refused when its type is described
+ * with a hidden member or type (see {@link HiddenMemberRefusal}), and the reserved-name assertions
+ * the manifest lists are removed from the copy (see {@link ReservedNameRedaction}) before it is
+ * relocated into a component. A method parameter or form field
+ * with a captured schema may not hold {@code propertyNames} (see {@link ParameterPropertyNames}); it
+ * publishes that schema unchanged, inline or as a component (see {@link SchemaEmbedder}). A
+ * composite field, or an input with no captured schema, is unenforced: it publishes {@code
+ * {"default": "<raw text>"}} when it declares a default value, else the empty schema; nothing is
+ * derived from its Java type or annotations. Two visible inputs of one operation with the same name
+ * and location fail publication.
+ *
+ * <p>When the document marks unguarded inputs (see {@link ValidationDisclosure}), a Parameter Object
+ * whose binding is not schema-enforced, and a request body whose body binding is not, carries the
+ * marker as its last member. A form request body carries it when any of its visible form bindings is
+ * not schema-enforced or is a named file part, since a file part publishes no schema.
  */
 final class InputAssembler {
 
@@ -95,11 +113,27 @@ final class InputAssembler {
      * @param embedder the schema embedder of the document
      * @param operation the operation
      * @param facts the operation's descriptor facts, or {@code null} when none were taken
+     * @param context the component's assembly inputs, naming the bound schema source
+     * @param tally the disclosure tally of the document's assembly
+     * @param generators the input generators of the document's assembly
+     * @param markInputs whether inputs no schema guards are marked
      * @return the plan, to publish once every operation of the document is checked
-     * @throws RestConfigurationException when two inputs share a name and location, or a captured
-     *     schema holds a refused construct
+     * @throws RestConfigurationException when the operation hides a path parameter, two visible
+     *     inputs share a name and location, a published request body carries no matching redaction
+     *     manifest or one that does not resolve in it, a published request body's type is described
+     *     with a hidden member or type or cannot be inspected for one, a published parameter or
+     *     form-field schema holds {@code propertyNames}, or a published captured schema holds a refused
+     *     construct
      */
-    static Plan check(String subject, SchemaEmbedder embedder, OperationPublication operation, OperationFacts facts) {
+    static Plan check(
+            String subject,
+            SchemaEmbedder embedder,
+            OperationPublication operation,
+            OperationFacts facts,
+            AssemblyContext context,
+            DisclosureTally tally,
+            InputGenerators generators,
+            boolean markInputs) {
         OperationDetail detail = operation.detail();
         if (detail == null) {
             return new Plan(operation.operationId(), List.of(), null, null);
@@ -107,11 +141,16 @@ final class InputAssembler {
         String operationId = operation.operationId();
         OperationFacts known = facts == null ? NO_FACTS : facts;
         CapturedSchemas schemas = detail.schemas();
-        checkDuplicates(subject, operationId, detail.inputs());
+        HiddenInputs.refusePath(subject, operationId, detail.inputs());
+        List<InputBinding> inputs = HiddenInputs.visible(detail.inputs());
+        if (inputs.size() != detail.inputs().size()) {
+            tally.hiddenInputOmitted();
+        }
+        checkDuplicates(subject, operationId, inputs);
 
         InputBinding bodyBinding = null;
         List<InputBinding> forms = new ArrayList<>();
-        for (InputBinding binding : detail.inputs()) {
+        for (InputBinding binding : inputs) {
             if (binding.origin() == InputBinding.Origin.BODY) {
                 if (bodyBinding == null) {
                     bodyBinding = binding;
@@ -124,17 +163,29 @@ final class InputAssembler {
         BodyPlan body = null;
         if (bodyBinding != null) {
             JsonObject captured = schemas == null ? null : schemas.body();
-            SchemaEmbedder.CheckedSchema checked =
-                    captured == null ? null : embedder.check(InputDescription.body(operationId), captured);
+            SchemaEmbedder.CheckedSchema checked = null;
+            RedactionManifest manifest = null;
+            if (captured != null) {
+                manifest = ManifestVerifier.verify(subject, operationId, captured, schemas.bodyProvenance(), context);
+                checked = embedder.check(InputDescription.body(operationId), captured);
+            }
+            HiddenMemberRefusal.refuse(subject, operationId, bodyBinding, detail.profileId(), generators);
+            if (checked != null) {
+                ReservedNameRedaction.redact(subject, operationId, manifest, checked.tree(), context, tally);
+            }
             boolean required = detail.gateInstalled() && captured != null && rejectsNull(captured);
-            body = new BodyPlan(mediaTypes(known.consumes(), DEFAULT_BODY_MEDIA_TYPE), checked, required);
+            body = new BodyPlan(
+                    mediaTypes(known.consumes(), DEFAULT_BODY_MEDIA_TYPE),
+                    checked,
+                    required,
+                    markInputs && !bodyBinding.schemaEnforced());
         }
 
         List<ParameterPlan> parameters = new ArrayList<>();
         for (InputBinding.Origin origin : List.of(InputBinding.Origin.PARAMETER, InputBinding.Origin.COMPOSITE_FIELD)) {
-            for (InputBinding binding : detail.inputs()) {
+            for (InputBinding binding : inputs) {
                 if (binding.origin() == origin && binding.location() != ParamLocation.FORM) {
-                    parameters.add(parameter(embedder, operationId, schemas, binding));
+                    parameters.add(parameter(subject, embedder, operationId, schemas, binding, markInputs));
                 }
             }
         }
@@ -142,11 +193,16 @@ final class InputAssembler {
         FormPlan form = null;
         if (bodyBinding == null && !forms.isEmpty()) {
             List<PropertyPlan> properties = new ArrayList<>();
+            boolean filePart = false;
+            boolean unenforced = false;
             for (InputBinding binding : forms) {
-                properties.add(formProperty(embedder, operationId, schemas, known, binding));
+                properties.add(formProperty(subject, embedder, operationId, schemas, known, binding));
+                boolean named = known.namedFileParts().contains(binding.name());
+                filePart |= named;
+                unenforced |= named || !binding.schemaEnforced();
             }
-            String defaultMediaType = known.namedFileParts().isEmpty() ? URL_ENCODED : MULTIPART;
-            form = new FormPlan(mediaTypes(known.consumes(), defaultMediaType), properties);
+            String defaultMediaType = filePart ? MULTIPART : URL_ENCODED;
+            form = new FormPlan(mediaTypes(known.consumes(), defaultMediaType), properties, markInputs && unenforced);
         }
         return new Plan(operationId, parameters, body, form);
     }
@@ -170,22 +226,33 @@ final class InputAssembler {
 
     /** Plans one Parameter Object, checking its captured schema when it publishes one. */
     private static ParameterPlan parameter(
-            SchemaEmbedder embedder, String operationId, CapturedSchemas schemas, InputBinding binding) {
+            String subject,
+            SchemaEmbedder embedder,
+            String operationId,
+            CapturedSchemas schemas,
+            InputBinding binding,
+            boolean markInputs) {
         JsonObject captured = captured(schemas, binding);
-        SchemaEmbedder.CheckedSchema checked = captured == null
-                ? null
-                : embedder.check(InputDescription.parameter(operationId, binding.location(), binding.name()), captured);
+        SchemaEmbedder.CheckedSchema checked = null;
+        if (captured != null) {
+            InputDescription input = InputDescription.parameter(operationId, binding.location(), binding.name());
+            ObjectNode tree = DocumentWriter.tree(captured);
+            ParameterPropertyNames.refuse(subject, input, tree);
+            checked = embedder.check(input, tree);
+        }
         return new ParameterPlan(
                 binding.name(),
                 in(binding.location()),
                 description(binding.annotations()),
                 binding.requiredness() == InputBinding.Requiredness.REQUIRED,
                 checked,
-                checked == null ? unenforced(binding) : null);
+                checked == null ? unenforced(binding) : null,
+                markInputs && !binding.schemaEnforced());
     }
 
     /** Plans one form-body property, checking its captured schema when it publishes one. */
     private static PropertyPlan formProperty(
+            String subject,
             SchemaEmbedder embedder,
             String operationId,
             CapturedSchemas schemas,
@@ -198,10 +265,10 @@ final class InputAssembler {
         if (captured == null) {
             return new PropertyPlan(binding.name(), null, unenforced(binding));
         }
-        return new PropertyPlan(
-                binding.name(),
-                embedder.check(InputDescription.formField(operationId, binding.name()), captured),
-                null);
+        InputDescription input = InputDescription.formField(operationId, binding.name());
+        ObjectNode tree = DocumentWriter.tree(captured);
+        ParameterPropertyNames.refuse(subject, input, tree);
+        return new PropertyPlan(binding.name(), embedder.check(input, tree), null);
     }
 
     /**
@@ -325,6 +392,7 @@ final class InputAssembler {
      * @param required whether the parameter is certainly required
      * @param checked the checked captured schema, or {@code null} for an unenforced input
      * @param unenforced the unenforced schema, or {@code null} when a captured schema is published
+     * @param marked whether the Parameter Object carries the marker of an input no schema guards
      */
     private record ParameterPlan(
             String name,
@@ -332,7 +400,8 @@ final class InputAssembler {
             String description,
             boolean required,
             SchemaEmbedder.CheckedSchema checked,
-            ObjectNode unenforced) {
+            ObjectNode unenforced,
+            boolean marked) {
 
         ObjectNode publish(SchemaEmbedder embedder) {
             ObjectNode node = NODES.objectNode();
@@ -345,6 +414,9 @@ final class InputAssembler {
                 node.put("required", true);
             }
             node.set("schema", checked != null ? embedder.publish(checked) : unenforced);
+            if (marked) {
+                ValidationDisclosure.markUnenforced(node);
+            }
             return node;
         }
     }
@@ -355,14 +427,19 @@ final class InputAssembler {
      * @param mediaTypes the media types, in order
      * @param checked the checked captured body, or {@code null} when none was captured
      * @param required whether the body is required
+     * @param marked whether the request body carries the marker of an input no schema guards
      */
-    private record BodyPlan(List<String> mediaTypes, SchemaEmbedder.CheckedSchema checked, boolean required) {
+    private record BodyPlan(
+            List<String> mediaTypes, SchemaEmbedder.CheckedSchema checked, boolean required, boolean marked) {
 
         ObjectNode publish(SchemaEmbedder embedder) {
             JsonNode schema = checked != null ? embedder.publish(checked) : NODES.objectNode();
             ObjectNode requestBody = requestBody(mediaTypes, schema);
             if (required) {
                 requestBody.put("required", true);
+            }
+            if (marked) {
+                ValidationDisclosure.markUnenforced(requestBody);
             }
             return requestBody;
         }
@@ -373,8 +450,9 @@ final class InputAssembler {
      *
      * @param mediaTypes the media types, in order
      * @param properties the properties, in inventory order
+     * @param marked whether the request body carries the marker of an input no schema guards
      */
-    private record FormPlan(List<String> mediaTypes, List<PropertyPlan> properties) {
+    private record FormPlan(List<String> mediaTypes, List<PropertyPlan> properties, boolean marked) {
 
         ObjectNode publish(SchemaEmbedder embedder) {
             ObjectNode schema = NODES.objectNode();
@@ -383,7 +461,11 @@ final class InputAssembler {
             for (PropertyPlan property : properties) {
                 members.set(property.name(), property.publish(embedder));
             }
-            return requestBody(mediaTypes, schema);
+            ObjectNode requestBody = requestBody(mediaTypes, schema);
+            if (marked) {
+                ValidationDisclosure.markUnenforced(requestBody);
+            }
+            return requestBody;
         }
     }
 

@@ -66,6 +66,7 @@ final class DocsPublicationSink implements OperationPublicationSink {
     private final String prefix;
     private final Set<RequestValidationStrategy> strategies;
     private final RestApplications applications;
+    private final AssemblyContext context;
 
     /**
      * Creates a sink with the default documentation prefix, no registered request-validation
@@ -73,9 +74,10 @@ final class DocsPublicationSink implements OperationPublicationSink {
      *
      * @param documents the enabled documents
      * @param store the document store of the component
+     * @param context the component's assembly inputs the assembler reads besides the publication
      */
-    DocsPublicationSink(EnabledDocuments documents, DocumentStore store) {
-        this(documents, store, ApidocsConfig.DEFAULT_PATH, Set.of(), new RestApplications(List.of()));
+    DocsPublicationSink(EnabledDocuments documents, DocumentStore store, AssemblyContext context) {
+        this(documents, store, ApidocsConfig.DEFAULT_PATH, Set.of(), new RestApplications(List.of()), context);
     }
 
     /**
@@ -86,18 +88,21 @@ final class DocsPublicationSink implements OperationPublicationSink {
      * @param prefix the configured documentation prefix, without a trailing slash
      * @param strategies the registered request-validation strategies
      * @param applications the declared applications of the component
+     * @param context the component's assembly inputs the assembler reads besides the publication
      */
     DocsPublicationSink(
             EnabledDocuments documents,
             DocumentStore store,
             String prefix,
             Set<RequestValidationStrategy> strategies,
-            RestApplications applications) {
+            RestApplications applications,
+            AssemblyContext context) {
         this.documents = documents;
         this.store = store;
         this.prefix = prefix;
         this.strategies = strategies;
         this.applications = applications;
+        this.context = context;
     }
 
     /**
@@ -154,7 +159,7 @@ final class DocsPublicationSink implements OperationPublicationSink {
         return store.publish(
                 applicationName,
                 caller,
-                () -> DocumentAssembler.assemble(document, detached, facts),
+                () -> DocumentAssembler.assemble(document, detached, facts, context),
                 () -> SnapshotRenderer.render(detached));
     }
 
@@ -264,7 +269,7 @@ final class DocsPublicationSink implements OperationPublicationSink {
     private record Collision(String url, EnabledDocuments.EnabledDocument document, OperationPublication operation) {}
 
     /** Takes the descriptor facts of every operation that has detail, before the publication is detached. */
-    private static Map<String, OperationFacts> operationFacts(MountPublication publication) {
+    static Map<String, OperationFacts> operationFacts(MountPublication publication) {
         Map<String, OperationFacts> facts = new LinkedHashMap<>();
         for (OperationPublication operation : publication.operations()) {
             OperationDetail detail = operation.detail();
@@ -284,7 +289,8 @@ final class DocsPublicationSink implements OperationPublicationSink {
         return Collections.unmodifiableMap(facts);
     }
 
-    private static MountPublication detach(MountPublication publication) {
+    /** Copies a publication without retaining descriptors, copying every captured schema so the copy is independent. */
+    static MountPublication detach(MountPublication publication) {
         List<OperationPublication> operations = publication.operations().stream()
                 .map(DocsPublicationSink::detach)
                 .toList();

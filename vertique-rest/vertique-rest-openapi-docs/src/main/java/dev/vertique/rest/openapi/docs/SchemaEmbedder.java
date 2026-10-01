@@ -22,7 +22,8 @@ import java.util.SortedMap;
  * SchemaRelocation relocated} and registered with its relocated definitions in the document's
  * {@link ComponentRegistry}, so key collisions are found as components are published.
  *
- * <p>The captured objects are only read; relocation and reference rewriting change the owned copy.
+ * <p>The captured objects are only read; reserved-name redaction (see {@link ReservedNameRedaction}),
+ * relocation, and reference rewriting change the owned copy.
  */
 final class SchemaEmbedder {
 
@@ -52,7 +53,18 @@ final class SchemaEmbedder {
      * @throws RestConfigurationException when the schema holds a refused construct
      */
     CheckedSchema check(InputDescription input, JsonObject captured) {
-        ObjectNode tree = DocumentWriter.tree(captured);
+        return check(input, DocumentWriter.tree(captured));
+    }
+
+    /**
+     * Refuses the constructs a published schema may not hold in a tree the document already owns.
+     *
+     * @param input the input the schema was captured for
+     * @param tree the document's own copy of the captured schema, made by {@link DocumentWriter#tree}
+     * @return the checked copy, to publish once every input of the document is checked
+     * @throws RestConfigurationException when the schema holds a refused construct
+     */
+    CheckedSchema check(InputDescription input, ObjectNode tree) {
         SchemaRefusals.check(subject, input, tree);
         return new CheckedSchema(input, tree);
     }

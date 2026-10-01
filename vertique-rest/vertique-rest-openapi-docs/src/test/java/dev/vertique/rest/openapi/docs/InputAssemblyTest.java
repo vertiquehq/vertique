@@ -140,7 +140,8 @@ class InputAssemblyTest {
      * @return the parsed document, members in written order
      */
     private static JsonObject assemble(EnabledDocuments.EnabledDocument document, Publications.Built built) {
-        PublishedDocument published = DocumentAssembler.assemble(document, built.publication(), facts(built));
+        PublishedDocument published =
+                DocumentAssembler.assemble(document, built.publication(), facts(built), TestContexts.noSource());
         return new JsonObject(new String(published.json(), StandardCharsets.UTF_8));
     }
 
@@ -155,7 +156,7 @@ class InputAssemblyTest {
             EnabledDocuments.EnabledDocument document, Publications.Built built) {
         return assertThrows(
                 RestConfigurationException.class,
-                () -> DocumentAssembler.assemble(document, built.publication(), facts(built)));
+                () -> DocumentAssembler.assemble(document, built.publication(), facts(built), TestContexts.noSource()));
     }
 
     /**

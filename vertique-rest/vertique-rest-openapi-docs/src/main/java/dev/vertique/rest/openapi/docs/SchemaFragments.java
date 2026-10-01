@@ -89,8 +89,14 @@ final class SchemaFragments {
                 || "-._~!$&'()*+,;=:@/?".indexOf(c) >= 0;
     }
 
-    /** Unescapes one RFC 6901 reference token; {@code null} for a {@code ~} not followed by 0 or 1. */
-    private static String unescape(String escaped) {
+    /**
+     * Unescapes one RFC 6901 reference token, {@code ~1} to {@code /} and {@code ~0} to {@code ~}.
+     *
+     * @param escaped the escaped reference token
+     * @return the unescaped token, or {@code null} for a {@code ~} not followed by {@code 0} or
+     *     {@code 1}
+     */
+    static String unescape(String escaped) {
         StringBuilder token = new StringBuilder(escaped.length());
         for (int i = 0; i < escaped.length(); i++) {
             char c = escaped.charAt(i);

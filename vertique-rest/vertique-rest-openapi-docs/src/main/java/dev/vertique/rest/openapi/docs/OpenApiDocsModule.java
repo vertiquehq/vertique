@@ -10,6 +10,7 @@ import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.config.JsonConfigPaths;
 import dev.vertique.core.exception.ConfigurationException;
+import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.rest.core.config.JaxRsConfig;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import dev.vertique.rest.core.lifecycle.RouterLifecycleHook;
@@ -22,6 +23,7 @@ import dev.vertique.rest.core.security.SecuritySchemeHandler;
 import dev.vertique.rest.jaxrs.publication.ApiDocsInstalled;
 import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
 import dev.vertique.rest.jaxrs.publication.RestApplications;
+import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
 import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
@@ -70,6 +72,8 @@ public abstract class OpenApiDocsModule {
      * @param apidocsConfig the parsed {@code apidocs} section, whose path is the documentation prefix
      * @param strategies the registered request-validation strategies
      * @param applications the declared applications of the component
+     * @param schemaSource the bound operation schema source, if any
+     * @param profiles the JSON mapper profile registry
      * @return the sink, or an empty set when no document is enabled
      */
     @Provides
@@ -79,11 +83,19 @@ public abstract class OpenApiDocsModule {
             DocumentStore store,
             ApidocsConfig apidocsConfig,
             Set<RequestValidationStrategy> strategies,
-            RestApplications applications) {
+            RestApplications applications,
+            Optional<OperationSchemaSource> schemaSource,
+            JsonMapperProfileRegistry profiles) {
         if (documents.isEmpty()) {
             return Set.of();
         }
-        return Set.of(new DocsPublicationSink(documents, store, apidocsConfig.path(), strategies, applications));
+        return Set.of(new DocsPublicationSink(
+                documents,
+                store,
+                apidocsConfig.path(),
+                strategies,
+                applications,
+                new AssemblyContext(schemaSource, profiles)));
     }
 
     /**

@@ -239,9 +239,11 @@ With no enabled document, because `apidocs.enabled` is `false`, no application c
 every annotated application is switched off, or no application is registered, the module contributes
 no publication sink and no docs mount. No publication is built, no composition validator runs, no
 startup warning is logged, and routes, validation, and schema-source calls are exactly as without
-the module. Only two configuration checks still run when `apidocs.enabled` is not `false`: the checks
-of every `apidocs.documents` entry and the `@ApiDocs` shape check of every active application (see
-[Configuration](#configuration)). With `apidocs.enabled` `false`, nothing runs.
+the module. In particular, no request body is checked for a redaction manifest, so a schema source
+that binds none starts and routes unchanged. Only two configuration checks still run when
+`apidocs.enabled` is not `false`: the checks of every `apidocs.documents` entry and the `@ApiDocs`
+shape check of every active application (see [Configuration](#configuration)). With
+`apidocs.enabled` `false`, nothing runs.
 
 ### Startup log lines
 
@@ -271,7 +273,8 @@ The root members are written in this order:
 5. `paths`: one entry per rendered path, keys in natural order.
 6. `components`: `schemas` only, keys in natural order; left out when the document has no
    component schema.
-7. `x-vertique-validation`: `{"patternDialect": "java.util.regex"}` (see [Patterns](#patterns)).
+7. `x-vertique-validation`: `{"patternDialect": "java.util.regex"}` in a public document (see
+   [Patterns](#patterns) and [Validation disclosure](#validation-disclosure)).
 
 ### Paths and operations
 
@@ -289,8 +292,9 @@ The root members are written in this order:
 
 ### Parameters
 
-Every input that is neither the request body nor a form input becomes a Parameter Object. Method
-parameters come first, then the fields of composite beans, each group in binding order.
+Every visible input that is neither the request body nor a form input becomes a Parameter Object.
+Method parameters come first, then the fields of composite beans, each group in binding order. A
+hidden input becomes nothing (see [Hidden inputs](#hidden-inputs)).
 
 - **`name` and `in`.** The bound name and the lowercase location (`path`, `query`, `header`,
   `cookie`).
@@ -301,7 +305,8 @@ parameters come first, then the fields of composite beans, each group in binding
   primitive query parameter without `@DefaultValue`, carries no `required` member.
 - **`schema`.** The schema captured for the input, published unchanged. It is published inline,
   unless it holds a `$ref` or `$defs` at a schema position; then it becomes a component and the
-  parameter references it (see [Components](#components)).
+  parameter references it (see [Components](#components)). A captured parameter schema may not hold
+  the `propertyNames` keyword (see [Refused constructs](#refused-constructs)).
 
 ### Unenforced inputs
 
@@ -309,19 +314,53 @@ An input with no captured schema, and every composite-bean field, is unenforced.
 `{"default": "<raw @DefaultValue text>"}` when it declares a `@DefaultValue`, and the empty schema
 `{}` otherwise. Nothing is derived from its Java type or its constraint annotations.
 
+### Hidden inputs
+
+An input is hidden when the operation inventory of `dev.vertique:vertique-rest-jaxrs` flags it
+hidden. The document reads only that flag and never re-derives hiding from annotations. The
+inventory flags an input hidden when:
+
+- the input itself carries `@Parameter(hidden = true)` or `@Schema(hidden = true)`, or, for a
+  composite-bean field or component, `@Hidden`;
+- a hidden method-level entry names it: a `@Parameter(hidden = true)` on the method, an entry of
+  `@Parameters`, or an entry of `@Operation(parameters = ...)`, matched by exact name and by
+  location (an entry without a location matches every location);
+- it is a field of a `@BeanParam` or `@RequestParams` parameter that carries
+  `@Parameter(hidden = true)` or `@Schema(hidden = true)`, or whose type carries `@Hidden`: hiding
+  the composite hides all its fields.
+
+A hidden input appears nowhere in the document: in no parameter list, form body, request body,
+component, or example.
+
+- **Hidden body.** The operation publishes no `requestBody`.
+- **Hidden form fields.** Hidden form fields, named file parts included, leave the form body and do
+  not choose its default media type. A form whose fields are all hidden publishes no request body.
+- **Removed before every other check.** Apart from the path-parameter check below, hidden inputs
+  are left out before any check of the document runs, so a hidden input is never verified,
+  redacted, or checked, and never collides with a visible one of the same name and location.
+- **Binding is unchanged.** The request still binds and validates every hidden input exactly as
+  before; hiding changes the document only.
+- **Path parameters cannot be hidden.** A document must describe every variable of a path template,
+  so an operation that hides a path parameter fails startup:
+  `<subject>: operation '<id>' hides its path parameter '<name>'; a document must describe every
+  path variable, so a path parameter cannot be hidden`, where `<subject>` is
+  `Application '<name>' (declared by <binary name>) at mount '<mount path>'`.
+
 ### Request bodies
 
-- **Body input.** The operation's body input becomes `requestBody`, with one media type per type in
-  `@Consumes`, or `application/json` when the operation declares none. Each media type references the
-  one component `<operationId>.request`, which holds the captured body schema. When no body schema
-  was captured, each media type holds the empty schema `{}`.
+- **Body input.** The operation's visible body input becomes `requestBody`, with one media type per
+  type in `@Consumes`, or `application/json` when the operation declares none. Each media type
+  references the one component `<operationId>.request`, which holds the captured body schema after
+  [reserved-name redaction](#reserved-name-redaction). When no body schema was captured, each media
+  type holds the empty schema `{}`.
 - **`required`.** The request body carries `required: true` exactly when a request-validation gate is
   installed for the operation and the captured body schema, evaluated as the gate evaluates it,
   rejects an absent body. Otherwise it carries no `required` member.
-- **Form inputs.** When the operation has no body input, its form inputs and named file parts become
-  the request body instead: an object schema with one property per input, in binding order. The
-  media types are those in `@Consumes`; when the operation declares none, `multipart/form-data` for
-  an operation with a named file part and `application/x-www-form-urlencoded` otherwise. A named file
+- **Form inputs.** When the operation has no body input, its visible form inputs and named file
+  parts become the request body instead: an object schema with one property per input, in binding
+  order. The media types are those in `@Consumes`; when the operation declares none,
+  `multipart/form-data` for an operation with a visible named file part and
+  `application/x-www-form-urlencoded` otherwise. A named file
   part's property is `{}`; any other property is its captured schema (inline or a component, as for a
   parameter) or the unenforced schema above. A form request body never carries `required`.
 - **Body and form inputs together.** When an operation binds a body, its form inputs are not
@@ -341,10 +380,59 @@ Component keys are built from the runtime operation id:
 Every character outside `[A-Za-z0-9._-]` in a key is replaced by `_`. Two components with the same
 key fail startup.
 
+### Reserved-name redaction
+
+The request-body schema the framework's input generator builds, which is the schema the
+request-validation gate validates, can refuse names the body type binds but does not publish, such
+as a `@JsonIgnore` or `@Schema(hidden = true)` member beside extra keys a `@JsonAnySetter` accepts.
+It does so with an assertion under `propertyNames` that spells each name out: an `enum` of the names
+for a case-sensitively bound type, or a pattern of their ASCII case folds for a case-insensitively
+bound one. The generator records the location of every such assertion, copies included, in a
+redaction manifest bound to the schema's content. `dev.vertique:vertique-json-schema` describes when
+the generator emits these assertions.
+
+The document publishes the body schema minus exactly those recorded assertions, so the names never
+appear in it while the gate still refuses them:
+
+- **Exactly the recorded locations.** Each recorded assertion is removed from the document's own
+  copy, before [relocation](#relocation-of-local-definitions). Nothing is matched by shape and
+  nothing is simplified: an `allOf` left with one element stays an `allOf`. A body that reserves no
+  name is published unchanged.
+- **What stays.** The refusal of non-ASCII keys of a case-insensitively bound type, and a
+  `propertyNames` that a JSON mapper profile's own schema override declares, are not recorded and
+  stay in the document.
+- **The gate is unchanged.** The captured schema the gate validates with is never changed, so every
+  request is accepted or refused exactly as before.
+
+**Fail-closed.** A captured body schema is published only when it carries the framework's redaction
+manifest and its content matches that manifest. Only the framework's input generator binds one, so
+a custom `OperationSchemaSource`, or one that decorates the framework's source, fails startup when
+it returns a body schema it built, replaced, or edited, or one without the manifest:
+
+```text
+<subject>: the request body of operation '<id>' carries no redaction manifest matching its content
+(schema source <binary name>); only the framework's schema generator binds one, so the source must
+return the generated body schema and its manifest unchanged
+```
+
+`<binary name>` is the runtime class of the bound source. A manifest whose recorded locations do not
+all resolve in the body schema fails startup too, before anything is removed:
+
+```text
+<subject>: the request body of operation '<id>' carries a redaction manifest that does not resolve
+in its schema (schema source <binary name>)
+```
+
+Each message is one line; it is wrapped here for reading. Neither message echoes a location, a name,
+or schema text. A hidden body is never verified. These checks run only for an application with an
+enabled document: without one, a source that binds no manifest starts and routes unchanged (see
+[Nothing is built without an enabled document](#nothing-is-built-without-an-enabled-document)).
+
 ### Relocation of local definitions
 
-A schema published as a component is relocated on a copy the document owns; the captured schemas
-the request-validation gate uses are never changed.
+A schema published as a component is relocated on a copy the document owns, after
+[reserved-name redaction](#reserved-name-redaction) for a request body; the captured schemas the
+request-validation gate uses are never changed.
 
 - The root `$defs` is removed, and each entry `<def>` becomes component `<component>.<def>`.
 - Every fragment-only `$ref` at a schema position, in the component and in each relocated
@@ -374,16 +462,106 @@ and the JSON Pointer of the offending keyword. It never echoes a value, a refere
 and names a `patternProperties` member by its ordinal (`[key-N]`) rather than its pattern.
 Identifiers, anchors, and nested definitions are reported before references.
 
-The whole document is checked before anything is published: paths first, then each operation in the
-order the document lists it, its duplicate inputs, then its body schema, parameter schemas, and form
-field schemas. The first violation fails startup. Component key collisions are found as components
-are published.
+**`propertyNames` in a parameter.** Only a request body carries a redaction manifest, so a captured
+parameter or form-field schema that holds the `propertyNames` keyword at a schema position fails
+startup:
+
+```text
+<subject>: the <location> parameter '<name>' of operation '<id>' has a schema holding the keyword
+'propertyNames'; parameter schemas carry no redaction manifest, so a published one may not hold it
+```
+
+A form field is named `the form field '<name>' of operation '<id>'` instead. The text
+`propertyNames` as data (inside `const`, `enum`, `default`, `examples`, or `example`) or as a
+property name (a member of `properties`, `patternProperties`, `$defs`, or `dependentSchemas`) is
+not the keyword.
+
+**Order.** The whole document is checked before anything is published: paths first, then each
+operation in the order the document lists it. Within an operation, a hidden path parameter is
+checked first; then hidden inputs are left out, and the visible inputs are checked: duplicate
+inputs; the request body (its manifest, its refused constructs, its
+[hidden members](#hidden-members-of-a-request-body), and its redaction); the parameter schemas
+(`propertyNames`, then refused constructs); and the form-field schemas, likewise. The first
+violation fails startup. Component key collisions are found as components are published.
+
+### Hidden members of a request body
+
+A hidden *input* is left out (see [Hidden inputs](#hidden-inputs)). A hidden *member* inside the
+type of a published request body is different: the input generator of the operation's JSON mapper
+profile describes the body type, and when that description still holds a member or type carrying
+`@Hidden` or `@Schema(hidden = true)` that the generator did not leave out, startup fails. The
+check runs for every published request body, whether or not a body schema was captured. It inspects
+the bound Java type of the request body. A custom or decorating schema source must return the
+generated description of the bound type unchanged: `@Hidden` members of a different type it
+describes are not refused (such a document reports `inputSchemaSource: custom` when protected). A
+refusal reads:
+
+```text
+<subject>: the request body of operation '<id>' describes <what>, which carries <marker>; <fix>
+```
+
+- `<what>` is `member '<member>' of <declaring type>`, or `type <declaring type>` for a type.
+- `<marker>` is `@Hidden`, `@Schema(hidden = true)`, or `both @Hidden and @Schema(hidden = true)`.
+- `<fix>` depends on where the marker is:
+
+| Position of the marker | Fix |
+|---|---|
+| `@Hidden` on the property's own field or getter | The input generator ignores `@Hidden`; add `@Schema(hidden = true)` on the property's own field or getter |
+| `@Schema(hidden = true)` declared through an annotation bundle, a mix-in, or a creator parameter | Declare it directly on the property's own field or getter |
+| A type carrying a marker | The generator does not hide a type; declare `@Schema(hidden = true)` on the field or getter of each member that references it, or hide the operation |
+| A member the generator cannot leave out: an enum constant, `@JsonUnwrapped` content, a property bound through a setter, a builder, or a static factory's creator parameter, or its value constraints, and also a case-insensitively bound nested bean described inline or a converter-bound property | Remove it from the published type, or hide the operation |
+
+The messages state these fixes as:
+
+- `the input generator ignores @Hidden; declare @Schema(hidden = true) on the property's own field
+  or getter`;
+- `the input generator ignores @Schema(hidden = true) where it is declared; declare it directly on
+  the property's own field or getter, not through a bundle or mix-in`;
+- `the input generator does not hide a type; declare @Schema(hidden = true) on the field or getter
+  of each member that references it, or hide the operation`;
+- `the input generator cannot leave this member out where the document describes it (an enum
+  constant, @JsonUnwrapped content, or a property bound through a setter, a builder, a static
+  factory's creator parameter, or its value constraints); remove it from the published type, or hide
+  the operation`. This message is used for every position in the table's last row, including the
+  two the parenthetical does not list.
+
+The first reported entry fails startup. When the body type cannot be inspected, startup fails with
+`<subject>: the request body of operation '<id>' could not be inspected for hidden members`, without
+the cause. The generator's output, the request-validation gate, and the binding are unchanged: the
+member still binds and keeps its constraints.
 
 ### Patterns
 
 Patterns are published verbatim, as written in the captured schema. They are Java regular
 expressions, which the root member `x-vertique-validation.patternDialect: "java.util.regex"` records;
 a consumer using another regular-expression dialect may read a pattern differently.
+
+### Validation disclosure
+
+The root `x-vertique-validation` depends on the document's access, which comes only from
+`@ApiDocs(access)`; no configuration changes it.
+
+- **Public document.** The root member is exactly `{"patternDialect":"java.util.regex"}`, and no
+  input carries a marker.
+- **Protected document.** After `patternDialect`, the root member adds, in this order:
+
+| Member | Value |
+|---|---|
+| `strategy` | The id of the mount's request-validation strategy |
+| `inputSchemaSource` | `generated` when the bound `OperationSchemaSource` is exactly the framework's source, runtime class `dev.vertique.rest.validation.AnnotationSchemaSource`; `custom` for any other source, a subclass or a wrapper of the framework's source included; `absent` when none is bound |
+| `enforcement` | `active` for `web-validation`, `disabled` for `none`, `unknown` for any other strategy |
+| `reservedNamesRefused` | `true` when a reserved name was removed from a published request body; otherwise absent |
+| `hiddenInputs` | `true` when an input of a published operation was left out as hidden; otherwise absent |
+
+Under `web-validation` only, a protected document also marks each Parameter Object and request
+body that the gate does not validate with a schema with `"x-vertique-validation":
+{"enforcedSchema": false}` as its last member. A form request body is marked when any of its fields
+is not validated with a schema or is a named file part, since a file part publishes no schema.
+Under any other strategy no input is marked; the root `enforcement` already qualifies every input.
+
+Protected documents are refused at startup in this release (see
+[Access](#access-public-is-served-protected-is-refused)), so no served document carries these
+protected-only members yet.
 
 ---
 
@@ -434,7 +612,7 @@ not construct these records.
 | `apidocs.documents.<name>.info.title` | string | none | Document title. Required non-blank when `info` is configured; otherwise `info` comes from `@OpenAPIDefinition` on the declaring interface |
 | `apidocs.documents.<name>.info.version` | string | none | Document version. Required non-blank when `info` is configured; otherwise `info` comes from `@OpenAPIDefinition` on the declaring interface |
 | `apidocs.documents.<name>.info.description` | string | absent | Optional description, written to `info` when present |
-| `apidocs.documents.<name>.serverUrl` | string | absent | The document's `servers[0].url`. When absent, the mount path without its trailing `/*` (`/` for the root mount) |
+| `apidocs.documents.<name>.serverUrl` | string | absent | The document's `servers[0].url`, published exactly as configured, so it must never hold credentials or other secrets. When absent, the mount path without its trailing `/*` (`/` for the root mount) |
 
 Each key under `apidocs.documents` is an application `name`. The document list is a keyed collection:
 the key becomes the entry's `name`.
@@ -513,7 +691,9 @@ No default `info` is invented. Other members of `@OpenAPIDefinition` are not pub
 
 Anything else, a blank value included, fails startup naming `apidocs.documents.<name>.serverUrl`
 without repeating the value. A valid `serverUrl` is published unchanged as the document's
-`servers[0].url` (see [Root members](#root-members)).
+`servers[0].url` (see [Root members](#root-members)), to every reader of the document. Never put
+credentials, such as the user information of `https://user:secret@host/`, or any other secret in
+it: the check does not refuse them, and the document publishes them as configured.
 
 ---
 
@@ -631,8 +811,9 @@ nothing.
 ### Startup failures
 
 Every failure below stops startup. Each message names what is wrong and never echoes configuration
-values, schema text, references, or pattern text. Messages about the document's content name
-operation ids, rendered paths, input names, and component keys.
+values, schema text, references, pattern text, redaction locations, or reserved names. Messages
+about the document's content name operation ids, rendered paths, input names, component keys, the
+class of the bound schema source, and the declaring type and member of a hidden member.
 
 | Condition | Failure |
 |---|---|
@@ -655,8 +836,14 @@ operation ids, rendered paths, input names, and component keys.
 | A `GET` or `HEAD` route of a JAX-RS mount can answer a document URL | `RestConfigurationException` with one line per route and URL, naming both |
 | A documented application resolves operations from the shared global contract | `RestConfigurationException` naming the application, the mount, and the strategy |
 | Two operations of a documented application render to equivalent paths with different variable names, or with the same method | `RestConfigurationException` starting `Application '<name>' (declared by <binary name>) at mount '<mount path>'`, naming both routes by method, operation id, and rendered path, and stating that routes at one path must use the same variable names and differ in method |
-| An operation of a documented application binds two inputs with the same name and location | `RestConfigurationException` with the same start, naming the operation, the input name, and the location, and stating that a document describes one parameter per name and location |
-| A captured input schema of a documented application holds a refused construct (see [Refused constructs](#refused-constructs)) | `RestConfigurationException` with the same start, naming the operation, the input, the construct, and the JSON Pointer of the offending keyword; no value, reference, or schema text |
+| An operation of a documented application hides a path parameter (see [Hidden inputs](#hidden-inputs)) | `RestConfigurationException` with the same start, naming the operation and the parameter, and stating that a path parameter cannot be hidden |
+| An operation of a documented application binds two visible inputs with the same name and location | `RestConfigurationException` with the same start, naming the operation, the input name, and the location, and stating that a document describes one parameter per name and location |
+| A published request body of a documented application carries no redaction manifest matching its content, such as one a custom or decorating `OperationSchemaSource` built, replaced, or edited (see [Reserved-name redaction](#reserved-name-redaction)) | `RestConfigurationException` with the same start, naming the operation and the class of the bound schema source |
+| A published request body carries a redaction manifest that does not resolve in its schema | `RestConfigurationException` with the same start, naming the operation and the class of the bound schema source |
+| A captured parameter or form-field schema of a documented application holds the `propertyNames` keyword | `RestConfigurationException` with the same start, naming the operation and the parameter's location and name, or the form field |
+| A published request body's type is described with a member or type carrying `@Hidden` or `@Schema(hidden = true)` (see [Hidden members of a request body](#hidden-members-of-a-request-body)) | `RestConfigurationException` with the same start, naming the operation, the member or type, its marker, and the fix |
+| A published request body's type cannot be inspected for hidden members | `RestConfigurationException` with the same start, naming the operation; the cause is not echoed |
+| A captured schema of a visible input of a documented application holds a refused construct (see [Refused constructs](#refused-constructs)) | `RestConfigurationException` with the same start, naming the operation, the input, the construct, and the JSON Pointer of the offending keyword; no value, reference, or schema text |
 | Two components of a document would have the same key | `RestConfigurationException` with the same start, naming the input of both components and the key; when either is a relocated definition, it says `one component` instead of the key, and states that component keys replace every character outside `[A-Za-z0-9._-]` with `_` |
 | A later server instance publishes a different mount or operation than the stored document | `RestConfigurationException` naming the application, its declaring interface, its mount path, and the first differing operation id |
 | A mount of a documented application is built outside a Vert.x context | `RestConfigurationException` naming the application |
@@ -685,6 +872,18 @@ and its message can quote that value.
   their inputs only.
 - **Expecting a server URL from the request.** `servers[0].url` is the configured `serverUrl` or the
   mount path; behind a proxy that changes the path, configure `serverUrl`.
+- **Putting credentials in `serverUrl`.** It is published exactly as configured, user information
+  included; keep credentials and other secrets out of it.
+- **Hiding a path parameter.** It fails startup; a document describes every path variable.
+- **Expecting a hidden input to stop binding.** Hiding changes the document only; the request still
+  binds and validates the input.
+- **A schema source that replaces or edits the generated body schema.** With an enabled document it
+  fails startup; return the generated body schema and its redaction manifest unchanged.
+- **A schema source that describes a different type than the bound body type.** The hidden-member
+  check inspects the bound type only, so `@Hidden` members of the other type are not refused and
+  publish; return the generated description of the bound type unchanged.
+- **Hiding a body property with `@Hidden`.** The input generator ignores `@Hidden`, so startup
+  fails; declare `@Schema(hidden = true)` on the property's own field or getter.
 - **Expecting `required: false`.** An input that is not certainly required carries no `required`
   member at all.
 - **Expecting schemas for composite-bean fields.** They are unenforced and publish `{}` or their
@@ -728,7 +927,9 @@ The module requires `@VertxConfig JsonObject`, `ConfigParser` (from `ConfigParsi
 `JaxRsConfig` and `RestApplications` (both from `RestModule` in `dev.vertique:vertique-rest-jaxrs`),
 and the component's multibound sets of `RequestValidationStrategy`, `SecuritySchemeHandler`,
 `MountCustomizer`, `Middleware`, `RouterLifecycleHook`, and `RequestInterceptor`, plus an optional
-`AuthEnforcementCapability`.
+`AuthEnforcementCapability`, the optional `OperationSchemaSource` that `RestModule` declares, and
+the `JsonMapperProfileRegistry` from `JsonRuntimeModule` (in `dev.vertique:vertique-json`), which
+`RestModule` includes.
 
 ---
 
@@ -738,8 +939,8 @@ and the component's multibound sets of `RequestValidationStrategy`, `SecuritySch
 |---|---|
 | `dev.vertique:vertique-rest-jaxrs` | The declared-application view, the operation publication seam the module consumes, and the `ApiDocsInstalled` marker |
 | `dev.vertique:vertique-rest-core` | `RouterMount`, `MountMeta`, the extension phases, `JaxRsConfig` default headers, and `RestConfigurationException` |
-| `dev.vertique:vertique-core` | `ConfigParser`, configuration path navigation, `ConfigurationException`, and `@KeyedBy` |
-| `dev.vertique:vertique-json-schema` | The redaction manifest whose digest is part of the comparison between instances |
+| `dev.vertique:vertique-core` | `ConfigParser`, configuration path navigation, `ConfigurationException`, `@KeyedBy`, and `JsonMapperProfileRegistry` |
+| `dev.vertique:vertique-json-schema` | The redaction manifest each published request body is verified against and redacted by, and whose digest is part of the comparison between instances; the input generator that reports hidden members of a request body |
 | `io.vertx:vertx-json-schema` | Compile dependency; evaluates whether a captured request-body schema accepts an absent body, which decides the request body's `required` |
 | `io.swagger.core.v3:swagger-annotations-jakarta` | `@OpenAPIDefinition`, read for `info` on the declaring interface, and `@Parameter`, read for a parameter's `description` |
 | Jackson (`jackson-databind`, `jackson-dataformat-yaml`) | Writes the JSON and YAML forms; YAML brings SnakeYAML |
@@ -765,3 +966,12 @@ adds no route beyond the document URLs. It is not part of any starter.
   expect startup to fail naming the configuration path.
 - Declare a `GET /{path: .*}` route on a mount at `/`: expect startup to fail naming the route and
   the document URL.
+- Mark a query parameter `@Parameter(hidden = true)`: expect its name in neither form of the
+  document, while a request still binds and validates it.
+- Mark a path parameter `@Parameter(hidden = true)`: expect startup to fail naming the operation and
+  the parameter.
+- Give a body type a `@JsonAnySetter` and a `@JsonIgnore` member, with the request-validation gate
+  installed: expect the ignored name in neither form of the document, while the gate still refuses a
+  body that holds it.
+- Bind an `OperationSchemaSource` that edits the generated body schema: expect startup to fail
+  naming the operation and the source class.
