@@ -15,6 +15,8 @@ import io.swagger.v3.oas.annotations.media.ExampleObject;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.parameters.RequestBody;
 import jakarta.validation.constraints.NotNull;
+import jakarta.ws.rs.CookieParam;
+import jakarta.ws.rs.HeaderParam;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.QueryParam;
 import java.util.List;
@@ -272,4 +274,61 @@ public final class AgreementResource {
     public void sameElementImplementation(
             @Parameter(array = @ArraySchema(schema = @Schema(implementation = String.class))) @QueryParam("q")
                     List<String> q) {}
+
+    // ---------------------------------------------------------------------------------------------
+    // Parameter names that differ from the binding's only in case
+    // ---------------------------------------------------------------------------------------------
+    //
+    // A case variant of the bound name carries no sentinel, because a sentinel cannot reveal whether
+    // the variant is echoed; the cases assert the variant's own spelling absent instead.
+
+    /**
+     * A header name that differs from the binding's only in ASCII case.
+     *
+     * @param trace the header parameter
+     */
+    public void caseFoldedHeaderName(@Parameter(name = "x-trace") @HeaderParam("X-Trace") String trace) {}
+
+    /**
+     * The binding's own header name, spelled exactly.
+     *
+     * @param trace the header parameter
+     */
+    public void exactHeaderName(@Parameter(name = "X-Trace") @HeaderParam("X-Trace") String trace) {}
+
+    /**
+     * A header name that differs from the binding's by more than case.
+     *
+     * @param trace the header parameter
+     */
+    public void renamedHeaderName(@Parameter(name = "X-TraceVALUEZX") @HeaderParam("X-Trace") String trace) {}
+
+    /**
+     * A header name equal to the binding's only under Unicode case folding: its {@code K} is U+212A
+     * KELVIN SIGN, which folds to an ASCII {@code k} only outside ASCII.
+     *
+     * @param key the header parameter
+     */
+    public void kelvinHeaderName(@Parameter(name = "X-\u212Aey") @HeaderParam("X-Key") String key) {}
+
+    /**
+     * A query name that differs from the binding's only in case.
+     *
+     * @param qname the query parameter
+     */
+    public void caseFoldedQueryName(@Parameter(name = "QNAME") @QueryParam("qname") String qname) {}
+
+    /**
+     * A cookie name that differs from the binding's only in case.
+     *
+     * @param session the cookie parameter
+     */
+    public void caseFoldedCookieName(@Parameter(name = "SESSION") @CookieParam("session") String session) {}
+
+    /**
+     * A path name that differs from the binding's only in case.
+     *
+     * @param itemid the path parameter
+     */
+    public void caseFoldedPathName(@Parameter(name = "ITEMID") @PathParam("itemid") String itemid) {}
 }
