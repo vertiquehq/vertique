@@ -5,6 +5,7 @@ package dev.vertique.rest.openapi.docs;
 
 import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.rest.core.response.ResponseProducerBinding;
+import dev.vertique.rest.core.security.SecuritySchemeHandler;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
 import java.util.Objects;
 import java.util.Optional;
@@ -20,12 +21,32 @@ import java.util.Set;
  * @param profiles the JSON mapper profile registry
  * @param warnings the documentation module's warnings of the component
  * @param producerBindings the registered response producer bindings; an unmodifiable copy is stored
+ * @param securitySchemeHandlers the registered security scheme handlers, looked up by scheme name for
+ *     the schemes a document's operations reference
  */
 record AssemblyContext(
         Optional<OperationSchemaSource> schemaSource,
         JsonMapperProfileRegistry profiles,
         DocumentWarnings warnings,
-        Set<ResponseProducerBinding<?>> producerBindings) {
+        Set<ResponseProducerBinding<?>> producerBindings,
+        Set<SecuritySchemeHandler> securitySchemeHandlers) {
+
+    /**
+     * Creates a context with the given warnings, response producers and no registered security scheme
+     * handlers.
+     *
+     * @param schemaSource the bound operation schema source, or empty when none is bound
+     * @param profiles the JSON mapper profile registry
+     * @param warnings the documentation module's warnings of the component
+     * @param producerBindings the registered response producer bindings
+     */
+    AssemblyContext(
+            Optional<OperationSchemaSource> schemaSource,
+            JsonMapperProfileRegistry profiles,
+            DocumentWarnings warnings,
+            Set<ResponseProducerBinding<?>> producerBindings) {
+        this(schemaSource, profiles, warnings, producerBindings, Set.of());
+    }
 
     /**
      * Creates a context with the given warnings and no registered response producers.
@@ -56,5 +77,6 @@ record AssemblyContext(
         Objects.requireNonNull(profiles, "profiles");
         Objects.requireNonNull(warnings, "warnings");
         producerBindings = Set.copyOf(producerBindings);
+        securitySchemeHandlers = Set.copyOf(securitySchemeHandlers);
     }
 }

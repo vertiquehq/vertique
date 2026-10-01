@@ -102,6 +102,11 @@ SPDX-License-Identifier: EUPL-1.2
             <scope>test</scope>
         </dependency>
         <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-rest-auth-jwt</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
         </dependency>
