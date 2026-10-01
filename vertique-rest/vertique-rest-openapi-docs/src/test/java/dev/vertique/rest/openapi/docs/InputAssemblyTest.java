@@ -1097,14 +1097,15 @@ class InputAssemblyTest {
     @Test
     @DisplayName("Rewritten references keep the escaped and percent-encoded form of the tokens they carry over")
     void rewrittenReferencesKeepTheirEscaping() {
-        // Given: findItem's parameter 'code' captured with properties 'a/b' and 'c d', a definition 'W'
-        // with a property 'x y', and references into each: one needing '~1', one '%20' into the root,
-        // and one '%20' below a definition.
+        // Given: findItem's parameter 'code' captured with properties 'a/b', 'c d' and 't~u', a definition
+        // 'W' with a property 'x y', and references into each: one needing '~1', one '%20' and one '~0'
+        // into the root, and one '%20' below a definition.
         JsonObject escaped = new JsonObject("""
-                {"properties": {"a/b": {"type": "string"}, "c d": {"type": "string"}},
+                {"properties": {"a/b": {"type": "string"}, "c d": {"type": "string"}, "t~u": {"type": "string"}},
                  "$defs": {"W": {"properties": {"x y": {"type": "integer"}}}},
                  "anyOf": [{"$ref": "#/properties/a~1b"},
                            {"$ref": "#/properties/c%20d"},
+                           {"$ref": "#/properties/t~0u"},
                            {"$ref": "#/$defs/W/properties/x%20y"}]}""");
         Publications.Built built = findItemWithCode(escaped);
         Snapshots.Snapshot before = Snapshots.of(built.publication());
@@ -1113,16 +1114,17 @@ class InputAssemblyTest {
         JsonObject doc = assemble(PUBLIC_DOCUMENT, built);
 
         // Then: the parameter references its component; the component is the root without $defs, the
-        // definition is its own component, and each rewritten reference re-escapes '/' as '~1' and
-        // percent-encodes the space.
+        // definition is its own component, and each rewritten reference re-escapes '/' as '~1' and '~' as
+        // '~0', and percent-encodes the space.
         assertEquals(new JsonObject("""
                         {"name": "code", "in": "query",
                          "schema": {"$ref": "#/components/schemas/findItem.query.code"}}"""), findItemParameter(doc));
         assertEquals(new JsonObject("""
                         {"findItem.query.code": {
-                            "properties": {"a/b": {"type": "string"}, "c d": {"type": "string"}},
+                            "properties": {"a/b": {"type": "string"}, "c d": {"type": "string"}, "t~u": {"type": "string"}},
                             "anyOf": [{"$ref": "#/components/schemas/findItem.query.code/properties/a~1b"},
                                       {"$ref": "#/components/schemas/findItem.query.code/properties/c%20d"},
+                                      {"$ref": "#/components/schemas/findItem.query.code/properties/t~0u"},
                                       {"$ref": "#/components/schemas/findItem.query.code.W/properties/x%20y"}]},
                          "findItem.query.code.W": {"properties": {"x y": {"type": "integer"}}}}"""), componentSchemas(doc));
         OpenApi31Toolchain.assertValid(doc);

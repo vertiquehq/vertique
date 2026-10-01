@@ -1014,12 +1014,12 @@ class ApidocsConfigTest {
     }
 
     /**
-     * Strings the configuration parser reads as no boolean at all: empty and whitespace-only text, and
-     * single control characters that are not whitespace (start of heading, escape), which the parser
+     * Strings the configuration parser reads as no boolean at all: empty and whitespace-only text, the
+     * word {@code null} (which the parser maps to no value), and single control characters that are not whitespace (start of heading, escape), which the parser
      * also reads as {@code null} although {@code String.isBlank()} calls them not blank.
      */
     static Stream<String> blankEnabledValues() {
-        return Stream.of("", " ", "\t", "\u0001", "\u001b");
+        return Stream.of("", " ", "\t", "null", "\u0001", "\u001b");
     }
 
     @ParameterizedTest(name = "enabled given as a blank string, variant {index}")

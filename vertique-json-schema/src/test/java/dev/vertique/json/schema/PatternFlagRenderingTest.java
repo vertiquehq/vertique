@@ -9,9 +9,13 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.JsonNode;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import io.swagger.v3.oas.annotations.media.Schema;
 import io.vertx.core.json.JsonObject;
 import io.vertx.json.schema.Draft;
 import io.vertx.json.schema.JsonSchema;
@@ -178,9 +182,10 @@ class PatternFlagRenderingTest {
     @DisplayName("a COMMENTS @Pattern whose regexp does not compile in comments mode fails generation without"
             + " echoing the regexp")
     void commentsFlagWithARegexpInvalidInCommentsModeIsRefused() {
-        // Given a member constrained by @Pattern(regexp = "a\\", flags = COMMENTS): a trailing
-        // backslash, which Pattern.compile(regexp, COMMENTS) rejects
-        String regexp = "a\\";
+        // Given a member constrained by @Pattern(regexp = "zq7sentinel\\", flags = COMMENTS): a trailing
+        // backslash, which Pattern.compile(regexp, COMMENTS) rejects, behind a sentinel no diagnostic
+        // text would otherwise contain
+        String regexp = "zq7sentinel\\";
         assertThrows(
                 java.util.regex.PatternSyntaxException.class,
                 () -> java.util.regex.Pattern.compile(regexp, java.util.regex.Pattern.COMMENTS),
@@ -199,12 +204,104 @@ class PatternFlagRenderingTest {
                 message.contains("TrailingBackslashDto.value"),
                 () -> "the diagnostic must name the constrained member: " + message);
         assertFalse(message.contains(regexp), () -> "the diagnostic echoes the regexp: " + message);
+        assertFalse(message.contains("zq7sentinel"), () -> "the diagnostic echoes part of the regexp: " + message);
     }
 
     /** A COMMENTS-mode regexp ending in a lone backslash, which comments mode cannot compile. */
     static final class TrailingBackslashDto {
-        @Pattern(regexp = "a\\", flags = Pattern.Flag.COMMENTS)
+        @Pattern(regexp = "zq7sentinel\\", flags = Pattern.Flag.COMMENTS)
         public String value;
+    }
+
+    @ParameterizedTest(name = "{1}")
+    @MethodSource("unembeddableFlaggedRegexps")
+    @DisplayName("a flagged @Pattern that compiles with its flags but not inside an embedded modifier group fails"
+            + " generation without echoing the regexp")
+    void flaggedRegexpThatCannotBeEmbeddedIsRefused(Class<?> type, String label) throws Exception {
+        // Given a member whose flagged @Pattern compiles with Pattern.compile(regexp, flags), yet whose
+        // regexp swallows the closing parenthesis of an embedded modifier group around it
+        Pattern annotation = type.getField("value").getAnnotation(Pattern.class);
+        int flags = 0;
+        for (Pattern.Flag flag : annotation.flags()) {
+            flags |= flag.getValue();
+        }
+        int declaredFlags = flags;
+        assertDoesNotThrow(
+                () -> java.util.regex.Pattern.compile(annotation.regexp(), declaredFlags),
+                "precondition: the declared regexp must compile with its flags");
+        jakarta.validation.Validator bv = MetadataTestValidators.plain();
+
+        // When the validator-backed generator describes the type
+        JsonSchemaGenerationException failure =
+                assertThrows(JsonSchemaGenerationException.class, () -> AnnotationJsonSchemaGenerator.forInputProfile(
+                                vertiqueProfile(), bv)
+                        .generateCanonical(type));
+
+        // Then the diagnostic names the constrained member and never echoes any part of the regexp
+        String message = failure.getMessage();
+        assertTrue(message.contains(label), () -> "the diagnostic must name the constrained member: " + message);
+        assertFalse(message.contains("zq7"), () -> "the diagnostic echoes part of the regexp: " + message);
+    }
+
+    static Stream<Arguments> unembeddableFlaggedRegexps() {
+        return Stream.of(
+                Arguments.of(InlineCommentsDto.class, "InlineCommentsDto.value"),
+                Arguments.of(OpenQuoteDto.class, "OpenQuoteDto.value"));
+    }
+
+    /** An inline (?x) turns comments mode on, so a # comment runs over whatever follows the regexp. */
+    static final class InlineCommentsDto {
+        @Pattern(regexp = "(?x)zq7a#c", flags = Pattern.Flag.CASE_INSENSITIVE)
+        public String value;
+    }
+
+    /** An unterminated \Q quotes everything that follows the regexp. */
+    static final class OpenQuoteDto {
+        @Pattern(regexp = "zq7a\\Q", flags = Pattern.Flag.CASE_INSENSITIVE)
+        public String value;
+    }
+
+    @Test
+    @DisplayName("a @Schema(pattern) that only ends like an embedded modifier group around the @Pattern regexp"
+            + " composes with it instead of replacing it")
+    void unflaggedGroupEndingInTheRegexpDoesNotReplaceIt() {
+        // Given a creator parameter constrained by @Pattern(regexp = "abc") whose @Schema(pattern) is
+        // "(?:x|y:abc)": it starts with "(?" and ends with ":abc)", yet its group carries no modifier
+        // and it is a different expression ("x" passes it, not "abc")
+        // When the generator renders it
+        String canonical = AnnotationJsonSchemaGenerator.forInputProfile(vertiqueProfile())
+                .generateCanonical(LookalikeGroupDto.class);
+        JsonNode document = SchemaAssertions.assertCanonicalForm(canonical);
+
+        // Then the @Pattern regexp is still enforced in the property's conjunctive closure
+        List<String> patterns =
+                SchemaAssertions.textValues(SchemaAssertions.propertyClosure(document, "code"), "pattern");
+        assertTrue(patterns.contains("abc"), () -> "the @Pattern regexp was dropped; document: " + document);
+
+        // And the real io.vertx.json.schema gate decides as both constraints together do
+        JsonSchemaOptions options =
+                new JsonSchemaOptions().setDraft(Draft.DRAFT202012).setBaseUri("https://vertique.local/lookalike/");
+        Validator gate = Validator.create(JsonSchema.of(new JsonObject(canonical)), options);
+        assertFalse(
+                gate.validate(new JsonObject().put("code", "x")).getValid(),
+                () -> "\"x\" fails @Pattern(regexp = \"abc\") and must fail the gate; document: " + document);
+        assertTrue(
+                gate.validate(new JsonObject().put("code", "y:abc")).getValid(),
+                () -> "\"y:abc\" satisfies both constraints and must pass the gate; document: " + document);
+    }
+
+    /** A creator parameter whose @Schema(pattern) only looks like a flagged rendering of its @Pattern. */
+    static final class LookalikeGroupDto {
+        private final String code;
+
+        @JsonCreator
+        LookalikeGroupDto(@JsonProperty("code") @Pattern(regexp = "abc") @Schema(pattern = "(?:x|y:abc)") String code) {
+            this.code = code;
+        }
+
+        public String getCode() {
+            return code;
+        }
     }
 
     @Test
