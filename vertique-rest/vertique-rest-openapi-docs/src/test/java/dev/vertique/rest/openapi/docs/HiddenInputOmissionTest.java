@@ -455,9 +455,8 @@ class HiddenInputOmissionTest {
         // Then the body is URL-encoded only, lists only the visible field, and names no file part
         for (DisclosureDocuments.Rendering rendering : renderings) {
             for (JsonNode tree : List.of(rendering.jsonTree(), rendering.yamlTree())) {
-                JsonNode content = operation(tree, "/forms", "post")
-                        .path("requestBody")
-                        .path("content");
+                JsonNode content =
+                        operation(tree, "/forms", "post").path("requestBody").path("content");
                 assertEquals(Set.of("application/x-www-form-urlencoded"), fieldNames(content), content::toString);
                 assertEquals(
                         Set.of("titleZx"),
@@ -474,9 +473,8 @@ class HiddenInputOmissionTest {
         DisclosureDocuments.Rendering control =
                 DisclosureDocuments.renderPublic(visible, DisclosureDocuments.noSource());
         for (JsonNode tree : List.of(control.jsonTree(), control.yamlTree())) {
-            JsonNode content = operation(tree, "/forms", "post")
-                    .path("requestBody")
-                    .path("content");
+            JsonNode content =
+                    operation(tree, "/forms", "post").path("requestBody").path("content");
             assertEquals(Set.of("multipart/form-data"), fieldNames(content), content::toString);
         }
     }
