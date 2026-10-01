@@ -3,53 +3,47 @@
 
 package dev.vertique.rest.openapi.docs;
 
-import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.json.schema.Draft;
+import io.vertx.json.schema.JsonSchema;
 import io.vertx.json.schema.JsonSchemaOptions;
 import io.vertx.json.schema.OutputFormat;
 import io.vertx.json.schema.OutputUnit;
 import io.vertx.json.schema.SchemaRepository;
 import io.vertx.json.schema.Validator;
-import io.vertx.openapi.contract.OpenAPIContract;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
-import java.util.regex.Pattern;
 
 /**
  * Test-only OpenAPI 3.1 validator for documents produced by this module.
  *
- * <p>Two steps, both run on deep copies so the caller's document is never mutated (the contract
- * loader writes {@code __absolute_uri__} into the object it is given):
+ * <p>Two steps, both run on deep copies so the caller's document is never mutated (the JSON Schema
+ * validator writes {@code __absolute_uri__} into the objects it compiles):
  *
  * <ol>
- *   <li>the document loads as an OpenAPI 3.1 contract (structure, required fields, security schemes);
+ *   <li>the document validates against the official OpenAPI 3.1 JSON Schema ({@code
+ *       https://spec.openapis.org/oas/3.1/schema/2022-10-07}), which covers the document structure:
+ *       required members, Reference Object form, Paths keys, server URLs, parameters, responses and
+ *       specification extensions. Problems from this step start with {@code contract:};
  *   <li>every Schema Object (under {@code components.schemas}, and every {@code schema} of a
- *       parameter or media type) validates against the JSON Schema 2020-12 meta-schema, which the
- *       contract loader does not check.
+ *       parameter or media type) validates against the JSON Schema 2020-12 meta-schema. The official
+ *       document schema only requires a Schema Object to be an object or a boolean, so this step
+ *       checks its content. Problems from this step start with the JSON pointer of the schema.
  * </ol>
  *
- * <p>The contract loader (vertx-openapi) is stricter than OpenAPI 3.1.1 in two places, and only the
- * copy handed to it is adjusted before loading:
- *
- * <ul>
- *   <li>it rejects a relative server URL such as {@code /api}, which OpenAPI 3.1.1 allows (and which
- *       this module publishes as the mount path): every {@code servers[].url} without a URI scheme,
- *       at the root, on a path item or on an operation, is prefixed with the placeholder origin
- *       {@code https://toolchain.invalid};
- *   <li>it rejects an operation without {@code responses}, which OpenAPI 3.1.1 allows: such an
- *       operation receives a placeholder {@code default} response.
- * </ul>
- *
- * <p>The placeholders never hide a malformed value: an absolute server URL and a present {@code
- * responses} member are loaded exactly as given, so a malformed one is still rejected. The Schema
- * Object step validates its own untouched copy.
+ * <p>The official schema is read from the test classpath, where the vertx-openapi test dependency
+ * ships it under {@code spec.openapis.org/oas/3.1/schema/2022-10-07}. Its sibling {@code
+ * schema-base} variant is deliberately not used: it pins {@code jsonSchemaDialect} and every
+ * Schema Object's {@code $schema} to the OpenAPI base dialect, while this module publishes the
+ * JSON Schema 2020-12 dialect.
  *
  * <p>Use {@link #assertValid(JsonObject)} to fail a test with every problem found, or {@link
  * #validate(JsonObject)} to inspect the {@link Verdict}.
@@ -57,14 +51,11 @@ import java.util.regex.Pattern;
 public final class OpenApi31Toolchain {
 
     private static final String META_SCHEMA_URI = "https://json-schema.org/draft/2020-12/schema";
-    private static final long TIMEOUT_SECONDS = 60;
+    private static final String OPENAPI_SCHEMA_URI = "https://spec.openapis.org/oas/3.1/schema/2022-10-07";
+    private static final String OPENAPI_SCHEMA_RESOURCE = "spec.openapis.org/oas/3.1/schema/2022-10-07";
 
-    /** Origin prefixed to scheme-less server URLs in the contract-load copy only. */
-    static final String PLACEHOLDER_ORIGIN = "https://toolchain.invalid";
-
-    private static final Pattern URI_SCHEME = Pattern.compile("^[A-Za-z][A-Za-z0-9+.-]*:");
-    private static final List<String> OPERATION_METHODS =
-            List.of("get", "put", "post", "delete", "options", "head", "patch", "trace");
+    /** The official schema, parsed once; only copies are handed to the validator. */
+    private static final JsonObject OPENAPI_SCHEMA = loadResource(OPENAPI_SCHEMA_RESOURCE);
 
     private OpenApi31Toolchain() {}
 
@@ -72,8 +63,9 @@ public final class OpenApi31Toolchain {
      * The outcome of validating one document.
      *
      * @param valid whether both validation steps accepted the document
-     * @param problems one entry per problem; Schema Object problems start with the JSON pointer of
-     *     the offending schema (for example {@code /components/schemas/Bad: ...}); empty when valid
+     * @param problems one entry per problem; document structure problems start with {@code
+     *     contract:}, Schema Object problems start with the JSON pointer of the offending schema
+     *     (for example {@code /components/schemas/Bad: ...}); empty when valid
      */
     public record Verdict(boolean valid, List<String> problems) {
         public Verdict {
@@ -112,36 +104,27 @@ public final class OpenApi31Toolchain {
     /**
      * Validates a copy of the document on the given Vert.x instance.
      *
-     * @param vertx the instance used to load the contract and the meta-schema
+     * @param vertx the instance whose file system loads the JSON Schema 2020-12 meta-schema
      * @param document the document to check; not modified
      * @return the verdict
      */
     public static Verdict validate(Vertx vertx, JsonObject document) {
-        JsonObject forContract = document.copy();
-        JsonObject forSchemas = document.copy();
         List<String> problems = new ArrayList<>();
-        adaptForContractLoader(forContract);
-
-        try {
-            Future<OpenAPIContract> loaded = OpenAPIContract.from(vertx, forContract);
-            loaded.toCompletionStage().toCompletableFuture().get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        } catch (ExecutionException failed) {
-            problems.add("contract: " + failed.getCause());
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            problems.add("contract: interrupted");
-        } catch (TimeoutException timedOut) {
-            problems.add("contract: timed out");
-        }
-
         SchemaRepository repository = SchemaRepository.create(new JsonSchemaOptions()
                         .setDraft(Draft.DRAFT202012)
                         .setBaseUri("https://vertique.local/")
                         .setOutputFormat(OutputFormat.Basic))
                 .preloadMetaSchema(vertx.fileSystem(), Draft.DRAFT202012);
+        repository.dereference(OPENAPI_SCHEMA_URI, JsonSchema.of(OPENAPI_SCHEMA.copy()));
+
+        OutputUnit structure = repository.validator(OPENAPI_SCHEMA_URI).validate(document.copy());
+        if (!Boolean.TRUE.equals(structure.getValid())) {
+            problems.addAll(contractProblems(structure));
+        }
+
         Validator meta = repository.validator(META_SCHEMA_URI);
-        Map<String, Object> schemas = new java.util.LinkedHashMap<>();
-        collectSchemas(forSchemas, "", schemas);
+        Map<String, Object> schemas = new LinkedHashMap<>();
+        collectSchemas(document.copy(), "", schemas);
         schemas.forEach((pointer, schema) -> {
             OutputUnit out = meta.validate(schema);
             if (!Boolean.TRUE.equals(out.getValid())) {
@@ -151,46 +134,17 @@ public final class OpenApi31Toolchain {
         return new Verdict(problems.isEmpty(), problems);
     }
 
-    /**
-     * Adjusts the contract-load copy for the two places where the loader is stricter than OpenAPI
-     * 3.1.1: scheme-less server URLs get the placeholder origin, and operations without {@code
-     * responses} get a placeholder default response. Present values are never replaced.
-     */
-    private static void adaptForContractLoader(JsonObject document) {
-        anchorServerUrls(document.getValue("servers"));
-        if (!(document.getValue("paths") instanceof JsonObject paths)) {
-            return;
-        }
-        for (String path : paths.fieldNames()) {
-            if (!(paths.getValue(path) instanceof JsonObject pathItem)) {
-                continue;
-            }
-            anchorServerUrls(pathItem.getValue("servers"));
-            for (String method : OPERATION_METHODS) {
-                if (!(pathItem.getValue(method) instanceof JsonObject operation)) {
-                    continue;
-                }
-                anchorServerUrls(operation.getValue("servers"));
-                if (!operation.containsKey("responses")) {
-                    operation.put(
-                            "responses",
-                            new JsonObject().put("default", new JsonObject().put("description", "placeholder")));
-                }
+    private static List<String> contractProblems(OutputUnit out) {
+        List<String> found = new ArrayList<>();
+        if (out.getErrors() != null) {
+            for (OutputUnit error : out.getErrors()) {
+                found.add("contract: " + error.getInstanceLocation() + " " + error.getError());
             }
         }
-    }
-
-    private static void anchorServerUrls(Object servers) {
-        if (!(servers instanceof JsonArray array)) {
-            return;
+        if (found.isEmpty()) {
+            found.add("contract: " + out.getInstanceLocation() + " " + out.getError());
         }
-        for (int i = 0; i < array.size(); i++) {
-            if (array.getValue(i) instanceof JsonObject server
-                    && server.getValue("url") instanceof String url
-                    && !URI_SCHEME.matcher(url).lookingAt()) {
-                server.put("url", url.startsWith("/") ? PLACEHOLDER_ORIGIN + url : PLACEHOLDER_ORIGIN + "/" + url);
-            }
-        }
+        return found;
     }
 
     private static String describe(OutputUnit out) {
@@ -232,5 +186,18 @@ public final class OpenApi31Toolchain {
 
     private static boolean isSchemaShaped(Object value) {
         return value instanceof JsonObject || value instanceof Boolean;
+    }
+
+    private static JsonObject loadResource(String name) {
+        ClassLoader loader = OpenApi31Toolchain.class.getClassLoader();
+        try (InputStream in = loader.getResourceAsStream(name)) {
+            if (in == null) {
+                throw new IllegalStateException(
+                        "Missing test classpath resource " + name + " (shipped by the vertx-openapi test dependency)");
+            }
+            return new JsonObject(new String(in.readAllBytes(), StandardCharsets.UTF_8));
+        } catch (IOException failed) {
+            throw new UncheckedIOException("Cannot read test classpath resource " + name, failed);
+        }
     }
 }

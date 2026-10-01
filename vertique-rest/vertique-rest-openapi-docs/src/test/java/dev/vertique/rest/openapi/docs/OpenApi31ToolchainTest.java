@@ -18,9 +18,10 @@ import org.junit.jupiter.api.Test;
  * Verifies the test-only OpenAPI 3.1 validation toolchain the documentation tests rely on: it
  * accepts a valid document without touching the caller's copy, and rejects documents whose
  * {@code info.version}, component schemas or parameter schemas are invalid, naming the JSON
- * pointer of the offending part. It also accepts what OpenAPI 3.1.1 allows but the contract loader
- * rejects (relative server URLs, operations without responses) without hiding a malformed absolute
- * server URL or a malformed responses member.
+ * pointer of the offending part. It accepts what OpenAPI 3.1.1 allows (relative server URLs,
+ * operations without responses, references through arrays, parameter schemas without {@code
+ * type}) and rejects, as document structure problems, missing required members, malformed
+ * references, Paths keys without a leading slash, malformed server URLs and malformed responses.
  */
 @DisplayName("The OpenAPI 3.1 validation toolchain")
 class OpenApi31ToolchainTest {
@@ -106,17 +107,17 @@ class OpenApi31ToolchainTest {
     @Test
     @DisplayName("still rejects a malformed absolute server URL as a contract problem")
     void stillRejectsAMalformedServerUrl() {
-        // Given two documents whose absolute server URL is malformed
+        // Given two documents whose absolute server URL is not a URI reference
         JsonObject spaceInHost = minimalValid().put("servers", serverUrl("https://exa mple.test/"));
-        JsonObject unknownScheme = minimalValid().put("servers", serverUrl("unknown-scheme://example.test/"));
+        JsonObject angleBrackets = minimalValid().put("servers", serverUrl("https://example.test/<api>"));
 
         // When each is validated
         Verdict spaceInHostVerdict = OpenApi31Toolchain.validate(spaceInHost);
-        Verdict unknownSchemeVerdict = OpenApi31Toolchain.validate(unknownScheme);
+        Verdict angleBracketsVerdict = OpenApi31Toolchain.validate(angleBrackets);
 
         // Then each is rejected with a contract problem
         assertRejectedByContract(spaceInHostVerdict, "a space in the host");
-        assertRejectedByContract(unknownSchemeVerdict, "an unknown URL scheme");
+        assertRejectedByContract(angleBracketsVerdict, "angle brackets in the path");
     }
 
     @Test
@@ -133,6 +134,82 @@ class OpenApi31ToolchainTest {
         // Then each is rejected with a contract problem
         assertRejectedByContract(stringVerdict, "responses as a string");
         assertRejectedByContract(numberVerdict, "a response as a number");
+    }
+
+    @Test
+    @DisplayName("rejects a document missing a required root member as a contract problem")
+    void rejectsADocumentMissingARequiredMember() {
+        // Given a document without info and a document without openapi
+        JsonObject withoutInfo = minimalValid();
+        withoutInfo.remove("info");
+        JsonObject withoutOpenapi = minimalValid();
+        withoutOpenapi.remove("openapi");
+
+        // When each is validated
+        Verdict withoutInfoVerdict = OpenApi31Toolchain.validate(withoutInfo);
+        Verdict withoutOpenapiVerdict = OpenApi31Toolchain.validate(withoutOpenapi);
+
+        // Then each is rejected with a contract problem
+        assertRejectedByContract(withoutInfoVerdict, "a document without info");
+        assertRejectedByContract(withoutOpenapiVerdict, "a document without openapi");
+    }
+
+    @Test
+    @DisplayName("rejects a malformed reference and a Paths key without a leading slash as contract problems")
+    void rejectsABadReferenceForm() {
+        // Given an operation whose parameter is a Reference Object with a non-string $ref
+        JsonObject operation = new JsonObject().put("parameters", new JsonArray().add(new JsonObject().put("$ref", 5)));
+        JsonObject numericReference =
+                minimalValid().put("paths", new JsonObject().put("/things", new JsonObject().put("get", operation)));
+        // And a document whose Paths key does not start with a slash
+        JsonObject listOperation = new JsonObject().put("operationId", "list");
+        JsonObject relativePathKey =
+                minimalValid().put("paths", new JsonObject().put("things", new JsonObject().put("get", listOperation)));
+
+        // When each is validated
+        Verdict numericReferenceVerdict = OpenApi31Toolchain.validate(numericReference);
+        Verdict relativePathKeyVerdict = OpenApi31Toolchain.validate(relativePathKey);
+
+        // Then each is rejected with a contract problem
+        assertRejectedByContract(numericReferenceVerdict, "a parameter reference whose $ref is a number");
+        assertRejectedByContract(relativePathKeyVerdict, "a Paths key without a leading slash");
+    }
+
+    @Test
+    @DisplayName("accepts references through arrays and parameter schemas without a type")
+    void acceptsReferencesThroughArraysAndUntypedParameterSchemas() {
+        // Given a component composed with allOf, another component referencing its first allOf
+        // branch, and a parameter whose schema is an untyped anyOf of a component reference
+        JsonObject idProperty = new JsonObject().put("id", new JsonObject().put("type", "string"));
+        JsonObject composed = new JsonObject()
+                .put(
+                        "allOf",
+                        new JsonArray()
+                                .add(new JsonObject().put("type", "object").put("properties", idProperty))
+                                .add(new JsonObject().put("required", new JsonArray().add("id"))));
+        JsonObject throughArray = new JsonObject().put("$ref", "#/components/schemas/A/allOf/0");
+        JsonObject untyped = new JsonObject()
+                .put("anyOf", new JsonArray().add(new JsonObject().put("$ref", "#/components/schemas/B")));
+        JsonObject parameter =
+                new JsonObject().put("name", "filter").put("in", "query").put("schema", untyped);
+        JsonObject operation =
+                new JsonObject().put("operationId", "listThings").put("parameters", new JsonArray().add(parameter));
+        JsonObject document = minimalValid()
+                .put("paths", new JsonObject().put("/things", new JsonObject().put("get", operation)))
+                .put(
+                        "components",
+                        new JsonObject()
+                                .put(
+                                        "schemas",
+                                        new JsonObject().put("A", composed).put("B", throughArray)));
+        JsonObject before = document.copy();
+
+        // When it is validated
+        Verdict verdict = OpenApi31Toolchain.validate(document);
+
+        // Then it is valid and the caller's document is unchanged
+        assertTrue(verdict.valid(), "references through arrays and untyped parameter schemas: " + verdict.problems());
+        assertEquals(before, document, "the caller's document must not be mutated");
     }
 
     private static void assertRejectedByContract(Verdict verdict, String label) {
