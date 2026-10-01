@@ -44,7 +44,7 @@ final class ReservedNameRedaction {
      * @param operationId the runtime id of the operation
      * @param manifest the verified manifest of the captured body
      * @param schema the document's own copy of the captured body, changed in place
-     * @param context the per-application inputs, naming the bound schema source
+     * @param context the component's assembly inputs, naming the bound schema source
      * @param tally the disclosure tally of the document's assembly, told when anything was removed
      * @throws RestConfigurationException when a pointer does not resolve in the schema
      */
@@ -59,8 +59,9 @@ final class ReservedNameRedaction {
         Map<ArrayNode, SortedSet<Integer>> elements = new IdentityHashMap<>();
         for (String pointer : manifest.pointers()) {
             if (!resolve(schema, pointer, members, elements)) {
-                throw new RestConfigurationException(subject + ": the request body of operation '" + operationId
-                        + "' carries a redaction manifest that does not resolve in its schema "
+                throw new RestConfigurationException(subject + ": "
+                        + InputDescription.body(operationId).refusalPhrase()
+                        + " carries a redaction manifest that does not resolve in its schema "
                         + ManifestVerifier.sourcePhrase(context));
             }
         }
@@ -95,7 +96,7 @@ final class ReservedNameRedaction {
         JsonNode node = schema;
         String token = null;
         for (String part : escaped) {
-            token = unescape(part);
+            token = SchemaFragments.unescape(part);
             if (token == null) {
                 return false;
             }
@@ -119,26 +120,6 @@ final class ReservedNameRedaction {
                     .add(SchemaPositions.arrayIndex(token));
         }
         return true;
-    }
-
-    /** Unescapes one RFC 6901 reference token; {@code null} for a {@code ~} not followed by 0 or 1. */
-    private static String unescape(String escaped) {
-        StringBuilder token = new StringBuilder(escaped.length());
-        for (int i = 0; i < escaped.length(); i++) {
-            char c = escaped.charAt(i);
-            if (c != '~') {
-                token.append(c);
-            } else if (i + 1 < escaped.length() && escaped.charAt(i + 1) == '0') {
-                token.append('~');
-                i++;
-            } else if (i + 1 < escaped.length() && escaped.charAt(i + 1) == '1') {
-                token.append('/');
-                i++;
-            } else {
-                return null;
-            }
-        }
-        return token.toString();
     }
 
     /**

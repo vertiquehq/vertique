@@ -53,7 +53,18 @@ final class SchemaEmbedder {
      * @throws RestConfigurationException when the schema holds a refused construct
      */
     CheckedSchema check(InputDescription input, JsonObject captured) {
-        ObjectNode tree = DocumentWriter.tree(captured);
+        return check(input, DocumentWriter.tree(captured));
+    }
+
+    /**
+     * Refuses the constructs a published schema may not hold in a tree the document already owns.
+     *
+     * @param input the input the schema was captured for
+     * @param tree the document's own copy of the captured schema, made by {@link DocumentWriter#tree}
+     * @return the checked copy, to publish once every input of the document is checked
+     * @throws RestConfigurationException when the schema holds a refused construct
+     */
+    CheckedSchema check(InputDescription input, ObjectNode tree) {
         SchemaRefusals.check(subject, input, tree);
         return new CheckedSchema(input, tree);
     }

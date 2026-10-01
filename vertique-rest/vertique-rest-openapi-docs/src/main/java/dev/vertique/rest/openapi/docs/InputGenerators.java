@@ -44,11 +44,7 @@ final class InputGenerators {
      *     built for the profile; nothing is cached then
      */
     AnnotationJsonSchemaGenerator generator(String profileId) {
-        AnnotationJsonSchemaGenerator generator = generators.get(profileId);
-        if (generator == null) {
-            generator = AnnotationJsonSchemaGenerator.forInputProfile(profiles.profile(JsonProfileId.of(profileId)));
-            generators.put(profileId, generator);
-        }
-        return generator;
+        return generators.computeIfAbsent(
+                profileId, id -> AnnotationJsonSchemaGenerator.forInputProfile(profiles.profile(JsonProfileId.of(id))));
     }
 }

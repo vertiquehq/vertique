@@ -74,7 +74,7 @@ final class DocsPublicationSink implements OperationPublicationSink {
      *
      * @param documents the enabled documents
      * @param store the document store of the component
-     * @param context the per-application inputs the assembler reads besides the publication
+     * @param context the component's assembly inputs the assembler reads besides the publication
      */
     DocsPublicationSink(EnabledDocuments documents, DocumentStore store, AssemblyContext context) {
         this(documents, store, ApidocsConfig.DEFAULT_PATH, Set.of(), new RestApplications(List.of()), context);
@@ -88,7 +88,7 @@ final class DocsPublicationSink implements OperationPublicationSink {
      * @param prefix the configured documentation prefix, without a trailing slash
      * @param strategies the registered request-validation strategies
      * @param applications the declared applications of the component
-     * @param context the per-application inputs the assembler reads besides the publication
+     * @param context the component's assembly inputs the assembler reads besides the publication
      */
     DocsPublicationSink(
             EnabledDocuments documents,

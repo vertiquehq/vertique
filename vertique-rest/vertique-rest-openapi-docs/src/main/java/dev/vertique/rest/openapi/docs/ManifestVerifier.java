@@ -28,7 +28,7 @@ final class ManifestVerifier {
      * @param operationId the runtime id of the operation
      * @param captured the captured body schema, only read
      * @param provenance the body schema's provenance, or {@code null}
-     * @param context the per-application inputs, naming the bound schema source
+     * @param context the component's assembly inputs, naming the bound schema source
      * @return the verified manifest
      * @throws RestConfigurationException when the provenance is not a manifest matching the captured
      *     schema
@@ -38,16 +38,17 @@ final class ManifestVerifier {
         if (provenance instanceof RedactionManifest manifest && manifest.matches(captured.encode())) {
             return manifest;
         }
-        throw new RestConfigurationException(subject + ": the request body of operation '" + operationId
-                + "' carries no redaction manifest matching its content " + sourcePhrase(context)
-                + "; only the framework's schema generator binds one, so the source must return the generated body"
-                + " schema and its manifest unchanged");
+        throw new RestConfigurationException(
+                subject + ": " + InputDescription.body(operationId).refusalPhrase()
+                        + " carries no redaction manifest matching its content " + sourcePhrase(context)
+                        + "; only the framework's schema generator binds one, so the source must return"
+                        + " the generated body schema and its manifest unchanged");
     }
 
     /**
      * Names the bound schema source for a failure message.
      *
-     * @param context the per-application inputs
+     * @param context the component's assembly inputs
      * @return {@code (schema source <binary name>)} of the bound source's runtime class, or {@code (no
      *     schema source is bound)}
      */

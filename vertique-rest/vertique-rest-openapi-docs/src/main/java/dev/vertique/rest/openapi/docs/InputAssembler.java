@@ -67,8 +67,9 @@ import java.util.Set;
  * <p>A captured request body is published only once its redaction manifest is verified against the
  * capture (see {@link ManifestVerifier}); the document's own copy is then checked for refused
  * constructs, every published body, captured schema or not, is refused when its type is described
- * with a hidden member or type (see {@link HiddenMemberRefusal}), and the reserved-name assertions the manifest lists are removed from it (see {@link
- * ReservedNameRedaction}) before it is relocated into a component. A method parameter or form field
+ * with a hidden member or type (see {@link HiddenMemberRefusal}), and the reserved-name assertions
+ * the manifest lists are removed from the copy (see {@link ReservedNameRedaction}) before it is
+ * relocated into a component. A method parameter or form field
  * with a captured schema may not hold {@code propertyNames} (see {@link ParameterPropertyNames}); it
  * publishes that schema unchanged, inline or as a component (see {@link SchemaEmbedder}). A
  * composite field, or an input with no captured schema, is unenforced: it publishes {@code
@@ -112,7 +113,7 @@ final class InputAssembler {
      * @param embedder the schema embedder of the document
      * @param operation the operation
      * @param facts the operation's descriptor facts, or {@code null} when none were taken
-     * @param context the per-application inputs, naming the bound schema source
+     * @param context the component's assembly inputs, naming the bound schema source
      * @param tally the disclosure tally of the document's assembly
      * @param generators the input generators of the document's assembly
      * @param markInputs whether inputs no schema guards are marked
@@ -192,12 +193,10 @@ final class InputAssembler {
         FormPlan form = null;
         if (bodyBinding == null && !forms.isEmpty()) {
             List<PropertyPlan> properties = new ArrayList<>();
-            for (InputBinding binding : forms) {
-                properties.add(formProperty(subject, embedder, operationId, schemas, known, binding));
-            }
             boolean filePart = false;
             boolean unenforced = false;
             for (InputBinding binding : forms) {
+                properties.add(formProperty(subject, embedder, operationId, schemas, known, binding));
                 boolean named = known.namedFileParts().contains(binding.name());
                 filePart |= named;
                 unenforced |= named || !binding.schemaEnforced();
@@ -237,8 +236,9 @@ final class InputAssembler {
         SchemaEmbedder.CheckedSchema checked = null;
         if (captured != null) {
             InputDescription input = InputDescription.parameter(operationId, binding.location(), binding.name());
-            ParameterPropertyNames.refuse(subject, input, captured);
-            checked = embedder.check(input, captured);
+            ObjectNode tree = DocumentWriter.tree(captured);
+            ParameterPropertyNames.refuse(subject, input, tree);
+            checked = embedder.check(input, tree);
         }
         return new ParameterPlan(
                 binding.name(),
@@ -266,8 +266,9 @@ final class InputAssembler {
             return new PropertyPlan(binding.name(), null, unenforced(binding));
         }
         InputDescription input = InputDescription.formField(operationId, binding.name());
-        ParameterPropertyNames.refuse(subject, input, captured);
-        return new PropertyPlan(binding.name(), embedder.check(input, captured), null);
+        ObjectNode tree = DocumentWriter.tree(captured);
+        ParameterPropertyNames.refuse(subject, input, tree);
+        return new PropertyPlan(binding.name(), embedder.check(input, tree), null);
     }
 
     /**

@@ -3,8 +3,8 @@
 
 package dev.vertique.rest.openapi.docs;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import dev.vertique.rest.core.RestConfigurationException;
-import io.vertx.core.json.JsonObject;
 
 /**
  * Refuses a published parameter or form-field schema that holds the {@code propertyNames} keyword.
@@ -30,11 +30,11 @@ final class ParameterPropertyNames {
      *
      * @param subject the failure-message subject naming the application and its mount
      * @param input the parameter or form field the schema was captured for
-     * @param captured the captured schema, only read
+     * @param schema the document's own copy of the captured schema, only read
      * @throws RestConfigurationException when the schema holds the keyword
      */
-    static void refuse(String subject, InputDescription input, JsonObject captured) {
-        SchemaPositions.walk(DocumentWriter.tree(captured), (owner, keyword, value, pointer, atRoot) -> {
+    static void refuse(String subject, InputDescription input, JsonNode schema) {
+        SchemaPositions.walk(schema, (owner, keyword, value, pointer, atRoot) -> {
             if (KEYWORD.equals(keyword)) {
                 throw new RestConfigurationException(subject + ": " + input.refusalPhrase()
                         + " has a schema holding the keyword '" + KEYWORD

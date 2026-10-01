@@ -75,7 +75,7 @@ final class ValidationDisclosure {
     /**
      * Builds the root {@code x-vertique-validation} object of the document.
      *
-     * @param context the per-application inputs, naming the bound schema source
+     * @param context the component's assembly inputs, naming the bound schema source
      * @param tally the disclosure tally of the document's completed assembly
      * @return the root object, its members in the documented order
      */

@@ -9,9 +9,9 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * The per-application inputs the {@link DocumentAssembler} reads besides the publication: the bound
- * {@link OperationSchemaSource}, if the application binds one, and the {@link
- * JsonMapperProfileRegistry} used to build input-direction schema generators.
+ * The inputs the {@link DocumentAssembler} reads besides the publication, shared by every document
+ * of the component: the bound {@link OperationSchemaSource}, if the component binds one, and the
+ * {@link JsonMapperProfileRegistry} used to build input-direction schema generators.
  *
  * @param schemaSource the bound operation schema source, or empty when none is bound
  * @param profiles the JSON mapper profile registry

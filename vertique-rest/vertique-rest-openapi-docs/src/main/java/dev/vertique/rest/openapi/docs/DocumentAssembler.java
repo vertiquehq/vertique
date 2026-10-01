@@ -30,12 +30,13 @@ import java.util.SortedMap;
  * <p>Inputs are assembled by {@link InputAssembler} in two phases over the whole document, both
  * visiting the operations in the order the document lists them (path keys in natural order, then
  * methods in Path Item order): every operation's inputs are first checked, so the first hidden path
- * parameter, duplicate input, unverified request body, request body describing a hidden member,
- * unresolved redaction, or refused construct of the document fails before anything is published; then every operation is published, each checked
- * schema once. Inputs the inventory flags hidden are left out before any check reads them, and a
- * {@link DisclosureTally} created for the assembly records whether any was and whether a reserved
- * name was removed from a published request body. The input-direction schema generators that
- * inspect request bodies are likewise created per assembly ({@link InputGenerators}).
+ * parameter, duplicate input, unverified request body, refused construct, request body describing a
+ * hidden member, or unresolved redaction of the document fails before anything is published; then
+ * every operation is published, each checked schema once. Inputs the inventory flags hidden are left
+ * out before any check reads them, and a {@link DisclosureTally} created for the assembly records
+ * whether any was and whether a reserved name was removed from a published request body. The
+ * input-direction schema generators that inspect request bodies are likewise created per assembly
+ * ({@link InputGenerators}).
  *
  * <p>Failures are thrown as {@link dev.vertique.rest.core.RestConfigurationException} so that
  * publication fails startup; each message starts with the {@linkplain #subject subject} naming the
@@ -59,7 +60,7 @@ final class DocumentAssembler {
      * @param document the enabled document of the application
      * @param publication the detached publication of the application's mount
      * @param facts the per-operation descriptor facts, keyed by operation id
-     * @param context the per-application inputs besides the publication
+     * @param context the component's assembly inputs besides the publication
      * @return the published document
      * @throws dev.vertique.rest.core.RestConfigurationException when the publication cannot be
      *     described by one document
