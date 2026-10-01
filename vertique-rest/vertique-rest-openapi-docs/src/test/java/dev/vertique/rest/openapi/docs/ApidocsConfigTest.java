@@ -1012,4 +1012,75 @@ class ApidocsConfigTest {
         assertTrue(scheme >= 0, message);
         assertTrue(roles < scheme, "the rolesAllowed line comes before the securityScheme line: " + message);
     }
+
+    /**
+     * Strings the configuration parser reads as no boolean at all: empty and whitespace-only text, the
+     * word {@code null} (which the parser maps to no value), and single control characters that are not whitespace (start of heading, escape), which the parser
+     * also reads as {@code null} although {@code String.isBlank()} calls them not blank.
+     */
+    static Stream<String> blankEnabledValues() {
+        return Stream.of("", " ", "\t", "null", "\u0001", "\u001b");
+    }
+
+    @ParameterizedTest(name = "enabled given as a blank string, variant {index}")
+    @MethodSource("blankEnabledValues")
+    @DisplayName("A blank apidocs.documents.<name>.enabled fails startup naming the setting, without echoing the value")
+    void blankEnabledFailsNamingTheSetting(String blank) {
+        // Given the shared declarations and the shared configuration whose documented public entry
+        // gives enabled as a blank string
+        RestApplications view = sharedView();
+        JsonObject config = DocsConfigs.shared();
+        DocsConfigs.document(config, "public").put("enabled", blank);
+
+        // When the providers run
+        ConfigurationException failure = assertThrows(ConfigurationException.class, () -> resolve(config, view));
+
+        // Then the message names the application, its declaring interface and the setting, says what
+        // is accepted, and never echoes the value
+        String message = failure.getMessage();
+        assertNamesApplication(message, "public", PUBLIC_INTERFACE);
+        assertTrue(message.contains("'apidocs.documents.public.enabled'"), message);
+        assertTrue(message.contains("must be true or false"), message);
+        assertFalse(message.contains("\"enabled\":"), message);
+        assertFalse(message.contains("\"\""), message);
+        if (!blank.isBlank()) {
+            assertFalse(message.contains(blank), "the message echoes the control character: " + message);
+        }
+    }
+
+    @Test
+    @DisplayName(
+            "A non-boolean string for apidocs.documents.<name>.enabled is refused without echoing the value in its message")
+    void nonBooleanEnabledIsRefusedWithoutEchoingTheValue() {
+        // Given the shared declarations and the shared configuration whose public entry gives
+        // enabled as the string "yes"
+        RestApplications view = sharedView();
+        JsonObject config = DocsConfigs.shared();
+        DocsConfigs.document(config, "public").put("enabled", "yes");
+
+        // When the providers run
+        ConfigurationException failure = assertThrows(ConfigurationException.class, () -> resolve(config, view));
+
+        // Then the top-level message names the configuration section and does not contain the value
+        // (the parser keeps the underlying Jackson failure as the cause, whose diagnostic may echo
+        // the value; that is a known residual outside this assertion)
+        String message = String.valueOf(failure.getMessage());
+        assertTrue(message.contains("ApidocsConfig"), message);
+        assertFalse(message.contains("yes"), message);
+    }
+
+    @Test
+    @DisplayName("A boolean false for apidocs.documents.<name>.enabled is accepted and disables the document")
+    void booleanFalseEnabledDisablesTheDocument() {
+        // Given the shared declarations and the shared configuration whose public entry gives
+        // enabled as the boolean false
+        RestApplications view = sharedView();
+        JsonObject config = DocsConfigs.withDocumentEnabled(DocsConfigs.shared(), "public", false);
+
+        // When the providers run
+        EnabledDocuments documents = resolve(config, view);
+
+        // Then nothing is thrown and no document is enabled
+        assertTrue(documents.isEmpty());
+    }
 }

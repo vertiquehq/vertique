@@ -29,8 +29,11 @@ import java.util.stream.Collectors;
  * <p>The checks run in three steps. First, every key of the raw {@code apidocs.documents} object,
  * in sorted order and whatever the entry's {@code enabled} value, must follow the application-name
  * grammar, name a declared application (active or not), hold only {@code enabled}, {@code info},
- * and {@code serverUrl}, and set {@code enabled: true} only for an application whose declaring
- * interface carries {@link ApiDocs}; the first violation fails. Second, the {@link ApiDocs} of every
+ * and {@code serverUrl}, hold no {@code enabled} string the parser cannot map to a boolean (a blank string or
+ * one made only of control characters parses to no value, so it fails instead of keeping the
+ * annotation's decision), and set {@code enabled: true}
+ * only for an application whose declaring interface carries {@link ApiDocs}; the first violation
+ * fails. Second, the {@link ApiDocs} of every
  * active application is re-checked for its shape, whether or not configuration disables its
  * document, and every violation is reported in one failure. Third, only when at least one document
  * is enabled, {@code apidocs.path} is checked, then the {@code info} and {@code serverUrl} of each
@@ -113,10 +116,14 @@ final class DocumentConfigChecks {
                     .byName(key)
                     .orElseThrow(() -> new ConfigurationException(
                             "Invalid configuration '" + path + "': no application of that name is declared"));
+            DocumentConfig document = parsed.get(key);
             if (documents.getValue(key) instanceof JsonObject entry) {
                 checkEntryKeys(application, path, entry);
+                if (entry.getValue("enabled") instanceof String && (document == null || document.enabled() == null)) {
+                    throw new ConfigurationException(describe(application) + " has an invalid '" + path
+                            + ".enabled': it must be true or false, or be left out to keep the @ApiDocs decision");
+                }
             }
-            DocumentConfig document = parsed.get(key);
             if (document != null
                     && Boolean.TRUE.equals(document.enabled())
                     && application.declaringType().getAnnotation(ApiDocs.class) == null) {

@@ -246,10 +246,15 @@ name — never by simple name alone, so an application-defined constraint whose 
 to collide with one of these, or with a plain Jakarta Validation type, is never mistaken for it — and
 never by importing `hibernate-validator`'s constraint classes, so the metadata source stays usable
 with any Jakarta Validation provider). A `@Pattern`'s flags are embedded as an inline Java regex
-modifier group (`(?i:...)`, ...) as a correction — measured against the real `io.vertx.json.schema`
-5.1.6 validator, which compiles the `pattern` keyword with plain `java.util.regex.Pattern` and honors
+modifier group (`(?i:...)`, ...; with `COMMENTS`, a line break precedes the closing parenthesis only
+when a trailing `#` comment would otherwise swallow it) as a correction, after the regexp is first
+compiled with its flags — one `java.util.regex` rejects fails generation with a diagnostic naming the
+property, never echoing the expression — measured against the real
+`io.vertx.json.schema` 5.1.6 validator, which compiles the `pattern` keyword with plain `java.util.regex.Pattern` and honors
 this — except `CANON_EQ`, which has no embeddable modifier character and fails generation with a
-bounded diagnostic naming the property. Two or more `@Pattern` constraints in the default group on one
+bounded diagnostic naming the property. A regexp that compiles with its flags but whose embedded
+group does not — an open `\Q` quote, or comments mode switched on inline, can cause this — fails
+generation with a diagnostic naming the property, never echoing the expression. Two or more `@Pattern` constraints in the default group on one
 member — Jakarta Validation's own `@Pattern.List` repetition — render as an `allOf` of one
 single-`pattern` subschema per constraint, sorted for deterministic output, rather than the second
 silently overwriting the first; a composed constraint's own leaves render the same way as if declared
