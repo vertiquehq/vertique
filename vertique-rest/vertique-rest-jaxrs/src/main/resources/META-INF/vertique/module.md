@@ -1468,6 +1468,10 @@ application's settings object. The section sits under `jaxrs`, but this module p
 
 The section is strict:
 
+- The section name is matched case-sensitively. A `jaxrs` key that equals `applications` ignoring
+  case but is spelled differently — `Applications`, `APPLICATIONS` — fails startup, whatever its
+  value, even when no exact `applications` key is present. A key that is not a case variant, such
+  as the singular `application`, is an unknown `jaxrs` key and stays ignored.
 - An absent `jaxrs.applications` and an empty object `{}` both configure no per-application
   settings. Any other value that is not a JSON object — a string, number, boolean, array, or
   `null` — fails startup.
@@ -1480,8 +1484,9 @@ The section is strict:
 That strictness is a deliberate narrowing of the "unknown keys are ignored" rule
 `vertique-rest-core` applies to `jaxrs`, limited to the reserved name `applications`. Each of those
 failures, and a blank `openapiPath`, raises a `ConfigurationException` naming the offending
-configuration paths, sorted, never their values. Shapes and keys are checked before any
-`openapiPath` value is parsed, so blank values are reported only when no shape or key problem
+configuration paths (for a miscased section name, the offending `jaxrs` keys), sorted, never their
+values. The section name is checked first, then shapes and keys, all before any `openapiPath`
+value is parsed, so blank values are reported only when no section-name, shape, or key problem
 remains (see [Startup failures](#startup-failures)).
 
 ---
@@ -1543,20 +1548,21 @@ mount, and with no application declared it remains the only operationId check th
 and refuses to create any application mount's router.
 
 Parsing `jaxrs.applications` (see [Per-application configuration](#per-application-configuration))
-raises `ConfigurationException`. The shape, key, and blank-value checks use the three messages
-below; `<paths>` lists every offending configuration path, single-quoted, sorted, and
-comma-separated. An entry that passes those checks but cannot be bound — an `openapiPath` that is a
+raises `ConfigurationException`. The section-name, shape, key, and blank-value checks use the four
+messages below; `<keys>` lists every offending `jaxrs` key and `<paths>` every offending
+configuration path, each single-quoted, sorted, and comma-separated. An entry that passes those checks but cannot be bound — an `openapiPath` that is a
 JSON object or array, or a blank entry key — fails instead with the configuration parser's own
 message, which does not name the full configuration path. No message contains a configured value.
 
 | Condition | Message |
 |---|---|
+| A `jaxrs` key equals `applications` ignoring case but is spelled differently | `Miscased applications keys under 'jaxrs': <keys>; per-application settings belong under 'jaxrs.applications'` |
 | `jaxrs.applications` is present but not a JSON object (`null` included) | `'jaxrs.applications' must be a JSON object` |
 | An entry is not a JSON object (`null` included), or an entry carries a key other than `openapiPath` | `Invalid entries or keys under 'jaxrs.applications': <paths>; each entry must be a JSON object whose only key is 'openapiPath'` |
 | A configured `openapiPath` is empty or only whitespace | `Blank values under 'jaxrs.applications': <paths>; set 'openapiPath' to a non-blank location or omit it` |
 
-In the second message a path is `jaxrs.applications.<name>` for an entry that is not an object and
-`jaxrs.applications.<name>.<key>` for a rejected key; in the third it is
+In the third message a path is `jaxrs.applications.<name>` for an entry that is not an object and
+`jaxrs.applications.<name>.<key>` for a rejected key; in the fourth it is
 `jaxrs.applications.<name>.openapiPath`.
 
 `SecurityPolicyViolationException` is thrown immediately when a `SecurityPolicyValidator` is bound and
