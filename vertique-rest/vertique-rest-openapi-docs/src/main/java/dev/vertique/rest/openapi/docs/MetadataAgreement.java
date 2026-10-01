@@ -3,6 +3,8 @@
 
 package dev.vertique.rest.openapi.docs;
 
+import static dev.vertique.rest.openapi.docs.InputDocumentation.first;
+import static dev.vertique.rest.openapi.docs.InputDocumentation.isDefault;
 import static dev.vertique.rest.openapi.docs.OperationMetadata.isSet;
 
 import dev.vertique.rest.core.RestConfigurationException;
@@ -19,7 +21,6 @@ import jakarta.annotation.Nullable;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Array;
 import java.lang.reflect.GenericArrayType;
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
@@ -143,7 +144,7 @@ final class MetadataAgreement {
      * @throws RestConfigurationException when the first {@link Operation} names another operation id
      */
     OperationAgreement operation(String operationId, OperationFacts facts) {
-        Operation operation = InputDocumentation.first(facts.methodAnnotations(), Operation.class);
+        Operation operation = first(facts.methodAnnotations(), Operation.class);
         if (operation != null
                 && isSet(operation.operationId())
                 && !operation.operationId().equals(operationId)) {
@@ -231,7 +232,7 @@ final class MetadataAgreement {
          *     runtime
          */
         void parameter(InputBinding binding) {
-            Parameter parameter = InputDocumentation.first(binding.annotations(), Parameter.class);
+            Parameter parameter = first(binding.annotations(), Parameter.class);
             if (parameter == null) {
                 return;
             }
@@ -370,15 +371,6 @@ final class MetadataAgreement {
                 .filter(member -> member.getDefaultValue() != null)
                 .sorted(Comparator.comparing(Method::getName))
                 .toList();
-    }
-
-    /** Tells whether an annotation member equals its declared default. */
-    private static boolean isDefault(Annotation annotation, Method member) {
-        try {
-            return Objects.deepEquals(member.invoke(annotation), member.getDefaultValue());
-        } catch (IllegalAccessException | InvocationTargetException e) {
-            throw new IllegalStateException("Cannot read annotation member " + member.getName(), e);
-        }
     }
 
     /** Tells whether two types are the same, a primitive type and its wrapper being equal. */

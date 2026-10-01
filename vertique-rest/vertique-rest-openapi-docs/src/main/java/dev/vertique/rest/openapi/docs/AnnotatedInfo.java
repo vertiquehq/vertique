@@ -3,10 +3,9 @@
 
 package dev.vertique.rest.openapi.docs;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.DeserializationFeature;
+import static dev.vertique.rest.openapi.docs.OperationMetadata.setOrNull;
+
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.swagger.v3.oas.annotations.extensions.Extension;
@@ -59,9 +58,6 @@ record AnnotatedInfo(
     /** The name an extension with a blank name is listed under among the unpublished keys. */
     static final String UNNAMED = "<unnamed>";
 
-    private static final ObjectMapper STRICT_JSON =
-            new ObjectMapper().enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
-
     private static final JsonNodeFactory NODES = JsonNodeFactory.instance;
 
     /**
@@ -94,9 +90,9 @@ record AnnotatedInfo(
         return new AnnotatedInfo(
                 info.title(),
                 info.version(),
-                unsetIfBlank(info.description()),
-                unsetIfBlank(info.summary()),
-                unsetIfBlank(info.termsOfService()),
+                setOrNull(info.description()),
+                setOrNull(info.summary()),
+                setOrNull(info.termsOfService()),
                 ContactMembers.of(info.contact(), unpublished),
                 LicenseMembers.of(info.license(), unpublished),
                 extensions,
@@ -143,9 +139,9 @@ record AnnotatedInfo(
         @Nullable
         private static ContactMembers of(Contact contact, SortedSet<String> unpublished) {
             ContactMembers members = new ContactMembers(
-                    unsetIfBlank(contact.name()),
-                    unsetIfBlank(contact.url()),
-                    unsetIfBlank(contact.email()),
+                    setOrNull(contact.name()),
+                    setOrNull(contact.url()),
+                    setOrNull(contact.email()),
                     readExtensions(contact.extensions(), unpublished));
             boolean set = members.name() != null
                     || members.url() != null
@@ -184,9 +180,9 @@ record AnnotatedInfo(
         @Nullable
         private static LicenseMembers of(License license, SortedSet<String> unpublished) {
             LicenseMembers members = new LicenseMembers(
-                    unsetIfBlank(license.name()),
-                    unsetIfBlank(license.identifier()),
-                    unsetIfBlank(license.url()),
+                    setOrNull(license.name()),
+                    setOrNull(license.identifier()),
+                    setOrNull(license.url()),
                     readExtensions(license.extensions(), unpublished));
             boolean set = members.name() != null
                     || members.identifier() != null
@@ -224,21 +220,7 @@ record AnnotatedInfo(
      * strictly, else the value as a string.
      */
     private static JsonNode value(ExtensionProperty property) {
-        if (property.parseValue()) {
-            try {
-                JsonNode parsed = STRICT_JSON.readTree(property.value());
-                if (parsed != null && !parsed.isMissingNode()) {
-                    return parsed;
-                }
-            } catch (JsonProcessingException e) {
-                // Not JSON: published as the string it is.
-            }
-        }
-        return NODES.textNode(property.value());
-    }
-
-    @Nullable
-    private static String unsetIfBlank(String value) {
-        return value.isBlank() ? null : value;
+        JsonNode parsed = property.parseValue() ? Examples.parseStrictly(property.value()) : null;
+        return parsed != null ? parsed : NODES.textNode(property.value());
     }
 }

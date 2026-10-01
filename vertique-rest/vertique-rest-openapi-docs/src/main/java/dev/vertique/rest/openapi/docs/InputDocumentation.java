@@ -4,6 +4,7 @@
 package dev.vertique.rest.openapi.docs;
 
 import static dev.vertique.rest.openapi.docs.OperationMetadata.isSet;
+import static dev.vertique.rest.openapi.docs.OperationMetadata.setOrNull;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -49,10 +50,10 @@ import java.util.Objects;
  * not publish. No {@code example}, {@code examples}, or {@code deprecated} is written on the request
  * body itself, and a body's own {@code deprecated} is published nowhere.
  *
- * <p>Example values and named examples follow {@link Examples}. A reference in a {@link Parameter},
- * a {@link RequestBody}, or an example fails publication: the document declares no reusable
- * parameters, request bodies, or examples for it to name. Failures name the operation, the input, and
- * the attribute, never a value.
+ * <p>Example values and named examples follow {@link Examples}. A reference in an example fails
+ * publication: the document declares no reusable examples for it to name. A reference in a {@link
+ * Parameter} or a {@link RequestBody} is refused by {@link MetadataAgreement} before the
+ * documentation is read. Failures name the operation, the input, and the attribute, never a value.
  */
 final class InputDocumentation {
 
@@ -97,8 +98,8 @@ final class InputDocumentation {
      * @param binding the parameter's binding
      * @param description the parameter's own description, or {@code null} when it has none
      * @return the documentation
-     * @throws RestConfigurationException when the {@link Parameter} or one of its examples sets a
-     *     reference, or one of its examples is malformed
+     * @throws RestConfigurationException when one of the {@link Parameter}'s examples sets a reference
+     *     or is malformed
      */
     static ParameterDocumentation parameter(
             String subject, String operationId, InputBinding binding, @Nullable String description) {
@@ -106,12 +107,8 @@ final class InputDocumentation {
         if (parameter == null) {
             return new ParameterDocumentation(description, false, null, null);
         }
-        String input = phrase(binding);
-        if (isSet(parameter.ref())) {
-            throw unresolvedReference(subject, operationId, "@Parameter.ref on " + input);
-        }
-        ObjectNode examples =
-                Examples.render(subject, operationId, "@Parameter.examples on " + input, parameter.examples());
+        ObjectNode examples = Examples.render(
+                subject, operationId, "@Parameter.examples on " + phrase(binding), parameter.examples());
         Schema schema = parameter.schema();
         JsonNode example = null;
         if (examples == null) {
@@ -159,15 +156,15 @@ final class InputDocumentation {
      * @param requestBody the documenting annotation, or {@code null} when there is none
      * @param mediaTypes the media types the body publishes, in order
      * @return the documentation
-     * @throws RestConfigurationException when the annotation sets a reference, or one of its content
-     *     entries' examples is malformed or sets a reference
+     * @throws RestConfigurationException when one of the annotation's content entries' examples is
+     *     malformed or sets a reference
      */
     static BodyDocumentation body(
             String subject, String operationId, @Nullable RequestBody requestBody, List<String> mediaTypes) {
         if (requestBody == null) {
             return BodyDocumentation.NONE;
         }
-        String description = bodyDescription(subject, operationId, requestBody);
+        String description = bodyDescription(requestBody);
         String where = "@RequestBody.content.examples on " + REQUEST_BODY;
         Map<String, MediaTypeExamples> examples = new LinkedHashMap<>();
         for (Content content : requestBody.content()) {
@@ -189,22 +186,16 @@ final class InputDocumentation {
     }
 
     /**
-     * Reads the description of a request body, checking the annotation's reference.
+     * Reads the description of a request body.
      *
-     * @param subject the failure-message subject naming the application and its mount
-     * @param operationId the runtime operation id
      * @param requestBody the documenting annotation, or {@code null} when there is none
      * @return the annotation's description when set, else the description of the first content
      *     schema that sets one, else {@code null}
-     * @throws RestConfigurationException when the annotation sets a reference
      */
     @Nullable
-    static String bodyDescription(String subject, String operationId, @Nullable RequestBody requestBody) {
+    static String bodyDescription(@Nullable RequestBody requestBody) {
         if (requestBody == null) {
             return null;
-        }
-        if (isSet(requestBody.ref())) {
-            throw unresolvedReference(subject, operationId, "@RequestBody.ref on " + REQUEST_BODY);
         }
         if (isSet(requestBody.description())) {
             return requestBody.description();
@@ -235,27 +226,29 @@ final class InputDocumentation {
         return null;
     }
 
-    /** Tells whether every member of an annotation equals its declared default. */
+    /**
+     * Tells whether an annotation member equals its declared default.
+     *
+     * @param annotation the annotation
+     * @param member a member of the annotation's type
+     * @return {@code true} when the member's value deeply equals its declared default
+     */
+    static boolean isDefault(Annotation annotation, Method member) {
+        try {
+            return Objects.deepEquals(member.invoke(annotation), member.getDefaultValue());
+        } catch (IllegalAccessException | InvocationTargetException e) {
+            throw new IllegalStateException("Cannot read annotation member " + member.getName(), e);
+        }
+    }
+
+    /** Tells whether every member of an annotation declares a default and equals it. */
     private static boolean isDefault(Annotation annotation) {
         for (Method member : annotation.annotationType().getDeclaredMethods()) {
-            Object defaultValue = member.getDefaultValue();
-            if (defaultValue == null) {
+            if (member.getDefaultValue() == null || !isDefault(annotation, member)) {
                 return false;
-            }
-            try {
-                if (!Objects.deepEquals(member.invoke(annotation), defaultValue)) {
-                    return false;
-                }
-            } catch (IllegalAccessException | InvocationTargetException e) {
-                throw new IllegalStateException("Cannot read annotation member " + member.getName(), e);
             }
         }
         return true;
-    }
-
-    @Nullable
-    private static String setOrNull(String value) {
-        return isSet(value) ? value : null;
     }
 
     /**

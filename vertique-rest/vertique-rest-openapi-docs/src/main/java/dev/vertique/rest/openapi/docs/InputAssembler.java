@@ -243,7 +243,7 @@ final class InputAssembler {
                 body = body.documented(InputDocumentation.body(subject, operationId, requestBody, body.mediaTypes()));
             } else {
                 agreeing.requestBody(requestBody, form.mediaTypes(), null, false);
-                form = form.documented(InputDocumentation.bodyDescription(subject, operationId, requestBody));
+                form = form.documented(InputDocumentation.bodyDescription(requestBody));
             }
         }
         for (int i = 0; i < parameters.size(); i++) {

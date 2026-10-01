@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.vertique.rest.core.RestConfigurationException;
 import io.swagger.v3.oas.annotations.media.ExampleObject;
+import jakarta.annotation.Nullable;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -47,15 +48,24 @@ final class Examples {
      *     as exactly one JSON value
      */
     static JsonNode value(String text) {
+        JsonNode parsed = parseStrictly(text.trim());
+        return parsed != null ? parsed : NODES.textNode(text);
+    }
+
+    /**
+     * Parses a text strictly as exactly one JSON value.
+     *
+     * @param text the text, parsed as given
+     * @return the JSON value, or {@code null} when the text is not exactly one JSON value
+     */
+    @Nullable
+    static JsonNode parseStrictly(String text) {
         try {
-            JsonNode parsed = STRICT_JSON.readTree(text.trim());
-            if (parsed != null && !parsed.isMissingNode()) {
-                return parsed;
-            }
+            JsonNode parsed = STRICT_JSON.readTree(text);
+            return parsed == null || parsed.isMissingNode() ? null : parsed;
         } catch (JsonProcessingException e) {
-            // Not JSON: published as the string it is.
+            return null;
         }
-        return NODES.textNode(text);
     }
 
     /**
@@ -82,17 +92,8 @@ final class Examples {
         return rendered;
     }
 
-    /**
-     * Checks named examples, in declaration order, without rendering them.
-     *
-     * @param subject the failure-message subject naming the application and its mount
-     * @param operationId the runtime operation id
-     * @param where where the examples are declared
-     * @param examples the named examples, in declaration order
-     * @throws RestConfigurationException when a name is blank or repeated, an example sets both a
-     *     value and an external value, or an example sets a reference
-     */
-    static void check(String subject, String operationId, String where, ExampleObject[] examples) {
+    /** Checks named examples, in declaration order, without rendering them. */
+    private static void check(String subject, String operationId, String where, ExampleObject[] examples) {
         Set<String> names = new HashSet<>();
         for (ExampleObject example : examples) {
             String prefix = subject + ": operation '" + operationId + "': @ExampleObject.";

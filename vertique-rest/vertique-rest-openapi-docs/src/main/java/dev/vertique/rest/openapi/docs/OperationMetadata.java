@@ -66,13 +66,7 @@ record OperationMetadata(
         if (facts == null) {
             return NONE;
         }
-        Operation operation = null;
-        for (Annotation annotation : facts.methodAnnotations()) {
-            if (annotation instanceof Operation found) {
-                operation = found;
-                break;
-            }
-        }
+        Operation operation = InputDocumentation.first(facts.methodAnnotations(), Operation.class);
         List<Tag> methodTags = tags(facts.methodAnnotations());
         List<Tag> classTags = tags(facts.classAnnotations());
 
@@ -166,9 +160,14 @@ record OperationMetadata(
         return value != null && !value.isBlank();
     }
 
-    /** Returns the value when it is set, else {@code null}. */
+    /**
+     * Returns an annotation string member when it is set.
+     *
+     * @param value the member value
+     * @return the value when it is neither {@code null} nor blank, else {@code null}
+     */
     @Nullable
-    private static String setOrNull(@Nullable String value) {
+    static String setOrNull(@Nullable String value) {
         return isSet(value) ? value : null;
     }
 
