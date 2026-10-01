@@ -123,8 +123,6 @@ final class DocumentAssembler {
         String mountPath = publication.mountPath();
         if (mountPath.endsWith("/*")) {
             mountPath = mountPath.substring(0, mountPath.length() - 2);
-        } else if (mountPath.endsWith("*")) {
-            mountPath = mountPath.substring(0, mountPath.length() - 1);
         }
         return mountPath.isEmpty() ? "/" : mountPath;
     }

@@ -430,7 +430,7 @@ not construct these records.
 |---|---|---|---|
 | `apidocs.enabled` | boolean | `true` | Global switch. `false` disables every document, and the rest of the `apidocs` subtree is then neither parsed nor checked. Must be a JSON boolean |
 | `apidocs.path` | string | `/apidocs` | Prefix under which documents are served |
-| `apidocs.documents.<name>.enabled` | boolean | absent | `false` disables the document of application `<name>`. Absent or `null` keeps the decision of `@ApiDocs`. `true` is accepted only for an application whose declaring interface carries `@ApiDocs`. A blank string fails startup |
+| `apidocs.documents.<name>.enabled` | boolean | absent | `false` disables the document of application `<name>`. Absent or `null` keeps the decision of `@ApiDocs`. `true` is accepted only for an application whose declaring interface carries `@ApiDocs`. A string that is blank or made only of control characters fails startup |
 | `apidocs.documents.<name>.info.title` | string | none | Document title. Required non-blank when `info` is configured; otherwise `info` comes from `@OpenAPIDefinition` on the declaring interface |
 | `apidocs.documents.<name>.info.version` | string | none | Document version. Required non-blank when `info` is configured; otherwise `info` comes from `@OpenAPIDefinition` on the declaring interface |
 | `apidocs.documents.<name>.info.description` | string | absent | Optional description, written to `info` when present |
@@ -468,16 +468,16 @@ unnoticed. The checks run in this order, and the first violation fails startup:
    other key fails, `access` and `mount` included: who may read a document is `@ApiDocs`'s, in code,
    and configuration cannot relocate a document. The failure lists each unsupported key's full path,
    sorted.
-4. **Blank `enabled`.** A blank string cannot be read as a boolean, so it fails instead of keeping
-   the decision of `@ApiDocs`. The failure names the application, its declaring interface, and
+4. **Unreadable `enabled`.** A string that is blank or made only of control characters cannot be
+   read as a boolean, so it fails instead of keeping the decision of `@ApiDocs`. The failure names the application, its declaring interface, and
    `apidocs.documents.<name>.enabled`.
 5. **`enabled: true`.** `true` is accepted only for an application whose declaring interface itself
    carries `@ApiDocs`; otherwise the failure names the application, its declaring interface, and
    `apidocs.documents.<name>.enabled`.
 
 `enabled` is a tri-state. Absent and an explicit JSON `null` keep the decision of `@ApiDocs`, `false`
-disables the document, and `true` only confirms a document that `@ApiDocs` already enables. A blank
-string is refused. A configuration entry never enables a document without `@ApiDocs`.
+disables the document, and `true` only confirms a document that `@ApiDocs` already enables. A string
+that is blank or made only of control characters is refused. A configuration entry never enables a document without `@ApiDocs`.
 
 Keys elsewhere under `apidocs` are tolerated.
 
@@ -640,7 +640,7 @@ operation ids, rendered paths, input names, and component keys.
 | `apidocs.enabled` is present and not a JSON boolean | `ConfigurationException` naming `apidocs.enabled` |
 | An `apidocs.documents` key breaks the name grammar, or names no declared application | `ConfigurationException` naming `apidocs.documents.<name>` and the rule |
 | An entry holds a key other than `enabled`, `info`, or `serverUrl` | `ConfigurationException` naming the application, its declaring interface, and each unsupported key's path |
-| An entry sets `enabled` to a blank string | `ConfigurationException` naming the application, its declaring interface, and `apidocs.documents.<name>.enabled`, ending `it must be true or false, or be left out to keep the @ApiDocs decision` |
+| An entry sets `enabled` to a string that is blank or made only of control characters | `ConfigurationException` naming the application, its declaring interface, and `apidocs.documents.<name>.enabled`, ending `it must be true or false, or be left out to keep the @ApiDocs decision` |
 | An entry sets `enabled: true` for an application without `@ApiDocs` | `ConfigurationException` naming the application, its declaring interface, and `apidocs.documents.<name>.enabled` |
 | A blank key, or an entry that is not a JSON object | The keyed-collection parser's own `ConfigurationException`, raised before any check above; it says the entry has a blank key, or that the entry `'<key>'` must be a nested JSON object, and names the key |
 | The `@ApiDocs` of an active application breaks its shape rules | `RestConfigurationException` listing every violation, sorted, each naming the application, its declaring interface, and `@ApiDocs.securityScheme` or `@ApiDocs.rolesAllowed` |
@@ -662,7 +662,7 @@ operation ids, rendered paths, input names, and component keys.
 | A mount of a documented application is built outside a Vert.x context | `RestConfigurationException` naming the application |
 
 Entries of applications without `@ApiDocs`, and entries that switch a document off, are still checked
-for their name, their application, their keys, and a blank `enabled`. The `info` and `serverUrl` of a document are checked
+for their name, their application, their keys, and an unreadable `enabled`. The `info` and `serverUrl` of a document are checked
 only when it is enabled. A value of the wrong type inside an entry is rejected by the canonical parser,
 and its message can quote that value.
 
