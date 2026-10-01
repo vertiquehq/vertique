@@ -60,6 +60,9 @@ final class DocsRouterMount implements RouterMount {
     private final String cacheControl;
     private final Set<SecuritySchemeHandler> securitySchemeHandlers;
     private final Optional<AuthEnforcementCapability> authEnforcement;
+    // Plain field, not volatile or atomic: HttpVerticle runs the composition validators and then the
+    // sequential createRouter chain on the same verticle context within one start, and the unscoped
+    // provider gives every composition a fresh instance, so no two threads share this flag.
     private boolean validated;
 
     /**

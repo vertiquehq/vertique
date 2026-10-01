@@ -28,6 +28,10 @@ import java.util.regex.Pattern;
  *   <li>any other route is compared with the URL as a literal path, exactly or as a prefix when it
  *       ends with {@code *}, with Vert.x's handling of the trailing slash.
  * </ul>
+ *
+ * <p>The matcher decides by path and method only and ignores consumes/produces and virtual-host
+ * constraints, so it may report a route that Vert.x would answer with 415/406, or not at all, as
+ * colliding: it can over-refuse but never under-refuse.
  */
 final class DocumentRouteMatcher {
 

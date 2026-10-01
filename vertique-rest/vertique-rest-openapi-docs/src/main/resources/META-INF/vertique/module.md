@@ -103,8 +103,9 @@ configuration entry alone.
   application mount exists, so a protected document is never exposed without an access check. The
   failure names the application, its declaring interface, and `@ApiDocs.access`. Before that
   refusal, startup checks the `securityScheme` of each protected document (see
-  [Startup Checks](#startup-checks)). `rolesAllowed` has no effect while protected documents are
-  refused.
+  [Startup Checks](#startup-checks)). `rolesAllowed` has no effect on serving yet, because protected documents are
+  refused. The shape check still refuses a blank role and any role on a `PUBLIC` document (see
+  [`@ApiDocs` shape](#apidocs-shape)).
 
 ### Built once, off the event loop, frozen
 
@@ -265,8 +266,8 @@ not construct these records.
 | `apidocs.enabled` | boolean | `true` | Global switch. `false` disables every document, and the rest of the `apidocs` subtree is then neither parsed nor checked. Must be a JSON boolean |
 | `apidocs.path` | string | `/apidocs` | Prefix under which documents are served |
 | `apidocs.documents.<name>.enabled` | boolean | absent | `false` disables the document of application `<name>`. Absent or `null` keeps the decision of `@ApiDocs`. `true` is accepted only for an application whose declaring interface carries `@ApiDocs` |
-| `apidocs.documents.<name>.info.title` | string | none | Document title. Non-blank for every enabled document |
-| `apidocs.documents.<name>.info.version` | string | none | Document version. Non-blank for every enabled document |
+| `apidocs.documents.<name>.info.title` | string | none | Document title. Required non-blank when `info` is configured; otherwise `info` comes from `@OpenAPIDefinition` on the declaring interface |
+| `apidocs.documents.<name>.info.version` | string | none | Document version. Required non-blank when `info` is configured; otherwise `info` comes from `@OpenAPIDefinition` on the declaring interface |
 | `apidocs.documents.<name>.info.description` | string | absent | Optional description, written to `info` when present |
 | `apidocs.documents.<name>.serverUrl` | string | absent | Checked for every enabled document; it does not change the document in this release |
 
@@ -371,7 +372,10 @@ path does not match. A document with no such mount fails.
 
 **Mounts at or under the prefix.** No JAX-RS mount may lie at or under `apidocs.path`. Move the mount
 or choose another `apidocs.path`. Mounts that are not JAX-RS mounts, such as a UI mount, may lie under
-the prefix.
+the prefix. The documentation mount is mounted first and answers the exact document URLs itself, so a
+route of a mount that is not a JAX-RS mount, a main-router customizer route, or an API middleware path
+at one of those URLs is never reached. Such routes are not checked for collisions; only published
+JAX-RS operations are.
 
 **Pattern mount paths.** A JAX-RS mount whose path contains `:`, `{`, or `}` is refused while documents
 are enabled when its literal part before the first such character is a prefix of `apidocs.path`, as
@@ -429,8 +433,9 @@ through to later mounts. Keep such handlers pass-through, or have `matches` excl
 ## Warnings
 
 The module logs one WARN on logger `dev.vertique.rest.openapi.docs.DocumentWarnings` per enabled
-document, once per component. It is logged after the startup checks pass, and a second composition or
-server instance of the same component does not repeat it.
+document, once per component. It is logged when the documentation module's composition checks pass, before any
+router is created, so it can appear even when a later startup check fails the deployment. A second
+composition or server instance of the same component does not repeat it.
 
 The warning starts with `apidocs.documents.<name>` and the described mount's path, and lists the
 mount-scoped controls that apply to the application's mount but not to the document routes, each as
