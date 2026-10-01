@@ -76,17 +76,23 @@ public class OpenApiDocsServingIT {
      *
      * <ul>
      *   <li>Root members in the order {@code openapi}, {@code info}, {@code jsonSchemaDialect},
-     *       {@code servers}, {@code paths}, {@code components}, {@code x-vertique-validation}.
+     *       {@code servers}, {@code paths}, {@code components}, {@code tags},
+     *       {@code x-vertique-validation}.
      *   <li>{@code info}: the configured title and version; no description is configured.
      *   <li>{@code jsonSchemaDialect}: every document declares JSON Schema draft 2020-12.
      *   <li>{@code servers}: no server URL is configured, so the one entry is the mount path
      *       {@code /api/public/*} without its {@code /*}.
      *   <li>{@code paths}: one key per route template relative to the mount, in natural string order
      *       ({@code /items} before {@code /items/{id}}); within a path, methods in the order get,
-     *       put, post, delete, options, head, patch, trace; each operation lists {@code operationId}
+     *       put, post, delete, options, head, patch, trace; each operation lists {@code tags} (the
+     *       class tag), {@code summary} (from the operation annotation; no description or external
+     *       documentation is set, so neither is written), {@code operationId}
      *       (the runtime id, the method name), then {@code parameters} (left out when empty), then
-     *       {@code requestBody} (left out when the operation has no body). Summaries, tags, and
-     *       responses are not part of this document yet.
+     *       {@code requestBody} (left out when the operation has no body). Responses are not part
+     *       of this document yet.
+     *   <li>{@code tags}: the root list holds the one tag the resource class declares,
+     *       {@code {"name":"catalog"}}; it has no description or external documentation, and unset
+     *       members are never written.
      *   <li>Parameters in declaration order, each as {@code name}, {@code in} (lowercase location),
      *       {@code required} (only {@code true}, only for an input that is certainly required),
      *       {@code schema}. No parameter carries a description annotation.
@@ -116,19 +122,20 @@ public class OpenApiDocsServingIT {
             + "\"servers\":[{\"url\":\"/api/public\"}],"
             + "\"paths\":{"
             + "\"/items\":{"
-            + "\"get\":{\"operationId\":\"listItems\","
+            + "\"get\":{\"tags\":[\"catalog\"],\"summary\":\"List items\",\"operationId\":\"listItems\","
             + "\"parameters\":[{\"name\":\"limit\",\"in\":\"query\",\"schema\":{\"type\":\"integer\"}}]},"
-            + "\"post\":{\"operationId\":\"createItem\","
+            + "\"post\":{\"tags\":[\"catalog\"],\"summary\":\"Create an item\",\"operationId\":\"createItem\","
             + "\"parameters\":[{\"name\":\"dryRun\",\"in\":\"query\",\"schema\":{\"type\":\"boolean\"}}],"
             + "\"requestBody\":{\"content\":{\"application/json\":"
             + "{\"schema\":{\"$ref\":\"#/components/schemas/createItem.request\"}}}}}},"
             + "\"/items/{id}\":{"
-            + "\"get\":{\"operationId\":\"getItem\","
+            + "\"get\":{\"tags\":[\"catalog\"],\"summary\":\"Get an item\",\"operationId\":\"getItem\","
             + "\"parameters\":[{\"name\":\"id\",\"in\":\"path\",\"required\":true,\"schema\":{\"type\":\"string\"}}]}}},"
             + "\"components\":{\"schemas\":{"
             + "\"createItem.request\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\","
             + "\"properties\":{\"name\":{\"type\":\"string\"},\"quantity\":{\"type\":\"integer\"}},"
             + "\"type\":\"object\"}}},"
+            + "\"tags\":[{\"name\":\"catalog\"}],"
             + "\"x-vertique-validation\":{\"patternDialect\":\"java.util.regex\"}}";
 
     private static final String JSON_URL = "/apidocs/public/openapi.json";
