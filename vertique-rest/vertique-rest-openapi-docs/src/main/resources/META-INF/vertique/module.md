@@ -734,14 +734,17 @@ first failure wins.
 | `@RequestBody.content.schema.implementation` | It is set and differs from the erasure of the bound body type; on a form request body, whenever it is set |
 | `@RequestBody.required` | It is `true` and the document does not mark the request body `required` (see [Request bodies](#request-bodies)); a form request body never is |
 | `@Parameter.content` | It has any entry: the runtime never binds a parameter's content |
-| `@Parameter.name` | It is set and differs from the bound name |
+| `@Parameter.name` | It is set and differs from the bound name; a header name that differs only in ASCII letter case agrees |
 | `@Parameter.in` | It is not `DEFAULT` and differs from the bound location; on a form field, whenever it is not `DEFAULT` |
 | `@Parameter.required` | It is `true` and the runtime certainly accepts a missing value (below) |
 | `@Parameter.schema.implementation` | It is set and differs from the erasure of the bound type |
 | `@Parameter.array.schema.implementation` | It is set and differs from the erasure of the element type of a collection or array input, or the input is neither a collection nor an array. An input whose element type is not known, such as a wildcard collection or a collection field of a composite bean, is not checked |
 
-- **Exact comparison.** Names and media types are compared exactly, case included: a
-  `@Parameter(name = "x-trace")` on a header bound as `X-Trace` fails.
+- **Name comparison.** Media types and query, path, cookie, and form-field names are compared
+  exactly, case included. Header names are compared ignoring ASCII letter case, as HTTP does: a
+  `@Parameter(name = "x-trace")` on a header bound as `X-Trace` agrees, and the document publishes
+  `X-Trace`. Only ASCII letters fold, so a non-ASCII look-alike such as U+212A KELVIN SIGN never
+  matches `k`.
 - **Types.** A primitive type and its wrapper are the same type.
 - **Message.** `<subject>: operation '<id>' declares <attribute> on <input>, which contradicts how the
   runtime binds it (<fact>); documentation metadata cannot change it, so remove the attribute or make
@@ -1208,8 +1211,8 @@ and its message can quote that value.
   and a warning names them. Put the constraint on the input itself.
 - **Hiding an input with `@Parameter(schema = @Schema(hidden = true))`.** It does not hide the input;
   it is warned as an ignored member. Use `@Parameter(hidden = true)`.
-- **Spelling a header name in another case.** `@Parameter.name` is compared exactly; `x-trace` on a
-  header bound as `X-Trace` fails startup.
+- **Spelling a query, path, or cookie name in another case.** Only header names ignore ASCII letter
+  case; `@Parameter(name = "ID")` on a query parameter bound as `id` fails startup.
 - **Expecting a hidden operation to stop routing.** `@Hidden` and `@Operation(hidden = true)` change
   the document only; the route still answers, and its id and route are still checked for reserved
   ids and document-URL collisions.
