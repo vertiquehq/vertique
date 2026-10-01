@@ -27,10 +27,13 @@ import dev.vertique.rest.openapi.docs.fixture.input.Publications;
 import dev.vertique.rest.openapi.docs.fixture.metadata.dto.ItemDto;
 import dev.vertique.rest.openapi.docs.fixture.metadata.unit.MetadataPublications;
 import dev.vertique.rest.openapi.docs.fixture.metadata.unit.enrichment.AgreementResource;
+import dev.vertique.rest.openapi.docs.fixture.metadata.unit.enrichment.ComposedHiddenResource;
+import dev.vertique.rest.openapi.docs.fixture.metadata.unit.enrichment.ComposedHiddenTypeResource;
 import dev.vertique.rest.openapi.docs.fixture.metadata.unit.enrichment.ExampleResource;
 import dev.vertique.rest.openapi.docs.fixture.metadata.unit.enrichment.FormResource;
 import dev.vertique.rest.openapi.docs.fixture.metadata.unit.enrichment.HiddenContractResource;
 import dev.vertique.rest.openapi.docs.fixture.metadata.unit.enrichment.HiddenFirstResource;
+import dev.vertique.rest.openapi.docs.fixture.metadata.unit.enrichment.PlainMarkerTypeResource;
 import dev.vertique.rest.openapi.docs.fixture.metadata.unit.enrichment.RequestBodySourceResource;
 import dev.vertique.rest.openapi.docs.fixture.metadata.unit.enrichment.SummaryOnlyResource;
 import dev.vertique.rest.openapi.docs.fixture.metadata.unit.enrichment.TaggedResource;
@@ -1143,7 +1146,10 @@ class MetadataEnrichmentTest {
                 hiddenInputDisagreement(),
                 hiddenBodyMember(),
                 warnings(),
-                interfaceHiddenOperation());
+                interfaceHiddenOperation(),
+                composedHiddenOperation(),
+                composedHiddenMethod(),
+                composedHiddenClass());
     }
 
     private static Arguments renderedPathCollision() {
@@ -1407,6 +1413,51 @@ class MetadataEnrichmentTest {
                 },
                 annotated(source, hiddenId, SummaryOnlyResource.class, "report"),
                 fails(List.of(hiddenId, visibleId, "'/reports/{id}'")));
+    }
+
+    private static Arguments composedHiddenOperation() {
+        String hiddenId = "searchInternalZx";
+        String path = "/internal";
+        Supplier<Publications.Built> source = renamedQueryOperation(hiddenId, path);
+        return pair(
+                "a method annotation whose type carries @Operation(hidden = true) hides the operation",
+                annotated(source, hiddenId, ComposedHiddenResource.class, "composedOperationHidden"),
+                rendering -> assertOperationAbsent(rendering, hiddenId, path),
+                annotated(source, hiddenId, ComposedHiddenResource.class, "composedOperationVisible"),
+                fails(List.of(hiddenId, "@Parameter.name"), "q"));
+    }
+
+    private static Arguments composedHiddenMethod() {
+        String hiddenId = "searchComposedZx";
+        String path = "/composed";
+        Supplier<Publications.Built> source = renamedQueryOperation(hiddenId, path);
+        return pair(
+                "a method annotation whose type carries @Hidden hides the operation",
+                annotated(source, hiddenId, ComposedHiddenResource.class, "composedHiddenHidden"),
+                rendering -> assertOperationAbsent(rendering, hiddenId, path),
+                annotated(source, hiddenId, ComposedHiddenResource.class, "composedHiddenVisible"),
+                fails(List.of(hiddenId, "@Parameter.name"), "q"));
+    }
+
+    private static Arguments composedHiddenClass() {
+        String hiddenId = "searchClassZx";
+        String path = "/classes";
+        Supplier<Publications.Built> source = renamedQueryOperation(hiddenId, path);
+        return pair(
+                "a class annotation whose type carries @Hidden hides the class's operation",
+                annotated(source, hiddenId, ComposedHiddenTypeResource.class, "search"),
+                rendering -> assertOperationAbsent(rendering, hiddenId, path),
+                annotated(source, hiddenId, PlainMarkerTypeResource.class, "search"),
+                fails(List.of(hiddenId, "@Parameter.name"), "q"));
+    }
+
+    /** One GET operation with one string query parameter {@code q}, which the fixtures rename. */
+    private static Supplier<Publications.Built> renamedQueryOperation(String operationId, String path) {
+        return () -> MetadataPublications.mount()
+                .operation("GET", path, operationId)
+                .param(ParamLocation.QUERY, "q", Requiredness.NOT_REQUIRED)
+                .schema(stringSchema())
+                .build();
     }
 
     @ParameterizedTest(name = "{0}")

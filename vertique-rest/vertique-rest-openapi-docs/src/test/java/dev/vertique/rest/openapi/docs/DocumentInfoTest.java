@@ -18,6 +18,7 @@ import dev.vertique.rest.openapi.docs.fixture.metadata.info.FullInfoWithContactE
 import dev.vertique.rest.openapi.docs.fixture.metadata.info.InfoRegistrations;
 import dev.vertique.rest.openapi.docs.fixture.metadata.info.MixedExtensionApi;
 import dev.vertique.rest.openapi.docs.fixture.metadata.info.OwnInfoApi;
+import dev.vertique.rest.openapi.docs.fixture.metadata.info.SubclassInfoApplication;
 import dev.vertique.rest.openapi.docs.fixture.metadata.info.UrlLicenseApi;
 import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
@@ -82,7 +83,9 @@ class DocumentInfoTest {
                 Arguments.of("a license with both identifier and url fails without echoing either", (InfoCase)
                         DocumentInfoTest::licenseWithIdentifierAndUrlFails),
                 Arguments.of("a configured info replaces the annotation and its license rule", (InfoCase)
-                        DocumentInfoTest::configuredInfoReplacesTheAnnotation));
+                        DocumentInfoTest::configuredInfoReplacesTheAnnotation),
+                Arguments.of("an info inherited from a superclass is not read and fails naming the setting", (InfoCase)
+                        DocumentInfoTest::superclassInfoIsNotRead));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -251,6 +254,26 @@ class DocumentInfoTest {
 
         // Then the info is exactly the configured one
         assertEquals("{\"title\":\"Configured\",\"version\":\"9\"}", MetadataDocuments.infoJson(rendering));
+    }
+
+    private static void superclassInfoIsNotRead(WarningCapture capture) {
+        // Given child declared by a class without an info of its own whose superclass carries one, which
+        // reflection reports as inherited, and no configured info
+        MetadataDocuments.Resolution resolution =
+                MetadataDocuments.resolve(InfoRegistrations.childApi(SubclassInfoApplication.class), null);
+
+        // When the enabled documents are resolved
+        RuntimeException failure = resolution.failure();
+
+        // Then resolution fails naming the info setting and the declaring class, and no message carries
+        // the superclass's title
+        ConfigurationException configuration = assertInstanceOf(ConfigurationException.class, failure);
+        String message = configuration.getMessage();
+        assertTrue(message.contains(DOCUMENT_PATH + ".info"), message);
+        assertTrue(message.contains(SubclassInfoApplication.class.getName()), message);
+        for (String text : messages(failure, capture)) {
+            assertFalse(text.contains("SuperZx"), text);
+        }
     }
 
     // ---------------------------------------------------------------------------------------------
