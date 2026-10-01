@@ -20,6 +20,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
+import java.util.stream.Collectors;
 
 /**
  * Publishes what a document states about its operations' security: each operation's {@code
@@ -35,9 +36,10 @@ import java.util.TreeMap;
  * order, from the description its registered {@link SecuritySchemeHandler} returns from {@link
  * SecuritySchemeHandler#openApiDescription()}, which is asked once per referenced scheme and
  * assembly; a registered handler whose scheme no published operation references is not asked. A
- * referenced scheme with no registered handler, with a handler that describes nothing, or with a
- * description of a kind this module cannot render fails the document, naming the first operation in
- * document order that references the scheme. The failure echoes no description content,
+ * referenced scheme with no registered handler, with more than one registered handler (no handler is
+ * asked then), with a handler that describes nothing, or with a description of a kind this module
+ * cannot render fails the document, naming the first operation in document order that references the
+ * scheme. The failure echoes no description content,
  * configuration value, or credential.
  */
 final class DocumentSecurityAssembler {
@@ -55,8 +57,8 @@ final class DocumentSecurityAssembler {
      * @param handlers the registered security scheme handlers
      * @return the Security Scheme Objects of the referenced schemes, keyed and sorted by scheme name;
      *     empty when no operation references a scheme
-     * @throws RestConfigurationException when a referenced scheme has no handler, its handler
-     *     describes nothing, or its description cannot be rendered
+     * @throws RestConfigurationException when a referenced scheme has no handler or more than one,
+     *     its handler describes nothing, or its description cannot be rendered
      */
     static SortedMap<String, ObjectNode> schemes(
             String prefix, List<LocatedOperation> operations, Set<SecuritySchemeHandler> handlers) {
@@ -73,11 +75,22 @@ final class DocumentSecurityAssembler {
             String schemeName = reference.getKey();
             String requires =
                     prefix + ": " + reference.getValue().label() + " requires security scheme '" + schemeName + "'";
-            SecuritySchemeHandler handler = handlers.stream()
+            List<SecuritySchemeHandler> providers = handlers.stream()
                     .filter(candidate -> schemeName.equals(candidate.schemeName()))
-                    .findFirst()
-                    .orElseThrow(() -> new RestConfigurationException(
-                            requires + ", but no SecuritySchemeHandler is registered for it"));
+                    .toList();
+            if (providers.isEmpty()) {
+                throw new RestConfigurationException(requires + ", but no SecuritySchemeHandler is registered for it");
+            }
+            if (providers.size() > 1) {
+                String names = providers.stream()
+                        .map(provider -> provider.getClass().getName())
+                        .sorted()
+                        .collect(Collectors.joining(", "));
+                throw new RestConfigurationException(requires
+                        + ", which more than one SecuritySchemeHandler provides: " + names
+                        + "; each security scheme must be provided by exactly one handler");
+            }
+            SecuritySchemeHandler handler = providers.get(0);
             Optional<SecuritySchemeDescription> description = handler.openApiDescription();
             if (description == null || description.isEmpty()) {
                 throw new RestConfigurationException(requires
