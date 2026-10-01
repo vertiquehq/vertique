@@ -5,10 +5,14 @@ package dev.vertique.rest.openapi.docs;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.vertique.json.schema.AnnotationJsonSchemaGenerator;
+import dev.vertique.json.schema.HiddenMember;
+import dev.vertique.json.schema.HidingMarker;
+import dev.vertique.json.schema.OutputRename;
 import dev.vertique.rest.core.RestConfigurationException;
 import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
 import java.lang.reflect.Type;
+import java.util.List;
 
 /**
  * Generates the output-direction schema of one published response type and checks it for the
@@ -19,11 +23,18 @@ import java.lang.reflect.Type;
  * take ({@link DocumentWriter#tree}), and checked by {@link SchemaRefusals}. Nothing is published
  * here: the checked schema is relocated into a component only when the document is written.
  *
- * <p>Any exception from resolving the profile, building its generator, or generating the schema
- * fails publication with a {@link RestConfigurationException} that names the document's
- * configuration path, the application and its mount, the operation, what was being published, and
- * its status, and keeps the original exception as its cause. The message never carries schema
- * text.
+ * <p>After generating the schema, the same generator reports the type's renamed members and its
+ * hidden members, in that order. A member whose serialized name differs from the name the schema
+ * describes fails publication, naming the first such member's declaring type, member, serialized
+ * name, and schema name. A described member or type carrying a hiding marker the output generator
+ * does not honor fails publication, naming the first reported entry, its marker, and the one fix its
+ * position implies; the generator's output is never changed, so the member is not dropped.
+ *
+ * <p>Any exception from resolving the profile, building its generator, generating the schema, or
+ * reporting its renamed or hidden members fails publication with a {@link
+ * RestConfigurationException} that names the document's configuration path, the application and its
+ * mount, the operation, what was being published, and its status, and keeps the original exception
+ * as its cause. No message carries schema text.
  */
 final class OutputSchemas {
 
@@ -39,22 +50,77 @@ final class OutputSchemas {
      * @param generators the output generators of the document's assembly
      * @param target the published type and where it is published
      * @return the checked schema, to publish as the target's component
-     * @throws RestConfigurationException when the schema cannot be generated or holds a refused
-     *     construct
+     * @throws RestConfigurationException when the schema cannot be generated, describes a member
+     *     under a name other than its serialized name, describes a member or type carrying a hiding
+     *     marker, or holds a refused construct
      */
     static SchemaEmbedder.CheckedSchema check(
             String prefix, String subject, OutputGenerators generators, Target target) {
+        AnnotationJsonSchemaGenerator generator;
         String text;
         try {
-            AnnotationJsonSchemaGenerator generator = generators.generator(target.profileId());
+            generator = generators.generator(target.profileId());
             text = generator.generateCanonical(target.type());
         } catch (RuntimeException e) {
             throw failure(prefix, target, "generating it in output direction failed", e);
+        }
+        List<OutputRename> renames;
+        try {
+            renames = generator.outputRenames(target.type());
+        } catch (RuntimeException e) {
+            throw failure(prefix, target, "inspecting it for renamed members failed", e);
+        }
+        if (!renames.isEmpty()) {
+            throw renamed(prefix, target, renames.get(0));
+        }
+        List<HiddenMember> hidden;
+        try {
+            hidden = generator.hiddenMembers(target.type());
+        } catch (RuntimeException e) {
+            throw failure(prefix, target, "inspecting it for hidden members failed", e);
+        }
+        if (!hidden.isEmpty()) {
+            throw hidden(prefix, target, hidden.get(0));
         }
         ObjectNode tree = DocumentWriter.tree(new JsonObject(text));
         InputDescription description = target.description();
         SchemaRefusals.check(subject, description, tree);
         return new SchemaEmbedder.CheckedSchema(description, tree);
+    }
+
+    /** Builds the refusal of an output type whose member is described under another name. */
+    private static RestConfigurationException renamed(String prefix, Target target, OutputRename rename) {
+        return new RestConfigurationException(prefix + ": operation '" + target.operationId() + "' publishes "
+                + rename.declaringType() + " as an output type of status " + target.status() + "; its member '"
+                + rename.member() + "' is serialized as '" + rename.serializedName() + "' but described as '"
+                + rename.schemaName() + "', so the document would describe a property the response never carries;"
+                + " make @Schema(name) agree with the serialized name or remove it");
+    }
+
+    /** Builds the refusal of an output type that describes a member or type carrying a hiding marker. */
+    private static RestConfigurationException hidden(String prefix, Target target, HiddenMember entry) {
+        return new RestConfigurationException(prefix + ": operation '" + target.operationId()
+                + "' publishes an output type of status " + target.status() + " that describes "
+                + HiddenMemberRefusal.what(entry) + ", which carries " + HiddenMemberRefusal.marker(entry.marker())
+                + "; " + hiddenFix(entry));
+    }
+
+    /** Chooses the fix for a hidden output entry from its position and marker only. */
+    private static String hiddenFix(HiddenMember entry) {
+        if (entry.member() == null) {
+            return "the output generator does not hide a type; declare @Schema(hidden = true) on the field or"
+                    + " getter of each member that references it, or hide the operation";
+        }
+        if (entry.hideableBySchemaHidden()) {
+            if (entry.marker() == HidingMarker.HIDDEN) {
+                return "the output generator ignores @Hidden; declare @Schema(hidden = true) on the property's own"
+                        + " field or getter";
+            }
+            return "the output generator ignores @Schema(hidden = true) where it is declared; declare it directly"
+                    + " on the property's own field or getter, not through a bundle or mix-in";
+        }
+        return "the output generator cannot leave this member out where the document describes it (an enum"
+                + " constant or @JsonUnwrapped content); remove it from the published type, or hide the operation";
     }
 
     /**

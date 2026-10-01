@@ -55,16 +55,26 @@ final class HiddenMemberRefusal {
                         + ", which carries " + marker(first.marker()) + "; " + fix(first));
     }
 
-    /** Names the reported member, or the reported type when the entry has no member. */
-    private static String what(HiddenMember entry) {
+    /**
+     * Names the reported member, or the reported type when the entry has no member.
+     *
+     * @param entry the reported entry
+     * @return {@code member '<member>' of <type>}, or {@code type <type>}
+     */
+    static String what(HiddenMember entry) {
         if (entry.member() == null) {
             return "type " + entry.declaringType();
         }
         return "member '" + entry.member() + "' of " + entry.declaringType();
     }
 
-    /** Names the marker or markers of an entry. */
-    private static String marker(HidingMarker marker) {
+    /**
+     * Names the marker or markers of an entry.
+     *
+     * @param marker the entry's marker
+     * @return {@code @Hidden}, {@code @Schema(hidden = true)}, or both
+     */
+    static String marker(HidingMarker marker) {
         return switch (marker) {
             case HIDDEN -> "@Hidden";
             case SCHEMA_HIDDEN -> "@Schema(hidden = true)";
