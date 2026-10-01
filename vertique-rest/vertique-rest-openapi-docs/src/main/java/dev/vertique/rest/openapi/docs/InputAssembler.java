@@ -16,6 +16,7 @@ import dev.vertique.rest.jaxrs.publication.OperationDetail;
 import dev.vertique.rest.jaxrs.publication.OperationPublication;
 import dev.vertique.rest.jaxrs.routing.ParamLocation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.parameters.RequestBody;
 import io.vertx.core.json.JsonObject;
 import io.vertx.json.schema.Draft;
 import io.vertx.json.schema.JsonSchema;
@@ -27,6 +28,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -64,6 +66,15 @@ import java.util.Set;
  *       binding is certainly required, and the description of its {@link Parameter} annotation when
  *       that is not blank.
  * </ul>
+ *
+ * <p>Once every schema of an operation is checked, the documentation of its request body and then of
+ * its Parameter Objects, in published order, is read from their Swagger annotations (see {@link
+ * InputDocumentation}): a Parameter Object's {@code deprecated}, {@code example}, and {@code
+ * examples}, and a description its own schema annotation fills when the parameter has none; a
+ * request body's {@code description} and, on a body binding's Media Type Objects, its examples. A
+ * form binding publishes no documentation of its own; a form request body takes only its {@code
+ * description}. A reference or a malformed example among them fails publication. Captured schemas
+ * are never changed by it.
  *
  * <p>A captured request body is published only once its redaction manifest is verified against the
  * capture (see {@link ManifestVerifier}); the document's own copy is then checked for refused
@@ -123,8 +134,8 @@ final class InputAssembler {
      *     inputs share a name and location, a published request body carries no matching redaction
      *     manifest or one that does not resolve in it, a published request body's type is described
      *     with a hidden member or type or cannot be inspected for one, a published parameter or
-     *     form-field schema holds {@code propertyNames}, or a published captured schema holds a refused
-     *     construct
+     *     form-field schema holds {@code propertyNames}, a published captured schema holds a refused
+     *     construct, or the documentation of a published input sets a reference or a malformed example
      */
     static Plan check(
             String subject,
@@ -177,16 +188,19 @@ final class InputAssembler {
             boolean required = detail.gateInstalled() && captured != null && rejectsNull(captured);
             body = new BodyPlan(
                     mediaTypes(known.consumes(), DEFAULT_BODY_MEDIA_TYPE),
+                    InputDocumentation.BodyDocumentation.NONE,
                     checked,
                     required,
                     markInputs && !bodyBinding.schemaEnforced());
         }
 
         List<ParameterPlan> parameters = new ArrayList<>();
+        List<InputBinding> parameterBindings = new ArrayList<>();
         for (InputBinding.Origin origin : List.of(InputBinding.Origin.PARAMETER, InputBinding.Origin.COMPOSITE_FIELD)) {
             for (InputBinding binding : inputs) {
                 if (binding.origin() == origin && binding.location() != ParamLocation.FORM) {
                     parameters.add(parameter(subject, embedder, operationId, schemas, binding, markInputs));
+                    parameterBindings.add(binding);
                 }
             }
         }
@@ -203,7 +217,30 @@ final class InputAssembler {
                 unenforced |= named || !binding.schemaEnforced();
             }
             String defaultMediaType = filePart ? MULTIPART : URL_ENCODED;
-            form = new FormPlan(mediaTypes(known.consumes(), defaultMediaType), properties, markInputs && unenforced);
+            form = new FormPlan(
+                    mediaTypes(known.consumes(), defaultMediaType), null, properties, markInputs && unenforced);
+        }
+
+        // Documentation is read once every schema of the operation is checked: the request body
+        // first, then the parameters in published order.
+        if (body != null || form != null) {
+            RequestBody requestBody = InputDocumentation.requestBody(
+                    body != null ? bodyBinding.annotations() : List.of(), known.methodAnnotations());
+            if (body != null) {
+                body = body.documented(InputDocumentation.body(subject, operationId, requestBody, body.mediaTypes()));
+            } else {
+                form = form.documented(InputDocumentation.bodyDescription(subject, operationId, requestBody));
+            }
+        }
+        for (int i = 0; i < parameters.size(); i++) {
+            ParameterPlan plan = parameters.get(i);
+            parameters.set(
+                    i,
+                    plan.documented(InputDocumentation.parameter(
+                            subject,
+                            operationId,
+                            parameterBindings.get(i),
+                            plan.documentation().description())));
         }
         return new Plan(operationId, parameters, body, form);
     }
@@ -244,7 +281,7 @@ final class InputAssembler {
         return new ParameterPlan(
                 binding.name(),
                 in(binding.location()),
-                description(binding.annotations()),
+                new InputDocumentation.ParameterDocumentation(description(binding.annotations()), false, null, null),
                 binding.requiredness() == InputBinding.Requiredness.REQUIRED,
                 checked,
                 checked == null ? unenforced(binding) : null,
@@ -323,15 +360,28 @@ final class InputAssembler {
     }
 
     /**
-     * Builds a request body holding one media type per entry, each with the schema: the schema itself
-     * under the first media type and a copy under each further one.
+     * Builds a request body: its description when set, then one Media Type Object per media type,
+     * each with the schema (the schema itself under the first media type and a copy under each further
+     * one) followed by the media type's examples.
      */
-    private static ObjectNode requestBody(List<String> mediaTypes, JsonNode schema) {
+    private static ObjectNode requestBody(
+            String description,
+            List<String> mediaTypes,
+            JsonNode schema,
+            Map<String, InputDocumentation.MediaTypeExamples> examples) {
         ObjectNode requestBody = NODES.objectNode();
+        if (description != null) {
+            requestBody.put("description", description);
+        }
         ObjectNode content = requestBody.putObject("content");
         boolean first = true;
         for (String mediaType : mediaTypes) {
-            content.putObject(mediaType).set("schema", first ? schema : schema.deepCopy());
+            ObjectNode mediaTypeObject = content.putObject(mediaType);
+            mediaTypeObject.set("schema", first ? schema : schema.deepCopy());
+            InputDocumentation.MediaTypeExamples mediaTypeExamples = examples.get(mediaType);
+            if (mediaTypeExamples != null) {
+                mediaTypeExamples.write(mediaTypeObject);
+            }
             first = false;
         }
         return requestBody;
@@ -394,7 +444,7 @@ final class InputAssembler {
      *
      * @param name the parameter name
      * @param in the lowercase location
-     * @param description the description, or {@code null}
+     * @param documentation the documentation of the Parameter Object
      * @param required whether the parameter is certainly required
      * @param checked the checked captured schema, or {@code null} for an unenforced input
      * @param unenforced the unenforced schema, or {@code null} when a captured schema is published
@@ -403,23 +453,42 @@ final class InputAssembler {
     private record ParameterPlan(
             String name,
             String in,
-            String description,
+            InputDocumentation.ParameterDocumentation documentation,
             boolean required,
             SchemaEmbedder.CheckedSchema checked,
             ObjectNode unenforced,
             boolean marked) {
 
+        /** Returns this plan with the given documentation. */
+        ParameterPlan documented(InputDocumentation.ParameterDocumentation documented) {
+            return new ParameterPlan(name, in, documented, required, checked, unenforced, marked);
+        }
+
+        /**
+         * Writes the Parameter Object: {@code name}, {@code in}, {@code description}, {@code
+         * required}, {@code deprecated}, {@code schema}, {@code example}, {@code examples}, and the
+         * marker, in that order, each optional member only when set.
+         */
         ObjectNode publish(SchemaEmbedder embedder) {
             ObjectNode node = NODES.objectNode();
             node.put("name", name);
             node.put("in", in);
-            if (description != null) {
-                node.put("description", description);
+            if (documentation.description() != null) {
+                node.put("description", documentation.description());
             }
             if (required) {
                 node.put("required", true);
             }
+            if (documentation.deprecated()) {
+                node.put("deprecated", true);
+            }
             node.set("schema", checked != null ? embedder.publish(checked) : unenforced);
+            if (documentation.example() != null) {
+                node.set("example", documentation.example().deepCopy());
+            }
+            if (documentation.examples() != null) {
+                node.set("examples", documentation.examples().deepCopy());
+            }
             if (marked) {
                 ValidationDisclosure.markUnenforced(node);
             }
@@ -431,16 +500,31 @@ final class InputAssembler {
      * The planned request body of a body binding.
      *
      * @param mediaTypes the media types, in order
+     * @param documentation the documentation of the request body
      * @param checked the checked captured body, or {@code null} when none was captured
      * @param required whether the body is required
      * @param marked whether the request body carries the marker of an input no schema guards
      */
     private record BodyPlan(
-            List<String> mediaTypes, SchemaEmbedder.CheckedSchema checked, boolean required, boolean marked) {
+            List<String> mediaTypes,
+            InputDocumentation.BodyDocumentation documentation,
+            SchemaEmbedder.CheckedSchema checked,
+            boolean required,
+            boolean marked) {
 
+        /** Returns this plan with the given documentation. */
+        BodyPlan documented(InputDocumentation.BodyDocumentation documented) {
+            return new BodyPlan(mediaTypes, documented, checked, required, marked);
+        }
+
+        /**
+         * Writes the Request Body Object: {@code description}, {@code content}, {@code required}, and
+         * the marker, in that order, each optional member only when set.
+         */
         ObjectNode publish(SchemaEmbedder embedder) {
             JsonNode schema = checked != null ? embedder.publish(checked) : NODES.objectNode();
-            ObjectNode requestBody = requestBody(mediaTypes, schema);
+            ObjectNode requestBody =
+                    requestBody(documentation.description(), mediaTypes, schema, documentation.examples());
             if (required) {
                 requestBody.put("required", true);
             }
@@ -455,10 +539,17 @@ final class InputAssembler {
      * The planned request body of an operation's form bindings.
      *
      * @param mediaTypes the media types, in order
+     * @param description the description, or {@code null}
      * @param properties the properties, in inventory order
      * @param marked whether the request body carries the marker of an input no schema guards
      */
-    private record FormPlan(List<String> mediaTypes, List<PropertyPlan> properties, boolean marked) {
+    private record FormPlan(
+            List<String> mediaTypes, String description, List<PropertyPlan> properties, boolean marked) {
+
+        /** Returns this plan with the given description. */
+        FormPlan documented(String documented) {
+            return new FormPlan(mediaTypes, documented, properties, marked);
+        }
 
         ObjectNode publish(SchemaEmbedder embedder) {
             ObjectNode schema = NODES.objectNode();
@@ -467,7 +558,7 @@ final class InputAssembler {
             for (PropertyPlan property : properties) {
                 members.set(property.name(), property.publish(embedder));
             }
-            ObjectNode requestBody = requestBody(mediaTypes, schema);
+            ObjectNode requestBody = requestBody(description, mediaTypes, schema, Map.of());
             if (marked) {
                 ValidationDisclosure.markUnenforced(requestBody);
             }
