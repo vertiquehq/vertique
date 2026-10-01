@@ -17,6 +17,7 @@ import dev.vertique.rest.jaxrs.publication.InputBinding.Requiredness;
 import dev.vertique.rest.jaxrs.routing.ParamLocation;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsDescriptorRegistry;
 import dev.vertique.rest.openapi.docs.InputTestComponents.FrozenComponent;
+import dev.vertique.rest.openapi.docs.InputTestComponents.PatternsComponent;
 import dev.vertique.rest.openapi.docs.InputTestComponents.TwinsComponent;
 import dev.vertique.rest.openapi.docs.InputTestComponents.TwoApplicationsComponent;
 import dev.vertique.rest.openapi.docs.InputTestComponents.VerbatimComponent;
@@ -39,6 +40,10 @@ import dev.vertique.rest.openapi.docs.fixture.input.it.ReflectedTwinApi;
 import dev.vertique.rest.openapi.docs.fixture.input.it.TwinInputs;
 import dev.vertique.rest.openapi.docs.fixture.input.it.VerbatimApi;
 import dev.vertique.rest.openapi.docs.fixture.input.it.VerbatimResource;
+import dev.vertique.rest.openapi.docs.fixture.input.patterns.FlaggedRequest;
+import dev.vertique.rest.openapi.docs.fixture.input.patterns.FoldedRequest;
+import dev.vertique.rest.openapi.docs.fixture.input.patterns.PatternsApi;
+import dev.vertique.rest.openapi.docs.fixture.input.patterns.PatternsResource;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Future;
 import io.vertx.core.Verticle;
@@ -51,6 +56,7 @@ import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -69,9 +75,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * Serves documents of declared applications under {@code web-validation} over a real,
  * loopback-bound {@code HttpVerticle} deployment and checks the inputs they publish: Parameter
  * Objects against the binding inventory on both resource discovery paths, authored patterns and
- * their dialect, that publication never writes to, or re-reads, the schemas the gate received, and
- * that two applications publish separate documents, each holding only its own operations and
- * components.
+ * their dialect, that every pattern value and {@code patternProperties} key the gate received is
+ * published unchanged at its mapped position, that publication never writes to, or re-reads, the
+ * schemas the gate received, and that two applications publish separate documents, each holding only
+ * its own operations and components.
  *
  * <p>Expected values are fixed literals, or are read from what the test's own recorders kept: the
  * binding inventory the recording sink projected during the publication call, and the deep copies
@@ -292,6 +299,7 @@ public class InputAssemblyIT {
             assertTrue(
                     capturedMember.contains(ExpressionRequest.EXPRESSION_PATTERN),
                     () -> "the captured member pattern must hold the authored expression; was: " + capturedMember);
+            assertHasDotallAndCommentsGroup(capturedMember, "the captured member pattern");
             String capturedParameter = recording
                     .parameterCopy(ParamLocation.QUERY, VerbatimResource.CODE)
                     .getString("pattern");
@@ -338,6 +346,24 @@ public class InputAssemblyIT {
         } finally {
             undeploy(deployment);
         }
+    }
+
+    /**
+     * Checks that a captured pattern opens with an inline modifier group carrying the {@code DOTALL}
+     * ({@code s}) and {@code COMMENTS} ({@code x}) modifiers before its colon, so a publication that
+     * stripped inline flag groups would publish different text.
+     *
+     * @param pattern the captured pattern text
+     * @param what    what the pattern is, for the failure message
+     */
+    private static void assertHasDotallAndCommentsGroup(String pattern, String what) {
+        assertTrue(pattern.startsWith("(?"), () -> what + " must open with an inline modifier group; was: " + pattern);
+        int colon = pattern.indexOf(':');
+        assertTrue(colon > 2, () -> what + " must name its modifiers before a colon; was: " + pattern);
+        String modifiers = pattern.substring(2, colon);
+        assertTrue(
+                modifiers.contains("s") && modifiers.contains("x"),
+                () -> what + " must carry the s and x modifiers before its colon; was: " + pattern);
     }
 
     // --- The gate's schemas stay untouched and the document stays frozen ---
@@ -629,6 +655,347 @@ public class InputAssemblyIT {
      */
     static String componentKey(String raw) {
         return raw.replaceAll("[^A-Za-z0-9._-]", "_");
+    }
+
+    // --- Every captured pattern ---
+
+    /** The keywords whose values are JSON data, never schemas, so a walk never enters them. */
+    private static final Set<String> LITERAL_KEYWORDS = Set.of("const", "enum", "default", "examples", "example");
+
+    /** The keywords whose object members are names, each member a schema whatever its name. */
+    private static final Set<String> NAMED_MEMBER_KEYWORDS =
+            Set.of("properties", "patternProperties", "$defs", "dependentSchemas");
+
+    /** The portable end anchor that ends every generator-built case-fold pattern. */
+    private static final String PORTABLE_END_ANCHOR = "(?![\\s\\S])";
+
+    /** The end anchor a published pattern must never carry: it is not portable across dialects. */
+    private static final String JAVA_END_ANCHOR = "\\z";
+
+    /** The route of the case-insensitively bound body. */
+    private static final String FOLDED_ROUTE = "/patterns/folded";
+
+    /** The route of the body with an authored flagged pattern. */
+    private static final String FLAGGED_ROUTE = "/patterns/flagged";
+
+    /** The route of the operation with authored parameter patterns. */
+    private static final String CODES_ROUTE = "/patterns/codes/{id}";
+
+    /**
+     * One regular expression in a schema: a {@code pattern} value, or a {@code patternProperties} key
+     * (then {@code pointer} is that {@code patternProperties} object's).
+     *
+     * @param schema  which schema holds it: a component key, or {@code parameter <in> <name>}
+     * @param pointer its JSON Pointer within that schema
+     * @param text    the regular expression's text
+     */
+    record PatternPair(String schema, String pointer, String text) implements Comparable<PatternPair> {
+
+        private static final Comparator<PatternPair> ORDER = Comparator.comparing(PatternPair::schema)
+                .thenComparing(PatternPair::pointer)
+                .thenComparing(PatternPair::text);
+
+        @Override
+        public int compareTo(PatternPair other) {
+            return ORDER.compare(this, other);
+        }
+    }
+
+    @Test
+    @DisplayName(
+            "Every pattern value and patternProperties key the gate received, generator-built or authored, is published at its mapped position with identical text, in JSON and YAML")
+    void everyCapturedPatternIsPublishedUnchanged() throws Exception {
+        // Given: precondition first, the generator names no reserved member of either body type, so
+        // redaction would remove no pattern from them.
+        for (Class<?> bodyType : List.of(FoldedRequest.class, FlaggedRequest.class)) {
+            assertTrue(
+                    GeneratedBodies.manifestIsEmpty(bodyType, GeneratedBodies.DEFAULT_PROFILE),
+                    () -> bodyType.getSimpleName() + " must name no reserved member, so redaction removes nothing");
+        }
+        PatternsComponent component =
+                DaggerInputTestComponents_PatternsComponent.factory().create(webValidationConfig(PatternsApi.NAME));
+
+        Deployment deployment = deploy(component::httpVerticle);
+        try {
+            // When: the document's JSON and YAML forms are requested.
+            byte[] jsonBytes = bodyBytes(fetch(deployment.port(), documentPath(PatternsApi.NAME, JSON_FORM)));
+            byte[] yamlBytes = bodyBytes(fetch(deployment.port(), documentPath(PatternsApi.NAME, YAML_FORM)));
+            JsonObject document = new JsonObject(Buffer.buffer(jsonBytes));
+            JsonObject yamlDocument = yamlAsJson(yamlBytes);
+
+            // Then: each operation id is published once, where its route says.
+            assertEquals(
+                    Map.of(
+                            PatternsResource.SUBMIT_FOLDED, "post " + FOLDED_ROUTE,
+                            PatternsResource.SUBMIT_FLAGGED, "post " + FLAGGED_ROUTE,
+                            PatternsResource.FIND_CODE, "get " + CODES_ROUTE),
+                    operationsById(document),
+                    "operation ids and where they are published");
+
+            RecordingSchemaSource source = component.recordingSource();
+            Map<String, List<PatternPair>> expected = new LinkedHashMap<>();
+            Map<String, List<PatternPair>> published = new LinkedHashMap<>();
+            Map<String, List<PatternPair>> publishedYaml = new LinkedHashMap<>();
+
+            // The bodies: each component and its relocated definitions against the gate's copy.
+            Map<String, String> bodyRoutes = new LinkedHashMap<>();
+            bodyRoutes.put(PatternsResource.SUBMIT_FOLDED, FOLDED_ROUTE);
+            bodyRoutes.put(PatternsResource.SUBMIT_FLAGGED, FLAGGED_ROUTE);
+            for (Map.Entry<String, String> body : bodyRoutes.entrySet()) {
+                String operationId = body.getKey();
+                JsonObject captured = source.recording(operationId).bodyCopy();
+                assertNotNull(captured, () -> "the source must have returned a body schema for " + operationId);
+                String bodyKey = componentKey(operationId + ".request");
+                assertEquals(
+                        "#/components/schemas/" + bodyKey,
+                        operation(document, body.getValue(), "post")
+                                .getJsonObject("requestBody")
+                                .getJsonObject("content")
+                                .getJsonObject("application/json")
+                                .getJsonObject("schema")
+                                .getString("$ref"),
+                        () -> operationId + ": the body references its component");
+                assertFalse(
+                        schemaComponent(document, bodyKey).containsKey("$defs"),
+                        () -> bodyKey + ": the published component keeps no local definitions");
+                expected.put(bodyKey, expectedBodyPairs(bodyKey, captured));
+                published.put(bodyKey, publishedBodyPairs(document, bodyKey));
+                publishedYaml.put(bodyKey, publishedBodyPairs(yamlDocument, bodyKey));
+            }
+            JsonObject flaggedCapture =
+                    source.recording(PatternsResource.SUBMIT_FLAGGED).bodyCopy();
+            JsonObject flaggedDefinitions = flaggedCapture.getJsonObject("$defs");
+            assertTrue(
+                    flaggedDefinitions != null && !flaggedDefinitions.isEmpty(),
+                    () -> "the flagged body's capture must carry root local definitions, so the relocation"
+                            + " mapping is exercised; was: " + flaggedCapture.encode());
+
+            // The parameters: each published inline, against the gate's copy.
+            RecordingSchemaSource.Recording codes = source.recording(PatternsResource.FIND_CODE);
+            JsonArray parameters = operation(document, CODES_ROUTE, "get").getJsonArray("parameters");
+            JsonArray yamlParameters =
+                    operation(yamlDocument, CODES_ROUTE, "get").getJsonArray("parameters");
+            for (ParameterInput input : List.of(
+                    new ParameterInput(ParamLocation.PATH, "path", PatternsResource.ID),
+                    new ParameterInput(ParamLocation.QUERY, "query", PatternsResource.NAME))) {
+                String where = "parameter " + input.in() + " " + input.name();
+                JsonObject captured = codes.parameterCopy(input.location(), input.name());
+                assertFalse(captured.containsKey("$defs"), () -> where + ": the capture carries no local definitions");
+                assertEquals(
+                        List.of(),
+                        pointersOfMember(captured, "$ref"),
+                        () -> where + ": the capture carries no reference, so it is published inline");
+                expected.put(where, patternPairs(where, captured));
+                published.put(where, publishedParameterPairs(parameters, input, where));
+                publishedYaml.put(where, publishedParameterPairs(yamlParameters, input, where));
+            }
+
+            for (String input : expected.keySet()) {
+                System.out.println(input + ": " + expected.get(input).size() + " captured pattern pairs, "
+                        + published.get(input).size() + " published (JSON), "
+                        + publishedYaml.get(input).size() + " published (YAML): " + published.get(input));
+            }
+
+            // Not vacuous: every input has a pattern; the generator-built and flagged patterns are there,
+            // and one pattern sits in a relocated definition.
+            for (Map.Entry<String, List<PatternPair>> input : expected.entrySet()) {
+                assertFalse(input.getValue().isEmpty(), () -> input.getKey() + ": the capture must carry a pattern");
+            }
+            String foldedKey = componentKey(PatternsResource.SUBMIT_FOLDED + ".request");
+            assertTrue(
+                    expected.get(foldedKey).stream()
+                            .anyMatch(pair -> pair.text().contains(PORTABLE_END_ANCHOR)),
+                    () -> "the folded body's capture must carry a generator-built case-fold pattern; was: "
+                            + expected.get(foldedKey));
+            String flaggedKey = componentKey(PatternsResource.SUBMIT_FLAGGED + ".request");
+            List<PatternPair> flaggedMember = expected.get(flaggedKey).stream()
+                    .filter(pair ->
+                            pair.schema().equals(flaggedKey) && pair.pointer().equals("/properties/expression/pattern"))
+                    .toList();
+            assertEquals(
+                    1,
+                    flaggedMember.size(),
+                    () -> "the flagged body's capture must carry the member pattern; was: " + expected.get(flaggedKey));
+            String flagged = flaggedMember.get(0).text();
+            assertTrue(
+                    flagged.contains(FlaggedRequest.EXPRESSION_PATTERN),
+                    () -> "the flagged member pattern must hold the authored expression; was: " + flagged);
+            assertHasDotallAndCommentsGroup(flagged, "the flagged member pattern");
+            assertTrue(
+                    expected.get(flaggedKey).stream()
+                            .anyMatch(pair -> !pair.schema().equals(flaggedKey)),
+                    () -> "a flagged-body pattern must sit in a relocated definition; was: "
+                            + expected.get(flaggedKey));
+
+            // Each input publishes exactly the captured pairs, at their mapped positions, in both forms.
+            for (String input : expected.keySet()) {
+                assertEquals(
+                        expected.get(input),
+                        published.get(input),
+                        () -> input + ": the published pattern pairs must equal the captured ones (JSON)");
+                assertEquals(
+                        expected.get(input),
+                        publishedYaml.get(input),
+                        () -> input + ": the published pattern pairs must equal the captured ones (YAML)");
+            }
+
+            // No published pattern was re-anchored to the Java-only end anchor.
+            for (Map<String, List<PatternPair>> form : List.of(published, publishedYaml)) {
+                for (List<PatternPair> pairs : form.values()) {
+                    for (PatternPair pair : pairs) {
+                        assertFalse(
+                                pair.text().contains(JAVA_END_ANCHOR),
+                                () -> "a published pattern must not contain " + JAVA_END_ANCHOR + ": " + pair);
+                    }
+                }
+            }
+        } finally {
+            undeploy(deployment);
+        }
+    }
+
+    /**
+     * One parameter of the operation with authored parameter patterns.
+     *
+     * @param location the parameter's location, as the source keys it
+     * @param in       the published {@code in} value
+     * @param name     the parameter's name
+     */
+    private record ParameterInput(ParamLocation location, String in, String name) {}
+
+    /**
+     * Returns the pattern pairs a captured body schema is expected to publish: a pair under {@code
+     * /$defs/<def>/<p>} moves to {@code /<p>} of component {@code <component>.<def>} (through the
+     * component-key rule); every other pair stays at its pointer of the body component.
+     *
+     * @param component the body component's key
+     * @param captured  the gate's copy of the body schema
+     * @return the expected pairs, sorted
+     */
+    private static List<PatternPair> expectedBodyPairs(String component, JsonObject captured) {
+        String definitions = "/$defs/";
+        List<PatternPair> mapped = new ArrayList<>();
+        for (PatternPair pair : patternPairs(component, captured)) {
+            if (pair.pointer().startsWith(definitions)) {
+                String rest = pair.pointer().substring(definitions.length());
+                int slash = rest.indexOf('/');
+                assertTrue(slash > 0, () -> "a pattern sits below a definition, never at it: " + pair);
+                String definition = unescapePointerSegment(rest.substring(0, slash));
+                mapped.add(new PatternPair(
+                        componentKey(component + "." + definition), rest.substring(slash), pair.text()));
+            } else {
+                mapped.add(pair);
+            }
+        }
+        mapped.sort(null);
+        return mapped;
+    }
+
+    /**
+     * Returns the pattern pairs a document publishes for one body: those of the body component and of
+     * every component keyed under it (its relocated definitions).
+     *
+     * @param document  the published document
+     * @param component the body component's key
+     * @return the published pairs, sorted
+     */
+    private static List<PatternPair> publishedBodyPairs(JsonObject document, String component) {
+        schemaComponent(document, component);
+        JsonObject schemas = document.getJsonObject("components").getJsonObject("schemas");
+        List<PatternPair> pairs = new ArrayList<>();
+        for (String key : new TreeSet<>(schemas.fieldNames())) {
+            if (key.equals(component) || key.startsWith(component + ".")) {
+                pairs.addAll(patternPairs(key, schemas.getJsonObject(key)));
+            }
+        }
+        pairs.sort(null);
+        return pairs;
+    }
+
+    /**
+     * Returns the pattern pairs of one Parameter Object's inline schema.
+     *
+     * @param parameters the operation's published parameters
+     * @param input      the parameter
+     * @param where      the pairs' schema label
+     * @return the published pairs, sorted
+     */
+    private static List<PatternPair> publishedParameterPairs(JsonArray parameters, ParameterInput input, String where) {
+        JsonObject parameter = byName(parameters).get(input.name());
+        assertNotNull(parameter, () -> where + ": the operation must publish the parameter");
+        assertEquals(input.in(), parameter.getString("in"), () -> where + ": location");
+        JsonObject schema = parameter.getJsonObject("schema");
+        assertNotNull(schema, () -> where + ": the parameter must publish a schema");
+        return patternPairs(where, schema);
+    }
+
+    /**
+     * Walks every schema position of a schema and returns every {@code pattern} value and every
+     * {@code patternProperties} key it carries. The walk never enters {@code const}, {@code enum},
+     * {@code default}, {@code examples}, or {@code example} (JSON data, not schemas), and the members
+     * of {@code properties}, {@code patternProperties}, {@code $defs}, and {@code dependentSchemas} are
+     * names: each is a schema whatever its name.
+     *
+     * @param schema the label every returned pair carries
+     * @param root   the schema's root
+     * @return the pairs, sorted
+     */
+    static List<PatternPair> patternPairs(String schema, Object root) {
+        List<PatternPair> pairs = new ArrayList<>();
+        walkPatterns(schema, root, "", false, pairs);
+        pairs.sort(null);
+        return pairs;
+    }
+
+    private static void walkPatterns(
+            String schema, Object node, String pointer, boolean membersAreNames, List<PatternPair> pairs) {
+        if (node instanceof JsonObject object) {
+            for (String field : object.fieldNames()) {
+                Object member = object.getValue(field);
+                String memberPointer = pointer + "/" + escapePointerSegment(field);
+                if (membersAreNames) {
+                    walkPatterns(schema, member, memberPointer, false, pairs);
+                    continue;
+                }
+                if (LITERAL_KEYWORDS.contains(field)) {
+                    continue;
+                }
+                if ("pattern".equals(field) && member instanceof String text) {
+                    pairs.add(new PatternPair(schema, memberPointer, text));
+                    continue;
+                }
+                if ("patternProperties".equals(field) && member instanceof JsonObject byPattern) {
+                    for (String key : byPattern.fieldNames()) {
+                        pairs.add(new PatternPair(schema, memberPointer, key));
+                    }
+                }
+                boolean names = NAMED_MEMBER_KEYWORDS.contains(field) && member instanceof JsonObject;
+                walkPatterns(schema, member, memberPointer, names, pairs);
+            }
+        } else if (node instanceof JsonArray array) {
+            for (int index = 0; index < array.size(); index++) {
+                walkPatterns(schema, array.getValue(index), pointer + "/" + index, false, pairs);
+            }
+        }
+    }
+
+    private static String escapePointerSegment(String segment) {
+        return segment.replace("~", "~0").replace("/", "~1");
+    }
+
+    private static String unescapePointerSegment(String segment) {
+        return segment.replace("~1", "/").replace("~0", "~");
+    }
+
+    /**
+     * Parses a document's YAML form into a JSON object, through the JSON text of its tree.
+     *
+     * @param yamlBytes the YAML form's bytes
+     * @return the parsed document
+     */
+    private static JsonObject yamlAsJson(byte[] yamlBytes) throws Exception {
+        JsonNode tree = new ObjectMapper(new YAMLFactory()).readTree(yamlBytes);
+        return new JsonObject(new ObjectMapper().writeValueAsString(tree));
     }
 
     // --- Shared helpers: configuration, documents, and trees ---
