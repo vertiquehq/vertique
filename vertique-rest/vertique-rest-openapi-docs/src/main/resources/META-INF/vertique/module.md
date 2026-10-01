@@ -17,10 +17,12 @@ server-level prefix (default `/apidocs`) at `<prefix>/<application name>/openapi
 startup, on a worker thread, and served from frozen bytes with strong entity tags, conditional
 `304` answers, `HEAD`, and `Cache-Control`.
 
-In this release the document content is the skeleton only: `openapi` (`3.1.1`), the `info` object
-from configuration or from `@OpenAPIDefinition(info)`, and an empty `paths` object. The document does not list operations,
-parameters, request bodies, responses, security schemes, or servers, although the module receives
-all of them at startup and compares them across server instances (see
+A document describes the application's inputs: `openapi` (`3.1.1`), the `info` object from
+configuration or from `@OpenAPIDefinition(info)`, the JSON Schema dialect, one server, every
+operation of the mount with its parameters and request body, the component schemas those inputs
+reference, and the pattern dialect (see [Document Content](#document-content)). It lists no
+responses, security schemes, summaries, or tags, although the module receives the response shape at
+startup and compares it across server instances (see
 [Several server instances](#several-server-instances)).
 
 The module serves documents only. It has no UI, no assets, and no other route, and `@ApiDocs` is not
@@ -115,17 +117,45 @@ that call, and assembles the document on a worker thread. The document is stored
 and YAML bytes built from one tree, together with a strong entity tag for each form. Nothing is
 assembled per request, no schema source is called per request, and no event loop waits for another.
 
-- **JSON:** compact UTF-8 with fields in OpenAPI 3.1.1 specification order: `openapi`, `info`
-  (`title`, `description` when configured, `version`), `paths`.
+- **JSON:** compact UTF-8 with the root members in a fixed order (see
+  [Document Content](#document-content)); `info` holds `title`, `description` when configured, and
+  `version`.
 - **YAML:** written from the same tree with Jackson's default YAML settings, so the parsed YAML tree
   equals the JSON tree.
 - **Identical inputs produce identical bytes** and identical entity tags.
 
-The skeleton document for the example above is exactly:
+For the example above, with no `serverUrl` configured, no request-validation gate installed, and a
+`CatalogResource` at `@Path("/items")` declaring `listItems(@QueryParam("limit") Integer limit)` on
+`GET`, `getItem(@PathParam("id") String id)` on `GET /{id}`, and
+`createItem(@QueryParam("dryRun") boolean dryRun, CreateItemRequest request)` on `POST` with
+`@Consumes(APPLICATION_JSON)`, where `CreateItemRequest` is `record CreateItemRequest(String name,
+int quantity)`, the JSON document is exactly (wrapped here for reading):
 
 ```json
-{"openapi":"3.1.1","info":{"title":"Catalog","version":"1.0"},"paths":{}}
+{"openapi":"3.1.1","info":{"title":"Catalog","version":"1.0"},
+"jsonSchemaDialect":"https://json-schema.org/draft/2020-12/schema",
+"servers":[{"url":"/api/public"}],
+"paths":{
+"/items":{
+"get":{"operationId":"listItems",
+"parameters":[{"name":"limit","in":"query","schema":{"type":"integer"}}]},
+"post":{"operationId":"createItem",
+"parameters":[{"name":"dryRun","in":"query","schema":{"type":"boolean"}}],
+"requestBody":{"content":{"application/json":
+{"schema":{"$ref":"#/components/schemas/createItem.request"}}}}}},
+"/items/{id}":{
+"get":{"operationId":"getItem",
+"parameters":[{"name":"id","in":"path","required":true,"schema":{"type":"string"}}]}}},
+"components":{"schemas":{
+"createItem.request":{"$schema":"https://json-schema.org/draft/2020-12/schema",
+"properties":{"name":{"type":"string"},"quantity":{"type":"integer"}},
+"type":"object"}}},
+"x-vertique-validation":{"patternDialect":"java.util.regex"}}
 ```
+
+The served bytes have no line breaks. `limit` and `dryRun` carry no `required` member because
+neither is certainly required, and the request body carries none because no validation gate is
+installed.
 
 ### The docs mount
 
@@ -223,6 +253,140 @@ of every `apidocs.documents` entry and the `@ApiDocs` shape check of every activ
 
 ---
 
+## Document Content
+
+A document is built from the operations its application's JAX-RS mount publishes and from the
+schemas the mount captured for their inputs. Nothing is read from a request.
+
+### Root members
+
+The root members are written in this order:
+
+1. `openapi`: `3.1.1`.
+2. `info`: see [`info`](#info).
+3. `jsonSchemaDialect`: `https://json-schema.org/draft/2020-12/schema`.
+4. `servers`: exactly one entry. Its `url` is the configured `apidocs.documents.<name>.serverUrl`
+   when present; otherwise the mount path without its trailing `/*`, and `/` for the root mount. It
+   is never taken from request headers such as `Host` or `X-Forwarded-*`.
+5. `paths`: one entry per rendered path, keys in natural order.
+6. `components`: `schemas` only, keys in natural order; left out when the document has no
+   component schema.
+7. `x-vertique-validation`: `{"patternDialect": "java.util.regex"}` (see [Patterns](#patterns)).
+
+### Paths and operations
+
+- **Path keys.** Each key is the operation's JAX-RS path template relative to the mount, with every
+  variable written as `{name}`: `{id: [0-9]+}` becomes `{id}`. The regular expression of a variable
+  never reaches the document.
+- **Equivalent paths.** Two templates whose rendered keys have the same literal text with variables
+  at the same positions are equivalent. They share one path item only when they use the same
+  variable names and differ in method; otherwise startup fails (see
+  [Startup failures](#startup-failures)).
+- **Methods.** Within a path item each operation is keyed by its lowercase HTTP method, in the order
+  `get`, `put`, `post`, `delete`, `options`, `head`, `patch`, `trace`.
+- **Operation Object.** `operationId` (the runtime operation id), then `parameters` (left out when
+  empty), then `requestBody` (left out when the operation has none).
+
+### Parameters
+
+Every input that is neither the request body nor a form input becomes a Parameter Object. Method
+parameters come first, then the fields of composite beans, each group in binding order.
+
+- **`name` and `in`.** The bound name and the lowercase location (`path`, `query`, `header`,
+  `cookie`).
+- **`description`.** The `description` of the input's first `@Parameter` annotation, left out when
+  blank or absent.
+- **`required`.** Written as `true` only when the input is certainly required, such as a path
+  parameter. It is never written as `false`: an input whose requiredness is not certain, such as a
+  primitive query parameter without `@DefaultValue`, carries no `required` member.
+- **`schema`.** The schema captured for the input, published unchanged. It is published inline,
+  unless it holds a `$ref` or `$defs` at a schema position; then it becomes a component and the
+  parameter references it (see [Components](#components)).
+
+### Unenforced inputs
+
+An input with no captured schema, and every composite-bean field, is unenforced. Its schema is
+`{"default": "<raw @DefaultValue text>"}` when it declares a `@DefaultValue`, and the empty schema
+`{}` otherwise. Nothing is derived from its Java type or its constraint annotations.
+
+### Request bodies
+
+- **Body input.** The operation's body input becomes `requestBody`, with one media type per type in
+  `@Consumes`, or `application/json` when the operation declares none. Each media type references the
+  one component `<operationId>.request`, which holds the captured body schema. When no body schema
+  was captured, each media type holds the empty schema `{}`.
+- **`required`.** The request body carries `required: true` exactly when a request-validation gate is
+  installed for the operation and the captured body schema, evaluated as the gate evaluates it,
+  rejects an absent body. Otherwise it carries no `required` member.
+- **Form inputs.** When the operation has no body input, its form inputs and named file parts become
+  the request body instead: an object schema with one property per input, in binding order. The
+  media types are those in `@Consumes`; when the operation declares none, `multipart/form-data` for
+  an operation with a named file part and `application/x-www-form-urlencoded` otherwise. A named file
+  part's property is `{}`; any other property is its captured schema (inline or a component, as for a
+  parameter) or the unenforced schema above. A form request body never carries `required`.
+- **Body and form inputs together.** When an operation binds a body, its form inputs are not
+  published.
+
+### Components
+
+Component keys are built from the runtime operation id:
+
+| Input | Component key |
+|---|---|
+| Request body | `<operationId>.request` |
+| Parameter | `<operationId>.<location>.<name>`, location in lowercase |
+| Form field | `<operationId>.form.<name>` |
+| Relocated definition | `<component>.<def>` |
+
+Every character outside `[A-Za-z0-9._-]` in a key is replaced by `_`. Two components with the same
+key fail startup.
+
+### Relocation of local definitions
+
+A schema published as a component is relocated on a copy the document owns; the captured schemas
+the request-validation gate uses are never changed.
+
+- The root `$defs` is removed, and each entry `<def>` becomes component `<component>.<def>`.
+- Every fragment-only `$ref` at a schema position, in the component and in each relocated
+  definition, is rewritten:
+  - `#` becomes `#/components/schemas/<component>`;
+  - `#/$defs/<def>` and `#/$defs/<def>/<rest>` become `#/components/schemas/<component>.<def>`
+    and that followed by `/<rest>`;
+  - any other `#/<pointer>` becomes `#/components/schemas/<component>/<pointer>`.
+- Nothing else changes: no `$id` is added, and a root `$schema`, boolean subschemas, pattern text,
+  and member order are kept.
+
+### Refused constructs
+
+A captured schema that the document cannot publish fails startup. It is refused when, at a schema
+position, it holds:
+
+- `$id` anywhere, the root included;
+- `$anchor`, `$dynamicAnchor`, or `$dynamicRef`;
+- `$defs` below the root;
+- a `$ref` that is not fragment-only (does not start with `#`);
+- a fragment-only `$ref` that does not resolve to a schema position inside the captured schema,
+  such as an anchor-name fragment, a pointer to a missing member, or a pointer to the `$defs` object
+  itself.
+
+The failure names the application, its declaring interface, the mount, the operation, the input,
+and the JSON Pointer of the offending keyword. It never echoes a value, a reference, or schema text,
+and names a `patternProperties` member by its ordinal (`[key-N]`) rather than its pattern.
+Identifiers, anchors, and nested definitions are reported before references.
+
+The whole document is checked before anything is published: paths first, then each operation in the
+order the document lists it, its duplicate inputs, then its body schema, parameter schemas, and form
+field schemas. The first violation fails startup. Component key collisions are found as components
+are published.
+
+### Patterns
+
+Patterns are published verbatim, as written in the captured schema. They are Java regular
+expressions, which the root member `x-vertique-validation.patternDialect: "java.util.regex"` records;
+a consumer using another regular-expression dialect may read a pattern differently.
+
+---
+
 ## Key Classes
 
 ### ApiDocs
@@ -266,11 +430,11 @@ not construct these records.
 |---|---|---|---|
 | `apidocs.enabled` | boolean | `true` | Global switch. `false` disables every document, and the rest of the `apidocs` subtree is then neither parsed nor checked. Must be a JSON boolean |
 | `apidocs.path` | string | `/apidocs` | Prefix under which documents are served |
-| `apidocs.documents.<name>.enabled` | boolean | absent | `false` disables the document of application `<name>`. Absent or `null` keeps the decision of `@ApiDocs`. `true` is accepted only for an application whose declaring interface carries `@ApiDocs` |
+| `apidocs.documents.<name>.enabled` | boolean | absent | `false` disables the document of application `<name>`. Absent or `null` keeps the decision of `@ApiDocs`. `true` is accepted only for an application whose declaring interface carries `@ApiDocs`. A blank string fails startup |
 | `apidocs.documents.<name>.info.title` | string | none | Document title. Required non-blank when `info` is configured; otherwise `info` comes from `@OpenAPIDefinition` on the declaring interface |
 | `apidocs.documents.<name>.info.version` | string | none | Document version. Required non-blank when `info` is configured; otherwise `info` comes from `@OpenAPIDefinition` on the declaring interface |
 | `apidocs.documents.<name>.info.description` | string | absent | Optional description, written to `info` when present |
-| `apidocs.documents.<name>.serverUrl` | string | absent | Checked for every enabled document; it does not change the document in this release |
+| `apidocs.documents.<name>.serverUrl` | string | absent | The document's `servers[0].url`. When absent, the mount path without its trailing `/*` (`/` for the root mount) |
 
 Each key under `apidocs.documents` is an application `name`. The document list is a keyed collection:
 the key becomes the entry's `name`.
@@ -304,13 +468,16 @@ unnoticed. The checks run in this order, and the first violation fails startup:
    other key fails, `access` and `mount` included: who may read a document is `@ApiDocs`'s, in code,
    and configuration cannot relocate a document. The failure lists each unsupported key's full path,
    sorted.
-4. **`enabled: true`.** `true` is accepted only for an application whose declaring interface itself
+4. **Blank `enabled`.** A blank string cannot be read as a boolean, so it fails instead of keeping
+   the decision of `@ApiDocs`. The failure names the application, its declaring interface, and
+   `apidocs.documents.<name>.enabled`.
+5. **`enabled: true`.** `true` is accepted only for an application whose declaring interface itself
    carries `@ApiDocs`; otherwise the failure names the application, its declaring interface, and
    `apidocs.documents.<name>.enabled`.
 
 `enabled` is a tri-state. Absent and an explicit JSON `null` keep the decision of `@ApiDocs`, `false`
-disables the document, and `true` only confirms a document that `@ApiDocs` already enables. A
-configuration entry never enables a document without `@ApiDocs`.
+disables the document, and `true` only confirms a document that `@ApiDocs` already enables. A blank
+string is refused. A configuration entry never enables a document without `@ApiDocs`.
 
 Keys elsewhere under `apidocs` are tolerated.
 
@@ -345,7 +512,8 @@ No default `info` is invented. Other members of `@OpenAPIDefinition` are not pub
 - an absolute path that starts with a single `/` and has no scheme or authority.
 
 Anything else, a blank value included, fails startup naming `apidocs.documents.<name>.serverUrl`
-without repeating the value. A valid `serverUrl` does not change the document in this release.
+without repeating the value. A valid `serverUrl` is published unchanged as the document's
+`servers[0].url` (see [Root members](#root-members)).
 
 ---
 
@@ -462,8 +630,9 @@ nothing.
 
 ### Startup failures
 
-Every failure below stops startup. Each message names what is wrong and does not echo configuration
-values or document content.
+Every failure below stops startup. Each message names what is wrong and never echoes configuration
+values, schema text, references, or pattern text. Messages about the document's content name
+operation ids, rendered paths, input names, and component keys.
 
 | Condition | Failure |
 |---|---|
@@ -471,6 +640,7 @@ values or document content.
 | `apidocs.enabled` is present and not a JSON boolean | `ConfigurationException` naming `apidocs.enabled` |
 | An `apidocs.documents` key breaks the name grammar, or names no declared application | `ConfigurationException` naming `apidocs.documents.<name>` and the rule |
 | An entry holds a key other than `enabled`, `info`, or `serverUrl` | `ConfigurationException` naming the application, its declaring interface, and each unsupported key's path |
+| An entry sets `enabled` to a blank string | `ConfigurationException` naming the application, its declaring interface, and `apidocs.documents.<name>.enabled`, ending `it must be true or false, or be left out to keep the @ApiDocs decision` |
 | An entry sets `enabled: true` for an application without `@ApiDocs` | `ConfigurationException` naming the application, its declaring interface, and `apidocs.documents.<name>.enabled` |
 | A blank key, or an entry that is not a JSON object | The keyed-collection parser's own `ConfigurationException`, raised before any check above; it says the entry has a blank key, or that the entry `'<key>'` must be a nested JSON object, and names the key |
 | The `@ApiDocs` of an active application breaks its shape rules | `RestConfigurationException` listing every violation, sorted, each naming the application, its declaring interface, and `@ApiDocs.securityScheme` or `@ApiDocs.rolesAllowed` |
@@ -484,11 +654,15 @@ values or document content.
 | A JAX-RS operation uses a reserved id `apidocs:<name>:json` or `apidocs:<name>:yaml` | `RestConfigurationException` naming the operation id, its method and template, the mount, and the application |
 | A `GET` or `HEAD` route of a JAX-RS mount can answer a document URL | `RestConfigurationException` with one line per route and URL, naming both |
 | A documented application resolves operations from the shared global contract | `RestConfigurationException` naming the application, the mount, and the strategy |
+| Two operations of a documented application render to equivalent paths with different variable names, or with the same method | `RestConfigurationException` starting `Application '<name>' (declared by <binary name>) at mount '<mount path>'`, naming both routes by method, operation id, and rendered path, and stating that routes at one path must use the same variable names and differ in method |
+| An operation of a documented application binds two inputs with the same name and location | `RestConfigurationException` with the same start, naming the operation, the input name, and the location, and stating that a document describes one parameter per name and location |
+| A captured input schema of a documented application holds a refused construct (see [Refused constructs](#refused-constructs)) | `RestConfigurationException` with the same start, naming the operation, the input, the construct, and the JSON Pointer of the offending keyword; no value, reference, or schema text |
+| Two components of a document would have the same key | `RestConfigurationException` with the same start, naming the input of both components and the key; when either is a relocated definition, it says `one component` instead of the key, and states that component keys replace every character outside `[A-Za-z0-9._-]` with `_` |
 | A later server instance publishes a different mount or operation than the stored document | `RestConfigurationException` naming the application, its declaring interface, its mount path, and the first differing operation id |
 | A mount of a documented application is built outside a Vert.x context | `RestConfigurationException` naming the application |
 
 Entries of applications without `@ApiDocs`, and entries that switch a document off, are still checked
-for their name, their application, and their keys. The `info` and `serverUrl` of a document are checked
+for their name, their application, their keys, and a blank `enabled`. The `info` and `serverUrl` of a document are checked
 only when it is enabled. A value of the wrong type inside an entry is rejected by the canonical parser,
 and its message can quote that value.
 
@@ -507,9 +681,16 @@ and its message can quote that value.
   access is declared by `@ApiDocs` in code.
 - **Mounting a JAX-RS mount or a catch-all route under the prefix.** It fails startup. Choose another
   `apidocs.path`, or move, narrow, or remove the mount or route.
-- **Expecting operations in the document.** `paths` is empty in this release; consumers that read
-  operations from the served document find none.
-- **Expecting `serverUrl` in the document.** It is checked and left out.
+- **Expecting responses or security schemes in the document.** A document describes operations and
+  their inputs only.
+- **Expecting a server URL from the request.** `servers[0].url` is the configured `serverUrl` or the
+  mount path; behind a proxy that changes the path, configure `serverUrl`.
+- **Expecting `required: false`.** An input that is not certainly required carries no `required`
+  member at all.
+- **Expecting schemas for composite-bean fields.** They are unenforced and publish `{}` or their
+  `@DefaultValue` only.
+- **Using `$id`, anchors, or nested `$defs` in an input schema.** A documented application refuses
+  them at startup; keep local definitions in the root `$defs` and reference them by fragment.
 - **Expecting routes added by a hook or customizer to be checked.** They are neither published nor
   collision-checked.
 - **A customizer that ends every request.** A match-all customizer whose handler does not pass the
@@ -559,7 +740,8 @@ and the component's multibound sets of `RequestValidationStrategy`, `SecuritySch
 | `dev.vertique:vertique-rest-core` | `RouterMount`, `MountMeta`, the extension phases, `JaxRsConfig` default headers, and `RestConfigurationException` |
 | `dev.vertique:vertique-core` | `ConfigParser`, configuration path navigation, `ConfigurationException`, and `@KeyedBy` |
 | `dev.vertique:vertique-json-schema` | The redaction manifest whose digest is part of the comparison between instances |
-| `io.swagger.core.v3:swagger-annotations-jakarta` | `@OpenAPIDefinition`, read for `info` on the declaring interface |
+| `io.vertx:vertx-json-schema` | Compile dependency; evaluates whether a captured request-body schema accepts an absent body, which decides the request body's `required` |
+| `io.swagger.core.v3:swagger-annotations-jakarta` | `@OpenAPIDefinition`, read for `info` on the declaring interface, and `@Parameter`, read for a parameter's `description` |
 | Jackson (`jackson-databind`, `jackson-dataformat-yaml`) | Writes the JSON and YAML forms; YAML brings SnakeYAML |
 | Dagger and `jakarta.inject-api` | Module bindings |
 
