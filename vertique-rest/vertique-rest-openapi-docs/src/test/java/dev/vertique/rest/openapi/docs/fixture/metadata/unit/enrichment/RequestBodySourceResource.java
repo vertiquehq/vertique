@@ -43,4 +43,21 @@ public final class RequestBodySourceResource {
      */
     @RequestBody(description = "mZX")
     public void parameterAndMethodDescriptions(@RequestBody(description = "pZX") ItemDto body) {}
+
+    /**
+     * A description on the method beside one in the {@code @Operation}'s request body.
+     *
+     * @param body the body
+     */
+    @RequestBody(description = "mZX")
+    @Operation(requestBody = @RequestBody(description = "oZX"))
+    public void methodAndOperationDescriptions(ItemDto body) {}
+
+    /**
+     * A bare all-default request body on the body parameter beside a description on the method.
+     *
+     * @param body the body
+     */
+    @RequestBody(description = "mZX")
+    public void bareParameterAndMethodDescription(@RequestBody ItemDto body) {}
 }

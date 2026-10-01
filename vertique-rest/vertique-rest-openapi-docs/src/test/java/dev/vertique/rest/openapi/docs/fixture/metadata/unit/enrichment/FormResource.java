@@ -93,10 +93,17 @@ public final class FormResource {
     public void requiredUnknownField(@Parameter(required = true) @FormParam("count") int count) {}
 
     /**
-     * A description of the form request body.
+     * A description of the form request body, beside a valid example on the body and one on a form
+     * field, neither of which is published.
      *
      * @param note the form field
      */
-    @RequestBody(description = "Form body")
-    public void describedBody(@FormParam("note") String note) {}
+    @RequestBody(
+            description = "Form body",
+            content =
+                    @Content(
+                            mediaType = "application/x-www-form-urlencoded",
+                            examples = @ExampleObject(name = "e", value = "1")))
+    public void describedBody(
+            @Parameter(examples = @ExampleObject(name = "f", value = "2")) @FormParam("note") String note) {}
 }

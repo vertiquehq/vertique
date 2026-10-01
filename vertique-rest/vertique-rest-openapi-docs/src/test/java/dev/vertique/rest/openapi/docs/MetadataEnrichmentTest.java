@@ -622,7 +622,7 @@ class MetadataEnrichmentTest {
                         fails(List.of(SUBMIT, "@RequestBody.required", "request body"))),
                 requirementOnAFormFieldOfUnknownRequirednessIsWarnedAndNotPublished(),
                 row(
-                        "a form request body's description publishes, and no example is published on it",
+                        "a form request body's description publishes, and no declared example is published on it",
                         submit("describedBody"),
                         publishesWithoutWarning(rendering -> {
                             JsonNode requestBody = submitRequestBody(rendering);
@@ -637,7 +637,33 @@ class MetadataEnrichmentTest {
                                             .isObject(),
                                     () -> "the form media type is not published: " + requestBody);
                             assertNoExample(requestBody, "the form request body");
-                        })));
+                        })),
+                // Request body sources, continued.
+                row(
+                        "a method's request body wins over the operation's, whose description appears nowhere",
+                        create(
+                                RequestBodySourceResource.class,
+                                "methodAndOperationDescriptions",
+                                GeneratedBodies.describe(ItemDto.class)),
+                        publishesWithoutWarning(rendering -> {
+                            assertEquals(
+                                    "mZX",
+                                    createRequestBody(rendering)
+                                            .path("description")
+                                            .asText(null),
+                                    () -> "the request body: " + createRequestBody(rendering));
+                            assertAbsent(rendering, "oZX");
+                        })),
+                row(
+                        "a bare request body on the body parameter leaves the method's description to publish",
+                        create(
+                                RequestBodySourceResource.class,
+                                "bareParameterAndMethodDescription",
+                                GeneratedBodies.describe(ItemDto.class)),
+                        publishesWithoutWarning(rendering -> assertEquals(
+                                "mZX",
+                                createRequestBody(rendering).path("description").asText(null),
+                                () -> "the request body: " + createRequestBody(rendering)))));
     }
 
     /** Asserts that no member named {@code example} or {@code examples} appears anywhere in a node. */
