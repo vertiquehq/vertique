@@ -19,16 +19,16 @@ import java.util.SortedMap;
  * Assembles one application's document from its detached mount publication.
  *
  * <p>The root members are written in this order: {@code openapi}, {@code info}, {@code
- * jsonSchemaDialect} (JSON Schema draft 2020-12), {@code servers}, {@code paths}, {@code
- * components} (only when it holds a schema or a security scheme: {@code schemas} first, then {@code
- * securitySchemes}, each with its keys in natural order), {@code tags} (only when
- * a published operation declares a tag; see {@link RootTags}), and {@code
- * x-vertique-validation}, which names the {@code java.util.regex} pattern dialect and, in a
- * protected document only, the validation authority (see {@link ValidationDisclosure}). The single server
- * is the configured server URL of the document, or else the mount path without its trailing {@code
- * /*} ({@code /} for the root mount); it is never inferred from a request. Paths are rendered by
- * {@link RenderedPaths} from each operation's mount-relative JAX-RS template, in natural order, and
- * each operation is keyed by its lowercase method and carries its runtime operation id.
+ * jsonSchemaDialect} (JSON Schema draft 2020-12), {@code servers}, {@code paths}, {@code components}
+ * (only when it holds a schema or a security scheme: {@code schemas} first, then {@code
+ * securitySchemes}, each with its keys in natural order), {@code tags} (only when a published
+ * operation declares a tag; see {@link RootTags}), and {@code x-vertique-validation}, which names the
+ * {@code java.util.regex} pattern dialect and, in a protected document only, the validation authority
+ * (see {@link ValidationDisclosure}). The single server is the configured server URL of the document,
+ * or else the mount path without its trailing {@code /*} ({@code /} for the root mount); it is never
+ * inferred from a request. Paths are rendered by {@link RenderedPaths} from each operation's
+ * mount-relative JAX-RS template, in natural order, and each operation is keyed by its lowercase
+ * method and carries its runtime operation id.
  *
  * <p>The {@code info} is the configured one, else the complete {@code info} of the declaring
  * interface's annotation ({@link AnnotatedInfo}).

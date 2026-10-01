@@ -574,7 +574,8 @@ schemas, likewise; then its Swagger annotations (see
 [Order of the response checks](#order-of-the-response-checks)). Once every operation is checked, the
 `@Tag` declarations of all operations are merged in the same order (see [Tags](#tags)), and then the
 security schemes the operations reference are resolved (see
-[Operation Security](#operation-security)). The first violation fails startup. Component key collisions are found as components are published.
+[Operation Security](#operation-security)). The first violation fails startup. Component key
+collisions are found as components are published.
 
 ### Hidden members of a request body
 
@@ -1207,9 +1208,10 @@ The JWT handler of `dev.vertique:vertique-rest-auth-jwt` describes its scheme as
 `{"type":"http","scheme":"bearer","bearerFormat":"JWT"}`, under whatever scheme name it is
 configured with.
 
-**Published as supplied.** Descriptions, OAuth2 flow URLs, and the OpenID Connect URL are published
-exactly as the handler supplies them. This module performs no OAuth or OpenID Connect processing and
-checks no URL. Never put credentials, internal hosts, or other secrets in a description.
+**Published as supplied.** Descriptions, OAuth2 flow URLs, scope names and scope descriptions, API
+key names, and the OpenID Connect URL are published exactly as the handler supplies them. This
+module performs no OAuth or OpenID Connect processing and checks no URL. Never put credentials,
+internal hosts, or other secrets in a description.
 
 ### Fail-closed publication
 
@@ -1623,9 +1625,9 @@ operations that restrict callers, and it is served without authentication: <entr
   `GET /admin (adminReport), GET /scopeless (scopelessGet)`. Hidden operations are not listed.
 - **Names nothing secret.** The warning names no role, scope, action, or claim.
 - **Publication proceeds.** The document is served as usual.
-- **When.** Held back like the metadata warnings and logged after them, only once the document is
-  written; once per document and component. A protected document never logs it, nor does a public
-  document whose operations restrict no caller.
+- **When.** Held back like the metadata warnings and logged last, after every other warning of the
+  document, only once the document is written; once per document and component. A protected
+  document never logs it, nor does a public document whose operations restrict no caller.
 
 ---
 
@@ -1722,8 +1724,9 @@ and its message can quote that value.
 - **Expecting an unreferenced scheme to be published.** `securitySchemes` holds only the schemes a
   published operation requires; a registered handler nothing references, or only hidden operations
   reference, is left out.
-- **Putting credentials or internal hosts in a scheme description.** Descriptions and OAuth2 and
-  OpenID Connect URLs are published exactly as the handler supplies them and are not checked.
+- **Putting credentials or internal hosts in a scheme description.** Descriptions, OAuth2 flow URLs,
+  scope names and descriptions, API key names, and the OpenID Connect URL are published exactly as
+  the handler supplies them and are not checked.
 - **Expecting a response for `Response`, `CompletionStage`, or a producer-bound type.** Their content
   is decided at runtime, so they publish `default` only; declare the responses with `@ApiResponse`.
   Return `Future<T>` instead of `CompletionStage<T>` to have `T` inferred.
