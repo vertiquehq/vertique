@@ -33,8 +33,9 @@ import lombok.extern.slf4j.Slf4j;
  *   <li>Always calls {@code rc.next()} — enrichment failure never breaks the pipeline</li>
  * </ol>
  *
- * <p>The handler runs after the route's authentication handlers, so a request rejected by
- * authentication never reaches it and its span carries none of these attributes.
+ * <p>The handler runs after the route's authentication handlers. A request rejected before it runs
+ * (authentication 401, authorization 403, the {@code @Consumes} check 415, or the validation gate
+ * 400) never reaches it and its span carries none of these attributes.
  *
  * <p>This component uses the OpenTelemetry API only — no SDK dependency. When no SDK is installed,
  * all span operations are no-ops and no span is stored on the context.

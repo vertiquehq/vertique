@@ -146,14 +146,15 @@ Per-request timer. One sample is recorded per `RestRequestCompletedEvent`.
 | `outcome` | Low-cardinality bucket: `INFORMATIONAL`, `SUCCESS`, `REDIRECTION`, `CLIENT_ERROR`, `SERVER_ERROR`, `UNKNOWN` | Derived by integer division of the status code by 100; status 0 or outside 100–599 → `UNKNOWN` |
 | `error.type` | `failureCode`, else `wireFailureCode`, else `none` | Simple class name of the pipeline-mapped failure (e.g. `IllegalStateException`); when absent, falls back to the post-handoff wire-failure classification on `RestRequestCompletedEvent` (e.g. `ConnectionClosed`) |
 
-All tags above are part of `vertique-micrometer-core`'s frozen cardinality-guarded tag-key set —
+All tags above are part of `vertique-micrometer-core`'s growth-only cardinality-guarded tag-key set (it only grows; entries are never removed or reordered) —
 each key is capped at `metrics.cardinality.maxTagValuesPerKey` distinct values (default `200`)
 across the composite. See `vertique-micrometer-core`'s module reference for the guard mechanism.
 
-**Protected API document reads.** Reads of a protected API document, and their denials, that
-complete as REST operations count in `vertique.rest.server.requests` under framework synthetic
-operations: the `operation` tag is an id starting with `apidocs:` and the `route` tag is an
-absolute literal route template.
+**API document reads.** Reads of API documents that complete as REST operations count in
+`vertique.rest.server.requests` under framework synthetic operations: the `operation` tag starts
+with `apidocs:` and the `route` tag is a literal route template. A request denied before the
+operation id is captured records `operation` and `route` as `UNKNOWN`, because the capture runs
+after authentication and authorization.
 
 **No application tag yet.** The timer does not carry the application name (`rest.application`).
 When one resource is mounted by more than one application with the same operationId and route, both

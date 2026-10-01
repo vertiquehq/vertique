@@ -43,7 +43,8 @@ WARN and swallows.
 **Vert.x creates the HTTP server span; this module enriches it.** The Vert.x OTel tracing
 integration (from `io.vertx:vertx-opentelemetry`) creates a server span for every incoming HTTP
 request. This module renames that span to `"METHOD /route/template"` and adds the
-`http.route` and `vertique.operation.id` attributes once the OpenAPI route is known.
+`http.route` and `vertique.operation.id` attributes once the OpenAPI route is known, plus
+`vertique.application.name` (only for operations of a named application).
 
 **Band 300+ runs post-dispatch, post-auth.** `ServerSpanEnrichmentContributor` runs at priority 360
 — after the auth handlers and after `OperationIdCaptureContributor` at 350. Requests rejected
@@ -102,10 +103,13 @@ lambda. At request time the handler:
    name. Attribute writes are conditional on the values being non-null.
 4. Always calls `rc.next()` — enrichment failure never breaks the pipeline.
 
-The handler runs after the route's authentication handlers. A request rejected by authentication
-(401) never reaches it, so its span carries none of this contributor's attributes: no
-`vertique.application.name`, no `vertique.operation.id`, and no `http.route` from this contributor.
-This limitation lifts once the contributor runs before authentication.
+The handler runs after the route's authentication handlers, and the attributes are set only for
+operations that reach it. A request rejected before this handler runs ends there and its span carries
+none of this contributor's attributes: no `vertique.application.name`, no `vertique.operation.id`,
+and no `http.route` from this contributor. The rejections that end a request before the contributor
+(priority 360) runs are authentication (401), authorization (403), the `@Consumes` check (415), and
+the validation gate (400). The registrar cannot currently add an authentication handler after a user
+handler on the same route.
 
 ```java
 @Component(modules = {

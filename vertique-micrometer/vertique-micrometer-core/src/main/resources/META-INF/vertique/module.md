@@ -56,7 +56,7 @@ earlier `VertxBuilderContributor`) sees an empty composite whose recording is a 
 
 **Cardinality guard.** Before backends or JVM binders are added, `CardinalityGuard` installs one
 `MeterFilter.maximumAllowableTags("vertique.", key, cap, denyAndWarnOnce)` filter per entry in the
-frozen tag-key list. This bounds cardinality on all `vertique.*` meters at the composite level
+growth-only tag-key list (it only grows; entries are never removed or reordered). This bounds cardinality on all `vertique.*` meters at the composite level
 before any individual backend sees the meter.
 
 **Secret-safe failures.** `MetricsBootstrapException` carries no cause — only the component name
@@ -253,7 +253,8 @@ key and violated rule but never any part of the value. Rules:
 
 **Compatibility.** Every key added to `GUARDED_TAG_KEYS` becomes reserved. Configuration that sets
 `metrics.tags.extra.rest.application` now fails startup with a `ConfigurationException` naming the
-key; choose another key name (for example `application`, which is accepted).
+key; choose another key name (for example `application`, which is accepted). The rejection applies when metrics are
+active: the validator runs when metrics are enabled and at least one backend provider exists.
 
 ### `@Timed` and `TimedAspect`
 
@@ -333,7 +334,7 @@ All keys live under the `metrics` section.
 | `metrics.vertx.namedPools` | boolean | `true` | Enable Vert.x named-pool metrics. |
 | `metrics.vertx.labels` | `List<String>` | `null` (Vert.x defaults; `HTTP_ROUTE` off) | Explicit list of `io.vertx.micrometer.Label` names to emit on Vert.x meters. `null` = use Vert.x default set. Empty list = suppress all labels. |
 | `metrics.tags.service` | string | `null` | Service name applied to all meters as a `service` common tag. Falls back to `OTEL_SERVICE_NAME` env var, then `"unknown-service"`. Validated at startup. |
-| `metrics.tags.extra` | `Map<String,String>` | `{}` | Additional common tags. Max 16 entries. Keys and values validated at startup (see Tag Policy). Cardinality-guarded keys, including `rest.application`, are rejected and fail startup. |
+| `metrics.tags.extra` | `Map<String,String>` | `{}` | Additional common tags. Max 16 entries. Keys and values validated at startup (see Tag Policy). Cardinality-guarded keys, including `rest.application`, are rejected and fail startup when metrics are active (metrics enabled and at least one backend provider exists). |
 | `metrics.cardinality.maxTagValuesPerKey` | int | `200` | Max distinct values per guarded tag key on `vertique.*` meters. |
 | `metrics.cardinality.maxMeters` | int | `0` | Global max meter count across the composite. Name-agnostic: it counts every meter, `vertique.*` or not, so size it against the whole population rather than the framework's own subset. `0` = unlimited. |
 | `metrics.security.enabled` | boolean | `true` | Enable security-event metrics from `SecurityMetricsObserver`. |
