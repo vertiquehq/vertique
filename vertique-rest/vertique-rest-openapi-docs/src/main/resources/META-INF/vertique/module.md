@@ -19,11 +19,12 @@ startup, on a worker thread, and served from frozen bytes with strong entity tag
 
 A document describes the application's inputs: `openapi` (`3.1.1`), the `info` object from
 configuration or from `@OpenAPIDefinition(info)`, the JSON Schema dialect, one server, every
-operation of the mount with its parameters and request body, the component schemas those inputs
-reference, and the pattern dialect (see [Document Content](#document-content)). It lists no
-responses, security schemes, summaries, or tags, although the module receives the response shape at
-startup and compares it across server instances (see
-[Several server instances](#several-server-instances)).
+visible operation of the mount with its parameters and request body, the component schemas those
+inputs reference, the tags its operations declare, and the pattern dialect (see
+[Document Content](#document-content)). Operations, parameters, and request bodies carry the
+documentation of their Swagger annotations (see [Swagger annotations](#swagger-annotations)). It lists
+no responses or security schemes, although the module receives the response shape at startup and
+compares it across server instances (see [Several server instances](#several-server-instances)).
 
 The module serves documents only. It has no UI, no assets, and no other route, and `@ApiDocs` is not
 API protection: it does not change who may call any operation of the application.
@@ -118,8 +119,8 @@ and YAML bytes built from one tree, together with a strong entity tag for each f
 assembled per request, no schema source is called per request, and no event loop waits for another.
 
 - **JSON:** compact UTF-8 with the root members in a fixed order (see
-  [Document Content](#document-content)); `info` holds `title`, `description` when configured, and
-  `version`.
+  [Document Content](#document-content)); `info` holds the configured `title`, `description`, and
+  `version`, or the members of the annotated `info` (see [`info`](#info)).
 - **YAML:** written from the same tree with Jackson's default YAML settings, so the parsed YAML tree
   equals the JSON tree.
 - **Identical inputs produce identical bytes** and identical entity tags.
@@ -273,7 +274,9 @@ The root members are written in this order:
 5. `paths`: one entry per rendered path, keys in natural order.
 6. `components`: `schemas` only, keys in natural order; left out when the document has no
    component schema.
-7. `x-vertique-validation`: `{"patternDialect": "java.util.regex"}` in a public document (see
+7. `tags`: one Tag Object per tag a published operation declares with `@Tag`, sorted by name; left
+   out when there is none (see [Tags](#tags)).
+8. `x-vertique-validation`: `{"patternDialect": "java.util.regex"}` in a public document (see
    [Patterns](#patterns) and [Validation disclosure](#validation-disclosure)).
 
 ### Paths and operations
@@ -287,8 +290,12 @@ The root members are written in this order:
   [Startup failures](#startup-failures)).
 - **Methods.** Within a path item each operation is keyed by its lowercase HTTP method, in the order
   `get`, `put`, `post`, `delete`, `options`, `head`, `patch`, `trace`.
-- **Operation Object.** `operationId` (the runtime operation id), then `parameters` (left out when
-  empty), then `requestBody` (left out when the operation has none).
+- **Operation Object.** `tags`, `summary`, `description`, and `externalDocs`, each only when set
+  (see [Swagger annotations](#swagger-annotations)); then `operationId` (the runtime operation id),
+  `parameters` (left out when empty), `requestBody` (left out when the operation has none), and
+  `deprecated` (only `true`).
+- **Hidden operations.** A hidden operation is not listed (see
+  [Hidden operations](#hidden-operations)).
 
 ### Parameters
 
@@ -296,13 +303,20 @@ Every visible input that is neither the request body nor a form input becomes a 
 Method parameters come first, then the fields of composite beans, each group in binding order. A
 hidden input becomes nothing (see [Hidden inputs](#hidden-inputs)).
 
+The members are written in this order: `name`, `in`, `description`, `required`, `deprecated`,
+`schema`, `example`, `examples`, each optional member only when set.
+
 - **`name` and `in`.** The bound name and the lowercase location (`path`, `query`, `header`,
   `cookie`).
-- **`description`.** The `description` of the input's first `@Parameter` annotation, left out when
-  blank or absent.
+- **`description`.** The `description` of the input's first `@Parameter` annotation; when that is
+  blank or absent, the `description` of that annotation's own `schema`. Left out when neither is set.
 - **`required`.** Written as `true` only when the input is certainly required, such as a path
   parameter. It is never written as `false`: an input whose requiredness is not certain, such as a
   primitive query parameter without `@DefaultValue`, carries no `required` member.
+  `@Parameter(required = true)` never adds it (see
+  [Agreement with the runtime](#agreement-with-the-runtime)).
+- **`deprecated`, `example`, `examples`.** From the input's first `@Parameter` (see
+  [Swagger annotations](#swagger-annotations)).
 - **`schema`.** The schema captured for the input, published unchanged. It is published inline,
   unless it holds a `$ref` or `$defs` at a schema position; then it becomes a component and the
   parameter references it (see [Components](#components)). A captured parameter schema may not hold
@@ -313,6 +327,47 @@ hidden input becomes nothing (see [Hidden inputs](#hidden-inputs)).
 An input with no captured schema, and every composite-bean field, is unenforced. Its schema is
 `{"default": "<raw @DefaultValue text>"}` when it declares a `@DefaultValue`, and the empty schema
 `{}` otherwise. Nothing is derived from its Java type or its constraint annotations.
+
+### Hidden operations
+
+An operation is hidden when either holds:
+
+- `@Hidden` (`io.swagger.v3.oas.annotations.Hidden`) is present on the resource method, on the same
+  method of a superclass or of an interface the resource implements (a JAX-RS interface included),
+  on the resource class, on a superclass, or on an implemented interface; or
+- an `@Operation` with `hidden = true` is present on the resource method or on the same method of a
+  superclass or implemented interface. Any of those `@Operation`s counts, not only the first one,
+  which supplies the operation's other members.
+
+A composed annotation also hides, one meta level deep:
+
+- an annotation on the resource method whose own type carries `@Hidden` or `@Operation(hidden = true)`
+  hides the operation; and
+- an annotation on the resource class whose own type carries `@Hidden` hides the operation.
+
+Nesting deeper than one level does not count: an annotation whose type is itself only annotated with
+a further annotation carrying `@Hidden` does not hide an operation.
+
+Hiding applies to the document this module serves only. A build-time specification generator may
+still list an operation hidden through a composed `@Hidden` (swagger-core's reader, for example,
+does not resolve it).
+
+A hidden operation is removed from the document before its paths are rendered and before any of its
+content is checked:
+
+- **Nothing of it is published.** Its Operation Object, its path item when no visible operation is
+  left there, every component keyed by its operation id, and every root tag that only it declared
+  are absent.
+- **Nothing of it is checked as content.** Its paths, inputs, schemas, redaction manifest, hidden
+  members, annotations, tags, and examples are neither verified nor checked, and it causes no
+  warning.
+- **It changes no disclosure.** The `reservedNamesRefused` and `hiddenInputs` members of
+  [Validation disclosure](#validation-disclosure) are computed over the visible operations only.
+- **Its route still answers.** Hiding changes the document only: the route, its validation, and its
+  security are unchanged.
+- **Route-level checks still see it.** A hidden operation still fails startup when it uses a
+  [reserved operation id](#startup-checks) or its route can answer a document URL, and it is part of
+  the comparison between [server instances](#several-server-instances).
 
 ### Hidden inputs
 
@@ -337,7 +392,8 @@ component, or example.
   not choose its default media type. A form whose fields are all hidden publishes no request body.
 - **Removed before every other check.** Apart from the path-parameter check below, hidden inputs
   are left out before any check of the document runs, so a hidden input is never verified,
-  redacted, or checked, and never collides with a visible one of the same name and location.
+  redacted, or checked, never collides with a visible one of the same name and location, and its
+  Swagger annotations are neither checked nor warned about.
 - **Binding is unchanged.** The request still binds and validates every hidden input exactly as
   before; hiding changes the document only.
 - **Path parameters cannot be hidden.** A document must describe every variable of a path template,
@@ -347,6 +403,11 @@ component, or example.
   `Application '<name>' (declared by <binary name>) at mount '<mount path>'`.
 
 ### Request bodies
+
+The Request Body Object holds `description` (when set), `content`, and `required` (when written), in
+that order, and nothing else: no `example`, `examples`, or `deprecated`. Each Media Type Object holds
+`schema`, then `examples` or `example` when the request body's `@RequestBody` supplies one (see
+[Swagger annotations](#swagger-annotations)).
 
 - **Body input.** The operation's visible body input becomes `requestBody`, with one media type per
   type in `@Consumes`, or `application/json` when the operation declares none. Each media type
@@ -362,7 +423,8 @@ component, or example.
   `multipart/form-data` for an operation with a visible named file part and
   `application/x-www-form-urlencoded` otherwise. A named file
   part's property is `{}`; any other property is its captured schema (inline or a component, as for a
-  parameter) or the unenforced schema above. A form request body never carries `required`.
+  parameter) or the unenforced schema above. A form request body never carries `required`, takes
+  only its `description` from `@RequestBody`, and carries no examples.
 - **Body and form inputs together.** When an operation binds a body, its form inputs are not
   published.
 
@@ -476,12 +538,15 @@ A form field is named `the form field '<name>' of operation '<id>'` instead. The
 property name (a member of `properties`, `patternProperties`, `$defs`, or `dependentSchemas`) is
 not the keyword.
 
-**Order.** The whole document is checked before anything is published: paths first, then each
-operation in the order the document lists it. Within an operation, a hidden path parameter is
-checked first; then hidden inputs are left out, and the visible inputs are checked: duplicate
-inputs; the request body (its manifest, its refused constructs, its
-[hidden members](#hidden-members-of-a-request-body), and its redaction); the parameter schemas
-(`propertyNames`, then refused constructs); and the form-field schemas, likewise. The first
+**Order.** The whole document is checked before anything is published. Hidden operations are
+removed first; then the paths of the visible operations are checked, then each operation in the
+order the document lists it. Within an operation, a hidden path parameter is checked first; then
+hidden inputs are left out, and the visible inputs are checked: duplicate inputs; the request body
+(its manifest, its refused constructs, its [hidden members](#hidden-members-of-a-request-body), and
+its redaction); the parameter schemas (`propertyNames`, then refused constructs); the form-field
+schemas, likewise; and then its Swagger annotations (see
+[Agreement with the runtime](#agreement-with-the-runtime)). Once every operation is checked, the
+`@Tag` declarations of all operations are merged in the same order (see [Tags](#tags)). The first
 violation fails startup. Component key collisions are found as components are published.
 
 ### Hidden members of a request body
@@ -562,6 +627,153 @@ Under any other strategy no input is marked; the root `enforcement` already qual
 Protected documents are refused at startup in this release (see
 [Access](#access-public-is-served-protected-is-refused)), so no served document carries these
 protected-only members yet.
+
+### Swagger annotations
+
+The document reads the Swagger annotations (`io.swagger.v3.oas.annotations`) of each visible
+operation and of its visible inputs. Method annotations are resolved from the resource method, then
+the same method of each superclass, then of each implemented interface; class annotations from the
+resource class, then each superclass, then each implemented interface. Where a member is read from
+"the first" annotation of a type, it is the first in that order. A blank string member counts as
+unset.
+
+Documentation never changes a published input name, location, schema, requiredness, or media type,
+and never edits a captured schema. An annotation that contradicts how the runtime binds an
+operation fails startup (see [Agreement with the runtime](#agreement-with-the-runtime)).
+
+| Annotation member | Published as | Precedence and rules |
+|---|---|---|
+| `@Operation.summary`, `@Operation.description` | The Operation Object's `summary`, `description` | From the first `@Operation` |
+| `@Operation.deprecated` | `deprecated: true` | From the first `@Operation`; only `true` is written |
+| `@Operation.externalDocs` | `externalDocs` with `description` (when set) and `url` | From the first `@Operation`; written only when `url` is set |
+| `@Operation.tags` | The operation's `tags` | Listed first, in declared order; see [Tags](#tags) |
+| `@Tag` or `@Tags` on the method or the class | The operation's `tags` and the root `tags` | See [Tags](#tags) |
+| `@Operation.hidden`, `@Hidden` | Nothing: the operation is removed | See [Hidden operations](#hidden-operations) |
+| `@Parameter.description` | The Parameter Object's `description` | From the input's first `@Parameter`; when blank, filled from that annotation's `schema.description` |
+| `@Parameter.deprecated` | `deprecated: true` | `true` when `@Parameter.deprecated` or its `schema.deprecated` is `true` |
+| `@Parameter.example` | `example` | Not written when `examples` is; when unset, filled from `schema.example`; see [Examples](#examples) |
+| `@Parameter.examples` | `examples` | Wins over `example`; see [Examples](#examples) |
+| `@RequestBody.description` | The request body's `description` | From the selected `@RequestBody` (below); when blank, the `description` of the first `content` entry's schema that sets one |
+| `@RequestBody.content` examples | The Media Type Object's `examples` or `example` | See [Examples](#examples); never on the Request Body Object, never on a form body |
+| `@Operation.operationId`, `@Parameter.name`, `in`, `required`, `content`, `schema.implementation`, `array.schema.implementation`, `@RequestBody.content.mediaType`, `content.schema.implementation`, `required` | Nothing | Checked against the runtime; see [Agreement with the runtime](#agreement-with-the-runtime) |
+| `ref` of `@Parameter`, `@RequestBody`, or `@ExampleObject` | Nothing | Fails startup: the document declares no reusable parameters, request bodies, or examples to reference |
+| Other members of `@Schema` and `@ArraySchema` on an input | Nothing | Named in a warning; see [Ignored schema members](#ignored-schema-members) |
+
+- **Which `@RequestBody`.** A request body is documented by exactly one `@RequestBody`: the first
+  that sets any member among the one on the body parameter, the first on the method, and the
+  `requestBody` of the first `@Operation`. Their members are never merged. A form request body has
+  no body parameter, so only the last two are read, and only its `description` is published.
+- **Which `@Parameter`.** Each Parameter Object reads the first `@Parameter` of its input. A
+  `@Parameter` on the body parameter is neither read nor checked. A form field's `@Parameter` is
+  checked but publishes nothing.
+- **Schema documentation members.** The `description`, `example`, and `deprecated` of a
+  parameter's own `@Parameter(schema = @Schema(...))` fill the Parameter Object as the table says;
+  its `title` and `externalDocs` are not published. A request body's own content schema fills its
+  `description` and its Media Type Objects' `example`; its `deprecated`, `title`, and
+  `externalDocs` are not published anywhere. The documentation members of an `@ArraySchema`'s
+  element schema are not published. None of these logs a warning.
+- **DTO members.** A body type's member `title`, `description`, and `example` reach the document only
+  as the framework's schema generator wrote them into the captured schema (under the member's JSON
+  name). The document adds, renames, and removes nothing there.
+- **Not applied and not checked.** Every member the table does not list, among them `@Parameter`
+  `style`, `explode`, `allowReserved`, `allowEmptyValue`, and `extensions`; `@Operation`
+  `parameters`, `responses`, `security`, `servers`, and `extensions`; `@RequestBody.extensions`;
+  the `@Content` members other than `mediaType`, `examples`, `schema`, and `array`; and the
+  extensions of `@Tag`, `@ExternalDocumentation`, and `@ExampleObject`. A method-level `@Parameter`
+  or `@Parameters` entry is read only to hide an input (see [Hidden inputs](#hidden-inputs)).
+
+### Tags
+
+- **Operation `tags`.** The distinct names of the first `@Operation`'s `tags`, in declared order,
+  then of the method's `@Tag`s, then of the class's `@Tag`s, each in resolved order; the first
+  occurrence of a name is kept and blank names are ignored. Repeated `@Tag`s arrive as a `@Tags`
+  container, which is unwrapped in place.
+- **Root `tags`.** Every `@Tag` on a published operation's method or class contributes a Tag Object
+  with `name`, `description`, and `externalDocs` (written only with a set `url`), in that order. The
+  root `tags` is sorted by name (case-sensitive) and left out when empty. A name that appears only in
+  `@Operation.tags` adds no root tag.
+- **Conflicts.** The `description` and the `externalDocs` of one tag name are merged separately
+  across every declaration, in document order. A declaration that leaves a member unset never
+  conflicts, and the set value is published. Two declarations that set a member to different values
+  fail startup, naming the tag, the operation that first set it, and the first later operation whose
+  value differs, never either value. `description` is compared first; `externalDocs` is compared as
+  the published object. An operation whose method and class `@Tag`s differ names itself twice.
+
+### Examples
+
+- **Values.** An example value (`@Parameter.example`, a schema's `example`, or
+  `@ExampleObject.value`) is published as JSON when its trimmed text parses as exactly one JSON value,
+  and otherwise as the string it is, untrimmed. `"42"` becomes the number `42`, `"null"` the JSON
+  `null`, `"{\"a\": 1}"` an object, and `"42 items"` stays a string.
+- **Named examples.** `@ExampleObject`s become an `examples` map keyed by `name`, in declaration
+  order. Each Example Object holds `summary`, `description`, and `value` or `externalValue`, in that
+  order, each when set.
+- **`examples` wins.** When an input declares both named examples and an example value, only
+  `examples` is published.
+- **Request bodies.** Each `content` entry of the selected `@RequestBody` applies to its
+  `mediaType`, or to every media type of the body when `mediaType` is empty. For each media type of
+  the body, the first applying entry, in declaration order, that declares named examples or whose
+  schema sets `example` supplies that Media Type Object's `examples`, or else its `example`. An entry
+  never adds a media type. A form request body publishes no examples.
+- **Malformed examples fail startup.** An `@ExampleObject` with a blank `name`, a `name` an earlier
+  entry of the same array already uses, both `value` and `externalValue`, or a `ref` fails startup
+  naming the operation, the input, and the attribute.
+
+### Agreement with the runtime
+
+Annotations document what the runtime does; they cannot change it. Each of the following fails
+startup, after the operation's schema checks and before its documentation is read, in this order:
+the operation id, the request body, the parameters in published order, then the form fields. The
+first failure wins.
+
+| Attribute | Fails when |
+|---|---|
+| `@Operation.operationId` | It is set on the first `@Operation` and differs from the runtime operation id |
+| `@RequestBody.ref`, `@Parameter.ref` | It is set (see [Swagger annotations](#swagger-annotations)) |
+| `@RequestBody.content.mediaType` | It is set and is not among the media types the request body publishes |
+| `@RequestBody.content.schema.implementation` | It is set and differs from the erasure of the bound body type; on a form request body, whenever it is set |
+| `@RequestBody.required` | It is `true` and the document does not mark the request body `required` (see [Request bodies](#request-bodies)); a form request body never is |
+| `@Parameter.content` | It has any entry: the runtime never binds a parameter's content |
+| `@Parameter.name` | It is set and differs from the bound name |
+| `@Parameter.in` | It is not `DEFAULT` and differs from the bound location; on a form field, whenever it is not `DEFAULT` |
+| `@Parameter.required` | It is `true` and the runtime certainly accepts a missing value (below) |
+| `@Parameter.schema.implementation` | It is set and differs from the erasure of the bound type |
+| `@Parameter.array.schema.implementation` | It is set and differs from the erasure of the element type of a collection or array input, or the input is neither a collection nor an array. An input whose element type is not known, such as a wildcard collection or a collection field of a composite bean, is not checked |
+
+- **Exact comparison.** Names and media types are compared exactly, case included: a
+  `@Parameter(name = "x-trace")` on a header bound as `X-Trace` fails.
+- **Types.** A primitive type and its wrapper are the same type.
+- **Message.** `<subject>: operation '<id>' declares <attribute> on <input>, which contradicts how the
+  runtime binds it (<fact>); documentation metadata cannot change it, so remove the attribute or make
+  it agree`, one line, where `<input>` is `query parameter q`, `header parameter X-Trace`, `form field
+  f`, `request body`, and so on, and `<subject>` is as in [Hidden inputs](#hidden-inputs). No
+  annotation value is echoed.
+
+**Requiredness.** For each parameter and form field the runtime reports whether a missing value is
+rejected, with one of three answers. `@Parameter(required = true)` is checked against it:
+
+| The runtime says | For example | `@Parameter(required = true)` |
+|---|---|---|
+| Required: a missing value is certainly rejected | A path parameter; an input with a null-rejecting constraint such as `@NotNull`, with a bean validator bound and no group sequence involved | Agrees; `required: true` is written, as without the annotation |
+| Not required: a missing value certainly binds | An input with `@DefaultValue`, without a constraint annotation, or with no bean validator bound; a non-array collection with only `@NotNull` | Fails startup |
+| Cannot be determined | A primitive method parameter without `@DefaultValue`; any other case | Not published: the Parameter Object carries no `required`, and one warning names the input (see [Warnings](#warnings)) |
+
+`@Parameter(required = false)` is never checked.
+
+### Ignored schema members
+
+The captured schema of an input stays authoritative. Every non-default member of the `@Schema` in
+`@Parameter.schema`, `@Parameter.array.schema`, `@RequestBody.content.schema`, or
+`@RequestBody.content.array.schema`, and every non-default member of an `@ArraySchema` other than
+`schema`, is not published, and the operation's ignored-members warning names it (see
+[Warnings](#warnings)). Exempt from the warning are the documentation members `description`,
+`title`, `example`, `deprecated`, and `externalDocs`, and an `implementation` that is compared (see
+[Agreement with the runtime](#agreement-with-the-runtime)).
+`@RequestBody.content.array.schema.implementation` is not compared and is warned.
+
+`@Parameter(schema = @Schema(hidden = true))` does not hide an input: `hidden` there is an ignored
+member and is warned. Hide an input with `@Parameter(hidden = true)` or a `@Schema(hidden = true)` on
+the input itself (see [Hidden inputs](#hidden-inputs)).
 
 ---
 
@@ -674,13 +886,47 @@ application is not checked.
 Each enabled document needs an `info` with a non-blank `title` and `version`.
 
 - **From configuration.** `apidocs.documents.<name>.info`, when present, is used as a whole and replaces
-  the annotation's `info`.
-- **From `@OpenAPIDefinition`.** Otherwise the `title`, `version`, and (when non-blank) `description`
-  of `@OpenAPIDefinition(info = ...)` on the declaring interface itself. A superinterface's
-  `@OpenAPIDefinition` is never read.
+  the annotation's `info`: it publishes `title`, `description` (when present), and `version`, and no
+  member of the annotation appears beside them.
+- **From `@OpenAPIDefinition`.** Otherwise the `@OpenAPIDefinition(info = ...)` on the declaring
+  type itself. The annotation is never inherited: one on a superclass or a superinterface is never
+  read, even where `@OpenAPIDefinition` is `@Inherited`.
 - **Neither.** Startup fails naming `apidocs.documents.<name>.info`.
 
 No default `info` is invented. Other members of `@OpenAPIDefinition` are not published in this release.
+
+An annotated `info` publishes every member of `@Info`, `@Contact`, and `@License` that is set, in the
+field order of the OpenAPI 3.1.1 objects. A blank string is unset, and an unset member is never
+written:
+
+- **Info:** `title`, `summary`, `description`, `termsOfService`, `contact`, `license`, `version`,
+  then its extensions.
+- **Contact:** `name`, `url`, `email`, then its extensions; written only when one of them is set.
+- **License:** `name`, `identifier`, `url`, then its extensions; written only when one of them is
+  set.
+
+An `@Info` that sets only `title`, `version`, and `description` therefore publishes exactly those
+three. Member values are published as declared and never echoed in a message.
+
+URLs (`termsOfService`, `contact.url`, `license.url`, every `externalDocs.url`, and
+`@ExampleObject.externalValue`) are published exactly as declared and are not checked; never put
+credentials, internal hosts, or non-`http(s)` schemes in them.
+
+- **Extensions.** An `@Extension` of the `@Info`, its `@Contact`, or its `@License` whose name
+  starts with `x-` (case-sensitive) becomes a member of that name, written after the object's other
+  members. Its value is an object of its `@ExtensionProperty` names and values; a property with a
+  blank name is skipped, so an extension whose properties are all skipped publishes `{}`. A property
+  with `parseValue = true` holds its value parsed as JSON when the text is exactly one JSON value,
+  and the text as a string otherwise. Extensions of one name merge in declaration order: the first
+  keeps its position and a repeated property takes the later value.
+- **Other extension names.** An extension whose name does not start with `x-`, a blank name
+  included, is not published, and one warning per document names it (see [Warnings](#warnings)).
+- **License `identifier` and `url`.** OpenAPI 3.1 makes them mutually exclusive, so an `@License`
+  that sets both fails startup naming the application, its declaring interface, and
+  `@OpenAPIDefinition.info.license`, and echoing neither value.
+- **Documented limit: a license without `name`.** OpenAPI 3.1 requires `name` in a License Object,
+  but an `@License` that sets `identifier` or `url` without `name` is published as declared, without
+  `name`, and is not refused. Set `name` whenever the license sets anything.
 
 ### `serverUrl`
 
@@ -784,11 +1030,18 @@ through to later mounts. Keep such handlers pass-through, or have `matches` excl
 
 ## Warnings
 
-The module logs one WARN on logger `dev.vertique.rest.openapi.docs.DocumentWarnings` per enabled
-document, once per component. It is logged when the documentation module's composition checks pass, before any
-router is created, so it can appear even when another startup check (including another module's
-composition validator in the same pass, or a later check) fails the deployment. A second
-composition or server instance of the same component does not repeat it.
+Every warning of the module is logged at WARN on logger
+`dev.vertique.rest.openapi.docs.DocumentWarnings` and starts with `apidocs.documents.<name>`. No
+warning carries schema text, an annotation value other than the extension names it lists, or a
+configuration value other than the document name and a mount path. Each is logged at most once per component, so a second composition
+or server instance of the same component does not repeat it.
+
+### Controls that skip the document routes
+
+The module logs one such warning per enabled document. It is logged when the documentation
+module's composition checks pass, before any router is created, so it can appear even when another
+startup check (including another module's composition validator in the same pass, or a later check)
+fails the deployment.
 
 The warning starts with `apidocs.documents.<name>` and the described mount's path, and lists the
 mount-scoped controls that apply to the application's mount but not to the document routes, each as
@@ -804,6 +1057,35 @@ while main-router middleware still applies. For a public document the warning al
 `OperationHandlerContributor` runs for the document routes. A document with no such control logs
 nothing.
 
+### Metadata warnings
+
+Three warnings report Swagger annotation content the document does not publish. Unlike the warning
+above, they are held back while the document is assembled and logged only once it is built
+successfully, so a document that fails startup logs none of them. They are logged in document order:
+the `info` warning first, then each operation's warnings in the order the document lists the
+operations. Hidden operations and hidden inputs cause none.
+
+- **Unpublished `info` extensions.** One per document, when the annotated `info` declares an
+  extension whose name does not start with `x-` (see [`info`](#info)). It names the application and
+  its declaring interface and lists every such name, sorted, a blank name as `<unnamed>`; it quotes
+  no property value:
+  `apidocs.documents.<name>: application '<name>' (declared by <binary name>) has
+  @OpenAPIDefinition.info extensions whose names do not start with 'x-', which are not published:
+  <names>`.
+- **Ignored schema members.** One per operation that declares any (see
+  [Ignored schema members](#ignored-schema-members)), naming every such member as
+  `<annotation path> on <input>`, for example `@Parameter.schema.maxLength on query parameter q`:
+  `apidocs.documents.<name>: operation '<id>' at mount '<mount path>' declares schema members the
+  document does not publish, because each input's canonical schema stays authoritative: <members>`.
+- **Requiredness that cannot be determined.** One per parameter or form field that declares
+  `@Parameter(required = true)` while the runtime cannot tell whether it rejects a missing value
+  (see [Agreement with the runtime](#agreement-with-the-runtime)):
+  `apidocs.documents.<name>: operation '<id>' at mount '<mount path>' declares @Parameter.required on
+  <input>, but whether the runtime rejects a missing value cannot be determined, so the document does
+  not mark it required`.
+
+Each message is one line; it is wrapped here for reading.
+
 ---
 
 ## Failures, Constraints, and Common Mistakes
@@ -811,9 +1093,10 @@ nothing.
 ### Startup failures
 
 Every failure below stops startup. Each message names what is wrong and never echoes configuration
-values, schema text, references, pattern text, redaction locations, or reserved names. Messages
-about the document's content name operation ids, rendered paths, input names, component keys, the
-class of the bound schema source, and the declaring type and member of a hidden member.
+values, schema text, references, pattern text, redaction locations, reserved names, or annotation
+values. Messages about the document's content name operation ids, rendered paths, input names,
+component keys, tag names, annotation attributes, the class of the bound schema source, and the
+declaring type and member of a hidden member.
 
 | Condition | Failure |
 |---|---|
@@ -827,6 +1110,7 @@ class of the bound schema source, and the declaring type and member of a hidden 
 | The `@ApiDocs` of an active application breaks its shape rules | `RestConfigurationException` listing every violation, sorted, each naming the application, its declaring interface, and `@ApiDocs.securityScheme` or `@ApiDocs.rolesAllowed` |
 | A document is enabled and `apidocs.path` breaks a rule above | `ConfigurationException` naming `apidocs.path` |
 | An enabled document has no `info`, or a blank `title` or `version` | `ConfigurationException` naming the application, its declaring interface's binary name, and `apidocs.documents.<name>.info`, `.info.title`, or `.info.version`; a blank `title` or `version` in `@OpenAPIDefinition(info)` names `@OpenAPIDefinition.info` |
+| An enabled document takes its `info` from `@OpenAPIDefinition` and its `@License` sets both `identifier` and `url` | `ConfigurationException` naming the application, its declaring interface's binary name, `@OpenAPIDefinition.info.license`, and `apidocs.documents.<name>.info`; neither value is echoed |
 | An enabled document has an invalid `serverUrl` | `ConfigurationException` naming the application, its declaring interface, and `apidocs.documents.<name>.serverUrl` |
 | An enabled `PROTECTED` document names a `securityScheme` no registered handler has, or authentication enforcement is not installed | `RestConfigurationException` naming the application, its declaring interface, and `@ApiDocs.securityScheme` or `@ApiDocs.access`; raised before any document route is registered |
 | An enabled document has `@ApiDocs.access` `PROTECTED` and passes the check above | `RestConfigurationException` naming the application, its declaring interface, and `@ApiDocs.access`, stating that protected documents are not served yet; raised before any document route is registered |
@@ -844,6 +1128,10 @@ class of the bound schema source, and the declaring type and member of a hidden 
 | A published request body's type is described with a member or type carrying `@Hidden` or `@Schema(hidden = true)` (see [Hidden members of a request body](#hidden-members-of-a-request-body)) | `RestConfigurationException` with the same start, naming the operation, the member or type, its marker, and the fix |
 | A published request body's type cannot be inspected for hidden members | `RestConfigurationException` with the same start, naming the operation; the cause is not echoed |
 | A captured schema of a visible input of a documented application holds a refused construct (see [Refused constructs](#refused-constructs)) | `RestConfigurationException` with the same start, naming the operation, the input, the construct, and the JSON Pointer of the offending keyword; no value, reference, or schema text |
+| A Swagger annotation of a visible operation of a documented application contradicts how the runtime binds it (see [Agreement with the runtime](#agreement-with-the-runtime)) | `RestConfigurationException` with the same start, naming the operation and the attribute, and for an input attribute the input and the runtime fact it contradicts; no annotation value |
+| A `@Parameter`, `@RequestBody`, or `@ExampleObject` of a visible operation sets `ref` | `RestConfigurationException` with the same start, naming the operation and the attribute with its input, and stating that the document declares no reusable parameters, request bodies, or examples |
+| An `@ExampleObject` of a visible input has a blank name, a name used twice in one array, or both `value` and `externalValue` (see [Examples](#examples)) | `RestConfigurationException` with the same start, naming the operation, the attribute, and where it is declared |
+| Two `@Tag` declarations of one name set a different `description` or `externalDocs` (see [Tags](#tags)) | `RestConfigurationException` with the same start, naming the tag, the member, and both operations, never either value |
 | Two components of a document would have the same key | `RestConfigurationException` with the same start, naming the input of both components and the key; when either is a relocated definition, it says `one component` instead of the key, and states that component keys replace every character outside `[A-Za-z0-9._-]` with `_` |
 | A later server instance publishes a different mount or operation than the stored document | `RestConfigurationException` naming the application, its declaring interface, its mount path, and the first differing operation id |
 | A mount of a documented application is built outside a Vert.x context | `RestConfigurationException` naming the application |
@@ -874,6 +1162,9 @@ and its message can quote that value.
   mount path; behind a proxy that changes the path, configure `serverUrl`.
 - **Putting credentials in `serverUrl`.** It is published exactly as configured, user information
   included; keep credentials and other secrets out of it.
+- **Putting credentials, internal hosts, or other schemes in a documentation URL.** `termsOfService`,
+  `contact.url`, `license.url`, every `externalDocs.url`, and `@ExampleObject.externalValue` are
+  published exactly as declared and are not checked; use public `http(s)` URLs only.
 - **Hiding a path parameter.** It fails startup; a document describes every path variable.
 - **Expecting a hidden input to stop binding.** Hiding changes the document only; the request still
   binds and validates the input.
@@ -905,6 +1196,31 @@ and its message can quote that value.
 - **Omitting the module and expecting silence.** An application whose interface carries `@ApiDocs`
   but whose component does not list `OpenApiDocsModule` serves no document, and `vertique-rest-jaxrs`
   logs one INFO line per such application saying so.
+- **Marking a parameter `@Parameter(required = true)` without enforcing it.** On an input with
+  `@DefaultValue`, without a constraint annotation, or with no bean validator bound, the runtime
+  accepts a missing value, so startup fails. Add a null-rejecting constraint such as `@NotNull`, or
+  remove the attribute.
+- **Expecting `@Parameter(required = true)` to add `required`.** The document writes `required`
+  from what the runtime enforces; when that cannot be determined, the attribute is not published
+  and a warning names the input.
+- **Narrowing a schema with `@Parameter(schema = @Schema(...))`.** Members such as `maxLength`,
+  `format`, or `pattern` are not published; the captured schema stays as the runtime validates it,
+  and a warning names them. Put the constraint on the input itself.
+- **Hiding an input with `@Parameter(schema = @Schema(hidden = true))`.** It does not hide the input;
+  it is warned as an ignored member. Use `@Parameter(hidden = true)`.
+- **Spelling a header name in another case.** `@Parameter.name` is compared exactly; `x-trace` on a
+  header bound as `X-Trace` fails startup.
+- **Expecting a hidden operation to stop routing.** `@Hidden` and `@Operation(hidden = true)` change
+  the document only; the route still answers, and its id and route are still checked for reserved
+  ids and document-URL collisions.
+- **Expecting `@Operation.tags` alone to add a root tag.** Only `@Tag` on the method or class adds a
+  root tag with its description; an `@Operation.tags` name appears on the operation only.
+- **Declaring one tag with different descriptions.** Every `@Tag` of one name that sets a
+  `description` or `externalDocs` must set the same value, or startup fails; set it once.
+- **A license with both `identifier` and `url`, or without `name`.** Both together fail startup.
+  A license without `name` is published as declared, although OpenAPI 3.1 requires `name`; set it.
+- **Expecting annotated `info` members beside a configured `info`.** A configured `info` replaces
+  the annotation as a whole.
 
 ---
 
@@ -942,7 +1258,7 @@ the `JsonMapperProfileRegistry` from `JsonRuntimeModule` (in `dev.vertique:verti
 | `dev.vertique:vertique-core` | `ConfigParser`, configuration path navigation, `ConfigurationException`, `@KeyedBy`, and `JsonMapperProfileRegistry` |
 | `dev.vertique:vertique-json-schema` | The redaction manifest each published request body is verified against and redacted by, and whose digest is part of the comparison between instances; the input generator that reports hidden members of a request body |
 | `io.vertx:vertx-json-schema` | Compile dependency; evaluates whether a captured request-body schema accepts an absent body, which decides the request body's `required` |
-| `io.swagger.core.v3:swagger-annotations-jakarta` | `@OpenAPIDefinition`, read for `info` on the declaring interface, and `@Parameter`, read for a parameter's `description` |
+| `io.swagger.core.v3:swagger-annotations-jakarta` | `@OpenAPIDefinition`, read for `info` on the declaring interface, and the operation, parameter, request-body, tag, example, and hiding annotations described in [Swagger annotations](#swagger-annotations) |
 | Jackson (`jackson-databind`, `jackson-dataformat-yaml`) | Writes the JSON and YAML forms; YAML brings SnakeYAML |
 | Dagger and `jakarta.inject-api` | Module bindings |
 
@@ -975,3 +1291,11 @@ adds no route beyond the document URLs. It is not part of any starter.
   body that holds it.
 - Bind an `OperationSchemaSource` that edits the generated body schema: expect startup to fail
   naming the operation and the source class.
+- Annotate an operation with `@Operation(summary = ...)` and its class with `@Tag(name = ...)`:
+  expect the summary and the tag on the operation, and the tag in the root `tags`.
+- Mark an operation `@Hidden`: expect it, its components, and the tags only it declared in neither
+  form of the document, while a request to its route is still answered.
+- Put `@Parameter(required = true)` on a query parameter with `@DefaultValue`: expect startup to fail
+  naming the operation and `@Parameter.required` on that parameter.
+- Put `@Parameter(schema = @Schema(maxLength = 5))` on a query parameter: expect its captured schema
+  published unchanged and one `DocumentWarnings` warning naming `@Parameter.schema.maxLength`.

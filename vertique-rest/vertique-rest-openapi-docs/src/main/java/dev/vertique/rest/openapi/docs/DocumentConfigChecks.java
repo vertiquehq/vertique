@@ -10,6 +10,7 @@ import dev.vertique.rest.jaxrs.publication.RestApplications;
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
 import io.swagger.v3.oas.annotations.info.Info;
 import io.vertx.core.json.JsonObject;
+import jakarta.annotation.Nullable;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
@@ -82,7 +83,10 @@ final class DocumentConfigChecks {
         checkPath(apidocsConfig.path());
         List<EnabledDocuments.EnabledDocument> resolved = new ArrayList<>(selected.size());
         for (EnabledDocuments.EnabledDocument document : selected) {
-            InfoConfig info = resolveInfo(document);
+            AnnotatedInfo annotated = resolveInfo(document);
+            InfoConfig info = annotated == null
+                    ? document.info()
+                    : new InfoConfig(annotated.title(), annotated.version(), annotated.description());
             checkServerUrl(document);
             resolved.add(new EnabledDocuments.EnabledDocument(
                     document.name(),
@@ -91,7 +95,8 @@ final class DocumentConfigChecks {
                     document.mountPath(),
                     document.contractOrigin(),
                     info,
-                    document.serverUrl()));
+                    document.serverUrl(),
+                    annotated));
         }
         return List.copyOf(resolved);
     }
@@ -216,10 +221,17 @@ final class DocumentConfigChecks {
     }
 
     /**
-     * Resolves the {@code info} of an enabled document: the configured one when present, else the
-     * {@code info} of an {@link OpenAPIDefinition} carried by the declaring interface itself.
+     * Resolves the {@code info} of an enabled document: the configured one when present, which
+     * replaces the annotation as a whole, else the complete {@code info} of an {@link
+     * OpenAPIDefinition} read with {@link Class#getDeclaredAnnotation(Class)} from the declaring type
+     * itself: never inherited from a superclass, and never carried by a superinterface.
+     *
+     * @return {@code null} when the configured {@code info} is valid, else the annotated one
+     * @throws ConfigurationException when neither source supplies a non-blank {@code title} and
+     *     {@code version}, or when the annotated license sets both {@code identifier} and {@code url}
      */
-    private static InfoConfig resolveInfo(EnabledDocuments.EnabledDocument document) {
+    @Nullable
+    private static AnnotatedInfo resolveInfo(EnabledDocuments.EnabledDocument document) {
         String base = "apidocs.documents." + document.name() + ".info";
         InfoConfig configured = document.info();
         if (configured != null) {
@@ -229,9 +241,9 @@ final class DocumentConfigChecks {
             if (configured.version() == null || configured.version().isBlank()) {
                 throw infoFailure(document, base + ".version");
             }
-            return configured;
+            return null;
         }
-        OpenAPIDefinition definition = document.declaringType().getAnnotation(OpenAPIDefinition.class);
+        OpenAPIDefinition definition = document.declaringType().getDeclaredAnnotation(OpenAPIDefinition.class);
         if (definition == null) {
             throw infoFailure(document, base);
         }
@@ -242,8 +254,13 @@ final class DocumentConfigChecks {
                     + ") has a blank title or version in @OpenAPIDefinition.info; set them there or configure '"
                     + base + "'");
         }
-        String description = info.description().isBlank() ? null : info.description();
-        return new InfoConfig(info.title(), info.version(), description);
+        if (AnnotatedInfo.hasIdentifierAndUrl(info.license())) {
+            throw new ConfigurationException("Application '" + document.name() + "' (declared by "
+                    + document.declaringType().getName()
+                    + ") sets both identifier and url in @OpenAPIDefinition.info.license, which OpenAPI 3.1"
+                    + " makes mutually exclusive; keep one of them or configure '" + base + "'");
+        }
+        return AnnotatedInfo.of(info);
     }
 
     private static ConfigurationException infoFailure(EnabledDocuments.EnabledDocument document, String settingPath) {
