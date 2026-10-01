@@ -14,8 +14,8 @@ import jakarta.ws.rs.core.MediaType;
 /**
  * Resource whose one operation hides {@code x-trace}, with no location, while binding header {@code
  * X-Trace} and query {@code page}: the entry differs from the header only in ASCII letter case, and a
- * header binding matches ignoring ASCII letter case whatever location the entry names, so the entry
- * hides the header and the query input stays visible.
+ * header binding's name matches ignoring ASCII letter case whether or not the entry names a location,
+ * so the entry hides the header and the query input stays visible.
  *
  * <p>No generated descriptor companion exists for this class, and none may be added: it is a
  * reflection-path fixture, and it is not part of any parity mount.
