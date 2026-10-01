@@ -11,6 +11,8 @@ import dev.vertique.rest.jaxrs.publication.OperationDetail;
 import dev.vertique.rest.jaxrs.publication.OperationPublication;
 import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
 import dev.vertique.rest.jaxrs.publication.RestApplications;
+import dev.vertique.rest.jaxrs.routing.FilePartDescriptor;
+import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
 import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
@@ -18,8 +20,10 @@ import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -145,12 +149,12 @@ final class DocsPublicationSink implements OperationPublicationSink {
             return Future.failedFuture(new RestConfigurationException("The mount of application '" + applicationName
                     + "' was built outside a Vert.x context, so its document cannot be published"));
         }
+        Map<String, OperationFacts> facts = operationFacts(publication);
         MountPublication detached = detach(publication);
-        InfoConfig info = document.info();
         return store.publish(
                 applicationName,
                 caller,
-                () -> DocumentWriter.write(info, SnapshotRenderer.render(detached)),
+                () -> DocumentAssembler.assemble(document, detached, facts),
                 () -> SnapshotRenderer.render(detached));
     }
 
@@ -258,6 +262,27 @@ final class DocsPublicationSink implements OperationPublicationSink {
      * @param operation the operation whose route can answer it
      */
     private record Collision(String url, EnabledDocuments.EnabledDocument document, OperationPublication operation) {}
+
+    /** Takes the descriptor facts of every operation that has detail, before the publication is detached. */
+    private static Map<String, OperationFacts> operationFacts(MountPublication publication) {
+        Map<String, OperationFacts> facts = new LinkedHashMap<>();
+        for (OperationPublication operation : publication.operations()) {
+            OperationDetail detail = operation.detail();
+            if (detail == null || detail.descriptor() == null) {
+                continue;
+            }
+            JaxRsOperationDescriptor descriptor = detail.descriptor();
+            List<String> consumes = descriptor.consumes() == null ? List.of() : descriptor.consumes();
+            List<String> namedFileParts = new ArrayList<>();
+            for (FilePartDescriptor part : descriptor.fileParts()) {
+                if (part.partName() != null) {
+                    namedFileParts.add(part.partName());
+                }
+            }
+            facts.put(operation.operationId(), new OperationFacts(consumes, namedFileParts));
+        }
+        return Collections.unmodifiableMap(facts);
+    }
 
     private static MountPublication detach(MountPublication publication) {
         List<OperationPublication> operations = publication.operations().stream()
