@@ -29,10 +29,11 @@ import java.util.SortedMap;
  * <p>Inputs are assembled by {@link InputAssembler} in two phases over the whole document, both
  * visiting the operations in the order the document lists them (path keys in natural order, then
  * methods in Path Item order): every operation's inputs are first checked, so the first hidden path
- * parameter, refused construct, or duplicate input of the document fails before anything is
- * published; then every operation is published, each checked schema once. Inputs the inventory flags
- * hidden are left out before any check reads them, and a {@link DisclosureTally} created for the
- * assembly records whether any was.
+ * parameter, duplicate input, unverified request body, unresolved redaction, or refused construct of
+ * the document fails before anything is published; then every operation is published, each checked
+ * schema once. Inputs the inventory flags hidden are left out before any check reads them, and a
+ * {@link DisclosureTally} created for the assembly records whether any was and whether a reserved
+ * name was removed from a published request body.
  *
  * <p>Failures are thrown as {@link dev.vertique.rest.core.RestConfigurationException} so that
  * publication fails startup; each message starts with the {@linkplain #subject subject} naming the
@@ -79,7 +80,8 @@ final class DocumentAssembler {
                 planned.add(new PlannedOperation(
                         item.getKey(),
                         RenderedPaths.methodKey(operation),
-                        InputAssembler.check(subject, embedder, operation, facts.get(operation.operationId()), tally)));
+                        InputAssembler.check(
+                                subject, embedder, operation, facts.get(operation.operationId()), context, tally)));
             }
         }
 

@@ -159,8 +159,13 @@ final class SchemaPositions {
         return token.toString();
     }
 
-    /** Reads an RFC 6901 array index: {@code 0} or digits without a leading zero; -1 otherwise. */
-    private static int arrayIndex(String token) {
+    /**
+     * Reads an RFC 6901 array index: {@code 0} or digits without a leading zero.
+     *
+     * @param token the unescaped reference token
+     * @return the index, or -1 when the token is not an array index
+     */
+    static int arrayIndex(String token) {
         if (token.isEmpty() || token.length() > 9 || (token.length() > 1 && token.charAt(0) == '0')) {
             return -1;
         }

@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import dev.vertique.json.schema.RedactionManifest;
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.jaxrs.publication.CapturedSchemas;
 import dev.vertique.rest.jaxrs.publication.InputBinding;
@@ -53,21 +54,26 @@ import java.util.Set;
  *       is never read.
  *   <li>Every form binding, method parameter or composite field, becomes a property of the form
  *       request body, in inventory order: one media type per consumed type, or, when none is
- *       declared, {@code multipart/form-data} for an operation with a named file part and else
- *       {@code application/x-www-form-urlencoded}. A named file part's property is the empty schema.
- *       A form body never carries {@code required}. When an operation binds a body, its form
- *       bindings add no request body.
+ *       declared, {@code multipart/form-data} when a visible form binding is a named file part and
+ *       else {@code application/x-www-form-urlencoded}; a hidden file part never chooses it. A
+ *       named file part's property is the empty schema. A form body never carries {@code
+ *       required}. When an operation binds a body, its form bindings add no request body.
  *   <li>Every other binding becomes a Parameter Object: method parameters first, then composite
  *       fields, each in inventory order. A parameter carries {@code required: true} exactly when its
  *       binding is certainly required, and the description of its {@link Parameter} annotation when
  *       that is not blank.
  * </ul>
  *
- * <p>A method parameter or form field with a captured schema publishes that schema unchanged, inline
- * or as a component (see {@link SchemaEmbedder}). A composite field, or an input with no captured
- * schema, is unenforced: it publishes {@code {"default": "<raw text>"}} when it declares a default
- * value, else the empty schema; nothing is derived from its Java type or annotations. Two visible
- * inputs of one operation with the same name and location fail publication.
+ * <p>A captured request body is published only once its redaction manifest is verified against the
+ * capture (see {@link ManifestVerifier}); the document's own copy is then checked for refused
+ * constructs, and the reserved-name assertions the manifest lists are removed from it (see {@link
+ * ReservedNameRedaction}) before it is relocated into a component. A method parameter or form field
+ * with a captured schema may not hold {@code propertyNames} (see {@link ParameterPropertyNames}); it
+ * publishes that schema unchanged, inline or as a component (see {@link SchemaEmbedder}). A
+ * composite field, or an input with no captured schema, is unenforced: it publishes {@code
+ * {"default": "<raw text>"}} when it declares a default value, else the empty schema; nothing is
+ * derived from its Java type or annotations. Two visible inputs of one operation with the same name
+ * and location fail publication.
  */
 final class InputAssembler {
 
@@ -100,16 +106,20 @@ final class InputAssembler {
      * @param embedder the schema embedder of the document
      * @param operation the operation
      * @param facts the operation's descriptor facts, or {@code null} when none were taken
+     * @param context the per-application inputs, naming the bound schema source
      * @param tally the disclosure tally of the document's assembly
      * @return the plan, to publish once every operation of the document is checked
      * @throws RestConfigurationException when the operation hides a path parameter, two visible
-     *     inputs share a name and location, or a published captured schema holds a refused construct
+     *     inputs share a name and location, a published request body carries no matching redaction
+     *     manifest or one that does not resolve in it, a published parameter or form-field schema holds
+     *     {@code propertyNames}, or a published captured schema holds a refused construct
      */
     static Plan check(
             String subject,
             SchemaEmbedder embedder,
             OperationPublication operation,
             OperationFacts facts,
+            AssemblyContext context,
             DisclosureTally tally) {
         OperationDetail detail = operation.detail();
         if (detail == null) {
@@ -140,8 +150,13 @@ final class InputAssembler {
         BodyPlan body = null;
         if (bodyBinding != null) {
             JsonObject captured = schemas == null ? null : schemas.body();
-            SchemaEmbedder.CheckedSchema checked =
-                    captured == null ? null : embedder.check(InputDescription.body(operationId), captured);
+            SchemaEmbedder.CheckedSchema checked = null;
+            if (captured != null) {
+                RedactionManifest manifest =
+                        ManifestVerifier.verify(subject, operationId, captured, schemas.bodyProvenance(), context);
+                checked = embedder.check(InputDescription.body(operationId), captured);
+                ReservedNameRedaction.redact(subject, operationId, manifest, checked.tree(), context, tally);
+            }
             boolean required = detail.gateInstalled() && captured != null && rejectsNull(captured);
             body = new BodyPlan(mediaTypes(known.consumes(), DEFAULT_BODY_MEDIA_TYPE), checked, required);
         }
@@ -150,7 +165,7 @@ final class InputAssembler {
         for (InputBinding.Origin origin : List.of(InputBinding.Origin.PARAMETER, InputBinding.Origin.COMPOSITE_FIELD)) {
             for (InputBinding binding : inputs) {
                 if (binding.origin() == origin && binding.location() != ParamLocation.FORM) {
-                    parameters.add(parameter(embedder, operationId, schemas, binding));
+                    parameters.add(parameter(subject, embedder, operationId, schemas, binding));
                 }
             }
         }
@@ -159,9 +174,13 @@ final class InputAssembler {
         if (bodyBinding == null && !forms.isEmpty()) {
             List<PropertyPlan> properties = new ArrayList<>();
             for (InputBinding binding : forms) {
-                properties.add(formProperty(embedder, operationId, schemas, known, binding));
+                properties.add(formProperty(subject, embedder, operationId, schemas, known, binding));
             }
-            String defaultMediaType = known.namedFileParts().isEmpty() ? URL_ENCODED : MULTIPART;
+            boolean filePart = false;
+            for (InputBinding binding : forms) {
+                filePart |= known.namedFileParts().contains(binding.name());
+            }
+            String defaultMediaType = filePart ? MULTIPART : URL_ENCODED;
             form = new FormPlan(mediaTypes(known.consumes(), defaultMediaType), properties);
         }
         return new Plan(operationId, parameters, body, form);
@@ -186,11 +205,18 @@ final class InputAssembler {
 
     /** Plans one Parameter Object, checking its captured schema when it publishes one. */
     private static ParameterPlan parameter(
-            SchemaEmbedder embedder, String operationId, CapturedSchemas schemas, InputBinding binding) {
+            String subject,
+            SchemaEmbedder embedder,
+            String operationId,
+            CapturedSchemas schemas,
+            InputBinding binding) {
         JsonObject captured = captured(schemas, binding);
-        SchemaEmbedder.CheckedSchema checked = captured == null
-                ? null
-                : embedder.check(InputDescription.parameter(operationId, binding.location(), binding.name()), captured);
+        SchemaEmbedder.CheckedSchema checked = null;
+        if (captured != null) {
+            InputDescription input = InputDescription.parameter(operationId, binding.location(), binding.name());
+            ParameterPropertyNames.refuse(subject, input, captured);
+            checked = embedder.check(input, captured);
+        }
         return new ParameterPlan(
                 binding.name(),
                 in(binding.location()),
@@ -202,6 +228,7 @@ final class InputAssembler {
 
     /** Plans one form-body property, checking its captured schema when it publishes one. */
     private static PropertyPlan formProperty(
+            String subject,
             SchemaEmbedder embedder,
             String operationId,
             CapturedSchemas schemas,
@@ -214,10 +241,9 @@ final class InputAssembler {
         if (captured == null) {
             return new PropertyPlan(binding.name(), null, unenforced(binding));
         }
-        return new PropertyPlan(
-                binding.name(),
-                embedder.check(InputDescription.formField(operationId, binding.name()), captured),
-                null);
+        InputDescription input = InputDescription.formField(operationId, binding.name());
+        ParameterPropertyNames.refuse(subject, input, captured);
+        return new PropertyPlan(binding.name(), embedder.check(input, captured), null);
     }
 
     /**

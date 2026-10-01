@@ -22,7 +22,8 @@ import java.util.SortedMap;
  * SchemaRelocation relocated} and registered with its relocated definitions in the document's
  * {@link ComponentRegistry}, so key collisions are found as components are published.
  *
- * <p>The captured objects are only read; relocation and reference rewriting change the owned copy.
+ * <p>The captured objects are only read; reserved-name redaction (see {@link ReservedNameRedaction}),
+ * relocation, and reference rewriting change the owned copy.
  */
 final class SchemaEmbedder {
 
