@@ -482,6 +482,17 @@ final class MetadataConstraintSource implements ConstraintSource {
      * {@code java.util.regex.Pattern} and honors an embedded modifier group — measured in
      * {@code PatternFlagRenderingTest}). A flag with no embeddable modifier character
      * ({@code CANON_EQ}) cannot be expressed this way and fails generation with a bounded diagnostic.
+     *
+     * <p>With {@code COMMENTS} among the flags, a line terminator precedes the group's closing
+     * parenthesis: in comments mode a {@code #} comment runs to the end of the line, so a regexp that
+     * ends inside a comment would otherwise swallow the closing parenthesis. Comments mode ignores
+     * whitespace outside a character class, so the added terminator leaves the group semantically equal
+     * to {@code Pattern.compile(regexp, flags)}; {@code \n} ends a comment with or without
+     * {@code UNIX_LINES}. A regexp that ends in an unclosed character class or a lone trailing backslash
+     * is already invalid for the validator itself, so the terminator never lands inside a class or after
+     * a dangling escape in a valid regexp. A regexp ending in an open {@code \Q} quote quotes the closing
+     * parenthesis with or without this terminator, the same as for every other flag. Without
+     * {@code COMMENTS} the group is {@code "(?" + modifiers + ":" + regexp + ")"} exactly.
      */
     private static String renderPattern(Map<String, Object> attributes, String label) {
         String regexp = (String) attributes.get("regexp");
@@ -503,7 +514,8 @@ final class MetadataConstraintSource implements ConstraintSource {
             }
             modifiers.append(embedded);
         }
-        return "(?" + modifiers + ":" + regexp + ")";
+        String commentTerminator = modifiers.indexOf("x") >= 0 ? "\n" : "";
+        return "(?" + modifiers + ":" + regexp + commentTerminator + ")";
     }
 
     private static boolean appliesInDefaultGroup(ConstraintDescriptor<?> descriptor) {
