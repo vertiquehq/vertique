@@ -31,4 +31,22 @@ public class FutureSubtypeShapes {
     public MyFuture<Dto> futureSubtypeOfDto() {
         return null;
     }
+
+    /**
+     * Returns {@code Future<Future<Dto>>}.
+     *
+     * @return {@code null}
+     */
+    public Future<Future<Dto>> futureOfFutureOfDto() {
+        return null;
+    }
+
+    /**
+     * Returns {@code Future<MyFuture<Dto>>}.
+     *
+     * @return {@code null}
+     */
+    public Future<FutureSubtypeShapes.MyFuture<Dto>> futureOfFutureSubtypeOfDto() {
+        return null;
+    }
 }

@@ -155,7 +155,14 @@ class ResponseInferenceTest {
                         List.of(),
                         CharSequenceProducers.bindings(),
                         runtime()),
-                row("Future subtype", FutureSubtypeShapes.class, "futureSubtypeOfDto", List.of(), runtime()));
+                row("Future subtype", FutureSubtypeShapes.class, "futureSubtypeOfDto", List.of(), runtime()),
+                row("Future of Future", FutureSubtypeShapes.class, "futureOfFutureOfDto", List.of(), runtime()),
+                row(
+                        "Future of a Future subtype",
+                        FutureSubtypeShapes.class,
+                        "futureOfFutureSubtypeOfDto",
+                        List.of(),
+                        runtime()));
     }
 
     @ParameterizedTest(name = "{0}")
