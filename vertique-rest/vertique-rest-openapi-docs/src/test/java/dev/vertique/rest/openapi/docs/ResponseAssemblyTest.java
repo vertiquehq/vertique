@@ -617,6 +617,12 @@ class ResponseAssemblyTest {
         // and the inferred CreatorZx, whose creator parameter carries @Schema(hidden = true)
         ResponseOperation creatorParameterMarker =
                 ResponseOperation.of("creatorParameterMarker", RefusalPositionResource.class, "creatorParameterMarker");
+        // and ReceiptZx, whose field internalZx carries @Hidden only, as the schema of header X-Receipt on 200
+        ResponseOperation hiddenHeader =
+                ResponseOperation.of("hiddenHeader", RefusalPositionResource.class, "hiddenHeader");
+        // and Note, whose member note is described as remark, as the array element of 200
+        ResponseOperation renamedArrayElement =
+                ResponseOperation.of("renamedArrayElement", RefusalPositionResource.class, "renamedArrayElement");
 
         // When / Then: each document is assembled, one assertion block per case
         assertAll(
@@ -711,6 +717,34 @@ class ResponseAssemblyTest {
                                             + " declared; declare it directly on the property's own field or getter,"
                                             + " not through a bundle or mix-in"),
                                     "the failure carries the misplaced-marker fix"));
+                },
+                () -> {
+                    String message = String.valueOf(
+                            assemble(REPORTS, hiddenHeader).failure().getMessage());
+                    assertAll(
+                            "(vi) a header schema describing a @Hidden member fails publication; message: " + message,
+                            () -> assertTrue(message.contains("of status 200"), "the failure names status 200"),
+                            () -> assertTrue(
+                                    message.contains("member 'internalZx' of " + ReceiptZx.class.getName()),
+                                    "the failure names the member and its type"),
+                            () -> assertTrue(
+                                    message.contains(", which carries @Hidden; "), "the failure names the marker"),
+                            () -> assertTrue(
+                                    message.contains("the output generator ignores @Hidden; declare @Schema(hidden ="
+                                            + " true) on the property's own field or getter"),
+                                    "the failure carries the @Hidden fix"));
+                },
+                () -> {
+                    String message = String.valueOf(
+                            assemble(REPORTS, renamedArrayElement).failure().getMessage());
+                    assertAll(
+                            "(vii) an array element describing a renamed member fails publication; message: " + message,
+                            () -> assertTrue(message.contains("of status 200"), "the failure names status 200"),
+                            () -> assertTrue(
+                                    message.contains(
+                                            "its member 'note' is serialized as 'note' but described as 'remark'"),
+                                    "the failure names the member, its serialized name, and its schema name"),
+                            () -> assertTrue(message.contains(Note.class.getName()), "the failure names the type"));
                 });
     }
 

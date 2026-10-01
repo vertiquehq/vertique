@@ -103,4 +103,35 @@ public class RefusalPositionResource {
     public Future<CreatorZx> creatorParameterMarker() {
         return null;
     }
+
+    /**
+     * Declares {@code ReceiptZx}, whose field {@code internalZx} carries {@code @Hidden} only, as the
+     * schema of header {@code X-Receipt} on status {@code 200}.
+     *
+     * @return {@code null}
+     */
+    @ApiResponse(
+            responseCode = "200",
+            description = "OK",
+            headers = @Header(name = "X-Receipt", schema = @Schema(implementation = ReceiptZx.class)))
+    public Response hiddenHeader() {
+        return null;
+    }
+
+    /**
+     * Declares an array of {@code Note}, whose member {@code note} is described as {@code remark}, as
+     * the JSON content of status {@code 200}.
+     *
+     * @return {@code null}
+     */
+    @ApiResponse(
+            responseCode = "200",
+            description = "OK",
+            content =
+                    @Content(
+                            mediaType = "application/json",
+                            array = @ArraySchema(schema = @Schema(implementation = Note.class))))
+    public Response renamedArrayElement() {
+        return null;
+    }
 }

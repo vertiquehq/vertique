@@ -13,6 +13,7 @@ import dev.vertique.rest.openapi.docs.ResponseInference.Row;
 import dev.vertique.rest.openapi.docs.fixture.responses.shapes.CharSequenceProducers;
 import dev.vertique.rest.openapi.docs.fixture.responses.shapes.CustomProducers;
 import dev.vertique.rest.openapi.docs.fixture.responses.shapes.Dto;
+import dev.vertique.rest.openapi.docs.fixture.responses.shapes.FutureSubtypeShapes;
 import dev.vertique.rest.openapi.docs.fixture.responses.shapes.GenericResource;
 import dev.vertique.rest.openapi.docs.fixture.responses.shapes.Item;
 import dev.vertique.rest.openapi.docs.fixture.responses.shapes.ItemResource;
@@ -153,7 +154,8 @@ class ResponseInferenceTest {
                         "stringReturn",
                         List.of(),
                         CharSequenceProducers.bindings(),
-                        runtime()));
+                        runtime()),
+                row("Future subtype", FutureSubtypeShapes.class, "futureSubtypeOfDto", List.of(), runtime()));
     }
 
     @ParameterizedTest(name = "{0}")
