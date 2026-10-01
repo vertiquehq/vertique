@@ -66,6 +66,13 @@ public final class FormResource {
     public void fieldQueryLocation(@Parameter(in = ParameterIn.QUERY) @FormParam("note") String note) {}
 
     /**
+     * A form field name differing from the binding's only in case.
+     *
+     * @param note the form field
+     */
+    public void caseFoldedFieldName(@Parameter(name = "NOTE") @FormParam("note") String note) {}
+
+    /**
      * A schema implementation on the form request body, which binds no type.
      *
      * @param note the form field
