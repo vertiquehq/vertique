@@ -242,7 +242,7 @@ final class DocumentConfigChecks {
             }
             return null;
         }
-        OpenAPIDefinition definition = document.declaringType().getAnnotation(OpenAPIDefinition.class);
+        OpenAPIDefinition definition = document.declaringType().getDeclaredAnnotation(OpenAPIDefinition.class);
         if (definition == null) {
             throw infoFailure(document, base);
         }
