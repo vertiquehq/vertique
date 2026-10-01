@@ -20,7 +20,8 @@ import java.util.SortedMap;
  * <p>The root members are written in this order: {@code openapi}, {@code info}, {@code
  * jsonSchemaDialect} (JSON Schema draft 2020-12), {@code servers}, {@code paths}, {@code
  * components} (only when it holds a schema, with its keys in natural order), and {@code
- * x-vertique-validation}, which names the {@code java.util.regex} pattern dialect. The single server
+ * x-vertique-validation}, which names the {@code java.util.regex} pattern dialect and, in a
+ * protected document only, the validation authority (see {@link ValidationDisclosure}). The single server
  * is the configured server URL of the document, or else the mount path without its trailing {@code
  * /*} ({@code /} for the root mount); it is never inferred from a request. Paths are rendered by
  * {@link RenderedPaths} from each operation's mount-relative JAX-RS template, in natural order, and
@@ -75,6 +76,7 @@ final class DocumentAssembler {
         SchemaEmbedder embedder = new SchemaEmbedder(subject);
         DisclosureTally tally = new DisclosureTally();
         InputGenerators generators = new InputGenerators(context.profiles());
+        ValidationDisclosure disclosure = new ValidationDisclosure(document.access(), publication.strategyId());
 
         List<PlannedOperation> planned = new ArrayList<>();
         for (Map.Entry<String, List<OperationPublication>> item : pathItems.entrySet()) {
@@ -89,7 +91,8 @@ final class DocumentAssembler {
                                 facts.get(operation.operationId()),
                                 context,
                                 tally,
-                                generators)));
+                                generators,
+                                disclosure.marksInputs())));
             }
         }
 
@@ -112,7 +115,7 @@ final class DocumentAssembler {
             ObjectNode componentSchemas = root.putObject("components").putObject("schemas");
             schemas.forEach(componentSchemas::set);
         }
-        root.putObject("x-vertique-validation").put("patternDialect", PATTERN_DIALECT);
+        root.set(ValidationDisclosure.MEMBER, disclosure.root(context, tally));
         return DocumentWriter.write(root, SnapshotRenderer.render(publication));
     }
 
