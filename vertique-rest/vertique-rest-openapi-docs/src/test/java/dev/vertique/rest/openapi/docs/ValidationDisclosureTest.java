@@ -9,11 +9,14 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import dev.vertique.rest.jaxrs.publication.InputBinding;
 import dev.vertique.rest.jaxrs.publication.InputBinding.Requiredness;
 import dev.vertique.rest.jaxrs.publication.OperationPublication;
 import dev.vertique.rest.jaxrs.routing.ParamLocation;
+import dev.vertique.rest.jaxrs.validation.NoneValidationStrategy;
 import dev.vertique.rest.openapi.docs.DisclosureDocuments.Rendering;
+import dev.vertique.rest.openapi.docs.fixture.disclosure.dto.AliasedGuardZx;
 import dev.vertique.rest.openapi.docs.fixture.disclosure.dto.FlatZx;
 import dev.vertique.rest.openapi.docs.fixture.disclosure.sources.CanonicalSubclassSchemaSource;
 import dev.vertique.rest.openapi.docs.fixture.disclosure.sources.PassThroughSchemaSource;
@@ -22,6 +25,7 @@ import dev.vertique.rest.openapi.docs.fixture.input.GeneratedBodies;
 import dev.vertique.rest.openapi.docs.fixture.input.Publications;
 import dev.vertique.rest.openapi.docs.fixture.input.UnitDocumentedApi;
 import dev.vertique.rest.validation.AnnotationSchemaSource;
+import dev.vertique.rest.validation.WebValidationStrategy;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import java.util.ArrayList;
@@ -54,10 +58,10 @@ class ValidationDisclosureTest {
     private static final String MOUNT = "/api/orders/*";
 
     /** The id of the strategy that validates every input with its captured schema. */
-    private static final String WEB_VALIDATION = "web-validation";
+    private static final String WEB_VALIDATION = WebValidationStrategy.ID;
 
     /** The id of the strategy that validates nothing. */
-    private static final String NONE = "none";
+    private static final String NONE = NoneValidationStrategy.ID;
 
     /** A custom strategy that installs no schema gate, so no input is schema-enforced. */
     private static final String CUSTOM_SIGNATURE = "custom-signature-zx";
@@ -114,6 +118,25 @@ class ValidationDisclosureTest {
     /** The root member order of a protected document with nothing refused or hidden. */
     private static final List<String> PROTECTED_ROOT_ORDER =
             List.of("patternDialect", "strategy", "inputSchemaSource", "enforcement");
+
+    /** The operation whose body loses its guard copies and whose query parameter is hidden. */
+    private static final String CREATE_ALIASED = "createAliased";
+
+    /** The hidden query parameter of {@value #CREATE_ALIASED}. */
+    private static final String HIDDEN_QUERY = "debugZx";
+
+    /** The schema-hidden member of the guarded child, named only by the guard. */
+    private static final String GUARDED_SECRET = "secretZx";
+
+    /** The protected root under web-validation with a reserved name removed and an input left out. */
+    private static final String FULL_PROTECTED_ROOT =
+            "{\"patternDialect\":\"java.util.regex\",\"strategy\":\"web-validation\","
+                    + "\"inputSchemaSource\":\"generated\",\"enforcement\":\"active\","
+                    + "\"reservedNamesRefused\":true,\"hiddenInputs\":true}";
+
+    /** The member order of {@link #FULL_PROTECTED_ROOT}. */
+    private static final List<String> FULL_PROTECTED_ROOT_ORDER = List.of(
+            "patternDialect", "strategy", "inputSchemaSource", "enforcement", "reservedNamesRefused", "hiddenInputs");
 
     /** The media type of a URL-encoded form body. */
     private static final String URL_ENCODED = "application/x-www-form-urlencoded";
@@ -517,6 +540,57 @@ class ValidationDisclosureTest {
                 PLAIN_PARAMETER_ORDER,
                 publicParameters.getJsonObject(2),
                 "public composite-field parameter");
+    }
+
+    @Test
+    @DisplayName(
+            "A protected root lists every member in order when a reserved name was removed and an input left out; a public root stays the pattern dialect only")
+    void protectedRootListsEveryMemberInOrderWhenRedactionAndOmissionBothApply() {
+        // Given: strategy web-validation with the gate installed and one operation 'createAliased'
+        // taking a hidden query parameter and a body described by the real generator whose guarded
+        // child is copied under each accepted name; the canonical source is bound. The generator's
+        // schema names the guarded member (positive control) and the inventory flags the parameter.
+        Publications.Built built = DisclosurePublications.from(Publications.mount(MOUNT)
+                        .application(APPLICATION, UnitDocumentedApi.class)
+                        .strategy(WEB_VALIDATION)
+                        .operation("POST", "/aliased", CREATE_ALIASED)
+                        .gateInstalled(true)
+                        .consumes("application/json")
+                        .param(ParamLocation.QUERY, HIDDEN_QUERY, Requiredness.UNKNOWN)
+                        .schema(new JsonObject("{\"type\":\"integer\"}"))
+                        .body(GeneratedBodies.describe(AliasedGuardZx.class))
+                        .build())
+                .hidden(CREATE_ALIASED, ParamLocation.QUERY, HIDDEN_QUERY)
+                .bodyType(CREATE_ALIASED, AliasedGuardZx.class)
+                .build();
+        assertTrue(
+                GeneratedBodies.describe(AliasedGuardZx.class).schema().encode().contains(GUARDED_SECRET),
+                "positive control: the generator's schema names " + GUARDED_SECRET);
+        assertTrue(
+                inputs(built, CREATE_ALIASED).stream()
+                        .anyMatch(binding -> HIDDEN_QUERY.equals(binding.name()) && binding.hidden()),
+                "positive control: the inventory flags " + HIDDEN_QUERY + " hidden");
+
+        // When: it is assembled with a protected and with a public document.
+        Rendering protectedDocument = DisclosureDocuments.renderProtected(built, canonical());
+        Rendering publicDocument = DisclosureDocuments.renderPublic(built, canonical());
+
+        // Then (protected): the root holds every member, in order, with the expected values, in both
+        // forms.
+        JsonObject root = protectedDocument.rootValidation();
+        assertNotNull(root, "the protected document has no root x-vertique-validation");
+        assertObject(FULL_PROTECTED_ROOT, FULL_PROTECTED_ROOT_ORDER, root, "protected root x-vertique-validation");
+        JsonNode yamlNode = protectedDocument.yamlTree().get("x-vertique-validation");
+        assertNotNull(yamlNode, "the protected YAML has no root x-vertique-validation");
+        JsonObject yamlRoot = new JsonObject(yamlNode.toString());
+        assertObject(
+                FULL_PROTECTED_ROOT, FULL_PROTECTED_ROOT_ORDER, yamlRoot, "protected YAML root x-vertique-validation");
+
+        // Then (public): the root is exactly the pattern dialect in both forms, and neither the hidden
+        // parameter nor the guarded member is in any byte.
+        assertDisclosesNothing(publicDocument, "public");
+        assertJsonLacks(publicDocument, "public", HIDDEN_QUERY, GUARDED_SECRET);
+        assertYamlLacks(publicDocument, "public", HIDDEN_QUERY, GUARDED_SECRET);
     }
 
     // ---------------------------------------------------------------------------------------------

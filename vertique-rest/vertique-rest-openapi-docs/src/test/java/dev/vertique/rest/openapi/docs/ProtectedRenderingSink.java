@@ -5,9 +5,7 @@ package dev.vertique.rest.openapi.docs;
 
 import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.rest.core.RestConfigurationException;
-import dev.vertique.rest.jaxrs.publication.CapturedSchemas;
 import dev.vertique.rest.jaxrs.publication.InputBinding;
-import dev.vertique.rest.jaxrs.publication.InputKey;
 import dev.vertique.rest.jaxrs.publication.MountPublication;
 import dev.vertique.rest.jaxrs.publication.OperationDetail;
 import dev.vertique.rest.jaxrs.publication.OperationPublication;
@@ -18,10 +16,7 @@ import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
-import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -124,7 +119,7 @@ final class ProtectedRenderingSink implements OperationPublicationSink {
         EnabledDocuments.EnabledDocument document = new EnabledDocuments.EnabledDocument(
                 applicationName, declaringType, apiDocs.access(), publication.mountPath(), origin, INFO);
         Map<String, OperationFacts> facts = DocsPublicationSink.operationFacts(publication);
-        MountPublication detached = detach(publication);
+        MountPublication detached = DocsPublicationSink.detach(publication);
         Callable<Outcome> task = () -> render(document, detached, facts);
         Context caller = Vertx.currentContext();
         if (caller == null) {
@@ -217,41 +212,6 @@ final class ProtectedRenderingSink implements OperationPublicationSink {
         } catch (Throwable failure) {
             return Outcome.failed(failure);
         }
-    }
-
-    private static MountPublication detach(MountPublication publication) {
-        List<OperationPublication> operations = new ArrayList<>();
-        for (OperationPublication operation : publication.operations()) {
-            OperationDetail detail = operation.detail();
-            operations.add(new OperationPublication(
-                    operation.operationId(),
-                    operation.httpMethod(),
-                    operation.jaxRsPathTemplate(),
-                    operation.vertxRouteValue(),
-                    operation.vertxRouteIsRegex(),
-                    operation.effectivePolicy(),
-                    operation.securityRequirementSets(),
-                    operation.requiresAction(),
-                    detail == null ? null : detach(detail)));
-        }
-        return new MountPublication(
-                publication.mountPath(),
-                publication.mountId(),
-                publication.applicationName(),
-                publication.declaringType(),
-                publication.strategyId(),
-                operations);
-    }
-
-    private static OperationDetail detach(OperationDetail detail) {
-        CapturedSchemas schemas = detail.schemas();
-        JsonObject body = schemas.body();
-        Map<InputKey, JsonObject> parameters = new HashMap<>();
-        schemas.parameters().forEach((key, schema) -> parameters.put(key, schema.copy()));
-        CapturedSchemas copied =
-                new CapturedSchemas(body == null ? null : body.copy(), schemas.bodyProvenance(), parameters);
-        return new OperationDetail(
-                null, detail.profileId(), copied, detail.gateInstalled(), detail.inputs(), detail.response());
     }
 
     /**

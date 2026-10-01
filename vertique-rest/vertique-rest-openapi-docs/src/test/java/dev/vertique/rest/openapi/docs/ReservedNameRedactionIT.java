@@ -87,6 +87,9 @@ public class ReservedNameRedactionIT {
     /** The name of the root member that records the document's validation facts. */
     private static final String VALIDATION_MEMBER = "x-vertique-validation";
 
+    /** The root {@value #VALIDATION_MEMBER} of every public document: the pattern dialect only. */
+    private static final JsonObject PUBLIC_ROOT = new JsonObject().put("patternDialect", "java.util.regex");
+
     /** The schema-hidden member of the notes body. */
     private static final String INTERNAL_NOTE = "internalNoteZx";
 
@@ -212,6 +215,14 @@ public class ReservedNameRedactionIT {
                         validation.getValue("reservedNamesRefused"),
                         () -> "the protected root records the removal: " + validation.encode());
             });
+            checks.add(() -> assertEquals(
+                    PUBLIC_ROOT,
+                    publicForm.rootValidation(),
+                    "the public JSON root records the pattern dialect only, although a guard was removed"));
+            checks.add(() -> assertEquals(
+                    PUBLIC_ROOT,
+                    documents.get("public YAML").getJsonObject(VALIDATION_MEMBER),
+                    "the public YAML root records the pattern dialect only, although a guard was removed"));
             checks.add(
                     () -> assertEquals(BAD_REQUEST, hiddenName.status(), "the hidden name is refused: " + hiddenName));
             checks.add(() ->
@@ -398,6 +409,9 @@ public class ReservedNameRedactionIT {
             Outcome outcome = deploy(refusal.component().get()::httpVerticle);
             undeploy(outcome);
             outcomes.put(refusal, outcome);
+            // Evidence: the refusal message alone, which by design quotes no schema value.
+            Throwable failure = outcome.failure();
+            System.out.println("FAILURE " + refusal.label() + ": " + (failure == null ? null : failure.getMessage()));
         }
 
         // Then: each unverifiable body fails deployment before a port is published, with a message

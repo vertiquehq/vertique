@@ -83,6 +83,9 @@ public class HiddenInputOmissionIT {
     /** The root validation member that counts the inputs left out of a protected document. */
     private static final String HIDDEN_INPUTS = "hiddenInputs";
 
+    /** The root validation member of every public document: the pattern dialect only. */
+    private static final JsonObject PUBLIC_ROOT = new JsonObject().put("patternDialect", "java.util.regex");
+
     /** The root validation member that records reserved names removed from a protected document. */
     private static final String RESERVED_NAMES_REFUSED = "reservedNamesRefused";
 
@@ -206,10 +209,14 @@ public class HiddenInputOmissionIT {
                         Boolean.TRUE,
                         protectedRoot == null ? null : protectedRoot.getValue(HIDDEN_INPUTS),
                         "the protected root has " + HIDDEN_INPUTS + ": true"),
-                () -> assertNotNull(publicRoot, "the public root carries " + VALIDATION_MEMBER),
-                () -> assertFalse(
-                        publicRoot != null && publicRoot.containsKey(HIDDEN_INPUTS),
-                        "the public root has no " + HIDDEN_INPUTS));
+                () -> assertEquals(
+                        PUBLIC_ROOT,
+                        publicRoot,
+                        "the public JSON root records the pattern dialect only, although inputs were left out"),
+                () -> assertEquals(
+                        PUBLIC_ROOT,
+                        yamlRootValidation(publicRendering),
+                        "the public YAML root records the pattern dialect only, although inputs were left out"));
 
         // Then: every hidden input still binds and is still validated.
         Executable requests = () -> assertAll(
@@ -340,7 +347,11 @@ public class HiddenInputOmissionIT {
         List<Outcome> refusalOutcomes = new ArrayList<>();
         for (RefusalCase refusal : refusals) {
             Served component = refusal.component().get();
-            refusalOutcomes.add(deployAndRelease(component::httpVerticle));
+            Outcome outcome = deployAndRelease(component::httpVerticle);
+            refusalOutcomes.add(outcome);
+            // Evidence: the refusal message alone, which by design quotes no schema value.
+            Throwable failure = outcome.failure();
+            System.out.println("FAILURE " + refusal.label() + ": " + (failure == null ? null : failure.getMessage()));
         }
 
         // When: (c) is served and posted to, and its protected twin rendered.
@@ -424,7 +435,8 @@ public class HiddenInputOmissionIT {
         for (String fragment : refusal.fragments()) {
             checks.add(() -> assertTrue(message.contains(fragment), "the message names: " + fragment));
         }
-        checks.add(() -> assertTrue(message.contains(mount), "the message names the mount " + mount));
+        String mountFragment = "mount '" + mount + "/*'";
+        checks.add(() -> assertTrue(message.contains(mountFragment), "the message names " + mountFragment));
         checks.add(() -> assertTrue(message.contains(operationId), "the message names the operation " + operationId));
         checks.add(() -> assertFalse(message.contains("{"), "the message holds no '{'"));
         checks.add(() -> assertFalse(message.contains("\"type\""), "the message holds no \"type\""));
@@ -498,6 +510,12 @@ public class HiddenInputOmissionIT {
     private static void assertDeployed(String what, Outcome outcome) {
         assertNull(outcome.failure(), () -> what + ": the deployment failed: " + outcome.failure());
         assertNotNull(outcome.port(), () -> what + ": the deployment published no port");
+    }
+
+    /** Returns the root validation member of the YAML form, or {@code null} when it is absent. */
+    private static JsonObject yamlRootValidation(DisclosureDocuments.Rendering rendering) {
+        JsonNode root = rendering.yamlTree().get(VALIDATION_MEMBER);
+        return root == null ? null : new JsonObject(root.toString());
     }
 
     private static String pointerSegment(String segment) {

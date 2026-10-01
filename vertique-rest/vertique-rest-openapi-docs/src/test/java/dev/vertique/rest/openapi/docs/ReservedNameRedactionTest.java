@@ -41,8 +41,8 @@ import org.junit.jupiter.api.function.Executable;
 
 /**
  * Unit proofs that a request body is published without the reserved-name assertions its redaction
- * manifest lists, and only those, and that a parameter schema holding the {@code propertyNames}
- * keyword fails publication.
+ * manifest lists, and only those, and that a parameter or form-field schema holding the {@code
+ * propertyNames} keyword fails publication.
  *
  * <p>Every body schema and its manifest come from the real input-direction generator's {@code
  * describe(type)}: the generated schema is the captured body copy and the manifest its provenance,
@@ -71,6 +71,9 @@ class ReservedNameRedactionTest {
 
     /** The pattern of the non-ASCII refusal, as a JSON string value. */
     private static final String NON_ASCII_PATTERN = "[^\\x00-\\x7F]";
+
+    /** The root {@code x-vertique-validation} of every public document. */
+    private static final String PUBLIC_ROOT = "{\"patternDialect\":\"java.util.regex\"}";
 
     /** The schema-hidden member of the guarded child and of the recursive node. */
     private static final String SECRET = "secretZx";
@@ -101,6 +104,12 @@ class ReservedNameRedactionTest {
 
     /** The operation of the parameter-schema cases. */
     private static final String FIND_OPERATION = "findItems";
+
+    /** The form operation of the form-field case. */
+    private static final String SUBMIT_OPERATION = "submitItems";
+
+    /** The media type of a URL-encoded form body. */
+    private static final String URL_ENCODED = "application/x-www-form-urlencoded";
 
     /** A parameter schema holding the keyword in a property's schema. */
     private static final String KEYWORD_IN_PROPERTY = """
@@ -252,6 +261,17 @@ class ReservedNameRedactionTest {
                             root.getValue("reservedNamesRefused"),
                             () -> at + ": reservedNamesRefused in " + root.encode());
                 });
+            } else {
+                // Then (public): the root records the pattern dialect only, although a guard was removed.
+                checks.add(() -> {
+                    JsonObject root = rendering.rootValidation();
+                    assertNotNull(root, () -> at + ": no root x-vertique-validation");
+                    assertEquals(new JsonObject(PUBLIC_ROOT), root, () -> at + ": the public root " + root.encode());
+                });
+                checks.add(() -> assertEquals(
+                        tree(new JsonObject(PUBLIC_ROOT)),
+                        rendering.yamlTree().get("x-vertique-validation"),
+                        () -> at + ": the public YAML root"));
             }
         }
         assertAll(label + " guard copies", checks);
@@ -371,6 +391,7 @@ class ReservedNameRedactionTest {
         assertAll(
                 "parameter propertyNames",
                 ReservedNameRedactionTest::keywordInParameterSchemaFails,
+                ReservedNameRedactionTest::keywordInFormFieldSchemaFails,
                 () -> textOrNameIsNotTheKeyword("(b) the name as data", NAME_AS_DATA),
                 () -> textOrNameIsNotTheKeyword("(c) the name as a property name", NAME_AS_PROPERTY));
     }
@@ -405,6 +426,44 @@ class ReservedNameRedactionTest {
             });
         }
         assertAll("(a) the keyword in a parameter schema", checks);
+    }
+
+    /** (d) The keyword inside a form field's schema fails naming mount, operation, and the form field. */
+    private static void keywordInFormFieldSchemaFails() {
+        // Given: a URL-encoded form field whose captured schema holds the keyword below a property.
+        Publications.Built built = Publications.mount(MOUNT)
+                .application(APPLICATION, UnitDocumentedApi.class)
+                .operation("POST", "/items", SUBMIT_OPERATION)
+                .consumes(URL_ENCODED)
+                .formField(PARAMETER)
+                .schema(new JsonObject(KEYWORD_IN_PROPERTY))
+                .build();
+
+        List<Executable> checks = new ArrayList<>();
+        for (ApiDocs.Access mode : MODES) {
+            String at = "(d) " + mode;
+            checks.add(() -> {
+                // When: the document is assembled.
+                RestConfigurationException failure =
+                        DisclosureDocuments.failure(built, mode, DisclosureDocuments.noSource());
+
+                // Then: the failure names the mount, the operation, and the form field, and quotes no
+                // schema text.
+                String message = failure.getMessage();
+                assertNotNull(message, () -> at + ": the failure has no message");
+                assertAll(
+                        at,
+                        () -> assertTrue(message.contains(MOUNT_FRAGMENT), () -> at + ": no mount: " + message),
+                        () -> assertTrue(
+                                message.contains("'" + SUBMIT_OPERATION + "'"),
+                                () -> at + ": no operation: " + message),
+                        () -> assertTrue(
+                                message.contains("form field '" + PARAMETER + "'"),
+                                () -> at + ": no form field: " + message),
+                        () -> assertFalse(message.contains("{"), () -> at + ": schema text: " + message));
+            });
+        }
+        assertAll("(d) the keyword in a form-field schema", checks);
     }
 
     /** (b), (c) The text {@code propertyNames} as data or as a property name publishes unchanged. */
