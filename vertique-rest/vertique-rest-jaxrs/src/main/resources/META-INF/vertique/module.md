@@ -1660,9 +1660,10 @@ as proof of a complete body.
 - **Hiding an input the method does not bind, once a documentation module is bound.** A method-level
   hiding entry — `@Parameter(name = ..., in = ..., hidden = true)` on the method, in `@Parameters`, in
   `@Operation(parameters = ...)`, or carried by a composed annotation — must name an input the method
-  binds. Names match exactly and case-sensitively, header names included: write the name exactly as in
-  `@HeaderParam`. An unset `in` matches every location. A hidden entry that names no bound input fails
-  startup with a configuration exception, and only when such a sink is bound.
+  binds. Names match exactly, except header names, which match ignoring ASCII letter case, as the
+  request binds them. Only ASCII letters fold, so a non-ASCII look-alike such as U+212A KELVIN SIGN
+  does not match `k`. An unset `in` matches every location. A hidden entry that names no bound input
+  fails startup with a configuration exception, and only when such a sink is bound.
 
 ---
 
