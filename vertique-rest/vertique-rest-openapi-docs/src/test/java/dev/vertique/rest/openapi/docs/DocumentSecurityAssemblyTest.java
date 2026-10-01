@@ -40,7 +40,9 @@ import dev.vertique.rest.openapi.docs.fixture.security.listing.RosterCaptureComp
 import dev.vertique.rest.openapi.docs.fixture.security.listing.RosterSchemeModule;
 import dev.vertique.rest.openapi.docs.fixture.security.unit.DaggerGhostCaptureComponent;
 import dev.vertique.rest.openapi.docs.fixture.security.unit.GhostApi;
+import dev.vertique.rest.openapi.docs.fixture.security.unit.GhostBearerHandler;
 import dev.vertique.rest.openapi.docs.fixture.security.unit.GhostCaptureComponent;
+import dev.vertique.rest.openapi.docs.fixture.security.unit.GhostQueryKeyHandler;
 import dev.vertique.rest.openapi.docs.fixture.security.unit.GhostResource;
 import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments;
 import io.vertx.core.Vertx;
@@ -316,6 +318,56 @@ class DocumentSecurityAssemblyTest {
                 () -> assertTrue(
                         message.contains("no SecuritySchemeHandler is registered"),
                         () -> "the failure must state that no SecuritySchemeHandler is registered: " + message));
+    }
+
+    @Test
+    @DisplayName("a referenced scheme provided by two handlers fails publication naming both handlers")
+    void schemeProvidedByTwoHandlersFailsNamingBoth() throws Exception {
+        // Given: the publication of a real mount build of application 'ghost', whose operation
+        // readGhost requires ghostAuth, and a handler set in which two different handler classes both
+        // provide ghostAuth, each describing it differently
+        MountPublication captured = captureGhostPublication();
+        assertReferencesOnlyGhostAuth(captured);
+        Map<String, OperationFacts> facts = DocsPublicationSink.operationFacts(captured);
+        MountPublication detached = DocsPublicationSink.detach(captured);
+        EnabledDocuments.EnabledDocument document = MetadataDocuments.document(captured, ApiDocs.Access.PUBLIC);
+        Set<SecuritySchemeHandler> handlers = new LinkedHashSet<>();
+        handlers.add(new GhostQueryKeyHandler());
+        handlers.add(new GhostBearerHandler());
+        AssemblyContext context = new AssemblyContext(
+                Optional.empty(), ResponseDocuments.registry(), new DocumentWarnings(), Set.of(), handlers);
+
+        // When: the document is assembled
+        RestConfigurationException failure = assertThrows(
+                RestConfigurationException.class,
+                () -> DocumentAssembler.assemble(document, detached, facts, context),
+                "assembly must fail: readGhost requires ghostAuth, which two handlers provide");
+
+        // Then: the message names the document, the operation, the scheme, both handlers sorted by
+        // binary name, and the rule, and publishes neither handler's description
+        String message = failure.getMessage();
+        String bothHandlers = "dev.vertique.rest.openapi.docs.fixture.security.unit.GhostBearerHandler, "
+                + "dev.vertique.rest.openapi.docs.fixture.security.unit.GhostQueryKeyHandler";
+        assertAll(
+                () -> assertTrue(
+                        message.contains("apidocs.documents." + GhostApi.NAME),
+                        () -> "the failure must name apidocs.documents.ghost: " + message),
+                () -> assertTrue(
+                        message.contains("operation '" + GhostResource.READ_GHOST + "'"),
+                        () -> "the failure must name operation 'readGhost': " + message),
+                () -> assertTrue(
+                        message.contains("security scheme '" + GhostResource.SCHEME + "'"),
+                        () -> "the failure must name security scheme 'ghostAuth': " + message),
+                () -> assertTrue(
+                        message.contains("which more than one SecuritySchemeHandler provides: " + bothHandlers),
+                        () -> "the failure must list both handlers, sorted: " + message),
+                () -> assertTrue(
+                        message.contains("each security scheme must be provided by exactly one handler"),
+                        () -> "the failure must state the one-handler rule: " + message),
+                () -> assertFalse(
+                        message.contains("api_key"), () -> "the failure must not carry a description: " + message),
+                () -> assertFalse(
+                        message.contains("JWT"), () -> "the failure must not carry a description: " + message));
     }
 
     /**
