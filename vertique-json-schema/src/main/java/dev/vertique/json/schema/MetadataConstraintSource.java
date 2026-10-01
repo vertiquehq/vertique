@@ -28,6 +28,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 /**
  * A {@link ConstraintSource} driven by Bean Validation metadata ({@link
@@ -149,6 +151,19 @@ final class MetadataConstraintSource implements ConstraintSource {
             "MULTILINE", 'm',
             "DOTALL", 's',
             "UNICODE_CASE", 'u');
+
+    /**
+     * The {@code java.util.regex.Pattern} flag bit per embeddable {@code jakarta.validation.constraints.Pattern.Flag}
+     * — the same keys as {@link #EMBEDDABLE_PATTERN_FLAGS} — used to compile a regexp with its declared
+     * flags exactly as a Jakarta Validation provider does before it is embedded.
+     */
+    private static final Map<String, Integer> EMBEDDABLE_PATTERN_FLAG_BITS = Map.of(
+            "UNIX_LINES", Pattern.UNIX_LINES,
+            "CASE_INSENSITIVE", Pattern.CASE_INSENSITIVE,
+            "COMMENTS", Pattern.COMMENTS,
+            "MULTILINE", Pattern.MULTILINE,
+            "DOTALL", Pattern.DOTALL,
+            "UNICODE_CASE", Pattern.UNICODE_CASE);
 
     private final Validator validator;
 
@@ -483,16 +498,20 @@ final class MetadataConstraintSource implements ConstraintSource {
      * {@code PatternFlagRenderingTest}). A flag with no embeddable modifier character
      * ({@code CANON_EQ}) cannot be expressed this way and fails generation with a bounded diagnostic.
      *
-     * <p>With {@code COMMENTS} among the flags, a line terminator precedes the group's closing
-     * parenthesis: in comments mode a {@code #} comment runs to the end of the line, so a regexp that
-     * ends inside a comment would otherwise swallow the closing parenthesis. Comments mode ignores
-     * whitespace outside a character class, so the added terminator leaves the group semantically equal
-     * to {@code Pattern.compile(regexp, flags)}; {@code \n} ends a comment with or without
-     * {@code UNIX_LINES}. A regexp that ends in an unclosed character class or a lone trailing backslash
-     * is already invalid for the validator itself, so the terminator never lands inside a class or after
-     * a dangling escape in a valid regexp. A regexp ending in an open {@code \Q} quote quotes the closing
-     * parenthesis with or without this terminator, the same as for every other flag. Without
-     * {@code COMMENTS} the group is {@code "(?" + modifiers + ":" + regexp + ")"} exactly.
+     * <p>The regexp is first compiled with its declared flags, as a Jakarta Validation provider compiles
+     * it; one {@code java.util.regex} rejects fails generation with a bounded diagnostic that names the
+     * property but never echoes the expression, so the embedded form can never turn a regexp the
+     * provider rejects into a pattern the validator accepts.
+     *
+     * <p>The group is {@code "(?" + modifiers + ":" + regexp + ")"}. With {@code COMMENTS} among the
+     * flags, and only when that plain group itself fails to compile, a line break precedes the closing
+     * parenthesis instead: in comments mode a {@code #} comment runs to the end of the line, so a regexp
+     * that ends inside a comment swallows the closing parenthesis. The line break is added only on that
+     * failure, so a regexp that switches comments mode off inline (for example {@code (?-x)...}) never
+     * gains a literal line break where the plain group already compiles. Where it is added, comments mode
+     * is in effect at the end of the regexp — otherwise the {@code #} would not have swallowed the
+     * parenthesis — so the line break is ignored whitespace there, and {@code \n} ends a comment with or
+     * without {@code UNIX_LINES}.
      */
     private static String renderPattern(Map<String, Object> attributes, String label) {
         String regexp = (String) attributes.get("regexp");
@@ -501,6 +520,7 @@ final class MetadataConstraintSource implements ConstraintSource {
             return regexp;
         }
         StringBuilder modifiers = new StringBuilder();
+        int flagBits = 0;
         for (Object flag : flags) {
             String name = flag.toString();
             Character embedded = EMBEDDABLE_PATTERN_FLAGS.get(name);
@@ -513,9 +533,33 @@ final class MetadataConstraintSource implements ConstraintSource {
                         null);
             }
             modifiers.append(embedded);
+            flagBits |= EMBEDDABLE_PATTERN_FLAG_BITS.get(name);
         }
-        String commentTerminator = modifiers.indexOf("x") >= 0 ? "\n" : "";
-        return "(?" + modifiers + ":" + regexp + commentTerminator + ")";
+        if (!compiles(regexp, flagBits)) {
+            throw Diagnostics.failure(
+                    "the @Pattern constraint on " + label
+                            + " declares a regular expression that java.util.regex rejects with its flags;"
+                            + " fix the expression",
+                    null);
+        }
+        String plain = "(?" + modifiers + ":" + regexp + ")";
+        if (modifiers.indexOf("x") < 0 || compiles(plain, 0)) {
+            return plain;
+        }
+        return "(?" + modifiers + ":" + regexp + "\n)";
+    }
+
+    /**
+     * Whether {@code regex} compiles with {@code flagBits}. The rejection itself is discarded: its
+     * message echoes the expression, which a diagnostic must not carry.
+     */
+    private static boolean compiles(String regex, int flagBits) {
+        try {
+            Pattern.compile(regex, flagBits);
+            return true;
+        } catch (PatternSyntaxException rejected) {
+            return false;
+        }
     }
 
     private static boolean appliesInDefaultGroup(ConstraintDescriptor<?> descriptor) {

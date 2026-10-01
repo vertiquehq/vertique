@@ -2104,7 +2104,8 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     /**
      * Whether {@code flagged} is exactly {@code plainRegexp} wrapped in an inline Java regex modifier
      * group — {@code "(?" + modifiers + ":" + plainRegexp + ")"}, or
-     * {@code "(?" + modifiers + ":" + plainRegexp + "\n)"} when the modifiers include comments mode,
+     * {@code "(?" + modifiers + ":" + plainRegexp + "\n)"} when the modifier group (the text between
+     * {@code (?} and the first {@code :}) includes comments mode,
      * {@link MetadataConstraintSource#renderPattern}'s own shapes for a single {@code @Pattern}'s
      * embedded flags — meaning both values render the very same {@code @Pattern} annotation, not two
      * different ones in conflict.
@@ -2115,8 +2116,12 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         }
         String suffix = ":" + plainRegexp + ")";
         String commentsSuffix = ":" + plainRegexp + "\n)";
-        return (flagged.length() > suffix.length() && flagged.endsWith(suffix))
-                || (flagged.length() > commentsSuffix.length() && flagged.endsWith(commentsSuffix));
+        if (flagged.length() > suffix.length() && flagged.endsWith(suffix)) {
+            return true;
+        }
+        return flagged.length() > commentsSuffix.length()
+                && flagged.endsWith(commentsSuffix)
+                && flagged.substring(2, flagged.indexOf(':')).indexOf('x') >= 0;
     }
 
     /**
