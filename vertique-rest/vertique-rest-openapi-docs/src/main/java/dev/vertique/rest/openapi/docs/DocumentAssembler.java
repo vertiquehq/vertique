@@ -19,15 +19,16 @@ import java.util.SortedMap;
  * Assembles one application's document from its detached mount publication.
  *
  * <p>The root members are written in this order: {@code openapi}, {@code info}, {@code
- * jsonSchemaDialect} (JSON Schema draft 2020-12), {@code servers}, {@code paths}, {@code
- * components} (only when it holds a schema, with its keys in natural order), {@code tags} (only when
- * a published operation declares a tag; see {@link RootTags}), and {@code
- * x-vertique-validation}, which names the {@code java.util.regex} pattern dialect and, in a
- * protected document only, the validation authority (see {@link ValidationDisclosure}). The single server
- * is the configured server URL of the document, or else the mount path without its trailing {@code
- * /*} ({@code /} for the root mount); it is never inferred from a request. Paths are rendered by
- * {@link RenderedPaths} from each operation's mount-relative JAX-RS template, in natural order, and
- * each operation is keyed by its lowercase method and carries its runtime operation id.
+ * jsonSchemaDialect} (JSON Schema draft 2020-12), {@code servers}, {@code paths}, {@code components}
+ * (only when it holds a schema or a security scheme: {@code schemas} first, then {@code
+ * securitySchemes}, each with its keys in natural order), {@code tags} (only when a published
+ * operation declares a tag; see {@link RootTags}), and {@code x-vertique-validation}, which names the
+ * {@code java.util.regex} pattern dialect and, in a protected document only, the validation authority
+ * (see {@link ValidationDisclosure}). The single server is the configured server URL of the document,
+ * or else the mount path without its trailing {@code /*} ({@code /} for the root mount); it is never
+ * inferred from a request. Paths are rendered by {@link RenderedPaths} from each operation's
+ * mount-relative JAX-RS template, in natural order, and each operation is keyed by its lowercase
+ * method and carries its runtime operation id.
  *
  * <p>The {@code info} is the configured one, else the complete {@code info} of the declaring
  * interface's annotation ({@link AnnotatedInfo}).
@@ -46,8 +47,12 @@ import java.util.SortedMap;
  * against how the runtime binds it ({@link MetadataAgreement}: the operation id, then the request
  * body, the parameters, and the form fields, each input for a contradiction, then for an unresolved
  * reference or a malformed example). Then the tag declarations of every operation are merged in the
- * same order, so a conflicting tag fails before anything is published; then every operation is
- * published, each checked schema once, with its documentation metadata ({@link OperationMetadata}).
+ * same order, so a conflicting tag fails before anything is published; then the security schemes the
+ * operations reference are resolved from the registered handlers' descriptions and rendered ({@link
+ * DocumentSecurityAssembler}), so a referenced scheme with no handler or no description fails before
+ * anything is published; then every operation is published, each checked schema once, with its
+ * documentation metadata ({@link OperationMetadata}) and, as the Operation Object's last member, its
+ * {@code security} when it declares a requirement set. No root {@code security} is written.
  * Inputs the inventory flags hidden are left
  * out before any check reads them, and a {@link DisclosureTally} created for the assembly records
  * whether any was and whether a reserved name was removed from a published request body. The
@@ -59,11 +64,13 @@ import java.util.SortedMap;
  * fails publication warns about nothing: first the extensions of an annotated {@code info} not
  * published for lacking the {@code x-} prefix, once per document; then, per operation, the schema
  * members of its inputs the document does not publish, in one warning, and each requirement on an
- * input whose enforcement the runtime leaves unknown.
+ * input whose enforcement the runtime leaves unknown; last, for a public document, one warning listing
+ * the operations that restrict callers ({@link PublicRestrictionWarning}).
  *
  * <p>Failures are thrown as {@link dev.vertique.rest.core.RestConfigurationException} so that
- * publication fails startup; each message starts with the {@linkplain #subject subject} naming the
- * application, its declaring interface, and its mount.
+ * publication fails startup; each message contains the {@linkplain #subject subject} naming the
+ * application, its declaring interface, and its mount, and the response and security failures start
+ * with the document's configuration path before it.
  */
 final class DocumentAssembler {
 
@@ -118,7 +125,7 @@ final class DocumentAssembler {
             for (OperationPublication operation : item.getValue()) {
                 OperationFacts operationFacts = facts.get(operation.operationId());
                 planned.add(new PlannedOperation(
-                        item.getKey(),
+                        new DocumentSecurityAssembler.LocatedOperation(item.getKey(), operation),
                         RenderedPaths.methodKey(operation),
                         InputAssembler.check(
                                 subject,
@@ -148,14 +155,24 @@ final class DocumentAssembler {
             rootTags.add(operation.plan().operationId(), operation.metadata());
         }
 
+        List<DocumentSecurityAssembler.LocatedOperation> located =
+                planned.stream().map(PlannedOperation::located).toList();
+        SortedMap<String, ObjectNode> securitySchemes = DocumentSecurityAssembler.schemes(
+                "apidocs.documents." + document.name() + ": " + subject, located, context.securitySchemeHandlers());
+        PublicRestrictionWarning.add(document, publication.mountPath(), located, warnings);
+
         ObjectNode paths = NODES.objectNode();
         for (PlannedOperation operation : planned) {
             ObjectNode pathItem = paths.has(operation.path())
                     ? (ObjectNode) paths.get(operation.path())
                     : paths.putObject(operation.path());
-            pathItem.set(
-                    operation.method(),
-                    operation.plan().publish(embedder, operation.metadata(), operation.responses()));
+            ObjectNode published = operation.plan().publish(embedder, operation.metadata(), operation.responses());
+            ArrayNode security =
+                    DocumentSecurityAssembler.security(operation.located().publication());
+            if (security != null) {
+                published.set("security", security);
+            }
+            pathItem.set(operation.method(), published);
         }
 
         ObjectNode root = NODES.objectNode();
@@ -166,10 +183,11 @@ final class DocumentAssembler {
         root.put("jsonSchemaDialect", JSON_SCHEMA_DIALECT);
         root.putArray("servers").addObject().put("url", serverUrl(document, publication));
         root.set("paths", paths);
-        SortedMap<String, JsonNode> schemas = embedder.components();
-        if (!schemas.isEmpty()) {
-            ObjectNode componentSchemas = root.putObject("components").putObject("schemas");
-            schemas.forEach(componentSchemas::set);
+        ObjectNode components = NODES.objectNode();
+        putMembers(components, "schemas", embedder.components());
+        putMembers(components, "securitySchemes", securitySchemes);
+        if (!components.isEmpty()) {
+            root.set("components", components);
         }
         ArrayNode tags = rootTags.render();
         if (tags != null) {
@@ -227,19 +245,33 @@ final class DocumentAssembler {
         return mountPath.isEmpty() ? "/" : mountPath;
     }
 
+    /** Adds the members as an object member of the parent under the name, unless there are none. */
+    private static void putMembers(ObjectNode parent, String name, SortedMap<String, ? extends JsonNode> members) {
+        if (!members.isEmpty()) {
+            ObjectNode member = parent.putObject(name);
+            members.forEach(member::set);
+        }
+    }
+
     /**
      * One operation of the document, checked and waiting to be published.
      *
-     * @param path the rendered path key
+     * @param located the operation's publication with its rendered path key
      * @param method the lowercase method key
      * @param plan the checked plan of its Operation Object
      * @param responses the checked plan of its responses
      * @param metadata the operation's documentation metadata
      */
     private record PlannedOperation(
-            String path,
+            DocumentSecurityAssembler.LocatedOperation located,
             String method,
             InputAssembler.Plan plan,
             ResponseAssembler.ResponsePlan responses,
-            OperationMetadata metadata) {}
+            OperationMetadata metadata) {
+
+        /** Returns the rendered path key. */
+        String path() {
+            return located.path();
+        }
+    }
 }

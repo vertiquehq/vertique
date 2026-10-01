@@ -25,7 +25,9 @@ dialect (see [Document Content](#document-content)). Responses are inferred from
 method's return type or taken from its `@ApiResponse` declarations (see
 [Operation Responses](#operation-responses)). Operations, parameters, request bodies, and responses
 carry the documentation of their Swagger annotations (see
-[Swagger annotations](#swagger-annotations)). It lists no security schemes.
+[Swagger annotations](#swagger-annotations)). Each operation lists the security requirements it
+declares, and `components.securitySchemes` describes exactly the schemes they reference (see
+[Operation Security](#operation-security)).
 
 The module serves documents only. It has no UI, no assets, and no other route, and `@ApiDocs` is not
 API protection: it does not change who may call any operation of the application.
@@ -252,6 +254,8 @@ startup warning is logged, and routes, validation, and schema-source calls are e
 the module. In particular, no request body is checked for a redaction manifest, so a schema source
 that binds none starts and routes unchanged, and no response is inferred, generated, or checked, so
 a renamed or hidden output member or an output type the generator rejects does not affect startup.
+No `SecuritySchemeHandler` is asked for its `openApiDescription()`, so a handler that describes
+nothing starts and guards its routes unchanged.
 The same holds for an application whose own document is disabled while another one is enabled.
 Only two configuration checks still run when `apidocs.enabled` is not `false`: the checks of every `apidocs.documents` entry and the `@ApiDocs`
 shape check of every active application (see [Configuration](#configuration)). With
@@ -284,8 +288,9 @@ The root members are written in this order:
    when present; otherwise the mount path without its trailing `/*`, and `/` for the root mount. It
    is never taken from request headers such as `Host` or `X-Forwarded-*`.
 5. `paths`: one entry per rendered path, keys in natural order.
-6. `components`: `schemas` only, keys in natural order; left out when the document has no
-   component schema.
+6. `components`: `schemas`, then `securitySchemes` (see
+   [Operation Security](#operation-security)), each with its keys in natural order and each left
+   out when empty; `components` itself is left out when both are.
 7. `tags`: one Tag Object per tag a published operation declares with `@Tag`, sorted by name; left
    out when there is none (see [Tags](#tags)).
 8. `x-vertique-validation`: `{"patternDialect": "java.util.regex"}` in a public document (see
@@ -305,7 +310,9 @@ The root members are written in this order:
 - **Operation Object.** `tags`, `summary`, `description`, and `externalDocs`, each only when set
   (see [Swagger annotations](#swagger-annotations)); then `operationId` (the runtime operation id),
   `parameters` (left out when empty), `requestBody` (left out when the operation has none),
-  `responses` (see [Operation Responses](#operation-responses)), and `deprecated` (only `true`).
+  `responses` (see [Operation Responses](#operation-responses)), `deprecated` (only `true`), and
+  last `security`, only when the operation declares a security requirement (see
+  [Operation Security](#operation-security)).
 - **Hidden operations.** A hidden operation is not listed (see
   [Hidden operations](#hidden-operations)).
 
@@ -369,7 +376,8 @@ content is checked:
 
 - **Nothing of it is published.** Its Operation Object, its path item when no visible operation is
   left there, every component keyed by its operation id, and every root tag that only it declared
-  are absent.
+  are absent. It references no security scheme, so a scheme that only hidden operations require is
+  neither published nor asked for its description.
 - **Nothing of it is checked as content.** Its paths, inputs, schemas, redaction manifest, hidden
   members, annotations, tags, examples, return type, and declared responses are neither verified
   nor checked, no output schema is generated for it, and it causes no warning.
@@ -564,8 +572,10 @@ its redaction); the parameter schemas (`propertyNames`, then refused constructs)
 schemas, likewise; then its Swagger annotations (see
 [Agreement with the runtime](#agreement-with-the-runtime)); and then its responses (see
 [Order of the response checks](#order-of-the-response-checks)). Once every operation is checked, the
-`@Tag` declarations of all operations are merged in the same order (see [Tags](#tags)). The first
-violation fails startup. Component key collisions are found as components are published.
+`@Tag` declarations of all operations are merged in the same order (see [Tags](#tags)), and then the
+security schemes the operations reference are resolved (see
+[Operation Security](#operation-security)). The first violation fails startup. Component key
+collisions are found as components are published.
 
 ### Hidden members of a request body
 
@@ -667,6 +677,7 @@ operation fails startup (see [Agreement with the runtime](#agreement-with-the-ru
 | `@Operation.tags` | The operation's `tags` | Listed first, in declared order; see [Tags](#tags) |
 | `@Tag` or `@Tags` on the method or the class | The operation's `tags` and the root `tags` | See [Tags](#tags) |
 | `@Operation.hidden`, `@Hidden` | Nothing: the operation is removed | See [Hidden operations](#hidden-operations) |
+| `@SecurityRequirement`, `@SecurityRequirements`, `@Operation.security` | The operation's `security` | Not read by this module: the requirement sets the runtime resolved and enforces are published; see [Operation Security](#operation-security) |
 | `@Parameter.description` | The Parameter Object's `description` | From the input's first `@Parameter`; when blank, filled from that annotation's `schema.description` |
 | `@Parameter.deprecated` | `deprecated: true` | `true` when `@Parameter.deprecated` or its `schema.deprecated` is `true` |
 | `@Parameter.example` | `example` | Not written when `examples` is; when unset, filled from `schema.example`; see [Examples](#examples) |
@@ -697,7 +708,7 @@ operation fails startup (see [Agreement with the runtime](#agreement-with-the-ru
 - **Not applied and not checked.** Every member the table does not list, among them `@Parameter`
   `style`, `explode`, `allowReserved`, `allowEmptyValue`, and `extensions`; `@Operation`
   `parameters`, `responses` (declare responses with `@ApiResponse` on the method or the class
-  instead), `security`, `servers`, and `extensions`; `@RequestBody.extensions`;
+  instead), `servers`, and `extensions`; `@RequestBody.extensions`;
   the `@Content` members other than `mediaType`, `examples`, `schema`, and `array`; and the
   extensions of `@Tag`, `@ExternalDocumentation`, and `@ExampleObject`. A method-level `@Parameter`
   or `@Parameters` entry is read only to hide an input (see [Hidden inputs](#hidden-inputs)).
@@ -1140,6 +1151,149 @@ Component collisions are found as the document is written, after every operation
 
 ---
 
+## Operation Security
+
+A document states which security schemes its operations require and describes those schemes. It
+publishes what the runtime enforces, never more: the requirement sets come from the operation's
+`@SecurityRequirement`, `@SecurityRequirements`, or `@Operation(security = ...)` exactly as
+`dev.vertique:vertique-rest-jaxrs` resolves them for routing, and each scheme's description comes
+from its `SecuritySchemeHandler`.
+
+### Operation `security`
+
+- **One object per requirement set.** An operation that declares a requirement publishes `security`
+  with one Security Requirement Object per requirement set, in declaration order. Alternatives,
+  such as two repeated `@SecurityRequirement`s, are separate objects.
+- **Scopes as declared.** Each object is keyed by scheme name, and its value lists the
+  requirement's scopes in declaration order, or `[]` when it has none. Those scopes are published,
+  so a public document discloses the scopes its operations require.
+- **Last member.** `security` is the last member of the Operation Object.
+- **Only when declared.** An operation without a requirement has no `security` member, and the
+  document never writes a root `security`.
+
+### What is never published
+
+Roles from `@RolesAllowed`, the scopes of `@Authorized`, `@RequiresAction` actions, `@PermitAll`,
+`@DenyAll`, and checks the application makes in code are not expressible in an OpenAPI document and
+appear nowhere in it. They still restrict callers at runtime. A public document that lists such
+operations logs one warning (see
+[Operations that restrict callers](#operations-that-restrict-callers)).
+
+### `components.securitySchemes`
+
+- **Exactly the referenced schemes.** A scheme is published when a requirement of a published
+  operation names it. Keys are sorted by scheme name.
+- **From the handler.** Each Security Scheme Object is rendered from the
+  `SecuritySchemeDescription` that the scheme's registered handler returns from
+  `openApiDescription()`, asked once per referenced scheme each time the document is assembled.
+- **Unreferenced handlers stay out.** A registered handler whose scheme no published operation
+  references, a scheme only hidden operations require included, is neither published nor asked for
+  its description.
+- **Document access is separate.** `@ApiDocs(securityScheme)` names the scheme that would protect
+  the document routes. It is not an operation requirement and does not by itself enter
+  `securitySchemes`; it appears there only when a published operation also requires the scheme.
+
+Members are written in the Security Scheme Object's field order `type`, `description`, `name`, `in`,
+`scheme`, `bearerFormat`, `flows`, `openIdConnectUrl`; an empty optional field is left out, and
+`description` is written only when the description sets one.
+
+| Description (`dev.vertique.rest.core.security`) | Security Scheme Object |
+|---|---|
+| `Http.of(scheme)` | `{"type":"http","scheme":"<scheme>"}` |
+| `Http.bearer(format)` | `{"type":"http","scheme":"bearer","bearerFormat":"<format>"}`; no `bearerFormat` when `format` is `null` |
+| `ApiKey.header(name)`, `.query(name)`, `.cookie(name)` | `{"type":"apiKey","name":"<name>","in":"header"}`, `"query"`, or `"cookie"` |
+| `OAuth2.of(flows)` | `{"type":"oauth2","flows":{...}}`: the set flows in the order `implicit`, `password`, `clientCredentials`, `authorizationCode`, each with `authorizationUrl`, `tokenUrl`, and `refreshUrl` when set, then `scopes`, always present and sorted by scope name |
+| `OpenIdConnect.of(url)` | `{"type":"openIdConnect","openIdConnectUrl":"<url>"}` |
+| `MutualTls.of()` | `{"type":"mutualTLS"}` |
+
+The JWT handler of `dev.vertique:vertique-rest-auth-jwt` describes its scheme as
+`{"type":"http","scheme":"bearer","bearerFormat":"JWT"}`, under whatever scheme name it is
+configured with.
+
+**Published as supplied.** Descriptions, OAuth2 flow URLs, scope names and scope descriptions, API
+key names, and the OpenID Connect URL are published exactly as the handler supplies them. A
+scheme's OAuth2 flow scopes are published as the handler lists them, including scopes only hidden
+or unpublished operations use, so list only the scopes the document should reveal. This module
+performs no OAuth or OpenID Connect processing and checks no URL. Never put credentials,
+internal hosts, or other secrets in a description.
+
+### Fail-closed publication
+
+Each referenced scheme must be publishable, or the document fails publication and so startup.
+`<prefix>` is as in [Refusals of output types](#refusals-of-output-types), `<METHOD> <path>` names
+the first operation, in document order, that references the scheme, `<path>` is its path key, and
+each message is one line, wrapped here for reading:
+
+```text
+<prefix>: operation '<id>' (<METHOD> <path>) requires security scheme '<scheme>', whose
+SecuritySchemeHandler provides no OpenAPI description; return one from openApiDescription() or
+disable the document
+```
+
+- **No description.** The message above. Fix it by returning a description from the handler's
+  `openApiDescription()`, or set `apidocs.documents.<name>.enabled: false`.
+- **No registered handler.** The same start, ending `, but no SecuritySchemeHandler is registered
+  for it`. In a deployment the route registration of `vertique-rest-jaxrs` already refuses such an
+  operation, before any document is assembled.
+- **More than one handler provides the scheme.** The same start, ending `, which more than one
+  SecuritySchemeHandler provides: <class names>; each security scheme must be provided by exactly
+  one handler`, with the binary class names sorted. Neither of the scheme's handlers is asked for a
+  description. Fix it by providing each scheme from exactly one handler: put the description on the enforcing handler.
+- **A kind this module does not know.** The same start, ending `, whose SecuritySchemeHandler
+  describes it as <class name>, a kind of security scheme this documentation module cannot
+  publish`, naming the description's class.
+
+No message echoes description content or a configuration value. With no enabled document no
+handler is asked for a description, so none of these checks runs (see
+[Nothing is built without an enabled document](#nothing-is-built-without-an-enabled-document)).
+
+### Example
+
+With the JWT handler configured as `bearerAuth` and a handler `apiKeyAuth` describing
+`ApiKey.header("X-Api-Key")`:
+
+```java
+@Path("/orders")
+public class OrderResource {
+    @GET @Path("/read") @Produces(MediaType.TEXT_PLAIN)
+    @SecurityRequirement(name = "bearerAuth", scopes = "orders.read")
+    public String readOrder() { return "order"; }
+
+    @GET @Path("/search") @Produces(MediaType.TEXT_PLAIN)
+    @SecurityRequirement(name = "bearerAuth")
+    @SecurityRequirement(name = "apiKeyAuth")
+    public String searchOrders() { return "found"; }
+
+    @GET @Path("/admin") @Produces(MediaType.TEXT_PLAIN)
+    @SecurityRequirement(name = "bearerAuth")
+    @RolesAllowed("order-admin")
+    public String adminOrders() { return "admin"; }
+}
+```
+
+The document holds (wrapped here for reading; other members left out):
+
+```json
+"paths":{
+"/orders/admin":{"get":{"operationId":"adminOrders",
+"responses":{"200":{"description":"OK","content":{"text/plain":{}}}},
+"security":[{"bearerAuth":[]}]}},
+"/orders/read":{"get":{"operationId":"readOrder",
+"responses":{"200":{"description":"OK","content":{"text/plain":{}}}},
+"security":[{"bearerAuth":["orders.read"]}]}},
+"/orders/search":{"get":{"operationId":"searchOrders",
+"responses":{"200":{"description":"OK","content":{"text/plain":{}}}},
+"security":[{"bearerAuth":[]},{"apiKeyAuth":[]}]}}},
+"components":{"securitySchemes":{
+"apiKeyAuth":{"type":"apiKey","name":"X-Api-Key","in":"header"},
+"bearerAuth":{"type":"http","scheme":"bearer","bearerFormat":"JWT"}}}
+```
+
+The role `order-admin` appears nowhere in the document, while `adminOrders` still refuses a caller
+without it.
+
+---
+
 ## Key Classes
 
 ### ApiDocs
@@ -1373,6 +1527,12 @@ its own, from its annotation or its configuration, is not refused by this check.
 has not checked it, which happens when the `HttpVerticle` is built without composition validators, such
 as with its public five-argument constructor or by a subclass. Obtain the `HttpVerticle` from Dagger.
 
+**Referenced security schemes.** While a document is assembled, every security scheme a published
+operation requires must have a registered `SecuritySchemeHandler` whose `openApiDescription()`
+returns a description of a kind this module renders; otherwise the document fails naming the
+scheme and the first operation that requires it (see
+[Fail-closed publication](#fail-closed-publication)).
+
 The sink checks run for every JAX-RS mount of the composition, documented or not, in the order reserved
 ids, route collisions, shared contract. The first check with a violation fails the mount, listing all of
 that check's violations.
@@ -1455,6 +1615,31 @@ cause none.
 
 Each message is one line; it is wrapped here for reading.
 
+### Operations that restrict callers
+
+A `PUBLIC` document is served without authentication, so it shows anyone what its restricted
+operations accept. When it lists any published operation that restricts callers, one warning names
+them all:
+
+```text
+apidocs.documents.<name>: the public document of application '<name>' at mount '<mount path>' lists
+operations that restrict callers, and it is served without authentication: <entries>
+```
+
+- **What restricts callers.** A restrictive effective policy (`@RolesAllowed`, `@Authorized`, or
+  `@DenyAll`), any security requirement, or a required `@RequiresAction` action.
+- **Entries.** Each such operation as `<METHOD> <path> (<operationId>)`, joined by `, `, in
+  document order (path keys in natural order, then methods), for example
+  `GET /admin (adminReport), GET /scopeless (scopelessGet)`. Hidden operations are not listed.
+- **Names nothing secret.** The warning names no role, scope, action, or claim.
+- **Annotation-declared only.** The warning sees only restrictions declared by annotation:
+  security annotations, requirement sets, and required actions. Access checks added by router
+  hooks, middleware, or interceptors are not detected.
+- **Publication proceeds.** The document is served as usual.
+- **When.** Held back like the metadata warnings and logged last, after every other warning of the
+  document, only once the document is written; once per document and component. A protected
+  document never logs it, nor does a public document whose operations restrict no caller.
+
 ---
 
 ## Failures, Constraints, and Common Mistakes
@@ -1466,7 +1651,8 @@ values, schema text, references, pattern text, redaction locations, reserved nam
 values. Messages about the document's content name operation ids, rendered paths, input names,
 component keys, tag names, annotation attributes, the class of the bound schema source, the
 declaring type and member of a hidden member, response statuses and header names, and the declaring
-type, member, serialized name, and schema name of a renamed output member. Two quote what the
+type, member, serialized name, and schema name of a renamed output member, and security scheme
+names with the method and path key of the operation requiring them. Two quote what the
 developer declared: an invalid response status is quoted as declared, and a renamed output member's
 names are quoted.
 
@@ -1514,6 +1700,10 @@ names are quoted.
 | A published output type describes a member or type carrying `@Hidden` or a `@Schema(hidden = true)` the output generator ignores | `RestConfigurationException` with the `apidocs.documents.<name>: ` start, naming the operation, the status, the member or type, its marker, and the fix |
 | A generated output schema holds a refused construct | `RestConfigurationException` with the same start, naming the operation, the output schema and its status, the construct, and the JSON Pointer |
 | Two components of a document would have the same key | `RestConfigurationException` with the same start, naming the input or output of both components and the key; when either is a relocated definition, it says `one component` instead of the key, and states that component keys replace every character outside `[A-Za-z0-9._-]` with `_` |
+| A published operation requires a security scheme whose registered handler returns no `openApiDescription()` (see [Fail-closed publication](#fail-closed-publication)) | `RestConfigurationException` with the `apidocs.documents.<name>: ` start, naming the first operation requiring it by id, method, and path key, and the scheme, and stating the fix; no description content or configuration value |
+| A published operation requires a security scheme no registered handler provides | `RestConfigurationException` with the same start, naming the operation and the scheme; in a deployment the route registration refuses the operation first |
+| A published operation requires a security scheme that more than one registered handler provides | `RestConfigurationException` with the same start, naming the operation, the scheme, and the handlers' binary class names, sorted; provide the scheme from exactly one handler |
+| A referenced scheme's handler returns a description of a kind this module does not know | `RestConfigurationException` with the same start, naming the operation, the scheme, and the description's class |
 | A later server instance publishes a different mount or operation than the stored document | `RestConfigurationException` naming the application, its declaring interface, its mount path, and the first differing operation id |
 | A mount of a documented application is built outside a Vert.x context | `RestConfigurationException` naming the application |
 
@@ -1537,8 +1727,18 @@ and its message can quote that value.
   access is declared by `@ApiDocs` in code.
 - **Mounting a JAX-RS mount or a catch-all route under the prefix.** It fails startup. Choose another
   `apidocs.path`, or move, narrow, or remove the mount or route.
-- **Expecting security schemes in the document.** A document describes operations, their inputs,
-  and their responses only.
+- **A security handler without a description.** A published operation requiring a scheme whose
+  handler returns no `openApiDescription()` fails startup; return a description, or disable the
+  document.
+- **Expecting roles or actions in the document.** `@RolesAllowed` roles, `@RequiresAction` actions,
+  `@PermitAll`, `@DenyAll`, and application checks are never published; only security requirements
+  and their scopes are. A public document listing restricted operations logs a warning instead.
+- **Expecting an unreferenced scheme to be published.** `securitySchemes` holds only the schemes a
+  published operation requires; a registered handler nothing references, or only hidden operations
+  reference, is left out.
+- **Putting credentials or internal hosts in a scheme description.** Descriptions, OAuth2 flow URLs,
+  scope names and descriptions, API key names, and the OpenID Connect URL are published exactly as
+  the handler supplies them and are not checked.
 - **Expecting a response for `Response`, `CompletionStage`, or a producer-bound type.** Their content
   is decided at runtime, so they publish `default` only; declare the responses with `@ApiResponse`.
   Return `Future<T>` instead of `CompletionStage<T>` to have `T` inferred.
@@ -1666,7 +1866,7 @@ decides which return types publish `default`, and the `JsonMapperProfileRegistry
 | Module | Why |
 |---|---|
 | `dev.vertique:vertique-rest-jaxrs` | The declared-application view, the operation publication seam the module consumes, and the `ApiDocsInstalled` marker |
-| `dev.vertique:vertique-rest-core` | `RouterMount`, `MountMeta`, the extension phases, `JaxRsConfig` default headers, `ResponseProducerBinding`, and `RestConfigurationException` |
+| `dev.vertique:vertique-rest-core` | `RouterMount`, `MountMeta`, the extension phases, `JaxRsConfig` default headers, `ResponseProducerBinding`, `SecuritySchemeHandler` and `SecuritySchemeDescription` (rendered as `securitySchemes`), and `RestConfigurationException` |
 | `dev.vertique:vertique-core` | `ConfigParser`, configuration path navigation, `ConfigurationException`, `@KeyedBy`, and `JsonMapperProfileRegistry` |
 | `dev.vertique:vertique-json-schema` | The redaction manifest each published request body is verified against and redacted by, and whose digest is part of the comparison between instances; the input generator that reports hidden members of a request body; the output generator that describes response types and reports their renamed and hidden members |
 | `io.vertx:vertx-json-schema` | Compile dependency; evaluates whether a captured request-body schema accepts an absent body, which decides the request body's `required` |
@@ -1726,3 +1926,11 @@ adds no route beyond the document URLs. It is not part of any starter.
   startup to succeed.
 - Add `links` to a declared `@ApiResponse`: expect it in neither form of the document and one
   `DocumentWarnings` warning naming `@ApiResponse.links on status <status>`.
+- Put `@SecurityRequirement(name = "bearerAuth")` and `@RolesAllowed(...)` on an operation of a
+  public document, with the JWT handler configured as `bearerAuth`: expect the operation's last
+  member `"security":[{"bearerAuth":[]}]`, `components.securitySchemes.bearerAuth` as
+  `{"type":"http","scheme":"bearer","bearerFormat":"JWT"}`, the role in neither form, and one
+  `DocumentWarnings` warning listing the operation.
+- Require a scheme whose handler returns no `openApiDescription()`: expect startup to fail naming
+  the operation and the scheme; set `apidocs.documents.<name>.enabled: false` and expect startup to
+  succeed with the route still refusing unauthenticated requests.

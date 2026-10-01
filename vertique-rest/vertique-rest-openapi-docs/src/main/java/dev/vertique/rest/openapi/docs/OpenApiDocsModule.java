@@ -77,6 +77,7 @@ public abstract class OpenApiDocsModule {
      * @param profiles the JSON mapper profile registry
      * @param warnings the documentation module's warnings of the component
      * @param producerBindings the registered response producer bindings
+     * @param securitySchemeHandlers the registered security scheme handlers
      * @return the sink, or an empty set when no document is enabled
      */
     @Provides
@@ -90,7 +91,8 @@ public abstract class OpenApiDocsModule {
             Optional<OperationSchemaSource> schemaSource,
             JsonMapperProfileRegistry profiles,
             DocumentWarnings warnings,
-            Set<ResponseProducerBinding<?>> producerBindings) {
+            Set<ResponseProducerBinding<?>> producerBindings,
+            Set<SecuritySchemeHandler> securitySchemeHandlers) {
         if (documents.isEmpty()) {
             return Set.of();
         }
@@ -100,7 +102,7 @@ public abstract class OpenApiDocsModule {
                 apidocsConfig.path(),
                 strategies,
                 applications,
-                new AssemblyContext(schemaSource, profiles, warnings, producerBindings)));
+                new AssemblyContext(schemaSource, profiles, warnings, producerBindings, securitySchemeHandlers)));
     }
 
     /**
