@@ -69,9 +69,67 @@ public class OpenApiDocsServingIT {
 
     private static final String HOST = "127.0.0.1";
 
-    /** The exact bytes the {@code public} document's JSON form must have under the shared configuration. */
-    private static final String EXPECTED_JSON =
-            "{\"openapi\":\"3.1.1\",\"info\":{\"title\":\"Catalog\",\"version\":\"1.0\"},\"paths\":{}}";
+    /**
+     * The exact bytes the {@code public} document's JSON form must have under the shared configuration.
+     *
+     * <p>Each member, and the rule it follows (compact JSON, members in the writer's fixed order):
+     *
+     * <ul>
+     *   <li>Root members in the order {@code openapi}, {@code info}, {@code jsonSchemaDialect},
+     *       {@code servers}, {@code paths}, {@code components}, {@code x-vertique-validation}.
+     *   <li>{@code info}: the configured title and version; no description is configured.
+     *   <li>{@code jsonSchemaDialect}: every document declares JSON Schema draft 2020-12.
+     *   <li>{@code servers}: no server URL is configured, so the one entry is the mount path
+     *       {@code /api/public/*} without its {@code /*}.
+     *   <li>{@code paths}: one key per route template relative to the mount, in natural string order
+     *       ({@code /items} before {@code /items/{id}}); within a path, methods in the order get,
+     *       put, post, delete, options, head, patch, trace; each operation lists {@code operationId}
+     *       (the runtime id, the method name), then {@code parameters} (left out when empty), then
+     *       {@code requestBody} (left out when the operation has no body). Summaries, tags, and
+     *       responses are not part of this document yet.
+     *   <li>Parameters in declaration order, each as {@code name}, {@code in} (lowercase location),
+     *       {@code required} (only {@code true}, only for an input that is certainly required),
+     *       {@code schema}. No parameter carries a description annotation.
+     *   <li>{@code limit}: a boxed query parameter with no constraint is not required, so no
+     *       {@code required} key; its schema is the one the schema source captured for it, published
+     *       unchanged: {@code {"type":"integer"}}.
+     *   <li>{@code id}: a path parameter is always required; captured schema
+     *       {@code {"type":"string"}}.
+     *   <li>{@code dryRun}: a primitive query parameter without a default is of unknown requiredness,
+     *       so no {@code required} key; it is the first declared parameter of its operation, so the
+     *       schema source captured {@code {"type":"boolean"}} for it.
+     *   <li>{@code createItem}'s request body: one media type per consumed type
+     *       ({@code application/json}), each referencing the component
+     *       {@code createItem.request}; no {@code required} key, because the {@code none} strategy
+     *       installs no validation gate.
+     *   <li>{@code components.schemas}: keys in natural order; {@code createItem.request} is the
+     *       captured body schema published unchanged (it has no local definitions to relocate and no
+     *       references to rewrite): the input-direction description of {@code CreateItemRequest}
+     *       under the default profile, with its root {@code $schema} and its keys in canonical order.
+     *   <li>{@code x-vertique-validation}: every document records the pattern dialect
+     *       {@code java.util.regex}; a public document records nothing else there.
+     * </ul>
+     */
+    private static final String EXPECTED_JSON = "{\"openapi\":\"3.1.1\","
+            + "\"info\":{\"title\":\"Catalog\",\"version\":\"1.0\"},"
+            + "\"jsonSchemaDialect\":\"https://json-schema.org/draft/2020-12/schema\","
+            + "\"servers\":[{\"url\":\"/api/public\"}],"
+            + "\"paths\":{"
+            + "\"/items\":{"
+            + "\"get\":{\"operationId\":\"listItems\","
+            + "\"parameters\":[{\"name\":\"limit\",\"in\":\"query\",\"schema\":{\"type\":\"integer\"}}]},"
+            + "\"post\":{\"operationId\":\"createItem\","
+            + "\"parameters\":[{\"name\":\"dryRun\",\"in\":\"query\",\"schema\":{\"type\":\"boolean\"}}],"
+            + "\"requestBody\":{\"content\":{\"application/json\":"
+            + "{\"schema\":{\"$ref\":\"#/components/schemas/createItem.request\"}}}}}},"
+            + "\"/items/{id}\":{"
+            + "\"get\":{\"operationId\":\"getItem\","
+            + "\"parameters\":[{\"name\":\"id\",\"in\":\"path\",\"required\":true,\"schema\":{\"type\":\"string\"}}]}}},"
+            + "\"components\":{\"schemas\":{"
+            + "\"createItem.request\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\","
+            + "\"properties\":{\"name\":{\"type\":\"string\"},\"quantity\":{\"type\":\"integer\"}},"
+            + "\"type\":\"object\"}}},"
+            + "\"x-vertique-validation\":{\"patternDialect\":\"java.util.regex\"}}";
 
     private static final String JSON_URL = "/apidocs/public/openapi.json";
     private static final String YAML_URL = "/apidocs/public/openapi.yaml";
