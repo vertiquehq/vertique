@@ -103,6 +103,7 @@ final class DocumentAssembler {
         SchemaEmbedder embedder = new SchemaEmbedder(subject);
         DisclosureTally tally = new DisclosureTally();
         InputGenerators generators = new InputGenerators(context.profiles());
+        OutputGenerators outputGenerators = new OutputGenerators(context.profiles());
         ValidationDisclosure disclosure = new ValidationDisclosure(document.access(), publication.strategyId());
         PendingWarnings warnings = new PendingWarnings(document.name());
         AnnotatedInfo annotatedInfo = document.annotatedInfo();
@@ -129,6 +130,15 @@ final class DocumentAssembler {
                                 generators,
                                 disclosure.marksInputs(),
                                 agreement),
+                        ResponseAssembler.check(
+                                subject,
+                                document,
+                                publication,
+                                operation,
+                                operationFacts,
+                                context,
+                                outputGenerators,
+                                warnings),
                         OperationMetadata.of(operationFacts)));
             }
         }
@@ -143,7 +153,9 @@ final class DocumentAssembler {
             ObjectNode pathItem = paths.has(operation.path())
                     ? (ObjectNode) paths.get(operation.path())
                     : paths.putObject(operation.path());
-            pathItem.set(operation.method(), operation.plan().publish(embedder, operation.metadata()));
+            pathItem.set(
+                    operation.method(),
+                    operation.plan().publish(embedder, operation.metadata(), operation.responses()));
         }
 
         ObjectNode root = NODES.objectNode();
@@ -221,7 +233,13 @@ final class DocumentAssembler {
      * @param path the rendered path key
      * @param method the lowercase method key
      * @param plan the checked plan of its Operation Object
+     * @param responses the checked plan of its responses
      * @param metadata the operation's documentation metadata
      */
-    private record PlannedOperation(String path, String method, InputAssembler.Plan plan, OperationMetadata metadata) {}
+    private record PlannedOperation(
+            String path,
+            String method,
+            InputAssembler.Plan plan,
+            ResponseAssembler.ResponsePlan responses,
+            OperationMetadata metadata) {}
 }
