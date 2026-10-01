@@ -826,7 +826,9 @@ The rules apply in this order, the first match winning:
 2. **Type variables.** Every type variable of the return type is resolved (see
    [Type variables](#type-variables)); then exactly one level of `io.vertx.core.Future` is
    unwrapped, so `Future<Response>` classifies as `Response` and `Future<String>` as `String`. A raw
-   `Future` without a type argument is decided at runtime.
+   `Future` without a type argument is decided at runtime, and so is a subtype of `Future` (for
+   example `interface MyFuture<T> extends Future<T>`): only `io.vertx.core.Future` itself is
+   unwrapped, so a subtype publishes the runtime-determined `default` response with no content.
 3. **Still open.** A type that still holds a type variable or a wildcard is decided at runtime and
    is never handed to the generator.
 4. **Handled by the runtime.** `Response`, `CompletionStage`, `ReadStream`, `Buffer`, and their

@@ -93,8 +93,8 @@ final class ResponseInference {
      *
      * <p>A method returning {@code void}, {@code Void}, or {@code Future<Void>} produces no content.
      * Otherwise every type variable of the return type is resolved against the generic supertypes
-     * of the resource class, one level of {@code Future} is unwrapped, and the resulting type is
-     * classified: a type still holding a type variable or wildcard, a type the runtime turns into a
+     * of the resource class, one level of {@code io.vertx.core.Future} itself is unwrapped (a subtype
+     * of {@code Future} is decided at runtime), and the resulting type is classified: a type still holding a type variable or wildcard, a type the runtime turns into a
      * response itself ({@code Response}, {@code CompletionStage}, {@code Optional}, {@code
      * ReadStream}, {@code Buffer}, {@code byte[]}, or a type with a registered response producer)
      * is decided at runtime; a {@code String} is raw text under every declared media type; an
@@ -115,6 +115,8 @@ final class ResponseInference {
                 return RUNTIME;
             }
             type = future.getActualTypeArguments()[0];
+        } else if (rawClass(type) != null && Future.class.isAssignableFrom(rawClass(type))) {
+            return RUNTIME;
         }
         if (isOpen(type)) {
             return RUNTIME;
