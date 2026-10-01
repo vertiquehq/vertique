@@ -422,6 +422,65 @@ class HiddenInputOmissionTest {
         assertAbsent(rendering, "blobZx");
     }
 
+    /**
+     * A form operation that declares no consumed media type picks its default from the file parts it
+     * publishes: a hidden file part must not make the body multipart, while the same file part
+     * visible does.
+     */
+    @Test
+    @DisplayName("A hidden file part does not make a form body without consumed media types multipart")
+    void hiddenFilePartDoesNotChooseTheFormMediaType() {
+        // Given a form operation with no consumed media type, a visible field 'titleZx', and a named
+        // file part 'attachmentZx' that is flagged hidden; and the same operation with it visible
+        Supplier<Publications.Built> source = () -> mount().operation("POST", "/forms", "submitFormZx")
+                .formField("titleZx")
+                .namedFilePart("attachmentZx")
+                .build();
+        Publications.Built hidden = DisclosurePublications.from(source.get())
+                .hidden("submitFormZx", ParamLocation.FORM, "attachmentZx")
+                .build();
+        Publications.Built visible = source.get();
+        assertHiddenInInventory(hidden, "submitFormZx", ParamLocation.FORM, "attachmentZx");
+        assertEquals(
+                List.of("attachmentZx"),
+                DisclosureDocuments.facts(hidden).get("submitFormZx").namedFileParts());
+        assertFalse(binding(visible, "submitFormZx", ParamLocation.FORM, "attachmentZx")
+                .hidden());
+
+        // When the hidden case is assembled for the public and the protected document
+        List<DisclosureDocuments.Rendering> renderings = List.of(
+                DisclosureDocuments.renderPublic(hidden, DisclosureDocuments.noSource()),
+                DisclosureDocuments.renderProtected(hidden, DisclosureDocuments.noSource()));
+
+        // Then the body is URL-encoded only, lists only the visible field, and names no file part
+        for (DisclosureDocuments.Rendering rendering : renderings) {
+            for (JsonNode tree : List.of(rendering.jsonTree(), rendering.yamlTree())) {
+                JsonNode content = operation(tree, "/forms", "post")
+                        .path("requestBody")
+                        .path("content");
+                assertEquals(Set.of("application/x-www-form-urlencoded"), fieldNames(content), content::toString);
+                assertEquals(
+                        Set.of("titleZx"),
+                        fieldNames(content.path("application/x-www-form-urlencoded")
+                                .path("schema")
+                                .path("properties")),
+                        content::toString);
+            }
+            assertAbsent(rendering, "attachmentZx");
+            assertAbsent(rendering, "multipart");
+        }
+
+        // and the control, with the file part visible, publishes multipart
+        DisclosureDocuments.Rendering control =
+                DisclosureDocuments.renderPublic(visible, DisclosureDocuments.noSource());
+        for (JsonNode tree : List.of(control.jsonTree(), control.yamlTree())) {
+            JsonNode content = operation(tree, "/forms", "post")
+                    .path("requestBody")
+                    .path("content");
+            assertEquals(Set.of("multipart/form-data"), fieldNames(content), content::toString);
+        }
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Shared helpers
     // ---------------------------------------------------------------------------------------------
