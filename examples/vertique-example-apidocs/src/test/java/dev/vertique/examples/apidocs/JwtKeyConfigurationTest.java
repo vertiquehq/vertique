@@ -78,6 +78,30 @@ class JwtKeyConfigurationTest {
         // Then: the token is accepted
         assertEquals("ada", user.principal().getString("sub"), "the minted token's subject");
 
+        // Given: a flat top-level "jwt.hs256Key" entry and no jwt section
+        String flatKey = keyOfLength(40);
+        JsonObject flatKeyConfig = new JsonObject().put("jwt.hs256Key", flatKey);
+
+        // When: a token minted with the flat key is authenticated by the provider for that configuration
+        JWTAuth flatProvider = AppModule.jwtAuth(vertx, flatKeyConfig);
+        String flatToken = JwtAuthFactory.fromSymmetricKey(vertx, "HS256", flatKey)
+                .generateToken(new JsonObject().put("sub", "grace"));
+        User flatUser = flatProvider
+                .authenticate(new TokenCredentials(flatToken))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .get(10, TimeUnit.SECONDS);
+
+        // Then: the token is accepted
+        assertEquals("grace", flatUser.principal().getString("sub"), "the flat-key token's subject");
+
+        // Given: a short flat top-level key beside a valid nested jwt.hs256Key
+        String shortFlatKey = keyOfLength(31);
+        JsonObject shortFlatBesideNested = withKey(minimalKey).put("jwt.hs256Key", shortFlatKey);
+
+        // When / Then: the flat key takes precedence, so the configuration is refused without echoing it
+        assertRefused(shortFlatBesideNested, shortFlatKey);
+
         // Then: the shipped configuration supplies no key
         assertFalse(
                 TestConfiguration.shippedText().contains("hs256Key"),

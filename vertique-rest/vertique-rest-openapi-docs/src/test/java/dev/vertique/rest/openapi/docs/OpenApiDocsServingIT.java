@@ -338,6 +338,36 @@ public class OpenApiDocsServingIT {
         }
     }
 
+    @Test
+    @DisplayName(
+            "With no other mount under the prefix, POST on a known document URL ends in the router's 405, and on an unknown document URL in 404")
+    void otherMethodsOnADocumentUrlEndInTheRoutersMethodNotAllowed() throws Exception {
+        // Given: the shared declarations and the documentation mount, with no mount after it
+        DocsTestComponents.WithoutMarkerMountComponent component =
+                DaggerDocsTestComponents_WithoutMarkerMountComponent.factory().create(DocsConfigs.shared());
+
+        Deployment deployment = deploy(component::httpVerticle);
+        try {
+            int port = deployment.port();
+
+            // When: a known document URL is posted to
+            HttpResponse<Buffer> known = send(HttpMethod.POST, port, "/apidocs/public/openapi.json", null);
+
+            // Then: the router's method mismatch answers 405, and the documentation mount serves nothing
+            assertEquals(405, known.statusCode(), "POST /apidocs/public/openapi.json must end in the router's 405");
+            assertNull(known.getHeader("ETag"), "POST /apidocs/public/openapi.json must carry no document ETag");
+
+            // When: an unknown document URL is posted to
+            HttpResponse<Buffer> unknown = send(HttpMethod.POST, port, "/apidocs/unknown/openapi.json", null);
+
+            // Then: no route matches its path, so it answers 404
+            assertEquals(404, unknown.statusCode(), "POST /apidocs/unknown/openapi.json must answer 404");
+            assertNull(unknown.getHeader("ETag"), "POST /apidocs/unknown/openapi.json must carry no document ETag");
+        } finally {
+            undeploy(deployment);
+        }
+    }
+
     /**
      * The seven default-headers variants: the variant's name, how it fills
      * {@code jaxrs.defaultHeaders} ({@code null} when the section is absent), the {@code Cache-Control} every document response must carry, and

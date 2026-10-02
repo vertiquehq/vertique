@@ -202,6 +202,13 @@ public class ApiDocsUiIT {
         // Then: each answers its expected status
         assertEquals(List.of(), mismatches, "answers under /apidocs");
 
+        // When: the page is requested with HEAD
+        Response head = given().when().head(UI_PAGE);
+
+        // Then: it answers 200 like GET, with no body
+        assertEquals(200, head.statusCode(), "HEAD " + UI_PAGE + " must answer 200 like GET");
+        assertEquals(0, head.asByteArray().length, "HEAD " + UI_PAGE + " must answer with no body");
+
         // Then: neither preview OpenAPI routing library is on the class path
         ClassLoader loader = ApiDocsUiIT.class.getClassLoader();
         assertAll(
