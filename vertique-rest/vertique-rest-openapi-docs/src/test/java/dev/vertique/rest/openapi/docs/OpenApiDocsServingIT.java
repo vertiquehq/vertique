@@ -340,7 +340,7 @@ public class OpenApiDocsServingIT {
 
     @Test
     @DisplayName(
-            "With no other mount under the prefix, POST on a known document URL ends in the router's 405, and on an unknown document URL in 404")
+            "With no other mount under the prefix, POST on a known document URL and on its trailing-slash variant ends in the router's 405 allowing exactly GET and HEAD, and on an unknown document URL in 404")
     void otherMethodsOnADocumentUrlEndInTheRoutersMethodNotAllowed() throws Exception {
         // Given: the shared declarations and the documentation mount, with no mount after it
         DocsTestComponents.WithoutMarkerMountComponent component =
@@ -355,7 +355,22 @@ public class OpenApiDocsServingIT {
 
             // Then: the router's method mismatch answers 405, and the documentation mount serves nothing
             assertEquals(405, known.statusCode(), "POST /apidocs/public/openapi.json must end in the router's 405");
+            assertAllowsExactlyGetAndHead(known, "POST /apidocs/public/openapi.json");
             assertNull(known.getHeader("ETag"), "POST /apidocs/public/openapi.json must carry no document ETag");
+
+            // When: the trailing-slash variant of a known document URL is posted to
+            HttpResponse<Buffer> knownTrailingSlash =
+                    send(HttpMethod.POST, port, "/apidocs/public/openapi.json/", null);
+
+            // Then: the document route still matches its path but not its method, so the router answers 405
+            assertEquals(
+                    405,
+                    knownTrailingSlash.statusCode(),
+                    "POST /apidocs/public/openapi.json/ must end in the router's 405");
+            assertAllowsExactlyGetAndHead(knownTrailingSlash, "POST /apidocs/public/openapi.json/");
+            assertNull(
+                    knownTrailingSlash.getHeader("ETag"),
+                    "POST /apidocs/public/openapi.json/ must carry no document ETag");
 
             // When: an unknown document URL is posted to
             HttpResponse<Buffer> unknown = send(HttpMethod.POST, port, "/apidocs/unknown/openapi.json", null);
@@ -487,6 +502,16 @@ public class OpenApiDocsServingIT {
         assertEquals(
                 get.getHeader("Content-Length"), head.getHeader("Content-Length"), "HEAD carries GET's Content-Length");
         assertEquals(0, bodyBytes(head).length, "HEAD sends no body");
+    }
+
+    private static void assertAllowsExactlyGetAndHead(HttpResponse<Buffer> response, String request) {
+        List<String> allow = response.headers().getAll("Allow");
+        assertFalse(allow.isEmpty(), () -> request + " must carry an Allow header");
+        Set<String> methods = Set.copyOf(allow.stream()
+                .flatMap(value -> Stream.of(value.split(",")))
+                .map(String::trim)
+                .toList());
+        assertEquals(Set.of("GET", "HEAD"), methods, () -> request + " must allow exactly GET and HEAD: " + allow);
     }
 
     /**
