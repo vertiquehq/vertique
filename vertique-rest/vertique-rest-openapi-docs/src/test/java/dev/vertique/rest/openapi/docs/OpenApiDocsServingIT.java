@@ -297,6 +297,47 @@ public class OpenApiDocsServingIT {
         }
     }
 
+    @Test
+    @DisplayName(
+            "With no other mount under the prefix, GET and HEAD on a document URL with a trailing slash fall through to the router's 404, not 405, while the exact URLs still answer 200")
+    void trailingSlashDocumentUrlsFallThroughToNotFound() throws Exception {
+        // Given: the shared declarations and the documentation mount, with no mount after it
+        DocsTestComponents.WithoutMarkerMountComponent component =
+                DaggerDocsTestComponents_WithoutMarkerMountComponent.factory().create(DocsConfigs.shared());
+
+        Deployment deployment = deploy(component::httpVerticle);
+        try {
+            int port = deployment.port();
+
+            // When / Then: the exact document URLs are answered by the documentation mount
+            List<Request> exact = List.of(
+                    new Request(HttpMethod.GET, "/apidocs/public/openapi.json"),
+                    new Request(HttpMethod.HEAD, "/apidocs/public/openapi.json"),
+                    new Request(HttpMethod.GET, "/apidocs/public/openapi.yaml"),
+                    new Request(HttpMethod.HEAD, "/apidocs/public/openapi.yaml"));
+            for (Request request : exact) {
+                HttpResponse<Buffer> response = send(request.method(), port, request.uri(), null);
+                assertEquals(200, response.statusCode(), () -> request + " must answer 200");
+                assertNotNull(response.getHeader("ETag"), () -> request + " must carry the document's ETag");
+            }
+
+            // When / Then: each trailing-slash variant falls through to the router's own 404
+            List<Request> trailingSlash = List.of(
+                    new Request(HttpMethod.GET, "/apidocs/public/openapi.json/"),
+                    new Request(HttpMethod.HEAD, "/apidocs/public/openapi.json/"),
+                    new Request(HttpMethod.GET, "/apidocs/public/openapi.yaml/"),
+                    new Request(HttpMethod.HEAD, "/apidocs/public/openapi.yaml/"));
+            for (Request request : trailingSlash) {
+                HttpResponse<Buffer> response = send(request.method(), port, request.uri(), null);
+                assertEquals(404, response.statusCode(), () -> request + " must fall through to 404");
+                assertNull(response.getHeader("Allow"), () -> request + " must carry no Allow header");
+                assertNull(response.getHeader("ETag"), () -> request + " must carry no document ETag");
+            }
+        } finally {
+            undeploy(deployment);
+        }
+    }
+
     /**
      * The seven default-headers variants: the variant's name, how it fills
      * {@code jaxrs.defaultHeaders} ({@code null} when the section is absent), the {@code Cache-Control} every document response must carry, and

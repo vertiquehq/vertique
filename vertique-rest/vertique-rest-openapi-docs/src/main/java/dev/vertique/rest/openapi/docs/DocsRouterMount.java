@@ -277,9 +277,13 @@ final class DocsRouterMount implements RouterMount {
             Function<PublishedDocument, String> tag) {
         String relativePath = "/" + name + "/" + file;
         String exactPath = prefix + relativePath;
-        for (HttpMethod method : List.of(HttpMethod.GET, HttpMethod.HEAD)) {
-            router.route(method, relativePath).handler(ctx -> serve(ctx, name, exactPath, contentType, bytes, tag));
-        }
+        // One route for both methods: with a route per method, a request the first route passes on
+        // would match the other route's path but not its method, and end with 405 instead of
+        // continuing to the later mounts.
+        router.route(relativePath)
+                .method(HttpMethod.GET)
+                .method(HttpMethod.HEAD)
+                .handler(ctx -> serve(ctx, name, exactPath, contentType, bytes, tag));
     }
 
     private void serve(
