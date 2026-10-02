@@ -564,7 +564,7 @@ violation found is reported in one `RestConfigurationException`, sorted and join
 | The root is not an object, or `openapi` is not a string `3.0.<n>` or `3.1.<n>`; OpenAPI 3.2 is not accepted, nor a version without its patch number. A file refused here reports that one violation only and is checked no further | `the document root must be OpenAPI 3.0 or 3.1, and it is not an object`, or `member /openapi must be OpenAPI 3.0 or 3.1, a string of the form 3.0.<n> or 3.1.<n>` |
 | A string `$ref` anywhere that does not start with `#/` | `member <pointer> is not a local reference: a reference must start with #/` |
 | A member named `operationRef` or `$id` anywhere | `member <pointer> is not allowed in a served contract` |
-| A local reference the checks follow (Path Items, Callback Objects, parameters, request bodies, form schemas) that does not resolve, or that closes a cycle | `the reference at <pointer> does not resolve within the document`, or `... closes a reference cycle` |
+| A local reference the checks follow (Path Items, Callback Objects, parameters, request bodies, form schemas, Link Objects in a `links` object) that does not resolve, or that closes a cycle | `the reference at <pointer> does not resolve within the document`, or `... closes a reference cycle` |
 | An Operation Object without a non-blank string `operationId` | `operation object <pointer> has no operationId` |
 | Two Operation Objects with one `operationId` | `operationId '<id>' is repeated at <pointers>` |
 | An `operationId` the mount does not route, anywhere it must name a routed operation (see [Operation ids](#operation-ids)) | `operationId '<id>' is not routed by the mount (at <pointers>)` |
@@ -636,8 +636,10 @@ references followed, must be a plain object schema, whether or not the operation
 - the last schema of the chain has a `properties` object, and no schema has a `properties` member
   that is not an object.
 
-Other keywords, such as `dependencies` or `$dynamicRef`, are not refused, and the runtime may not
-enforce them (see [Contract and runtime](#contract-and-runtime)).
+Other keywords, such as `dependencies`, `$dynamicRef`, or `$recursiveRef`, are not refused, and the
+runtime may not enforce them (see [Contract and runtime](#contract-and-runtime)). The checks do not
+follow `$dynamicRef` or `$recursiveRef`, so a schema they name is not checked for hidden form fields;
+do not use them in a form request body.
 
 ### `externalValue` and other URLs
 
