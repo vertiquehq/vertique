@@ -206,10 +206,11 @@ For a public document, the mount also calls `next()` for:
 
 For a public document, the mount itself never answers `404` or `405`. Whatever the later mounts
 answer, including a catch-all mount, is the response. When no later mount claims the request, the
-router answers it. A request whose path matches a document URL, or its trailing-slash variant for a
-protected document, but whose method is not `GET` or `HEAD`, such as `POST /apidocs/public/openapi.json`
-or `POST /apidocs/management/openapi.json`, ends with `405` (the router's method-mismatch status, with
-no `Allow` header). An unknown document name ends with `404`.
+router answers it. A request whose path matches a document URL or its trailing-slash variant, for
+any document, public or protected, but whose method is not `GET` or `HEAD`, such as
+`POST /apidocs/public/openapi.json` or `POST /apidocs/public/openapi.json/`, ends with `405` (the
+router's method-mismatch status, whose `Allow` header names `GET` and `HEAD`). An unknown document
+name ends with `404`.
 
 A protected document's route never continues to a later mount. Once its security chain has passed,
 a trailing-slash variant ends with `404` and a document that is not stored yet ends with `503`;
@@ -388,7 +389,10 @@ public interface ManagementApi {}
 
 `bearerAuth` is the scheme of the JWT handler that `JwtAuthModule` registers (see
 `dev.vertique:vertique-rest-auth-jwt`). The example binds its `JWTAuth` from the configured
-`jwt.hs256Key` and keeps no key in its sources.
+`jwt.hs256Key` and keeps no key in its sources. It sets neither `jwt.validation.issuer` nor
+`jwt.validation.audience`; both are unset by default, and the bearer handler then accepts any
+unexpired token signed with the key, whatever its issuer or audience. Set both in production (see
+`dev.vertique:vertique-rest-auth-jwt`).
 
 **3. Add document metadata in configuration.** The management interface declares no
 `@OpenAPIDefinition`, so its `info` comes from configuration; the public document gets a server URL.
@@ -490,7 +494,7 @@ protected document's name is answered `401`, which discloses that the name exist
 enabled document has no route and falls through to the later mounts. Methods other than `GET` and
 `HEAD` on a protected document URL are not answered by the document route: they continue to later
 mounts without the security chain and are answered as those mounts answer them. When no later mount
-claims the request, the router answers `405` (no `Allow` header), for example
+claims the request, the router answers `405`, for example
 `POST /apidocs/management/openapi.json`, where a request for an unknown name ends with `404`. No
 document content is reachable that way.
 
@@ -2393,9 +2397,9 @@ and its message can quote that value.
 - **Expecting a `404` or `405` from the docs mount for a public document.** The mount passes every
   public-document request it does not answer to the later mounts; a trailing slash, `POST`, or
   unknown name is answered by them. When no later mount claims the request, the router answers it:
-  `405` for another method on a document URL (no `Allow` header), `404` for an unknown name or a
-  public document's trailing-slash `GET` or `HEAD`. A protected document's trailing-slash variant
-  ends with `404` once the chain has passed.
+  `405` for another method on a document URL (its `Allow` header names `GET` and `HEAD`), `404` for
+  an unknown name or a public document's trailing-slash `GET` or `HEAD`. A protected document's
+  trailing-slash variant ends with `404` once the chain has passed.
 - **Publishing different content from different server instances.** Instances of one component are
   compared, and a difference fails the later instance's startup.
 - **Omitting the module and expecting silence.** An application whose interface carries `@ApiDocs`
@@ -2553,8 +2557,8 @@ Its routes stay where they were under three constraints:
 - **Declaring any application switches composition to explicit mode.** A manual `@JaxRsResources`
   contribution is routed only when an application selects it, startup warns about resources no
   application selects, and each application mount warns about operations with no explicit security
-  policy. Declare the policy on public resources with `@PermitAll`, as the example's
-  `CatalogResource` does (members elided):
+  policy. Declare the policy on public resources with `@PermitAll`, as the API documentation
+  example's `CatalogResource` (`examples/vertique-example-apidocs/`) does (members elided):
 
 ```java
 @PermitAll
@@ -2564,6 +2568,10 @@ public class CatalogResource {
     // …
 }
 ```
+
+The services example (`examples/vertique-example-services-codegen/`) leaves the policy of its
+resources implicit, so its startup logs the "no explicit security policy" warning for them, which is
+expected there.
 
 The "Explicit mode" and "Explicit security policy" sections of `dev.vertique:vertique-rest-jaxrs`
 list every warning.
@@ -2681,7 +2689,9 @@ mount; the page request reaches the UI mount. A `MountCustomizer` that matches e
 every request stops this fall-through (see [Mount Customizers](#mount-customizers)).
 
 The page is application code. It never bypasses a document's access policy: a page that shows a
-protected document must send the reader's credentials itself.
+protected document must send the reader's credentials itself. The page route has no access control
+of its own: `@ApiDocs` guards only the document URLs, so put the page behind an access check of its
+own when it must not be public.
 
 ### UI asset integrity and content security policy
 
@@ -2707,8 +2717,10 @@ rendering the example's public document:
 Everything else stays blocked, by decision: Redoc's `data:` section-link icon and its footer logo
 from another origin, and Scalar's web fonts from another origin (system fonts are used instead).
 Neither UI's rendering of operations, schemas, or search depends on them. Scalar features that
-contact other services were not exercised and stay blocked by `connect-src 'self'`. Re-measure when
-you change a pinned version. The example's policy:
+contact other services were not exercised and stay blocked by `connect-src 'self'`. When you change
+a pinned version, recompute the script's `integrity` hash from the new file (a stale hash makes the
+browser refuse the script, so the page fails closed) and re-measure the policy. The example's
+policy:
 
 ```java
 static final String CONTENT_SECURITY_POLICY = "default-src 'none'; script-src 'self' " + REDOC_SCRIPT_URL
@@ -2852,10 +2864,13 @@ appear exactly as written, such as the example's `ItemUpdate` record:
 
 ```java
 public record ItemUpdate(
-        @Pattern(regexp = "[A-Za-z0-9 ]{1,64}") String name) {}
+        @Pattern(regexp = "^[A-Za-z0-9 ]{1,64}(?![\\s\\S])") String name) {}
 ```
 
-A client that evaluates them in another dialect may read them differently.
+A client that evaluates them in another dialect may read them differently. The `web-validation`
+gate accepts a value when the pattern matches any part of it, so anchor a pattern at both ends when
+the whole value must match; in `java.util.regex`, `$` also matches before a final line terminator,
+so end the pattern with `(?![\s\S])` as the example does (see `dev.vertique:vertique-json-schema`).
 
 **Release note: the `web-validation` gate, with or without documents.** These behaviors apply to
 every application that validates with `web-validation`, whether or not any document is enabled:
