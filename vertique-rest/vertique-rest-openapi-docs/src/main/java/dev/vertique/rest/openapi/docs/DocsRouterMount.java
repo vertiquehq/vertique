@@ -28,7 +28,9 @@ import java.util.function.Function;
  * The router mount that serves the enabled documents. It is mounted before every other mount, at
  * the configured prefix followed by {@code /*}, and answers {@code GET} and {@code HEAD} for
  * {@code /<name>/openapi.json} and {@code /<name>/openapi.yaml} of each enabled document and for
- * nothing else: a request for any other URL, method, or name continues to the mounts after it.
+ * nothing else. A request whose URL and method match no document route continues to the mounts
+ * after it, and so does a request a public document's route passes on; a protected document's route
+ * never continues, so even a trailing-slash variant of its URL ends with {@code 404}.
  *
  * <p>The mount reads each document from the {@link DocumentStore} when a request arrives, because
  * the documents are stored after this router is built.
@@ -158,13 +160,7 @@ final class DocsRouterMount implements RouterMount {
      */
     @Override
     public Future<Router> createRouter(Vertx vertx) {
-        if (!validated) {
-            throw new RestConfigurationException("Documentation mount '" + MOUNT_ID + "' at '" + mountPath()
-                    + "' cannot create its router: the hosting HttpVerticle was built without composition"
-                    + " validators, such as with the public five-argument constructor or by a subclass;"
-                    + " obtain HttpVerticle from Dagger so its composition validators run before any mount"
-                    + " router is created");
-        }
+        requireValidated();
         Router router = Router.router(vertx);
         buildInto(router);
         return Future.succeededFuture(router);
@@ -183,13 +179,7 @@ final class DocsRouterMount implements RouterMount {
      *     route is rejected, after every route has been removed from the router again
      */
     void buildInto(Router router) {
-        if (!validated) {
-            throw new RestConfigurationException("Documentation mount '" + MOUNT_ID + "' at '" + mountPath()
-                    + "' cannot create its router: the hosting HttpVerticle was built without composition"
-                    + " validators, such as with the public five-argument constructor or by a subclass;"
-                    + " obtain HttpVerticle from Dagger so its composition validators run before any mount"
-                    + " router is created");
-        }
+        requireValidated();
         checkProtectedDocuments();
         List<EnabledDocuments.EnabledDocument> protectedDocuments = documents.all().stream()
                 .filter(document -> document.access() == ApiDocs.Access.PROTECTED)
@@ -234,6 +224,17 @@ final class DocsRouterMount implements RouterMount {
                                 + apiDocs.securityScheme() + "' handler authenticates; @ApiDocs on "
                                 + document.declaringType().getName() + " lists no rolesAllowed");
             }
+        }
+    }
+
+    /** Throws unless the composition validator has marked this mount validated. */
+    private void requireValidated() {
+        if (!validated) {
+            throw new RestConfigurationException("Documentation mount '" + MOUNT_ID + "' at '" + mountPath()
+                    + "' cannot create its router: the hosting HttpVerticle was built without composition"
+                    + " validators, such as with the public five-argument constructor or by a subclass;"
+                    + " obtain HttpVerticle from Dagger so its composition validators run before any mount"
+                    + " router is created");
         }
     }
 

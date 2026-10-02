@@ -89,7 +89,7 @@ final class ProtectedDocumentRoutes {
                 .flatMap(SecuritySchemeHandler::openApiDescription));
         installForm(
                 router,
-                document,
+                name,
                 origin,
                 scheme,
                 apiDocs.rolesAllowed(),
@@ -100,7 +100,7 @@ final class ProtectedDocumentRoutes {
                 vary);
         installForm(
                 router,
-                document,
+                name,
                 origin,
                 scheme,
                 apiDocs.rolesAllowed(),
@@ -113,7 +113,7 @@ final class ProtectedDocumentRoutes {
 
     private void installForm(
             Router router,
-            EnabledDocuments.EnabledDocument document,
+            String name,
             String origin,
             String scheme,
             String[] rolesAllowed,
@@ -122,7 +122,6 @@ final class ProtectedDocumentRoutes {
             Function<PublishedDocument, byte[]> bytes,
             Function<PublishedDocument, String> tag,
             Optional<String> vary) {
-        String name = document.name();
         String operationId = "apidocs:" + name + ":" + form;
         SyntheticOperation operation = rolesAllowed.length == 0
                 ? SyntheticOperation.authenticated(origin, operationId, scheme, name)

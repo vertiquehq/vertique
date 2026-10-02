@@ -41,7 +41,7 @@ final class DocumentWarnings {
      * @return {@code true} when the warning was logged, {@code false} when it had been logged before
      */
     boolean warnOnce(String kind, String documentName, String message) {
-        if (!warned.add(kind + '\0' + documentName)) {
+        if (!firstOccurrence(kind, documentName)) {
             return false;
         }
         LOG.warn("{}", message);
@@ -58,10 +58,15 @@ final class DocumentWarnings {
      * @return {@code true} when the notice was logged, {@code false} when it had been logged before
      */
     boolean infoOnce(String kind, String documentName, String message) {
-        if (!warned.add(kind + '\0' + documentName)) {
+        if (!firstOccurrence(kind, documentName)) {
             return false;
         }
         LOG.info("{}", message);
         return true;
+    }
+
+    /** Records the kind and document, reporting whether this is the first time they are recorded. */
+    private boolean firstOccurrence(String kind, String documentName) {
+        return warned.add(kind + '\0' + documentName);
     }
 }
