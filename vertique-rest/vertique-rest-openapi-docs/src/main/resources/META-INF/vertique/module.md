@@ -255,8 +255,9 @@ startup from the scheme handler's `openApiDescription()`:
 | API key in a cookie | `Cookie` |
 | API key in the query, or mutual TLS | none |
 
-The problem responses of a protected document carry `Cache-Control: no-store`; the document route
-adds neither `ETag` nor `Vary` to a problem response (other handlers, such as CORS, may add their
+The document route adds its `Vary` value to any `Vary` another handler (such as CORS) already set, so
+`Vary: Origin` is kept next to `Vary: Authorization`. The problem responses of a protected document
+carry `Cache-Control: no-store`; the document route adds neither `ETag` nor `Vary` to a problem response (other handlers, such as CORS, may add their
 own headers).
 
 ### Several server instances
@@ -1683,7 +1684,11 @@ that check's violations.
 ## Mount Customizers
 
 Every `MountCustomizer` whose `matches` accepts the docs mount's fixed metadata is applied to the docs
-router, as to any mount. Such a customizer therefore covers the document routes.
+router, as to any mount. Customizers are applied after the documentation router is created, so a route
+a customizer adds without an explicit order runs after the document routes. A protected document's route
+never continues, so such a route never runs for a served protected document, nor for a public document
+that is answered. A customizer route that must run first has to be registered with
+`order(Integer.MIN_VALUE)`.
 
 A customizer that matches every mount and adds a handler that ends every request, instead of passing it
 on, also ends every request the docs mount does not answer. Requests under the prefix then stop falling
