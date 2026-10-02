@@ -5,7 +5,7 @@ package dev.vertique.rest.jaxrs;
 
 import dev.vertique.rest.core.config.JaxRsConfig;
 import dev.vertique.rest.core.router.MountCompositionValidator;
-import dev.vertique.rest.jaxrs.publication.RestApplications;
+import dev.vertique.rest.jaxrs.application.RestApplications;
 import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
 import jakarta.annotation.Nullable;
 import java.util.List;

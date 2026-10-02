@@ -11,8 +11,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.rest.core.RestConfigurationException;
+import dev.vertique.rest.jaxrs.application.RestApplications.ContractOrigin;
 import dev.vertique.rest.jaxrs.publication.InputBinding.Requiredness;
-import dev.vertique.rest.jaxrs.publication.RestApplications.ContractOrigin;
 import dev.vertique.rest.jaxrs.routing.ParamLocation;
 import dev.vertique.rest.openapi.docs.fixture.input.GeneratedBodies;
 import dev.vertique.rest.openapi.docs.fixture.input.Publications;

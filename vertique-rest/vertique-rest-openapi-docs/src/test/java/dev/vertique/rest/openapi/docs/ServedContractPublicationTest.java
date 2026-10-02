@@ -10,12 +10,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.core.security.SecurityPolicy;
+import dev.vertique.rest.jaxrs.application.RestApplications;
 import dev.vertique.rest.jaxrs.publication.CapturedSchemas;
 import dev.vertique.rest.jaxrs.publication.MountPublication;
 import dev.vertique.rest.jaxrs.publication.OperationDetail;
 import dev.vertique.rest.jaxrs.publication.OperationPublication;
 import dev.vertique.rest.jaxrs.publication.ResponseShape;
-import dev.vertique.rest.jaxrs.publication.RestApplications;
 import dev.vertique.rest.openapi.docs.fixture.contract.PartnerApi;
 import io.vertx.core.Context;
 import io.vertx.core.Future;

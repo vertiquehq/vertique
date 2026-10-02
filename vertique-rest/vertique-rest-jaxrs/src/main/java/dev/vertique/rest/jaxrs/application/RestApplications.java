@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.jaxrs.publication;
+package dev.vertique.rest.jaxrs.application;
 
 import jakarta.annotation.Nullable;
 import java.util.Comparator;
@@ -14,8 +14,9 @@ import java.util.Optional;
  * INTERNAL, component-scoped {@code @Singleton} view over every declared {@code @RestApplication}:
  * for each one, its name, declaring type, active flag, mount path as registered, effective OpenAPI
  * contract location, and the setting that decided that location. Outside the maturity promise: not
- * an application contract, and public only so sibling framework modules — the JAX-RS application
- * composer, the mount composition validator, and the OpenAPI documentation module — can read it.
+ * an application contract, and public only so the composition code in {@code
+ * dev.vertique.rest.jaxrs} and sibling framework modules — the OpenAPI documentation module and the
+ * {@code openapi-contract} validation module — can read it.
  *
  * <p>Built once per component from {@code Set<GeneratedRestApplicationRegistration>} and the parsed
  * {@code jaxrs.applications} configuration. Every declared application is listed, active or not;

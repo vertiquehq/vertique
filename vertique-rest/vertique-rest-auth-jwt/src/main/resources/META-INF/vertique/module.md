@@ -457,6 +457,7 @@ requirements. Exactly one of the two paths appends the evidence per request.
 
 `openApiDescription()` returns `Http.bearer("JWT")` — HTTP bearer authentication with bearer format
 `JWT` — whatever this handler's own scheme name; it publishes no issuer, audience, or JWKS location.
+`Http` and `SecuritySchemeDescription` come from `dev.vertique.rest.core.security.scheme`.
 
 On success the handler builds an `AuthenticationEvidence` carrying:
 

@@ -5,8 +5,8 @@ package dev.vertique.rest.openapi.docs;
 
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
-import dev.vertique.rest.jaxrs.publication.SyntheticOperation;
-import dev.vertique.rest.jaxrs.publication.SyntheticOperations;
+import dev.vertique.rest.jaxrs.synthetic.SyntheticOperation;
+import dev.vertique.rest.jaxrs.synthetic.SyntheticOperations;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;

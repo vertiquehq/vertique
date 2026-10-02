@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.core.security;
+package dev.vertique.rest.core.security.scheme;
 
 import jakarta.annotation.Nullable;
 import java.util.Objects;

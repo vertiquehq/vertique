@@ -8,7 +8,7 @@ import dev.vertique.core.util.TypeResolver;
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.core.config.JaxRsConfig;
 import dev.vertique.rest.core.router.RouterMount;
-import dev.vertique.rest.jaxrs.publication.RestApplications;
+import dev.vertique.rest.jaxrs.application.RestApplications;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsResourceEntry;
 import dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration;
 import jakarta.inject.Provider;

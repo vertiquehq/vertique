@@ -23,7 +23,6 @@ import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.jaxrs.ApplicationMountTestAccess;
 import dev.vertique.rest.jaxrs.JaxRsRouterMount;
 import dev.vertique.rest.jaxrs.RestModule;
-import dev.vertique.rest.jaxrs.publication.ApiDocsInstalled;
 import dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration;
 import dev.vertique.rest.openapi.docs.ApiDocs;
 import io.vertx.core.json.JsonObject;

@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
-import dev.vertique.rest.jaxrs.publication.ApiDocsInstalled;
+import dev.vertique.rest.jaxrs.application.ApiDocsInstalled;
 import dev.vertique.rest.openapi.docs.fixture.PublicApi;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;

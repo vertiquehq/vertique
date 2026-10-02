@@ -8,9 +8,9 @@ import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dev.vertique.rest.core.routing.SecuritySchemeRegistry;
 import dev.vertique.rest.core.security.AuthEnforcementCapability;
-import dev.vertique.rest.core.security.Http;
-import dev.vertique.rest.core.security.SecuritySchemeDescription;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
+import dev.vertique.rest.core.security.scheme.Http;
+import dev.vertique.rest.core.security.scheme.SecuritySchemeDescription;
 import io.vertx.ext.web.handler.AuthenticationHandler;
 import java.util.Optional;
 
