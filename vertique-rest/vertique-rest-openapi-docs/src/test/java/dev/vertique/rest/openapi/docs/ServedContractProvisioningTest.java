@@ -22,13 +22,13 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
 /**
- * Unit proof that the selection of enabled documents, the provider every component runs before any
+ * Unit proof that the selection of enabled documents, which every component runs before any
  * mount is built, refuses a documented application whose entry in the declared-application view says
  * it serves its own contract but names no contract location.
  *
- * <p>The provider {@link OpenApiDocsModule#enabledDocuments} is called directly with a hand-built
+ * <p>The selection {@link EnabledDocumentsResolver#select} is called directly with a hand-built
  * {@link RestApplications} view, because the view the JAX-RS module builds never pairs a configured
- * or declared contract origin with a missing location; the view is the provider's only source of the
+ * or declared contract origin with a missing location; the view is the selection's only source of the
  * contract origin and location, so this is the narrowest seam on the real provisioning path. The one
  * application is the fixture {@link PartnerApi}, active and documented with a public {@link ApiDocs},
  * with an empty configuration and the default {@code apidocs} section. A control row gives the same
@@ -95,9 +95,9 @@ class ServedContractProvisioningTest {
                 List.of(new RestApplications.Entry(PARTNER, PartnerApi.class, true, MOUNT_PATH, location, origin)));
     }
 
-    /** Runs the selection provider with an empty configuration and the default, enabled section. */
+    /** Runs the selection with an empty configuration and the default, enabled section. */
     private static EnabledDocuments provision(RestApplications applications) {
-        ApidocsConfig apidocsConfig = new ApidocsConfig(ApidocsConfig.DEFAULT_PATH, true, List.of());
-        return OpenApiDocsModule.enabledDocuments(new JsonObject(), apidocsConfig, applications);
+        ApidocsConfig apidocsConfig = new ApidocsConfig(EnabledDocuments.DEFAULT_PATH, true, List.of());
+        return EnabledDocumentsResolver.select(new JsonObject(), apidocsConfig, applications);
     }
 }

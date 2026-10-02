@@ -12,13 +12,15 @@ import java.util.List;
 import java.util.SortedMap;
 
 /**
- * Embeds the captured input schemas of one document, in two phases.
+ * Embeds the schemas of one document, the captured input schemas and the generated response
+ * schemas, in two phases.
  *
- * <p>First every captured schema of the document is {@linkplain #check checked}: it is copied into a
- * tree the document owns and walked for {@linkplain SchemaRefusals refused constructs}. Only then is
+ * <p>First every schema of the document is {@linkplain #check checked}: it is copied into a tree the
+ * document owns and walked for {@linkplain SchemaRefusals refused constructs}. Only then is
  * each checked schema {@linkplain #publish published}: a request body or response schema always
- * becomes a component (see {@link SchemaPublicationSubject#alwaysComponent()}), and a parameter or form field becomes one only when it holds a {@code $ref} or a {@code $defs} at a
- * schema position; any other schema is published inline, unchanged. A component is {@linkplain
+ * becomes a component (see {@link SchemaPublicationSubject#alwaysComponent()}), and a parameter or
+ * form field becomes one only when it holds a {@code $ref} or a {@code $defs} at a schema position;
+ * any other schema is published inline, unchanged. A component is {@linkplain
  * SchemaRelocation relocated} and registered with its relocated definitions in the document's
  * {@link ComponentRegistry}, so key collisions are found as components are published.
  *
@@ -47,26 +49,26 @@ final class SchemaEmbedder {
      * Copies a captured schema into a tree the document owns and refuses the constructs a published
      * schema may not hold.
      *
-     * @param input the input the schema was captured for
+     * @param publicationSubject what the schema describes, naming its component key and its messages
      * @param captured the captured schema, only read
-     * @return the checked copy, to publish once every input of the document is checked
+     * @return the checked copy, to publish once every schema of the document is checked
      * @throws RestConfigurationException when the schema holds a refused construct
      */
-    CheckedSchema check(SchemaPublicationSubject input, JsonObject captured) {
-        return check(input, SchemaTrees.tree(captured));
+    CheckedSchema check(SchemaPublicationSubject publicationSubject, JsonObject captured) {
+        return check(publicationSubject, SchemaTrees.tree(captured));
     }
 
     /**
      * Refuses the constructs a published schema may not hold in a tree the document already owns.
      *
-     * @param input the input the schema was captured for
+     * @param publicationSubject what the schema describes, naming its component key and its messages
      * @param tree the document's own copy of the captured schema, made by {@link SchemaTrees#tree}
-     * @return the checked copy, to publish once every input of the document is checked
+     * @return the checked copy, to publish once every schema of the document is checked
      * @throws RestConfigurationException when the schema holds a refused construct
      */
-    CheckedSchema check(SchemaPublicationSubject input, ObjectNode tree) {
-        SchemaRefusals.check(subject, input, tree);
-        return new CheckedSchema(input, tree);
+    CheckedSchema check(SchemaPublicationSubject publicationSubject, ObjectNode tree) {
+        SchemaRefusals.check(subject, publicationSubject, tree);
+        return new CheckedSchema(publicationSubject, tree);
     }
 
     /**
@@ -79,16 +81,16 @@ final class SchemaEmbedder {
      * @throws RestConfigurationException when a component key is already taken in the document
      */
     JsonNode publish(CheckedSchema checked) {
-        SchemaPublicationSubject input = checked.input();
+        SchemaPublicationSubject publicationSubject = checked.publicationSubject();
         ObjectNode schema = checked.tree();
-        if (!input.alwaysComponent() && !SchemaRelocation.holdsReferences(schema)) {
+        if (!publicationSubject.alwaysComponent() && !SchemaRelocation.holdsReferences(schema)) {
             return schema;
         }
-        String key = input.componentKey();
+        String key = publicationSubject.componentKey();
         List<SchemaRelocation.Definition> definitions = SchemaRelocation.relocate(key, schema);
-        registry.register(key, schema, input, false);
+        registry.register(key, schema, publicationSubject, false);
         for (SchemaRelocation.Definition definition : definitions) {
-            registry.register(definition.key(), definition.schema(), input, true);
+            registry.register(definition.key(), definition.schema(), publicationSubject, true);
         }
         return reference(key);
     }
@@ -115,8 +117,8 @@ final class SchemaEmbedder {
     /**
      * A captured schema copied into a tree the document owns and checked for refused constructs.
      *
-     * @param input the input the schema was captured for
+     * @param publicationSubject what the schema describes, naming its component key and its messages
      * @param tree the owned copy
      */
-    record CheckedSchema(SchemaPublicationSubject input, ObjectNode tree) {}
+    record CheckedSchema(SchemaPublicationSubject publicationSubject, ObjectNode tree) {}
 }

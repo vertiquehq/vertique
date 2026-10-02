@@ -66,10 +66,10 @@ class ApidocsConfigTest {
         parser = component.configParser();
     }
 
-    /** Runs the configuration provider, then the selection provider, as the composition does. */
+    /** Parses the section, then selects the documents, as the composition does. */
     private static EnabledDocuments resolve(JsonObject config) {
-        ApidocsConfig apidocsConfig = OpenApiDocsModule.apidocsConfig(config, parser);
-        return OpenApiDocsModule.enabledDocuments(config, apidocsConfig, applications);
+        ApidocsConfig apidocsConfig = EnabledDocumentsResolver.parse(config, parser);
+        return EnabledDocumentsResolver.select(config, apidocsConfig, applications);
     }
 
     // ---- an invalid prefix fails startup naming the setting ----
@@ -104,16 +104,16 @@ class ApidocsConfigTest {
                 DocsConfigs.withApidocsPath(DocsConfigs.shared(), value), "public", false);
 
         if (valid) {
-            // When the providers run with the document enabled
-            ApidocsConfig apidocsConfig = OpenApiDocsModule.apidocsConfig(enabledConfig, parser);
-            EnabledDocuments documents = OpenApiDocsModule.enabledDocuments(enabledConfig, apidocsConfig, applications);
+            // When the section is parsed and the documents selected with the document enabled
+            ApidocsConfig apidocsConfig = EnabledDocumentsResolver.parse(enabledConfig, parser);
+            EnabledDocuments documents = EnabledDocumentsResolver.select(enabledConfig, apidocsConfig, applications);
 
             // Then one document, public, resolves under that prefix
             assertEquals(value, apidocsConfig.path());
             assertEquals(1, documents.all().size());
             assertEquals("public", documents.all().get(0).name());
         } else {
-            // When the providers run with the document enabled
+            // When the section is parsed and the documents selected with the document enabled
             ConfigurationException failure = assertThrows(ConfigurationException.class, () -> resolve(enabledConfig));
 
             // Then the message names the setting and never echoes the value
@@ -121,7 +121,7 @@ class ApidocsConfigTest {
             assertFalse(failure.getMessage().contains(MARKER), failure.getMessage());
         }
 
-        // When the providers run with the document disabled, whatever the value
+        // When the section is parsed and the documents selected with the document disabled, whatever the value
         EnabledDocuments none = resolve(disabledConfig);
 
         // Then no document resolves and nothing is thrown
@@ -153,7 +153,7 @@ class ApidocsConfigTest {
             DocsConfigs.document(config, "public").getJsonObject("info").put("description", MARKER_DESCRIPTION);
         }
 
-        // When the providers run
+        // When the section is parsed and the documents selected
         ConfigurationException failure = assertThrows(ConfigurationException.class, () -> resolve(config));
 
         // Then the message names the application, its declaring interface and the offending path
@@ -179,7 +179,7 @@ class ApidocsConfigTest {
         DocsConfigs.document(config, "public").remove("info");
         DocsConfigs.withDocumentEnabled(config, "public", false);
 
-        // When the providers run
+        // When the section is parsed and the documents selected
         EnabledDocuments documents = resolve(config);
 
         // Then no document resolves and nothing is thrown
@@ -193,7 +193,7 @@ class ApidocsConfigTest {
         JsonObject config = DocsConfigs.shared();
         DocsConfigs.document(config, "mgmt");
 
-        // When the providers run
+        // When the section is parsed and the documents selected
         EnabledDocuments documents = resolve(config);
 
         // Then only public resolves, with its configured info
@@ -210,7 +210,7 @@ class ApidocsConfigTest {
         // Given the public entry with an explicit JSON null for enabled
         JsonObject config = DocsConfigs.withDocumentEnabled(DocsConfigs.shared(), "public", null);
 
-        // When the providers run
+        // When the section is parsed and the documents selected
         EnabledDocuments documents = resolve(config);
 
         // Then public is still enabled
@@ -226,8 +226,8 @@ class ApidocsConfigTest {
         // Given a configuration without apidocs
         JsonObject config = DocsConfigs.loopback();
 
-        // When the configuration provider runs
-        ApidocsConfig apidocs = OpenApiDocsModule.apidocsConfig(config, parser);
+        // When the section is parsed
+        ApidocsConfig apidocs = EnabledDocumentsResolver.parse(config, parser);
 
         // Then the defaults apply
         assertEquals("/apidocs", apidocs.path());
@@ -245,8 +245,8 @@ class ApidocsConfigTest {
         entry.put("serverUrl", "https://example.invalid/api");
         entry.put("info", new JsonObject().put("title", "T").put("version", "V").put("description", "D"));
 
-        // When the configuration provider runs
-        ApidocsConfig apidocs = OpenApiDocsModule.apidocsConfig(config, parser);
+        // When the section is parsed
+        ApidocsConfig apidocs = EnabledDocumentsResolver.parse(config, parser);
 
         // Then the entry is keyed by its name and carries the attributes
         assertEquals(1, apidocs.documents().size());
@@ -265,8 +265,8 @@ class ApidocsConfigTest {
         // Given an entry without enabled
         JsonObject config = DocsConfigs.shared();
 
-        // When the configuration provider runs
-        ApidocsConfig apidocs = OpenApiDocsModule.apidocsConfig(config, parser);
+        // When the section is parsed
+        ApidocsConfig apidocs = EnabledDocumentsResolver.parse(config, parser);
 
         // Then the entry's enabled is null, not a default
         assertNull(apidocs.documents().get(0).enabled());
@@ -281,9 +281,9 @@ class ApidocsConfigTest {
         DocsConfigs.withApidocsPath(config, MARKER + "docs/");
         DocsConfigs.apidocs(config).put("documents", "not an object");
 
-        // When the providers run
-        ApidocsConfig apidocs = OpenApiDocsModule.apidocsConfig(config, parser);
-        EnabledDocuments documents = OpenApiDocsModule.enabledDocuments(config, apidocs, applications);
+        // When the section is parsed and the documents selected
+        ApidocsConfig apidocs = EnabledDocumentsResolver.parse(config, parser);
+        EnabledDocuments documents = EnabledDocumentsResolver.select(config, apidocs, applications);
 
         // Then the configuration is the disabled default and no document resolves
         assertFalse(apidocs.enabled());
@@ -304,9 +304,9 @@ class ApidocsConfigTest {
         JsonObject config = DocsConfigs.shared();
         DocsConfigs.apidocs(config).put("enabled", value);
 
-        // When the configuration provider runs
+        // When the section is parsed
         ConfigurationException failure =
-                assertThrows(ConfigurationException.class, () -> OpenApiDocsModule.apidocsConfig(config, parser));
+                assertThrows(ConfigurationException.class, () -> EnabledDocumentsResolver.parse(config, parser));
 
         // Then the message names the setting
         assertTrue(failure.getMessage().contains("apidocs.enabled"), failure.getMessage());
@@ -364,10 +364,10 @@ class ApidocsConfigTest {
         return view(ConfigRegistrations.publicApi(PublicApi.class), ConfigRegistrations.mgmtApi(), added);
     }
 
-    /** Runs the configuration provider, then the selection provider, against the given view. */
+    /** Parses the section, then selects the documents, against the given view. */
     private static EnabledDocuments resolve(JsonObject config, RestApplications view) {
-        ApidocsConfig apidocsConfig = OpenApiDocsModule.apidocsConfig(config, parser);
-        return OpenApiDocsModule.enabledDocuments(config, apidocsConfig, view);
+        ApidocsConfig apidocsConfig = EnabledDocumentsResolver.parse(config, parser);
+        return EnabledDocumentsResolver.select(config, apidocsConfig, view);
     }
 
     /** The enabled documents' names, in the order resolved. */
@@ -430,19 +430,19 @@ class ApidocsConfigTest {
         }
 
         if (!apidocsEnabled) {
-            // When the providers run with apidocs disabled
+            // When the section is parsed and the documents selected with apidocs disabled
             EnabledDocuments documents = resolve(config, view);
 
             // Then no document resolves and nothing is thrown
             assertTrue(documents.isEmpty());
         } else if (valid) {
-            // When the providers run
+            // When the section is parsed and the documents selected
             EnabledDocuments documents = resolve(config, view);
 
             // Then the entry is accepted and adds no document: its application carries no @ApiDocs
             assertEquals(List.of("public"), names(documents));
         } else {
-            // When the providers run
+            // When the section is parsed and the documents selected
             ConfigurationException failure = assertThrows(ConfigurationException.class, () -> resolve(config, view));
 
             // Then the message names the entry's path and the grammar, and echoes no value
@@ -486,7 +486,7 @@ class ApidocsConfigTest {
         RestApplications view = sharedViewWith(ConfigRegistrations.dormantApi());
 
         if (expectedDocuments == null) {
-            // When the providers run
+            // When the section is parsed and the documents selected
             ConfigurationException failure = assertThrows(ConfigurationException.class, () -> resolve(config, view));
 
             // Then the message names the entry's path and states that no such application is declared
@@ -495,7 +495,7 @@ class ApidocsConfigTest {
             assertTrue(message.contains("no application of that name is declared"), message);
             assertFalse(message.contains(MARKER), message);
         } else {
-            // When the providers run
+            // When the section is parsed and the documents selected
             EnabledDocuments documents = resolve(config, view);
 
             // Then exactly the expected documents resolve and nothing is thrown
@@ -571,7 +571,7 @@ class ApidocsConfigTest {
         }
 
         if (!apidocsEnabled) {
-            // When the providers run with apidocs disabled
+            // When the section is parsed and the documents selected with apidocs disabled
             EnabledDocuments documents = resolve(config, view);
 
             // Then no document resolves and nothing is thrown
@@ -579,7 +579,7 @@ class ApidocsConfigTest {
             return;
         }
 
-        // When the providers run
+        // When the section is parsed and the documents selected
         ConfigurationException failure = assertThrows(ConfigurationException.class, () -> resolve(config, view));
 
         // Then the message names the application, its declaring interface, every unknown key's full
@@ -641,7 +641,7 @@ class ApidocsConfigTest {
         RestApplications view = sharedViewWith(ConfigRegistrations.opsApi(OpsApi.class, true));
 
         if (expectedDocuments == null) {
-            // When the providers run
+            // When the section is parsed and the documents selected
             ConfigurationException failure = assertThrows(ConfigurationException.class, () -> resolve(config, view));
 
             // Then the message names mgmt, its declaring interface and the setting, and states that the
@@ -651,7 +651,7 @@ class ApidocsConfigTest {
             assertTrue(message.contains("apidocs.documents.mgmt.enabled"), message);
             assertTrue(message.contains("declares no @ApiDocs"), message);
         } else {
-            // When the providers run
+            // When the section is parsed and the documents selected
             EnabledDocuments documents = resolve(config, view);
 
             // Then exactly the expected documents are enabled
@@ -724,7 +724,7 @@ class ApidocsConfigTest {
         }
 
         if (expectedInfo != null) {
-            // When the providers run
+            // When the section is parsed and the documents selected
             EnabledDocuments documents =
                     assertDoesNotThrow(() -> resolve(config, view), () -> "\"" + variant + "\": the document resolves");
 
@@ -732,7 +732,7 @@ class ApidocsConfigTest {
             assertEquals(List.of("public"), names(documents));
             assertEquals(expectedInfo, documents.all().get(0).info());
         } else {
-            // When the providers run
+            // When the section is parsed and the documents selected
             ConfigurationException failure = assertThrows(ConfigurationException.class, () -> resolve(config, view));
 
             // Then the message names public, the declaring interface and the offending source
@@ -779,14 +779,14 @@ class ApidocsConfigTest {
         }
 
         if (valid) {
-            // When the providers run with the document enabled
+            // When the section is parsed and the documents selected with the document enabled
             EnabledDocuments documents = resolve(enabledConfig, view);
 
             // Then public resolves carrying the configured text unchanged
             assertEquals(List.of("public"), names(documents));
             assertEquals(value, documents.all().get(0).serverUrl());
         } else {
-            // When the providers run with the document enabled
+            // When the section is parsed and the documents selected with the document enabled
             ConfigurationException failure =
                     assertThrows(ConfigurationException.class, () -> resolve(enabledConfig, view));
 
@@ -796,7 +796,7 @@ class ApidocsConfigTest {
             assertTrue(message.contains("apidocs.documents.public.serverUrl"), message);
         }
 
-        // When the providers run with the document disabled, whatever the value
+        // When the section is parsed and the documents selected with the document disabled, whatever the value
         EnabledDocuments none = resolve(disabledConfig, view);
 
         // Then no document resolves and nothing is thrown
@@ -916,7 +916,7 @@ class ApidocsConfigTest {
         RestApplications view = sharedViewWith(ConfigRegistrations.opsApi(declaringInterface, active));
 
         if (expectedAttribute != null) {
-            // When the providers run
+            // When the section is parsed and the documents selected
             RestConfigurationException failure =
                     assertThrows(RestConfigurationException.class, () -> resolve(config, view));
 
@@ -928,7 +928,7 @@ class ApidocsConfigTest {
             assertFalse(message.contains("bearerAuth"), message);
             assertFalse(message.contains("admin"), message);
         } else {
-            // When the providers run
+            // When the section is parsed and the documents selected
             EnabledDocuments documents = resolve(config, view);
 
             // Then the declaration is accepted and exactly the expected documents are enabled
@@ -962,7 +962,7 @@ class ApidocsConfigTest {
                         DocsConfigs.apidocs(config).getJsonObject("documents").fieldNames()),
                 "the entries keep their insertion order");
 
-        // When the providers run
+        // When the section is parsed and the documents selected
         ConfigurationException failure = assertThrows(ConfigurationException.class, () -> resolve(config, view));
 
         // Then the message names only the sorted-first key's path and the grammar, and echoes no value
@@ -981,7 +981,7 @@ class ApidocsConfigTest {
         String key = "a" + BELL + "b";
         JsonObject config = sharedWithEntry(key, infoEntry(MARKER + "Title", "1"));
 
-        // When the providers run
+        // When the section is parsed and the documents selected
         ConfigurationException failure = assertThrows(ConfigurationException.class, () -> resolve(config, view));
 
         // Then the path names the key with BEL written as backslash, u, 0007, and the raw BEL is absent
@@ -998,7 +998,7 @@ class ApidocsConfigTest {
         // scheme and lists a role, registered by hand as generated code would register it
         RestApplications view = sharedViewWith(ConfigRegistrations.opsApi(OpsPublicWithSchemeAndRolesApi.class, true));
 
-        // When the providers run
+        // When the section is parsed and the documents selected
         RestConfigurationException failure =
                 assertThrows(RestConfigurationException.class, () -> resolve(sharedWithOpsInfo(), view));
 
@@ -1034,7 +1034,7 @@ class ApidocsConfigTest {
         JsonObject config = DocsConfigs.shared();
         DocsConfigs.document(config, "public").put("enabled", blank);
 
-        // When the providers run
+        // When the section is parsed and the documents selected
         ConfigurationException failure = assertThrows(ConfigurationException.class, () -> resolve(config, view));
 
         // Then the message names the application, its declaring interface and the setting, says what
@@ -1060,7 +1060,7 @@ class ApidocsConfigTest {
         JsonObject config = DocsConfigs.shared();
         DocsConfigs.document(config, "public").put("enabled", "yes");
 
-        // When the providers run
+        // When the section is parsed and the documents selected
         ConfigurationException failure = assertThrows(ConfigurationException.class, () -> resolve(config, view));
 
         // Then the top-level message names the configuration section and does not contain the value
@@ -1079,7 +1079,7 @@ class ApidocsConfigTest {
         RestApplications view = sharedView();
         JsonObject config = DocsConfigs.withDocumentEnabled(DocsConfigs.shared(), "public", false);
 
-        // When the providers run
+        // When the section is parsed and the documents selected
         EnabledDocuments documents = resolve(config, view);
 
         // Then nothing is thrown and no document is enabled

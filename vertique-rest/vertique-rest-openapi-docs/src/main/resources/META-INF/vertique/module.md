@@ -1881,15 +1881,16 @@ see [Access](#access-public-and-protected) and [Protected Documents](#protected-
 
 ### OpenApiDocsModule
 
-The Dagger module an application lists. It provides the parsed `apidocs` configuration, selects the
-enabled documents, and contributes the publication sink, the composition validator, and the docs
-mount when at least one document is enabled (see [Module Dagger Bindings](#module-dagger-bindings)).
+The Dagger module an application lists. It reads the `apidocs` configuration, selects the enabled
+documents, and contributes the publication sink, the composition validator, and the docs mount when
+at least one document is enabled (see [Module Dagger Bindings](#module-dagger-bindings)).
 
-### ApidocsConfig, DocumentConfig, InfoConfig
+### InfoConfig
 
-The public records behind the `apidocs` configuration section (see [Configuration](#configuration)).
-They are parsed by the canonical `ConfigParser`; applications normally only write the configuration,
-not construct these records.
+The public record of a document's configured `info` object (`title`, `version`, optional
+`description`; see [Configuration](#configuration)). The rest of the `apidocs` section is parsed
+into internal records, and the parsed section is not a Dagger binding: applications write the
+configuration, not these records.
 
 ---
 
@@ -2464,8 +2465,7 @@ and its message can quote that value.
 
 | Binding | Notes |
 |---|---|
-| `ApidocsConfig` | The parsed `apidocs` section, through the canonical `ConfigParser`. When `apidocs.enabled` is `false`, the disabled defaults without parsing the rest of the subtree |
-| The enabled documents | Package-private, `@Singleton`; decides which applications have a document and runs the configuration checks above |
+| The enabled documents | Package-private, `@Singleton`; parses the `apidocs` section through the canonical `ConfigParser` (when `apidocs.enabled` is `false`, without parsing the rest of the subtree), decides which applications have a document, and runs the configuration checks above. The parsed section itself is not bound |
 | `@ElementsIntoSet Set<MountCompositionValidator>` | The composition validator when at least one document is enabled, otherwise an empty set; contributes to the set `HttpVerticle` runs before it creates any router |
 | `@ElementsIntoSet Set<OperationPublicationSink>` | The publication sink when at least one document is enabled, otherwise an empty set; contributes to the set `vertique-rest-jaxrs` declares |
 | `@ElementsIntoSet Set<RouterMount>` | The docs mount when at least one document is enabled, otherwise an empty set; unscoped, so every composition builds its own mount |

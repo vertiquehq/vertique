@@ -16,7 +16,7 @@ import jakarta.annotation.Nullable;
  * @param info the {@code info} object of the document
  * @param serverUrl the optional server URL published in the document
  */
-public record DocumentConfig(
+record DocumentConfig(
         String name,
         @Nullable Boolean enabled,
         @Nullable InfoConfig info,

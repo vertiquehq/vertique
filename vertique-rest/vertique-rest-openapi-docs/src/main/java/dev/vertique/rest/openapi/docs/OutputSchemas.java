@@ -83,9 +83,9 @@ final class OutputSchemas {
             throw hidden(prefix, target, hidden.get(0));
         }
         ObjectNode tree = SchemaTrees.tree(new JsonObject(text));
-        SchemaPublicationSubject description = target.description();
-        SchemaRefusals.check(subject, description, tree);
-        return new SchemaEmbedder.CheckedSchema(description, tree);
+        SchemaPublicationSubject publicationSubject = target.publicationSubject();
+        SchemaRefusals.check(subject, publicationSubject, tree);
+        return new SchemaEmbedder.CheckedSchema(publicationSubject, tree);
     }
 
     /** Builds the refusal of an output type whose member is described under another name. */
@@ -163,11 +163,13 @@ final class OutputSchemas {
         }
 
         /**
-         * Returns the description of the component the schema is published as.
+         * Returns the subject of the published schema, which names its component key and its
+         * messages.
          *
-         * @return the output description, whose collision phrase names the status and the operation
+         * @return the response schema's subject, whose collision phrase names the status and the
+         *     operation
          */
-        SchemaPublicationSubject description() {
+        SchemaPublicationSubject publicationSubject() {
             String noun = header == null
                     ? "output schema of status " + status
                     : "output schema of header '" + header + "' of status " + status;

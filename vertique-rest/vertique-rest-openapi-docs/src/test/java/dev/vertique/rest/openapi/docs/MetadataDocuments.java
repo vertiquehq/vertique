@@ -57,8 +57,8 @@ import org.slf4j.LoggerFactory;
  * passes; pass one guard to several assemblies to stand for one component, or a fresh one per
  * assembly. {@link WarningCapture} records what the guard logs.
  *
- * <p><b>Configured {@code info}.</b> {@link #resolve} runs the configuration provider and the
- * enabled-document selection provider over a view holding one hand-written registration, as the
+ * <p><b>Configured {@code info}.</b> {@link #resolve} parses the {@code apidocs} section and runs the
+ * enabled-document selection over a view holding one hand-written registration, as the
  * composition does, and {@link #assembleResolved} assembles a resolved document over a publication
  * without operations.
  */
@@ -221,13 +221,13 @@ final class MetadataDocuments {
     // ---------------------------------------------------------------------------------------------
 
     /**
-     * Runs the configuration provider, then the enabled-document selection provider, for a view
+     * Parses the {@code apidocs} section, then runs the enabled-document selection, for a view
      * holding exactly one registration, over the loopback configuration plus, when given, {@code
      * apidocs.documents.<name>.info}.
      *
      * @param registration the registration, for example {@code InfoRegistrations.childApi(...)}
      * @param configuredInfo the configured {@code info} object, or {@code null} for none
-     * @return the enabled documents, or whatever the providers threw
+     * @return the enabled documents, or whatever parsing or selection threw
      */
     static Resolution resolve(GeneratedRestApplicationRegistration registration, @Nullable JsonObject configuredInfo) {
         Objects.requireNonNull(registration, "registration");
@@ -240,8 +240,8 @@ final class MetadataDocuments {
         RestApplications applications = component.restApplications();
         ConfigParser parser = component.configParser();
         try {
-            ApidocsConfig apidocsConfig = OpenApiDocsModule.apidocsConfig(config, parser);
-            return Resolution.ofDocuments(OpenApiDocsModule.enabledDocuments(config, apidocsConfig, applications));
+            ApidocsConfig apidocsConfig = EnabledDocumentsResolver.parse(config, parser);
+            return Resolution.ofDocuments(EnabledDocumentsResolver.select(config, apidocsConfig, applications));
         } catch (RuntimeException failure) {
             return Resolution.ofFailure(failure);
         }

@@ -9,19 +9,35 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * The documents enabled for one component, ordered by application name.
+ * The documents enabled for one component, ordered by application name, and the path prefix they
+ * are served under.
  *
  * @param all the enabled documents
+ * @param path the documentation path prefix, without a trailing slash: the configured {@code
+ *     apidocs.path}, or {@link #DEFAULT_PATH} when it is not configured or the feature is disabled
  */
-record EnabledDocuments(List<EnabledDocument> all) {
+record EnabledDocuments(List<EnabledDocument> all, String path) {
+
+    /** The default documentation path prefix. */
+    static final String DEFAULT_PATH = "/apidocs";
 
     /**
      * Copies the document list unmodifiably.
      *
      * @param all the enabled documents
+     * @param path the documentation path prefix
      */
     EnabledDocuments {
         all = List.copyOf(all);
+    }
+
+    /**
+     * Creates the enabled documents under the default path prefix.
+     *
+     * @param all the enabled documents
+     */
+    EnabledDocuments(List<EnabledDocument> all) {
+        this(all, DEFAULT_PATH);
     }
 
     /**

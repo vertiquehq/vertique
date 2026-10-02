@@ -181,7 +181,7 @@ class ServedContractPublicationTest {
         return new DocsPublicationSink(
                 new EnabledDocuments(List.of(document)),
                 store,
-                ApidocsConfig.DEFAULT_PATH,
+                EnabledDocuments.DEFAULT_PATH,
                 Set.of(),
                 applications,
                 TestContexts.noSource());

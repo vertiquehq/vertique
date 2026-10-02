@@ -87,7 +87,7 @@ final class DocsPublicationSink implements OperationPublicationSink {
      * @param context the component's assembly inputs the assembler reads besides the publication
      */
     DocsPublicationSink(EnabledDocuments documents, DocumentStore store, AssemblyContext context) {
-        this(documents, store, ApidocsConfig.DEFAULT_PATH, Set.of(), new RestApplications(List.of()), context);
+        this(documents, store, EnabledDocuments.DEFAULT_PATH, Set.of(), new RestApplications(List.of()), context);
     }
 
     /**

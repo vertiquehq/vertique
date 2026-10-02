@@ -13,15 +13,13 @@ import java.util.List;
  * The {@code apidocs} configuration section. Each {@code documents} key is injected into the
  * element's {@code name}.
  *
- * @param path the path prefix under which the documents are served; defaults to {@code /apidocs}
+ * @param path the path prefix under which the documents are served; defaults to {@link
+ *     EnabledDocuments#DEFAULT_PATH}
  * @param enabled whether the documentation feature is enabled; defaults to {@code true}
  * @param documents the configured document entries; defaults to empty
  */
-public record ApidocsConfig(
+record ApidocsConfig(
         String path, boolean enabled, @KeyedBy("name") List<DocumentConfig> documents) {
-
-    /** The default path prefix. */
-    static final String DEFAULT_PATH = "/apidocs";
 
     /**
      * Compact constructor copying the keyed-collection list defensively for immutability.
@@ -30,7 +28,7 @@ public record ApidocsConfig(
      * @param enabled the global enabled flag
      * @param documents the document list (defensively copied; {@code null} becomes empty)
      */
-    public ApidocsConfig {
+    ApidocsConfig {
         documents = documents != null ? List.copyOf(documents) : List.of();
     }
 
@@ -47,6 +45,7 @@ public record ApidocsConfig(
             @JsonProperty("path") @Nullable String path,
             @JsonProperty("enabled") @Nullable Boolean enabled,
             @JsonProperty("documents") @Nullable List<DocumentConfig> documents) {
-        return new ApidocsConfig(path != null ? path : DEFAULT_PATH, enabled != null ? enabled : true, documents);
+        return new ApidocsConfig(
+                path != null ? path : EnabledDocuments.DEFAULT_PATH, enabled != null ? enabled : true, documents);
     }
 }
