@@ -12,14 +12,14 @@ import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 
 /**
- * T003 TP-005 component, extended by T023 TP-017: lists only {@link RestModule}, the {@code
+ * Component for the two-unit applications proof: lists only {@link RestModule}, the {@code
  * resources} unit's real, processor-generated {@code
  * dev.vertique.it.apps.resources.GeneratedJaxRsResourcesModule}, this unit's own real, processor-
  * generated {@code dev.vertique.it.apps.app.GeneratedJaxRsResourcesModule} (which carries {@link
  * PublicApplication}'s and {@link ManagementApplication}'s native registrations), and {@link
  * AppSupportModule} — no handwritten registration or mount module. The leftover {@link
  * LegacyStyleApplication} subclass contributes no registration and mounts nothing; it exists only to
- * prove AC-021.4's runtime half.
+ * prove that such a subclass is inert at runtime.
  */
 @Singleton
 @Component(

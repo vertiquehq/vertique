@@ -148,6 +148,30 @@ public final class DocsTestComponents {
         interface ComponentFactory extends Factory<SharedComponent> {}
     }
 
+    /**
+     * The shared fixture without a marker mount: nothing but the documentation mount is mounted under
+     * {@code /apidocs/*}, so a request the documentation mount passes on reaches the router's own
+     * final response.
+     */
+    @Singleton
+    @Component(
+            modules = {
+                RestModule.class,
+                OpenApiDocsModule.class,
+                ConfigParsingModule.class,
+                DocsTestSupportModule.class,
+                SharedRegistrationModule.class,
+                SharedResourcesModule.class,
+                SchemaSourceModules.Counting.class,
+                RecordingMountCustomizer.Binding.class
+            })
+    public interface WithoutMarkerMountComponent extends DocsProvisions {
+
+        /** Factory taking the application configuration. */
+        @Component.Factory
+        interface ComponentFactory extends Factory<WithoutMarkerMountComponent> {}
+    }
+
     /** The shared fixture with {@code UndocumentedPublicApi} in place of {@code PublicApi}. */
     @Singleton
     @Component(

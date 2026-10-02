@@ -204,8 +204,12 @@ For a public document, the mount also calls `next()` for:
 - a trailing-slash variant of a document URL;
 - a document whose bytes are not stored yet.
 
-For a public document, this mount never answers `404` or `405`. Whatever the later mounts answer,
-including a catch-all mount or the framework's default not-found handling, is the response.
+For a public document, the mount itself never answers `404` or `405`. Whatever the later mounts
+answer, including a catch-all mount, is the response. When no later mount claims the request, the
+router answers it. A request whose path matches a document URL, or its trailing-slash variant for a
+protected document, but whose method is not `GET` or `HEAD`, such as `POST /apidocs/public/openapi.json`
+or `POST /apidocs/management/openapi.json`, ends with `405` (the router's method-mismatch status, with
+no `Allow` header). An unknown document name ends with `404`.
 
 A protected document's route never continues to a later mount. Once its security chain has passed,
 a trailing-slash variant ends with `404` and a document that is not stored yet ends with `503`;
@@ -332,6 +336,90 @@ shape check of every active application (see [Configuration](#configuration)). W
 
 ---
 
+## Getting Started
+
+The example `examples/vertique-example-apidocs/` publishes one public and one protected document.
+The steps below are taken from it; the [Developer Guide](#developer-guide) explains each choice.
+
+**1. Add the artifact and list the module.** Depend on `dev.vertique:vertique-rest-openapi-docs`
+(its version comes from the framework BOM) and list `OpenApiDocsModule` beside `RestModule` and the
+generated module that holds the application registrations:
+
+```java
+@VertiqueApp
+@Singleton
+@Component(
+        modules = {
+            VertxModule.class,
+            ConfigParsingModule.class,
+            RestModule.class,
+            RestValidationModule.class,
+            JwtAuthModule.class,
+            OpenApiDocsModule.class,
+            // … deployment and lifecycle modules …
+            AppModule.class,
+            GeneratedJaxRsResourcesModule.class
+        })
+interface AppComponent extends VertiqueApplicationComponent {}
+```
+
+**2. Declare the applications and their document access.** Access is code, on the declaring
+interface. The public document takes its `info` from `@OpenAPIDefinition`:
+
+```java
+@RestApplication(
+        name = "public",
+        path = "/api/public",
+        resources = {CatalogResource.class})
+@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@OpenAPIDefinition(info = @Info(title = "Catalog API", version = "1.0"))
+public interface PublicApi {}
+
+@RestApplication(
+        name = "management",
+        path = "/api/mgmt",
+        resources = {ManagementResource.class})
+@ApiDocs(
+        access = ApiDocs.Access.PROTECTED,
+        securityScheme = "bearerAuth",
+        rolesAllowed = {"admin"})
+public interface ManagementApi {}
+```
+
+`bearerAuth` is the scheme of the JWT handler that `JwtAuthModule` registers (see
+`dev.vertique:vertique-rest-auth-jwt`). The example binds its `JWTAuth` from the configured
+`jwt.hs256Key` and keeps no key in its sources.
+
+**3. Add document metadata in configuration.** The management interface declares no
+`@OpenAPIDefinition`, so its `info` comes from configuration; the public document gets a server URL.
+Configuration never holds `access`:
+
+```json
+{
+  "apidocs": {
+    "documents": {
+      "public": {
+        "serverUrl": "https://api.example.com/api/public"
+      },
+      "management": {
+        "info": {
+          "title": "Management API",
+          "version": "1.0"
+        }
+      }
+    }
+  }
+}
+```
+
+**4. Read the documents.** `/apidocs/public/openapi.json` and `.yaml` answer any caller.
+`/apidocs/management/openapi.json` and `.yaml` answer `401` without a token, `403` to a token
+without the `admin` role, and `200` with `Cache-Control: private, no-store` to an `admin`. The
+example also serves a Redoc page at `/apidocs/ui/` (see
+[Serving a UI under the prefix](#serving-a-ui-under-the-prefix)).
+
+---
+
 ## Protected Documents
 
 A document whose declaring interface carries
@@ -401,8 +489,10 @@ Authentication runs before any other check, so an unauthenticated request for an
 protected document's name is answered `401`, which discloses that the name exists. A name without an
 enabled document has no route and falls through to the later mounts. Methods other than `GET` and
 `HEAD` on a protected document URL are not answered by the document route: they continue to later
-mounts like a request for an unknown name, without the security chain, and are answered as those
-mounts answer them. No document content is reachable that way.
+mounts without the security chain and are answered as those mounts answer them. When no later mount
+claims the request, the router answers `405` (no `Allow` header), for example
+`POST /apidocs/management/openapi.json`, where a request for an unknown name ends with `404`. No
+document content is reachable that way.
 
 ### Events and metrics
 
@@ -804,7 +894,9 @@ The members are written in this order: `name`, `in`, `description`, `required`, 
 
 An input with no captured schema, and every composite-bean field, is unenforced. Its schema is
 `{"default": "<raw @DefaultValue text>"}` when it declares a `@DefaultValue`, and the empty schema
-`{}` otherwise. Nothing is derived from its Java type or its constraint annotations.
+`{}` otherwise. Nothing is derived from its Java type or its constraint annotations: a `@BeanParam`
+field `int page` with `@DefaultValue("1")` publishes `{"default": "1"}`, a string default and no
+`type`.
 
 ### Hidden operations
 
@@ -2202,8 +2294,9 @@ and its message can quote that value.
 
 ### Common mistakes
 
-- **Annotating without configuring `info`.** `@ApiDocs` alone does not start: every enabled document
-  needs `apidocs.documents.<name>.info.title` and `.version`. Disable a document with
+- **Annotating without an `info`.** `@ApiDocs` alone does not start: every enabled generated
+  document needs an `info` with a `title` and a `version`, from `@OpenAPIDefinition(info)` on the
+  declaring interface or from `apidocs.documents.<name>.info` (see [`info`](#info)). Disable a document with
   `apidocs.documents.<name>.enabled: false` instead of removing the annotation when the configuration
   is not ready.
 - **Keying a document entry by path instead of name.** Entries are keyed by the `@RestApplication`
@@ -2299,8 +2392,10 @@ and its message can quote that value.
   error interceptors, and later mounts never see them.
 - **Expecting a `404` or `405` from the docs mount for a public document.** The mount passes every
   public-document request it does not answer to the later mounts; a trailing slash, `POST`, or
-  unknown name is answered by them. A protected document's trailing-slash variant ends with `404`
-  once the chain has passed.
+  unknown name is answered by them. When no later mount claims the request, the router answers it:
+  `405` for another method on a document URL (no `Allow` header), `404` for an unknown name or a
+  public document's trailing-slash `GET` or `HEAD`. A protected document's trailing-slash variant
+  ends with `404` once the chain has passed.
 - **Publishing different content from different server instances.** Instances of one component are
   compared, and a difference fails the later instance's startup.
 - **Omitting the module and expecting silence.** An application whose interface carries `@ApiDocs`
@@ -2382,6 +2477,451 @@ and the component's multibound sets of `RequestValidationStrategy`, `SecuritySch
 multibound `Set<ResponseProducerBinding<?>>` (from `dev.vertique:vertique-rest-core`), which
 decides which return types publish `default`, and the `JsonMapperProfileRegistry` from
 `JsonRuntimeModule` (in `dev.vertique:vertique-json`), which `RestModule` includes.
+
+---
+
+## Developer Guide
+
+Task-oriented guidance for adopting runtime documents. Each subsection points to the reference
+section above, or to another module's reference, that holds the full rules. The examples
+`examples/vertique-example-apidocs/` and `examples/vertique-example-services-codegen/` show the
+patterns in a running application.
+
+### Declaring named applications
+
+A document belongs to a declared application, so start with `@RestApplication` (from
+`dev.vertique:vertique-rest-jaxrs`) on an interface, as [Getting Started](#getting-started) shows:
+
+- **`name`.** Matches `[a-z0-9][a-z0-9_-]{0,63}` and is neither `none` nor `null`. It names the
+  document, its URLs, and its `apidocs.documents.<name>` and `jaxrs.applications.<name>` entries, so
+  keep it stable: a renamed application moves its document URLs, and an entry under the old name
+  fails startup.
+- **`path`.** The mount path, normalized at compile time: `/api/public/` and `/api/public/*` both
+  become `/api/public`.
+- **Membership.** Exactly one of a non-empty `resources` list and `discover = true`, which only the
+  sole declared application may use.
+- **`openapiPath`.** Names the application's own contract, and
+  `jaxrs.applications.<name>.openapiPath` overrides it. Either makes the document that contract (see
+  [Serving an application's own contract](#serving-an-applications-own-contract)).
+
+The annotation processor of `dev.vertique:vertique-codegen-jaxrs` checks each declaration at
+compile time and emits one registration per interface into the generated
+`GeneratedJaxRsResourcesModule`; list that module and `RestModule` in the component. At startup,
+before the server listens, a name declared twice in the component (active or not), a
+`discover = true` application beside another declaration, a `jaxrs.applications.<name>` entry that
+names no declaration, and two active applications whose paths overlap each fail. The full rules are
+in the "@RestApplication" section of `dev.vertique:vertique-rest-jaxrs` and the "REST Application
+Declarations" section of `dev.vertique:vertique-codegen-jaxrs`.
+
+### Migrating from `Application` subclasses
+
+A `jakarta.ws.rs.core.Application` subclass is not registered. The build warns once for each
+concrete subclass that its `@ApplicationPath` and `getClasses()` have no effect, and where its
+resources are served instead: at `jaxrs.basePath` on the legacy default mount when the component
+declares no `@RestApplication`, otherwise only where a declared application lists them. A build that
+treats warnings as errors fails on it, and `@NoAutoWire` on the subclass silences it.
+
+- **Port it.** Declare a `@RestApplication` interface with the same path that lists the subclass's
+  resources, or sets `discover = true` when it is the sole application, then delete the subclass.
+  The "Porting a Jakarta `Application` Subclass" section of `dev.vertique:vertique-codegen-jaxrs`
+  shows the before and after.
+- **Check the perimeter.** Until it is ported, the resources no longer answer under the old
+  `@ApplicationPath` prefix, so gateway routes, allowlists, and other rules keyed on that prefix stop
+  matching them.
+
+**Documents for the legacy default mount.** The default mount never publishes a document. To
+document an application that uses it, declare one sole discovery application at the same place, as
+`examples/vertique-example-services-codegen/` does (members elided):
+
+```java
+@RestApplication(name = "services", path = "/", discover = true)
+@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@OpenAPIDefinition(
+        info =
+                @Info(
+                        title = "Example Services Codegen API",
+                        version = "0.1.0",
+                        description = "…"))
+public interface ServicesApi {}
+```
+
+Its routes stay where they were under three constraints:
+
+- **`path` is your `jaxrs.basePath` without `/*`**, so `/` for the default `/*`.
+- **A root application conflicts with every other JAX-RS mount**, application or hand-built, so it
+  must be the only one.
+- **Declaring any application switches composition to explicit mode.** A manual `@JaxRsResources`
+  contribution is routed only when an application selects it, startup warns about resources no
+  application selects, and each application mount warns about operations with no explicit security
+  policy. Declare the policy on public resources with `@PermitAll`, as the example's
+  `CatalogResource` does (members elided):
+
+```java
+@PermitAll
+@Path("/items")
+@Produces(MediaType.APPLICATION_JSON)
+public class CatalogResource {
+    // …
+}
+```
+
+The "Explicit mode" and "Explicit security policy" sections of `dev.vertique:vertique-rest-jaxrs`
+list every warning.
+
+### Enabling documents with `@ApiDocs`
+
+1. **List `OpenApiDocsModule`** in the component.
+2. **Put `@ApiDocs` on the declaring interface** with its access, which only code decides:
+   `PUBLIC`, or `PROTECTED` with a `securityScheme` and optional `rolesAllowed`. An empty
+   `rolesAllowed` admits any caller the scheme authenticates, and an INFO line says so (see
+   [Access: `PUBLIC` and `PROTECTED`](#access-public-and-protected)).
+3. **Give the document an `info`** from `@OpenAPIDefinition(info)` on the declaring interface or from
+   `apidocs.documents.<name>.info`; the example uses one of each (see [`info`](#info)).
+
+`@ApiDocs` guards the document routes only and is not API protection: secure the operations
+themselves, as the example's `ManagementResource` does (members elided):
+
+```java
+@Path("/")
+@Produces(MediaType.APPLICATION_JSON)
+@SecurityRequirement(name = "bearerAuth")
+@RolesAllowed("admin")
+public class ManagementResource {
+    // …
+}
+```
+
+Configuration describes or switches off documents but never changes access: `apidocs.enabled: false`
+turns every document off, `apidocs.documents.<name>.enabled: false` turns one off, and an entry may
+set `info` and `serverUrl`; `access` and `mount` are refused (see [Configuration](#configuration)).
+When the docs artifact is on the classpath but the component does not list `OpenApiDocsModule`,
+`dev.vertique:vertique-rest-jaxrs` logs one INFO line per active application carrying `@ApiDocs`,
+stating that no documentation route is published for it.
+
+### Operation ids and application identity
+
+Once any application is declared, operation ids are unique across all JAX-RS mounts, with one
+exemption: the same method of the same resource class keeps its id in every application that mounts
+it. Two distinct resource methods that share an id across mounts fail startup. This rule is kept
+until a later change scopes operation ids per mount (and, under a strategy that resolves operations
+from the mount's contract, such as `openapi-contract`, across the mounts sharing one contract
+location) and logs a startup WARN naming the applications that share an id; until then, no such
+WARN is logged.
+
+Code that keys state or decisions on the operation id alone can already conflate one resource method
+mounted by several applications. Key it on the application as well:
+
+- **Where the name is.** `RestOperationDescriptor.applicationName()`, `MountMeta.applicationName()`,
+  and `OperationContext.operation().applicationName()`, all `null` for the legacy default mount and
+  for hand-built mounts. A protected document's synthetic operation reports the documented application.
+- **In an interceptor.** Key state on `ctx.operation().applicationName()` plus the operation id. The
+  "`RequestInterceptor`, `OperationInterceptor`, `ErrorInterceptor`" section of
+  `dev.vertique:vertique-rest-core` shows the pattern.
+- **Metrics and traces.** See the "`vertique.rest.server.requests` — Timer" section of
+  `dev.vertique:vertique-micrometer-rest` and the span attributes of
+  `dev.vertique:vertique-opentelemetry-rest`.
+
+### Choosing the documentation prefix
+
+Documents are served under `apidocs.path`, `/apidocs` by default (see [Configuration](#configuration)
+for its rules). Startup fails when a published `GET` or `HEAD` route of a JAX-RS mount, typically a
+root application's, can answer a document URL, and when a JAX-RS mount lies at or under the prefix
+(see [Startup Checks](#startup-checks)):
+
+- **A colliding route.** Choose an `apidocs.path` that no route matches, or narrow the route.
+- **A route that matches every path**, such as `GET /{path: .*}` on a root mount, collides under any
+  prefix: narrow or remove it before enabling documents.
+- **Routes added by a `RouterLifecycleHook` or a `MountCustomizer`** are neither published nor
+  checked for collisions; check them yourself against the document URLs.
+
+### Serving a UI under the prefix
+
+The docs mount answers only the exact document URLs and passes every other request under the prefix
+on, so an application `RouterMount` in the default phase can serve a UI there (see
+[What the mount answers, and what it passes on](#what-the-mount-answers-and-what-it-passes-on)). The
+example contributes its page this way, from `ApiDocsUiMount` in
+`examples/vertique-example-apidocs/` (members elided):
+
+```java
+@Provides
+@IntoSet
+static RouterMount apiDocsUiMount() {
+    return new ApiDocsUiMount();
+}
+```
+
+```java
+static final String MOUNT_PATH = "/apidocs/ui/*";
+// …
+public Future<Router> createRouter(Vertx vertx) {
+    return vertx.executeBlocking(ApiDocsUiMount::readPage).map(page -> {
+        Router router = Router.router(vertx);
+        router.route("/").method(HttpMethod.GET).method(HttpMethod.HEAD).handler(ctx -> serve(ctx, page));
+        return router;
+    });
+}
+
+private static void serve(RoutingContext ctx, byte[] page) {
+    HttpServerResponse response = ctx.response()
+            .putHeader("Content-Type", CONTENT_TYPE)
+            .putHeader("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+            .putHeader("Content-Length", Integer.toString(page.length));
+    if (ctx.request().method() == HttpMethod.HEAD) {
+        response.end();
+    } else {
+        response.end(Buffer.buffer(page));
+    }
+}
+```
+
+Startup then logs the framework's overlap warning for the two mounts, which is expected here:
+`Mount path '/apidocs/*' (priority=<n>) is a prefix of '/apidocs/ui/*' (priority=<n>); requests
+matching both will be handled by the first-mounted`. Only the document URLs are answered by the docs
+mount; the page request reaches the UI mount. A `MountCustomizer` that matches every mount and ends
+every request stops this fall-through (see [Mount Customizers](#mount-customizers)).
+
+The page is application code. It never bypasses a document's access policy: a page that shows a
+protected document must send the reader's credentials itself.
+
+### UI asset integrity and content security policy
+
+**Integrity.** Self-host the UI's assets, or pin each external script by its exact version, with
+`integrity` and `crossorigin`, as the example's page does:
+
+```html
+<redoc spec-url="/apidocs/public/openapi.json"></redoc>
+<script src="https://cdn.jsdelivr.net/npm/redoc@2.5.4/bundles/redoc.standalone.js" integrity="sha384-w447zOpYfw/1Tv/5AK9NfHTlQIqE3RVR6KY62jCyy9zNDgO64cMwGGP1Fj0zJVf5" crossorigin="anonymous"></script>
+```
+
+**Policy.** Start from the restrictive base policy
+`default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'`
+and add the pinned script's exact URL, path and file name included, to `script-src`. Never add the
+CDN origin, a path prefix, or a wildcard. The additions each UI needs were measured in a browser,
+rendering the example's public document:
+
+| UI | Additions beyond the base policy and the script URL | Why |
+|---|---|---|
+| Redoc 2.5.4 standalone | `style-src 'unsafe-inline'`; `worker-src blob:` | Redoc injects its styles at run time, which no hash or nonce can cover, and fails to render without them; its search runs in a worker created from a `blob:` URL |
+| Scalar 1.72.4 standalone (`@scalar/api-reference`) | `style-src 'unsafe-inline'` | Scalar injects its styles at run time and renders unstyled without them |
+
+Everything else stays blocked, by decision: Redoc's `data:` section-link icon and its footer logo
+from another origin, and Scalar's web fonts from another origin (system fonts are used instead).
+Neither UI's rendering of operations, schemas, or search depends on them. Scalar features that
+contact other services were not exercised and stay blocked by `connect-src 'self'`. Re-measure when
+you change a pinned version. The example's policy:
+
+```java
+static final String CONTENT_SECURITY_POLICY = "default-src 'none'; script-src 'self' " + REDOC_SCRIPT_URL
+        + "; style-src 'self' 'unsafe-inline'; connect-src 'self'; worker-src blob:; frame-ancestors 'none'";
+```
+
+Do not loosen the policy further. A page that reads a protected document must not keep bearer
+tokens in `localStorage`.
+
+### Document access and middleware
+
+The docs mount runs in the `SYSTEM_FIRST` phase, so document requests bypass controls attached to
+the mount a document describes:
+
+- **Not run for document routes.** API-scoped middleware, `RouterLifecycleHook`s,
+  `RequestInterceptor`s that override `beforeRequest`, and `MountCustomizer`s whose `matches` rejects the docs mount.
+- **Run for document routes.** ROOT-scoped middleware and `BEFORE_MOUNTS` router customizers on the
+  main router, and every `MountCustomizer` whose `matches` accepts the docs mount. A customizer that
+  adds a catch-all handler to every mount stops fall-through under the prefix (see
+  [Mount Customizers](#mount-customizers)).
+- **Public documents.** No `OperationHandlerContributor` runs for their routes.
+- **Startup warning.** One WARN per document names each uncovered mount-scoped control (see
+  [Controls that skip the document routes](#controls-that-skip-the-document-routes)).
+
+An IP allowlist that guards `/api/mgmt` as API-scoped middleware therefore does not guard
+`/apidocs/management/openapi.json`. Move such a rule to the main router and match the document URLs
+too.
+
+A protected document's `401` and `403` are problem responses its route writes itself; the
+application's error pipeline, exception mappers, and error interceptors never see them (see
+[Answers](#answers)). Each protected read or denial completes as a `RestRequestCompletedEvent` whose
+`operation()` is the document's synthetic descriptor, carrying the documented application's name,
+and emits the same authorization-decision and credential-rejection events as an equally annotated
+resource request. A public document read is claimed by no operation and completes as an
+`HttpRequestCompletedEvent` (see [Events and metrics](#events-and-metrics)).
+
+### What redaction keeps out of a document
+
+A generated document never publishes:
+
+- **Reserved names** a request body refuses but does not publish, such as a `@JsonIgnore` member
+  beside `@JsonAnySetter` extras (see [Reserved-name redaction](#reserved-name-redaction)). A
+  `propertyNames` that a JSON mapper profile's own schema override declares is not a recorded
+  refusal and stays in the document, so a hidden property it names is your own disclosure.
+- **Hidden inputs**, in any position (see [Hidden inputs](#hidden-inputs)). Hiding a composite
+  parameter with `@Parameter(hidden = true)` or `@Schema(hidden = true)`, or its type with
+  `@Hidden`, hides all its fields.
+- **Hidden operations** (see [Hidden operations](#hidden-operations)), nor roles, actions, or other
+  checks that OpenAPI cannot express (see [What is never published](#what-is-never-published)).
+
+A member or type that a generator still describes in a request body or a response although it
+carries `@Hidden` or `@Schema(hidden = true)` fails publication instead of leaking. The message names
+the fix that works at that position: `@Schema(hidden = true)` on the property's own field or getter;
+on the members that reference a hidden type; or, for an enum constant, `@JsonUnwrapped` content, or a
+property bound through a setter, builder, or creator parameter, removing it from the published type
+or hiding the operation (see [Hidden members of a request body](#hidden-members-of-a-request-body)
+and [Refusals of output types](#refusals-of-output-types)). Know the limits of that check:
+
+- It inspects the bound body type. A custom or decorating `OperationSchemaSource` that returns
+  another type's description can publish that type's `@Hidden` members.
+- On output, it covers the members the output generator describes.
+- `hidden` declared on a response's or a parameter's `@Header`, `@Schema`, `@Content(schema = …)`,
+  or `@ArraySchema` is warned, not honored: the referenced schema is published, in public documents
+  too (see [Response content and headers](#response-content-and-headers) and
+  [Ignored schema members](#ignored-schema-members)).
+
+### Validation strategy and what a document claims
+
+What a generated document's input schemas claim depends on the mount's request-validation strategy:
+
+| Strategy | The input schemas are | `enforcement` |
+|---|---|---|
+| `web-validation` | The schemas the gate enforces, minus redacted reserved names | `active` |
+| `none` | Descriptive | `disabled` |
+| A custom strategy | The schemas it received, descriptive | `unknown` |
+| `openapi-contract` | An application with its own contract serves that contract; one that validates against the shared global contract fails startup with an enabled document | — |
+
+A public document omits these internals and records only the pattern dialect; a protected one
+records the strategy, the schema source, and the enforcement (see
+[Validation disclosure](#validation-disclosure)). Under any strategy, an application with its own
+contract location serves that contract (see
+[Serving an application's own contract](#serving-an-applications-own-contract)), and the shared
+global contract is served only by the application itself (see
+[Serving the shared `openapi-contract` file](#serving-the-shared-openapi-contract-file)).
+
+### Serving an application's own contract
+
+1. **Write the contract** as OpenAPI 3.0 or 3.1: its `openapi` is `3.0.<n>` or `3.1.<n>`, and
+   OpenAPI 3.2 fails startup. Its file name ends in `.json`, `.yaml`, or `.yml` and chooses the
+   parser.
+2. **Point the application at it** with `@RestApplication.openapiPath` or
+   `jaxrs.applications.<name>.openapiPath`; configuration wins. Each application needs a location of
+   its own: two applications sharing one file after path normalization fail startup.
+3. **Keep `@ApiDocs`**, and configure no `info` or `serverUrl` and no `@OpenAPIDefinition`: the
+   contract is served as parsed, in JSON and YAML, and never rewritten.
+4. **Describe exactly the routed operations.** Every Operation Object needs an `operationId` that no
+   other one repeats. Every visible routed operation needs a route operation
+   with its `operationId`, HTTP method, and path; hidden operations may be described or left out.
+   Webhook and callback operations describe outbound calls: they are exempt from the unrouted-id
+   check and never matched, but each needs an `operationId` that no route uses. Every other
+   `operationId` member, such as one in a Link, must name a routed operation, is never matched or
+   counted, and, in an Operation or Link Object, must not describe that route's hidden inputs (see
+   [Operation ids](#operation-ids)).
+5. **Keep it self-contained and safe.** Only local references, no described hidden parameter or
+   form field, and plain object schemas for form bodies.
+
+Startup refuses every violation, listing them all (see
+[Startup checks of a served contract](#startup-checks-of-a-served-contract)). It warns when
+`servers[0].url` is not the mount path (see
+[Warnings of a served contract](#warnings-of-a-served-contract)). Under `openapi-contract` a relative
+`servers` URL fails startup: omit `servers` or use an absolute URL (see
+[Contract and runtime](#contract-and-runtime)). A relative location resolves to a
+working-directory file before a classpath resource of the same name, and that file then shadows the
+packaged contract, with a WARN (see
+[Where the contract is read from](#where-the-contract-is-read-from)).
+
+Know the residuals. Nothing compares the contract's schemas with what `web-validation` enforces, so
+drift between them goes undetected; keep them in step (see
+[Contract and runtime](#contract-and-runtime)). A served contract's form-body schemas may declare
+keywords the runtime does not enforce, `dependencies` included, and a developer-authored contract
+can still name a hidden input in the positions under [Not checked](#not-checked): a served contract
+is not fully checked for hidden inputs.
+
+### Serving the shared `openapi-contract` file
+
+Under `openapi-contract`, an application that validates against the shared global
+`jaxrs.openapiPath` cannot enable a document: startup fails, because that file describes every
+mount, public and management alike (see [Startup Checks](#startup-checks)). Either give each
+application its own contract location (see
+[Serving an application's own contract](#serving-an-applications-own-contract)), or serve the shared
+file yourself, with a `RouterMount` like the UI mount of
+[Serving a UI under the prefix](#serving-a-ui-under-the-prefix) that returns the contract resource.
+That route is yours: `@ApiDocs` does not guard it, so put it behind an access check at least as
+strict as the most restricted mount the file describes.
+
+### Pattern dialect and the validation input bounds
+
+Patterns are published verbatim and are Java regular expressions; every generated document records
+`"patternDialect": "java.util.regex"` (see [Patterns](#patterns)). Application-authored patterns
+appear exactly as written, such as the example's `ItemUpdate` record:
+
+```java
+public record ItemUpdate(
+        @Pattern(regexp = "[A-Za-z0-9 ]{1,64}") String name) {}
+```
+
+A client that evaluates them in another dialect may read them differently.
+
+**Release note: the `web-validation` gate, with or without documents.** These behaviors apply to
+every application that validates with `web-validation`, whether or not any document is enabled:
+
+- **Input bounds.** A string value or object key that reaches a pattern position (`pattern`,
+  `patternProperties`, or a pattern-bearing `propertyNames`) or the format `idn-hostname`,
+  `idn-email`, or `regex` is rejected with `400` when it is longer than
+  `jaxrs.validationPatternMaxChars` (4,096 UTF-16 code units), or when those strings and keys add up
+  to more than `jaxrs.validationPatternMaxTotalChars` (262,144) in one request. Every other format is
+  neither bounded nor counted, so pattern-free bodies of dates, timestamps, or identifiers are
+  unaffected. Raise either limit in configuration; the total may not be smaller than the per-string
+  limit (see `dev.vertique:vertique-rest-core`).
+- **Linear format checks.** `uri`, `uri-reference`, `url`, `json-pointer`, `relative-json-pointer`,
+  `json-pointer-uri-fragment`, and `uri-template` are decided by linear implementations instead of
+  the validation engine's regular expressions, so values at the edges, such as unencoded spaces, may
+  be judged differently, and values long enough to overflow the engine's checks are judged instead
+  of failing with an error. `url` keeps the engine's scheme and host filtering and also rejects a
+  dotted-quad label with a leading zero, such as `http://8.08.8.8/`. The "WebValidationStrategy"
+  section of `dev.vertique:vertique-rest-validation` lists the verdict differences.
+- **Case-insensitive body types.** A key of a case-insensitively bound type counts toward the total
+  up to three times per validation of its object, and once per `anyOf` branch for a polymorphic type;
+  nesting does not multiply the count.
+
+### Output renames and documentation warnings
+
+- **Renamed output properties.** A response member that `@Schema(name = ...)` describes under a name
+  other than the one it is serialized under fails startup, because the document would describe a
+  property the response never carries. Rename it on the wire with `@JsonProperty`, or remove the
+  `@Schema(name)` (see [Refusals of output types](#refusals-of-output-types)).
+- **Documentation the document does not publish** is warned at startup, once the document is built:
+  a `@Parameter(required = true)` whose requiredness the runtime cannot determine, non-documentation
+  `@Schema` and `@ArraySchema` members on an input, response attributes the document omits, and
+  `info` extensions not named `x-` (see [Metadata warnings](#metadata-warnings)). The examples start
+  with none of these warnings: keep annotations to what the runtime does.
+
+### Differences from the Maven plugin's document
+
+A runtime document and a document the Swagger Maven plugin writes at build time are independent
+producers, and no parity between them is promised. Differences come from which authority decides
+each part:
+
+- **Schemas.** The plugin's model converters and Swagger core model describe types; the runtime
+  publishes the schemas the framework's input generator built for the validation gate and the
+  schemas its output generator builds for responses, under the operation's JSON mapper profile.
+- **Parameters and request bodies.** The runtime writes `required` from what the binding and the
+  validation gate enforce; documentation annotations cannot add it.
+- **Responses.** The runtime infers responses from return types, and a declared success status
+  without content keeps the inferred schema, where swagger-core publishes none unless
+  `useReturnTypeSchema` is `true` (see
+  [A declared success status without content](#a-declared-success-status-without-content)).
+- **Security schemes.** The runtime describes each scheme from its `SecuritySchemeHandler`.
+- **Configuration.** `info` and `servers` may come from `apidocs.documents.<name>` configuration.
+- **Disclosure.** The runtime removes reserved names and hidden inputs and adds
+  `x-vertique-validation`.
+- **Hiding.** The runtime resolves a composed `@Hidden` one meta level deep, which swagger-core's
+  reader does not (see [Hidden operations](#hidden-operations)). A plugin configuration that lists
+  implementation classes, rather than discovering resource packages, also keeps operations hidden by
+  `@Hidden` on an interface or interface method, which the runtime leaves out.
+
+Compared on `examples/vertique-example-services-codegen/` for property names, types, requiredness,
+composition, `readOnly`, `writeOnly`, and recursion, the two documents agree, and its recorded list
+of expected differences, `examples/vertique-example-services-codegen/src/test/resources/apidocs/maven-comparison-expected-differences.json`,
+is empty. Outside those dimensions they differ: component names (`ChargeRequest` against
+`charge.request`), `openapi` (`3.0.1` against `3.1.1`), a root `$schema` in the runtime
+components, `format` members such as `int64` in the Maven document, and `requestBody.required: true`
+in the runtime document only.
 
 ---
 

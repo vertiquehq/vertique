@@ -297,6 +297,77 @@ public class OpenApiDocsServingIT {
         }
     }
 
+    @Test
+    @DisplayName(
+            "With no other mount under the prefix, GET and HEAD on a document URL with a trailing slash fall through to the router's 404, not 405, while the exact URLs still answer 200")
+    void trailingSlashDocumentUrlsFallThroughToNotFound() throws Exception {
+        // Given: the shared declarations and the documentation mount, with no mount after it
+        DocsTestComponents.WithoutMarkerMountComponent component =
+                DaggerDocsTestComponents_WithoutMarkerMountComponent.factory().create(DocsConfigs.shared());
+
+        Deployment deployment = deploy(component::httpVerticle);
+        try {
+            int port = deployment.port();
+
+            // When / Then: the exact document URLs are answered by the documentation mount
+            List<Request> exact = List.of(
+                    new Request(HttpMethod.GET, "/apidocs/public/openapi.json"),
+                    new Request(HttpMethod.HEAD, "/apidocs/public/openapi.json"),
+                    new Request(HttpMethod.GET, "/apidocs/public/openapi.yaml"),
+                    new Request(HttpMethod.HEAD, "/apidocs/public/openapi.yaml"));
+            for (Request request : exact) {
+                HttpResponse<Buffer> response = send(request.method(), port, request.uri(), null);
+                assertEquals(200, response.statusCode(), () -> request + " must answer 200");
+                assertNotNull(response.getHeader("ETag"), () -> request + " must carry the document's ETag");
+            }
+
+            // When / Then: each trailing-slash variant falls through to the router's own 404
+            List<Request> trailingSlash = List.of(
+                    new Request(HttpMethod.GET, "/apidocs/public/openapi.json/"),
+                    new Request(HttpMethod.HEAD, "/apidocs/public/openapi.json/"),
+                    new Request(HttpMethod.GET, "/apidocs/public/openapi.yaml/"),
+                    new Request(HttpMethod.HEAD, "/apidocs/public/openapi.yaml/"));
+            for (Request request : trailingSlash) {
+                HttpResponse<Buffer> response = send(request.method(), port, request.uri(), null);
+                assertEquals(404, response.statusCode(), () -> request + " must fall through to 404");
+                assertNull(response.getHeader("Allow"), () -> request + " must carry no Allow header");
+                assertNull(response.getHeader("ETag"), () -> request + " must carry no document ETag");
+            }
+        } finally {
+            undeploy(deployment);
+        }
+    }
+
+    @Test
+    @DisplayName(
+            "With no other mount under the prefix, POST on a known document URL ends in the router's 405, and on an unknown document URL in 404")
+    void otherMethodsOnADocumentUrlEndInTheRoutersMethodNotAllowed() throws Exception {
+        // Given: the shared declarations and the documentation mount, with no mount after it
+        DocsTestComponents.WithoutMarkerMountComponent component =
+                DaggerDocsTestComponents_WithoutMarkerMountComponent.factory().create(DocsConfigs.shared());
+
+        Deployment deployment = deploy(component::httpVerticle);
+        try {
+            int port = deployment.port();
+
+            // When: a known document URL is posted to
+            HttpResponse<Buffer> known = send(HttpMethod.POST, port, "/apidocs/public/openapi.json", null);
+
+            // Then: the router's method mismatch answers 405, and the documentation mount serves nothing
+            assertEquals(405, known.statusCode(), "POST /apidocs/public/openapi.json must end in the router's 405");
+            assertNull(known.getHeader("ETag"), "POST /apidocs/public/openapi.json must carry no document ETag");
+
+            // When: an unknown document URL is posted to
+            HttpResponse<Buffer> unknown = send(HttpMethod.POST, port, "/apidocs/unknown/openapi.json", null);
+
+            // Then: no route matches its path, so it answers 404
+            assertEquals(404, unknown.statusCode(), "POST /apidocs/unknown/openapi.json must answer 404");
+            assertNull(unknown.getHeader("ETag"), "POST /apidocs/unknown/openapi.json must carry no document ETag");
+        } finally {
+            undeploy(deployment);
+        }
+    }
+
     /**
      * The seven default-headers variants: the variant's name, how it fills
      * {@code jaxrs.defaultHeaders} ({@code null} when the section is absent), the {@code Cache-Control} every document response must carry, and

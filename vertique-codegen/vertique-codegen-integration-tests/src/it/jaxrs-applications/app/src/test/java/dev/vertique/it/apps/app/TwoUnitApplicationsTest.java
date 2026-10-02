@@ -25,12 +25,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * T003 TP-005, extended by T023 TP-017: real, processor-generated code, across two compilation units
+ * Real, processor-generated code, across two compilation units
  * ({@code resources} and {@code app}), serves both {@link PublicApplication}'s and
  * {@link ManagementApplication}'s native application mounts over HTTP from
  * {@link dev.vertique.rest.core.router.HttpVerticle} instances built by {@link AppComponent}, with no
  * handwritten registration or mount module, while the leftover {@link LegacyStyleApplication}
- * subclass stays inert (AC-021.4).
+ * subclass stays inert.
  */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class TwoUnitApplicationsTest {

@@ -17,7 +17,7 @@ import java.util.Map;
 /**
  * Support bindings {@link LegacyComponent} needs: a {@link ConfigParser} that deserializes each
  * config section through a private Jackson mapper, and the unsecured {@link SecurityPolicyValidator}
- * stand-in {@code JaxRsRouterMount.Factory} requires. Mirrors T002's
+ * stand-in {@code JaxRsRouterMount.Factory} requires. Mirrors the
  * {@code application.ApplicationTestSupportModule}, the reference shape for a bare component.
  */
 @Module

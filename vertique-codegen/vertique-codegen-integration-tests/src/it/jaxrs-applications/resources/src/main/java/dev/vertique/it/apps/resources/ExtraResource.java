@@ -11,8 +11,8 @@ import jakarta.ws.rs.core.MediaType;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * DI-eligible JAX-RS resource fixture never listed by any {@code Application} (T003 TP-005): it is
- * cataloged, but no active application's {@code getClasses()} selects it, so its lazy
+ * DI-eligible JAX-RS resource fixture never listed by any {@code Application}: it is
+ * cataloged, but no active application lists it (an {@code Application} subclass's {@code getClasses()} has no effect), so its lazy
  * {@link jakarta.inject.Provider} must never be called and {@link #CONSTRUCTIONS} must stay {@code 0}.
  */
 @Path("/extra")

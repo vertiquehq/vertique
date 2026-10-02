@@ -286,6 +286,8 @@ interface MgmtApi {}
 
 The declaration also needs a `name` (see "Declaration Checks" below). A subclass kept for another reason can be annotated `@NoAutoWire` to suppress its warning.
 
+Until the port, the subclass's resources are served at `jaxrs.basePath` when no `@RestApplication` is declared, or only where a declared application selects them, never under the old `@ApplicationPath`, so perimeter rules keyed on that prefix (gateway routes, allowlists, rate limits) stop matching them.
+
 ---
 
 ## REST Application Declarations

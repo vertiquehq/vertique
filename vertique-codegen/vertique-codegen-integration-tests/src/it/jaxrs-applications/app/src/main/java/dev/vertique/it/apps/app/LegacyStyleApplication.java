@@ -9,9 +9,9 @@ import jakarta.ws.rs.core.Application;
 import java.util.Set;
 
 /**
- * T023 TP-017 leftover-adapter fixture (AC-021.4): a concrete {@code jakarta.ws.rs.core.Application}
+ * Leftover-adapter fixture: a concrete {@code jakarta.ws.rs.core.Application}
  * subclass the native composer never registers and never instantiates. The compile-time allow list
- * (T028) reports exactly one warning naming this class; at runtime it and every resource it lists
+ * reports exactly one warning naming this class; at runtime it and every resource it lists
  * ({@link CatalogResource}) stay inert, so {@code GET /api/legacy/catalog} must 404 rather than
  * serve.
  */

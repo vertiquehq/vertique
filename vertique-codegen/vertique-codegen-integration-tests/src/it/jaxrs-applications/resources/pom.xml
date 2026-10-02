@@ -20,8 +20,7 @@ SPDX-License-Identifier: EUPL-1.2
     <!--
     Resources-only compilation unit: every resource is DI-eligible (an @Inject constructor), so the
     real processor writes this unit's own dev.vertique.it.apps.resources.GeneratedJaxRsResourcesModule.
-    No Application here, so the module's package is resolved from these resources (C-GEN "Package
-    resolution").
+    No Application here, so the module's package is resolved from these resources.
     -->
     <dependencies>
         <dependency>
