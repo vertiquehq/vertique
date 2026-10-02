@@ -10,10 +10,11 @@
  * the marker {@code RestModule} detects, through {@code @BindsOptionalOf}, to know whether the
  * OpenAPI documentation module is present in the component.
  *
- * <p>Every type here is public only so the JAX-RS application composer and mount composition
- * validator in {@code dev.vertique.rest.jaxrs}, and sibling framework modules — the OpenAPI
- * documentation module and the {@code openapi-contract} validation module — can read this
- * composition or bind the marker. It is outside the maturity promise and is not an application
- * contract: an application never depends on this package directly.
+ * <p>Every type here is public only so the composition code in {@code dev.vertique.rest.jaxrs}
+ * (the {@code RestModule} wiring, the application composer, and the mount composition validator)
+ * and sibling framework modules — the OpenAPI documentation module and the {@code openapi-contract}
+ * validation module — can read this composition or bind the marker. It is outside the maturity
+ * promise and is not an application contract: an application never depends on this package
+ * directly.
  */
 package dev.vertique.rest.jaxrs.application;
