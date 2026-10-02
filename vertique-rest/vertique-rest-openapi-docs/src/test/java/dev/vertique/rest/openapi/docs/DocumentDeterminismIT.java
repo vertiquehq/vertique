@@ -22,7 +22,7 @@ import dev.vertique.rest.openapi.docs.DeterminismTestComponents.CaptureComponent
 import dev.vertique.rest.openapi.docs.assembly.AssemblyContext;
 import dev.vertique.rest.openapi.docs.assembly.DocumentAssembler;
 import dev.vertique.rest.openapi.docs.config.EnabledDocuments;
-import dev.vertique.rest.openapi.docs.diagnostics.DocumentWarnings;
+import dev.vertique.rest.openapi.docs.diagnostics.DiagnosticsAccess;
 import dev.vertique.rest.openapi.docs.document.PublishedDocument;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.conformance.complete.CompleteEntries;
@@ -219,7 +219,7 @@ class DocumentDeterminismIT {
         EnabledDocuments.EnabledDocument document =
                 MetadataDocuments.document(inputs.attached(), ApiDocs.Access.PUBLIC);
         AssemblyContext context = new AssemblyContext(
-                schemaSource, profiles, new DocumentWarnings(), inputs.producers(), inputs.handlers());
+                schemaSource, profiles, DiagnosticsAccess.documentWarnings(), inputs.producers(), inputs.handlers());
         PublishedDocument published = DocumentAssembler.assemble(document, detached, facts, context);
         return new Assembled(
                 name,

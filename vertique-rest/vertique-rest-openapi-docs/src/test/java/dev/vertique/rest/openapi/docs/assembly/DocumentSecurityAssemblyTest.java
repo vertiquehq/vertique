@@ -33,7 +33,7 @@ import dev.vertique.rest.openapi.docs.MetadataDocuments;
 import dev.vertique.rest.openapi.docs.OpenApi31Toolchain;
 import dev.vertique.rest.openapi.docs.ResponseDocuments;
 import dev.vertique.rest.openapi.docs.config.EnabledDocuments;
-import dev.vertique.rest.openapi.docs.diagnostics.DocumentWarnings;
+import dev.vertique.rest.openapi.docs.diagnostics.DiagnosticsAccess;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.StubSchemeHandler;
 import dev.vertique.rest.openapi.docs.fixture.security.catalog.WarningCapture;
@@ -298,7 +298,7 @@ class DocumentSecurityAssemblyTest {
         AssemblyContext context = new AssemblyContext(
                 Optional.empty(),
                 ResponseDocuments.registry(),
-                new DocumentWarnings(),
+                DiagnosticsAccess.documentWarnings(),
                 Set.of(),
                 schemeHandlers("bearerAuth", "apiKeyAuth"));
 
@@ -343,7 +343,11 @@ class DocumentSecurityAssemblyTest {
         handlers.add(new GhostQueryKeyHandler());
         handlers.add(new GhostBearerHandler());
         AssemblyContext context = new AssemblyContext(
-                Optional.empty(), ResponseDocuments.registry(), new DocumentWarnings(), Set.of(), handlers);
+                Optional.empty(),
+                ResponseDocuments.registry(),
+                DiagnosticsAccess.documentWarnings(),
+                Set.of(),
+                handlers);
 
         // When: the document is assembled
         RestConfigurationException failure = assertThrows(
@@ -454,7 +458,7 @@ class DocumentSecurityAssemblyTest {
         AssemblyContext context = new AssemblyContext(
                 Optional.empty(),
                 ResponseDocuments.registry(),
-                new DocumentWarnings(),
+                DiagnosticsAccess.documentWarnings(),
                 Set.of(),
                 Set.of(RosterSchemeModule.rosterAuthHandler()));
 

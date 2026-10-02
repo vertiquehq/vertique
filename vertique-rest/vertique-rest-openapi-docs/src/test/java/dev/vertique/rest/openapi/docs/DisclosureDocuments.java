@@ -16,7 +16,7 @@ import dev.vertique.rest.openapi.docs.assembly.AssemblyContext;
 import dev.vertique.rest.openapi.docs.assembly.DocumentAssembler;
 import dev.vertique.rest.openapi.docs.config.EnabledDocuments;
 import dev.vertique.rest.openapi.docs.config.InfoConfig;
-import dev.vertique.rest.openapi.docs.diagnostics.DocumentWarnings;
+import dev.vertique.rest.openapi.docs.diagnostics.DiagnosticsAccess;
 import dev.vertique.rest.openapi.docs.document.PublishedDocument;
 import dev.vertique.rest.openapi.docs.fixture.disclosure.profile.TagsProfileModule;
 import dev.vertique.rest.openapi.docs.fixture.input.Publications;
@@ -65,7 +65,11 @@ public final class DisclosureDocuments {
      */
     public static AssemblyContext noSource() {
         return new AssemblyContext(
-                Optional.empty(), TagsProfileModule.registry(), new DocumentWarnings(), Set.of(), Set.of());
+                Optional.empty(),
+                TagsProfileModule.registry(),
+                DiagnosticsAccess.documentWarnings(),
+                Set.of(),
+                Set.of());
     }
 
     /**
@@ -79,7 +83,7 @@ public final class DisclosureDocuments {
         return new AssemblyContext(
                 Optional.of(Objects.requireNonNull(source, "source")),
                 TagsProfileModule.registry(),
-                new DocumentWarnings(),
+                DiagnosticsAccess.documentWarnings(),
                 Set.of(),
                 Set.of());
     }

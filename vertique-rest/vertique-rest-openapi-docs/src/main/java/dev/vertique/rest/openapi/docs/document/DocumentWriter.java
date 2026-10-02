@@ -10,7 +10,6 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.vertique.rest.openapi.docs.config.InfoConfig;
 import dev.vertique.rest.openapi.docs.metadata.AnnotatedInfo;
-import dev.vertique.rest.openapi.docs.schema.SchemaTrees;
 import jakarta.annotation.Nullable;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -35,7 +34,8 @@ public final class DocumentWriter {
     /** The OpenAPI version every document declares. */
     public static final String OPENAPI_VERSION = "3.1.1";
 
-    private static final ObjectMapper JSON = SchemaTrees.JSON;
+    /** The JSON mapper, with Jackson's default settings, that builds and writes document trees. */
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
 

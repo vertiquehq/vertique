@@ -9,15 +9,14 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.vertx.core.json.JsonObject;
 
 /**
- * Copies captured and generated schemas into Jackson trees the document owns, and holds the JSON
- * mapper the document's trees are built and written with.
+ * Copies captured and generated schemas into Jackson trees the document owns.
  *
  * <p>Internal to the OpenAPI documentation module; not an application API.
  */
 public final class SchemaTrees {
 
-    /** The JSON mapper, with Jackson's default settings, that builds and writes document trees. */
-    public static final ObjectMapper JSON = new ObjectMapper();
+    /** The JSON mapper, with Jackson's default settings, that reads captured schemas into trees. */
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     private SchemaTrees() {}
 

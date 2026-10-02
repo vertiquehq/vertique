@@ -41,15 +41,14 @@ import java.util.TreeMap;
  *
  * <p>Every other member that differs from its default is not published and is named as {@code
  * @<Annotation>.<member>}: among others {@code @ApiResponse.ref}, {@code @ApiResponse.links}, {@code
- *
- * <p>Internal to the OpenAPI documentation module; not an application API.
- *
  * @Content.encoding}, every member of a {@link Schema} without an {@code implementation}, every
  * member of an {@link ArraySchema} but {@code schema}, and the whole array of a content whose {@code
  * schema} is implemented. An extension whose name does not start with {@code x-} is named {@code
  * @ApiResponse.extensions}, without its name, and a header with a blank name {@code @Header.name}.
  * Members are compared with their defaults reflectively and visited in name order, so the names are
  * deterministic; no value is ever quoted.
+ *
+ * <p>Internal to the OpenAPI documentation module; not an application API.
  */
 public final class ResponseAttributes {
 

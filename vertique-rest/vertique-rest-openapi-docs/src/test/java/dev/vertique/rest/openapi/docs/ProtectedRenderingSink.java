@@ -17,7 +17,7 @@ import dev.vertique.rest.openapi.docs.assembly.AssemblyContext;
 import dev.vertique.rest.openapi.docs.assembly.DocumentAssembler;
 import dev.vertique.rest.openapi.docs.config.EnabledDocuments;
 import dev.vertique.rest.openapi.docs.config.InfoConfig;
-import dev.vertique.rest.openapi.docs.diagnostics.DocumentWarnings;
+import dev.vertique.rest.openapi.docs.diagnostics.DiagnosticsAccess;
 import dev.vertique.rest.openapi.docs.document.PublishedDocument;
 import dev.vertique.rest.openapi.docs.metadata.OperationFacts;
 import dev.vertique.rest.openapi.docs.publication.DocsPublicationSink;
@@ -81,7 +81,8 @@ final class ProtectedRenderingSink implements OperationPublicationSink {
             Optional<OperationSchemaSource> schemaSource,
             JsonMapperProfileRegistry profiles,
             RestApplications applications) {
-        this.context = new AssemblyContext(schemaSource, profiles, new DocumentWarnings(), Set.of(), Set.of());
+        this.context =
+                new AssemblyContext(schemaSource, profiles, DiagnosticsAccess.documentWarnings(), Set.of(), Set.of());
         this.applications = Objects.requireNonNull(applications, "applications");
     }
 

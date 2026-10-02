@@ -42,8 +42,8 @@ import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 
 /**
- * The Dagger test components of the served-contract integration test. They live in the module's
- * package so they can expose its package-private {@link DocumentStore}.
+ * The Dagger test components of the served-contract integration test. They expose the component's
+ * {@link DocumentStore}, a public type of the module's internal {@code publication} package.
  *
  * <p>Three module sets are used, each copied from an existing proof:
  *

@@ -41,8 +41,8 @@ import jakarta.inject.Singleton;
 import java.util.Set;
 
 /**
- * The Dagger test components of the startup-check integration tests. They live in the module's
- * package so they can expose its package-private types.
+ * The Dagger test components of the startup-check integration tests. The module types they expose
+ * are public types of the module's internal packages.
  *
  * <p>Every component lists {@link StartupBase}: {@code RestModule}, {@link OpenApiDocsModule}, the
  * canonical {@link ConfigParsingModule}, the test support bindings, a counting schema source, a

@@ -23,6 +23,7 @@ import dev.vertique.rest.openapi.docs.DisclosureDocuments.Rendering;
 import dev.vertique.rest.openapi.docs.MetadataDocuments.Outcome;
 import dev.vertique.rest.openapi.docs.MetadataDocuments.WarningCapture;
 import dev.vertique.rest.openapi.docs.assembly.AssemblyContext;
+import dev.vertique.rest.openapi.docs.diagnostics.DiagnosticsAccess;
 import dev.vertique.rest.openapi.docs.diagnostics.DocumentWarnings;
 import dev.vertique.rest.openapi.docs.fixture.input.Publications;
 import dev.vertique.rest.openapi.docs.fixture.input.UnitDocumentedApi;
@@ -339,7 +340,7 @@ public final class ResponseDocuments {
      */
     public static Outcome assemble(
             String documentName, JsonMapperProfileRegistry profiles, ResponseOperation... operations) {
-        return assemble(documentName, List.of(operations), profiles, Set.of(), new DocumentWarnings());
+        return assemble(documentName, List.of(operations), profiles, Set.of(), DiagnosticsAccess.documentWarnings());
     }
 
     /**

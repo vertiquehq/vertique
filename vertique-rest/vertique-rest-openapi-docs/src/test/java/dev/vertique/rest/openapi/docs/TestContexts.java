@@ -6,7 +6,7 @@ package dev.vertique.rest.openapi.docs;
 import dev.vertique.json.DefaultJsonMapperProfileRegistry;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
 import dev.vertique.rest.openapi.docs.assembly.AssemblyContext;
-import dev.vertique.rest.openapi.docs.diagnostics.DocumentWarnings;
+import dev.vertique.rest.openapi.docs.diagnostics.DiagnosticsAccess;
 import java.util.Optional;
 import java.util.Set;
 
@@ -20,7 +20,7 @@ public final class TestContexts {
         return new AssemblyContext(
                 Optional.empty(),
                 new DefaultJsonMapperProfileRegistry(Set.of()),
-                new DocumentWarnings(),
+                DiagnosticsAccess.documentWarnings(),
                 Set.of(),
                 Set.of());
     }
@@ -30,7 +30,7 @@ public final class TestContexts {
         return new AssemblyContext(
                 Optional.of(source),
                 new DefaultJsonMapperProfileRegistry(Set.of()),
-                new DocumentWarnings(),
+                DiagnosticsAccess.documentWarnings(),
                 Set.of(),
                 Set.of());
     }

@@ -23,8 +23,8 @@ import jakarta.inject.Singleton;
 import java.util.Set;
 
 /**
- * The Dagger test components of the composition-validator unit proofs. They live in the module's
- * package so a test can reach the documentation mount's package-private validated mark.
+ * The Dagger test components of the composition-validator unit proofs, which live in the {@code
+ * serving} package and read the documentation mount's package-private validated mark directly.
  *
  * <p>A component exposes the mounts, the composition validators, and the JAX-RS mount factory
  * without building an {@code HttpVerticle}, so a test hands hand-assembled mount lists to a

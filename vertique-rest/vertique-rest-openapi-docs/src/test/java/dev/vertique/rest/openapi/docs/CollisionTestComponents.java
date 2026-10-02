@@ -21,8 +21,8 @@ import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 
 /**
- * The Dagger test components of the route-collision tests. They live in the module's package so
- * they can expose its package-private {@link DocumentStore}.
+ * The Dagger test components of the route-collision tests. They expose the component's {@link
+ * DocumentStore}, a public type of the module's internal {@code publication} package.
  *
  * <p>Every component is built from {@code RestModule}, the canonical {@link ConfigParsingModule},
  * {@link DocsTestSupportModule}, and the deterministic counting schema source, and takes the

@@ -44,7 +44,7 @@ public final class DocumentWarnings {
     private final Set<String> warned = ConcurrentHashMap.newKeySet();
 
     @Inject
-    public DocumentWarnings() {}
+    DocumentWarnings() {}
 
     /**
      * Logs a warning unless a warning of the same kind was already logged for the same document.

@@ -27,6 +27,7 @@ import dev.vertique.rest.openapi.docs.assembly.DocumentAssembler;
 import dev.vertique.rest.openapi.docs.config.EnabledDocuments;
 import dev.vertique.rest.openapi.docs.config.EnabledDocumentsResolver;
 import dev.vertique.rest.openapi.docs.config.InfoConfig;
+import dev.vertique.rest.openapi.docs.diagnostics.DiagnosticsAccess;
 import dev.vertique.rest.openapi.docs.diagnostics.DocumentWarnings;
 import dev.vertique.rest.openapi.docs.document.PublishedDocument;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
@@ -93,7 +94,7 @@ public final class MetadataDocuments {
      * @return the guard
      */
     public static DocumentWarnings warnings() {
-        return new DocumentWarnings();
+        return DiagnosticsAccess.documentWarnings();
     }
 
     /**
