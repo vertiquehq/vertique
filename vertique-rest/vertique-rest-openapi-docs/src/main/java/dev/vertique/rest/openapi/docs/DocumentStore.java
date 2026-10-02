@@ -34,8 +34,30 @@ final class DocumentStore {
 
     private static final Logger LOG = LoggerFactory.getLogger(DocumentStore.class);
 
-    /** The source named by the stored line of a document assembled from the running code. */
-    private static final String SOURCE_GENERATED = "generated";
+    /** Where a stored document comes from, as the stored line names it. */
+    enum Source {
+
+        /** A document assembled from the running code. */
+        GENERATED("generated"),
+
+        /** An application's own contract, served as parsed. */
+        SERVED_CONTRACT("served contract");
+
+        private final String label;
+
+        Source(String label) {
+            this.label = label;
+        }
+
+        /**
+         * Returns how the stored line names the source.
+         *
+         * @return the label
+         */
+        String label() {
+            return label;
+        }
+    }
 
     /** The promise of each application: incomplete while assembling, then the stored document. */
     private final ConcurrentHashMap<String, Future<PublishedDocument>> flights = new ConcurrentHashMap<>();
@@ -99,25 +121,56 @@ final class DocumentStore {
      */
     Future<Void> publish(
             String name, Context caller, Callable<PublishedDocument> assemble, Callable<Snapshot> ownSnapshot) {
+        return publish(name, caller, Source.GENERATED, assemble, ownSnapshot);
+    }
+
+    /**
+     * Publishes the document of an application from the given source, or compares a later
+     * composition's snapshot with the stored one, as {@link #publish(String, Context, Callable,
+     * Callable)} does.
+     *
+     * <p>The stored line names the source. For a generated document the store also logs, at {@code
+     * DEBUG}, how long the assembly took; a served contract's step logs its own timing line.
+     *
+     * @param name the application name
+     * @param caller the context that called, on which the returned future completes
+     * @param source where the document comes from
+     * @param assemble produces the document
+     * @param ownSnapshot renders the caller's own snapshot
+     * @return a future completing when the document is stored and the snapshot matches; it fails
+     *     with a {@link RestConfigurationException} when the snapshot differs
+     */
+    Future<Void> publish(
+            String name,
+            Context caller,
+            Source source,
+            Callable<PublishedDocument> assemble,
+            Callable<Snapshot> ownSnapshot) {
         Promise<PublishedDocument> mine = Promise.promise();
         Future<PublishedDocument> existing = flights.putIfAbsent(name, mine.future());
         if (existing == null) {
-            return assembleAndStore(name, caller, assemble, mine);
+            return assembleAndStore(name, caller, source, assemble, mine);
         }
         return compareWithStored(name, caller, ownSnapshot, existing);
     }
 
     private Future<Void> assembleAndStore(
-            String name, Context caller, Callable<PublishedDocument> assemble, Promise<PublishedDocument> mine) {
+            String name,
+            Context caller,
+            Source source,
+            Callable<PublishedDocument> assemble,
+            Promise<PublishedDocument> mine) {
         return caller.executeBlocking(() -> {
                     long start = System.nanoTime();
                     PublishedDocument document = assemble.call();
-                    Snapshot.MountPart mount = document.snapshot().mountPart();
-                    LOG.debug(
-                            "Assembled the document of application '{}' at mount '{}' in {} ms",
-                            name,
-                            mount.mountPath(),
-                            TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start));
+                    if (source == Source.GENERATED) {
+                        Snapshot.MountPart mount = document.snapshot().mountPart();
+                        LOG.debug(
+                                "Assembled the document of application '{}' at mount '{}' in {} ms",
+                                name,
+                                mount.mountPath(),
+                                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start));
+                    }
                     return document;
                 })
                 .transform(assembled -> {
@@ -134,7 +187,7 @@ final class DocumentStore {
                             "The document of application '{}' at mount '{}' is stored (source: {})",
                             name,
                             document.snapshot().mountPart().mountPath(),
-                            SOURCE_GENERATED);
+                            source.label());
                     return Future.succeededFuture();
                 });
     }

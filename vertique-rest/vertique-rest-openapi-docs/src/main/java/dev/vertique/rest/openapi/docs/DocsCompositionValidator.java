@@ -13,20 +13,41 @@ import dev.vertique.rest.core.router.MountCustomizer;
 import dev.vertique.rest.core.router.MountMeta;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.jaxrs.JaxRsRouterMount;
+import dev.vertique.rest.jaxrs.publication.RestApplications;
+import dev.vertique.rest.jaxrs.publication.RestApplications.ContractOrigin;
 import io.vertx.ext.web.RoutingContext;
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * The documentation module's composition validator. It is contributed only when at least one
  * document is enabled, and checks the mounts of a composition before any of them creates its router.
- * It reads only each mount's {@link RouterMount#mountPath()} and {@link RouterMount#meta()}.
+ * Of the mounts it reads only each one's {@link RouterMount#mountPath()} and {@link
+ * RouterMount#meta()}; of the declared applications it reads the {@link RestApplications} view.
+ *
+ * <p>An enabled document whose application's contract origin is {@link ContractOrigin#CONFIGURATION}
+ * or {@link ContractOrigin#ANNOTATION} serves the contract at the application's effective contract
+ * location. Its location is normalized with {@link Path#of(String, String...)} and {@link
+ * Path#normalize()}, so {@code ./a.yaml} and {@code a.yaml} are one location. The validator reports:
+ *
+ * <ul>
+ *   <li>each group of two or more such applications whose locations are one location, naming the
+ *       applications in name order and never the location;
+ *   <li>each such application whose location cannot be parsed as a path, naming the application and
+ *       the setting that supplied the location, never its value or the parser's message.
+ * </ul>
  *
  * <p>A JAX-RS mount is an instance of {@link JaxRsRouterMount}, whether it serves a declared
  * application or was built by hand. Its normalized path is its mount path without the trailing
- * {@code /*}, and {@code /} for {@code /*}. The validator reports:
+ * {@code /*}, and {@code /} for {@code /*}. Of the mounts, the validator also reports:
  *
  * <ul>
  *   <li>each enabled document for which no JAX-RS mount carries the document's name as its
@@ -71,6 +92,7 @@ final class DocsCompositionValidator implements MountCompositionValidator {
 
     private final EnabledDocuments documents;
     private final String prefix;
+    private final RestApplications applications;
     private final DocumentWarnings warnings;
     private final Set<MountCustomizer> mountCustomizers;
     private final Set<Middleware> middlewares;
@@ -82,6 +104,8 @@ final class DocsCompositionValidator implements MountCompositionValidator {
      *
      * @param documents the enabled documents, at least one
      * @param prefix the configured documentation prefix, without a trailing slash
+     * @param applications the declared applications of the component, whose effective contract
+     *     locations are compared
      * @param warnings the documentation module's warnings of the component
      * @param mountCustomizers the component's mount customizers
      * @param middlewares the component's middlewares
@@ -91,6 +115,7 @@ final class DocsCompositionValidator implements MountCompositionValidator {
     DocsCompositionValidator(
             EnabledDocuments documents,
             String prefix,
+            RestApplications applications,
             DocumentWarnings warnings,
             Set<MountCustomizer> mountCustomizers,
             Set<Middleware> middlewares,
@@ -98,6 +123,7 @@ final class DocsCompositionValidator implements MountCompositionValidator {
             Set<RequestInterceptor> requestInterceptors) {
         this.documents = documents;
         this.prefix = prefix;
+        this.applications = applications;
         this.warnings = warnings;
         this.mountCustomizers = mountCustomizers;
         this.middlewares = middlewares;
@@ -115,6 +141,7 @@ final class DocsCompositionValidator implements MountCompositionValidator {
                         + ") has an enabled document, but the composition holds no mount for it");
             }
         }
+        violations.addAll(contractLocationViolations());
         for (RouterMount mount : mounts) {
             if (!(mount instanceof JaxRsRouterMount)) {
                 continue;
@@ -148,6 +175,58 @@ final class DocsCompositionValidator implements MountCompositionValidator {
             warnUncoveredControls(mounts, docsMeta);
         }
         return List.of();
+    }
+
+    /**
+     * Reports the contract locations of the enabled documents whose applications serve their own
+     * contracts: one violation per group of two or more applications whose effective locations are
+     * equal once normalized, and one per application whose location cannot be parsed as a path. No
+     * violation names a location, and none carries the parser's exception.
+     *
+     * @return the violations, unsorted
+     */
+    private List<String> contractLocationViolations() {
+        List<String> violations = new ArrayList<>();
+        Map<Path, List<String>> byLocation = new LinkedHashMap<>();
+        for (EnabledDocuments.EnabledDocument document : documents.all()) {
+            if (document.contractOrigin() == ContractOrigin.GLOBAL) {
+                continue;
+            }
+            Optional<RestApplications.Entry> entry =
+                    applications.byName(document.name()).filter(RestApplications.Entry::active);
+            if (entry.isEmpty()) {
+                continue;
+            }
+            RestApplications.Entry application = entry.get();
+            if (application.effectiveOpenapiPath() == null) {
+                violations.add("apidocs.documents." + application.name() + ": application '" + application.name()
+                        + "' (declared by " + application.declaringType().getName()
+                        + ") serves its own contract as its document, but has no contract location");
+                continue;
+            }
+            Path location;
+            try {
+                location = Path.of(application.effectiveOpenapiPath()).normalize();
+            } catch (InvalidPathException unparseable) {
+                violations.add("apidocs.documents." + application.name() + ": application '" + application.name()
+                        + "' (declared by " + application.declaringType().getName()
+                        + ") serves its own contract as its document, but its contract location ("
+                        + ServedContractSource.setting(application) + ") cannot be parsed as a path");
+                continue;
+            }
+            byLocation.computeIfAbsent(location, key -> new ArrayList<>()).add(application.name());
+        }
+        for (List<String> names : byLocation.values()) {
+            if (names.size() < 2) {
+                continue;
+            }
+            String quoted =
+                    names.stream().sorted().map(name -> "'" + name + "'").collect(Collectors.joining(", "));
+            violations.add("apidocs.documents: applications " + quoted
+                    + " serve documents with one contract location; each application serving its own contract"
+                    + " as its document needs a contract location of its own");
+        }
+        return violations;
     }
 
     /**

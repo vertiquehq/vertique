@@ -28,6 +28,7 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -54,8 +55,8 @@ import org.slf4j.LoggerFactory;
  * Deploys compositions in which the {@code openapi-contract} request-validation strategy is available
  * and observes how a documented application's document meets it: a document for an application whose
  * operations the selected strategy resolves from the shared global contract refuses startup, while a
- * strategy that resolves nothing from a contract, or an application with a contract of its own,
- * publishes the document; and without an enabled document the strategy's behavior and the
+ * strategy that resolves nothing from a contract publishes the generated document, an application with
+ * a contract of its own and no configured {@code info} serves that contract as its document; and without an enabled document the strategy's behavior and the
  * not-installed notice are those of a composition without the documentation module.
  *
  * <p>Every deployment goes through {@link StartupDeployments}, which reads the bound port from the
@@ -189,13 +190,25 @@ public class OpenApiContractRefusalIT {
      * @param config    creates the case's configuration
      * @param document  the document the case enables
      * @param refusal   what the refusal names, or {@code null} for a case that must deploy
+     * @param contract  the classpath location of the contract the case's document must serve, or
+     *                  {@code null} for a case whose document is generated
      */
     record ContractCase(
             String label,
             BiFunction<Vertx, JsonObject, DocsProvisions> component,
             Supplier<JsonObject> config,
             String document,
-            Refusal refusal) {
+            Refusal refusal,
+            String contract) {
+
+        ContractCase(
+                String label,
+                BiFunction<Vertx, JsonObject, DocsProvisions> component,
+                Supplier<JsonObject> config,
+                String document,
+                Refusal refusal) {
+            this(label, component, config, document, refusal, null);
+        }
 
         @Override
         public String toString() {
@@ -240,16 +253,19 @@ public class OpenApiContractRefusalIT {
                         "(d) the application declares its own contract",
                         (vertx, config) -> DaggerContractRefusalTestComponents_OwnContractComponent.factory()
                                 .create(vertx, config),
-                        () -> sharedConfig(OPENAPI_CONTRACT),
+                        () -> ownContractConfig(sharedConfig(OPENAPI_CONTRACT)),
                         PUBLIC,
-                        null),
+                        null,
+                        OWN_CONTRACT),
                 new ContractCase(
                         "(e) the application's contract is configured",
                         (vertx, config) -> DaggerContractRefusalTestComponents_SharedContractComponent.factory()
                                 .create(vertx, config),
-                        () -> withApplicationContract(sharedConfig(OPENAPI_CONTRACT), PUBLIC, OWN_CONTRACT),
+                        () -> withApplicationContract(
+                                ownContractConfig(sharedConfig(OPENAPI_CONTRACT)), PUBLIC, OWN_CONTRACT),
                         PUBLIC,
-                        null),
+                        null,
+                        OWN_CONTRACT),
                 new ContractCase(
                         "(f) a custom strategy that resolves operations from the mount's contract",
                         (vertx, config) -> DaggerContractRefusalTestComponents_ContractTestStrategyComponent.factory()
@@ -331,6 +347,20 @@ public class OpenApiContractRefusalIT {
                         served.contentType() != null && served.contentType().startsWith("application/json"),
                         "a JSON document"),
                 () -> assertTrue(new JsonObject(served.body()).containsKey("openapi"), "an OpenAPI document"));
+        if (contractCase.contract() != null) {
+            assertEquals(
+                    loadContract(contractCase.contract()),
+                    new JsonObject(served.body()),
+                    contractCase.label() + ": the document is the application's own contract");
+        }
+    }
+
+    /** Reads a contract test resource from the classpath. */
+    private static JsonObject loadContract(String resource) throws Exception {
+        try (InputStream in = OpenApiContractRefusalIT.class.getClassLoader().getResourceAsStream(resource)) {
+            assertNotNull(in, "the test resource " + resource);
+            return new JsonObject(Buffer.buffer(in.readAllBytes()));
+        }
     }
 
     @Test
@@ -517,6 +547,19 @@ public class OpenApiContractRefusalIT {
     private static JsonObject emptyConfig() {
         JsonObject config = DocsConfigs.withDocumentInfo(DocsConfigs.loopback(), EMPTY, "Empty", "1");
         return withContract(config, OPENAPI_CONTRACT, ABSENT_SHARED_CONTRACT);
+    }
+
+    /**
+     * Removes the configured {@code apidocs.documents.public.info} (and a configured
+     * {@code serverUrl}, should one be present) from the configuration: an application that serves
+     * its own contract takes its identity from that contract.
+     */
+    private static JsonObject ownContractConfig(JsonObject config) {
+        JsonObject document =
+                DocsConfigs.apidocs(config).getJsonObject("documents").getJsonObject(PUBLIC);
+        document.remove("info");
+        document.remove("serverUrl");
+        return config;
     }
 
     /** Returns the shared configuration with the {@code openapi-contract} strategy and the shared test contract. */

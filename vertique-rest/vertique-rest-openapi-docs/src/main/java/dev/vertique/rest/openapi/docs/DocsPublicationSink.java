@@ -5,6 +5,7 @@ package dev.vertique.rest.openapi.docs;
 
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.jaxrs.publication.CapturedSchemas;
+import dev.vertique.rest.jaxrs.publication.InputBinding;
 import dev.vertique.rest.jaxrs.publication.InputKey;
 import dev.vertique.rest.jaxrs.publication.MountPublication;
 import dev.vertique.rest.jaxrs.publication.OperationDetail;
@@ -25,8 +26,10 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -53,6 +56,12 @@ import java.util.Set;
  *
  * <p>Only a mount that passes every check is published, so a refused mount never stores a document.
  * The checks keep no state between publications.
+ *
+ * <p>An application whose contract is its own, as the {@link RestApplications} view decides ({@link
+ * ServedContractSource}), has that contract loaded as its document ({@link ServedContractLoader})
+ * inside the same single flight, in place of the assembly; every other documented application's
+ * document is assembled and, once assembled, logged as generated. Either way a later composition
+ * compares its own snapshot and never loads or assembles.
  *
  * <p>The publication a sink receives must not be retained past the call. The sink therefore takes a
  * detached copy during {@link #mountBuilt}: every schema {@link JsonObject} is copied and the
@@ -127,7 +136,8 @@ final class DocsPublicationSink implements OperationPublicationSink {
      *     publication is done, and fails with a {@link RestConfigurationException} when the mount uses
      *     a reserved operation id, has a route that can answer a document URL, or documents an
      *     application on the shared global contract, when the calling thread has no Vert.x context,
-     *     or when the mount differs from the document already published
+     *     when the application's own contract cannot be read or parsed or fails a check, or when the
+     *     mount differs from the document already published
      */
     @Override
     public Future<Void> mountBuilt(MountPublication publication) {
@@ -157,11 +167,79 @@ final class DocsPublicationSink implements OperationPublicationSink {
         }
         Map<String, OperationFacts> facts = operationFacts(publication);
         MountPublication detached = detach(publication);
+        Optional<RestApplications.Entry> served = ServedContractSource.served(applications, applicationName);
+        if (served.isPresent()) {
+            String servedPath = served.get().effectiveOpenapiPath();
+            if (servedPath == null) {
+                return Future.failedFuture(new RestConfigurationException("apidocs.documents." + applicationName
+                        + ": application '" + applicationName + "' has no contract location"));
+            }
+            String setting = ServedContractSource.setting(served.get());
+            for (OperationPublication operation : detached.operations()) {
+                if (operation.detail() == null) {
+                    return Future.failedFuture(new RestConfigurationException("The served contract of application '"
+                            + applicationName + "' cannot be checked: operation '"
+                            + ContractReferences.display(operation.operationId())
+                            + "' was published without its detail"));
+                }
+            }
+            List<RoutedOperation> routed = routedOperations(detached, facts);
+            return store.publish(
+                    applicationName,
+                    caller,
+                    DocumentStore.Source.SERVED_CONTRACT,
+                    () -> ServedContractLoader.load(
+                            document,
+                            servedPath,
+                            setting,
+                            detached,
+                            facts,
+                            routed,
+                            caller.owner().fileSystem(),
+                            context.warnings()),
+                    () -> SnapshotRenderer.render(detached));
+        }
         return store.publish(
                 applicationName,
                 caller,
-                () -> DocumentAssembler.assemble(document, detached, facts, context),
+                DocumentStore.Source.GENERATED,
+                () -> {
+                    PublishedDocument assembled = DocumentAssembler.assemble(document, detached, facts, context);
+                    context.warnings()
+                            .infoOnce(
+                                    DocumentWarnings.SOURCE,
+                                    applicationName,
+                                    DocumentWarnings.generatedSource(applicationName));
+                    return assembled;
+                },
                 () -> SnapshotRenderer.render(detached));
+    }
+
+    /**
+     * Lists the mount's routed operations as the checks of a served contract see them: each with its
+     * id, method, rendered mount-relative path, whether it is hidden, and its hidden inputs.
+     */
+    private static List<RoutedOperation> routedOperations(
+            MountPublication publication, Map<String, OperationFacts> facts) {
+        List<RoutedOperation> routed = new ArrayList<>(publication.operations().size());
+        for (OperationPublication operation : publication.operations()) {
+            Set<InputKey> hiddenInputs = new LinkedHashSet<>();
+            OperationDetail detail = operation.detail();
+            if (detail != null) {
+                for (InputBinding input : detail.inputs()) {
+                    if (input.hidden() && input.location() != null && input.name() != null) {
+                        hiddenInputs.add(new InputKey(input.location(), input.name()));
+                    }
+                }
+            }
+            routed.add(new RoutedOperation(
+                    operation.operationId(),
+                    operation.httpMethod(),
+                    RenderedPaths.render(operation.jaxRsPathTemplate()),
+                    HiddenOperations.hidden(facts.get(operation.operationId())),
+                    Collections.unmodifiableSet(hiddenInputs)));
+        }
+        return Collections.unmodifiableList(routed);
     }
 
     /** Lists, sorted, each operation whose id is reserved for an enabled document. */
