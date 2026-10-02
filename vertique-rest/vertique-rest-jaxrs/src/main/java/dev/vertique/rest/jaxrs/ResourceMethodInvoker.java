@@ -10,8 +10,6 @@ import dev.vertique.core.validation.ParameterViolation;
 import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.json.JacksonFieldNameResolver;
 import dev.vertique.rest.core.RestValidationException;
-import dev.vertique.rest.core.capture.HttpOperationMeta;
-import dev.vertique.rest.core.capture.RestServerRequestEvidenceCapturer;
 import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.convert.ParamConversionResolver;
 import dev.vertique.rest.core.interceptor.OperationContext;
@@ -29,7 +27,6 @@ import jakarta.annotation.Nullable;
 import java.lang.reflect.InvocationTargetException;
 import java.util.List;
 import java.util.Map;
-import lombok.extern.slf4j.Slf4j;
 
 /**
  * Vert.x Handler that bridges a RoutingContext to a JAX-RS resource method invocation.
@@ -50,7 +47,6 @@ import lombok.extern.slf4j.Slf4j;
  *       {@link dev.vertique.rest.core.interceptor.RequestInterceptor#afterResponse} fire for every response</li>
  * </ol>
  */
-@Slf4j
 public class ResourceMethodInvoker implements Handler<RoutingContext> {
 
     /** Context data key for the {@code @Produces} media type list set by the invoker. */
@@ -63,10 +59,6 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
     private final OperationInterceptorChain interceptorChain;
     private final ParameterExtractor parameterExtractor;
     private final @Nullable GeneratedJaxRsSupport generatedSupport;
-    private final List<RestServerRequestEvidenceCapturer> evidenceCapturers;
-
-    /** The descriptor handed to every capturer; built once, by {@link #operationMetaFor}. */
-    private final HttpOperationMeta operationMeta;
 
     /**
      * The framework conversion resolver threaded into the {@link ParameterExtractor} and into every
@@ -106,9 +98,6 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
      * @param objectProcessor       optional input object processor for canonicalization and sanitization;
      *                              {@code null} when {@code SanitizationModule} is not included —
      *                              input processing is skipped
-     * @param evidenceCapturers     pre-sorted list of {@link RestServerRequestEvidenceCapturer}
-     *                              instances to invoke once per request after the body is available;
-     *                              empty list is the no-op default
      * @param resolvedBodyMapper    effective request-body {@link ObjectMapper} resolved once at
      *                              router-build time for this method (FR-JSON-020); {@code null} when
      *                              the effective JSON profile is {@code vertx} (the default), in which
@@ -126,7 +115,6 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
             List<RequestBodyDecoder> decoders,
             @Nullable BeanValidator beanValidator,
             @Nullable InputObjectProcessor objectProcessor,
-            List<RestServerRequestEvidenceCapturer> evidenceCapturers,
             @Nullable ObjectMapper resolvedBodyMapper,
             ParamConversionResolver paramConversionResolver) {
         this(
@@ -138,7 +126,6 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
                 decoders,
                 beanValidator,
                 objectProcessor,
-                evidenceCapturers,
                 resolvedBodyMapper,
                 paramConversionResolver,
                 JacksonFieldNameResolver.forRoute(resolvedBodyMapper));
@@ -157,7 +144,6 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
      * @param decoders              priority-sorted list of request body decoders
      * @param beanValidator         optional Bean Validation implementation; {@code null} skips validation
      * @param objectProcessor       optional input object processor; {@code null} skips input processing
-     * @param evidenceCapturers     pre-sorted request-evidence capturers; empty list is the no-op default
      * @param resolvedBodyMapper    effective request-body mapper (FR-JSON-020), or {@code null} when the
      *                              route's profile resolved to the process codec's own mapper
      * @param paramConversionResolver the framework parameter-conversion resolver; must not be {@code null}
@@ -175,7 +161,6 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
             List<RequestBodyDecoder> decoders,
             @Nullable BeanValidator beanValidator,
             @Nullable InputObjectProcessor objectProcessor,
-            List<RestServerRequestEvidenceCapturer> evidenceCapturers,
             @Nullable ObjectMapper resolvedBodyMapper,
             ParamConversionResolver paramConversionResolver,
             InputFieldNameResolver bodyNameResolver) {
@@ -188,7 +173,6 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
                 decoders,
                 beanValidator,
                 objectProcessor,
-                evidenceCapturers,
                 resolvedBodyMapper,
                 paramConversionResolver,
                 bodyNameResolver,
@@ -197,8 +181,9 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
 
     /**
      * Creates a new invoker that uses the operation descriptor the router build already produced, so
-     * the descriptor the route was validated with, the descriptor request evidence is derived from,
-     * and the {@link OperationContext#operation()} every interceptor receives are one instance.
+     * the descriptor the route was validated with, the operation the request's completion event
+     * carries, and the {@link OperationContext#operation()} every interceptor receives are one
+     * instance.
      *
      * @param meta                  metadata describing the JAX-RS resource method
      * @param interceptors          sorted list of operation interceptors
@@ -208,7 +193,6 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
      * @param decoders              priority-sorted list of request body decoders
      * @param beanValidator         optional Bean Validation implementation; {@code null} skips validation
      * @param objectProcessor       optional input object processor; {@code null} skips input processing
-     * @param evidenceCapturers     pre-sorted request-evidence capturers; empty list is the no-op default
      * @param resolvedBodyMapper    effective request-body mapper, or {@code null} when the route's
      *                              profile resolved to the process codec's own mapper
      * @param paramConversionResolver the framework parameter-conversion resolver; must not be {@code null}
@@ -226,7 +210,6 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
             List<RequestBodyDecoder> decoders,
             @Nullable BeanValidator beanValidator,
             @Nullable InputObjectProcessor objectProcessor,
-            List<RestServerRequestEvidenceCapturer> evidenceCapturers,
             @Nullable ObjectMapper resolvedBodyMapper,
             ParamConversionResolver paramConversionResolver,
             InputFieldNameResolver bodyNameResolver,
@@ -254,32 +237,16 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
         // depends on whether meta.executionPlan() is non-null (which only happens when CG-010's
         // ExecutionPlanEmitter has produced a plan for this method).
         this.generatedSupport = new ParameterExtractorBackedSupport(this.parameterExtractor);
-        this.evidenceCapturers = evidenceCapturers != null ? evidenceCapturers : List.of();
         // The descriptor is built once, so the reflective path can construct a DefaultBoundRequest per
         // request without re-deriving the parameter model, and the same instance is the operation
         // every interceptor sees on its OperationContext.
         this.descriptor = descriptor;
-        this.operationMeta = operationMetaFor(meta, descriptor);
     }
 
     /**
-     * Builds the {@link HttpOperationMeta} request-evidence capturers receive for a route. The
-     * registrar validates the route with the result of this method and the invoker hands every
-     * request the result of this method, so the two can never disagree.
-     *
-     * @param meta       the route's method metadata
-     * @param descriptor the route's operation descriptor
-     * @return the operation descriptor for capturers; never {@code null}
-     */
-    static HttpOperationMeta operationMetaFor(ResourceMethodMeta meta, JaxRsOperationDescriptor descriptor) {
-        return new HttpOperationMeta(
-                meta.method(), meta.resourceInstance().getClass(), meta.operationId(), descriptor.routeTemplate());
-    }
-
-    /**
-     * Backward-compatible constructor that omits evidence capturers (defaults to empty list) and the
-     * resolved request-body mapper (defaults to {@code null}, i.e. the {@code vertx} default body
-     * path). Existing call sites that have not yet been migrated to pass these continue to compile.
+     * Backward-compatible constructor that omits the resolved request-body mapper (defaults to
+     * {@code null}, i.e. the {@code vertx} default body path). Existing call sites that have not yet
+     * been migrated to pass it continue to compile.
      *
      * @param meta                  metadata describing the JAX-RS resource method
      * @param interceptors          sorted list of operation interceptors
@@ -311,15 +278,14 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
                 decoders,
                 beanValidator,
                 objectProcessor,
-                List.of(),
                 null,
                 dev.vertique.rest.jaxrs.convert.ConversionContexts.defaultResolver());
     }
 
     /**
      * Backward-compatible constructor that omits the parameter-conversion resolver (defaults to the
-     * framework built-ins-only resolver). Existing call sites that pass evidence capturers and a
-     * resolved body mapper but predate the conversion-resolver wiring continue to compile.
+     * framework built-ins-only resolver). Existing call sites that pass a resolved body mapper but
+     * predate the conversion-resolver wiring continue to compile.
      *
      * @param meta                  metadata describing the JAX-RS resource method
      * @param interceptors          sorted list of operation interceptors
@@ -329,7 +295,6 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
      * @param decoders              priority-sorted list of request body decoders
      * @param beanValidator         optional Bean Validation implementation; {@code null} skips validation
      * @param objectProcessor       optional input object processor; {@code null} skips input processing
-     * @param evidenceCapturers     pre-sorted request-evidence capturers; empty list is the no-op default
      * @param resolvedBodyMapper    effective request-body mapper (FR-JSON-020), or {@code null} for the
      *                              {@code vertx} default
      */
@@ -342,7 +307,6 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
             List<RequestBodyDecoder> decoders,
             @Nullable BeanValidator beanValidator,
             @Nullable InputObjectProcessor objectProcessor,
-            List<RestServerRequestEvidenceCapturer> evidenceCapturers,
             @Nullable ObjectMapper resolvedBodyMapper) {
         this(
                 meta,
@@ -353,7 +317,6 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
                 decoders,
                 beanValidator,
                 objectProcessor,
-                evidenceCapturers,
                 resolvedBodyMapper,
                 dev.vertique.rest.jaxrs.convert.ConversionContexts.defaultResolver());
     }
@@ -402,23 +365,6 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
         try {
             if (!meta.mediaTypes().produces().isEmpty()) {
                 ctx.data().put(CTX_KEY_PRODUCES, meta.mediaTypes().produces());
-            }
-
-            // AUD-003 slice 2a: invoke request-evidence capturers after body materialisation.
-            // Each capturer is called in OrderedExtension order; a throwing capturer is logged at
-            // WARN and must never break request handling. When the set is empty this loop is a no-op.
-            if (!evidenceCapturers.isEmpty()) {
-                for (RestServerRequestEvidenceCapturer capturer : evidenceCapturers) {
-                    try {
-                        capturer.captureRequest(ctx, operationMeta);
-                    } catch (Exception e) {
-                        log.warn(
-                                "RestServerRequestEvidenceCapturer [{}] threw during captureRequest — ignoring: {}",
-                                capturer.getClass().getName(),
-                                e.toString(),
-                                e);
-                    }
-                }
             }
 
             // CG-010 slice 2: plan-or-reflective dispatch. When meta carries a generated execution

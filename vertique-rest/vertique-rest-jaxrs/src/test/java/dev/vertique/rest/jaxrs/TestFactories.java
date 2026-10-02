@@ -80,8 +80,8 @@ final class TestFactories {
         /**
          * {@code null} (the default) keeps the retained public {@code Factory} constructor path, with
          * no sink set threaded through at all. A non-{@code null} value — including an empty set —
-         * selects the package-private {@code @Inject} constructor and is passed as its 30th and last
-         * parameter (T006).
+         * selects the package-private {@code @Inject} constructor and is passed as its 29th and last
+         * parameter.
          */
         private @Nullable Set<OperationPublicationSink> publicationSinks;
 
@@ -312,7 +312,7 @@ final class TestFactories {
         }
 
         /**
-         * Sets the {@code Set<OperationPublicationSink>} multibinding (T006). Leaving this unset
+         * Sets the {@code Set<OperationPublicationSink>} multibinding. Leaving this unset
          * (the default, {@code null}) keeps the factory built through the retained public
          * constructor, exactly today's behavior; passing a set — including {@link Set#of()} — selects
          * the package-private {@code @Inject} constructor and threads it through as the sink set.
@@ -366,7 +366,6 @@ final class TestFactories {
                                 .defaults(), // jsonConfig (json.jsonProfile unset => vertique floor)
                         beanValidator, // beanValidator
                         Optional.empty(), // objectProcessor
-                        Set.of(), // evidenceCapturers
                         actionRegistry,
                         authorizer,
                         fileContentVerifiers,
@@ -375,7 +374,7 @@ final class TestFactories {
             }
 
             // A non-null publicationSinks (including an empty set) selects the package-private
-            // 30-parameter @Inject constructor T006 adds, with the sink set as its last parameter.
+            // 29-parameter @Inject constructor, with the sink set as its last parameter.
             return new JaxRsRouterMount.Factory(
                     Set.of(), // routerLifecycleHooks
                     operationInterceptors,
@@ -400,7 +399,6 @@ final class TestFactories {
                     dev.vertique.json.JsonConfig.defaults(), // jsonConfig (json.jsonProfile unset => vertique floor)
                     beanValidator, // beanValidator
                     Optional.empty(), // objectProcessor
-                    Set.of(), // evidenceCapturers
                     actionRegistry,
                     authorizer,
                     fileContentVerifiers,

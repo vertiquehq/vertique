@@ -5,23 +5,32 @@ package dev.vertique.micrometer.rest;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.context.DefaultContextHolder;
+import dev.vertique.rest.core.events.RequestCompletionRecorder;
 import dev.vertique.rest.core.events.RestRequestCompletionEmitter;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
+import dev.vertique.rest.core.routing.RestOperationDescriptor;
+import dev.vertique.rest.core.routing.SecurityRequirementSet;
+import dev.vertique.rest.core.security.SecurityPolicy;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.prometheusmetrics.PrometheusConfig;
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
+import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
+import io.vertx.ext.web.Route;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
+import java.lang.annotation.Annotation;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -45,16 +54,27 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *       {@code rc.next()} — mirrors how {@code JaxRsRouterMount} fires the interceptor in
  *       production; no natural {@code RequestInterceptor} invocation point exists in this test
  *       harness outside the JAX-RS route pipeline</li>
+ *   <li>A root handler, ordered after the emitter, that rejects {@code GET /limited} with
+ *       {@code ctx.fail(429)} before any route matches and calls {@code rc.next()} for every other
+ *       path — a stand-in for a ROOT middleware such as rate limiting; a 429 error handler ends
+ *       the response</li>
  * </ol>
  *
  * <p>Routes:
  * <ul>
- *   <li>{@code GET /ok} — sets operationId + routeTemplate on the context, responds 200</li>
- *   <li>{@code GET /boom} — sets operationId + routeTemplate, calls {@code ctx.fail(500, ex)};
- *       failureCode is populated as the exception's simple class name; note: the error pipeline
- *       is absent in this harness, so the failure handler writes 500 directly</li>
- *   <li>(no route for {@code GET /nope}) — 404 with null route/operation</li>
+ *   <li>{@code GET /ok} — first installs the {@code ok} operation's identity handler
+ *       ({@link RequestCompletionRecorder#operationRouteHandler}), then responds 200</li>
+ *   <li>{@code GET /boom} — first installs the {@code boom} operation's identity handler, then calls
+ *       {@code ctx.fail(500, ex)}; failureCode is populated as the exception's simple class name;
+ *       note: the error pipeline is absent in this harness, so the failure handler writes 500
+ *       directly</li>
+ *   <li>{@code GET /limited} — rejected at ROOT with 429; no operation route claims it</li>
+ *   <li>(no route for {@code GET /nope}) — 404; no operation route claims it</li>
  * </ul>
+ *
+ * <p>Only a request an operation route claimed yields a {@code RestRequestCompletedEvent}, so only
+ * {@code /ok} and {@code /boom} are timed; {@code /limited} and {@code /nope} yield an
+ * {@code HttpRequestCompletedEvent}, which {@link RestServerRequestMetricsListener} never receives.
  *
  * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient}: a raw
  * {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached, so
@@ -75,6 +95,18 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class RestServerMetricsIT {
+
+    /** Test-local descriptor for {@code GET /ok}, operation {@code ok}. */
+    private static final RestOperationDescriptor OK_OPERATION = new TestOperation("ok", "GET", "/ok");
+
+    /** Test-local descriptor for {@code GET /boom}, operation {@code boom}. */
+    private static final RestOperationDescriptor BOOM_OPERATION = new TestOperation("boom", "GET", "/boom");
+
+    /** The path the root handler rejects with 429 before any route matches. */
+    private static final String LIMITED_PATH = "/limited";
+
+    /** The fallback tag value for a missing route or operation; no series may carry it. */
+    private static final String UNKNOWN = "UNKNOWN";
 
     // --- Shared server/client state (per test) ---
 
@@ -141,23 +173,31 @@ public class RestServerMetricsIT {
             rc.next();
         });
 
-        // --- Application routes ---
-        router.get("/ok").handler(rc -> {
-            rc.put(RestRequestCompletionEmitter.KEY_OPERATION_ID, "ok");
-            rc.put(RestRequestCompletionEmitter.KEY_ROUTE_TEMPLATE, "/ok");
-            rc.response().setStatusCode(200).end();
+        // 4. ROOT rejection: a root handler ordered after the emitter (so the emitter's end handler is
+        //    registered) that fails GET /limited with 429 before any operation route matches — a
+        //    stand-in for a ROOT middleware such as rate limiting. Every other path continues.
+        router.route().order(emitter.priority() + 20).handler(rc -> {
+            if (LIMITED_PATH.equals(rc.normalizedPath())) {
+                rc.fail(429);
+            } else {
+                rc.next();
+            }
         });
 
-        router.get("/boom").handler(rc -> {
-            rc.put(RestRequestCompletionEmitter.KEY_OPERATION_ID, "boom");
-            rc.put(RestRequestCompletionEmitter.KEY_ROUTE_TEMPLATE, "/boom");
-            rc.fail(500, new IllegalStateException("simulated boom"));
-        });
+        // --- Application routes: each installs its operation's identity handler first ---
+        route(router, "/ok", OK_OPERATION)
+                .handler(rc -> rc.response().setStatusCode(200).end());
+        route(router, "/boom", BOOM_OPERATION).handler(rc -> rc.fail(500, new IllegalStateException("simulated boom")));
 
-        // Failure handler: maps ctx.fail() to an HTTP response so the response end handler fires
+        // Failure handlers: map ctx.fail() to an HTTP response so the response end handler fires
         router.errorHandler(500, rc -> {
             if (!rc.response().ended()) {
                 rc.response().setStatusCode(500).end();
+            }
+        });
+        router.errorHandler(429, rc -> {
+            if (!rc.response().ended()) {
+                rc.response().setStatusCode(429).end();
             }
         });
 
@@ -173,6 +213,21 @@ public class RestServerMetricsIT {
     }
 
     /**
+     * Adds a route at {@code path} for {@code operation}'s HTTP method whose first handler is
+     * {@link RequestCompletionRecorder#operationRouteHandler(RestOperationDescriptor)}, the handler
+     * that records the operation's identity for the completion event.
+     *
+     * @param router    the router to add the route to
+     * @param path      the Vert.x route path
+     * @param operation the operation the route serves
+     * @return the route, ready for its application handler
+     */
+    private static Route route(Router router, String path, RestOperationDescriptor operation) {
+        return router.route(HttpMethod.valueOf(operation.httpMethod()), path)
+                .handler(RequestCompletionRecorder.operationRouteHandler(operation));
+    }
+
+    /**
      * Sends a single GET request to the given path and returns the status code.
      *
      * @param port the server port
@@ -183,13 +238,42 @@ public class RestServerMetricsIT {
         return client.get(port, "127.0.0.1", path).send().map(resp -> resp.statusCode());
     }
 
+    /**
+     * Sums the counts of every {@value RestServerRequestMetricsListener#METER_NAME} series.
+     *
+     * @param registry the registry to read
+     * @return the total number of recorded requests across all series of the meter
+     */
+    private static long totalCount(PrometheusMeterRegistry registry) {
+        return registry.find(RestServerRequestMetricsListener.METER_NAME).timers().stream()
+                .mapToLong(Timer::count)
+                .sum();
+    }
+
+    /**
+     * Renders every {@value RestServerRequestMetricsListener#METER_NAME} series as its tags and
+     * count, for assertion messages.
+     *
+     * @param registry the registry to read
+     * @return one {@code [key=value, …] count=n} entry per series
+     */
+    private static String series(PrometheusMeterRegistry registry) {
+        return registry.find(RestServerRequestMetricsListener.METER_NAME).timers().stream()
+                .map(t -> t.getId().getTags().stream()
+                                .map(tag -> tag.getKey() + "=" + tag.getValue())
+                                .toList()
+                        + " count=" + t.count())
+                .toList()
+                .toString();
+    }
+
     // =========================================================================
     // Test 15 — timer tags by outcome bucket
     // =========================================================================
 
     @Test
-    @DisplayName("Test 15: GET /ok (200→SUCCESS), GET /boom (500→SERVER_ERROR), GET /nope (404→CLIENT_ERROR) "
-            + "each produce a timer with the correct route and outcome tag")
+    @DisplayName("Test 15: GET /ok (200→SUCCESS) and GET /boom (500→SERVER_ERROR) each produce a timer with "
+            + "the correct route and outcome tag; the unmatched GET /nope (404) produces none")
     void timerTagsByOutcomeBucket(Vertx vertx, VertxTestContext ctx) {
         PrometheusMeterRegistry[] registryHolder = new PrometheusMeterRegistry[1];
 
@@ -220,14 +304,83 @@ public class RestServerMetricsIT {
                         assertNotNull(boomTimer, "timer for /boom with outcome=SERVER_ERROR must be present");
                         assertEquals(1, boomTimer.count(), "count must be 1 for GET /boom");
 
-                        // /nope → route=UNKNOWN, outcome=CLIENT_ERROR
-                        Timer nopeTimer = registry.find(RestServerRequestMetricsListener.METER_NAME)
-                                .tag(RestServerRequestMetricsListener.TAG_ROUTE, "UNKNOWN")
-                                .tag(RestServerRequestMetricsListener.TAG_OUTCOME, "CLIENT_ERROR")
+                        // /nope → no operation route claims it, so it yields no REST event and no series
+                        assertNull(
+                                registry.find(RestServerRequestMetricsListener.METER_NAME)
+                                        .tag(RestServerRequestMetricsListener.TAG_OUTCOME, "CLIENT_ERROR")
+                                        .meter(),
+                                "the unmatched GET /nope must record no series; series: " + series(registry));
+                    });
+                    ctx.completeNow();
+                }));
+    }
+
+    // =========================================================================
+    // TP-012 — a ROOT rejection and an unmatched request are not timed
+    // =========================================================================
+
+    /**
+     * TP-012: {@value RestServerRequestMetricsListener#METER_NAME} records only requests an operation
+     * route claimed. {@code GET /limited} is rejected with 429 by a root handler before any route
+     * matches and {@code GET /nope} matches no route; neither is claimed, so each yields an
+     * {@code HttpRequestCompletedEvent} and no series, while {@code GET /ok} is timed under its
+     * operation's route and operation id.
+     *
+     * @param vertx the Vert.x instance
+     * @param ctx   the test context
+     */
+    @Test
+    @DisplayName("TP-012: GET /ok (200) is timed under route=/ok; the ROOT-rejected GET /limited (429) and the "
+            + "unmatched GET /nope (404) record no series")
+    void rootRejectedAndUnmatchedRequestsAreNotTimed(Vertx vertx, VertxTestContext ctx) {
+        PrometheusMeterRegistry[] registryHolder = new PrometheusMeterRegistry[1];
+
+        startServer(vertx, registryHolder)
+                .compose(port -> get(port, "/ok").compose(ok -> get(port, LIMITED_PATH)
+                        .compose(limited -> get(port, "/nope").map(nope -> List.of(ok, limited, nope)))))
+                // Allow end-handlers to fire
+                .compose(statuses -> Future.<List<Integer>>future(p -> vertx.setTimer(100, id -> p.complete(statuses))))
+                .onComplete(ctx.succeeding(statuses -> {
+                    ctx.verify(() -> {
+                        PrometheusMeterRegistry registry = registryHolder[0];
+                        String series = series(registry);
+
+                        assertEquals(List.of(200, 429, 404), statuses, "statuses of GET /ok, /limited and /nope");
+
+                        // Only the claimed GET /ok is timed
+                        assertEquals(1, totalCount(registry), "only GET /ok must be timed; series: " + series);
+                        Timer okTimer = registry.find(RestServerRequestMetricsListener.METER_NAME)
+                                .tag(RestServerRequestMetricsListener.TAG_ROUTE, "/ok")
+                                .tag(RestServerRequestMetricsListener.TAG_OPERATION, OK_OPERATION.operationId())
                                 .timer();
                         assertNotNull(
-                                nopeTimer, "timer for /nope with route=UNKNOWN, outcome=CLIENT_ERROR must be present");
-                        assertEquals(1, nopeTimer.count(), "count must be 1 for GET /nope");
+                                okTimer,
+                                "GET /ok must be timed under route=/ok and its operation id; series: " + series);
+                        assertEquals(1, okTimer.count(), "count must be 1 for GET /ok; series: " + series);
+
+                        // Neither the ROOT rejection nor the unmatched request has a series
+                        assertNull(
+                                registry.find(RestServerRequestMetricsListener.METER_NAME)
+                                        .tag(RestServerRequestMetricsListener.TAG_STATUS, "429")
+                                        .meter(),
+                                "the ROOT-rejected GET /limited must record no series; series: " + series);
+                        assertNull(
+                                registry.find(RestServerRequestMetricsListener.METER_NAME)
+                                        .tag(RestServerRequestMetricsListener.TAG_STATUS, "404")
+                                        .meter(),
+                                "the unmatched GET /nope must record no series; series: " + series);
+
+                        // No series falls back to an UNKNOWN route or operation
+                        assertNull(
+                                registry.find(RestServerRequestMetricsListener.METER_NAME)
+                                        .tag(RestServerRequestMetricsListener.TAG_ROUTE, UNKNOWN)
+                                        .meter(),
+                                "no series may carry route=UNKNOWN; series: " + series);
+                        assertNull(
+                                registry.find(RestServerRequestMetricsListener.METER_NAME)
+                                        .tag(RestServerRequestMetricsListener.TAG_OPERATION, UNKNOWN)
+                                        .meter(),
+                                "no series may carry operation=UNKNOWN; series: " + series);
                     });
                     ctx.completeNow();
                 }));
@@ -293,5 +446,55 @@ public class RestServerMetricsIT {
                     });
                     ctx.completeNow();
                 }));
+    }
+
+    // --- Test doubles ---
+
+    /**
+     * Test-local {@link RestOperationDescriptor} for an application route. Only the identity fields
+     * carry values: no route here is secured or negotiates content, so the security policy is
+     * {@link SecurityPolicy.None} and every collection is empty.
+     *
+     * @param operationId   the operation identifier
+     * @param httpMethod    the HTTP method
+     * @param routeTemplate the route template
+     */
+    private record TestOperation(String operationId, String httpMethod, String routeTemplate)
+            implements RestOperationDescriptor {
+
+        @Override
+        public List<String> consumes() {
+            return List.of();
+        }
+
+        @Override
+        public List<String> produces() {
+            return List.of();
+        }
+
+        @Override
+        public SecurityPolicy securityPolicy() {
+            return new SecurityPolicy.None();
+        }
+
+        @Override
+        public List<SecurityRequirementSet> securityRequirementSets() {
+            return List.of();
+        }
+
+        @Override
+        public List<Annotation> methodAnnotations() {
+            return List.of();
+        }
+
+        @Override
+        public List<Annotation> classAnnotations() {
+            return List.of();
+        }
+
+        @Override
+        public <A extends Annotation> Optional<A> findAnnotation(Class<A> type) {
+            return Optional.empty();
+        }
     }
 }

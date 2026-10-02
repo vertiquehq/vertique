@@ -141,6 +141,10 @@ request to any instance. Every request is admitted through the fixed pipeline be
 - **Session headers** — the stateless protocol has no session concept, so an unsupported session
   header (for example `Mcp-Session-Id`) is ignored and the request stays bounded.
 
+A request rejected at admission on its first entry into the mount (HTTP `405`, `403`, `415`, `406`,
+or the body-limit `413`) produces no MCP lifecycle event, and completes as an ordinary unclaimed
+HTTP request with exactly one `HttpRequestCompletedEvent`.
+
 Every admitted body is decoded exactly once through the strict codec — the single envelope
 authority — and `server/discover` is routed on that decoded result like every other method, so it
 requires a schema-valid `params` (carrying the protocol version and client capabilities) just as the
@@ -195,8 +199,48 @@ request-scoped upload cleanup — ran when a client vanished mid-request. It doe
 outcome classification also became more accurate as a result: an orderly client disconnect records
 `DISCONNECTED` where it previously recorded `RESET`. The method, `Origin`,
 `Content-Type`, and `Accept` admission checks all run before the completion coordinator is created,
-so — like a body-limit rejection — a request that fails admission produces no lifecycle observation;
-only an admitted request opens observation.
+so — like a body-limit rejection — a request that fails admission on its first entry into the mount
+produces no lifecycle observation; only an admitted request opens observation.
+
+**Completion events for MCP requests.** A request MCP settles — one it writes a response for, one it
+rejects after its completion coordinator exists, or one whose lost connection it settles as
+disconnected or reset while the request is in the MCP mount — produces only MCP's own lifecycle
+events: the observation's terminal and completion events, and the `McpRequestCompletedListener`
+callback. MCP claims each such request, so rest-core's completion emitter produces neither a
+`RestRequestCompletedEvent` nor an `HttpRequestCompletedEvent` for it, even when the request first
+entered another mount and fell through to the MCP mount. REST listeners, and the
+`vertique.rest.server.requests` metric, therefore never see those requests; applications observe
+them through `McpRequestLifecycleObserver` and `McpRequestCompletedListener`. Failures taken by
+another mount, and reroutes by an application `RouteAuthHandler`, work as follows:
+
+- **Not settled by MCP** — a request MCP admits but does not settle completes as an ordinary
+  rest-core request with one completion event, and MCP emits no terminal or completion for it. An
+  authentication or identity failure taken by the failure handler of another mount that is ordered
+  ahead of the MCP mount and matches the request's path produces one `HttpRequestCompletedEvent`. A
+  request an application `RouteAuthHandler` reroutes out of the MCP mount, and that completes
+  normally on its new target, produces that target's one rest-core completion event: a
+  `RestRequestCompletedEvent` for a JAX-RS operation route, an `HttpRequestCompletedEvent`
+  otherwise.
+- **Rerouted out, then disconnected** — a request rerouted out of the MCP mount to a path no
+  operation route matches, whose connection is lost before the response ends, is settled by MCP as
+  disconnected or reset, and that MCP completion is its one completion event.
+- **Rerouted back in** — a request an application `RouteAuthHandler` reroutes back into the MCP
+  mount keeps the one lifecycle observation MCP opened for it; MCP opens no second observation. It
+  gets exactly one MCP completion, whether it then completes normally, disconnects, or is reset,
+  and rest-core emits no completion event for it. That completion carries the identity established
+  on the request's last pass, even when the request authenticates only after the reroute. A request
+  that is then rejected at re-admission, for example because the reroute changed its method, owns
+  the first pass's coordinator and the writer claims it: it gets one MCP completion and no
+  `HttpRequestCompletedEvent`.
+
+**Known limitation: an observation MCP never settles stays open.** For a request MCP admitted but
+does not settle (the failure taken by another mount, or the reroute out of the mount that completes
+normally, above), MCP emits no terminal or completion, so the lifecycle observation it opened at
+`begin`, when the request passed admission and before authentication, is never closed. Observers
+therefore see that observation opened with no completion, and the in-flight gauge
+`vertique.mcp.server.active` (`vertique-micrometer-mcp`) stays one higher for each such request.
+This behavior predates the completion claim, which neither causes nor changes it. Nothing closes such
+an abandoned observation today.
 
 **Completion scope bracketing.** Immediately before the completion coordinator
 dispatches the one completion event to every retained observation and completion listener, it opens

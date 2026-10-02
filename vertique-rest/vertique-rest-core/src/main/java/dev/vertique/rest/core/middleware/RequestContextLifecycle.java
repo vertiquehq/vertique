@@ -6,6 +6,7 @@ package dev.vertique.rest.core.middleware;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.extension.ExtensionPhase;
 import dev.vertique.logging.MDCContexts;
+import io.vertx.core.http.HttpServerRequest;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
@@ -26,6 +27,20 @@ import lombok.extern.slf4j.Slf4j;
  * logging finalization, and every other end handler — so holder-bound values remain accessible to
  * downstream end handlers until the very end of the request.
  *
+ * <p><strong>One handle per request, across reroutes.</strong> A reroute re-runs every ROOT
+ * middleware on the same request, this one included. Each {@link Handle} is bound to the
+ * {@link HttpServerRequest} it was created for, and on re-entry this middleware reuses the
+ * request's own handle and registers no second cleanup. So "exactly one end handler per request"
+ * holds across reroutes, and every value bound on any pass — including an identity authenticated
+ * only after a reroute — stays readable by every other end handler until the request ends. A
+ * handle from another request is never reused: the middleware creates a fresh handle, as on first
+ * entry. A handle closed by {@link Handle#completeNow()} is never reopened: a reroute after it
+ * chains a successor handle, bound to the same request, that the same single cleanup closes.
+ *
+ * <p>A rerouted request without an inbound {@code X-Request-Id} therefore gets a generated request
+ * id on each pass, and its completion event carries the last pass's — the same id the echoed
+ * response header carries.
+ *
  * <p>Other middlewares that need to release per-request resources should obtain the {@link Handle}
  * from this middleware via {@link #fromRoutingContext(RoutingContext)} and register their cleanup
  * there. No middleware should call {@code ctx.addEndHandler} for context cleanup directly.
@@ -43,8 +58,9 @@ import lombok.extern.slf4j.Slf4j;
  *       upgrade path where Vert.x's {@code completeHandshake()} bypasses the response end handler.
  * </ul>
  *
- * <p>Late registration (calling {@code onClose} or {@code afterClose} after {@code completeNow()}
- * or the end handler fires) throws {@link IllegalStateException} immediately so leaks are loud.
+ * <p>Late registration (calling {@code onClose} or {@code afterClose} on a handle after its
+ * {@code completeNow()} or the end handler fires) throws {@link IllegalStateException} immediately
+ * so leaks are loud.
  */
 @Slf4j
 @Singleton
@@ -92,14 +108,53 @@ public final class RequestContextLifecycle implements Middleware {
     }
 
     /**
-     * Creates a fresh {@link Handle}, stores it in the routing context, registers the end handler
-     * that drives cleanup, and delegates to the next handler.
+     * Stores this request's {@link Handle} in the routing context, registers the end handler that
+     * drives cleanup on first entry only, and delegates to the next handler once.
+     *
+     * <ul>
+     *   <li><strong>First entry</strong> — the slot holds no handle bound to {@code ctx.request()}:
+     *       it is empty, or holds another request's handle, an unbound handle, or a value of another
+     *       type. Creates a fresh handle bound to {@code ctx.request()}, stores it, replacing any
+     *       value there, and registers exactly one cleanup end handler.
+     *   <li><strong>Re-entry</strong> — a reroute re-ran this middleware on the same request, and
+     *       the slot holds the request's own handle, still open. Reuses it and registers no end
+     *       handler; the request keeps one handle and one cleanup.
+     *   <li><strong>Re-entry after {@link Handle#completeNow()}</strong> — the request's handle is
+     *       closed and is never reopened. Follows its successor links to the last one, reuses that
+     *       one when it is open, and otherwise chains a new successor to it, bound to
+     *       {@code ctx.request()}; an existing successor is never overwritten. Stores the handle it
+     *       reached or chained, and registers no end handler: the first entry's cleanup closes
+     *       every link.
+     * </ul>
+     *
+     * <p>A handle bound to another request is never closed, reused or registered on.
      *
      * @param ctx the current routing context; must not be {@code null}
      */
     @Override
     public void handle(RoutingContext ctx) {
-        Handle handle = new Handle();
+        HttpServerRequest request = ctx.request();
+        Object slot = ctx.get(KEY);
+        if (slot instanceof Handle existing && existing.request != null && existing.request == request) {
+            // Re-entry: a reroute re-ran ROOT middleware on this request. Keep its one handle and its
+            // one cleanup, so every end handler still sees the last pass's bindings.
+            if (existing.closed) {
+                // completeNow() closed it before the reroute; never reopen it. Walk to the tail and
+                // chain a successor only when the tail is closed too, never overwriting a link.
+                Handle tail = existing;
+                while (tail.successor != null) {
+                    tail = tail.successor;
+                }
+                if (tail.closed) {
+                    tail.successor = new Handle(request);
+                    tail = tail.successor;
+                }
+                ctx.put(KEY, tail);
+            }
+            ctx.next();
+            return;
+        }
+        Handle handle = new Handle(request);
         ctx.put(KEY, handle);
         // Register first → fires last under Vert.x Web 5.1.2 reverse end-handler order.
         // This ensures all downstream end handlers (audit emit, log finalization) still see
@@ -141,7 +196,15 @@ public final class RequestContextLifecycle implements Middleware {
      * <p>Once {@link #completeNow()} or the end handler fires, subsequent calls to
      * {@link #onClose} or {@link #afterClose} throw {@link IllegalStateException} immediately.
      * Calling {@link #completeNow()} a second time (or having the end handler fire after
-     * {@link #completeNow()} already ran) is a no-op.
+     * {@link #completeNow()} already ran) is a no-op apart from completing this handle's
+     * successor, if any.
+     *
+     * <p>There is one handle per request across reroutes. The middleware binds each handle it
+     * creates to the request it was created for, reuses that handle when a reroute re-runs it on
+     * the same request, and registers no second cleanup. A closed handle is never reopened: when a
+     * reroute follows {@link #completeNow()}, the middleware chains a successor handle to it, bound
+     * to the same request, and the request's one cleanup reaches every link of that chain and
+     * closes it.
      */
     public static final class Handle {
 
@@ -151,8 +214,35 @@ public final class RequestContextLifecycle implements Middleware {
         /** Tasks collected by {@link #afterClose}. Stored in insertion order (FIFO). */
         private final List<Runnable> afterCloseRegistrations = new ArrayList<>();
 
+        /**
+         * The request this handle was created for, compared by identity on re-entry; {@code null}
+         * for a handle built with the public no-argument constructor, which is bound to no request.
+         */
+        private final HttpServerRequest request;
+
         /** Guards against double-close and late registration. */
         private boolean closed = false;
+
+        /**
+         * The handle chained to this one when its request was rerouted after this handle closed;
+         * {@code null} until then. Set once, by {@link RequestContextLifecycle#handle}, and never
+         * overwritten. A plain field, like {@link #closed}: the lifecycle is used serially.
+         */
+        private Handle successor;
+
+        /** Creates a handle bound to no request. */
+        public Handle() {
+            this(null);
+        }
+
+        /**
+         * Creates a handle bound to {@code request}, which re-entry detection compares by identity.
+         *
+         * @param request the request this handle is created for
+         */
+        Handle(HttpServerRequest request) {
+            this.request = request;
+        }
 
         /**
          * Registers a {@link ContextHolder.Scope} to be closed during request cleanup.
@@ -263,11 +353,16 @@ public final class RequestContextLifecycle implements Middleware {
         }
 
         /**
-         * Explicitly drives the request lifecycle to completion. Idempotent: subsequent calls after
-         * the first are no-ops, as is the end handler firing after this method returns.
+         * Explicitly drives the request lifecycle to completion. Idempotent: a call on a closed
+         * handle — any call after the first, or the end handler firing after this method returns —
+         * is a no-op apart from completing this handle's successor, if any.
          *
          * <p>Required by the WebSocket upgrade path, where Vert.x's {@code completeHandshake()}
          * bypasses the normal response end handler.
+         *
+         * <p>A closed handle is never reopened. If the request is rerouted after this call, the
+         * middleware chains a successor handle to this one, bound to the same request, and the
+         * request's one cleanup closes it.
          */
         public void completeNow() {
             closeAll();
@@ -286,7 +381,10 @@ public final class RequestContextLifecycle implements Middleware {
         }
 
         /**
-         * Drives the cleanup sequence. Idempotent: the second call is a no-op.
+         * Drives the cleanup sequence. Idempotent: a call on a closed handle is a no-op apart from
+         * completing its successor, if any — it calls the successor's {@code closeAll()}, which
+         * delegates in turn when that successor is closed too, so the request's one cleanup reaches
+         * the open tail of the chain at any depth.
          *
          * <ol>
          *   <li>Sets {@link #closed} to {@code true} so late registrations fail fast.
@@ -298,6 +396,9 @@ public final class RequestContextLifecycle implements Middleware {
          */
         void closeAll() {
             if (closed) {
+                if (successor != null) {
+                    successor.closeAll();
+                }
                 return;
             }
             closed = true;

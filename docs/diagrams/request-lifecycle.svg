@@ -3,9 +3,9 @@ SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 SPDX-License-Identifier: EUPL-1.2
 -->
 
-<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 680 658" role="img">
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="-35 0 781 756" role="img">
 <title>Vertique HTTP request lifecycle</title>
-<desc>One HTTP request threads ordered middleware: a per-request scope and context stage (open scope, correlation id to MDC, capture origin, register the completion end-handler), then authentication and authorization (resolve identity into SecurityContext, authorize, emit security events), then operation dispatch in the ResourceMethodInvoker (OpenAPI validate, decode body, canonicalize and sanitize, bean validation, invoke the handler), then response negotiation and serialization. Any failure is mapped by an ExceptionMapper to a ProblemDetail. At the end the completion end-handler emits the completion event and an audit record.</desc>
+<desc>One HTTP request threads ordered middleware: a per-request scope and context stage (open scope, register the completion end-handler, correlation id to MDC, capture origin), then, on a matched JAX-RS operation route, the operation identity step (a platform handler records the matched operation and claims the request for JAX-RS before authentication), then authentication and authorization (resolve identity into SecurityContext, authorize, emit security events), then operation dispatch in the ResourceMethodInvoker (OpenAPI validate, decode body, canonicalize and sanitize, bean validation, invoke the handler), then response negotiation and serialization. Any failure is mapped by an ExceptionMapper to a ProblemDetail. At the end the completion end-handler emits a RestRequestCompletedEvent for a request a JAX-RS operation route claimed, an HttpRequestCompletedEvent for a request no transport claimed, or nothing when another transport claimed it; the audit record is REST_OPERATION_COMPLETED for a JAX-RS operation and HTTP_SERVER_REQUEST_COMPLETED for an unclaimed request.</desc>
 <defs>
 <style>
 text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
@@ -41,54 +41,62 @@ text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Ar
 <g><rect class="fill-gray" x="60" y="92" width="320" height="100" rx="8" stroke-width="0.5"/>
 <text class="title gray-t" x="220" y="108" text-anchor="middle" dominant-baseline="central">Request scope &amp; context</text>
 <text class="sub gray-s" x="76" y="128" dominant-baseline="central">Open per-request scope (holder)</text>
-<text class="sub gray-s" x="76" y="146" dominant-baseline="central">Correlation id → MDC + headers</text>
-<text class="sub gray-s" x="76" y="164" dominant-baseline="central">Capture request origin (TLS)</text>
-<text class="sub gray-s" x="76" y="182" dominant-baseline="central">Register completion end-handler</text>
+<text class="sub gray-s" x="76" y="146" dominant-baseline="central">Register completion end-handler</text>
+<text class="sub gray-s" x="76" y="164" dominant-baseline="central">Correlation id → MDC + headers</text>
+<text class="sub gray-s" x="76" y="182" dominant-baseline="central">Capture request origin (TLS)</text>
 </g>
 <line class="arrow" x1="220" y1="192" x2="220" y2="208" marker-end="url(#arrow)"/>
 
-<g><rect class="fill-coral" x="60" y="208" width="320" height="82" rx="8" stroke-width="0.5"/>
-<text class="title coral-t" x="220" y="225" text-anchor="middle" dominant-baseline="central">Authentication &amp; authorization</text>
-<text class="sub coral-s" x="76" y="245" dominant-baseline="central">Resolve identity → SecurityContext (p80)</text>
-<text class="sub coral-s" x="76" y="263" dominant-baseline="central">Authorize @RolesAllowed / @Authorized (p100)</text>
-<text class="sub coral-s" x="76" y="281" dominant-baseline="central">Emit credential + decision events</text>
+<g><rect class="fill-gray" x="60" y="208" width="320" height="64" rx="8" stroke-width="0.5"/>
+<text class="title gray-t" x="220" y="225" text-anchor="middle" dominant-baseline="central">Operation identity (route matched)</text>
+<text class="sub gray-s" x="76" y="245" dominant-baseline="central">Record the matched operation (PlatformHandler)</text>
+<text class="sub gray-s" x="76" y="263" dominant-baseline="central">Claim for JAX-RS, before authentication</text>
 </g>
-<line class="arrow" x1="220" y1="290" x2="220" y2="306" marker-end="url(#arrow)"/>
+<line class="arrow" x1="220" y1="272" x2="220" y2="288" marker-end="url(#arrow)"/>
 
-<g><rect class="fill-teal" x="60" y="306" width="320" height="120" rx="8" stroke-width="0.5"/>
-<text class="title teal-t" x="220" y="323" text-anchor="middle" dominant-baseline="central">Operation dispatch — invoker</text>
-<text class="sub teal-s" x="76" y="345" dominant-baseline="central">OpenAPI validate (path · query · body)</text>
-<text class="sub teal-s" x="76" y="363" dominant-baseline="central">Decode body (RequestBodyDecoder)</text>
-<text class="sub teal-s" x="76" y="381" dominant-baseline="central">Canonicalize + sanitize (route→field)</text>
-<text class="sub teal-s" x="76" y="399" dominant-baseline="central">Bean Validation</text>
-<text class="sub teal-s" x="76" y="417" dominant-baseline="central">Invoke your @Path handler</text>
+<g><rect class="fill-coral" x="60" y="288" width="320" height="82" rx="8" stroke-width="0.5"/>
+<text class="title coral-t" x="220" y="305" text-anchor="middle" dominant-baseline="central">Authentication &amp; authorization</text>
+<text class="sub coral-s" x="76" y="325" dominant-baseline="central">Resolve identity → SecurityContext (p80)</text>
+<text class="sub coral-s" x="76" y="343" dominant-baseline="central">Authorize @RolesAllowed / @Authorized (p100)</text>
+<text class="sub coral-s" x="76" y="361" dominant-baseline="central">Emit credential + decision events</text>
 </g>
-<line class="arrow" x1="220" y1="426" x2="220" y2="442" marker-end="url(#arrow)"/>
+<line class="arrow" x1="220" y1="370" x2="220" y2="386" marker-end="url(#arrow)"/>
 
-<g><rect class="fill-blue" x="60" y="442" width="320" height="60" rx="8" stroke-width="0.5"/>
-<text class="title blue-t" x="220" y="460" text-anchor="middle" dominant-baseline="central">Response</text>
-<text class="sub blue-s" x="220" y="480" text-anchor="middle" dominant-baseline="central">negotiate (Accept) · serialize · 406 if none</text>
+<g><rect class="fill-teal" x="60" y="386" width="320" height="120" rx="8" stroke-width="0.5"/>
+<text class="title teal-t" x="220" y="403" text-anchor="middle" dominant-baseline="central">Operation dispatch — invoker</text>
+<text class="sub teal-s" x="76" y="425" dominant-baseline="central">OpenAPI validate (path · query · body)</text>
+<text class="sub teal-s" x="76" y="443" dominant-baseline="central">Decode body (RequestBodyDecoder)</text>
+<text class="sub teal-s" x="76" y="461" dominant-baseline="central">Canonicalize + sanitize (route→field)</text>
+<text class="sub teal-s" x="76" y="479" dominant-baseline="central">Bean Validation</text>
+<text class="sub teal-s" x="76" y="497" dominant-baseline="central">Invoke your @Path handler</text>
 </g>
-<line class="arrow" x1="220" y1="502" x2="220" y2="518" marker-end="url(#arrow)"/>
+<line class="arrow" x1="220" y1="506" x2="220" y2="522" marker-end="url(#arrow)"/>
 
-<g><rect class="fill-gray" x="120" y="518" width="200" height="36" rx="8" stroke-width="0.5"/><text class="title gray-t" x="220" y="536" text-anchor="middle" dominant-baseline="central">HTTP response</text></g>
-
-<g><rect class="fill-amber" x="430" y="300" width="220" height="104" rx="8" stroke-width="0.5"/>
-<text class="title amber-t" x="540" y="318" text-anchor="middle" dominant-baseline="central">Error pipeline</text>
-<text class="sub amber-s" x="446" y="338" dominant-baseline="central">Any failure is mapped by</text>
-<text class="sub amber-s" x="446" y="356" dominant-baseline="central">ExceptionMapper</text>
-<text class="sub amber-s" x="446" y="374" dominant-baseline="central">→ ProblemDetail (RFC 9457)</text>
-<text class="sub amber-s" x="446" y="392" dominant-baseline="central">consistent JSON error</text>
+<g><rect class="fill-blue" x="60" y="522" width="320" height="60" rx="8" stroke-width="0.5"/>
+<text class="title blue-t" x="220" y="540" text-anchor="middle" dominant-baseline="central">Response</text>
+<text class="sub blue-s" x="220" y="560" text-anchor="middle" dominant-baseline="central">negotiate (Accept) · serialize · 406 if none</text>
 </g>
-<path class="dash" d="M380 249 L408 249 L408 330 L430 330" marker-end="url(#arrow)"/>
-<path class="dash" d="M380 366 L430 366" marker-end="url(#arrow)"/>
-<text class="cap" x="392" y="240" dominant-baseline="central">on error</text>
-<path class="dash" d="M540 404 L540 472 L382 472" marker-end="url(#arrow)"/>
+<line class="arrow" x1="220" y1="582" x2="220" y2="598" marker-end="url(#arrow)"/>
 
-<line class="arrow" x1="220" y1="554" x2="220" y2="572" marker-end="url(#arrow)"/>
-<g><rect class="fill-pink" x="60" y="574" width="590" height="64" rx="8" stroke-width="0.5"/>
-<text class="title pink-t" x="355" y="594" text-anchor="middle" dominant-baseline="central">Completion &amp; audit — end handler (fires last)</text>
-<text class="sub pink-s" x="355" y="614" text-anchor="middle" dominant-baseline="central">Emits RestRequestCompletedEvent — snapshots SecurityContext + CorrelationContext</text>
-<text class="sub pink-s" x="355" y="632" text-anchor="middle" dominant-baseline="central">→ HTTP_SERVER_REQUEST_COMPLETED · optional evidence capture (policy-driven)</text>
+<g><rect class="fill-gray" x="120" y="598" width="200" height="36" rx="8" stroke-width="0.5"/><text class="title gray-t" x="220" y="616" text-anchor="middle" dominant-baseline="central">HTTP response</text></g>
+
+<g><rect class="fill-amber" x="430" y="380" width="220" height="104" rx="8" stroke-width="0.5"/>
+<text class="title amber-t" x="540" y="398" text-anchor="middle" dominant-baseline="central">Error pipeline</text>
+<text class="sub amber-s" x="446" y="418" dominant-baseline="central">Any failure is mapped by</text>
+<text class="sub amber-s" x="446" y="436" dominant-baseline="central">ExceptionMapper</text>
+<text class="sub amber-s" x="446" y="454" dominant-baseline="central">→ ProblemDetail (RFC 9457)</text>
+<text class="sub amber-s" x="446" y="472" dominant-baseline="central">consistent JSON error</text>
+</g>
+<path class="dash" d="M380 329 L408 329 L408 410 L430 410" marker-end="url(#arrow)"/>
+<path class="dash" d="M380 446 L430 446" marker-end="url(#arrow)"/>
+<text class="cap" x="392" y="320" dominant-baseline="central">on error</text>
+<path class="dash" d="M540 484 L540 552 L382 552" marker-end="url(#arrow)"/>
+
+<line class="arrow" x1="220" y1="634" x2="220" y2="652" marker-end="url(#arrow)"/>
+<g><rect class="fill-pink" x="20" y="654" width="670" height="82" rx="8" stroke-width="0.5"/>
+<text class="title pink-t" x="355" y="674" text-anchor="middle" dominant-baseline="central">Completion &amp; audit — end handler (before lifecycle cleanup)</text>
+<text class="sub pink-s" x="355" y="694" text-anchor="middle" dominant-baseline="central">RestRequestCompletedEvent (JAX-RS operation matched) · HttpRequestCompletedEvent (unclaimed)</text>
+<text class="sub pink-s" x="355" y="712" text-anchor="middle" dominant-baseline="central">No event when another transport claimed it · snapshots SecurityContext + CorrelationContext</text>
+<text class="sub pink-s" x="355" y="730" text-anchor="middle" dominant-baseline="central">→ REST_OPERATION_COMPLETED (JAX-RS) · HTTP_SERVER_REQUEST_COMPLETED (unclaimed)</text>
 </g>
 </svg>

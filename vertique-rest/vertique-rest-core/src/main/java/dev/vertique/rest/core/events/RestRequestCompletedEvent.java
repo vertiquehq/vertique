@@ -4,6 +4,7 @@
 package dev.vertique.rest.core.events;
 
 import dev.vertique.core.correlation.CorrelationContextSnapshot;
+import dev.vertique.rest.core.routing.RestOperationDescriptor;
 import dev.vertique.security.SecurityContextSnapshot;
 import dev.vertique.security.origin.RequestOrigin;
 import jakarta.annotation.Nullable;
@@ -13,8 +14,14 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * REST-owned transport source event emitted exactly once per handled request that completes
- * through the normal HTTP response lifecycle (success and all failure paths).
+ * REST-owned transport source event emitted exactly once for each HTTP request that a JAX-RS
+ * operation route claimed and that completes through the normal HTTP response lifecycle, on every
+ * success and failure path. That includes a request denied with 401, 403, 415 or 400 on the matched
+ * route: the route claims the request before authentication runs, so the event still carries its
+ * operation.
+ *
+ * <p>A request that no transport claimed produces an {@link HttpRequestCompletedEvent} instead, and a
+ * request that another transport claimed produces neither event.
  *
  * <p>This is a transport event. It carries no capture profile and chooses no sink. Its purpose is
  * to serve as a single source of truth that metrics, analytics, and operational observers can each
@@ -23,7 +30,8 @@ import java.util.Optional;
  * <p><strong>Protocol-upgrade exclusion.</strong> Successful protocol upgrades (e.g. WebSocket 101)
  * complete out-of-band via {@code RequestContextLifecycle.completeNow()} and do NOT produce a
  * completion event; channel lifecycle observers receive those transitions separately. A
- * <em>failed</em> upgrade that ends with an HTTP error response DOES produce a completion event.
+ * <em>failed</em> upgrade that ends with an HTTP error response is a request no transport claimed,
+ * so it produces an {@link HttpRequestCompletedEvent}, not this event.
  *
  * <p>Safety contract:
  * <ul>
@@ -34,6 +42,9 @@ import java.util.Optional;
  *       simple class name), safe for use in metric labels.</li>
  *   <li>{@code safeAttributes} is an unmodifiable map; consumers must not attempt to cast values
  *       to mutable types.</li>
+ *   <li>{@link #toString()} renders {@code operation} from its {@code operationId()} and
+ *       {@code routeTemplate()} and never calls the descriptor's own {@code toString()}, so logging
+ *       an event never reaches an application object behind the descriptor.</li>
  * </ul>
  *
  * <p><strong>Captured-context snapshot semantics.</strong> This event is consumed by independent
@@ -44,6 +55,15 @@ import java.util.Optional;
  * holder-bound contexts. This is consistent with how {@link CorrelationContextSnapshot} is used
  * for the correlation context.
  *
+ * <p><strong>Equality.</strong> {@code equals} and {@code hashCode} are the record's: they compare
+ * {@code operation} with the descriptor's own {@code equals} and {@code hashCode}. A descriptor the
+ * framework builds for an operation route compares by identity, so match per-route state to an
+ * event by descriptor identity, never by descriptor value equality.
+ *
+ * <p>Evolution: new components are only appended, after the last existing one, and each addition
+ * keeps the previous-arity constructor. Record-pattern deconstruction binds components by
+ * position, so it is outside the compatibility promise.
+ *
  * @param startTime          the instant at which the middleware registered the request; never
  *                           {@code null}
  * @param endTime            the instant at which the request completion was observed; never
@@ -51,10 +71,14 @@ import java.util.Optional;
  * @param method             the HTTP method name (e.g., {@code "GET"}, {@code "POST"}); never
  *                           {@code null}
  * @param path               the raw request path; never {@code null}
- * @param routeTemplate      the OpenAPI path template (e.g., {@code "/users/{id}"}), or
- *                           {@code null} when the request did not reach operation dispatch
- * @param operationId        the OpenAPI {@code operationId}, or {@code null} when the request did
- *                           not reach operation dispatch (e.g., pre-operation validation failure)
+ * @param operation          the {@link RestOperationDescriptor} of the JAX-RS operation route that
+ *                           claimed the request, carrying its HTTP method, route template and
+ *                           {@code operationId}; never {@code null}. {@code operation()} is the
+ *                           same instance that
+ *                           {@link dev.vertique.rest.core.router.OperationHandlerContributor
+ *                           OperationHandlerContributor}s received as
+ *                           {@link dev.vertique.rest.core.router.OperationRegistrationContext#operation()
+ *                           OperationRegistrationContext.operation()} for the matched route.
  * @param statusCode         the HTTP response status code actually sent
  * @param failureCode        a low-cardinality failure classification (e.g., the exception's simple
  *                           class name), or {@code null} when no failure was recorded
@@ -92,8 +116,7 @@ public record RestRequestCompletedEvent(
         Instant endTime,
         String method,
         String path,
-        @Nullable String routeTemplate,
-        @Nullable String operationId,
+        RestOperationDescriptor operation,
         int statusCode,
         @Nullable String failureCode,
         @Nullable String safeFailureMessage,
@@ -106,16 +129,45 @@ public record RestRequestCompletedEvent(
     /**
      * Compact constructor that validates required fields and defensively copies mutable inputs.
      *
-     * @throws NullPointerException if {@code method}, {@code path}, {@code startTime},
-     *                              {@code endTime}, or {@code origin} is {@code null}
+     * @throws NullPointerException if {@code method}, {@code path}, {@code operation},
+     *                              {@code startTime}, {@code endTime}, or {@code origin} is
+     *                              {@code null}
      */
     public RestRequestCompletedEvent {
         Objects.requireNonNull(method, "method");
         Objects.requireNonNull(path, "path");
+        Objects.requireNonNull(operation, "operation");
         Objects.requireNonNull(startTime, "startTime");
         Objects.requireNonNull(endTime, "endTime");
         Objects.requireNonNull(origin, "origin");
         // Defensively copy to an unmodifiable map; skip allocation for the empty/null case.
         safeAttributes = (safeAttributes == null || safeAttributes.isEmpty()) ? Map.of() : Map.copyOf(safeAttributes);
+    }
+
+    /**
+     * Returns the record's {@code RestRequestCompletedEvent[name=value, ...]} rendering, with
+     * {@code operation} rendered as {@code <operationId> <routeTemplate>}, for example
+     * {@code operation=getUser /users/{id}}. The descriptor's own {@code toString()} is never called,
+     * so logging an event never reaches an application object behind the descriptor. The rendering
+     * is for diagnostics and is not a parse format.
+     *
+     * @return the string rendering of this event
+     */
+    @Override
+    public String toString() {
+        return "RestRequestCompletedEvent[startTime=" + startTime
+                + ", endTime=" + endTime
+                + ", method=" + method
+                + ", path=" + path
+                + ", operation=" + operation.operationId() + " " + operation.routeTemplate()
+                + ", statusCode=" + statusCode
+                + ", failureCode=" + failureCode
+                + ", safeFailureMessage=" + safeFailureMessage
+                + ", wireFailureCode=" + wireFailureCode
+                + ", securityContextSnapshot=" + securityContextSnapshot
+                + ", correlationContext=" + correlationContext
+                + ", origin=" + origin
+                + ", safeAttributes=" + safeAttributes
+                + "]";
     }
 }

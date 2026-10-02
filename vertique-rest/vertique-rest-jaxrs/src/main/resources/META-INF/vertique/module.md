@@ -59,8 +59,12 @@ builds a `ResourceMethodMeta`, validates the declaration, and installs the per-o
 chain:
 
 ```
-auth handler(s) → @Consumes 415 gate → validation gate → OperationHandlerContributors → ResourceMethodInvoker
+operation-route identity (PlatformHandler) → auth handler(s) → @Consumes 415 gate → validation gate → OperationHandlerContributors → ResourceMethodInvoker
 ```
+
+The operation-route identity handler records the operation's route template and operation id for
+the request's completion event; as a Vert.x `PlatformHandler` it runs ahead of authentication, and
+it never fails a request.
 
 The candidate methods are the ones the resource class and its superclasses declare, plus every
 interface `default` method the class inherits without overriding. An annotated default method is a
@@ -304,16 +308,20 @@ is visible in these places:
   the descriptor an `OperationHandlerContributor` receives as `OperationRegistrationContext.operation()`.
 - **`OperationContext.operation()`** of every `OperationInterceptor` callback for that mount's
   operations. The route registration builds one descriptor per operation and hands that same instance
-  to contributors and to the operation's invoker, so the descriptor a contributor received and the one
-  `ctx.operation()` returns are the same object.
+  to the operation-route identity handler, to contributors, and to the operation's invoker, so the
+  descriptor a contributor received and the one `ctx.operation()` returns are the same object.
+- **`RestRequestCompletedEvent.operation()`** of every completion event for that mount's operations,
+  including a request rejected on its matched route (401, 403, 415, or 400): the operation-route
+  identity handler records the same descriptor ahead of authentication.
 - **Framework synthetic operations.** The descriptor of a synthetic operation reports the name of the
   application whose document the operation serves from `applicationName()`. A synthetic route runs the
   contributor chain but not the operation interceptors, so it has no `OperationContext`.
 
 The name is `null` on the mount metadata, the operation descriptors, and `ctx.operation()` for a mount
 built through `Factory.create` and for the zero-declaration default mount; nothing derives a name from the mount path or the mount id.
-Requests and configuration cannot set it, and it is not stored in the `RoutingContext` data map or
-published as a routing-context key.
+Requests and configuration cannot set it, and no routing-context key publishes it: the only
+per-request reference is the operation descriptor inside rest-core's framework-owned completion
+state, held under a key private to rest-core.
 
 **Interceptor chain.** After each `beforeOperation` the chain compares the returned context's
 `operation()` with the operation of the context the chain started with, by reference. When they differ,
@@ -1513,7 +1521,6 @@ remains (see [Startup failures](#startup-failures)).
 | `REQUIRES_ACTION_POLICY_CONFLICT` | a `@RequiresAction` declaration conflicts with the operation's resolved security policy |
 | `UNRESOLVABLE_PARAM_CONVERTER` | a path/query/header/cookie/form parameter type — or a collection's element type, or a convertible `@BeanParam` field — has no converter resolvable by the `ParamConversionResolver` chain |
 | `NO_EXPLICIT_SECURITY_POLICY` | `jaxrs.security.requireExplicitPolicy` is `true` and the operation is implicit (see [Explicit security policy](#explicit-security-policy)); message `<METHOD> <full path> has no explicit security policy, which jaxrs.security.requireExplicitPolicy requires`; fix by annotating the operation with `@PermitAll` or a restricting declaration |
-| `EVIDENCE_CAPTURE_REJECTED` | a request-evidence capturer rejected the route when it validated it at router build (`RestServerRequestEvidenceCapturer#validateRoute` threw) — for example the audit adapter cannot resolve the capture policy the route selects |
 
 Building the `RestApplications` view (see [The `RestApplications`
 view](#the-restapplications-view) above) and the composer's step-1 and membership checks (see

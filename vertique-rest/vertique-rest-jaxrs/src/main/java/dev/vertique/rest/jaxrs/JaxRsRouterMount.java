@@ -13,7 +13,6 @@ import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.rest.core.RestConfigurationException;
-import dev.vertique.rest.core.capture.RestServerRequestEvidenceCapturer;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.config.JaxRsConfig;
 import dev.vertique.rest.core.context.RestContextResolution;
@@ -354,9 +353,6 @@ public class JaxRsRouterMount implements RouterMount {
                 .sorted(OrderedExtension.comparator())
                 .toList();
         List<OperationHandlerContributor> sortedContributors = factory.sortedOperationHandlerContributors();
-        List<RestServerRequestEvidenceCapturer> sortedCapturers = factory.evidenceCapturers.stream()
-                .sorted(OrderedExtension.comparator())
-                .toList();
 
         ResponsePipeline responsePipeline = new ResponsePipeline(
                 factory.responseProducerBindings, sortedRequestInterceptors, factory.responseSerializer);
@@ -474,7 +470,6 @@ public class JaxRsRouterMount implements RouterMount {
                 factory.jaxRsConfig.mediaTypeValidation(),
                 factory.beanValidator,
                 factory.objectProcessor,
-                sortedCapturers,
                 factory.actionRegistry,
                 factory.authorizerAvailable,
                 factory.jaxRsConfig,
@@ -821,7 +816,6 @@ public class JaxRsRouterMount implements RouterMount {
         final boolean authEnabled;
         final @Nullable BeanValidator beanValidator;
         final @Nullable InputObjectProcessor objectProcessor;
-        final Set<RestServerRequestEvidenceCapturer> evidenceCapturers;
         final @Nullable ActionRegistry actionRegistry;
 
         /**
@@ -905,9 +899,6 @@ public class JaxRsRouterMount implements RouterMount {
          * @param beanValidator                optional Bean Validation implementation; present when {@code ValidationModule} is included
          * @param objectProcessor              optional input object processor for canonicalization and sanitization;
          *                                     present when a module providing {@code InputObjectProcessor} is included
-         * @param evidenceCapturers            set of {@link RestServerRequestEvidenceCapturer} instances
-         *                                     contributed via Dagger multibinding; empty when no audit
-         *                                     adapter is installed — the capturer loop is a pure no-op
          * @param actionRegistry               optional framework {@link ActionRegistry}; present when the
          *                                     authorization engine is installed. Used to validate
          *                                     {@code @RequiresAction} values at startup; when empty, any
@@ -957,7 +948,6 @@ public class JaxRsRouterMount implements RouterMount {
                 JsonConfig jsonConfig,
                 Optional<BeanValidator> beanValidator,
                 Optional<InputObjectProcessor> objectProcessor,
-                Set<RestServerRequestEvidenceCapturer> evidenceCapturers,
                 Optional<ActionRegistry> actionRegistry,
                 Optional<Authorizer> authorizer,
                 Set<FileContentVerifier> fileContentVerifiers,
@@ -987,7 +977,6 @@ public class JaxRsRouterMount implements RouterMount {
                     jsonConfig,
                     beanValidator,
                     objectProcessor,
-                    evidenceCapturers,
                     actionRegistry,
                     authorizer,
                     fileContentVerifiers,
@@ -1036,9 +1025,6 @@ public class JaxRsRouterMount implements RouterMount {
          * @param beanValidator                optional Bean Validation implementation; present when {@code ValidationModule} is included
          * @param objectProcessor              optional input object processor for canonicalization and sanitization;
          *                                     present when a module providing {@code InputObjectProcessor} is included
-         * @param evidenceCapturers            set of {@link RestServerRequestEvidenceCapturer} instances
-         *                                     contributed via Dagger multibinding; empty when no audit
-         *                                     adapter is installed — the capturer loop is a pure no-op
          * @param actionRegistry               optional framework {@link ActionRegistry}; present when the
          *                                     authorization engine is installed. Used to validate
          *                                     {@code @RequiresAction} values at startup; when empty, any
@@ -1091,7 +1077,6 @@ public class JaxRsRouterMount implements RouterMount {
                 JsonConfig jsonConfig,
                 Optional<BeanValidator> beanValidator,
                 Optional<InputObjectProcessor> objectProcessor,
-                Set<RestServerRequestEvidenceCapturer> evidenceCapturers,
                 Optional<ActionRegistry> actionRegistry,
                 Optional<Authorizer> authorizer,
                 Set<FileContentVerifier> fileContentVerifiers,
@@ -1121,7 +1106,6 @@ public class JaxRsRouterMount implements RouterMount {
             this.authEnabled = authEnforcementCapability.isPresent();
             this.beanValidator = beanValidator.orElse(null);
             this.objectProcessor = objectProcessor.orElse(null);
-            this.evidenceCapturers = evidenceCapturers;
             this.actionRegistry = actionRegistry.orElse(null);
             this.authorizerAvailable = authorizer.isPresent();
             this.fileContentVerifiers = fileContentVerifiers;
