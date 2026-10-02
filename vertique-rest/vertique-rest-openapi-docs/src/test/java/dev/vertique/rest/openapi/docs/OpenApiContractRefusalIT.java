@@ -82,11 +82,18 @@ public class OpenApiContractRefusalIT {
     /** A strategy id no registered strategy carries. */
     private static final String UNKNOWN_STRATEGY = "no-such-strategy";
 
-    /** The marker carried by the absent shared contract's location; no message may echo it. */
+    /** The marker carried by both shared contract locations; no message may echo it. */
     private static final String MARKER = "zq7";
 
     /** The shared global contract location of the refusal cases: absent from the classpath. */
     private static final String ABSENT_SHARED_CONTRACT = MARKER + "-contract.json";
+
+    /**
+     * The shared global contract location of the cases deployed under {@code openapi-contract}: a
+     * loadable test resource, because that strategy refuses startup when a mount's contract cannot be
+     * loaded. Its name carries the marker too.
+     */
+    private static final String LOADABLE_SHARED_CONTRACT = MARKER + "-shared-contract.json";
 
     /** The shared global contract location of the unchanged-behavior builds: a test resource. */
     private static final String SHARED_TEST_CONTRACT = "apidocs-contract-test.json";
@@ -232,7 +239,7 @@ public class OpenApiContractRefusalIT {
                         "(a) the shared fixture under openapi-contract",
                         (vertx, config) -> DaggerContractRefusalTestComponents_SharedContractComponent.factory()
                                 .create(vertx, config),
-                        () -> sharedConfig(OPENAPI_CONTRACT),
+                        OpenApiContractRefusalIT::sharedOpenApiContractConfig,
                         PUBLIC,
                         publicOnSharedContract),
                 new ContractCase(
@@ -253,7 +260,7 @@ public class OpenApiContractRefusalIT {
                         "(d) the application declares its own contract",
                         (vertx, config) -> DaggerContractRefusalTestComponents_OwnContractComponent.factory()
                                 .create(vertx, config),
-                        () -> ownContractConfig(sharedConfig(OPENAPI_CONTRACT)),
+                        () -> ownContractConfig(sharedOpenApiContractConfig()),
                         PUBLIC,
                         null,
                         OWN_CONTRACT),
@@ -262,7 +269,7 @@ public class OpenApiContractRefusalIT {
                         (vertx, config) -> DaggerContractRefusalTestComponents_SharedContractComponent.factory()
                                 .create(vertx, config),
                         () -> withApplicationContract(
-                                ownContractConfig(sharedConfig(OPENAPI_CONTRACT)), PUBLIC, OWN_CONTRACT),
+                                ownContractConfig(sharedOpenApiContractConfig()), PUBLIC, OWN_CONTRACT),
                         PUBLIC,
                         null,
                         OWN_CONTRACT),
@@ -538,6 +545,14 @@ public class OpenApiContractRefusalIT {
      */
     private static JsonObject sharedConfig(String strategy) {
         return withContract(DocsConfigs.shared(), strategy, ABSENT_SHARED_CONTRACT);
+    }
+
+    /**
+     * Returns the shared configuration ({@code apidocs.documents.public.info} set) with the
+     * {@code openapi-contract} strategy selected and the loadable shared contract location.
+     */
+    private static JsonObject sharedOpenApiContractConfig() {
+        return withContract(DocsConfigs.shared(), OPENAPI_CONTRACT, LOADABLE_SHARED_CONTRACT);
     }
 
     /**

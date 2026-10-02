@@ -26,6 +26,9 @@ public interface OwnContractPublicApi {
     /** The application's path. */
     String PATH = "/api/public";
 
-    /** The application's own contract location, a test classpath resource. */
+    /**
+     * The application's own contract location, a test classpath resource without a {@code servers}
+     * member, because the {@code openapi-contract} strategy accepts only absolute server URLs or none.
+     */
     String OPENAPI_PATH = "public-contract.json";
 }
