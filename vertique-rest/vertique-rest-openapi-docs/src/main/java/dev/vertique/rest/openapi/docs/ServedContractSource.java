@@ -32,35 +32,36 @@ final class ServedContractSource {
     private ServedContractSource() {}
 
     /**
-     * Returns the contract location an application's document is served from.
+     * Returns the entry of an application whose document is its own served contract.
      *
      * @param applications the declared applications of the component
      * @param name the application name
-     * @return the effective {@code openapiPath}, unchanged, when the application's contract is its
-     *     own; empty when its document is generated
+     * @return the application's entry, whose effective {@code openapiPath} is the contract location,
+     *     when its contract origin is not {@link RestApplications.ContractOrigin#GLOBAL GLOBAL} and it
+     *     has a location; empty when its document is generated
      */
-    static Optional<String> servedPath(RestApplications applications, String name) {
+    static Optional<RestApplications.Entry> served(RestApplications applications, String name) {
         return applications
                 .byName(name)
                 .filter(entry -> entry.contractOrigin() != RestApplications.ContractOrigin.GLOBAL)
-                .map(RestApplications.Entry::effectiveOpenapiPath);
+                .filter(entry -> entry.effectiveOpenapiPath() != null);
     }
 
     /**
-     * Names the setting an application's contract location comes from.
+     * Names the setting an application's own contract location comes from, never its value.
      *
-     * @param applications the declared applications of the component
-     * @param name the application name
-     * @return the configuration path {@code jaxrs.applications.<name>.openapiPath} for a configured
-     *     location; for a declared one, the annotation member on the declaring interface's binary name
+     * @param application the application, whose contract origin is not {@link
+     *     RestApplications.ContractOrigin#GLOBAL GLOBAL}
+     * @return {@code @RestApplication.openapiPath on <binary name>} of the declaring interface for a
+     *     declared location; otherwise the configuration path {@code
+     *     jaxrs.applications.<name>.openapiPath}
      */
-    static String setting(RestApplications applications, String name) {
-        return applications
-                .byName(name)
-                .filter(entry -> entry.contractOrigin() == RestApplications.ContractOrigin.ANNOTATION)
-                .map(entry -> "@RestApplication.openapiPath on "
-                        + entry.declaringType().getName())
-                .orElse("jaxrs.applications." + name + ".openapiPath");
+    static String setting(RestApplications.Entry application) {
+        if (application.contractOrigin() == RestApplications.ContractOrigin.ANNOTATION) {
+            return "@RestApplication.openapiPath on "
+                    + application.declaringType().getName();
+        }
+        return "jaxrs.applications." + application.name() + ".openapiPath";
     }
 
     /**

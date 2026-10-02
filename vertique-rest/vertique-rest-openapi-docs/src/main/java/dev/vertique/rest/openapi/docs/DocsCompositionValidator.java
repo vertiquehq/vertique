@@ -192,8 +192,11 @@ final class DocsCompositionValidator implements MountCompositionValidator {
             if (document.contractOrigin() == ContractOrigin.GLOBAL) {
                 continue;
             }
-            Optional<RestApplications.Entry> entry = applications.byName(document.name());
-            if (entry.isEmpty() || !entry.get().active() || entry.get().effectiveOpenapiPath() == null) {
+            Optional<RestApplications.Entry> entry = applications
+                    .byName(document.name())
+                    .filter(RestApplications.Entry::active)
+                    .filter(candidate -> candidate.effectiveOpenapiPath() != null);
+            if (entry.isEmpty()) {
                 continue;
             }
             RestApplications.Entry application = entry.get();
@@ -204,7 +207,7 @@ final class DocsCompositionValidator implements MountCompositionValidator {
                 violations.add("apidocs.documents." + application.name() + ": application '" + application.name()
                         + "' (declared by " + application.declaringType().getName()
                         + ") serves its own contract as its document, but its contract location ("
-                        + settingName(application) + ") cannot be parsed as a path");
+                        + ServedContractSource.setting(application) + ") cannot be parsed as a path");
                 continue;
             }
             byLocation.computeIfAbsent(location, key -> new ArrayList<>()).add(application.name());
@@ -220,20 +223,6 @@ final class DocsCompositionValidator implements MountCompositionValidator {
                     + " as its document needs a contract location of its own");
         }
         return violations;
-    }
-
-    /**
-     * Names the setting that supplied an application's own contract location, never its value.
-     *
-     * @param application the application, whose contract origin is not {@link ContractOrigin#GLOBAL}
-     * @return {@code jaxrs.applications.<name>.openapiPath}, or {@code @RestApplication.openapiPath
-     *     on <binary name>} of the declaring interface
-     */
-    private static String settingName(RestApplications.Entry application) {
-        if (application.contractOrigin() == ContractOrigin.CONFIGURATION) {
-            return "jaxrs.applications." + application.name() + ".openapiPath";
-        }
-        return "@RestApplication.openapiPath on " + application.declaringType().getName();
     }
 
     /**

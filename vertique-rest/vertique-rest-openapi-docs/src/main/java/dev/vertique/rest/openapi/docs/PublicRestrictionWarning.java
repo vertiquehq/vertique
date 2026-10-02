@@ -28,14 +28,11 @@ final class PublicRestrictionWarning {
     /** The warning kind, logged at most once per document and component. */
     static final String KIND = "public-restriction";
 
-    /** The lowercase methods of a Path Item Object, in the order a document lists them. */
-    private static final List<String> METHOD_ORDER =
-            List.of("get", "put", "post", "delete", "options", "head", "patch", "trace");
-
     /** Orders located operations as a document lists them: path, then Path Item method order. */
     private static final Comparator<DocumentSecurityAssembler.LocatedOperation> DOCUMENT_ORDER = Comparator.comparing(
                     DocumentSecurityAssembler.LocatedOperation::path)
-            .thenComparingInt(operation -> methodPosition(operation.method()))
+            .thenComparingInt(
+                    operation -> RenderedPaths.methodPosition(operation.method().toLowerCase(Locale.ROOT)))
             .thenComparing(DocumentSecurityAssembler.LocatedOperation::method)
             .thenComparing(operation -> operation.publication().operationId());
 
@@ -92,12 +89,6 @@ final class PublicRestrictionWarning {
                 "apidocs.documents." + document.name() + ": the public document of application '" + document.name()
                         + "' at mount '" + mountPath + "' lists operations that restrict callers, and it is served"
                         + " without authentication: " + String.join(", ", entries));
-    }
-
-    /** Returns the position of a method in a Path Item Object, unknown methods last. */
-    private static int methodPosition(String method) {
-        int position = METHOD_ORDER.indexOf(method.toLowerCase(Locale.ROOT));
-        return position < 0 ? METHOD_ORDER.size() : position;
     }
 
     /** Whether the operation's policy is restrictive, it declares a requirement set, or it requires an action. */

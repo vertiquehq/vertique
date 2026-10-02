@@ -38,8 +38,7 @@ final class PendingWarnings {
      * @param message the complete warning message, starting with the document's configuration path
      */
     void add(String kind, String message) {
-        warnings.add(
-                new Warning(Objects.requireNonNull(kind, "kind"), Objects.requireNonNull(message, "message"), false));
+        warnings.add(new Warning(kind, message, false));
     }
 
     /**
@@ -49,8 +48,7 @@ final class PendingWarnings {
      * @param message the complete notice, starting with the document's configuration path
      */
     void notice(String kind, String message) {
-        warnings.add(
-                new Warning(Objects.requireNonNull(kind, "kind"), Objects.requireNonNull(message, "message"), true));
+        warnings.add(new Warning(kind, message, true));
     }
 
     /**
@@ -76,5 +74,11 @@ final class PendingWarnings {
      * @param message the complete message
      * @param notice {@code true} for a notice logged at {@code INFO}, {@code false} for a warning
      */
-    private record Warning(String kind, String message, boolean notice) {}
+    private record Warning(String kind, String message, boolean notice) {
+
+        private Warning {
+            Objects.requireNonNull(kind, "kind");
+            Objects.requireNonNull(message, "message");
+        }
+    }
 }

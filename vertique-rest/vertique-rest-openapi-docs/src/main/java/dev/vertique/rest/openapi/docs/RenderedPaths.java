@@ -35,7 +35,7 @@ final class RenderedPaths {
             Pattern.compile("\\{\\s*(\\w[\\w.-]*)\\s*(?::\\s*((?:[^{}]|\\{[^{}]*})+))?\\s*}");
 
     /** The lowercase methods of a Path Item Object, in the order the document lists them. */
-    private static final List<String> METHOD_ORDER =
+    static final List<String> METHOD_ORDER =
             List.of("get", "put", "post", "delete", "options", "head", "patch", "trace");
 
     /** Orders the routes of one equivalence class by rendered path, then method, then operation id. */
@@ -132,7 +132,7 @@ final class RenderedPaths {
     }
 
     /** Returns the position of a lowercase method in a Path Item Object, unknown methods last. */
-    private static int methodPosition(String key) {
+    static int methodPosition(String key) {
         int position = METHOD_ORDER.indexOf(key);
         return position < 0 ? METHOD_ORDER.size() : position;
     }

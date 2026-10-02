@@ -75,7 +75,7 @@ final class ContractReferences {
         hops.add(new Hop(pointer, node));
         String current = pointer;
         JsonNode at = node;
-        while (at.isObject() && at.get("$ref") != null && at.get("$ref").isTextual()) {
+        while (at.isObject() && at.path("$ref").isTextual()) {
             String reference = at.get("$ref").textValue();
             if (!reference.startsWith("#/")) {
                 return new Chain(List.copyOf(hops), false);

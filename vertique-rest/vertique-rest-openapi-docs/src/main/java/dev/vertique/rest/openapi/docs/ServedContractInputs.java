@@ -139,7 +139,7 @@ final class ServedContractInputs {
             if (in == null || !in.isTextual() || name == null || !name.isTextual()) {
                 continue;
             }
-            ParamLocation location = LOCATIONS.get(asciiLowerCase(in.textValue()));
+            ParamLocation location = LOCATIONS.get(ResponseAssembler.asciiLowerCase(in.textValue()));
             if (location != null && matchesHidden(location, name.textValue(), twin)) {
                 violations.add("parameter " + display(parameter.pointer()) + " of operation '"
                         + display(twin.operationId()) + "' describes a hidden input");
@@ -173,18 +173,10 @@ final class ServedContractInputs {
         ContractReferences.Chain chain = references.follow(pointer, schema);
         for (ContractReferences.Hop hop : chain.hops()) {
             JsonNode node = hop.node();
-            boolean last = hop == chain.last();
             boolean plain = node.isObject();
             if (plain) {
-                for (String keyword : NOT_PLAIN_KEYWORDS) {
-                    plain &= !node.has(keyword);
-                }
+                plain = NOT_PLAIN_KEYWORDS.stream().noneMatch(node::has);
                 JsonNode properties = node.get("properties");
-                if (properties != null && !properties.isObject()) {
-                    plain = false;
-                } else if (properties == null && last && chain.complete()) {
-                    plain = false;
-                }
                 if (properties != null && properties.isObject()) {
                     for (Map.Entry<String, JsonNode> property : properties.properties()) {
                         if (matchesHidden(ParamLocation.FORM, property.getKey(), twin)) {
@@ -193,6 +185,9 @@ final class ServedContractInputs {
                                     + " of operation '" + id + "' describes a hidden form input");
                         }
                     }
+                } else if (properties != null || (hop == chain.last() && chain.complete())) {
+                    // A non-object properties member, or a resolved chain whose last schema has none.
+                    plain = false;
                 }
             }
             if (!plain) {
@@ -248,22 +243,14 @@ final class ServedContractInputs {
     /** Tells whether a media type, without its parameters and ignoring ASCII case, is a form type. */
     private static boolean isForm(String mediaType) {
         int semicolon = mediaType.indexOf(';');
-        String type = asciiLowerCase((semicolon < 0 ? mediaType : mediaType.substring(0, semicolon)).strip());
+        String type = ResponseAssembler.asciiLowerCase(
+                (semicolon < 0 ? mediaType : mediaType.substring(0, semicolon)).strip());
         return type.equals("application/x-www-form-urlencoded") || type.equals("multipart/form-data");
     }
 
     /** Compares two strings ignoring the case of ASCII letters only. */
     private static boolean asciiEqualsIgnoreCase(String a, String b) {
-        return a.length() == b.length() && asciiLowerCase(a).equals(asciiLowerCase(b));
-    }
-
-    /** Lower-cases ASCII letters only, leaving every other character unchanged. */
-    private static String asciiLowerCase(String text) {
-        StringBuilder out = new StringBuilder(text.length());
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            out.append(c >= 'A' && c <= 'Z' ? (char) (c + ('a' - 'A')) : c);
-        }
-        return out.toString();
+        return a.length() == b.length()
+                && ResponseAssembler.asciiLowerCase(a).equals(ResponseAssembler.asciiLowerCase(b));
     }
 }

@@ -29,6 +29,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -166,11 +167,11 @@ final class DocsPublicationSink implements OperationPublicationSink {
         }
         Map<String, OperationFacts> facts = operationFacts(publication);
         MountPublication detached = detach(publication);
-        String servedPath =
-                ServedContractSource.servedPath(applications, applicationName).orElse(null);
-        if (servedPath != null) {
+        Optional<RestApplications.Entry> served = ServedContractSource.served(applications, applicationName);
+        if (served.isPresent()) {
+            String servedPath = served.get().effectiveOpenapiPath();
+            String setting = ServedContractSource.setting(served.get());
             List<RoutedOperation> routed = routedOperations(detached, facts);
-            String setting = ServedContractSource.setting(applications, applicationName);
             return store.publish(
                     applicationName,
                     caller,

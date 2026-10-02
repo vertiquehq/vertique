@@ -16,7 +16,6 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
@@ -134,7 +133,7 @@ final class DocumentConfigChecks {
         Map<String, DocumentConfig> parsed = apidocsConfig.documents().stream()
                 .collect(Collectors.toMap(DocumentConfig::name, Function.identity(), (first, second) -> first));
         for (String key : new TreeSet<>(documents.fieldNames())) {
-            String path = "apidocs.documents." + escape(key);
+            String path = "apidocs.documents." + ContractReferences.display(key);
             if (!NAME.matcher(key).matches()) {
                 throw new ConfigurationException("Invalid configuration '" + path
                         + "': a document name is its application's name and must match " + NAME_GRAMMAR
@@ -173,7 +172,7 @@ final class DocumentConfigChecks {
             return;
         }
         String paths = unknown.stream()
-                .map(key -> "'" + path + "." + escape(key) + "'")
+                .map(key -> "'" + path + "." + ContractReferences.display(key) + "'")
                 .collect(Collectors.joining(", "));
         throw new ConfigurationException(describe(application) + " has unsupported keys " + paths
                 + ": an entry supports only 'enabled', 'info', and 'serverUrl'; access is declared by @ApiDocs in "
@@ -361,22 +360,5 @@ final class DocumentConfigChecks {
     private static String describe(RestApplications.Entry application) {
         return "Application '" + application.name() + "' (declared by "
                 + application.declaringType().getName() + ")";
-    }
-
-    /**
-     * Renders every control character of a configuration key as a Java-style Unicode escape of four
-     * uppercase hexadecimal digits, leaving every other character unchanged.
-     */
-    private static String escape(String key) {
-        StringBuilder out = new StringBuilder(key.length());
-        for (int i = 0; i < key.length(); i++) {
-            char c = key.charAt(i);
-            if (Character.isISOControl(c)) {
-                out.append(String.format(Locale.ROOT, "\\u%04X", (int) c));
-            } else {
-                out.append(c);
-            }
-        }
-        return out.toString();
     }
 }

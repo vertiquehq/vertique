@@ -21,6 +21,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * Checks the parsed contract an application serves as its document against the routes of its mount.
@@ -66,12 +67,11 @@ final class ServedContractChecks {
     /** The {@code openapi} values a served contract may declare. */
     private static final Pattern VERSION = Pattern.compile("3\\.[01]\\.[0-9]+");
 
-    /** The members of a Path Item that hold Operation Objects. */
-    private static final List<String> METHODS =
-            List.of("get", "put", "post", "delete", "options", "head", "patch", "trace");
-
     private final JsonNode root;
-    private final String mountPath;
+
+    /** The mount path without a trailing {@code /*} or {@code /}, empty for the root mount. */
+    private final String mountPrefix;
+
     private final Map<String, RoutedOperation> routedById = new HashMap<>();
     private final Set<String> violations;
     private final ContractReferences references;
@@ -95,7 +95,7 @@ final class ServedContractChecks {
     private ServedContractChecks(
             JsonNode root, String mountPath, List<RoutedOperation> routed, Set<String> violations) {
         this.root = root;
-        this.mountPath = mountPath;
+        this.mountPrefix = mountPrefix(mountPath);
         this.violations = violations;
         this.references = new ContractReferences(root, violations);
         this.inputs = new ServedContractInputs(references, violations);
@@ -143,7 +143,7 @@ final class ServedContractChecks {
             }
             RoutedOperation twin = routedById.get(member.id());
             if (twin == null) {
-                unrouted.computeIfAbsent(member.id(), id -> new TreeSet<>()).add(member.pointer());
+                recordUnrouted(member.id(), member.pointer());
             } else if (member.inLinks()) {
                 inputs.checkLink(member.ownerPointer(), member.owner(), twin);
             }
@@ -308,7 +308,7 @@ final class ServedContractChecks {
         }
         PathItem pathItem = new PathItem(pointer, node);
         pathItems.put(pointer, pathItem);
-        for (String method : METHODS) {
+        for (String method : RenderedPaths.METHOD_ORDER) {
             JsonNode operation = node.get(method);
             JsonNode operationCallbacks = operation == null ? null : operation.get("callbacks");
             if (operationCallbacks != null && operationCallbacks.isObject()) {
@@ -349,7 +349,7 @@ final class ServedContractChecks {
         Map<String, Set<String>> pointersById = new TreeMap<>();
         Set<String> described = new HashSet<>();
         for (PathItem pathItem : pathItems.values()) {
-            for (String method : METHODS) {
+            for (String method : RenderedPaths.METHOD_ORDER) {
                 JsonNode operation = pathItem.node.get(method);
                 if (operation == null) {
                     continue;
@@ -361,12 +361,13 @@ final class ServedContractChecks {
                     continue;
                 }
                 String id = idNode.textValue();
-                operationIdPointers.add(child(pointer, "operationId"));
+                String idPointer = child(pointer, "operationId");
+                operationIdPointers.add(idPointer);
                 pointersById.computeIfAbsent(id, key -> new TreeSet<>()).add(pointer);
                 RoutedOperation twin = routedById.get(id);
                 if (!pathItem.routeKeys.isEmpty()) {
                     if (twin == null) {
-                        unrouted.computeIfAbsent(id, key -> new TreeSet<>()).add(child(pointer, "operationId"));
+                        recordUnrouted(id, idPointer);
                         continue;
                     }
                     described.add(id);
@@ -381,7 +382,7 @@ final class ServedContractChecks {
                                 + " reuses a routed operation id '" + display(id) + "'");
                     }
                 } else if (twin == null) {
-                    unrouted.computeIfAbsent(id, key -> new TreeSet<>()).add(child(pointer, "operationId"));
+                    recordUnrouted(id, idPointer);
                 } else {
                     inputs.checkOperation(pointer, operation, pathItemsOf(pathItem), twin);
                 }
@@ -399,6 +400,11 @@ final class ServedContractChecks {
         return operationIdPointers;
     }
 
+    /** Records the pointer of an {@code operationId} member whose id the mount does not route. */
+    private void recordUnrouted(String id, String idPointer) {
+        unrouted.computeIfAbsent(id, key -> new TreeSet<>()).add(idPointer);
+    }
+
     /** Returns a Path Item and every Path Item that references it, each with its JSON Pointer. */
     private static List<ContractReferences.Hop> pathItemsOf(PathItem pathItem) {
         List<ContractReferences.Hop> all = new ArrayList<>();
@@ -409,16 +415,15 @@ final class ServedContractChecks {
 
     /** Tells whether a route operation matches its routed twin by method and by every path key. */
     private boolean bound(String method, Set<String> routeKeys, RoutedOperation twin) {
-        if (!method.equals(asciiLowerCase(twin.httpMethod()))) {
+        if (!method.equals(ResponseAssembler.asciiLowerCase(twin.httpMethod()))) {
             return false;
         }
         String relative = reduce(twin.renderedPath());
-        String mount = normalizedMount();
         Set<String> accepted = new HashSet<>();
         accepted.add(relative);
-        accepted.add(mount + relative);
-        if (relative.equals("/") && !mount.isEmpty()) {
-            accepted.add(mount);
+        accepted.add(mountPrefix + relative);
+        if (relative.equals("/") && !mountPrefix.isEmpty()) {
+            accepted.add(mountPrefix);
         }
         for (String key : routeKeys) {
             if (!accepted.contains(reduce(key))) {
@@ -429,7 +434,7 @@ final class ServedContractChecks {
     }
 
     /** Returns the mount path without a trailing {@code /*} or {@code /}, empty for the root mount. */
-    private String normalizedMount() {
+    private static String mountPrefix(String mountPath) {
         String mount = mountPath == null ? "" : mountPath;
         if (mount.endsWith("/*")) {
             mount = mount.substring(0, mount.length() - 2);
@@ -458,22 +463,8 @@ final class ServedContractChecks {
         return out.toString();
     }
 
-    /** Lower-cases ASCII letters only, leaving every other character unchanged. */
-    private static String asciiLowerCase(String text) {
-        StringBuilder out = new StringBuilder(text.length());
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            out.append(c >= 'A' && c <= 'Z' ? (char) (c + ('a' - 'A')) : c);
-        }
-        return out.toString();
-    }
-
     /** Renders sorted pointers for a message, separated by commas. */
     private static String displayAll(Set<String> pointers) {
-        List<String> shown = new ArrayList<>(pointers.size());
-        for (String pointer : pointers) {
-            shown.add(display(pointer));
-        }
-        return String.join(", ", shown);
+        return pointers.stream().map(ContractReferences::display).collect(Collectors.joining(", "));
     }
 }
