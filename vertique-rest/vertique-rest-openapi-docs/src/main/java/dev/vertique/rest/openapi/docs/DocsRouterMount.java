@@ -142,6 +142,29 @@ final class DocsRouterMount implements RouterMount {
                     + " obtain HttpVerticle from Dagger so its composition validators run before any mount"
                     + " router is created");
         }
+        Router router = Router.router(vertx);
+        buildInto(router);
+        return Future.succeededFuture(router);
+    }
+
+    /**
+     * Builds the documentation routes into the given router. Repeats the composition-validated check
+     * so a direct call cannot bypass it, runs the protected-document checks, refuses a protected
+     * document that is not served yet, and then registers the public document routes.
+     *
+     * @param router the router to register the routes on
+     * @throws RestConfigurationException when the mount is not validated, a protected document is
+     *     invalid, or a protected document is not served yet; in every case before any route is
+     *     registered
+     */
+    void buildInto(Router router) {
+        if (!validated) {
+            throw new RestConfigurationException("Documentation mount '" + MOUNT_ID + "' at '" + mountPath()
+                    + "' cannot create its router: the hosting HttpVerticle was built without composition"
+                    + " validators, such as with the public five-argument constructor or by a subclass;"
+                    + " obtain HttpVerticle from Dagger so its composition validators run before any mount"
+                    + " router is created");
+        }
         checkProtectedDocuments();
         for (EnabledDocuments.EnabledDocument document : documents.all()) {
             if (document.access() == ApiDocs.Access.PROTECTED) {
@@ -150,14 +173,12 @@ final class DocsRouterMount implements RouterMount {
                         + "and protected documents are not served yet");
             }
         }
-        Router router = Router.router(vertx);
         for (EnabledDocuments.EnabledDocument document : documents.all()) {
             register(
                     router, document.name(), JSON_FILE, JSON_TYPE, PublishedDocument::json, PublishedDocument::jsonTag);
             register(
                     router, document.name(), YAML_FILE, YAML_TYPE, PublishedDocument::yaml, PublishedDocument::yamlTag);
         }
-        return Future.succeededFuture(router);
     }
 
     /** Checks the {@link ApiDocs} values of the protected documents and throws one exception for all. */
