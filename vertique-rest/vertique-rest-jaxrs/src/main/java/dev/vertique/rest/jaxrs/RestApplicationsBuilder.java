@@ -4,8 +4,8 @@
 package dev.vertique.rest.jaxrs;
 
 import dev.vertique.rest.core.RestConfigurationException;
+import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.core.config.JaxRsConfig;
-import dev.vertique.rest.jaxrs.application.RestApplication;
 import dev.vertique.rest.jaxrs.publication.ApiDocsInstalled;
 import dev.vertique.rest.jaxrs.publication.RestApplications;
 import dev.vertique.rest.jaxrs.publication.RestApplications.ContractOrigin;

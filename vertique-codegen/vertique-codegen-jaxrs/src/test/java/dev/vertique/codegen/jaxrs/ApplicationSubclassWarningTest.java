@@ -106,7 +106,7 @@ class ApplicationSubclassWarningTest {
         return SourceFiles.inline(packageName + ".Api", """
                 package %s;
 
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "api", path = "/api", resources = PathResource.class)
                 interface Api {}

@@ -98,7 +98,7 @@ class RestApplicationRegistrationEmitterTest {
             SourceFiles.inline(MIXED_PKG + ".PublicApi", """
             package %s;
 
-            import dev.vertique.rest.jaxrs.application.RestApplication;
+            import dev.vertique.rest.core.application.RestApplication;
 
             @RestApplication(
                     name = "public",
@@ -113,7 +113,7 @@ class RestApplicationRegistrationEmitterTest {
             package %s;
 
             import dev.vertique.codegen.ConditionalOnProperty;
-            import dev.vertique.rest.jaxrs.application.RestApplication;
+            import dev.vertique.rest.core.application.RestApplication;
 
             @ConditionalOnProperty(name = "tp007.mgmt.enabled")
             @RestApplication(name = "mgmt", path = "/api/mgmt", resources = OrderResource.class)
@@ -124,7 +124,7 @@ class RestApplicationRegistrationEmitterTest {
             SourceFiles.inline(MIXED_PKG + ".Outer", """
             package %s;
 
-            import dev.vertique.rest.jaxrs.application.RestApplication;
+            import dev.vertique.rest.core.application.RestApplication;
 
             public class Outer {
 
@@ -144,7 +144,7 @@ class RestApplicationRegistrationEmitterTest {
             SourceFiles.inline(ONLYAPP_PKG + ".AllApi", """
             package %s;
 
-            import dev.vertique.rest.jaxrs.application.RestApplication;
+            import dev.vertique.rest.core.application.RestApplication;
 
             @RestApplication(name = "all", path = "/", discover = true)
             interface AllApi {}
@@ -177,7 +177,7 @@ class RestApplicationRegistrationEmitterTest {
             package a.res.apps;
 
             import a.res.ItemResource;
-            import dev.vertique.rest.jaxrs.application.RestApplication;
+            import dev.vertique.rest.core.application.RestApplication;
 
             @RestApplication(name = "items", path = "/items-app", resources = ItemResource.class)
             public interface ItemsApi {}
@@ -214,7 +214,7 @@ class RestApplicationRegistrationEmitterTest {
             package %1$s.a;
 
             import %1$s.PathResource;
-            import dev.vertique.rest.jaxrs.application.RestApplication;
+            import dev.vertique.rest.core.application.RestApplication;
 
             @RestApplication(name = "api-a", path = "/api/a", resources = PathResource.class)
             public interface Api {}
@@ -225,7 +225,7 @@ class RestApplicationRegistrationEmitterTest {
             package %1$s.b;
 
             import %1$s.PathResource;
-            import dev.vertique.rest.jaxrs.application.RestApplication;
+            import dev.vertique.rest.core.application.RestApplication;
 
             @RestApplication(name = "api-b", path = "/api/b", resources = PathResource.class)
             public interface Api {}

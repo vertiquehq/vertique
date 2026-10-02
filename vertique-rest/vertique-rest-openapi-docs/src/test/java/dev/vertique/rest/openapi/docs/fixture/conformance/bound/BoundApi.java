@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.openapi.docs.fixture.conformance.bound;
 
-import dev.vertique.rest.jaxrs.application.RestApplication;
+import dev.vertique.rest.core.application.RestApplication;
 
 /**
  * The application {@code bound} at {@code /api/bound}, listing {@link BoundResource}. It declares no

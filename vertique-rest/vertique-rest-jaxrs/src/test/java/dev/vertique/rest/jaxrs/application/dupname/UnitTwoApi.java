@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.jaxrs.application.dupname;
 
-import dev.vertique.rest.jaxrs.application.RestApplication;
+import dev.vertique.rest.core.application.RestApplication;
 
 /**
  * TP-008's second simulated compilation unit: registers the name {@code api}, the same name

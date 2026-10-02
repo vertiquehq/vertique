@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.jaxrs.publication.fixture;
 
-import dev.vertique.rest.jaxrs.application.RestApplication;
+import dev.vertique.rest.core.application.RestApplication;
 
 /**
  * T006 TP-005's declaring type for application {@code c}. Never implemented: the test builds this

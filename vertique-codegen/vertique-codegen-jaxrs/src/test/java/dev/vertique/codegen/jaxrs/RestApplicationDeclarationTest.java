@@ -96,7 +96,7 @@ class RestApplicationDeclarationTest {
         return SourceFiles.inline(packageName + ".Api", """
                 package %s;
 
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "api", path = "/api", resources = PathResource.class)
                 interface Api {}
@@ -123,7 +123,7 @@ class RestApplicationDeclarationTest {
                         SourceFiles.inline(classPkg + ".ClassApi", """
                                 package %s;
 
-                                import dev.vertique.rest.jaxrs.application.RestApplication;
+                                import dev.vertique.rest.core.application.RestApplication;
 
                                 @RestApplication(name = "api", path = "/api", resources = PathResource.class)
                                 public class ClassApi {}
@@ -136,7 +136,7 @@ class RestApplicationDeclarationTest {
                         SourceFiles.inline(enumPkg + ".EnumApi", """
                                 package %s;
 
-                                import dev.vertique.rest.jaxrs.application.RestApplication;
+                                import dev.vertique.rest.core.application.RestApplication;
 
                                 @RestApplication(name = "api", path = "/api", resources = PathResource.class)
                                 public enum EnumApi { INSTANCE }
@@ -149,7 +149,7 @@ class RestApplicationDeclarationTest {
                         SourceFiles.inline(recordPkg + ".RecordApi", """
                                 package %s;
 
-                                import dev.vertique.rest.jaxrs.application.RestApplication;
+                                import dev.vertique.rest.core.application.RestApplication;
 
                                 @RestApplication(name = "api", path = "/api", resources = PathResource.class)
                                 public record RecordApi() {}
@@ -162,7 +162,7 @@ class RestApplicationDeclarationTest {
                         SourceFiles.inline(annotationPkg + ".AnnotationApi", """
                                 package %s;
 
-                                import dev.vertique.rest.jaxrs.application.RestApplication;
+                                import dev.vertique.rest.core.application.RestApplication;
 
                                 @RestApplication(name = "api", path = "/api", resources = PathResource.class)
                                 public @interface AnnotationApi {}
@@ -228,7 +228,7 @@ class RestApplicationDeclarationTest {
         return SourceFiles.inline(packageName + ".Api", """
                 package %s;
 
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(%spath = "/api", resources = PathResource.class)
                 interface Api {}
@@ -309,7 +309,7 @@ class RestApplicationDeclarationTest {
         return SourceFiles.inline(TP003_A_PKG + ".PublicApi", """
                 package %s;
 
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "api", path = "/api/a", resources = PathResource.class)
                 interface PublicApi {}
@@ -321,7 +321,7 @@ class RestApplicationDeclarationTest {
                 package %s;
 
                 import dev.vertique.codegen.ConditionalOnProperty;
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @ConditionalOnProperty(name = "tp003.other.enabled")
                 @RestApplication(name = "api", path = "/api/b", resources = PathResource.class)
@@ -379,7 +379,7 @@ class RestApplicationDeclarationTest {
                 SourceFiles.inline(TP003_CONTROL_PKG + ".ControlApi", """
                 package %s;
 
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "api", path = "/api", resources = PathResource.class)
                 interface ControlApi {}
@@ -388,7 +388,7 @@ class RestApplicationDeclarationTest {
                 SourceFiles.inline(TP003_CONTROL_PKG + ".ControlApi2", """
                 package %s;
 
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "api2", path = "/api2", resources = PathResource.class)
                 interface ControlApi2 {}
@@ -419,7 +419,7 @@ class RestApplicationDeclarationTest {
         return SourceFiles.inline(packageName + ".Api", """
                 package %s;
 
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "api", %sresources = PathResource.class)
                 interface Api {}
@@ -538,7 +538,7 @@ class RestApplicationDeclarationTest {
         JavaFileObject api = SourceFiles.inline(pkg + ".Api", """
                 package %s;
 
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "api", path = "/api", resources = IfaceResource.class)
                 interface Api {}
@@ -561,7 +561,7 @@ class RestApplicationDeclarationTest {
         JavaFileObject api = SourceFiles.inline(pkg + ".Api", """
                 package %s;
 
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "api", path = "/api", resources = AbstractResource.class)
                 interface Api {}
@@ -586,7 +586,7 @@ class RestApplicationDeclarationTest {
         JavaFileObject api = SourceFiles.inline(pkg + ".Api", """
                 package %s;
 
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "api", path = "/api", resources = ProviderResource.class)
                 interface Api {}
@@ -616,7 +616,7 @@ class RestApplicationDeclarationTest {
         JavaFileObject api = SourceFiles.inline(pkg + ".Api", """
                 package %s;
 
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "api", path = "/api", resources = FeatureResource.class)
                 interface Api {}
@@ -645,7 +645,7 @@ class RestApplicationDeclarationTest {
         JavaFileObject api = SourceFiles.inline(pkg + ".Api", """
                 package %s;
 
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "api", path = "/api", resources = DynamicFeatureResource.class)
                 interface Api {}
@@ -665,7 +665,7 @@ class RestApplicationDeclarationTest {
         JavaFileObject api = SourceFiles.inline(pkg + ".Api", """
                 package %s;
 
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "api", path = "/api", resources = NoPathResource.class)
                 interface Api {}
@@ -681,7 +681,7 @@ class RestApplicationDeclarationTest {
         JavaFileObject api = SourceFiles.inline(pkg + ".Api", """
                 package %s;
 
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "api", path = "/api", resources = {PathResource.class, PathResource.class})
                 interface Api {}
@@ -717,7 +717,7 @@ class RestApplicationDeclarationTest {
         JavaFileObject api = SourceFiles.inline(pkg + ".Api", """
                 package %s;
 
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "api", path = "/api", resources = InheritedPathResource.class)
                 interface Api {}
@@ -750,7 +750,7 @@ class RestApplicationDeclarationTest {
         JavaFileObject api = SourceFiles.inline(pkg + ".Api", """
                 package %s;
 
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "api", path = "/api", resources = PathResource.class, discover = true)
                 interface Api {}
@@ -765,7 +765,7 @@ class RestApplicationDeclarationTest {
         JavaFileObject api = SourceFiles.inline(pkg + ".Api", """
                 package %s;
 
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "api", path = "/api")
                 interface Api {}
@@ -780,7 +780,7 @@ class RestApplicationDeclarationTest {
         JavaFileObject discoverOnly = SourceFiles.inline(pkg + ".DiscoverOnly", """
                 package %s;
 
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "all", path = "/", discover = true)
                 interface DiscoverOnly {}
@@ -803,7 +803,7 @@ class RestApplicationDeclarationTest {
         JavaFileObject discoverOnly = SourceFiles.inline(pkg + ".DiscoverOnly", """
                 package %s;
 
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "all", path = "/", discover = true)
                 interface DiscoverOnly {}
@@ -812,7 +812,7 @@ class RestApplicationDeclarationTest {
                 package %s;
 
                 import dev.vertique.codegen.ConditionalOnProperty;
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @ConditionalOnProperty(name = "tp006.api.enabled")
                 @RestApplication(name = "api", path = "/api", resources = PathResource.class)
@@ -837,7 +837,7 @@ class RestApplicationDeclarationTest {
         JavaFileObject discoverOnly = SourceFiles.inline(discoverPkg + ".DiscoverOnly", """
                 package %s;
 
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "all", path = "/", discover = true)
                 interface DiscoverOnly {}
@@ -857,7 +857,7 @@ class RestApplicationDeclarationTest {
         JavaFileObject discoverOnly = SourceFiles.inline(pkg + ".DiscoverOnly", """
                 package %s;
 
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "all", path = "/", discover = true)
                 interface DiscoverOnly {}
@@ -930,7 +930,7 @@ class RestApplicationDeclarationTest {
                 package %s;
 
                 import dev.vertique.codegen.NoAutoWire;
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @NoAutoWire
                 @RestApplication(name = "Bad Name", path = "/x*", discover = true)
@@ -983,7 +983,7 @@ class RestApplicationDeclarationTest {
         JavaFileObject badName = SourceFiles.inline(pkg + ".BadName", """
                 package %s;
 
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "Bad", path = "/b", resources = PathResource.class)
                 interface BadName {}
@@ -1024,7 +1024,7 @@ class RestApplicationDeclarationTest {
                 package acc.apps;
 
                 import acc.PathResource;
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "hidden", path = "/hidden", resources = PathResource.class)
                 interface HiddenApi {}
@@ -1048,7 +1048,7 @@ class RestApplicationDeclarationTest {
         JavaFileObject samePackageApi = SourceFiles.inline("acc.SamePackageApi", """
                 package acc;
 
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "samepkg", path = "/samepkg", resources = PathResource.class)
                 interface SamePackageApi {}
@@ -1069,7 +1069,7 @@ class RestApplicationDeclarationTest {
                 package acc.apps;
 
                 import acc.PathResource;
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 class Holder {
 
@@ -1102,7 +1102,7 @@ class RestApplicationDeclarationTest {
         JavaFileObject hasPrivateResource = SourceFiles.inline("acc.other.HasPrivateResource", """
                 package acc.other;
 
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "d", path = "/d", resources = PrivateResource.class)
                 public interface HasPrivateResource {}
@@ -1135,7 +1135,7 @@ class RestApplicationDeclarationTest {
                 package acc.apps;
 
                 import acc.other.PublicOtherResource;
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "e", path = "/e", resources = PublicOtherResource.class)
                 public interface HasPublicOtherResource {}
@@ -1186,7 +1186,7 @@ class RestApplicationDeclarationTest {
         JavaFileObject disjointApi = SourceFiles.inline("com.acme.app.DisjointApi", """
                 package com.acme.app;
 
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "disjoint", path = "/disjoint", discover = true)
                 interface DisjointApi {}

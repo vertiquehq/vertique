@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.openapi.docs.fixture.startup;
 
-import dev.vertique.rest.jaxrs.application.RestApplication;
+import dev.vertique.rest.core.application.RestApplication;
 
 /**
  * An undocumented application whose name is the longest the application-name grammar accepts:

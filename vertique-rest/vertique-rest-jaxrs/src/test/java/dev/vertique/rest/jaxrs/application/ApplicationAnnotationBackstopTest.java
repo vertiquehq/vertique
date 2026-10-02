@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.rest.core.RestConfigurationException;
+import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration;
 import dev.vertique.rest.openapi.docs.ApiDocs;

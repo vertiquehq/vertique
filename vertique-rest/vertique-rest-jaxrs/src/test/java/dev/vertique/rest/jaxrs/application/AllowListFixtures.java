@@ -9,6 +9,7 @@ import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dev.vertique.core.VertxConfig;
+import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.jaxrs.RestModule;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsResourceEntry;

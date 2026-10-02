@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.jaxrs.application.view;
 
-import dev.vertique.rest.jaxrs.application.RestApplication;
+import dev.vertique.rest.core.application.RestApplication;
 
 /**
  * TP-006's application {@code b}: no {@code jaxrs.applications.b} entry, so its own

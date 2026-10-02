@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
+import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration;
 import io.vertx.core.json.JsonObject;
 import java.lang.reflect.InvocationTargetException;
@@ -31,6 +32,7 @@ import javax.tools.Diagnostic;
 import javax.tools.JavaFileObject;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.DynamicTest;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestFactory;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -74,7 +76,7 @@ class RestApplicationAllowListTest {
     private static final String APPLICATION_PATH_FQN = "jakarta.ws.rs.ApplicationPath";
     private static final String API_DOCS_FQN = "dev.vertique.rest.openapi.docs.ApiDocs";
     private static final String OPEN_API_DEFINITION_FQN = "io.swagger.v3.oas.annotations.OpenAPIDefinition";
-    private static final String REST_APPLICATION_FQN = "dev.vertique.rest.jaxrs.application.RestApplication";
+    private static final String REST_APPLICATION_FQN = RestApplication.class.getName();
     private static final String CONDITIONAL_ON_PROPERTY_FQN = "dev.vertique.codegen.ConditionalOnProperty";
     private static final String NO_AUTO_WIRE_FQN = "dev.vertique.codegen.NoAutoWire";
     private static final String CONDITIONAL_ON_PROPERTIES_FQN = "dev.vertique.codegen.ConditionalOnProperties";
@@ -130,7 +132,7 @@ class RestApplicationAllowListTest {
                 packageName + ".Api", """
                 package %s;
 
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
                 %s
 
                 %s
@@ -148,7 +150,7 @@ class RestApplicationAllowListTest {
         return SourceFiles.inline(packageName + ".Api", """
                 package %s;
 
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
                 import jakarta.annotation.security.RolesAllowed;
                 import jakarta.inject.Named;
 
@@ -363,6 +365,11 @@ class RestApplicationAllowListTest {
                         unit(r18, apiWithAnnotatedMembersFixture(r18))));
     }
 
+    @Test
+    void scannerRecognizesTheRealRestApplicationTypeByName() {
+        assertEquals(RestApplication.class.getName(), RestApplicationScanner.REST_APPLICATION_FQN);
+    }
+
     @ParameterizedTest(name = "{0}")
     @MethodSource("allowListCases")
     @DisplayName("TP-004 — a disallowed runtime annotation on a declaration or superinterface fails compilation")
@@ -432,7 +439,7 @@ class RestApplicationAllowListTest {
                         "@RestApplication(name = \"base\", path = \"/base\", resources = PathResource.class) on Base",
                         baseCarrying(
                                 r3,
-                                "import dev.vertique.rest.jaxrs.application.RestApplication;",
+                                "import dev.vertique.rest.core.application.RestApplication;",
                                 "@RestApplication(name = \"base\", path = \"/base\", resources = PathResource.class)"),
                         r3 + ".Base",
                         REST_APPLICATION_FQN,
@@ -502,7 +509,7 @@ class RestApplicationAllowListTest {
                 import static dev.vertique.rest.openapi.docs.ApiDocs.Access.PROTECTED;
 
                 import dev.vertique.codegen.NoAutoWire;
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
                 import dev.vertique.rest.openapi.docs.ApiDocs;
                 import jakarta.annotation.security.RolesAllowed;
 

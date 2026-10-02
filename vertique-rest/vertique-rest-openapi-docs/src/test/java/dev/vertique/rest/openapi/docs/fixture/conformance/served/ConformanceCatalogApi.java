@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.openapi.docs.fixture.conformance.served;
 
-import dev.vertique.rest.jaxrs.application.RestApplication;
+import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
 import dev.vertique.rest.openapi.docs.fixture.contract.CatalogEntryResource;
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;

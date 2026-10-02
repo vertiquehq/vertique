@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.jaxrs.application.conflict.opid;
 
-import dev.vertique.rest.jaxrs.application.RestApplication;
+import dev.vertique.rest.core.application.RestApplication;
 
 /**
  * TP-009's ported cross-mount operationId fixtures (the pre-existing lettered cases (a) to (f)),

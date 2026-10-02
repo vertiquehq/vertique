@@ -82,15 +82,17 @@ import javax.lang.model.util.Types;
  * {@code -Avertique.codegen.autoWire=false} every declaration is still validated, none is
  * registered, and each gets one warning naming it.
  *
- * <p>Since {@code vertique-rest-jaxrs} and {@code jakarta.ws.rs-api} are test-scope dependencies
- * of this module, {@code dev.vertique.rest.jaxrs.application.RestApplication},
- * {@code dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration}, and the JAX-RS
- * provider and feature types are located by fully-qualified name rather than imported.
+ * <p>{@code dev.vertique.rest.core.application.RestApplication} (in {@code vertique-rest-core}) is
+ * matched by fully qualified name, like {@code ApiDocs}, rather than imported, although
+ * {@code vertique-rest-core} is a compile dependency of this module.
+ * {@code dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration} and the JAX-RS
+ * provider and feature types are matched by name because {@code vertique-rest-jaxrs} and
+ * {@code jakarta.ws.rs-api} are test-scope dependencies only.
  */
 public final class RestApplicationScanner {
 
-    /** FQN of {@code dev.vertique.rest.jaxrs.application.RestApplication}. */
-    static final String REST_APPLICATION_FQN = "dev.vertique.rest.jaxrs.application.RestApplication";
+    /** FQN of {@code dev.vertique.rest.core.application.RestApplication}. */
+    static final String REST_APPLICATION_FQN = "dev.vertique.rest.core.application.RestApplication";
 
     /** FQN of {@code dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration}. */
     private static final String REGISTRATION_FQN =

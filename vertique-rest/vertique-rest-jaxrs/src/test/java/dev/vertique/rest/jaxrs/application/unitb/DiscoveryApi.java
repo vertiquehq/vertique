@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.jaxrs.application.unitb;
 
-import dev.vertique.rest.jaxrs.application.RestApplication;
+import dev.vertique.rest.core.application.RestApplication;
 
 /**
  * TP-002's discovery-mode application fixture, registered by

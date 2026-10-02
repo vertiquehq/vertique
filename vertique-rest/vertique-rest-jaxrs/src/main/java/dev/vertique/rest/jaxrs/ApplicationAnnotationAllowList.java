@@ -4,7 +4,7 @@
 package dev.vertique.rest.jaxrs;
 
 import dev.vertique.core.util.TypeResolver;
-import dev.vertique.rest.jaxrs.application.RestApplication;
+import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.jaxrs.publication.ApiDocsInstalled;
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
 import java.lang.annotation.Annotation;

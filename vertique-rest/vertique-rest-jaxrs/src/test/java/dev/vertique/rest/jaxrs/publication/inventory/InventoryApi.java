@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.jaxrs.publication.inventory;
 
-import dev.vertique.rest.jaxrs.application.RestApplication;
+import dev.vertique.rest.core.application.RestApplication;
 
 /**
  * Declaring type of the {@code inventory} application over the reflection-path inventory

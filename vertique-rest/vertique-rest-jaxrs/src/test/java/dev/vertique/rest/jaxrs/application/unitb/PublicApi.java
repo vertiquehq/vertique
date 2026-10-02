@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.jaxrs.application.unitb;
 
-import dev.vertique.rest.jaxrs.application.RestApplication;
+import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.jaxrs.application.manual.BlobLikeResource;
 import dev.vertique.rest.jaxrs.application.unita.CatalogResource;
 import dev.vertique.rest.jaxrs.application.unita.scoped.ScopedResource;

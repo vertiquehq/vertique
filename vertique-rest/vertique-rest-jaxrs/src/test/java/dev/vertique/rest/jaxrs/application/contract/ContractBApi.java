@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.jaxrs.application.contract;
 
-import dev.vertique.rest.jaxrs.application.RestApplication;
+import dev.vertique.rest.core.application.RestApplication;
 
 /**
  * TP-007's application {@code b}: no annotation-declared and no configured contract location, so

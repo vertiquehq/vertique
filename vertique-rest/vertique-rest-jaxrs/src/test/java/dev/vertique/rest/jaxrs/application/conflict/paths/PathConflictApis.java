@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.jaxrs.application.conflict.paths;
 
-import dev.vertique.rest.jaxrs.application.RestApplication;
+import dev.vertique.rest.core.application.RestApplication;
 
 /**
  * TP-016's ported path-conflict fixtures for {@link JaxRsApplicationMountConflictTest}, each a

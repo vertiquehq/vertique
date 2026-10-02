@@ -80,8 +80,8 @@ public final class ApplicationAnnotationValidator {
      */
     public static final String API_DOCS_FQN = "dev.vertique.rest.openapi.docs.ApiDocs";
 
-    /** FQN of {@code dev.vertique.rest.jaxrs.application.RestApplication}. */
-    private static final String REST_APPLICATION_FQN = "dev.vertique.rest.jaxrs.application.RestApplication";
+    /** FQN of {@code dev.vertique.rest.core.application.RestApplication}. */
+    private static final String REST_APPLICATION_FQN = "dev.vertique.rest.core.application.RestApplication";
 
     /** FQN of {@code io.swagger.v3.oas.annotations.OpenAPIDefinition}. */
     private static final String OPEN_API_DEFINITION_FQN = "io.swagger.v3.oas.annotations.OpenAPIDefinition";

@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.jaxrs.application.view;
 
-import dev.vertique.rest.jaxrs.application.RestApplication;
+import dev.vertique.rest.core.application.RestApplication;
 
 /**
  * TP-006's application {@code c}, mounted at the root path: its {@code jaxrs.applications.c} entry

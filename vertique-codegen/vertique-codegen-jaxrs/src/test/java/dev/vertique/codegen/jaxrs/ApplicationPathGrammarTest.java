@@ -92,7 +92,7 @@ class ApplicationPathGrammarTest {
                 package %s;
 
                 import dev.vertique.codegen.NoAutoWire;
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
 
                 %s
                 @RestApplication(name = "api", path = "%s", resources = PathResource.class)
