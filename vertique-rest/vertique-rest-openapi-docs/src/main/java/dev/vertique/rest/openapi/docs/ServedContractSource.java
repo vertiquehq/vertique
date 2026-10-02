@@ -37,14 +37,13 @@ final class ServedContractSource {
      * @param applications the declared applications of the component
      * @param name the application name
      * @return the application's entry, whose effective {@code openapiPath} is the contract location,
-     *     when its contract origin is not {@link RestApplications.ContractOrigin#GLOBAL GLOBAL} and it
-     *     has a location; empty when its document is generated
+     *     when its contract origin is not {@link RestApplications.ContractOrigin#GLOBAL GLOBAL}, whose
+     *     location is non-null once provisioning has passed; empty when its document is generated
      */
     static Optional<RestApplications.Entry> served(RestApplications applications, String name) {
         return applications
                 .byName(name)
-                .filter(entry -> entry.contractOrigin() != RestApplications.ContractOrigin.GLOBAL)
-                .filter(entry -> entry.effectiveOpenapiPath() != null);
+                .filter(entry -> entry.contractOrigin() != RestApplications.ContractOrigin.GLOBAL);
     }
 
     /**

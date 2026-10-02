@@ -192,14 +192,18 @@ final class DocsCompositionValidator implements MountCompositionValidator {
             if (document.contractOrigin() == ContractOrigin.GLOBAL) {
                 continue;
             }
-            Optional<RestApplications.Entry> entry = applications
-                    .byName(document.name())
-                    .filter(RestApplications.Entry::active)
-                    .filter(candidate -> candidate.effectiveOpenapiPath() != null);
+            Optional<RestApplications.Entry> entry =
+                    applications.byName(document.name()).filter(RestApplications.Entry::active);
             if (entry.isEmpty()) {
                 continue;
             }
             RestApplications.Entry application = entry.get();
+            if (application.effectiveOpenapiPath() == null) {
+                violations.add("apidocs.documents." + application.name() + ": application '" + application.name()
+                        + "' (declared by " + application.declaringType().getName()
+                        + ") serves its own contract as its document, but has no contract location");
+                continue;
+            }
             Path location;
             try {
                 location = Path.of(application.effectiveOpenapiPath()).normalize();

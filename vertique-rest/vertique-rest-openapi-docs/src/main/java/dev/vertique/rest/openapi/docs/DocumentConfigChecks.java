@@ -93,6 +93,7 @@ final class DocumentConfigChecks {
         List<EnabledDocuments.EnabledDocument> resolved = new ArrayList<>(selected.size());
         for (EnabledDocuments.EnabledDocument document : selected) {
             if (document.contractOrigin() != ContractOrigin.GLOBAL) {
+                checkContractLocation(document, applications);
                 checkNoMetadataOverride(document);
                 resolved.add(new EnabledDocuments.EnabledDocument(
                         document.name(),
@@ -121,6 +122,18 @@ final class DocumentConfigChecks {
                     annotated));
         }
         return List.copyOf(resolved);
+    }
+
+    /** Refuses a document whose application serves its own contract but has no contract location. */
+    private static void checkContractLocation(
+            EnabledDocuments.EnabledDocument document, RestApplications applications) {
+        applications
+                .byName(document.name())
+                .filter(entry -> entry.effectiveOpenapiPath() == null)
+                .ifPresent(entry -> {
+                    throw new ConfigurationException(describe(entry) + " serves its own contract as its document"
+                            + " but has no contract location");
+                });
     }
 
     // ---- entries ----

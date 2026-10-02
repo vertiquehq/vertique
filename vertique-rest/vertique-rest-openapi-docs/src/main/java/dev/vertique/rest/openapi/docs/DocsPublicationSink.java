@@ -170,6 +170,10 @@ final class DocsPublicationSink implements OperationPublicationSink {
         Optional<RestApplications.Entry> served = ServedContractSource.served(applications, applicationName);
         if (served.isPresent()) {
             String servedPath = served.get().effectiveOpenapiPath();
+            if (servedPath == null) {
+                return Future.failedFuture(new RestConfigurationException("apidocs.documents." + applicationName
+                        + ": application '" + applicationName + "' has no contract location"));
+            }
             String setting = ServedContractSource.setting(served.get());
             List<RoutedOperation> routed = routedOperations(detached, facts);
             return store.publish(
