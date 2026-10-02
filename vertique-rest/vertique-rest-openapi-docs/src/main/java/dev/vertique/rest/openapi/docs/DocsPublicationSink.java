@@ -175,6 +175,14 @@ final class DocsPublicationSink implements OperationPublicationSink {
                         + ": application '" + applicationName + "' has no contract location"));
             }
             String setting = ServedContractSource.setting(served.get());
+            for (OperationPublication operation : detached.operations()) {
+                if (operation.detail() == null) {
+                    return Future.failedFuture(new RestConfigurationException("The served contract of application '"
+                            + applicationName + "' cannot be checked: operation '"
+                            + ContractReferences.display(operation.operationId())
+                            + "' was published without its detail"));
+                }
+            }
             List<RoutedOperation> routed = routedOperations(detached, facts);
             return store.publish(
                     applicationName,
