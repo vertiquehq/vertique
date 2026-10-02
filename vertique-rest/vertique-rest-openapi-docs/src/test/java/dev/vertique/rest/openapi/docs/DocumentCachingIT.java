@@ -28,6 +28,7 @@ import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -69,10 +70,16 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * by {@code private, } when the default is private, and carries no {@code Vary}. No document response
  * is ever {@code public} or carries {@code s-maxage}.
  *
+ * <p>A sixth graph (f), deployed by its own test, holds the applications of (a) with the framework's
+ * default {@code Cache-Control} and CORS enabled for two origins. A cross-origin read of the
+ * protected document, and its revalidation, must vary on both {@code Origin}, which the CORS handler
+ * adds, and {@code Authorization}, which the document adds: the document's {@code Vary} joins the one
+ * already present rather than replacing it.
+ *
  * <p>Both forms of every document are read. Each graph gets its own client, which is closed before
- * the graph is undeployed. The class allows 60 seconds rather than 20 because the one test deploys
- * five graphs in sequence, each with its JWT provider and up to seven applications, and each
- * deployment and undeployment is separately bounded at ten seconds.
+ * the graph is undeployed. The class allows 60 seconds rather than 20 because one test deploys five
+ * graphs in sequence, each with its JWT provider and up to seven applications, and each deployment
+ * and undeployment is separately bounded at ten seconds.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
@@ -192,6 +199,101 @@ public class DocumentCachingIT {
                 vertx.sharedData().getLocalMap(StartupDeployments.LOCAL_MAP).clear();
             }
         }
+    }
+
+    /** The origin the cross-origin requests come from, one of the two configured origins. */
+    private static final String CORS_ORIGIN = "https://app.example";
+
+    /**
+     * The second configured origin. With a single configured origin the CORS handler writes no
+     * {@code Vary} at all, so two are configured.
+     */
+    private static final String OTHER_CORS_ORIGIN = "https://admin.example";
+
+    @Test
+    @DisplayName("A protected document adds its Vary on Authorization beside the CORS Vary on Origin")
+    void protectedDocumentVaryKeepsCorsOrigin(Vertx vertx) throws Exception {
+        // Given: the public and management applications with CORS enabled for two origins, and alice's token
+        JWTAuth tokens = JwtAuthFactory.fromSymmetricKey(vertx, "HS256", CachingModules.SIGNING_KEY);
+        String adminToken =
+                tokens.generateToken(new JsonObject().put("sub", "alice").put("roles", new JsonArray().add("admin")));
+        JsonObject config = config(new Graph("f", null, false));
+        config.put(
+                "cors",
+                new JsonObject()
+                        .put("enabled", true)
+                        .put("origins", new JsonArray().add(CORS_ORIGIN).add(OTHER_CORS_ORIGIN)));
+        vertx.sharedData().getLocalMap(StartupDeployments.LOCAL_MAP).clear();
+        Outcome outcome = StartupDeployments.deploy(
+                vertx, () -> DaggerDocumentCachingTestComponents_PublicAndManagementComponent.factory()
+                        .create(vertx, config)
+                        .httpVerticle());
+        WebClient client = WebClient.create(vertx);
+        try {
+            assertNull(outcome.failure(), () -> "(f) the deployment failed: " + outcome.failure());
+            assertNotNull(outcome.port(), "(f) the deployment published no port");
+            int port = outcome.port();
+
+            for (String form : List.of("openapi.json", "openapi.yaml")) {
+                String uri = "/apidocs/management/" + form;
+                String label = "(f) management " + form;
+
+                // When: alice reads the form from the origin, then revalidates it with its entity tag
+                HttpResponse<Buffer> ok = await(client.get(port, HOST, uri)
+                        .putHeader("Authorization", "Bearer " + adminToken)
+                        .putHeader("Origin", CORS_ORIGIN)
+                        .send());
+                assertEquals(200, ok.statusCode(), () -> label + ": GET must answer 200, body: " + ok.bodyAsString());
+                String entityTag = ok.getHeader("ETag");
+                assertNotNull(entityTag, () -> label + ": the 200 must carry an entity tag");
+                HttpResponse<Buffer> notModified = await(client.get(port, HOST, uri)
+                        .putHeader("Authorization", "Bearer " + adminToken)
+                        .putHeader("Origin", CORS_ORIGIN)
+                        .putHeader("If-None-Match", entityTag)
+                        .send());
+                assertEquals(
+                        304,
+                        notModified.statusCode(),
+                        () -> label + ": a matching If-None-Match must answer 304, body: "
+                                + notModified.bodyAsString());
+
+                // Then: both vary on exactly Origin and Authorization, stay private, no-store, and passed CORS
+                for (HttpResponse<Buffer> response : List.of(ok, notModified)) {
+                    String which = label + " " + response.statusCode();
+                    assertEquals(
+                            List.of("private, no-store"),
+                            response.headers().getAll("Cache-Control"),
+                            () -> which + ": exactly one Cache-Control");
+                    assertEquals(
+                            CORS_ORIGIN,
+                            response.getHeader("Access-Control-Allow-Origin"),
+                            () -> which + ": the CORS handler answered the origin");
+                    assertEquals(
+                            List.of("authorization", "origin"),
+                            varyTokens(response),
+                            () -> which + ": Vary names Origin and Authorization, each once, was "
+                                    + response.headers().getAll("Vary"));
+                }
+            }
+        } finally {
+            client.close();
+            StartupDeployments.undeploy(vertx, outcome);
+            vertx.sharedData().getLocalMap(StartupDeployments.LOCAL_MAP).clear();
+        }
+    }
+
+    /**
+     * The field names of every {@code Vary} header of a response, split on commas, trimmed, lower-cased
+     * (field names are case-insensitive, and the CORS handler writes {@code origin}), and sorted.
+     */
+    private static List<String> varyTokens(HttpResponse<Buffer> response) {
+        return response.headers().getAll("Vary").stream()
+                .flatMap(value -> Arrays.stream(value.split(",")))
+                .map(String::trim)
+                .filter(token -> !token.isEmpty())
+                .map(token -> token.toLowerCase(Locale.ROOT))
+                .sorted()
+                .toList();
     }
 
     /**

@@ -44,6 +44,7 @@ import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -566,6 +567,123 @@ public class ProtectedDocumentIT {
     }
 
     /**
+     * Variants of a document request never reach the document's bytes without passing the chain, and
+     * never answer {@code 304} to a caller the chain denies:
+     *
+     * <ul>
+     *   <li>anonymous callers and {@code bob} sending {@code If-None-Match} as {@code *}, as the weak
+     *       form of alice's entity tag, or as a list holding alice's entity tag get their 401 or 403
+     *       problem body, never 304 and never an entity tag;
+     *   <li>paths that normalize onto the document's URL (a percent-encoded letter, a dot segment, a
+     *       doubled slash) never answer an anonymous caller 200 or 304 or any document content, and
+     *       answer alice with the outcome recorded per path;
+     *   <li>paths that do not match the document's URL (an upper-case prefix, an upper-case document
+     *       name, a path parameter) end outside the documentation route for anonymous callers and
+     *       alice alike, and the later catch-all never sees a user for an anonymous caller;
+     *   <li>an anonymous {@code OPTIONS} to the document's URL answers exactly what one to an unknown
+     *       document's URL answers.
+     * </ul>
+     *
+     * <p>Every response other than alice's 200 carries no document content and no entity tag.
+     */
+    @Test
+    @DisplayName("Conditional, path, and method variants of a document request never bypass the security chain")
+    void documentVariantsNeverBypassTheChain() throws Exception {
+        // Given: the shared deployment, and each form's bytes and entity tag as alice reads them
+        configured.requireStarted();
+        Observations observations = configured.observations();
+        Target target = configured.target();
+        Map<Form, Exchange> baselines = new EnumMap<>(Form.class);
+        for (Form form : Form.values()) {
+            Exchange baseline = send(target, HttpMethod.GET, form.path(), alice, Map.of());
+            assertEquals(200, baseline.status(), () -> form + ": alice's first read");
+            assertNotNull(baseline.header("ETag"), () -> form + ": alice's first read carries an ETag");
+            baselines.put(form, baseline);
+        }
+        List<Executable> checks = new ArrayList<>();
+
+        // When: anonymous callers and bob send If-None-Match variants that name or cover alice's tag
+        for (Form form : Form.values()) {
+            String tag = baselines.get(form).header("ETag");
+            Map<String, String> conditions = new LinkedHashMap<>();
+            conditions.put("wildcard", "*");
+            conditions.put("weak form of alice's tag", "W/" + tag);
+            conditions.put("alice's tag in a list", tag + ", \"x\"");
+            for (Caller caller : callers()) {
+                if (caller.expectedStatus() == 200) {
+                    continue;
+                }
+                for (Map.Entry<String, String> condition : conditions.entrySet()) {
+                    Exchange exchange = send(
+                            target,
+                            HttpMethod.GET,
+                            form.path(),
+                            caller.token(),
+                            Map.of("If-None-Match", condition.getValue()));
+                    String row = form + " | " + caller.name() + " | If-None-Match " + condition.getKey();
+                    String problem = caller.expectedStatus() == 401 ? PROBLEM_401 : PROBLEM_403;
+                    // Then: the caller's denial, never 304
+                    checks.add(() -> assertEquals(caller.expectedStatus(), exchange.status(), row + ": status"));
+                    checks.add(() -> assertEquals(new JsonObject(problem), json(exchange), row + ": the problem body"));
+                    checks.add(() -> assertNoDocumentContent(row, exchange));
+                }
+            }
+        }
+
+        // When: paths that normalize onto the document's URL are requested anonymously and by alice
+        Exchange jsonBaseline = baselines.get(Form.JSON);
+        for (Map.Entry<String, VariantOutcome> variant : NORMALIZING_VARIANTS.entrySet()) {
+            String path = variant.getKey();
+            Exchange anonymous = send(target, HttpMethod.GET, path, null, Map.of());
+            Exchange byAlice = send(target, HttpMethod.GET, path, alice, Map.of());
+            LOG.info("{}: anonymous {}, alice {}", path, anonymous.status(), byAlice.status());
+            // Then: the anonymous caller is never served; alice gets the outcome recorded for the path
+            checks.add(() -> assertNeverServed(path + " anonymous", anonymous));
+            checks.add(() -> assertVariant(path + " alice", variant.getValue(), byAlice, null, jsonBaseline));
+        }
+
+        // When: paths that do not match the document's URL are requested anonymously and by alice
+        for (Map.Entry<String, VariantOutcome> variant : NON_MATCHING_VARIANTS.entrySet()) {
+            String path = variant.getKey();
+            int catchAllBeforeAnonymous = observations.laterMountCatchAllHits();
+            int catchAllUserBeforeAnonymous = observations.laterMountCatchAllUserHits();
+            Exchange anonymous = send(target, HttpMethod.GET, path, null, Map.of());
+            int anonymousCatchAll = observations.laterMountCatchAllHits() - catchAllBeforeAnonymous;
+            int anonymousCatchAllUser = observations.laterMountCatchAllUserHits() - catchAllUserBeforeAnonymous;
+            int catchAllBeforeAlice = observations.laterMountCatchAllHits();
+            Exchange byAlice = send(target, HttpMethod.GET, path, alice, Map.of());
+            int aliceCatchAll = observations.laterMountCatchAllHits() - catchAllBeforeAlice;
+            LOG.info("{}: anonymous {}, alice {}", path, anonymous.status(), byAlice.status());
+            // Then: both end outside the documentation route, and the catch-all saw no anonymous user
+            checks.add(() ->
+                    assertVariant(path + " anonymous", variant.getValue(), anonymous, anonymousCatchAll, jsonBaseline));
+            checks.add(() -> assertEquals(0, anonymousCatchAllUser, path + " anonymous: the catch-all saw no user"));
+            checks.add(() -> assertVariant(path + " alice", variant.getValue(), byAlice, aliceCatchAll, jsonBaseline));
+        }
+
+        // When: an anonymous OPTIONS is sent to the document's URL, then to an unknown document's URL
+        Exchange managementOptions = send(target, HttpMethod.OPTIONS, MANAGEMENT_JSON, null, Map.of());
+        Exchange unknownOptions = send(target, HttpMethod.OPTIONS, UNKNOWN_JSON, null, Map.of());
+        LOG.info(
+                "OPTIONS: management {} {}, unknown {} {}",
+                managementOptions.status(),
+                managementOptions.body(),
+                unknownOptions.status(),
+                unknownOptions.body());
+
+        // Then: both answer alike, and neither carries document content
+        checks.add(() -> assertEquals(
+                unknownOptions.status(),
+                managementOptions.status(),
+                "OPTIONS: the management status equals the unknown"));
+        checks.add(() -> assertEquals(
+                unknownOptions.body(), managementOptions.body(), "OPTIONS: the management body equals the unknown"));
+        checks.add(() -> assertNoDocumentContent(managementOptions.label(), managementOptions));
+        checks.add(() -> assertNoDocumentContent(unknownOptions.label(), unknownOptions));
+        assertAll(checks);
+    }
+
+    /**
      * A second graph whose store holds no document answers an authorized document request 503 on the
      * documentation route and never continues to the next route; the shared deployment, whose store
      * holds the document, still serves it.
@@ -697,6 +815,95 @@ public class ProtectedDocumentIT {
                 assertEquals(0, exchange.body().length(), row + ": 304 has no body");
             }
         }
+    }
+
+    // --- Path variants ---
+
+    /** How a variant of the document's path is answered. */
+    private enum VariantOutcome {
+        /** 200 with the bytes and entity tag of alice's read of the JSON form. */
+        SERVED,
+        /** The documentation route's 404 problem body. */
+        DOCUMENT_NOT_FOUND,
+        /** The later mount's catch-all: 404 with its body, raising its count by one. */
+        LATER_CATCH_ALL,
+        /** The root router's own 404, reached by no route of the later mount. */
+        ROUTER_NOT_FOUND
+    }
+
+    /** The body of the root router's own 404, when no route handles a request. */
+    private static final String ROUTER_NOT_FOUND_BODY = "<html><body><h1>Resource not found</h1></body></html>";
+
+    /**
+     * Paths that normalize onto the JSON document's URL, with alice's outcome. An anonymous request
+     * to any of them must never be served, whatever alice's outcome.
+     */
+    private static final Map<String, VariantOutcome> NORMALIZING_VARIANTS = orderedVariants(
+            "/apidocs/%6Danagement/openapi.json", VariantOutcome.SERVED,
+            "/apidocs/public/../management/openapi.json", VariantOutcome.SERVED,
+            "/apidocs//management/openapi.json", VariantOutcome.SERVED);
+
+    /** Paths that do not match the JSON document's URL, with the outcome for every caller. */
+    private static final Map<String, VariantOutcome> NON_MATCHING_VARIANTS = orderedVariants(
+            "/APIDOCS/management/openapi.json", VariantOutcome.ROUTER_NOT_FOUND,
+            "/apidocs/Management/openapi.json", VariantOutcome.LATER_CATCH_ALL,
+            "/apidocs/management/openapi.json;x", VariantOutcome.LATER_CATCH_ALL);
+
+    private static Map<String, VariantOutcome> orderedVariants(
+            String first,
+            VariantOutcome firstOutcome,
+            String second,
+            VariantOutcome secondOutcome,
+            String third,
+            VariantOutcome thirdOutcome) {
+        Map<String, VariantOutcome> variants = new LinkedHashMap<>();
+        variants.put(first, firstOutcome);
+        variants.put(second, secondOutcome);
+        variants.put(third, thirdOutcome);
+        return variants;
+    }
+
+    /**
+     * Asserts a variant's outcome. {@code catchAllDelta} is the rise of the later catch-all's count
+     * across the request, or {@code null} when it was not measured.
+     */
+    private static void assertVariant(
+            String label, VariantOutcome expected, Exchange exchange, Integer catchAllDelta, Exchange baseline) {
+        switch (expected) {
+            case SERVED -> {
+                assertEquals(200, exchange.status(), label + ": status");
+                assertEquals(baseline.header("ETag"), exchange.header("ETag"), label + ": alice's entity tag");
+                assertEquals(baseline.body(), exchange.body(), label + ": the bytes of alice's read");
+            }
+            case DOCUMENT_NOT_FOUND -> {
+                assertEquals(404, exchange.status(), label + ": status");
+                assertEquals(new JsonObject(PROBLEM_404), json(exchange), label + ": the problem body");
+                assertNoDocumentContent(label, exchange);
+            }
+            case LATER_CATCH_ALL -> {
+                assertEquals(404, exchange.status(), label + ": status");
+                assertEquals(LaterDocsPrefixMount.BODY, exchange.body().toString(), label + ": the catch-all's body");
+                assertNoDocumentContent(label, exchange);
+                if (catchAllDelta != null) {
+                    assertEquals(1, catchAllDelta.intValue(), label + ": the catch-all count rose by one");
+                }
+            }
+            case ROUTER_NOT_FOUND -> {
+                assertEquals(404, exchange.status(), label + ": status");
+                assertEquals(ROUTER_NOT_FOUND_BODY, exchange.body().toString(), label + ": the router's own 404");
+                assertNoDocumentContent(label, exchange);
+                if (catchAllDelta != null) {
+                    assertEquals(0, catchAllDelta.intValue(), label + ": the catch-all never ran");
+                }
+            }
+        }
+    }
+
+    /** Asserts a response neither serves nor revalidates the document. */
+    private static void assertNeverServed(String label, Exchange exchange) {
+        assertFalse(exchange.status() == 200, label + ": never 200, body: " + exchange.body());
+        assertFalse(exchange.status() == 304, label + ": never 304");
+        assertNoDocumentContent(label, exchange);
     }
 
     // --- Shared assertions ---
