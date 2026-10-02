@@ -204,8 +204,12 @@ For a public document, the mount also calls `next()` for:
 - a trailing-slash variant of a document URL;
 - a document whose bytes are not stored yet.
 
-For a public document, this mount never answers `404` or `405`. Whatever the later mounts answer,
-including a catch-all mount or the framework's default not-found handling, is the response.
+For a public document, the mount itself never answers `404` or `405`. Whatever the later mounts
+answer, including a catch-all mount, is the response. When no later mount claims the request, the
+router answers it. A request whose path matches a document URL, or its trailing-slash variant for a
+protected document, but whose method is not `GET` or `HEAD`, such as `POST /apidocs/public/openapi.json`
+or `POST /apidocs/management/openapi.json`, ends with `405` (the router's method-mismatch status, with
+no `Allow` header). An unknown document name ends with `404`.
 
 A protected document's route never continues to a later mount. Once its security chain has passed,
 a trailing-slash variant ends with `404` and a document that is not stored yet ends with `503`;
@@ -485,8 +489,10 @@ Authentication runs before any other check, so an unauthenticated request for an
 protected document's name is answered `401`, which discloses that the name exists. A name without an
 enabled document has no route and falls through to the later mounts. Methods other than `GET` and
 `HEAD` on a protected document URL are not answered by the document route: they continue to later
-mounts like a request for an unknown name, without the security chain, and are answered as those
-mounts answer them. No document content is reachable that way.
+mounts without the security chain and are answered as those mounts answer them. When no later mount
+claims the request, the router answers `405` (no `Allow` header), for example
+`POST /apidocs/management/openapi.json`, where a request for an unknown name ends with `404`. No
+document content is reachable that way.
 
 ### Events and metrics
 
@@ -2386,8 +2392,10 @@ and its message can quote that value.
   error interceptors, and later mounts never see them.
 - **Expecting a `404` or `405` from the docs mount for a public document.** The mount passes every
   public-document request it does not answer to the later mounts; a trailing slash, `POST`, or
-  unknown name is answered by them. A protected document's trailing-slash variant ends with `404`
-  once the chain has passed.
+  unknown name is answered by them. When no later mount claims the request, the router answers it:
+  `405` for another method on a document URL (no `Allow` header), `404` for an unknown name or a
+  public document's trailing-slash `GET` or `HEAD`. A protected document's trailing-slash variant
+  ends with `404` once the chain has passed.
 - **Publishing different content from different server instances.** Instances of one component are
   compared, and a difference fails the later instance's startup.
 - **Omitting the module and expecting silence.** An application whose interface carries `@ApiDocs`
@@ -2604,8 +2612,8 @@ Code that keys state or decisions on the operation id alone can already conflate
 mounted by several applications. Key it on the application as well:
 
 - **Where the name is.** `RestOperationDescriptor.applicationName()`, `MountMeta.applicationName()`,
-  and `OperationContext.operation()`, all `null` for the legacy default mount and for hand-built
-  mounts. A protected document's synthetic operation reports the documented application.
+  and `OperationContext.operation().applicationName()`, all `null` for the legacy default mount and
+  for hand-built mounts. A protected document's synthetic operation reports the documented application.
 - **In an interceptor.** Key state on `ctx.operation().applicationName()` plus the operation id. The
   "`RequestInterceptor`, `OperationInterceptor`, `ErrorInterceptor`" section of
   `dev.vertique:vertique-rest-core` shows the pattern.
@@ -2648,12 +2656,21 @@ static final String MOUNT_PATH = "/apidocs/ui/*";
 public Future<Router> createRouter(Vertx vertx) {
     return vertx.executeBlocking(ApiDocsUiMount::readPage).map(page -> {
         Router router = Router.router(vertx);
-        router.get("/").handler(ctx -> ctx.response()
-                .putHeader("Content-Type", CONTENT_TYPE)
-                .putHeader("Content-Security-Policy", CONTENT_SECURITY_POLICY)
-                .end(page));
+        router.route("/").method(HttpMethod.GET).method(HttpMethod.HEAD).handler(ctx -> serve(ctx, page));
         return router;
     });
+}
+
+private static void serve(RoutingContext ctx, byte[] page) {
+    HttpServerResponse response = ctx.response()
+            .putHeader("Content-Type", CONTENT_TYPE)
+            .putHeader("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+            .putHeader("Content-Length", Integer.toString(page.length));
+    if (ctx.request().method() == HttpMethod.HEAD) {
+        response.end();
+    } else {
+        response.end(Buffer.buffer(page));
+    }
 }
 ```
 
@@ -2801,7 +2818,9 @@ global contract is served only by the application itself (see
 Startup refuses every violation, listing them all (see
 [Startup checks of a served contract](#startup-checks-of-a-served-contract)). It warns when
 `servers[0].url` is not the mount path (see
-[Warnings of a served contract](#warnings-of-a-served-contract)). A relative location resolves to a
+[Warnings of a served contract](#warnings-of-a-served-contract)). Under `openapi-contract` a relative
+`servers` URL fails startup: omit `servers` or use an absolute URL (see
+[Contract and runtime](#contract-and-runtime)). A relative location resolves to a
 working-directory file before a classpath resource of the same name, and that file then shadows the
 packaged contract, with a WARN (see
 [Where the contract is read from](#where-the-contract-is-read-from)).
