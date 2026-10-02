@@ -151,8 +151,8 @@ class ReservedNameRedactionTest {
         // Given: a flat body; its manifest is empty and it holds no $defs.
         String operationId = "createFlat";
         GeneratedBody body = GeneratedBodies.describe(FlatZx.class);
-        assertTrue(body.manifest().pointers().isEmpty(), () -> "(a) precondition: manifest " + body.manifest());
-        assertFalse(body.schema().containsKey("$defs"), () -> "(a) precondition: $defs in " + body.schema());
+        assertTrue(body.manifest().pointers().isEmpty(), () -> "flat body precondition: manifest " + body.manifest());
+        assertFalse(body.schema().containsKey("$defs"), () -> "flat body precondition: $defs in " + body.schema());
         JsonObject expected = body.schema().copy();
         Publications.Built built = bodyPublication(operationId, FlatZx.class, body, null);
 
@@ -160,7 +160,7 @@ class ReservedNameRedactionTest {
         List<Executable> checks = new ArrayList<>();
         for (ApiDocs.Access mode : MODES) {
             Rendering rendering = DisclosureDocuments.render(built, mode, DisclosureDocuments.noSource());
-            String label = "(a) " + mode;
+            String label = "flat body " + mode;
 
             // Then: the component equals the captured copy as a JSON value.
             checks.add(() -> assertEquals(
@@ -177,13 +177,17 @@ class ReservedNameRedactionTest {
                 });
             }
         }
-        assertAll("(a) flat body", checks);
+        assertAll("flat body", checks);
     }
 
     /** (b) A body whose aliased member's type carries a guard: every guard copy is removed. */
     private static void aliasCopiedGuardsAreAllRemoved() {
         guardCopiesAreAllRemoved(
-                "(b)", "createAliased", AliasedGuardZx.class, ALIASED_GUARD_COPIES, ALIASED_NON_ASCII_REFUSALS);
+                "aliased body",
+                "createAliased",
+                AliasedGuardZx.class,
+                ALIASED_GUARD_COPIES,
+                ALIASED_NON_ASCII_REFUSALS);
     }
 
     /**
@@ -192,7 +196,11 @@ class ReservedNameRedactionTest {
      */
     private static void foldCopiedGuardsAreAllRemovedAndTheNonAsciiRefusalStays() {
         guardCopiesAreAllRemoved(
-                "(c)", "createFoldCopy", FoldCopyGuardZx.class, FOLD_COPY_GUARD_COPIES, FOLD_COPY_NON_ASCII_REFUSALS);
+                "fold-copy body",
+                "createFoldCopy",
+                FoldCopyGuardZx.class,
+                FOLD_COPY_GUARD_COPIES,
+                FOLD_COPY_NON_ASCII_REFUSALS);
     }
 
     /**
@@ -291,23 +299,31 @@ class ReservedNameRedactionTest {
         assertEquals(
                 fragment,
                 body.schema().getJsonObject("properties").getJsonObject("tags"),
-                () -> "(d) precondition: the original's tags schema in " + body.schema());
-        assertEquals(NOTES_POINTERS, body.manifest().pointers(), () -> "(d) precondition: the manifest");
+                () -> "user-declared propertyNames precondition: the original's tags schema in " + body.schema());
+        assertEquals(
+                NOTES_POINTERS,
+                body.manifest().pointers(),
+                () -> "user-declared propertyNames precondition: the manifest");
         String originalText = body.schema().encode();
-        assertTrue(originalText.contains(INTERNAL_NOTE), () -> "(d) precondition: no " + INTERNAL_NOTE);
-        assertTrue(originalText.contains(AUDIT_TRAIL), () -> "(d) precondition: no " + AUDIT_TRAIL);
+        assertTrue(
+                originalText.contains(INTERNAL_NOTE),
+                () -> "user-declared propertyNames precondition: no " + INTERNAL_NOTE);
+        assertTrue(
+                originalText.contains(AUDIT_TRAIL),
+                () -> "user-declared propertyNames precondition: no " + AUDIT_TRAIL);
         Publications.Built built = bodyPublication(operationId, NotesZx.class, body, TagsProfileModule.TAGS_PROFILE);
 
         // Then: the manifest lists nothing inside the tags schema.
         List<Executable> checks = new ArrayList<>();
         checks.add(() -> assertTrue(
                 body.manifest().pointers().stream().noneMatch(pointer -> pointer.startsWith("/properties/tags")),
-                () -> "(d): the manifest lists the user-declared propertyNames: " + body.manifest()));
+                () -> "user-declared propertyNames: the manifest lists the user-declared propertyNames: "
+                        + body.manifest()));
 
         // When: the document is assembled in protected and in public mode.
         for (ApiDocs.Access mode : MODES) {
             Rendering rendering = DisclosureDocuments.render(built, mode, DisclosureDocuments.noSource());
-            String at = "(d) " + mode;
+            String at = "user-declared propertyNames " + mode;
 
             // Then: the user-declared fragment is published unchanged in both forms.
             checks.add(() -> assertEquals(
@@ -332,7 +348,7 @@ class ReservedNameRedactionTest {
             checks.add(() ->
                     assertFalse(rendering.contains(AUDIT_TRAIL), () -> at + ": " + AUDIT_TRAIL + " is published"));
         }
-        assertAll("(d) user-declared propertyNames", checks);
+        assertAll("user-declared propertyNames", checks);
     }
 
     /**
@@ -344,7 +360,7 @@ class ReservedNameRedactionTest {
         // hidden member (positive control).
         String operationId = "createNode";
         GeneratedBody body = GeneratedBodies.describe(NodeZx.class);
-        assertFalse(body.schema().containsKey("$defs"), () -> "(e) precondition: $defs in " + body.schema());
+        assertFalse(body.schema().containsKey("$defs"), () -> "recursive body precondition: $defs in " + body.schema());
         assertEquals(
                 "#",
                 body.schema()
@@ -352,15 +368,15 @@ class ReservedNameRedactionTest {
                         .getJsonObject("children")
                         .getJsonObject("items")
                         .getString("$ref"),
-                () -> "(e) precondition: the recursive reference in " + body.schema());
-        assertTrue(body.schema().encode().contains(SECRET), () -> "(e) precondition: no " + SECRET);
+                () -> "recursive body precondition: the recursive reference in " + body.schema());
+        assertTrue(body.schema().encode().contains(SECRET), () -> "recursive body precondition: no " + SECRET);
         Publications.Built built = bodyPublication(operationId, NodeZx.class, body, null);
         String relocatedRoot = "#/components/schemas/" + operationId + ".request";
 
         // When: the document is assembled in protected and in public mode.
         List<Executable> checks = new ArrayList<>();
         for (ApiDocs.Access mode : MODES) {
-            String at = "(e) " + mode;
+            String at = "recursive body " + mode;
             Rendering rendering = DisclosureDocuments.render(built, mode, DisclosureDocuments.noSource());
 
             // Then: the recursive reference names the relocated component, and every reference in
@@ -378,7 +394,7 @@ class ReservedNameRedactionTest {
             // Then: the hidden name is in no byte.
             checks.add(() -> assertFalse(rendering.contains(SECRET), () -> at + ": " + SECRET + " is published"));
         }
-        assertAll("(e) recursive body", checks);
+        assertAll("recursive body", checks);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -392,8 +408,8 @@ class ReservedNameRedactionTest {
                 "parameter propertyNames",
                 ReservedNameRedactionTest::keywordInParameterSchemaFails,
                 ReservedNameRedactionTest::keywordInFormFieldSchemaFails,
-                () -> textOrNameIsNotTheKeyword("(b) the name as data", NAME_AS_DATA),
-                () -> textOrNameIsNotTheKeyword("(c) the name as a property name", NAME_AS_PROPERTY));
+                () -> textOrNameIsNotTheKeyword("the name as data", NAME_AS_DATA),
+                () -> textOrNameIsNotTheKeyword("the name as a property name", NAME_AS_PROPERTY));
     }
 
     /** (a) The keyword inside a property's schema fails naming mount, operation, location, and name. */
@@ -403,7 +419,7 @@ class ReservedNameRedactionTest {
 
         List<Executable> checks = new ArrayList<>();
         for (ApiDocs.Access mode : MODES) {
-            String at = "(a) " + mode;
+            String at = "parameter schema " + mode;
             checks.add(() -> {
                 // When: the document is assembled.
                 RestConfigurationException failure =
@@ -425,7 +441,7 @@ class ReservedNameRedactionTest {
                         () -> assertFalse(message.contains("maxLength"), () -> at + ": schema text: " + message));
             });
         }
-        assertAll("(a) the keyword in a parameter schema", checks);
+        assertAll("the keyword in a parameter schema", checks);
     }
 
     /** (d) The keyword inside a form field's schema fails naming mount, operation, and the form field. */
@@ -441,7 +457,7 @@ class ReservedNameRedactionTest {
 
         List<Executable> checks = new ArrayList<>();
         for (ApiDocs.Access mode : MODES) {
-            String at = "(d) " + mode;
+            String at = "form-field schema " + mode;
             checks.add(() -> {
                 // When: the document is assembled.
                 RestConfigurationException failure =
@@ -463,7 +479,7 @@ class ReservedNameRedactionTest {
                         () -> assertFalse(message.contains("{"), () -> at + ": schema text: " + message));
             });
         }
-        assertAll("(d) the keyword in a form-field schema", checks);
+        assertAll("the keyword in a form-field schema", checks);
     }
 
     /** (b), (c) The text {@code propertyNames} as data or as a property name publishes unchanged. */

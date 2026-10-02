@@ -181,7 +181,7 @@ public class OutputHiddenMemberRefusalIT {
     static Stream<Arguments> cases() {
         return Stream.of(
                 row(
-                        "(a) inferred ReceiptZx, @Hidden-only field",
+                        "inferred ReceiptZx, @Hidden-only field",
                         refused(
                                 ReceiptsApi.NAME,
                                 ReceiptsApi.class,
@@ -192,7 +192,7 @@ public class OutputHiddenMemberRefusalIT {
                                         HIDDEN_FIX,
                                         List.of(ReceiptZx.class.getName(), INTERNAL_MEMBER_CLAUSE, HIDDEN_MARKER)))),
                 row(
-                        "(b) declared ReceiptZx content, @Hidden-only field",
+                        "declared ReceiptZx content, @Hidden-only field",
                         refused(
                                 ReceiptsExplicitApi.NAME,
                                 ReceiptsExplicitApi.class,
@@ -203,7 +203,7 @@ public class OutputHiddenMemberRefusalIT {
                                         HIDDEN_FIX,
                                         List.of(ReceiptZx.class.getName(), INTERNAL_MEMBER_CLAUSE, HIDDEN_MARKER)))),
                 row(
-                        "(c) LedgerZx reaching the @Hidden type AuditZx",
+                        "LedgerZx reaching the @Hidden type AuditZx",
                         refused(
                                 LedgerApi.NAME,
                                 LedgerApi.class,
@@ -214,7 +214,7 @@ public class OutputHiddenMemberRefusalIT {
                                         TYPE_FIX,
                                         List.of(AuditZx.class.getName(), HIDDEN_MARKER)))),
                 row(
-                        "(d) FixedReceiptZx, both markers on the field",
+                        "FixedReceiptZx, both markers on the field",
                         new Case(
                                 FixedApi.NAME,
                                 FixedApi.class,
@@ -224,7 +224,7 @@ public class OutputHiddenMemberRefusalIT {
                                 null,
                                 OutputHiddenMemberRefusalIT::observeFixed)),
                 row(
-                        "(e) inferred ReceiptZx, document disabled",
+                        "inferred ReceiptZx, document disabled",
                         new Case(
                                 ReceiptsApi.NAME,
                                 ReceiptsApi.class,
@@ -235,7 +235,7 @@ public class OutputHiddenMemberRefusalIT {
                                 null,
                                 OutputHiddenMemberRefusalIT::observeUnpublished)),
                 row(
-                        "(f) hidden operation returning ReceiptZx beside a visible one",
+                        "hidden operation returning ReceiptZx beside a visible one",
                         new Case(
                                 HiddenOpApi.NAME,
                                 HiddenOpApi.class,
@@ -245,7 +245,7 @@ public class OutputHiddenMemberRefusalIT {
                                 null,
                                 OutputHiddenMemberRefusalIT::observeHiddenOperation)),
                 row(
-                        "(g) PinReceiptZx, @Schema(hidden = true) on the setter",
+                        "PinReceiptZx, @Schema(hidden = true) on the setter",
                         refused(
                                 PinsApi.NAME,
                                 PinsApi.class,
@@ -256,7 +256,7 @@ public class OutputHiddenMemberRefusalIT {
                                         MISPLACED_FIX,
                                         List.of(PinReceiptZx.class.getName(), "setPinZx", SCHEMA_HIDDEN_MARKER)))),
                 row(
-                        "(h) TierReceiptZx reaching the hidden enum constant TierZx.INTERNAL_ZX",
+                        "TierReceiptZx reaching the hidden enum constant TierZx.INTERNAL_ZX",
                         refused(
                                 TiersApi.NAME,
                                 TiersApi.class,
@@ -267,7 +267,7 @@ public class OutputHiddenMemberRefusalIT {
                                         CANNOT_FIX,
                                         List.of(TierZx.class.getName(), "INTERNAL_ZX", SCHEMA_HIDDEN_MARKER)))),
                 row(
-                        "(i) NoteReceiptZx reaching the @Schema(hidden = true) type NoteZx",
+                        "NoteReceiptZx reaching the @Schema(hidden = true) type NoteZx",
                         refused(
                                 NoteReceiptsApi.NAME,
                                 NoteReceiptsApi.class,

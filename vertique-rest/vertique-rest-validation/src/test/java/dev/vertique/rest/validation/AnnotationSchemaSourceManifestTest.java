@@ -297,36 +297,32 @@ class AnnotationSchemaSourceManifestTest {
         AnnotationJsonSchemaGenerator oracle = AnnotationJsonSchemaGenerator.forInputProfile(profile);
 
         return Stream.of(
-                dynamicTest(
-                        "AC-014.3(a): a borrowed manifest carries through but no longer matches the substituted"
-                                + " JSON",
-                        () -> {
-                            AnnotationSchemaSource borrowing = new AnnotationSchemaSource() {
-                                @Override
-                                protected CanonicalSchema generateBodySchema(Type type, JsonMapperProfile p) {
-                                    CanonicalSchema substituted = super.generateBodySchema(PlainBody.class, p);
-                                    CanonicalSchema ownManifest = super.generateBodySchema(type, p);
-                                    return new CanonicalSchema(substituted.json(), ownManifest.redactionManifest());
-                                }
-                            };
+                dynamicTest("a borrowed manifest carries through but no longer matches the substituted JSON", () -> {
+                    AnnotationSchemaSource borrowing = new AnnotationSchemaSource() {
+                        @Override
+                        protected CanonicalSchema generateBodySchema(Type type, JsonMapperProfile p) {
+                            CanonicalSchema substituted = super.generateBodySchema(PlainBody.class, p);
+                            CanonicalSchema ownManifest = super.generateBodySchema(type, p);
+                            return new CanonicalSchema(substituted.json(), ownManifest.redactionManifest());
+                        }
+                    };
 
-                            OperationSchemas schemas =
-                                    borrowing.schemasFor(bodyOp("borrowed", GuardedBody.class), profile);
-                            JsonObject body = schemas.bodySchema()
-                                    .orElseThrow(() -> new AssertionError("expected a substituted body schema"));
-                            RedactionManifest manifest = schemas.bodySchemaProvenance(RedactionManifest.class)
-                                    .orElseThrow(() -> new AssertionError("expected the borrowed manifest"));
-                            RedactionManifest guardedManifest =
-                                    oracle.describe(GuardedBody.class).redactionManifest();
-                            JsonObject plainDocument = new JsonObject(
-                                    oracle.describe(PlainBody.class).json());
+                    OperationSchemas schemas = borrowing.schemasFor(bodyOp("borrowed", GuardedBody.class), profile);
+                    JsonObject body = schemas.bodySchema()
+                            .orElseThrow(() -> new AssertionError("expected a substituted body schema"));
+                    RedactionManifest manifest = schemas.bodySchemaProvenance(RedactionManifest.class)
+                            .orElseThrow(() -> new AssertionError("expected the borrowed manifest"));
+                    RedactionManifest guardedManifest =
+                            oracle.describe(GuardedBody.class).redactionManifest();
+                    JsonObject plainDocument =
+                            new JsonObject(oracle.describe(PlainBody.class).json());
 
-                            assertAll(
-                                    () -> assertEquals(plainDocument, body),
-                                    () -> assertEquals(guardedManifest, manifest),
-                                    () -> assertFalse(manifest.matches(body.encode())));
-                        }),
-                dynamicTest("AC-014.3(b): an in-place edit of the body breaks the match", () -> {
+                    assertAll(
+                            () -> assertEquals(plainDocument, body),
+                            () -> assertEquals(guardedManifest, manifest),
+                            () -> assertFalse(manifest.matches(body.encode())));
+                }),
+                dynamicTest("an in-place edit of the body breaks the match", () -> {
                     AnnotationSchemaSource source = new AnnotationSchemaSource();
                     OperationSchemas schemas = source.schemasFor(bodyOp("editedInPlace", GuardedBody.class), profile);
                     JsonObject body = schemas.bodySchema().orElseThrow();
@@ -338,7 +334,7 @@ class AnnotationSchemaSourceManifestTest {
                     assertFalse(manifest.matches(body.encode()), "must not match after the in-place edit");
                 }),
                 dynamicTest(
-                        "AC-014.3(c): a custom OperationSchemaSource built with the one-argument builder form"
+                        "a custom OperationSchemaSource built with the one-argument builder form"
                                 + " carries no provenance",
                         () -> {
                             OperationSchemaSource custom = (op, p) -> OperationSchemas.builder()
@@ -353,8 +349,7 @@ class AnnotationSchemaSourceManifestTest {
                                     schemas.bodySchemaProvenance(Object.class).isEmpty());
                         }),
                 dynamicTest(
-                        "AC-014.3(d): a decorator delegating and rebuilding with the one-argument form carries no"
-                                + " provenance",
+                        "a decorator delegating and rebuilding with the one-argument form carries no provenance",
                         () -> {
                             AnnotationSchemaSource delegate = new AnnotationSchemaSource();
                             OperationSchemaSource decorator = (op, p) -> {
@@ -371,7 +366,7 @@ class AnnotationSchemaSourceManifestTest {
                                     .isEmpty());
                         }),
                 dynamicTest(
-                        "AC-014.3(e): a decorator replacing the body through toBuilder()'s one-argument form"
+                        "a decorator replacing the body through toBuilder()'s one-argument form"
                                 + " carries no provenance",
                         () -> {
                             AnnotationSchemaSource delegate = new AnnotationSchemaSource();
@@ -391,7 +386,7 @@ class AnnotationSchemaSourceManifestTest {
                                             replaced, schemas.bodySchema().orElseThrow()));
                         }),
                 dynamicTest(
-                        "AC-014.3(f): a decorator adding a parameter through toBuilder() keeps the default"
+                        "a decorator adding a parameter through toBuilder() keeps the default"
                                 + " source's manifest, which still matches its unchanged body",
                         () -> {
                             AnnotationSchemaSource delegate = new AnnotationSchemaSource();

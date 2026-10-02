@@ -250,25 +250,25 @@ public class OpenApiDocsPublicationIT {
                 DocsConfigs.withDocumentEnabled(DocsConfigs.shared(), PublicApi.NAME, false), INVALID_APIDOCS_PATH);
         List<Variant> variants = List.of(
                 new Variant(
-                        "(a) undocumented declaration",
+                        "undocumented declaration",
                         DaggerDocsTestComponents_UndocumentedComponent.factory().create(DocsConfigs.shared()),
                         withoutDocsModule(DocsConfigs.shared()),
                         SHARED_OPERATION_COUNT,
                         Set.of(PublicApi.MOUNT_PATH, MgmtApi.MOUNT_PATH)),
                 new Variant(
-                        "(b) apidocs.enabled false with an invalid apidocs.path",
+                        "apidocs.enabled false with an invalid apidocs.path",
                         DaggerDocsTestComponents_SharedComponent.factory().create(disabledGlobally),
                         withoutDocsModule(disabledGlobally.copy()),
                         SHARED_OPERATION_COUNT,
                         Set.of(PublicApi.MOUNT_PATH, MgmtApi.MOUNT_PATH)),
                 new Variant(
-                        "(c) entry enabled false with an invalid apidocs.path",
+                        "entry enabled false with an invalid apidocs.path",
                         DaggerDocsTestComponents_SharedComponent.factory().create(disabledEntry),
                         withoutDocsModule(disabledEntry.copy()),
                         SHARED_OPERATION_COUNT,
                         Set.of(PublicApi.MOUNT_PATH, MgmtApi.MOUNT_PATH)),
                 new Variant(
-                        "(d) documented registration inactive",
+                        "documented registration inactive",
                         DaggerDocsTestComponents_InactivePublicComponent.factory()
                                 .create(DocsConfigs.shared()),
                         DaggerDocsTestComponents_InactivePublicWithoutDocsModuleComponent.factory()
@@ -276,7 +276,7 @@ public class OpenApiDocsPublicationIT {
                         INACTIVE_PUBLIC_OPERATION_COUNT,
                         Set.of(MgmtApi.MOUNT_PATH)),
                 new Variant(
-                        "(e) no registration, legacy default mount",
+                        "no registration, legacy default mount",
                         DaggerDocsTestComponents_LegacyDefaultMountComponent.factory()
                                 .create(DocsConfigs.legacyDefaultMount()),
                         DaggerDocsTestComponents_LegacyDefaultMountWithoutDocsModuleComponent.factory()
@@ -284,7 +284,7 @@ public class OpenApiDocsPublicationIT {
                         LEGACY_OPERATION_COUNT,
                         Set.of(DocsConfigs.LEGACY_BASE_PATH)),
                 new Variant(
-                        "(f) without the documentation module",
+                        "without the documentation module",
                         withoutDocsModule(DocsConfigs.shared()),
                         null,
                         SHARED_OPERATION_COUNT,

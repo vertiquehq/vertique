@@ -141,7 +141,7 @@ public class OutputRenameRefusalIT {
                 InputAssemblyIT.webValidationConfig(NotesApi.NAME), NotesApi.NAME, false);
         return Stream.of(
                 Arguments.of(Named.of(
-                        "(a) inferred Future<Note>, document enabled",
+                        "inferred Future<Note>, document enabled",
                         new Case(
                                 NotesApi.NAME,
                                 NotesApi.class,
@@ -151,7 +151,7 @@ public class OutputRenameRefusalIT {
                                 NoteResource.OPERATION_ID,
                                 NotesApi.PATH + NoteResource.ROUTE))),
                 Arguments.of(Named.of(
-                        "(b) declared Note content, document enabled",
+                        "declared Note content, document enabled",
                         new Case(
                                 NotesExplicitApi.NAME,
                                 NotesExplicitApi.class,
@@ -161,7 +161,7 @@ public class OutputRenameRefusalIT {
                                 NoteExplicitResource.OPERATION_ID,
                                 NotesExplicitApi.PATH + NoteExplicitResource.ROUTE))),
                 Arguments.of(Named.of(
-                        "(c) inferred Future<Note>, document disabled",
+                        "inferred Future<Note>, document disabled",
                         new Case(
                                 NotesApi.NAME,
                                 NotesApi.class,
@@ -171,7 +171,7 @@ public class OutputRenameRefusalIT {
                                 null,
                                 NotesApi.PATH + NoteResource.ROUTE))),
                 Arguments.of(Named.of(
-                        "(d) disabled document beside an enabled one",
+                        "disabled document beside an enabled one",
                         new Case(
                                 NotesApi.NAME,
                                 NotesApi.class,

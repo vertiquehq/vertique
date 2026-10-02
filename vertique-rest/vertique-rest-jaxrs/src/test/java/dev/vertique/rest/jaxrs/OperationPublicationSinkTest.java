@@ -106,7 +106,7 @@ class OperationPublicationSinkTest {
             client.close();
         }
         Future<Void> serverClose = server != null ? server.close() : Future.succeededFuture();
-        serverClose.onComplete(ar -> ctx.completeNow());
+        serverClose.onComplete(ctx.succeedingThenComplete());
     }
 
     // --- TP-002 ---

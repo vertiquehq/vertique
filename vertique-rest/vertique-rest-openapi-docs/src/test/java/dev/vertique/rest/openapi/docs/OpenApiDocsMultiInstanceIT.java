@@ -18,8 +18,10 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.rest.core.RestConfigurationException;
+import dev.vertique.rest.openapi.docs.fixture.CatalogResource;
 import dev.vertique.rest.openapi.docs.fixture.ContextRecordingRouterMount;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
+import dev.vertique.rest.openapi.docs.fixture.ManagementResource;
 import dev.vertique.rest.openapi.docs.fixture.MarkerRouterMount;
 import dev.vertique.rest.openapi.docs.fixture.PublicApi;
 import dev.vertique.rest.openapi.docs.fixture.RecordingPublicationSink;
@@ -36,6 +38,7 @@ import dev.vertique.rest.validation.WebValidationStrategy;
 import io.vertx.core.Context;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Future;
+import io.vertx.core.Verticle;
 import io.vertx.core.Vertx;
 import io.vertx.core.VertxOptions;
 import io.vertx.core.WorkerExecutor;
@@ -55,13 +58,22 @@ import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
+import java.util.function.IntSupplier;
+import java.util.function.Supplier;
+import java.util.function.ToIntFunction;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Named;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.slf4j.LoggerFactory;
 
 /**
@@ -71,6 +83,12 @@ import org.slf4j.LoggerFactory;
  * other or race; a later composition whose snapshot differs from the stored one fails its startup
  * with a message that names where, never what; and a racing composition neither assembles again nor
  * blocks its event loop while the first composition's assembly runs on a worker thread.
+ *
+ * <p>The sharing scenario runs under two configurations: the one the divergence scenario uses, below,
+ * and the shared fixture's configured {@code apidocs} section with the {@code none} validation
+ * strategy, whose only documented application is {@value #NAME} at {@value #MOUNT_PATH}. Its store log
+ * lines are also counted over every logger of the module's package, by the keyword classification
+ * below.
  *
  * <p>The sharing and divergence scenarios use the applications {@code public} at {@code /api/public}
  * ({@code @ApiDocs(access = PUBLIC)}) and {@code management} at {@code /api/mgmt} ({@code
@@ -137,6 +155,10 @@ public class OpenApiDocsMultiInstanceIT {
     /** The operation ids the management document lists. */
     private static final Set<String> MANAGEMENT_OPERATIONS = Set.of("createOrder", "readOrder");
 
+    /** The operation ids the shared fixture's public document lists. */
+    private static final Set<String> SHARED_FIXTURE_OPERATIONS =
+            Set.of(CatalogResource.LIST_ITEMS, CatalogResource.GET_ITEM, CatalogResource.CREATE_ITEM);
+
     /** The operation whose request body the switching source varies. */
     private static final String CREATE_ORDER = "createOrder";
 
@@ -160,9 +182,6 @@ public class OpenApiDocsMultiInstanceIT {
 
     /** The instances of the single two-instance deployment. */
     private static final int INSTANCES = 2;
-
-    /** The documented applications of each component; one composition compares each of them. */
-    private static final int DOCUMENTED_APPLICATIONS = 2;
 
     /** The assembly lines expected per application per component: the single flight assembles once. */
     private static final int ASSEMBLY_LINES_PER_APPLICATION = 1;
@@ -221,7 +240,7 @@ public class OpenApiDocsMultiInstanceIT {
     private static final String GATED_POOL = "apidocs-single-flight-gated-pool";
 
     /**
-     * The gated test's bounds. Their sum stays below the class timeout, so the gate is released and
+     * The gated test's bounds. Their sum stays below the test's timeout, so the gate is released and
      * the Vert.x instance closed even when a composition deadlocks the event loop.
      */
     private static final Duration GATE_START_BOUND = Duration.ofSeconds(2);
@@ -242,6 +261,28 @@ public class OpenApiDocsMultiInstanceIT {
     /** One document form and the bearer token it is requested with. */
     private record Form(String path, @Nullable String token) {}
 
+    /** One documented application, as the store's log lines name it. */
+    private record Application(String name, String mount) {}
+
+    /**
+     * One complete document of the sharing scenario: its JSON and YAML forms, whether it is read with
+     * the {@code admin} bearer token, and the operation ids it lists.
+     */
+    private record Document(String json, String yaml, boolean protectedByBearer, Set<String> operations) {}
+
+    /** One built component of the sharing scenario: its verticle supplier and its source's call counts. */
+    private record Shared(Supplier<Verticle> verticles, IntSupplier calls, ToIntFunction<String> callsFor) {}
+
+    /**
+     * One configuration of the sharing scenario: how a fresh component is built, its documented
+     * applications, its documents, and the operations whose schema-source calls are counted.
+     */
+    private record Sharing(
+            Function<Vertx, Shared> component,
+            List<Application> applications,
+            List<Document> documents,
+            List<String> countedOperations) {}
+
     @BeforeEach
     void captureDocsLogs() {
         docsLogger = (Logger) LoggerFactory.getLogger(DOCS_LOGGER);
@@ -259,43 +300,95 @@ public class OpenApiDocsMultiInstanceIT {
         docsLogger.setLevel(previousDocsLevel);
     }
 
-    @Test
+    /**
+     * The two configurations the sharing scenario runs under, each named after what it configures.
+     *
+     * @return one named argument per configuration
+     */
+    static Stream<Arguments> sharingConfigurations() {
+        return Stream.of(
+                Arguments.of(Named.of(
+                        "no apidocs section, web-validation strategy",
+                        new Sharing(
+                                vertx -> {
+                                    OpenApiDocsMultiInstanceTestComponents.CountingSourceComponent component =
+                                            DaggerOpenApiDocsMultiInstanceTestComponents_CountingSourceComponent
+                                                    .factory()
+                                                    .create(vertx, webValidationConfig());
+                                    return new Shared(
+                                            component::httpVerticle,
+                                            () -> component.countingSource().calls(),
+                                            operationId ->
+                                                    component.countingSource().calls(operationId));
+                                },
+                                List.of(
+                                        new Application(PUBLIC_NAME, PUBLIC_MOUNT),
+                                        new Application(MANAGEMENT_NAME, MANAGEMENT_MOUNT)),
+                                List.of(
+                                        new Document(PUBLIC_JSON, PUBLIC_YAML, false, PUBLIC_OPERATIONS),
+                                        new Document(MANAGEMENT_JSON, MANAGEMENT_YAML, true, MANAGEMENT_OPERATIONS)),
+                                List.of("listEntries", "getEntry", "createOrder", "readOrder")))),
+                Arguments.of(Named.of(
+                        "configured apidocs section, none validation strategy",
+                        new Sharing(
+                                vertx -> {
+                                    DocsTestComponents.SharedComponent component =
+                                            DaggerDocsTestComponents_SharedComponent.factory()
+                                                    .create(DocsConfigs.shared());
+                                    return new Shared(
+                                            component::httpVerticle,
+                                            () -> component.schemaSource().calls(),
+                                            operationId ->
+                                                    component.schemaSource().calls(operationId));
+                                },
+                                List.of(new Application(NAME, MOUNT_PATH)),
+                                List.of(new Document(PUBLIC_JSON, PUBLIC_YAML, false, SHARED_FIXTURE_OPERATIONS)),
+                                List.of(
+                                        CatalogResource.LIST_ITEMS,
+                                        CatalogResource.GET_ITEM,
+                                        CatalogResource.CREATE_ITEM,
+                                        ManagementResource.GET_STATUS)))));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("sharingConfigurations")
     @DisplayName("Two compositions assemble and store each complete document once and serve identical bytes and"
             + " entity tags")
-    void compositionsShareOneDocumentPerApplication(Vertx vertx) throws Exception {
+    void compositionsShareOneDocumentPerApplication(Sharing sharing, Vertx vertx) throws Exception {
         List<String> deployments = new ArrayList<>();
         WebClient client = DocumentRequests.separateConnectionsClient(vertx);
         String adminToken = SharedDeployment.alice(SharedDeployment.jwtAuth(vertx));
-        List<Form> forms = List.of(
-                new Form(PUBLIC_JSON, null),
-                new Form(PUBLIC_YAML, null),
-                new Form(MANAGEMENT_JSON, adminToken),
-                new Form(MANAGEMENT_YAML, adminToken));
+        List<Form> forms = new ArrayList<>();
+        for (Document document : sharing.documents()) {
+            String token = document.protectedByBearer() ? adminToken : null;
+            forms.add(new Form(document.json(), token));
+            forms.add(new Form(document.yaml(), token));
+        }
         try {
-            // (i) Given: one component whose schema source counts calls to the canonical source.
-            OpenApiDocsMultiInstanceTestComponents.CountingSourceComponent sequential =
-                    DaggerOpenApiDocsMultiInstanceTestComponents_CountingSourceComponent.factory()
-                            .create(vertx, webValidationConfig());
+            // (i) Given: one component whose schema source counts its calls.
+            Shared sequential = sharing.component().apply(vertx);
 
             // When: its HttpVerticle supplier is deployed twice, one deployment after the other.
             int firstPort;
             int secondPort;
+            appender.clear();
             try (StoreLogCapture logs = StoreLogCapture.attach()) {
                 firstPort = Deployments.deployAndReadPort(
-                        vertx, sequential::httpVerticle, new DeploymentOptions(), deployments, WAIT);
+                        vertx, sequential.verticles(), new DeploymentOptions(), deployments, WAIT);
                 secondPort = Deployments.deployAndReadPort(
-                        vertx, sequential::httpVerticle, new DeploymentOptions(), deployments, WAIT);
+                        vertx, sequential.verticles(), new DeploymentOptions(), deployments, WAIT);
 
                 // Then: per application, one assembly, one stored document, and one comparison.
-                assertAssembledStoredAndComparedOnce(logs, "one deployment after the other");
+                assertAssembledStoredAndComparedOnce(
+                        logs, appender.lines(), sharing.applications(), "one deployment after the other");
             }
 
             // Then: every operation was resolved once per composition, the docs module adding none.
-            int sequentialCallsAfterStartup = sequential.countingSource().calls();
-            for (String operationId : List.of("listEntries", "getEntry", "createOrder", "readOrder")) {
+            int sequentialCallsAfterStartup = sequential.calls().getAsInt();
+            for (String operationId : sharing.countedOperations()) {
                 assertEquals(
                         SEQUENTIAL_COMPOSITIONS,
-                        sequential.countingSource().calls(operationId),
+                        sequential.callsFor().applyAsInt(operationId),
                         () -> "schema-source calls for " + operationId + " over two sequential compositions");
             }
 
@@ -326,31 +419,31 @@ public class OpenApiDocsMultiInstanceIT {
                 assertEquals(1, bodies.size(), () -> form.path() + ": distinct bodies over both ports");
                 assertEquals(1, etags.size(), () -> form.path() + ": distinct entity tags over both ports: " + etags);
             }
-            assertOperations(client, firstPort, adminToken);
+            assertOperations(client, firstPort, sharing.documents(), adminToken);
 
             // Then: the requests performed no schema-source call.
             assertEquals(
                     sequentialCallsAfterStartup,
-                    sequential.countingSource().calls(),
+                    sequential.calls().getAsInt(),
                     "schema-source calls after the requests, sequential compositions");
 
             // (ii) Given: a fresh component. When: it is deployed once with two instances.
-            OpenApiDocsMultiInstanceTestComponents.CountingSourceComponent twoInstances =
-                    DaggerOpenApiDocsMultiInstanceTestComponents_CountingSourceComponent.factory()
-                            .create(vertx, webValidationConfig());
+            Shared twoInstances = sharing.component().apply(vertx);
             int sharedPort;
+            appender.clear();
             try (StoreLogCapture logs = StoreLogCapture.attach()) {
                 sharedPort = Deployments.deployAndReadPort(
                         vertx,
-                        twoInstances::httpVerticle,
+                        twoInstances.verticles(),
                         new DeploymentOptions().setInstances(INSTANCES),
                         deployments,
                         WAIT);
 
                 // Then: the same counts per application, whatever the interleaving of the two compositions.
-                assertAssembledStoredAndComparedOnce(logs, "one deployment of two instances");
+                assertAssembledStoredAndComparedOnce(
+                        logs, appender.lines(), sharing.applications(), "one deployment of two instances");
             }
-            int twoInstanceCallsAfterStartup = twoInstances.countingSource().calls();
+            int twoInstanceCallsAfterStartup = twoInstances.calls().getAsInt();
             assertTrue(twoInstanceCallsAfterStartup > 0, "the counting source was not asked at startup");
 
             // When: each form is requested repeatedly over separate connections.
@@ -364,12 +457,12 @@ public class OpenApiDocsMultiInstanceIT {
                 assertEquals(
                         1, etags.size(), () -> form.path() + ": distinct entity tags over two instances: " + etags);
             }
-            assertOperations(client, sharedPort, adminToken);
+            assertOperations(client, sharedPort, sharing.documents(), adminToken);
 
             // Then: the requests performed no schema-source call.
             assertEquals(
                     twoInstanceCallsAfterStartup,
-                    twoInstances.countingSource().calls(),
+                    twoInstances.calls().getAsInt(),
                     "schema-source calls after the requests, two instances");
         } finally {
             client.close();
@@ -511,6 +604,7 @@ public class OpenApiDocsMultiInstanceIT {
     }
 
     @Test
+    @Timeout(value = 20, unit = TimeUnit.SECONDS)
     @DisplayName("Racing compositions assemble once on the worker thread, and neither blocks its event loop")
     void racingCompositionsAssembleOnceOnAWorkerThread() throws Exception {
         // Given: a test-owned Vert.x instance with one event loop.
@@ -626,14 +720,15 @@ public class OpenApiDocsMultiInstanceIT {
     }
 
     /**
-     * Asserts one assembly line, one "stored" line, and one comparison line for each application, and
-     * one comparison line per application in all.
+     * Asserts one assembly line, one "stored" line, and one comparison line for each application; one
+     * store comparison line per application in all; and, over every logger of the module's package,
+     * one {@code DEBUG} line mentioning {@value #COMPARISON_KEYWORD} per application.
      */
-    private static void assertAssembledStoredAndComparedOnce(StoreLogCapture logs, String scenario) {
-        for (String[] application :
-                List.of(new String[] {PUBLIC_NAME, PUBLIC_MOUNT}, new String[] {MANAGEMENT_NAME, MANAGEMENT_MOUNT})) {
-            String name = application[0];
-            String mount = application[1];
+    private static void assertAssembledStoredAndComparedOnce(
+            StoreLogCapture logs, List<LogLine> packageLines, List<Application> applications, String scenario) {
+        for (Application application : applications) {
+            String name = application.name();
+            String mount = application.mount();
             assertEquals(
                     ASSEMBLY_LINES_PER_APPLICATION,
                     logs.assemblyLines(name, mount).size(),
@@ -648,11 +743,16 @@ public class OpenApiDocsMultiInstanceIT {
                     () -> scenario + ": comparison lines for " + name + " at " + mount + ": " + logs.allMessages());
         }
         assertEquals(
-                DOCUMENTED_APPLICATIONS * COMPARISON_LINES_PER_APPLICATION,
+                applications.size() * COMPARISON_LINES_PER_APPLICATION,
                 logs.allMessages().stream()
                         .filter(message -> message.startsWith(COMPARISON_PREFIX))
                         .count(),
                 () -> scenario + ": comparison lines over every application: " + logs.allMessages());
+        assertEquals(
+                applications.size() * COMPARISON_LINES_PER_APPLICATION,
+                comparisonLines(packageLines).size(),
+                () -> scenario + ": DEBUG lines mentioning " + COMPARISON_KEYWORD + " on any logger of the package: "
+                        + packageLines);
     }
 
     /**
@@ -684,16 +784,16 @@ public class OpenApiDocsMultiInstanceIT {
         assertTrue(answer.body().length > 0, () -> label + ": empty body");
     }
 
-    /** Asserts that both JSON documents served on a port are complete: they list every operation. */
-    private static void assertOperations(WebClient client, int port, String adminToken) throws Exception {
-        assertEquals(
-                PUBLIC_OPERATIONS,
-                operationIds(DocumentRequests.get(client, port, PUBLIC_JSON, null, WAIT)),
-                "the public document's operations");
-        assertEquals(
-                MANAGEMENT_OPERATIONS,
-                operationIds(DocumentRequests.get(client, port, MANAGEMENT_JSON, adminToken, WAIT)),
-                "the management document's operations");
+    /** Asserts that every JSON document served on a port is complete: it lists every operation. */
+    private static void assertOperations(WebClient client, int port, List<Document> documents, String adminToken)
+            throws Exception {
+        for (Document document : documents) {
+            String token = document.protectedByBearer() ? adminToken : null;
+            assertEquals(
+                    document.operations(),
+                    operationIds(DocumentRequests.get(client, port, document.json(), token, WAIT)),
+                    () -> document.json() + ": the document's operations");
+        }
     }
 
     /** Returns the operation ids of a JSON document. */
@@ -792,6 +892,13 @@ public class OpenApiDocsMultiInstanceIT {
         List<LogLine> lines() {
             synchronized (this) {
                 return List.copyOf(captured);
+            }
+        }
+
+        /** Forgets every line captured so far. */
+        void clear() {
+            synchronized (this) {
+                captured.clear();
             }
         }
     }

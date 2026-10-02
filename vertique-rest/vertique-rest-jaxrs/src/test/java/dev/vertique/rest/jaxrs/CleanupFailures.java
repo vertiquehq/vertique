@@ -11,9 +11,10 @@ import java.util.function.Supplier;
  * Collects teardown failures so that every cleanup step is attempted and no failure is lost.
  *
  * <p>Each step runs regardless of earlier failures. The first failure becomes the primary one and
- * every later failure is attached to it as suppressed. An interrupted wait restores the calling
- * thread's interrupt status before it is recorded, and a bounded wait that times out is recorded
- * as a failure. {@link #rethrowIfAny()} then fails the teardown with the primary failure.
+ * every later failure is attached to it as suppressed. A bounded wait that times out is recorded as a
+ * failure. An interrupt, pending before a step or raised by it, is cleared before the next step so
+ * the remaining bounded waits still run, and is restored on the calling thread by {@link
+ * #rethrowIfAny()}, which then fails the teardown with the primary failure.
  */
 public final class CleanupFailures {
 
@@ -31,18 +32,21 @@ public final class CleanupFailures {
 
     private Throwable primary;
 
+    private boolean interrupted;
+
     /**
      * Runs {@code step}, recording its failure instead of propagating it.
      *
      * @param step the cleanup step
      */
     public void attempt(Step step) {
+        // A pending interrupt would fail this step's wait at once; it is restored by rethrowIfAny.
+        interrupted |= Thread.interrupted();
         try {
             step.run();
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            collect(interrupted);
         } catch (Throwable failure) {
+            // A step may restore the flag it was interrupted with; clear it for the next step.
+            interrupted |= Thread.interrupted() || failure instanceof InterruptedException;
             collect(failure);
         }
     }
@@ -60,12 +64,15 @@ public final class CleanupFailures {
     }
 
     /**
-     * Fails the teardown with the primary failure, carrying every later failure as suppressed, when
-     * any step failed.
+     * Restores an interrupt held back while the steps ran, then fails the teardown with the primary
+     * failure, carrying every later failure as suppressed, when any step failed.
      *
      * @throws Exception the primary failure, when it is an exception
      */
     public void rethrowIfAny() throws Exception {
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
         if (primary == null) {
             return;
         }

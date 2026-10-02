@@ -544,7 +544,7 @@ class RestApplicationDeclarationTest {
                 interface Api {}
                 """.formatted(pkg));
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), ifaceResource, api);
-        logDiagnostics("listedinterface resource", result);
+        logDiagnostics("listed interface resource", result);
         assertErrorNamesTypeAndContainsAll(result, pkg + ".Api", "IfaceResource");
     }
 
@@ -567,7 +567,7 @@ class RestApplicationDeclarationTest {
                 interface Api {}
                 """.formatted(pkg));
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), abstractResource, api);
-        logDiagnostics("listedabstract resource", result);
+        logDiagnostics("listed abstract resource", result);
         assertErrorNamesTypeAndContainsAll(result, pkg + ".Api", "AbstractResource");
     }
 
@@ -592,7 +592,7 @@ class RestApplicationDeclarationTest {
                 interface Api {}
                 """.formatted(pkg));
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), providerResource, api);
-        logDiagnostics("listedprovider resource", result);
+        logDiagnostics("listed provider resource", result);
         assertErrorNamesTypeAndContainsAll(result, pkg + ".Api", "ProviderResource");
     }
 
@@ -622,7 +622,7 @@ class RestApplicationDeclarationTest {
                 interface Api {}
                 """.formatted(pkg));
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), featureResource, api);
-        logDiagnostics("listedFeature resource", result);
+        logDiagnostics("listed Feature resource", result);
         assertErrorNamesTypeAndContainsAll(result, pkg + ".Api", "FeatureResource");
     }
 
@@ -651,7 +651,7 @@ class RestApplicationDeclarationTest {
                 interface Api {}
                 """.formatted(pkg));
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), dynamicFeatureResource, api);
-        logDiagnostics("listedDynamicFeature resource", result);
+        logDiagnostics("listed DynamicFeature resource", result);
         assertErrorNamesTypeAndContainsAll(result, pkg + ".Api", "DynamicFeatureResource");
     }
 
@@ -671,7 +671,7 @@ class RestApplicationDeclarationTest {
                 interface Api {}
                 """.formatted(pkg));
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), noPathResource, api);
-        logDiagnostics("listedno-effective-path resource", result);
+        logDiagnostics("listed no-effective-path resource", result);
         assertErrorNamesTypeAndContainsAll(result, pkg + ".Api", "NoPathResource");
     }
 
@@ -687,14 +687,14 @@ class RestApplicationDeclarationTest {
                 interface Api {}
                 """.formatted(pkg));
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), pathResource, api);
-        logDiagnostics("listedduplicate resource", result);
+        logDiagnostics("listed duplicate resource", result);
         assertErrorNamesTypeAndContainsAll(result, pkg + ".Api", "PathResource");
     }
 
     private void pathResourceAccepted() {
         String pkg = "dev.vertique.test.declaration.resources.accepted";
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), pathResourceFixture(pkg), apiFixture(pkg));
-        logDiagnostics("listedaccepted PathResource", result);
+        logDiagnostics("listed accepted PathResource", result);
         result.assertSuccess();
         result.assertGeneratedSourceContains(pkg + ".GeneratedJaxRsResourcesModule", "PathResource.class");
     }
@@ -723,7 +723,7 @@ class RestApplicationDeclarationTest {
                 interface Api {}
                 """.formatted(pkg));
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), contract, resource, api);
-        logDiagnostics("listedaccepted interface-inherited @Path", result);
+        logDiagnostics("listed accepted interface-inherited @Path", result);
         result.assertSuccess();
         result.assertGeneratedSourceContains(pkg + ".GeneratedJaxRsResourcesModule", "InheritedPathResource.class");
     }
@@ -756,7 +756,7 @@ class RestApplicationDeclarationTest {
                 interface Api {}
                 """.formatted(pkg));
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), pathResourceFixture(pkg), api);
-        logDiagnostics("membership:both forms", result);
+        logDiagnostics("membership: both forms", result);
         assertErrorNamesTypeAndContainsAll(result, pkg + ".Api", "exactly one of");
     }
 
@@ -771,7 +771,7 @@ class RestApplicationDeclarationTest {
                 interface Api {}
                 """.formatted(pkg));
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), pathResourceFixture(pkg), api);
-        logDiagnostics("membership:neither form", result);
+        logDiagnostics("membership: neither form", result);
         assertErrorNamesTypeAndContainsAll(result, pkg + ".Api", "exactly one of");
     }
 
@@ -787,7 +787,7 @@ class RestApplicationDeclarationTest {
                 """.formatted(pkg));
         var result = ProcessorTestHarness.run(
                 new JaxRsPipelineProcessor(), pathResourceFixture(pkg), apiFixture(pkg), discoverOnly);
-        logDiagnostics("membership:discovery beside another", result);
+        logDiagnostics("membership: discovery beside another", result);
         result.assertFailed();
         boolean namesDiscoverOnly = result.compilation().errors().stream()
                 .map(d -> d.getMessage(null))
@@ -820,7 +820,7 @@ class RestApplicationDeclarationTest {
                 """.formatted(pkg));
         var result = ProcessorTestHarness.run(
                 new JaxRsPipelineProcessor(), pathResourceFixture(pkg), conditionalApi, discoverOnly);
-        logDiagnostics("membership:discovery beside conditional another", result);
+        logDiagnostics("membership: discovery beside conditional another", result);
         result.assertFailed();
         boolean namesDiscoverOnly = result.compilation().errors().stream()
                 .map(d -> d.getMessage(null))
@@ -843,12 +843,12 @@ class RestApplicationDeclarationTest {
                 interface DiscoverOnly {}
                 """.formatted(discoverPkg));
         var discoverResult = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), discoverOnly);
-        logDiagnostics("membership:separate (discover)", discoverResult);
+        logDiagnostics("membership: separate (discover)", discoverResult);
         discoverResult.assertSuccess();
 
         var apiResult =
                 ProcessorTestHarness.run(new JaxRsPipelineProcessor(), pathResourceFixture(apiPkg), apiFixture(apiPkg));
-        logDiagnostics("membership:separate (api)", apiResult);
+        logDiagnostics("membership: separate (api)", apiResult);
         apiResult.assertSuccess();
     }
 
@@ -863,7 +863,7 @@ class RestApplicationDeclarationTest {
                 interface DiscoverOnly {}
                 """.formatted(pkg));
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), discoverOnly);
-        logDiagnostics("membership:sole discovery unit", result);
+        logDiagnostics("membership: sole discovery unit", result);
         result.assertSuccess();
         String moduleFqn = pkg + ".GeneratedJaxRsResourcesModule";
         Class<?> declaringType = result.loadGeneratedClass(pkg + ".DiscoverOnly");

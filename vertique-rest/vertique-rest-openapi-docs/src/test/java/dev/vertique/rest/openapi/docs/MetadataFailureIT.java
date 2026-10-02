@@ -137,19 +137,19 @@ public class MetadataFailureIT {
         // echoing none of the values
         List<Executable> checks = List.of(
                 () -> assertRefused(
-                        "(a) @Parameter.in", location, SearchApi.PATH, SearchResource.OPERATION_ID, LOCATION_ATTRIBUTE),
+                        "@Parameter.in", location, SearchApi.PATH, SearchResource.OPERATION_ID, LOCATION_ATTRIBUTE),
                 () -> assertRefused(
-                        "(b) @ExampleObject.ref",
+                        "@ExampleObject.ref",
                         reference,
                         ExamplesApi.PATH,
                         ExamplesResource.OPERATION_ID,
                         REFERENCE_ATTRIBUTE),
                 // Then: (c) deploys, answers its success status, and no docs route answers the document URL
-                () -> assertNull(unpublished.failure(), "(c) the composition deploys: " + unpublished.failure()),
-                () -> assertNotNull(unpublished.port(), "(c) a port is published"),
-                () -> assertEquals(200, answeredStatus, "(c) GET /search?q=x answers its success status"),
-                () -> assertEquals("x", echoedBody, "(c) the operation binds the query unchanged"),
-                () -> assertEquals(404, documentRouteStatus, "(c) no docs route answers " + documentUrl));
+                () -> assertNull(unpublished.failure(), "the composition deploys: " + unpublished.failure()),
+                () -> assertNotNull(unpublished.port(), "a port is published"),
+                () -> assertEquals(200, answeredStatus, "GET /search?q=x answers its success status"),
+                () -> assertEquals("x", echoedBody, "the operation binds the query unchanged"),
+                () -> assertEquals(404, documentRouteStatus, "no docs route answers " + documentUrl));
         assertAll("metadata failure compositions", checks);
     }
 

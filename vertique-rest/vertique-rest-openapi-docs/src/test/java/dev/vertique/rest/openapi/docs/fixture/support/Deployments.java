@@ -83,7 +83,9 @@ public final class Deployments {
     }
 
     /**
-     * Undeploys each recorded deployment, waiting up to {@code bound} for each.
+     * Undeploys each recorded deployment in the order recorded, waiting up to {@code bound} for each.
+     * Every undeployment is attempted even when an earlier one failed or timed out; the first failure
+     * is thrown with each later one suppressed, as {@link Cleanup} reports them.
      *
      * @param vertx the Vert.x instance
      * @param deploymentIds the deployment ids to undeploy
@@ -91,8 +93,11 @@ public final class Deployments {
      * @throws Exception when an undeploy fails or times out
      */
     public static void undeployAll(Vertx vertx, List<String> deploymentIds, Duration bound) throws Exception {
-        for (String deploymentId : deploymentIds) {
-            Futures.await(vertx.undeploy(deploymentId), bound);
+        try (Cleanup cleanup = new Cleanup()) {
+            // Cleanup runs its steps last registered first; registering in reverse keeps the recorded order.
+            for (String deploymentId : deploymentIds.reversed()) {
+                cleanup.await("undeploy " + deploymentId, () -> vertx.undeploy(deploymentId), bound);
+            }
         }
     }
 

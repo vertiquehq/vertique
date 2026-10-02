@@ -584,64 +584,64 @@ public class ServedContractIT {
     static Stream<StartupRow> invalidContractsAndMetadataOverrides() {
         return Stream.of(
                 partnerRefused(
-                        "(a) the contract describes deleteOrder, which the mount does not route",
+                        "the contract describes deleteOrder, which the mount does not route",
                         ContractFiles.PARTNER_EXTRA_OPERATION,
                         "deleteOrder",
                         NOT_ROUTED),
                 partnerRefused(
-                        "(b) the contract omits createOrder",
+                        "the contract omits createOrder",
                         ContractFiles.PARTNER_MISSING_OPERATION,
                         "createOrder",
                         NOT_DESCRIBED),
                 partnerRefused(
-                        "(c) the contract references another file",
+                        "the contract references another file",
                         ContractFiles.PARTNER_EXTERNAL_REF,
                         "/paths/~1orders/post/requestBody/content/application~1json/schema/$ref",
                         NOT_LOCAL),
-                partnerRefused("(d) the contract is not valid JSON", ContractFiles.PARTNER_MALFORMED_JSON, NOT_JSON),
-                partnerRefused("(e) the contract is not valid YAML", ContractFiles.PARTNER_MALFORMED_YAML, NOT_YAML),
-                partnerRefused("(f) the contract location does not exist", ContractFiles.ABSENT, UNREADABLE),
+                partnerRefused("the contract is not valid JSON", ContractFiles.PARTNER_MALFORMED_JSON, NOT_JSON),
+                partnerRefused("the contract is not valid YAML", ContractFiles.PARTNER_MALFORMED_YAML, NOT_YAML),
+                partnerRefused("the contract location does not exist", ContractFiles.ABSENT, UNREADABLE),
                 partnerRefused(
-                        "(g) the contract has an unsupported extension",
+                        "the contract has an unsupported extension",
                         ContractFiles.PARTNER_TXT,
                         PARTNER_TXT_CONTRACT,
                         SUPPORTED_EXTENSIONS),
                 new StartupRow(
-                        "(h) apidocs.documents.partner.info is configured",
+                        "apidocs.documents.partner.info is configured",
                         ServedContractIT::sharedComponent,
                         () -> ContractConfigs.withPartnerInfo(ContractConfigs.shared()),
                         withoutPartnerNotices(
                                 row -> assertStartupFailure(row, PARTNER, PARTNER, null, CONFIGURED_INFO_PATH))),
                 new StartupRow(
-                        "(i) the declaring interface also carries @OpenAPIDefinition",
+                        "the declaring interface also carries @OpenAPIDefinition",
                         ServedContractIT::annotatedInfoComponent,
                         ContractConfigs::shared,
                         withoutPartnerNotices(row -> assertStartupFailure(
                                 row, PARTNER, PARTNER, null, OPENAPI_DEFINITION, ANNOTATED_INFO_BINARY))),
                 new StartupRow(
-                        "(j) apidocs.documents.partner.serverUrl is configured",
+                        "apidocs.documents.partner.serverUrl is configured",
                         ServedContractIT::sharedComponent,
                         () -> ContractConfigs.withPartnerServerUrl(ContractConfigs.shared()),
                         withoutPartnerNotices(
                                 row -> assertStartupFailure(row, PARTNER, PARTNER, null, CONFIGURED_SERVER_URL_PATH))),
                 partnerRefused(
-                        "(k) a webhook operation reuses the routed id getOrderInternal",
+                        "a webhook operation reuses the routed id getOrderInternal",
                         ContractFiles.PARTNER_WEBHOOK_REUSE,
                         "/webhooks/orderLookup/post",
                         REUSES_ROUTED_ID),
                 partnerRefused(
-                        "(l) the contract describes listOrders's hidden query parameter debug",
+                        "the contract describes listOrders's hidden query parameter debug",
                         ContractFiles.PARTNER_HIDDEN_PARAM,
                         "listOrders",
                         "/paths/~1orders/get/parameters/1",
                         HIDDEN_INPUT),
                 new StartupRow(
-                        "(m) control: the contract also describes the hidden operation getOrderInternal",
+                        "control: the contract also describes the hidden operation getOrderInternal",
                         ServedContractIT::sharedComponent,
                         () -> ContractConfigs.sharedWithPartnerContract(ContractFiles.PARTNER_WITH_HIDDEN),
                         ServedContractIT::assertServesTheHiddenOperation),
                 new StartupRow(
-                        "(n) control: row (a)'s contract with partner's document disabled",
+                        "control: the contract describing the unrouted deleteOrder, with partner's document disabled",
                         ServedContractIT::sharedComponent,
                         () -> ContractConfigs.withDocumentEnabled(
                                 ContractConfigs.sharedWithPartnerContract(ContractFiles.PARTNER_EXTRA_OPERATION),
@@ -649,11 +649,11 @@ public class ServedContractIT {
                                 false),
                         ServedContractIT::assertDisabledDocumentReadsNothing),
                 partnerRefused(
-                        "(o) the YAML contract holds a second document after a valid first one",
+                        "the YAML contract holds a second document after a valid first one",
                         ContractFiles.PARTNER_MULTI_DOCUMENT,
                         NOT_YAML),
                 new StartupRow(
-                        "(p) the configured contract location holds a line feed and an unsupported extension",
+                        "the configured contract location holds a line feed and an unsupported extension",
                         ServedContractIT::sharedComponent,
                         () -> ContractConfigs.sharedWithPartnerContract(ContractFiles.PARTNER_LINE_FEED_TXT),
                         withoutPartnerNotices(ServedContractIT::assertLineFeedLocationShownEscaped)));
@@ -865,15 +865,15 @@ public class ServedContractIT {
     @DisplayName("A contract whose servers differ from the mount logs one warning and is served unchanged")
     void serversMismatchLogsOneWarningAndServesUnchanged(Vertx vertx) throws Exception {
         List<ServersRow> rows = List.of(
-                new ServersRow("(a) no servers member", ContractFiles.PARTNER_NO_SERVERS, null, 1),
+                new ServersRow("no servers member", ContractFiles.PARTNER_NO_SERVERS, null, 1),
                 new ServersRow(
-                        "(b) an absolute servers[0].url",
+                        "an absolute servers[0].url",
                         ContractFiles.PARTNER_ABSOLUTE_SERVER,
                         "[{\"url\":\"https://partner.example.com/api/partner\"}]",
                         1),
-                new ServersRow("(c) an empty servers array", ContractFiles.PARTNER_EMPTY_SERVERS, "[]", 1),
+                new ServersRow("an empty servers array", ContractFiles.PARTNER_EMPTY_SERVERS, "[]", 1),
                 new ServersRow(
-                        "(d) control: servers[0].url is the mount path",
+                        "control: servers[0].url is the mount path",
                         ContractFiles.PARTNER,
                         "[{\"url\":\"/api/partner\"}]",
                         0));
@@ -1085,7 +1085,7 @@ public class ServedContractIT {
                 WorkingDirectoryFile.write(ContractFiles.SHADOWED, ContractTexts.WORKING_DIRECTORY_SHADOWED)) {
             Resolved resolved = deployAndReadPartner(
                     vertx,
-                    "(a) a working-directory file shadows the classpath resource",
+                    "a working-directory file shadows the classpath resource",
                     sharedComponent(vertx, ContractConfigs.sharedWithPartnerContract(ContractFiles.SHADOWED)),
                     null);
             assertAll(
@@ -1100,7 +1100,7 @@ public class ServedContractIT {
         assertFalse(Files.exists(Path.of(SHADOWED_CONTRACT)), "the working-directory file was removed");
         Resolved classpath = deployAndReadPartner(
                 vertx,
-                "(b) only the classpath resource exists",
+                "only the classpath resource exists",
                 sharedComponent(vertx, ContractConfigs.sharedWithPartnerContract(ContractFiles.SHADOWED)),
                 null);
         assertAll(
@@ -1117,7 +1117,7 @@ public class ServedContractIT {
                 Path.of(absoluteLocation).toAbsolutePath().normalize().toString();
         Resolved absolute = deployAndReadPartner(
                 vertx,
-                "(c) an absolute contract location",
+                "an absolute contract location",
                 sharedComponent(vertx, ContractConfigs.sharedWithPartnerContract(absoluteLocation)),
                 null);
         assertAll(
@@ -1136,7 +1136,7 @@ public class ServedContractIT {
                     false);
             Resolved strategy = deployAndReadPartner(
                     vertx,
-                    "(d) the shadowing file under openapi-contract",
+                    "the shadowing file under openapi-contract",
                     sharedOpenApiContractComponent(vertx, config),
                     new JsonObject[] {
                         new JsonObject().put("sku", "ABC-1234"),
@@ -1379,35 +1379,35 @@ public class ServedContractIT {
     static Stream<StartupRow> prefixCollisionAndReservedIdRows() {
         return Stream.of(
                 new StartupRow(
-                        "(a) catalog's GET /{a}/{b}/{c} can answer partner's document URL under /api/catalog/docs",
+                        "catalog's GET /{a}/{b}/{c} can answer partner's document URL under /api/catalog/docs",
                         ServedContractIT::threeSegmentsCatalogComponent,
                         () -> ContractConfigs.withApidocsPath(ContractConfigs.shared(), "/api/catalog/docs"),
                         row -> assertStartupFailure(
                                 row, null, null, null, "GET /{a}/{b}/{c}", "/api/catalog/docs/partner/openapi.json")),
                 new StartupRow(
-                        "(b) a catalog operation uses partner's synthetic id",
+                        "a catalog operation uses partner's synthetic id",
                         ServedContractIT::reservedIdCatalogComponent,
                         ContractConfigs::shared,
                         row -> assertStartupFailure(
                                 row, null, null, null, "apidocs:partner:json", "apidocs.documents.partner")),
                 new StartupRow(
-                        "(c) a hand-built mount lies under the documentation prefix",
+                        "a hand-built mount lies under the documentation prefix",
                         ServedContractIT::extraDocsComponent,
                         ContractConfigs::shared,
                         row -> assertStartupFailure(row, null, null, null, "/apidocs/extra/*", "apidocs.path")),
                 new StartupRow(
-                        "(d) control for (a): every document disabled",
+                        "control for catalog's GET /{a}/{b}/{c}: every document disabled",
                         ServedContractIT::threeSegmentsCatalogComponent,
                         () -> allDocumentsDisabled(
                                 ContractConfigs.withApidocsPath(ContractConfigs.shared(), "/api/catalog/docs")),
                         row -> assertDeployed(row.label(), row.outcome())),
                 new StartupRow(
-                        "(d) control for (b): partner's document disabled",
+                        "control for partner's synthetic id: partner's document disabled",
                         ServedContractIT::reservedIdCatalogComponent,
                         () -> ContractConfigs.withDocumentEnabled(ContractConfigs.shared(), PARTNER, false),
                         row -> assertDeployed(row.label(), row.outcome())),
                 new StartupRow(
-                        "(d) control for (c): every document disabled",
+                        "control for the hand-built mount under the prefix: every document disabled",
                         ServedContractIT::extraDocsComponent,
                         () -> allDocumentsDisabled(ContractConfigs.shared()),
                         row -> assertDeployed(row.label(), row.outcome())));
@@ -1457,17 +1457,17 @@ public class ServedContractIT {
         DocsProvisions served = sharedOpenApiContractComponent(vertx, ownOnly);
         Outcome servedOutcome = StartupDeployments.deploy(vertx, served::httpVerticle);
         try {
-            assertDeployed("(a) partner's own contract under openapi-contract", servedOutcome);
+            assertDeployed("partner's own contract under openapi-contract", servedOutcome);
             int port = servedOutcome.port();
-            JsonNode tree = parseJson("(a)", send(port, HttpMethod.GET, jsonUrl(PARTNER)));
+            JsonNode tree = parseJson("partner's own contract", send(port, HttpMethod.GET, jsonUrl(PARTNER)));
             int withoutSku = post(port, PARTNER_ORDERS_URI, new JsonObject().put("quantity", 1))
                     .status();
             int withSku = post(port, PARTNER_ORDERS_URI, new JsonObject().put("sku", "ABC-1234"))
                     .status();
             checks.add(() -> assertEquals(
-                    fixtureTree(PARTNER_STRATEGY_CONTRACT), tree, "(a): partner's tree is its configured contract's"));
-            checks.add(() -> assertEquals(400, withoutSku, "(a): the body without sku is refused by the strategy"));
-            checks.add(() -> assertEquals(204, withSku, "(a): the body with sku is accepted"));
+                    fixtureTree(PARTNER_STRATEGY_CONTRACT), tree, "partner's tree is its configured contract's"));
+            checks.add(() -> assertEquals(400, withoutSku, "the body without sku is refused by the strategy"));
+            checks.add(() -> assertEquals(204, withSku, "the body with sku is accepted"));
         } finally {
             StartupDeployments.undeploy(vertx, servedOutcome);
         }
@@ -1477,7 +1477,7 @@ public class ServedContractIT {
                 ContractConfigs.withDocumentEnabled(ContractConfigs.sharedUnderOpenApiContract(), ORDERS, false);
         checks.add(sharedContractRefusal(
                 vertx,
-                "(b) catalog on the shared contract under openapi-contract",
+                "catalog on the shared contract under openapi-contract",
                 sharedOpenApiContractComponent(vertx, withCatalog),
                 OPENAPI_CONTRACT));
 
@@ -1488,7 +1488,7 @@ public class ServedContractIT {
                 .create(vertx, custom);
         checks.add(sharedContractRefusal(
                 vertx,
-                "(c) catalog on the shared contract under custom-contract-test",
+                "catalog on the shared contract under custom-contract-test",
                 customComponent,
                 CUSTOM_CONTRACT_TEST));
 

@@ -236,28 +236,28 @@ public class OpenApiContractRefusalIT {
         Refusal publicOnSharedContract = new Refusal(PUBLIC_API_BINARY, PUBLIC_MOUNT_PATH, OPENAPI_CONTRACT);
         return Stream.of(
                 new ContractCase(
-                        "(a) the shared fixture under openapi-contract",
+                        "the shared fixture under openapi-contract",
                         (vertx, config) -> DaggerContractRefusalTestComponents_SharedContractComponent.factory()
                                 .create(vertx, config),
                         OpenApiContractRefusalIT::sharedOpenApiContractConfig,
                         PUBLIC,
                         publicOnSharedContract),
                 new ContractCase(
-                        "(b) an empty documented mount under openapi-contract",
+                        "an empty documented mount under openapi-contract",
                         (vertx, config) -> DaggerContractRefusalTestComponents_EmptyContractComponent.factory()
                                 .create(vertx, config),
                         OpenApiContractRefusalIT::emptyConfig,
                         EMPTY,
                         new Refusal(EMPTY_API_BINARY, EMPTY_MOUNT_PATH, OPENAPI_CONTRACT)),
                 new ContractCase(
-                        "(c) a custom strategy that resolves nothing from a contract",
+                        "a custom strategy that resolves nothing from a contract",
                         (vertx, config) -> DaggerContractRefusalTestComponents_DocsTestStrategyComponent.factory()
                                 .create(vertx, config),
                         () -> sharedConfig(CUSTOM_DOCS_TEST),
                         PUBLIC,
                         null),
                 new ContractCase(
-                        "(d) the application declares its own contract",
+                        "the application declares its own contract",
                         (vertx, config) -> DaggerContractRefusalTestComponents_OwnContractComponent.factory()
                                 .create(vertx, config),
                         () -> ownContractConfig(sharedOpenApiContractConfig()),
@@ -265,7 +265,7 @@ public class OpenApiContractRefusalIT {
                         null,
                         OWN_CONTRACT),
                 new ContractCase(
-                        "(e) the application's contract is configured",
+                        "the application's contract is configured",
                         (vertx, config) -> DaggerContractRefusalTestComponents_SharedContractComponent.factory()
                                 .create(vertx, config),
                         () -> withApplicationContract(
@@ -274,7 +274,7 @@ public class OpenApiContractRefusalIT {
                         null,
                         OWN_CONTRACT),
                 new ContractCase(
-                        "(f) a custom strategy that resolves operations from the mount's contract",
+                        "a custom strategy that resolves operations from the mount's contract",
                         (vertx, config) -> DaggerContractRefusalTestComponents_ContractTestStrategyComponent.factory()
                                 .create(vertx, config),
                         () -> sharedConfig(CUSTOM_CONTRACT_TEST),

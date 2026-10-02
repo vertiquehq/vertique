@@ -290,8 +290,7 @@ public class DocumentSecurityIT {
 
     static Stream<Arguments> vaultCases() {
         return Stream.of(
-                Arguments.of(Named.of("(a) document enabled", true)),
-                Arguments.of(Named.of("(b) document disabled", false)));
+                Arguments.of(Named.of("document enabled", true)), Arguments.of(Named.of("document disabled", false)));
     }
 
     /**

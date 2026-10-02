@@ -393,7 +393,7 @@ class ServedContractTest {
                         },
                         refused("orderShipped", REPEATED, "/webhooks/shipped/post", "/webhooks/reshipped/post")));
         rows.put(
-                "(c10) a webhooks operation with the routed id getOrderInternal",
+                "a webhooks operation with the routed id getOrderInternal",
                 row(
                         root -> obj(root, "")
                                 .putObject("webhooks")
@@ -569,9 +569,9 @@ class ServedContractTest {
                             "operationId": "notifyPartner",
                             "responses": {"200": {"description": "Received"}}}}}}
                         """)), passes()));
-        rows.put("(c1) the valid tree", row(root -> {}, passes()));
+        rows.put("the valid tree", row(root -> {}, passes()));
         rows.put(
-                "(c2) the hidden getOrderInternal described with another variable name",
+                "the hidden getOrderInternal described with another variable name",
                 row(root -> obj(root, "/paths").set("/orders/{orderId}", json("""
                         {"get": {"operationId": "getOrderInternal",
                                  "parameters": [{"name": "orderId", "in": "path", "required": true,
@@ -579,7 +579,7 @@ class ServedContractTest {
                                  "responses": {"200": {"description": "The order"}}}}
                         """)), passes()));
         rows.put(
-                "(c3) the orders Path Item given by a reference",
+                "the orders Path Item given by a reference",
                 row(
                         root -> {
                             JsonNode orders = obj(root, "/paths")
@@ -588,17 +588,17 @@ class ServedContractTest {
                         },
                         passes()));
         rows.put(
-                "(c4) a property named $ref with an object value",
+                "a property named $ref with an object value",
                 row(
                         root -> obj(root, "/components/schemas/Order/properties")
                                 .set("$ref", json("{\"type\": \"string\"}")),
                         passes()));
-        rows.put("(c5) a local $ref", row(root -> createOrderBody(root, "#/components/schemas/Order"), passes()));
+        rows.put("a local $ref", row(root -> createOrderBody(root, "#/components/schemas/Order"), passes()));
         rows.put(
-                "(c6) a Link naming listOrders",
+                "a Link naming listOrders",
                 row(root -> createOrderLink(root, "{\"operationId\": \"listOrders\"}"), passes()));
         rows.put(
-                "(c7) mount-prefixed path keys",
+                "mount-prefixed path keys",
                 row(
                         root -> {
                             ObjectNode paths = obj(root, "/paths");
@@ -610,7 +610,7 @@ class ServedContractTest {
                         },
                         passes()));
         rows.put(
-                "(c8) listOrders describing the visible query parameter page",
+                "listOrders describing the visible query parameter page",
                 row(
                         root -> obj(root, LIST_ORDERS)
                                 .set(
@@ -619,19 +619,19 @@ class ServedContractTest {
                                                 "[{\"name\": \"page\", \"in\": \"query\", \"schema\": {\"type\": \"integer\"}}]")),
                         passes()));
         rows.put(
-                "(c9) an example with an externalValue",
+                "an example with an externalValue",
                 row(root -> obj(root, LIST_ORDERS + "/responses/200").set("content", json("""
                         {"application/json": {"examples": {"all": {"externalValue": "https://example.com/orders.json"}}}}
                         """)), passes()));
         rows.put(
-                "(c11) a Link naming listOrders with the visible parameter key page",
+                "a Link naming listOrders with the visible parameter key page",
                 row(
                         root -> createOrderLink(
                                 root, "{\"operationId\": \"listOrders\", \"parameters\": {\"page\": \"1\"}}"),
                         passes()));
-        rows.put("(c12) openapi 3.0.3", row(root -> obj(root, "").put("openapi", "3.0.3"), passes()));
+        rows.put("openapi 3.0.3", row(root -> obj(root, "").put("openapi", "3.0.3"), passes()));
         rows.put(
-                "(c13) a Link naming listOrders with a literal requestBody",
+                "a Link naming listOrders with a literal requestBody",
                 row(
                         root -> createOrderLink(
                                 root, "{\"operationId\": \"listOrders\", \"requestBody\": {\"note\": \"x\"}}"),
@@ -659,7 +659,7 @@ class ServedContractTest {
                         root -> referencedLink(root, EXTENSION_LINK, "header.X-Debug"),
                         refused("listOrders", HIDDEN_INPUT, EXTENSION_LINK + "/parameters/header.X-Debug")));
         rows.put(
-                "(c14) a components Link naming listOrders with the visible key page, given by a reference",
+                "a components Link naming listOrders with the visible key page, given by a reference",
                 row(root -> referencedLink(root, COMPONENTS_LINK, "page"), passes()));
 
         // ----- A tree that is not a contract reports only the version rule -----

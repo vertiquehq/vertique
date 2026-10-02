@@ -160,7 +160,7 @@ public class DocumentCachingIT {
     }
 
     private static Arguments graph(String name, Graph graph) {
-        return Arguments.of(Named.of("(" + graph.label() + ") " + name, graph));
+        return Arguments.of(Named.of(name, graph));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -248,13 +248,13 @@ public class DocumentCachingIT {
                         .httpVerticle());
         WebClient client = WebClient.create(vertx);
         try {
-            assertNull(outcome.failure(), () -> "(f) the deployment failed: " + outcome.failure());
-            assertNotNull(outcome.port(), "(f) the deployment published no port");
+            assertNull(outcome.failure(), () -> "the deployment failed: " + outcome.failure());
+            assertNotNull(outcome.port(), "the deployment published no port");
             int port = outcome.port();
 
             for (String form : List.of("openapi.json", "openapi.yaml")) {
                 String uri = "/apidocs/management/" + form;
-                String label = "(f) management " + form;
+                String label = "management " + form;
 
                 // When: alice reads the form from the origin, then revalidates it with its entity tag
                 HttpResponse<Buffer> ok = Futures.await(

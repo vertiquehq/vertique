@@ -118,23 +118,23 @@ class DocsCompositionValidatorTest {
     static Stream<Arguments> documentMatchRows() {
         return Stream.of(
                 Arguments.of(
-                        "(a) as provided: public's application mount matches",
+                        "as provided: public's application mount matches",
                         (MountList) (resolved, factory) -> mountsInHttpVerticleOrder(resolved, mount -> true),
                         DocumentMatch.MATCHED_AND_MARKED),
                 Arguments.of(
-                        "(b) without public's application mount",
+                        "without public's application mount",
                         (MountList) (resolved, factory) ->
                                 mountsInHttpVerticleOrder(resolved, DocsCompositionValidatorTest::isNotPublicsMount),
                         DocumentMatch.NO_MOUNT_AND_NOTHING_MARKED),
                 Arguments.of(
-                        "(c) a manual JAX-RS mount at public's path, with no application name",
+                        "a manual JAX-RS mount at public's path, with no application name",
                         (MountList) (resolved, factory) -> mountsInHttpVerticleOrder(
                                 resolved,
                                 DocsCompositionValidatorTest::isNotPublicsMount,
                                 factory.create("/api/public/*", null, Set.of(new CatalogResource()))),
                         DocumentMatch.NO_MOUNT_AND_NOTHING_MARKED),
                 Arguments.of(
-                        "(d) a non-JAX-RS mount at public's path whose metadata names public",
+                        "a non-JAX-RS mount at public's path whose metadata names public",
                         (MountList) (resolved, factory) -> mountsInHttpVerticleOrder(
                                 resolved, DocsCompositionValidatorTest::isNotPublicsMount, new ForgedMetaMount()),
                         DocumentMatch.NO_MOUNT_AND_NOTHING_MARKED));
@@ -185,67 +185,67 @@ class DocsCompositionValidatorTest {
     static Stream<Arguments> prefixRows() {
         return Stream.of(
                 prefixRow(
-                        "(a) JAX-RS at /apidocs/*",
+                        "JAX-RS at /apidocs/*",
                         null,
                         jaxRs("/apidocs/*", new ValidatorResources.AtPrefix()),
                         PrefixReach.UNDER_PREFIX,
                         "jaxrs:/apidocs/*"),
                 prefixRow(
-                        "(b) JAX-RS at /apidocs/admin/*",
+                        "JAX-RS at /apidocs/admin/*",
                         null,
                         jaxRs("/apidocs/admin/*", new ValidatorResources.UnderPrefix()),
                         PrefixReach.UNDER_PREFIX,
                         "jaxrs:/apidocs/admin/*"),
                 prefixRow(
-                        "(c) JAX-RS at /apidocsx/*",
+                        "JAX-RS at /apidocsx/*",
                         null,
                         jaxRs("/apidocsx/*", new ValidatorResources.PrefixWithoutBoundary()),
                         PrefixReach.NO_VIOLATION,
                         null),
                 prefixRow(
-                        "(d) JAX-RS at /api/apidocs/*",
+                        "JAX-RS at /api/apidocs/*",
                         null,
                         jaxRs("/api/apidocs/*", new ValidatorResources.PrefixNested()),
                         PrefixReach.NO_VIOLATION,
                         null),
                 prefixRow(
-                        "(e) non-JAX-RS at /apidocs/ui/*",
+                        "non-JAX-RS at /apidocs/ui/*",
                         null,
                         factory -> new PathOnlyMount("/apidocs/ui/*"),
                         PrefixReach.NO_VIOLATION,
                         null),
                 prefixRow(
-                        "(f) JAX-RS at /apidocs/* with apidocs.path /docs",
+                        "JAX-RS at /apidocs/* with apidocs.path /docs",
                         "/docs",
                         jaxRs("/apidocs/*", new ValidatorResources.MovedPrefix()),
                         PrefixReach.NO_VIOLATION,
                         null),
                 prefixRow(
-                        "(g) JAX-RS at /:tenant/*",
+                        "JAX-RS at /:tenant/*",
                         null,
                         jaxRs("/:tenant/*", new ValidatorResources.ColonTenant()),
                         PrefixReach.PATTERN_REACHES_PREFIX,
                         "jaxrs:/:tenant/*"),
                 prefixRow(
-                        "(h) JAX-RS at /{tenant}/*",
+                        "JAX-RS at /{tenant}/*",
                         null,
                         jaxRs("/{tenant}/*", new ValidatorResources.BraceTenant()),
                         PrefixReach.PATTERN_REACHES_PREFIX,
                         "jaxrs:/{tenant}/*"),
                 prefixRow(
-                        "(i) non-JAX-RS at /:tenant/*",
+                        "non-JAX-RS at /:tenant/*",
                         null,
                         factory -> new PathOnlyMount("/:tenant/*"),
                         PrefixReach.NO_VIOLATION,
                         null),
                 prefixRow(
-                        "(j) JAX-RS at /api/{v}/* with apidocs.path /api/docs",
+                        "JAX-RS at /api/{v}/* with apidocs.path /api/docs",
                         "/api/docs",
                         jaxRs("/api/{v}/*", new ValidatorResources.Versioned()),
                         PrefixReach.PATTERN_REACHES_PREFIX,
                         "jaxrs:/api/{v}/*"),
                 prefixRow(
-                        "(k) JAX-RS at /api/:tenant/*",
+                        "JAX-RS at /api/:tenant/*",
                         null,
                         jaxRs("/api/:tenant/*", new ValidatorResources.ApiTenant()),
                         PrefixReach.NO_VIOLATION,

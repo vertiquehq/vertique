@@ -306,7 +306,7 @@ public class HiddenInputOmissionIT {
         String operationId = AccountsApplication.OPERATION_ID;
         List<RefusalCase> refusals = List.of(
                 new RefusalCase(
-                        "(a) a member carrying @Hidden only",
+                        "a member carrying @Hidden only",
                         () -> DaggerHiddenInputTestComponents_HiddenFieldAccountsComponent.factory()
                                 .create(accountsConfig()),
                         List.of(
@@ -315,32 +315,32 @@ public class HiddenInputOmissionIT {
                                 HIDDEN_MARKER,
                                 FIELD_OR_GETTER_FIX)),
                 new RefusalCase(
-                        "(b) a member whose type carries @Hidden",
+                        "a member whose type carries @Hidden",
                         () -> DaggerHiddenInputTestComponents_HiddenTypeAccountsComponent.factory()
                                 .create(accountsConfig()),
                         List.of(AuditTrailZx.class.getName(), HIDDEN_MARKER, TYPE_FIX)),
                 new RefusalCase(
-                        "(e) both kinds of member, the first reported entry named",
+                        "both kinds of member, the first reported entry named",
                         () -> DaggerHiddenInputTestComponents_FormAccountsComponent.factory()
                                 .create(accountsConfig()),
                         List.of("backdoorZx")),
                 new RefusalCase(
-                        "(f) a JavaBean getter carrying @Schema(hidden = true)",
+                        "a JavaBean getter carrying @Schema(hidden = true)",
                         () -> DaggerHiddenInputTestComponents_BeanAccountsComponent.factory()
                                 .create(accountsConfig()),
                         List.of(AccountBeanZx.class.getName(), "getPinZx", SCHEMA_HIDDEN_MARKER, REMOVE_FIX)),
                 new RefusalCase(
-                        "(g) an enum constant carrying @Schema(hidden = true)",
+                        "an enum constant carrying @Schema(hidden = true)",
                         () -> DaggerHiddenInputTestComponents_TierAccountsComponent.factory()
                                 .create(accountsConfig()),
                         List.of(TierZx.class.getName(), "INTERNAL_ZX", SCHEMA_HIDDEN_MARKER, REMOVE_FIX)),
                 new RefusalCase(
-                        "(h) a class carrying @Schema(hidden = true)",
+                        "a class carrying @Schema(hidden = true)",
                         () -> DaggerHiddenInputTestComponents_LedgerAccountsComponent.factory()
                                 .create(accountsConfig()),
                         List.of(LedgerNoteZx.class.getName(), SCHEMA_HIDDEN_MARKER, TYPE_FIX)),
                 new RefusalCase(
-                        "(i) a creator parameter carrying @Schema(hidden = true)",
+                        "a creator parameter carrying @Schema(hidden = true)",
                         () -> DaggerHiddenInputTestComponents_CtorAccountsComponent.factory()
                                 .create(accountsConfig()),
                         List.of(AccountCtorZx.class.getName(), "<init>#0", SCHEMA_HIDDEN_MARKER, MISPLACED_FIX)));
@@ -368,7 +368,7 @@ public class HiddenInputOmissionIT {
         Exchange fixedPost;
         Outcome fixedOutcome = StartupDeployments.deploy(vertx, fixed::httpVerticle);
         try {
-            assertDeployed("(c) the fixed member", fixedOutcome);
+            assertDeployed("the fixed member", fixedOutcome);
             fixedPublic = fetchPublic(fixedOutcome.port(), AccountsApplication.NAME);
             fixedPost = exchange(client.post(fixedOutcome.port(), HOST, route).sendJsonObject(backdoorBody));
         } finally {
@@ -384,7 +384,7 @@ public class HiddenInputOmissionIT {
         Exchange unpublishedPost;
         Outcome unpublishedOutcome = StartupDeployments.deploy(vertx, unpublished::httpVerticle);
         try {
-            assertDeployed("(d) the hidden member without an enabled document", unpublishedOutcome);
+            assertDeployed("the hidden member without an enabled document", unpublishedOutcome);
             unpublishedPost =
                     exchange(client.post(unpublishedOutcome.port(), HOST, route).sendJsonObject(backdoorBody));
         } finally {
@@ -404,7 +404,7 @@ public class HiddenInputOmissionIT {
         GeneratedBodies.GeneratedBody described = GeneratedBodies.describe(AccountFixedZx.class);
         JsonObject fixedRoot = fixedProtected.rootValidation();
         Executable fixedMember = () -> assertAll(
-                "(c) the fixed member",
+                "the fixed member",
                 () -> assertTrue(
                         described.schema().encode().contains("backdoorZx"),
                         "positive control: the generator's description of the body names backdoorZx"),
@@ -424,7 +424,7 @@ public class HiddenInputOmissionIT {
         Executable unpublishedMember = () -> assertEquals(
                 NO_CONTENT,
                 unpublishedPost.status(),
-                () -> "(d) the post naming backdoorZx without an enabled document: " + unpublishedPost);
+                () -> "the post naming backdoorZx without an enabled document: " + unpublishedPost);
         assertAll("hidden body members", refused, fixedMember, unpublishedMember);
     }
 
