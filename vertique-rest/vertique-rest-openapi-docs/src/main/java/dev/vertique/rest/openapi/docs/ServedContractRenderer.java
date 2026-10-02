@@ -32,7 +32,7 @@ final class ServedContractRenderer {
      * @param contract the parsed contract
      * @param snapshot the snapshot of the mount whose application serves the contract
      * @return the contract in both forms, with the entity tag of each
-     * @throws IllegalStateException when the tree cannot be serialized
+     * @throws IllegalStateException when the tree cannot be serialized, with no cause attached
      */
     static PublishedDocument render(JsonNode contract, Snapshot snapshot) {
         try {
@@ -40,8 +40,9 @@ final class ServedContractRenderer {
             byte[] yaml = YAML.writeValueAsBytes(contract);
             return new PublishedDocument(
                     json, yaml, DocumentWriter.entityTag(json), DocumentWriter.entityTag(yaml), snapshot);
-        } catch (JsonProcessingException e) {
-            throw new IllegalStateException("The served contract cannot be serialized", e);
+        } catch (JsonProcessingException unserializable) {
+            // The serializer's message can quote content; it is never chained.
+            throw new IllegalStateException("The served contract cannot be serialized");
         }
     }
 }
