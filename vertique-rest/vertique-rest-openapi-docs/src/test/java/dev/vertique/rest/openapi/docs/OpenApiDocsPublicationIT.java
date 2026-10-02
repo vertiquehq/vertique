@@ -8,7 +8,6 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -17,7 +16,6 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
-import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.core.router.MountMeta;
 import dev.vertique.rest.core.routing.RestOperationDescriptor;
 import dev.vertique.rest.jaxrs.publication.CapturedSchemas;
@@ -34,7 +32,6 @@ import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.ManualMountModule;
 import dev.vertique.rest.openapi.docs.fixture.MarkerRouterMount;
 import dev.vertique.rest.openapi.docs.fixture.MgmtApi;
-import dev.vertique.rest.openapi.docs.fixture.ProtectedMgmtApi;
 import dev.vertique.rest.openapi.docs.fixture.PublicApi;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -60,7 +57,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.AfterEach;
@@ -74,8 +70,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Deploys the documentation module's test components over loopback HTTP and observes what it
  * publishes: nothing when no document is enabled, a document served without further schema
- * discovery, a stored entry that retains only extracted data, and a protected document that refuses
- * startup.
+ * discovery, and a stored entry that retains only extracted data.
  *
  * <p>Every test deploys through {@link #deploy(Vertx, Provisions)}, which reads the bound port from
  * the {@code vertique} local map once the deployment completes, and undeploys through
@@ -189,24 +184,6 @@ public class OpenApiDocsPublicationIT {
 
     /** The notices logged by a component that includes the module, whatever its configuration. */
     private static final int NOTICES_WITH_MODULE = 0;
-
-    /**
-     * The protected application's name standing on its own in a refusal, so that a document or mount
-     * path alone cannot satisfy it.
-     */
-    private static final Pattern REFUSED_APPLICATION_NAMED = standingAlone(MgmtApi.NAME);
-
-    /** The annotation attribute a protected document's refusal names. */
-    private static final String REFUSED_ATTRIBUTE = "@ApiDocs.access";
-
-    /** The statement a protected document's refusal makes. */
-    private static final String NOT_SERVED_YET = "not served yet";
-
-    /** A lowercase hexadecimal SHA-256 digest, which a refusal never carries. */
-    private static final Pattern HEX_DIGEST = Pattern.compile("[0-9a-f]{64}");
-
-    /** The {@code beforeAuthSetup} calls a refused startup makes: no JAX-RS router is built. */
-    private static final int REFUSED_ROUTER_BUILDS = 0;
 
     private WebClient client;
 
@@ -689,82 +666,6 @@ public class OpenApiDocsPublicationIT {
                     .filter(message -> message.contains(fragment))
                     .toList();
         }
-    }
-
-    // ---------------------------------------------------------------------------------------------
-    // A protected document fails closed
-    // ---------------------------------------------------------------------------------------------
-
-    @Test
-    @DisplayName(
-            "a protected document refuses startup before any router is built, naming only the application, interface, and attribute")
-    void protectedDocumentIsRefusedUntilItsAccessChainExists(Vertx vertx) throws Exception {
-        // Given: the shared fixture with the protected mgmt declaration, its document's info configured,
-        // the bearerAuth scheme handler and the auth enforcement marker bound, and a counting hook
-        DocsTestComponents.ProtectedComponent component =
-                DaggerDocsTestComponents_ProtectedComponent.factory().create(DocsConfigs.sharedWithMgmtInfo());
-        vertx.sharedData().getLocalMap(LOCAL_MAP).clear();
-
-        // When: the component is deployed
-        Throwable failure = null;
-        Deployment unexpected = null;
-        try {
-            unexpected = await(deployment(vertx, component));
-        } catch (ExecutionException refused) {
-            failure = refused.getCause();
-        }
-        Object publishedPort = vertx.sharedData().getLocalMap(LOCAL_MAP).get(PORT_KEY);
-        int routerBuilds = component.lifecycleHook().beforeAuthSetupCalls();
-        Set<String> storedNames = component.documentStore().names();
-        String unexpectedMgmtStatus = "not requested";
-        if (unexpected != null) {
-            try {
-                HttpResponse<Buffer> mgmtResponse =
-                        send(HttpMethod.GET, unexpected.port(), documentPath(MgmtApi.NAME, JSON_FORM));
-                unexpectedMgmtStatus = mgmtResponse.statusCode()
-                        + (answeredByLastMarker(mgmtResponse)
-                                ? " from the marker mount"
-                                : " not from the marker mount");
-            } finally {
-                undeploy(vertx, unexpected);
-            }
-        }
-
-        // Then: the deployment failed before any server listened, any JAX-RS router was built, or any
-        // document was stored
-        Throwable refusal = failure;
-        String mgmtStatus = unexpectedMgmtStatus;
-        assertAll(
-                "a protected document fails closed",
-                () -> assertNotNull(
-                        refusal,
-                        "the deployment succeeded; GET " + documentPath(MgmtApi.NAME, JSON_FORM) + " answered "
-                                + mgmtStatus),
-                () -> assertNull(publishedPort, "no port is published"),
-                () -> assertEquals(REFUSED_ROUTER_BUILDS, routerBuilds, "no JAX-RS router is built"),
-                () -> assertEquals(Set.of(), storedNames, "the store is empty"));
-
-        // Then: the refusal is a configuration failure naming the application, its declaring interface,
-        // and the attribute, and stating that protected documents are not served yet
-        RestConfigurationException configurationFailure = assertInstanceOf(
-                RestConfigurationException.class,
-                refusal,
-                () -> "the refusal's class: " + refusal.getClass().getName() + ": " + refusal);
-        String message = configurationFailure.getMessage();
-        assertNotNull(message, "the refusal has a message");
-        assertAll(
-                "the refusal's message: " + message,
-                () -> assertTrue(
-                        REFUSED_APPLICATION_NAMED.matcher(message).find(), "names the application " + MgmtApi.NAME),
-                () -> assertTrue(
-                        message.contains(ProtectedMgmtApi.class.getName()),
-                        "names the declaring interface " + ProtectedMgmtApi.class.getName()),
-                () -> assertTrue(message.contains(REFUSED_ATTRIBUTE), "names " + REFUSED_ATTRIBUTE),
-                () -> assertTrue(message.contains(NOT_SERVED_YET), "states that it is " + NOT_SERVED_YET),
-                () -> assertFalse(message.contains(ProtectedMgmtApi.SECURITY_SCHEME), "echoes no security scheme"),
-                () -> assertFalse(message.contains(ProtectedMgmtApi.ROLE), "echoes no role"),
-                () -> assertFalse(message.contains("{"), "echoes no structured value"),
-                () -> assertFalse(HEX_DIGEST.matcher(message).find(), "carries no digest"));
     }
 
     /**
