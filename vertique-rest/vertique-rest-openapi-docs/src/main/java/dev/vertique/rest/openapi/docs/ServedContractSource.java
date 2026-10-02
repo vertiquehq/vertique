@@ -1,0 +1,103 @@
+// SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+// SPDX-License-Identifier: EUPL-1.2
+
+package dev.vertique.rest.openapi.docs;
+
+import dev.vertique.rest.jaxrs.publication.RestApplications;
+import java.io.File;
+import java.net.URL;
+import java.nio.file.Path;
+import java.util.Optional;
+
+/**
+ * Decides where an enabled document comes from and which location its contract resolves to.
+ *
+ * <p>An application whose entry in the {@link RestApplications} view has the contract origin {@link
+ * RestApplications.ContractOrigin#CONFIGURATION CONFIGURATION} or {@link
+ * RestApplications.ContractOrigin#ANNOTATION ANNOTATION} serves the contract at its effective
+ * {@code openapiPath}; one whose origin is {@link RestApplications.ContractOrigin#GLOBAL GLOBAL} gets a
+ * generated document. The view is read, never re-derived.
+ *
+ * <p>The resolved location mirrors how the Vert.x file system resolves the path it reads, without
+ * reading its cache: an absolute path names that file; a relative path names the working-directory
+ * file of that name when one exists, and otherwise the classpath resource of that name, looked up
+ * through the thread's context class loader (or this module's class loader when the thread has none).
+ * A file is named by its absolute, normalized path, without resolving symbolic links; a classpath
+ * resource by its class-loader URL, never by the copy the file system extracts into its cache. When a
+ * relative path names a working-directory file while a classpath resource of the same name also
+ * exists, the file shadows the resource.
+ */
+final class ServedContractSource {
+
+    private ServedContractSource() {}
+
+    /**
+     * Returns the contract location an application's document is served from.
+     *
+     * @param applications the declared applications of the component
+     * @param name the application name
+     * @return the effective {@code openapiPath}, unchanged, when the application's contract is its
+     *     own; empty when its document is generated
+     */
+    static Optional<String> servedPath(RestApplications applications, String name) {
+        return applications
+                .byName(name)
+                .filter(entry -> entry.contractOrigin() != RestApplications.ContractOrigin.GLOBAL)
+                .map(RestApplications.Entry::effectiveOpenapiPath);
+    }
+
+    /**
+     * Names the setting an application's contract location comes from.
+     *
+     * @param applications the declared applications of the component
+     * @param name the application name
+     * @return the configuration path {@code jaxrs.applications.<name>.openapiPath} for a configured
+     *     location; for a declared one, the annotation member on the declaring interface's binary name
+     */
+    static String setting(RestApplications applications, String name) {
+        return applications
+                .byName(name)
+                .filter(entry -> entry.contractOrigin() == RestApplications.ContractOrigin.ANNOTATION)
+                .map(entry -> "@RestApplication.openapiPath on "
+                        + entry.declaringType().getName())
+                .orElse("jaxrs.applications." + name + ".openapiPath");
+    }
+
+    /**
+     * Resolves a contract location as the file system resolves it.
+     *
+     * @param path the contract location, as configured or declared
+     * @return the resolved location and whether a working-directory file shadows a classpath resource
+     */
+    static Resolution resolve(String path) {
+        File file = new File(path);
+        if (file.isAbsolute()) {
+            return new Resolution(absolute(path), false);
+        }
+        URL resource = classLoader().getResource(path);
+        if (file.exists()) {
+            return new Resolution(absolute(path), resource != null);
+        }
+        return new Resolution(resource != null ? resource.toString() : path, false);
+    }
+
+    /** Returns the absolute, normalized form of a file path, without resolving symbolic links. */
+    private static String absolute(String path) {
+        return Path.of(path).toAbsolutePath().normalize().toString();
+    }
+
+    /** Returns the thread's context class loader, or this module's class loader when it has none. */
+    private static ClassLoader classLoader() {
+        ClassLoader context = Thread.currentThread().getContextClassLoader();
+        return context != null ? context : ServedContractSource.class.getClassLoader();
+    }
+
+    /**
+     * Where a contract location resolved.
+     *
+     * @param location the absolute path of the file, or the URL of the classpath resource
+     * @param shadowsClasspath whether a relative location named a working-directory file while a
+     *     classpath resource of the same name exists
+     */
+    record Resolution(String location, boolean shadowsClasspath) {}
+}

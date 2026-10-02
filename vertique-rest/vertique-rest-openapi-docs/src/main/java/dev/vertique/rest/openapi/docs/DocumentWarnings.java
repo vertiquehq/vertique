@@ -18,13 +18,23 @@ import org.slf4j.LoggerFactory;
  *
  * <p>A message starts with the document's configuration path,
  * {@code apidocs.documents.<name>}, and carries no configuration value other than the document
- * name and a mount path. The guard is thread-safe: compositions validated concurrently log each
+ * name, a mount path, and, for a served contract, its contract location and the location it resolved
+ * to. The guard is thread-safe: compositions validated concurrently log each
  * warning once.
  */
 @Singleton
 final class DocumentWarnings {
 
     private static final Logger LOG = LoggerFactory.getLogger(DocumentWarnings.class);
+
+    /** The notice kind naming where an enabled document comes from. */
+    static final String SOURCE = "source";
+
+    /** The warning kind of a relative contract location whose working-directory file shadows a classpath resource. */
+    static final String CONTRACT_SHADOWED = "contract-shadowed";
+
+    /** The warning kind of a served contract whose {@code servers} do not start with the mount path. */
+    static final String CONTRACT_SERVERS = "contract-servers";
 
     /** The warning kinds and documents already warned about, as {@code kind + '\0' + name}. */
     private final Set<String> warned = ConcurrentHashMap.newKeySet();
@@ -63,6 +73,55 @@ final class DocumentWarnings {
         }
         LOG.info("{}", message);
         return true;
+    }
+
+    /**
+     * Returns the source notice of a generated document.
+     *
+     * @param name the document's application name
+     * @return the notice
+     */
+    static String generatedSource(String name) {
+        return "apidocs.documents." + name + ": the document of application '" + name + "' is generated";
+    }
+
+    /**
+     * Returns the source notice of a served contract. The resolved location ends the notice.
+     *
+     * @param name the document's application name
+     * @param location the resolved location: an absolute file path or a classpath resource URL
+     * @return the notice
+     */
+    static String servedSource(String name, String location) {
+        return "apidocs.documents." + name + ": the document of application '" + name + "' is served from " + location;
+    }
+
+    /**
+     * Returns the warning that a working-directory file shadows a classpath resource of the same
+     * relative name.
+     *
+     * @param name the document's application name
+     * @param relativePath the application's relative contract location
+     * @return the warning
+     */
+    static String contractShadowed(String name, String relativePath) {
+        return "apidocs.documents." + name + ": the contract location '" + relativePath + "' of application '"
+                + name + "' is relative, and the working-directory file of that name shadows the classpath"
+                + " resource of the same name; the working-directory file is served and validated against";
+    }
+
+    /**
+     * Returns the warning that a served contract's first server is not the application's mount path.
+     *
+     * @param name the document's application name
+     * @param mountPath the application's mount path without its trailing {@code /*}, {@code /} for
+     *     the root mount
+     * @return the warning
+     */
+    static String contractServers(String name, String mountPath) {
+        return "apidocs.documents." + name + ": the contract of application '" + name
+                + "' does not list the mount path '" + mountPath
+                + "' as the url of its first server; the served document is not rewritten";
     }
 
     /** Records the kind and document, reporting whether this is the first time they are recorded. */
