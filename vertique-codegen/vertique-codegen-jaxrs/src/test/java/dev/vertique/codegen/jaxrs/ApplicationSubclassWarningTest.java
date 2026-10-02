@@ -142,7 +142,7 @@ class ApplicationSubclassWarningTest {
     private record SubclassFixture(String subclassBinaryName, List<JavaFileObject> sources) {}
 
     private static Stream<Arguments> applicationSubclassCases() {
-        String base = "dev.vertique.test.t028.tp001.";
+        String base = "dev.vertique.test.subclasswarning.singlewarning.";
         String applicationPathImport = "import jakarta.ws.rs.ApplicationPath;";
 
         String topLevelPkg = base + "toplevel";
@@ -287,11 +287,11 @@ class ApplicationSubclassWarningTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("applicationSubclassCases")
-    @DisplayName("TP-001 — an Application subclass compiles with exactly one warning naming it")
+    @DisplayName("an Application subclass compiles with exactly one warning naming it")
     void applicationSubclassCompilesWithOneWarning(String label, SubclassFixture fixture, Map<String, String> options) {
         var result = ProcessorTestHarness.run(
                 new JaxRsPipelineProcessor(), options, fixture.sources().toArray(JavaFileObject[]::new));
-        logDiagnostics("TP-001 " + label, result);
+        logDiagnostics("Application subclass " + label, result);
         assertOnlyTheSubclassWarning(result, fixture.subclassBinaryName());
     }
 
@@ -316,18 +316,18 @@ class ApplicationSubclassWarningTest {
     }
 
     @TestFactory
-    @DisplayName("TP-002 — @NoAutoWire on a subclass suppresses the warning")
+    @DisplayName("@NoAutoWire on a subclass suppresses the warning")
     Stream<DynamicTest> noAutoWireSuppressesTheWarning() {
         return Stream.of(
                 DynamicTest.dynamicTest(
-                        "@NoAutoWire subclass compiles with no diagnostic naming Legacy", this::tp002NoAutoWire),
-                DynamicTest.dynamicTest("control without @NoAutoWire gets the single warning", this::tp002Control));
+                        "@NoAutoWire subclass compiles with no diagnostic naming Legacy", this::silentSubclass),
+                DynamicTest.dynamicTest("control without @NoAutoWire gets the single warning", this::warnedSubclass));
     }
 
-    private void tp002NoAutoWire() {
-        String pkg = "dev.vertique.test.t028.tp002.noautowire";
+    private void silentSubclass() {
+        String pkg = "dev.vertique.test.subclasswarning.noautowire";
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), legacyFixture(pkg, true));
-        logDiagnostics("TP-002 @NoAutoWire", result);
+        logDiagnostics("@NoAutoWire subclass", result);
         result.assertSuccess();
         assertEquals(
                 List.of(),
@@ -335,10 +335,10 @@ class ApplicationSubclassWarningTest {
                 () -> "Expected no diagnostic naming Legacy" + diagnosticsSummary(result));
     }
 
-    private void tp002Control() {
-        String pkg = "dev.vertique.test.t028.tp002.control";
+    private void warnedSubclass() {
+        String pkg = "dev.vertique.test.subclasswarning.noautowirecontrol";
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), legacyFixture(pkg, false));
-        logDiagnostics("TP-002 control", result);
+        logDiagnostics("subclass without @NoAutoWire", result);
         assertOnlyTheSubclassWarning(result, pkg + ".Legacy");
     }
 
@@ -363,29 +363,29 @@ class ApplicationSubclassWarningTest {
     }
 
     @TestFactory
-    @DisplayName("TP-003 — no Application registration is emitted, and resource bindings take the native set")
+    @DisplayName("no Application registration is emitted, and resource bindings take the native set")
     Stream<DynamicTest> noApplicationRegistrationIsEmitted() {
         return Stream.of(
                 DynamicTest.dynamicTest(
-                        "(a) PathResource and an @Inject-constructed Legacy: no registration, native-set binding",
-                        this::tp003RowA),
-                DynamicTest.dynamicTest("(b) only Legacy: no module is written", this::tp003RowB),
+                        "PathResource and an @Inject-constructed Legacy: no registration, native-set binding",
+                        this::resourceBesideLegacy),
+                DynamicTest.dynamicTest("only Legacy: no module is written", this::onlyLegacy),
                 DynamicTest.dynamicTest(
-                        "(c) PathResource, Api, and Legacy: exactly Api's native registration", this::tp003RowC),
+                        "PathResource, Api, and Legacy: exactly Api's native registration", this::apiBesideLegacy),
                 DynamicTest.dynamicTest(
-                        "(d) @ConditionalOnProperty resource: condition constant and guarded body kept, new set",
-                        this::tp003RowD));
+                        "@ConditionalOnProperty resource: condition constant and guarded body kept, new set",
+                        this::conditionalResource));
     }
 
-    private void tp003RowA() {
-        String pkg = "dev.vertique.test.t028.tp003.a";
+    private void resourceBesideLegacy() {
+        String pkg = "dev.vertique.test.subclasswarning.nativeset.resourcebesidelegacy";
         String moduleFqn = pkg + "." + MODULE_SIMPLE_NAME;
         var result = ProcessorTestHarness.run(
                 new JaxRsPipelineProcessor(), pathResourceFixture(pkg), injectedLegacyFixture(pkg));
-        logDiagnostics("TP-003 (a)", result);
+        logDiagnostics("resource beside Legacy", result);
         result.assertSuccess();
         String source = sourceOf(result, moduleFqn);
-        logGeneratedSource("TP-003 (a) module", source);
+        logGeneratedSource("resource beside Legacy module", source);
 
         // Structural absence (ruling E2): the only registration type the module spells is the native one.
         assertEquals(
@@ -414,10 +414,10 @@ class ApplicationSubclassWarningTest {
                 moduleFqn, "return applications.isEmpty() ? Set.of(provider.get()) : Set.of();");
     }
 
-    private void tp003RowB() {
-        String pkg = "dev.vertique.test.t028.tp003.b";
+    private void onlyLegacy() {
+        String pkg = "dev.vertique.test.subclasswarning.nativeset.onlylegacy";
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), injectedLegacyFixture(pkg));
-        logDiagnostics("TP-003 (b)", result);
+        logDiagnostics("only Legacy", result);
         result.assertSuccess();
         List<String> modules = result.compilation().generatedSourceFiles().stream()
                 .map(f -> f.toUri().getPath())
@@ -426,15 +426,15 @@ class ApplicationSubclassWarningTest {
         assertEquals(List.of(), modules, () -> "Expected no generated module" + diagnosticsSummary(result));
     }
 
-    private void tp003RowC() {
-        String pkg = "dev.vertique.test.t028.tp003.c";
+    private void apiBesideLegacy() {
+        String pkg = "dev.vertique.test.subclasswarning.nativeset.apibesidelegacy";
         String moduleFqn = pkg + "." + MODULE_SIMPLE_NAME;
         var result = ProcessorTestHarness.run(
                 new JaxRsPipelineProcessor(), pathResourceFixture(pkg), apiFixture(pkg), injectedLegacyFixture(pkg));
-        logDiagnostics("TP-003 (c)", result);
+        logDiagnostics("Api beside Legacy", result);
         result.assertSuccess();
         String source = sourceOf(result, moduleFqn);
-        logGeneratedSource("TP-003 (c) module", source);
+        logGeneratedSource("Api beside Legacy module", source);
 
         Class<?> module = result.loadGeneratedClass(moduleFqn);
         Class<?> apiType = result.loadGeneratedClass(pkg + ".Api");
@@ -452,8 +452,8 @@ class ApplicationSubclassWarningTest {
         assertEquals("api", registration.name(), "name()");
     }
 
-    private void tp003RowD() {
-        String pkg = "dev.vertique.test.t028.tp003.d";
+    private void conditionalResource() {
+        String pkg = "dev.vertique.test.subclasswarning.nativeset.conditionalresource";
         String moduleFqn = pkg + "." + MODULE_SIMPLE_NAME;
         JavaFileObject adminResource = SourceFiles.inline(pkg + ".AdminResource", """
                 package %s;
@@ -474,9 +474,9 @@ class ApplicationSubclassWarningTest {
                 }
                 """.formatted(pkg));
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), adminResource);
-        logDiagnostics("TP-003 (d)", result);
+        logDiagnostics("conditional resource", result);
         result.assertSuccess();
-        logGeneratedSource("TP-003 (d) module", sourceOf(result, moduleFqn));
+        logGeneratedSource("conditional resource module", sourceOf(result, moduleFqn));
 
         result.assertGeneratedSourceContains(moduleFqn, "PropertyCondition[] ADMIN_RESOURCE_BINDING_CONDITIONS");
         result.assertGeneratedSourceContains(moduleFqn, "new PropertyCondition(\"adminApi.enabled\", \"true\", false)");

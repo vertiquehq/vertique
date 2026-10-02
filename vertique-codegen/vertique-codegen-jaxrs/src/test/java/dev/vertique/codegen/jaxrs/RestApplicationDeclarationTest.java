@@ -111,11 +111,11 @@ class RestApplicationDeclarationTest {
             String label, JavaFileObject fixture, String moduleFqn, String typeFqn, boolean isInterfaceRow) {}
 
     private static Stream<Arguments> nonInterfaceCases() {
-        String classPkg = "dev.vertique.test.tp001.classkind";
-        String enumPkg = "dev.vertique.test.tp001.enumkind";
-        String recordPkg = "dev.vertique.test.tp001.recordkind";
-        String annotationPkg = "dev.vertique.test.tp001.annotationkind";
-        String interfacePkg = "dev.vertique.test.tp001.interfacekind";
+        String classPkg = "dev.vertique.test.declaration.kind.classkind";
+        String enumPkg = "dev.vertique.test.declaration.kind.enumkind";
+        String recordPkg = "dev.vertique.test.declaration.kind.recordkind";
+        String annotationPkg = "dev.vertique.test.declaration.kind.annotationkind";
+        String interfacePkg = "dev.vertique.test.declaration.kind.interfacekind";
 
         List<NonInterfaceCase> cases = List.of(
                 new NonInterfaceCase(
@@ -181,7 +181,7 @@ class RestApplicationDeclarationTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("nonInterfaceCases")
-    @DisplayName("TP-001 — @RestApplication on anything but an interface fails compilation naming the type")
+    @DisplayName("@RestApplication on anything but an interface fails compilation naming the type")
     void restApplicationOnANonInterfaceTypeFailsCompilation(String label, NonInterfaceCase testCase) {
         String packageName = testCase.typeFqn().substring(0, testCase.typeFqn().lastIndexOf('.'));
         GeneratedModuleRecorder recorder = new GeneratedModuleRecorder();
@@ -189,7 +189,7 @@ class RestApplicationDeclarationTest {
                 List.<Processor>of(new JaxRsPipelineProcessor(), recorder),
                 pathResourceFixture(packageName),
                 testCase.fixture());
-        logDiagnostics("TP-001 " + label, result);
+        logDiagnostics("declaration kind " + label, result);
         if (testCase.isInterfaceRow()) {
             result.assertSuccess();
             result.assertGeneratedSourceContains(testCase.moduleFqn(), "GeneratedRestApplicationRegistration");
@@ -251,14 +251,14 @@ class RestApplicationDeclarationTest {
         List<Arguments> arguments = new ArrayList<>();
         for (int i = 0; i < raw.size(); i++) {
             NameCase testCase = raw.get(i);
-            arguments.add(Arguments.of(testCase.label(), testCase, "dev.vertique.test.tp002.n" + i));
+            arguments.add(Arguments.of(testCase.label(), testCase, "dev.vertique.test.declaration.name.n" + i));
         }
         return arguments.stream();
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("nameCases")
-    @DisplayName("TP-002 — application names follow [a-z0-9][a-z0-9_-]{0,63}")
+    @DisplayName("application names follow [a-z0-9][a-z0-9_-]{0,63}")
     void applicationNamesFollowTheGrammar(String label, NameCase testCase, String packageName) {
         String moduleFqn = packageName + ".GeneratedJaxRsResourcesModule";
         String apiFqn = packageName + ".Api";
@@ -267,7 +267,7 @@ class RestApplicationDeclarationTest {
                 new JaxRsPipelineProcessor(),
                 pathResourceFixture(packageName),
                 nameFixture(packageName, testCase.nameLiteral()));
-        logDiagnostics("TP-002 " + label, result);
+        logDiagnostics("application name " + label, result);
         switch (testCase.outcome()) {
             case GRAMMAR_REJECTED -> {
                 result.assertFailed();
@@ -301,55 +301,55 @@ class RestApplicationDeclarationTest {
     // TP-003 — two declarations with one name in one unit fail naming both
     // -----------------------------------------------------------------------------------------
 
-    private static final String TP003_A_PKG = "dev.vertique.test.tp003.a";
-    private static final String TP003_B_PKG = "dev.vertique.test.tp003.b";
-    private static final String TP003_CONTROL_PKG = "dev.vertique.test.tp003.control";
+    private static final String FIRST_APP_PKG = "dev.vertique.test.declaration.duplicatename.first";
+    private static final String SECOND_APP_PKG = "dev.vertique.test.declaration.duplicatename.second";
+    private static final String DISTINCT_NAMES_PKG = "dev.vertique.test.declaration.distinctnames";
 
-    private static JavaFileObject tp003PublicApiFixture() {
-        return SourceFiles.inline(TP003_A_PKG + ".PublicApi", """
+    private static JavaFileObject publicApiFixture() {
+        return SourceFiles.inline(FIRST_APP_PKG + ".PublicApi", """
                 package %s;
 
                 import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "api", path = "/api/a", resources = PathResource.class)
                 interface PublicApi {}
-                """.formatted(TP003_A_PKG));
+                """.formatted(FIRST_APP_PKG));
     }
 
-    private static JavaFileObject tp003OtherApiFixture() {
-        return SourceFiles.inline(TP003_B_PKG + ".OtherApi", """
+    private static JavaFileObject otherApiFixture() {
+        return SourceFiles.inline(SECOND_APP_PKG + ".OtherApi", """
                 package %s;
 
                 import dev.vertique.codegen.ConditionalOnProperty;
                 import dev.vertique.rest.core.application.RestApplication;
 
-                @ConditionalOnProperty(name = "tp003.other.enabled")
+                @ConditionalOnProperty(name = "duplicatename.other.enabled")
                 @RestApplication(name = "api", path = "/api/b", resources = PathResource.class)
                 interface OtherApi {}
-                """.formatted(TP003_B_PKG));
+                """.formatted(SECOND_APP_PKG));
     }
 
     @Test
-    @DisplayName("TP-003 — two declarations with one name in one unit fail naming both")
+    @DisplayName("two declarations with one name in one unit fail naming both")
     void duplicateNamesInOneUnitFailNamingBoth() {
         assertAll(
-                "TP-003 cases",
-                () -> tp003SingleUnitDuplicateFails(),
-                () -> tp003SeparateCompilationsSucceed(),
-                () -> tp003ControlUnitWithDistinctNamesSucceeds());
+                "duplicate application names",
+                () -> duplicateNameInOneUnitFails(),
+                () -> duplicateNameInSeparateUnitsSucceeds(),
+                () -> distinctNamesInOneUnitSucceed());
     }
 
-    private void tp003SingleUnitDuplicateFails() {
+    private void duplicateNameInOneUnitFails() {
         var result = ProcessorTestHarness.run(
                 new JaxRsPipelineProcessor(),
-                pathResourceFixture(TP003_A_PKG),
-                tp003PublicApiFixture(),
-                pathResourceFixture(TP003_B_PKG),
-                tp003OtherApiFixture());
-        logDiagnostics("TP-003 single-unit duplicate", result);
+                pathResourceFixture(FIRST_APP_PKG),
+                publicApiFixture(),
+                pathResourceFixture(SECOND_APP_PKG),
+                otherApiFixture());
+        logDiagnostics("duplicate name in one unit", result);
         result.assertFailed();
-        String publicApiFqn = TP003_A_PKG + ".PublicApi";
-        String otherApiFqn = TP003_B_PKG + ".OtherApi";
+        String publicApiFqn = FIRST_APP_PKG + ".PublicApi";
+        String otherApiFqn = SECOND_APP_PKG + ".OtherApi";
         boolean found = result.compilation().errors().stream()
                 .map(d -> d.getMessage(null))
                 .filter(Objects::nonNull)
@@ -360,44 +360,44 @@ class RestApplicationDeclarationTest {
                         + diagnosticsSummary(result));
     }
 
-    private void tp003SeparateCompilationsSucceed() {
+    private void duplicateNameInSeparateUnitsSucceeds() {
         var resultA = ProcessorTestHarness.run(
-                new JaxRsPipelineProcessor(), pathResourceFixture(TP003_A_PKG), tp003PublicApiFixture());
-        logDiagnostics("TP-003 separate (a)", resultA);
+                new JaxRsPipelineProcessor(), pathResourceFixture(FIRST_APP_PKG), publicApiFixture());
+        logDiagnostics("duplicate name, PublicApi unit", resultA);
         resultA.assertSuccess();
-        resultA.assertGeneratedSourceContains(TP003_A_PKG + ".GeneratedJaxRsResourcesModule", "PublicApi.class");
+        resultA.assertGeneratedSourceContains(FIRST_APP_PKG + ".GeneratedJaxRsResourcesModule", "PublicApi.class");
 
         var resultB = ProcessorTestHarness.run(
-                new JaxRsPipelineProcessor(), pathResourceFixture(TP003_B_PKG), tp003OtherApiFixture());
-        logDiagnostics("TP-003 separate (b)", resultB);
+                new JaxRsPipelineProcessor(), pathResourceFixture(SECOND_APP_PKG), otherApiFixture());
+        logDiagnostics("duplicate name, OtherApi unit", resultB);
         resultB.assertSuccess();
-        resultB.assertGeneratedSourceContains(TP003_B_PKG + ".GeneratedJaxRsResourcesModule", "OtherApi.class");
+        resultB.assertGeneratedSourceContains(SECOND_APP_PKG + ".GeneratedJaxRsResourcesModule", "OtherApi.class");
     }
 
-    private void tp003ControlUnitWithDistinctNamesSucceeds() {
+    private void distinctNamesInOneUnitSucceed() {
         JavaFileObject controlApi =
-                SourceFiles.inline(TP003_CONTROL_PKG + ".ControlApi", """
+                SourceFiles.inline(DISTINCT_NAMES_PKG + ".ControlApi", """
                 package %s;
 
                 import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "api", path = "/api", resources = PathResource.class)
                 interface ControlApi {}
-                """.formatted(TP003_CONTROL_PKG));
+                """.formatted(DISTINCT_NAMES_PKG));
         JavaFileObject controlApi2 =
-                SourceFiles.inline(TP003_CONTROL_PKG + ".ControlApi2", """
+                SourceFiles.inline(DISTINCT_NAMES_PKG + ".ControlApi2", """
                 package %s;
 
                 import dev.vertique.rest.core.application.RestApplication;
 
                 @RestApplication(name = "api2", path = "/api2", resources = PathResource.class)
                 interface ControlApi2 {}
-                """.formatted(TP003_CONTROL_PKG));
+                """.formatted(DISTINCT_NAMES_PKG));
         var result = ProcessorTestHarness.run(
-                new JaxRsPipelineProcessor(), pathResourceFixture(TP003_CONTROL_PKG), controlApi, controlApi2);
-        logDiagnostics("TP-003 control", result);
+                new JaxRsPipelineProcessor(), pathResourceFixture(DISTINCT_NAMES_PKG), controlApi, controlApi2);
+        logDiagnostics("distinct names in one unit", result);
         result.assertSuccess();
-        String moduleFqn = TP003_CONTROL_PKG + ".GeneratedJaxRsResourcesModule";
+        String moduleFqn = DISTINCT_NAMES_PKG + ".GeneratedJaxRsResourcesModule";
         result.assertGeneratedSourceContains(moduleFqn, "ControlApi.class");
         result.assertGeneratedSourceContains(moduleFqn, "ControlApi2.class");
     }
@@ -449,14 +449,14 @@ class RestApplicationDeclarationTest {
         List<Arguments> arguments = new ArrayList<>();
         for (int i = 0; i < raw.size(); i++) {
             PathCase testCase = raw.get(i);
-            arguments.add(Arguments.of(testCase.label(), testCase, "dev.vertique.test.tp004.p" + i));
+            arguments.add(Arguments.of(testCase.label(), testCase, "dev.vertique.test.declaration.path.p" + i));
         }
         return arguments.stream();
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("pathCases")
-    @DisplayName("TP-004 — application paths are normalized and rest-024's rejected paths fail naming the rule")
+    @DisplayName("application paths are normalized and rest-024's rejected paths fail naming the rule")
     void applicationPathsFollowTheApplicationPathGrammar(String label, PathCase testCase, String packageName) {
         String moduleFqn = packageName + ".GeneratedJaxRsResourcesModule";
         String apiFqn = packageName + ".Api";
@@ -464,7 +464,7 @@ class RestApplicationDeclarationTest {
                 new JaxRsPipelineProcessor(),
                 pathResourceFixture(packageName),
                 pathFixture(packageName, testCase.pathLiteralOrNull()));
-        logDiagnostics("TP-004 " + label, result);
+        logDiagnostics("application path " + label, result);
         switch (testCase.outcome()) {
             case REJECTED -> {
                 result.assertFailed();
@@ -510,23 +510,23 @@ class RestApplicationDeclarationTest {
     // -----------------------------------------------------------------------------------------
 
     @Test
-    @DisplayName("TP-005 — listed resources must be concrete @Path resource classes, listed once")
+    @DisplayName("listed resources must be concrete @Path resource classes, listed once")
     void listedResourcesMustBeConcretePathResources() {
         assertAll(
-                "TP-005 rows",
-                () -> tp005InterfaceResourceRejected(),
-                () -> tp005AbstractResourceRejected(),
-                () -> tp005ProviderResourceRejected(),
-                () -> tp005FeatureResourceRejected(),
-                () -> tp005DynamicFeatureResourceRejected(),
-                () -> tp005NoEffectivePathResourceRejected(),
-                () -> tp005DuplicateResourceRejected(),
-                () -> tp005PathResourceAccepted(),
-                () -> tp005InterfaceInheritedPathResourceAccepted());
+                "listed resources",
+                () -> interfaceResourceRejected(),
+                () -> abstractResourceRejected(),
+                () -> providerResourceRejected(),
+                () -> featureResourceRejected(),
+                () -> dynamicFeatureResourceRejected(),
+                () -> noEffectivePathResourceRejected(),
+                () -> duplicateResourceRejected(),
+                () -> pathResourceAccepted(),
+                () -> interfaceInheritedPathResourceAccepted());
     }
 
-    private void tp005InterfaceResourceRejected() {
-        String pkg = "dev.vertique.test.tp005.iface";
+    private void interfaceResourceRejected() {
+        String pkg = "dev.vertique.test.declaration.resources.iface";
         JavaFileObject ifaceResource = SourceFiles.inline(pkg + ".IfaceResource", """
                 package %s;
 
@@ -544,12 +544,12 @@ class RestApplicationDeclarationTest {
                 interface Api {}
                 """.formatted(pkg));
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), ifaceResource, api);
-        logDiagnostics("TP-005 interface resource", result);
+        logDiagnostics("listedinterface resource", result);
         assertErrorNamesTypeAndContainsAll(result, pkg + ".Api", "IfaceResource");
     }
 
-    private void tp005AbstractResourceRejected() {
-        String pkg = "dev.vertique.test.tp005.abstractclass";
+    private void abstractResourceRejected() {
+        String pkg = "dev.vertique.test.declaration.resources.abstractclass";
         JavaFileObject abstractResource = SourceFiles.inline(pkg + ".AbstractResource", """
                 package %s;
 
@@ -567,12 +567,12 @@ class RestApplicationDeclarationTest {
                 interface Api {}
                 """.formatted(pkg));
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), abstractResource, api);
-        logDiagnostics("TP-005 abstract resource", result);
+        logDiagnostics("listedabstract resource", result);
         assertErrorNamesTypeAndContainsAll(result, pkg + ".Api", "AbstractResource");
     }
 
-    private void tp005ProviderResourceRejected() {
-        String pkg = "dev.vertique.test.tp005.provider";
+    private void providerResourceRejected() {
+        String pkg = "dev.vertique.test.declaration.resources.provider";
         JavaFileObject providerResource = SourceFiles.inline(pkg + ".ProviderResource", """
                 package %s;
 
@@ -592,12 +592,12 @@ class RestApplicationDeclarationTest {
                 interface Api {}
                 """.formatted(pkg));
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), providerResource, api);
-        logDiagnostics("TP-005 provider resource", result);
+        logDiagnostics("listedprovider resource", result);
         assertErrorNamesTypeAndContainsAll(result, pkg + ".Api", "ProviderResource");
     }
 
-    private void tp005FeatureResourceRejected() {
-        String pkg = "dev.vertique.test.tp005.feature";
+    private void featureResourceRejected() {
+        String pkg = "dev.vertique.test.declaration.resources.feature";
         JavaFileObject featureResource = SourceFiles.inline(pkg + ".FeatureResource", """
                 package %s;
 
@@ -622,12 +622,12 @@ class RestApplicationDeclarationTest {
                 interface Api {}
                 """.formatted(pkg));
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), featureResource, api);
-        logDiagnostics("TP-005 Feature resource", result);
+        logDiagnostics("listedFeature resource", result);
         assertErrorNamesTypeAndContainsAll(result, pkg + ".Api", "FeatureResource");
     }
 
-    private void tp005DynamicFeatureResourceRejected() {
-        String pkg = "dev.vertique.test.tp005.dynamicfeature";
+    private void dynamicFeatureResourceRejected() {
+        String pkg = "dev.vertique.test.declaration.resources.dynamicfeature";
         JavaFileObject dynamicFeatureResource = SourceFiles.inline(pkg + ".DynamicFeatureResource", """
                 package %s;
 
@@ -651,12 +651,12 @@ class RestApplicationDeclarationTest {
                 interface Api {}
                 """.formatted(pkg));
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), dynamicFeatureResource, api);
-        logDiagnostics("TP-005 DynamicFeature resource", result);
+        logDiagnostics("listedDynamicFeature resource", result);
         assertErrorNamesTypeAndContainsAll(result, pkg + ".Api", "DynamicFeatureResource");
     }
 
-    private void tp005NoEffectivePathResourceRejected() {
-        String pkg = "dev.vertique.test.tp005.nopath";
+    private void noEffectivePathResourceRejected() {
+        String pkg = "dev.vertique.test.declaration.resources.nopath";
         JavaFileObject noPathResource = SourceFiles.inline(pkg + ".NoPathResource", """
                 package %s;
 
@@ -671,12 +671,12 @@ class RestApplicationDeclarationTest {
                 interface Api {}
                 """.formatted(pkg));
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), noPathResource, api);
-        logDiagnostics("TP-005 no-effective-path resource", result);
+        logDiagnostics("listedno-effective-path resource", result);
         assertErrorNamesTypeAndContainsAll(result, pkg + ".Api", "NoPathResource");
     }
 
-    private void tp005DuplicateResourceRejected() {
-        String pkg = "dev.vertique.test.tp005.duplicate";
+    private void duplicateResourceRejected() {
+        String pkg = "dev.vertique.test.declaration.resources.duplicate";
         JavaFileObject pathResource = pathResourceFixture(pkg);
         JavaFileObject api = SourceFiles.inline(pkg + ".Api", """
                 package %s;
@@ -687,20 +687,20 @@ class RestApplicationDeclarationTest {
                 interface Api {}
                 """.formatted(pkg));
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), pathResource, api);
-        logDiagnostics("TP-005 duplicate resource", result);
+        logDiagnostics("listedduplicate resource", result);
         assertErrorNamesTypeAndContainsAll(result, pkg + ".Api", "PathResource");
     }
 
-    private void tp005PathResourceAccepted() {
-        String pkg = "dev.vertique.test.tp005.accepted";
+    private void pathResourceAccepted() {
+        String pkg = "dev.vertique.test.declaration.resources.accepted";
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), pathResourceFixture(pkg), apiFixture(pkg));
-        logDiagnostics("TP-005 accepted PathResource", result);
+        logDiagnostics("listedaccepted PathResource", result);
         result.assertSuccess();
         result.assertGeneratedSourceContains(pkg + ".GeneratedJaxRsResourcesModule", "PathResource.class");
     }
 
-    private void tp005InterfaceInheritedPathResourceAccepted() {
-        String pkg = "dev.vertique.test.tp005.inherited";
+    private void interfaceInheritedPathResourceAccepted() {
+        String pkg = "dev.vertique.test.declaration.resources.inherited";
         JavaFileObject contract = SourceFiles.inline(pkg + ".InheritedPathContract", """
                 package %s;
 
@@ -723,7 +723,7 @@ class RestApplicationDeclarationTest {
                 interface Api {}
                 """.formatted(pkg));
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), contract, resource, api);
-        logDiagnostics("TP-005 accepted interface-inherited @Path", result);
+        logDiagnostics("listedaccepted interface-inherited @Path", result);
         result.assertSuccess();
         result.assertGeneratedSourceContains(pkg + ".GeneratedJaxRsResourcesModule", "InheritedPathResource.class");
     }
@@ -733,20 +733,20 @@ class RestApplicationDeclarationTest {
     // -----------------------------------------------------------------------------------------
 
     @Test
-    @DisplayName("TP-006 — membership is exactly one form, and discovery stands alone in its unit")
+    @DisplayName("membership is exactly one form, and discovery stands alone in its unit")
     void membershipIsExactlyOneFormAndDiscoveryIsAlone() {
         assertAll(
-                "TP-006 cases",
-                () -> tp006BothFormsFails(),
-                () -> tp006NeitherFormFails(),
-                () -> tp006DiscoveryBesideAnotherFails(),
-                () -> tp006DiscoveryBesideConditionalAnotherFails(),
-                () -> tp006SeparateCompilationsSucceed(),
-                () -> tp006SoleDiscoveryUnitCompiles());
+                "membership forms",
+                () -> bothMembershipFormsFail(),
+                () -> neitherMembershipFormFails(),
+                () -> discoveryBesideAnotherFails(),
+                () -> discoveryBesideConditionalAnotherFails(),
+                () -> discoveryInSeparateUnitsSucceeds(),
+                () -> soleDiscoveryUnitCompiles());
     }
 
-    private void tp006BothFormsFails() {
-        String pkg = "dev.vertique.test.tp006.bothforms";
+    private void bothMembershipFormsFail() {
+        String pkg = "dev.vertique.test.declaration.membership.bothforms";
         JavaFileObject api = SourceFiles.inline(pkg + ".Api", """
                 package %s;
 
@@ -756,12 +756,12 @@ class RestApplicationDeclarationTest {
                 interface Api {}
                 """.formatted(pkg));
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), pathResourceFixture(pkg), api);
-        logDiagnostics("TP-006 both forms", result);
+        logDiagnostics("membership:both forms", result);
         assertErrorNamesTypeAndContainsAll(result, pkg + ".Api", "exactly one of");
     }
 
-    private void tp006NeitherFormFails() {
-        String pkg = "dev.vertique.test.tp006.neitherform";
+    private void neitherMembershipFormFails() {
+        String pkg = "dev.vertique.test.declaration.membership.neitherform";
         JavaFileObject api = SourceFiles.inline(pkg + ".Api", """
                 package %s;
 
@@ -771,12 +771,12 @@ class RestApplicationDeclarationTest {
                 interface Api {}
                 """.formatted(pkg));
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), pathResourceFixture(pkg), api);
-        logDiagnostics("TP-006 neither form", result);
+        logDiagnostics("membership:neither form", result);
         assertErrorNamesTypeAndContainsAll(result, pkg + ".Api", "exactly one of");
     }
 
-    private void tp006DiscoveryBesideAnotherFails() {
-        String pkg = "dev.vertique.test.tp006.beside";
+    private void discoveryBesideAnotherFails() {
+        String pkg = "dev.vertique.test.declaration.membership.beside";
         JavaFileObject discoverOnly = SourceFiles.inline(pkg + ".DiscoverOnly", """
                 package %s;
 
@@ -787,7 +787,7 @@ class RestApplicationDeclarationTest {
                 """.formatted(pkg));
         var result = ProcessorTestHarness.run(
                 new JaxRsPipelineProcessor(), pathResourceFixture(pkg), apiFixture(pkg), discoverOnly);
-        logDiagnostics("TP-006 discovery beside another", result);
+        logDiagnostics("membership:discovery beside another", result);
         result.assertFailed();
         boolean namesDiscoverOnly = result.compilation().errors().stream()
                 .map(d -> d.getMessage(null))
@@ -798,8 +798,8 @@ class RestApplicationDeclarationTest {
                 () -> "Expected an ERROR naming '" + pkg + ".DiscoverOnly'" + diagnosticsSummary(result));
     }
 
-    private void tp006DiscoveryBesideConditionalAnotherFails() {
-        String pkg = "dev.vertique.test.tp006.besideconditional";
+    private void discoveryBesideConditionalAnotherFails() {
+        String pkg = "dev.vertique.test.declaration.membership.besideconditional";
         JavaFileObject discoverOnly = SourceFiles.inline(pkg + ".DiscoverOnly", """
                 package %s;
 
@@ -814,13 +814,13 @@ class RestApplicationDeclarationTest {
                 import dev.vertique.codegen.ConditionalOnProperty;
                 import dev.vertique.rest.core.application.RestApplication;
 
-                @ConditionalOnProperty(name = "tp006.api.enabled")
+                @ConditionalOnProperty(name = "membership.api.enabled")
                 @RestApplication(name = "api", path = "/api", resources = PathResource.class)
                 interface Api {}
                 """.formatted(pkg));
         var result = ProcessorTestHarness.run(
                 new JaxRsPipelineProcessor(), pathResourceFixture(pkg), conditionalApi, discoverOnly);
-        logDiagnostics("TP-006 discovery beside conditional another", result);
+        logDiagnostics("membership:discovery beside conditional another", result);
         result.assertFailed();
         boolean namesDiscoverOnly = result.compilation().errors().stream()
                 .map(d -> d.getMessage(null))
@@ -831,9 +831,9 @@ class RestApplicationDeclarationTest {
                 () -> "Expected an ERROR naming '" + pkg + ".DiscoverOnly'" + diagnosticsSummary(result));
     }
 
-    private void tp006SeparateCompilationsSucceed() {
-        String discoverPkg = "dev.vertique.test.tp006.separate.discover";
-        String apiPkg = "dev.vertique.test.tp006.separate.api";
+    private void discoveryInSeparateUnitsSucceeds() {
+        String discoverPkg = "dev.vertique.test.declaration.membership.separate.discover";
+        String apiPkg = "dev.vertique.test.declaration.membership.separate.api";
         JavaFileObject discoverOnly = SourceFiles.inline(discoverPkg + ".DiscoverOnly", """
                 package %s;
 
@@ -843,17 +843,17 @@ class RestApplicationDeclarationTest {
                 interface DiscoverOnly {}
                 """.formatted(discoverPkg));
         var discoverResult = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), discoverOnly);
-        logDiagnostics("TP-006 separate (discover)", discoverResult);
+        logDiagnostics("membership:separate (discover)", discoverResult);
         discoverResult.assertSuccess();
 
         var apiResult =
                 ProcessorTestHarness.run(new JaxRsPipelineProcessor(), pathResourceFixture(apiPkg), apiFixture(apiPkg));
-        logDiagnostics("TP-006 separate (api)", apiResult);
+        logDiagnostics("membership:separate (api)", apiResult);
         apiResult.assertSuccess();
     }
 
-    private void tp006SoleDiscoveryUnitCompiles() {
-        String pkg = "dev.vertique.test.tp006.alone";
+    private void soleDiscoveryUnitCompiles() {
+        String pkg = "dev.vertique.test.declaration.membership.alone";
         JavaFileObject discoverOnly = SourceFiles.inline(pkg + ".DiscoverOnly", """
                 package %s;
 
@@ -863,7 +863,7 @@ class RestApplicationDeclarationTest {
                 interface DiscoverOnly {}
                 """.formatted(pkg));
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), discoverOnly);
-        logDiagnostics("TP-006 sole discovery unit", result);
+        logDiagnostics("membership:sole discovery unit", result);
         result.assertSuccess();
         String moduleFqn = pkg + ".GeneratedJaxRsResourcesModule";
         Class<?> declaringType = result.loadGeneratedClass(pkg + ".DiscoverOnly");
@@ -916,16 +916,16 @@ class RestApplicationDeclarationTest {
     // -----------------------------------------------------------------------------------------
 
     @TestFactory
-    @DisplayName("TP-008 — opted-out declarations are not registered and are named in one warning")
+    @DisplayName("opted-out declarations are not registered and are named in one warning")
     Stream<DynamicTest> optedOutDeclarationsAreNotRegisteredAndWarn() {
         return Stream.of(
-                DynamicTest.dynamicTest("(a) @NoAutoWire declaration is inert", this::tp008RowA),
-                DynamicTest.dynamicTest("(b) autoWire=false suppresses registration and warns", this::tp008RowB),
-                DynamicTest.dynamicTest("(c) autoWire=false still validates other declarations", this::tp008RowC));
+                DynamicTest.dynamicTest("@NoAutoWire declaration is inert", this::noAutoWireIsInert),
+                DynamicTest.dynamicTest("autoWire=false suppresses registration and warns", this::autoWireFalseWarns),
+                DynamicTest.dynamicTest("autoWire=false still validates other declarations", this::validatesOthers));
     }
 
-    private void tp008RowA() {
-        String pkg = "dev.vertique.test.tp008.a";
+    private void noAutoWireIsInert() {
+        String pkg = "dev.vertique.test.declaration.optout.noautowire";
         JavaFileObject off = SourceFiles.inline(pkg + ".Off", """
                 package %s;
 
@@ -938,7 +938,7 @@ class RestApplicationDeclarationTest {
                 """.formatted(pkg));
         var result =
                 ProcessorTestHarness.run(new JaxRsPipelineProcessor(), pathResourceFixture(pkg), apiFixture(pkg), off);
-        logDiagnostics("TP-008 (a)", result);
+        logDiagnostics("@NoAutoWire declaration is inert", result);
         result.assertSuccess();
         assertEquals(0, result.compilation().errors().size(), "Expected no error for Off" + diagnosticsSummary(result));
         long offWarnings = messagesOf(result.compilation().warnings()).stream()
@@ -954,14 +954,14 @@ class RestApplicationDeclarationTest {
         result.assertGeneratedSourceDoesNotContain(moduleFqn, "Off.class");
     }
 
-    private void tp008RowB() {
-        String pkg = "dev.vertique.test.tp008.b";
+    private void autoWireFalseWarns() {
+        String pkg = "dev.vertique.test.declaration.optout.autowirefalse";
         var result = ProcessorTestHarness.run(
                 new JaxRsPipelineProcessor(),
                 Map.of("vertique.codegen.autoWire", "false"),
                 pathResourceFixture(pkg),
                 apiFixture(pkg));
-        logDiagnostics("TP-008 (b)", result);
+        logDiagnostics("autoWire=false suppresses registration", result);
         result.assertSuccess();
         long apiWarnings = messagesOf(result.compilation().warnings()).stream()
                 .filter(m -> m.contains("Api") && m.contains("is not registered"))
@@ -978,8 +978,8 @@ class RestApplicationDeclarationTest {
                 () -> "Expected no module written under autoWire=false" + diagnosticsSummary(result));
     }
 
-    private void tp008RowC() {
-        String pkg = "dev.vertique.test.tp008.c";
+    private void validatesOthers() {
+        String pkg = "dev.vertique.test.declaration.optout.autowirefalsevalidates";
         JavaFileObject badName = SourceFiles.inline(pkg + ".BadName", """
                 package %s;
 
@@ -993,7 +993,7 @@ class RestApplicationDeclarationTest {
                 Map.of("vertique.codegen.autoWire", "false"),
                 pathResourceFixture(pkg),
                 badName);
-        logDiagnostics("TP-008 (c)", result);
+        logDiagnostics("autoWire=false still validates", result);
         assertErrorNamesTypeAndContainsAll(result, pkg + ".BadName", GRAMMAR_PHRASE);
     }
 
@@ -1015,10 +1015,16 @@ class RestApplicationDeclarationTest {
     }
 
     private static Stream<AccessibilityCase> accessibilityCases() {
-        return Stream.of(tp010RowA(), tp010RowB(), tp010RowC(), tp010RowD(), tp010RowE(), tp010RowF());
+        return Stream.of(
+                hiddenDeclarationCase(),
+                samePackageDeclarationCase(),
+                nestedInHiddenTypeCase(),
+                hiddenResourceCase(),
+                publicOtherResourceCase(),
+                disjointOriginsCase());
     }
 
-    private static AccessibilityCase tp010RowA() {
+    private static AccessibilityCase hiddenDeclarationCase() {
         JavaFileObject pathResource = pathResourceFixture("acc");
         JavaFileObject hiddenApi = SourceFiles.inline("acc.apps.HiddenApi", """
                 package acc.apps;
@@ -1030,11 +1036,11 @@ class RestApplicationDeclarationTest {
                 interface HiddenApi {}
                 """);
         return new AccessibilityCase(
-                "(a) package-private declaration outside the module's package",
+                "package-private declaration outside the module's package",
                 List.of(pathResource, hiddenApi),
                 Map.of(),
                 (result, recorder) -> assertAll(
-                        "TP-010 (a)",
+                        "hidden declaration",
                         () -> assertErrorNamesTypeAndContainsAll(
                                 result,
                                 "acc.apps.HiddenApi",
@@ -1043,7 +1049,7 @@ class RestApplicationDeclarationTest {
                         () -> assertNoRegistrationEmitted(recorder, ACC_MODULE, "acc.apps.HiddenApi")));
     }
 
-    private static AccessibilityCase tp010RowB() {
+    private static AccessibilityCase samePackageDeclarationCase() {
         JavaFileObject pathResource = pathResourceFixture("acc");
         JavaFileObject samePackageApi = SourceFiles.inline("acc.SamePackageApi", """
                 package acc;
@@ -1054,7 +1060,7 @@ class RestApplicationDeclarationTest {
                 interface SamePackageApi {}
                 """);
         return new AccessibilityCase(
-                "(b) package-private declaration in the module's own package",
+                "package-private declaration in the module's own package",
                 List.of(pathResource, samePackageApi),
                 Map.of(),
                 (result, recorder) -> {
@@ -1063,7 +1069,7 @@ class RestApplicationDeclarationTest {
                 });
     }
 
-    private static AccessibilityCase tp010RowC() {
+    private static AccessibilityCase nestedInHiddenTypeCase() {
         JavaFileObject pathResource = pathResourceFixture("acc");
         JavaFileObject holder = SourceFiles.inline("acc.apps.Holder", """
                 package acc.apps;
@@ -1078,18 +1084,18 @@ class RestApplicationDeclarationTest {
                 }
                 """);
         return new AccessibilityCase(
-                "(c) public declaration nested in a package-private enclosing type",
+                "public declaration nested in a package-private enclosing type",
                 List.of(pathResource, holder),
                 Map.of(),
                 (result, recorder) -> assertAll(
-                        "TP-010 (c)",
+                        "declaration nested in a hidden type",
                         () -> assertErrorNamesTypeAndContainsAll(
                                 result, "acc.apps.Holder$Inner", "its enclosing type acc.apps.Holder is not public"),
                         () -> assertNoErrorInGeneratedModuleSource(result, ACC_MODULE),
                         () -> assertNoRegistrationEmitted(recorder, ACC_MODULE, "acc.apps.Holder$Inner")));
     }
 
-    private static AccessibilityCase tp010RowD() {
+    private static AccessibilityCase hiddenResourceCase() {
         JavaFileObject pathResource = pathResourceFixture("acc");
         JavaFileObject privateResource = SourceFiles.inline("acc.other.PrivateResource", """
                 package acc.other;
@@ -1108,11 +1114,11 @@ class RestApplicationDeclarationTest {
                 public interface HasPrivateResource {}
                 """);
         return new AccessibilityCase(
-                "(d) listed resource not accessible from the module's package",
+                "listed resource not accessible from the module's package",
                 List.of(pathResource, privateResource, hasPrivateResource),
                 Map.of(),
                 (result, recorder) -> assertAll(
-                        "TP-010 (d)",
+                        "hidden listed resource",
                         () -> assertErrorNamesTypeAndContainsAll(
                                 result,
                                 "acc.other.PrivateResource",
@@ -1121,7 +1127,7 @@ class RestApplicationDeclarationTest {
                         () -> assertNoRegistrationEmitted(recorder, ACC_MODULE, "acc.other.HasPrivateResource")));
     }
 
-    private static AccessibilityCase tp010RowE() {
+    private static AccessibilityCase publicOtherResourceCase() {
         JavaFileObject pathResource = pathResourceFixture("acc");
         JavaFileObject publicOtherResource = SourceFiles.inline("acc.other.PublicOtherResource", """
                 package acc.other;
@@ -1141,7 +1147,7 @@ class RestApplicationDeclarationTest {
                 public interface HasPublicOtherResource {}
                 """);
         return new AccessibilityCase(
-                "(e) public declaration listing a public resource of another package",
+                "public declaration listing a public resource of another package",
                 List.of(pathResource, publicOtherResource, hasPublicOtherResource),
                 Map.of(),
                 (result, recorder) -> {
@@ -1150,7 +1156,7 @@ class RestApplicationDeclarationTest {
                 });
     }
 
-    private static AccessibilityCase tp010RowF() {
+    private static AccessibilityCase disjointOriginsCase() {
         JavaFileObject acmeResource = SourceFiles.inline("com.acme.api.AcmeResource", """
                 package com.acme.api;
 
@@ -1192,11 +1198,11 @@ class RestApplicationDeclarationTest {
                 interface DisjointApi {}
                 """);
         return new AccessibilityCase(
-                "(f) autoWire=false with disjoint origin packages and no resolvable module package",
+                "autoWire=false with disjoint origin packages and no resolvable module package",
                 List.of(acmeResource, partnerResource, disjointApi),
                 Map.of("vertique.codegen.autoWire", "false"),
                 (result, recorder) -> assertAll(
-                        "TP-010 (f)",
+                        "disjoint origin packages",
                         () -> assertErrorNamesTypeAndContainsAll(
                                 result,
                                 "com.acme.app.DisjointApi",
@@ -1207,14 +1213,14 @@ class RestApplicationDeclarationTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("accessibilityCases")
-    @DisplayName("TP-010 — the declaring interface and listed resources must be accessible from the module")
+    @DisplayName("the declaring interface and listed resources must be accessible from the module")
     void declaringInterfaceAndListedResourcesMustBeAccessible(AccessibilityCase testCase) {
         GeneratedModuleRecorder recorder = new GeneratedModuleRecorder();
         var result = ProcessorTestHarness.run(
                 List.<Processor>of(new JaxRsPipelineProcessor(), recorder),
                 testCase.options(),
                 testCase.sources().toArray(new JavaFileObject[0]));
-        logDiagnostics("TP-010 " + testCase.label(), result);
+        logDiagnostics("accessibility " + testCase.label(), result);
         testCase.verify().accept(result, recorder);
     }
 
