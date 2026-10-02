@@ -29,6 +29,10 @@ carry the documentation of their Swagger annotations (see
 declares, and `components.securitySchemes` describes exactly the schemes they reference (see
 [Operation Security](#operation-security)).
 
+An application that names its own OpenAPI contract (`@RestApplication.openapiPath` or
+`jaxrs.applications.<name>.openapiPath`) gets no generated document: its contract is checked against
+its routes at startup and served as parsed (see [Served Contracts](#served-contracts)).
+
 The module serves documents only. It has no UI, no assets, and no other route, and `@ApiDocs` is not
 API protection: it does not change who may call any operation of the application.
 
@@ -48,7 +52,9 @@ Three things switch a document on; all three are required:
    [Protected Documents](#protected-documents)).
 3. The document has an `info` with a non-blank `title` and `version`, from
    `apidocs.documents.<name>.info` or from `@OpenAPIDefinition(info)` on the declaring interface,
-   where `<name>` is the application's `name` (see [Configuration](#configuration)).
+   where `<name>` is the application's `name` (see [Configuration](#configuration)). This holds
+   for a generated document only: an application that serves its own contract takes its `info`
+   from that contract, and a configured `info` is refused (see [Served Contracts](#served-contracts)).
 
 ```java
 @ApiDocs(access = ApiDocs.Access.PUBLIC)
@@ -303,10 +309,18 @@ shape check of every active application (see [Configuration](#configuration)). W
 ### Startup log lines
 
 - One INFO line per stored document, naming the application, its mount, and the document's source,
-  which is `generated` for every document in this release: `The document of application '<name>'
-  at mount '<mount path>' is stored (source: generated)`.
+  `generated` or `served contract`: `The document of application '<name>' at mount '<mount path>'
+  is stored (source: <source>)`.
+- One INFO line per enabled document, on logger `dev.vertique.rest.openapi.docs.DocumentWarnings`,
+  once per document and component, naming where the document comes from:
+  `apidocs.documents.<name>: the document of application '<name>' is generated`, or, for a
+  [served contract](#served-contracts), `apidocs.documents.<name>: the document of application
+  '<name>' is served from <resolved location>`, where the resolved location is an absolute file
+  path or a classpath resource URL.
 - DEBUG lines from `dev.vertique.rest.openapi.docs` record each assembly (application, mount, elapsed
-  milliseconds; no content) and each comparison between instances.
+  milliseconds; no content), each load of a served contract (`Loaded the served contract of
+  apidocs.documents.<name> at mount '<mount path>' in <n> ms`; no content), and each comparison
+  between instances.
 - One INFO line per protected document whose `@ApiDocs` lists no `rolesAllowed`, on logger
   `dev.vertique.rest.openapi.docs.DocumentWarnings`, once per document and component, logged after
   every document route is installed:
@@ -416,11 +430,264 @@ router. The documentation router is left with no route, and the server never lis
 
 ---
 
+## Served Contracts
+
+An application whose contract location is its own serves that contract as its document. The
+document still needs `@ApiDocs`, is served at the same two URLs with the same access and caching,
+and is stored once per component like a generated document, but nothing in it is assembled from the
+running code.
+
+### When the contract is the document
+
+The application's effective contract location, as `vertique-rest-jaxrs` resolves it, decides:
+
+1. `jaxrs.applications.<name>.openapiPath`, when configured;
+2. otherwise the declaring interface's non-empty `@RestApplication.openapiPath`;
+3. otherwise the shared `jaxrs.openapiPath`.
+
+Under 1 or 2 the document is the contract at that location. Under 3 the document is generated: the
+shared `jaxrs.openapiPath` is never served as a document (see [Startup Checks](#startup-checks) for
+the shared contract under `openapi-contract`).
+
+```java
+@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@RestApplication(name = "partner", path = "/api/partner",
+        openapiPath = "openapi/partner.yaml", resources = {PartnerResource.class})
+public interface PartnerApi {}
+```
+
+The contract supplies its own `info`, so the document needs no `apidocs.documents.<name>` entry. An
+entry may still set `enabled`; a configured `info` or `serverUrl` is refused (see
+[Startup checks of a served contract](#startup-checks-of-a-served-contract)).
+
+### Served as parsed
+
+- **Unchanged.** Both forms are written from the one parsed tree, members in parsed order. Nothing
+  is added, removed, or rewritten: no enrichment, no redaction, no `x-vertique-validation` member,
+  and `openapi`, `info`, and `servers` exactly as written.
+- **JSON and YAML.** The JSON form is compact UTF-8; the YAML form is written with Jackson's default
+  YAML settings. Parsing either form gives a tree equal to the parsed contract. The file's own bytes
+  are not served, so its formatting and YAML comments are not kept.
+- **Entity tags.** Each form carries a strong entity tag computed as for a generated document (see
+  [Responses](#responses)).
+- **Format by extension.** The text after the last `.` of the contract location, compared ignoring
+  letter case, chooses the parser: `json` for JSON, `yaml` or `yml` for YAML. Any other extension,
+  or none, is refused before the location is read. A JSON contract with content after its one JSON
+  value is refused as not valid JSON.
+
+### Where the contract is read from
+
+The location is read through the Vert.x file system, as the `openapi-contract` request-validation
+strategy reads it, so both read the same file:
+
+- **Absolute path.** That file.
+- **Relative path.** The working-directory file of that name when one exists, otherwise the
+  classpath resource of that name.
+- **Shadowing.** When a relative path names a working-directory file while a classpath resource of
+  the same name also exists, the file shadows the resource: it is served, and under
+  `openapi-contract` it is the contract requests are validated against. A WARN says so (see
+  [Warnings of a served contract](#warnings-of-a-served-contract)). Keep the working directory
+  controlled: a file placed there replaces the packaged contract.
+- **Resolved location.** The startup INFO line names where the contract resolved: a file as its
+  absolute, normalized path (symbolic links not resolved), a classpath resource as its class-loader
+  URL (see [Startup log lines](#startup-log-lines)).
+
+### Loaded once
+
+- **Once per component.** The contract is read, parsed, and checked when the application's mount
+  publishes, on a worker thread, once per component however many server instances it deploys. Every
+  other instance compares its own mount as for a generated document (see
+  [Several server instances](#several-server-instances)).
+- **Frozen.** The stored bytes never change: an edit to the file after the load is not served.
+- **Retry after failure.** A failed load fails every instance waiting on it and is discarded, so a
+  later deployment in the same component loads the contract again.
+- **Nothing fetched.** No reference is followed outside the document, and no URL in it is resolved.
+
+### Startup checks of a served contract
+
+Every check below stops startup. The checks run in three stages.
+
+**Document selection.** While the enabled documents are selected, metadata that would rewrite the
+contract fails with a `ConfigurationException`, checked in this order, the first one found failing:
+a configured `apidocs.documents.<name>.info`, a configured `apidocs.documents.<name>.serverUrl`, and
+an `@OpenAPIDefinition` on the declaring interface itself. A configured value counts whatever it
+holds, and none is echoed:
+
+```text
+Application '<name>' (declared by <interface>) serves its own OpenAPI contract as its document, but
+configures 'apidocs.documents.<name>.info', which would rewrite that contract; the served document
+is never rewritten, so remove it
+```
+
+**Composition.** Before any router is created, the composition validator reports, in the
+`HttpVerticle`'s `Invalid mount configuration:` list:
+
+- **One location for two documents.** Two or more enabled documents whose applications serve their
+  own contracts from one location: `apidocs.documents: applications '<a>', '<b>' serve documents
+  with one contract location; each application serving its own contract as its document needs a
+  contract location of its own`. Locations are compared after path normalization, so `./a.yaml`
+  and `a.yaml` are one location, while an absolute path and a relative path naming the same file
+  stay distinct.
+- **Unparsable location.** A location that cannot be parsed as a path: `apidocs.documents.<name>:
+  application '<name>' (declared by <interface>) serves its own contract as its document, but its
+  contract location (<setting>) cannot be parsed as a path`.
+
+Neither names the location. `<setting>` is `@RestApplication.openapiPath on <interface>` or
+`jaxrs.applications.<name>.openapiPath`.
+
+**Load.** When the mount publishes, a `RestConfigurationException` starting
+`apidocs.documents.<name>: the contract of application '<name>' (<setting>)` and ending:
+
+- `at '<location>' has an unsupported extension; a contract location ends with .json, .yaml, or
+  .yml`;
+- `cannot be read`;
+- `is not valid JSON` or `is not valid YAML`.
+
+No cause is attached: neither the message nor a cause carries the file system's or the parser's
+text, or any byte of the file.
+
+**Content.** The parsed contract is then checked against the mount's routed operations. Every
+violation found is reported in one `RestConfigurationException`, sorted and joined by `; `:
+`The served contract of application '<name>' is refused: <violations>`.
+
+| Refused | Violation |
+|---|---|
+| The root is not an object, or `openapi` is not a string `3.0.<n>` or `3.1.<n>`; OpenAPI 3.2 is not accepted, nor a version without its patch number | `the document root must be OpenAPI 3.0 or 3.1, and it is not an object`, or `member /openapi must be OpenAPI 3.0 or 3.1, a string of the form 3.0.<n> or 3.1.<n>` |
+| A string `$ref` anywhere that does not start with `#/` | `member <pointer> is not a local reference: a reference must start with #/` |
+| A member named `operationRef` or `$id` anywhere | `member <pointer> is not allowed in a served contract` |
+| A local reference the checks follow (Path Items, Callback Objects, parameters, request bodies, form schemas) that does not resolve, or that closes a cycle | `the reference at <pointer> does not resolve within the document`, or `... closes a reference cycle` |
+| An Operation Object without a non-blank string `operationId` | `operation object <pointer> has no operationId` |
+| Two Operation Objects with one `operationId` | `operationId '<id>' is repeated at <pointers>` |
+| An `operationId` the mount does not route, anywhere it must name a routed operation (see [Operation ids](#operation-ids)) | `operationId '<id>' is not routed by the mount (at <pointers>)` |
+| A route operation whose HTTP method or path differs from its routed operation | `operation object <pointer> with operationId '<id>' is not bound to its routed operation: its HTTP method or path differs` |
+| A routed operation that is not hidden and has no route operation | `routed operation '<id>' is not described` |
+| A webhook or callback operation that reuses a routed operation id | `webhook or callback operation <pointer> reuses a routed operation id '<id>'` |
+| A parameter, form property, or Link member that describes a hidden input (see [Hidden inputs of a served contract](#hidden-inputs-of-a-served-contract)) | `parameter <pointer> of operation '<id>' describes a hidden input`, and the like |
+| A form request-body schema that is not a plain object schema (see [Form request bodies](#form-request-bodies)) | `form request-body schema <pointer> of operation '<id>' is not a plain object schema` |
+
+- **What a message carries.** Operation ids, JSON Pointers (without a leading `#`), and fixed
+  wording, each control character rendered as a Java-style Unicode escape. Never a description,
+  example, schema, or reference value of the contract.
+- **What names the location.** Only the unsupported-extension refusal, the shadowing warning, and
+  the source INFO line name the contract location or where it resolved.
+
+### Operation ids
+
+Path Items are found under `paths`, under `webhooks`, in Callback Objects (`components.callbacks`
+and the `callbacks` of every operation found), and under `components.pathItems`, following local
+references; `x-` keys under `paths` and in a Callback Object are skipped. Each Operation Object
+(`get`, `put`, `post`, `delete`, `options`, `head`, `patch`, `trace`) is counted once, at its own
+location. Ids are compared exactly.
+
+| Where the `operationId` is | Checks |
+|---|---|
+| A route operation: its Path Item is under `paths`, or reached from there by reference | Must be routed by the mount; bound to that routed operation; checked for hidden inputs and form schemas; describes that routed operation |
+| A webhook or callback operation: its Path Item is otherwise under `webhooks` or in a Callback Object, or reached from there | Must not be a routed id; otherwise not checked against the mount: never bound, and exempt from the unrouted check |
+| Any other Operation Object: an unreferenced `components.pathItems` entry | Must be routed; checked for hidden inputs and form schemas; describes nothing |
+| Any other `operationId` member, such as one in a Link Object or inside an example | Must be routed; in a Link Object, the Link is checked for hidden inputs |
+
+- **Binding.** A route operation's method key must be its routed operation's HTTP method (ASCII
+  case ignored). Every `paths` key that reaches its Path Item, with each `{...}` variable reduced to
+  `{}`, must equal the routed operation's rendered path, either mount-relative (`/items/{id}`) or
+  prefixed by the mount path (`/api/partner/items/{id}`); for the path `/`, the mount path alone is
+  accepted too. Variable names need not match.
+- **Completeness.** Every routed operation that is not hidden needs a route operation.
+- **Hidden operations.** Routed ids include hidden operations, so a hidden operation may be
+  described or left out.
+
+### Hidden inputs of a served contract
+
+A route operation, and any other Operation Object naming a routed operation, is checked against the
+hidden inputs of that routed operation (see [Hidden inputs](#hidden-inputs)):
+
+- **Parameters.** Every Parameter Object of the operation and of the Path Items that hold or
+  reference it, local references followed, is refused when its `in` (ASCII case ignored) and `name`
+  match a hidden input: `path` and `query` names exactly, `header` and `cookie` names ignoring ASCII
+  case, as the runtime binds them.
+- **Form properties.** A property named like a hidden form input, in any schema of the form schema's
+  reference chain.
+- **Links.** Each key of a Link Object's `parameters` is read with an optional `path.`, `query.`,
+  `header.`, or `cookie.` qualifier and refused when it names a hidden input at that location; the
+  whole key is also read as an unqualified name, matched at every parameter location. A Link's
+  `requestBody` is refused when the operation it names has a hidden form input.
+
+### Form request bodies
+
+For each `application/x-www-form-urlencoded` or `multipart/form-data` media type of a checked
+operation's request body (compared without parameters, ignoring ASCII case), the schema, local
+references followed, must be a plain object schema, whether or not the operation hides an input:
+
+- no schema of the reference chain carries `allOf`, `anyOf`, `oneOf`, `not`, `if`, `then`, `else`,
+  `dependentSchemas`, `patternProperties`, `propertyNames`, `additionalProperties`, or
+  `unevaluatedProperties`;
+- the last schema of the chain has a `properties` object, and no schema has a `properties` member
+  that is not an object.
+
+Other keywords, such as `dependencies` or `$dynamicRef`, are not refused, and the runtime may not
+enforce them (see [Contract and runtime](#contract-and-runtime)).
+
+### `externalValue` and other URLs
+
+An example's `externalValue`, `externalDocs.url`, the `servers` URLs, and every other URL of the
+contract are served as written. An `externalValue` is a URL a client of the document may fetch; the
+module never fetches it, nor any other URL or reference. Keep credentials and internal hosts out of
+the contract.
+
+### Warnings of a served contract
+
+All are logged on logger `dev.vertique.rest.openapi.docs.DocumentWarnings`, once per document and
+component, and only once the contract is loaded and checked; a failed load logs none. They follow
+the source INFO line, in this order:
+
+- **Shadowing.** `apidocs.documents.<name>: the contract location '<relative path>' of application
+  '<name>' is relative, and the working-directory file of that name shadows the classpath resource
+  of the same name; the working-directory file is served and validated against`.
+- **`servers`.** When `servers[0].url` is not a string equal to the mount path without its trailing
+  `/*` (`/` for the root mount), no `servers` and an empty array included:
+  `apidocs.documents.<name>: the contract of application '<name>' does not list the mount path
+  '<mount path>' as the url of its first server; the served document is not rewritten`. The
+  contract is served unchanged.
+- **Operations that restrict callers.** For a `PUBLIC` document, the warning of
+  [Operations that restrict callers](#operations-that-restrict-callers), computed from the mount's
+  operations that are not hidden, each path rendered as a generated document renders it. It never
+  reads the contract's `security`, so it names exactly what the generated document of that mount
+  would name.
+
+Each message is one line; it is wrapped here for reading.
+
+### Access and caching
+
+As for a generated document: a `PUBLIC` document is served to any caller, and a `PROTECTED` one
+through the same security chain (see [Protected Documents](#protected-documents)). `Cache-Control`,
+`Vary`, entity tags, and `304` answers follow [Caching](#caching), including its warning that
+targeted cache headers such as `CDN-Cache-Control` are not removed from a protected document
+response. The contract's own `security` and `securitySchemes` change neither who may read the
+document nor how it is cached.
+
+### Contract and runtime
+
+- **Under `web-validation` or `none`.** The contract plays no part in request validation. Nothing
+  checks that the contract's schemas match what the runtime enforces; the startup
+  checks cover operation ids, methods, paths, hidden inputs, and the shape of form schemas only.
+  Keep the contract in step with the code.
+- **Under `openapi-contract`.** The strategy validates requests against the same file the document
+  serves. An application on the shared global `jaxrs.openapiPath` with an enabled document is still
+  refused, with the alternative of serving that file behind an access check (see
+  [Startup Checks](#startup-checks)); an application with its own contract is served.
+- **`servers` under `openapi-contract`.** The strategy needs a contract it validates against to have
+  absolute server URLs or no `servers`: `vertx-openapi` rejects a relative server URL when it builds
+  the contract. The `servers` warning expects `servers[0].url` to equal the mount path, a relative
+  URL. Under `openapi-contract`, omit `servers` and accept the warning, or use an absolute URL.
+
+---
+
 ## Document Content
 
 A document is built from the operations its application's JAX-RS mount publishes, from the
 schemas the mount captured for their inputs, and from the output schemas the module generates for
 their responses (see [Operation Responses](#operation-responses)). Nothing is read from a request.
+This section and the ones that follow describe a generated document; a served contract is served as
+parsed (see [Served Contracts](#served-contracts)).
 
 ### Root members
 
@@ -1483,10 +1750,10 @@ not construct these records.
 | `apidocs.enabled` | boolean | `true` | Global switch. `false` disables every document, and the rest of the `apidocs` subtree is then neither parsed nor checked. Must be a JSON boolean |
 | `apidocs.path` | string | `/apidocs` | Prefix under which documents are served |
 | `apidocs.documents.<name>.enabled` | boolean | absent | `false` disables the document of application `<name>`. Absent or `null` keeps the decision of `@ApiDocs`. `true` is accepted only for an application whose declaring interface carries `@ApiDocs`. A string that is blank or made only of control characters fails startup |
-| `apidocs.documents.<name>.info.title` | string | none | Document title. Required non-blank when `info` is configured; otherwise `info` comes from `@OpenAPIDefinition` on the declaring interface |
-| `apidocs.documents.<name>.info.version` | string | none | Document version. Required non-blank when `info` is configured; otherwise `info` comes from `@OpenAPIDefinition` on the declaring interface |
-| `apidocs.documents.<name>.info.description` | string | absent | Optional description, written to `info` when present |
-| `apidocs.documents.<name>.serverUrl` | string | absent | The document's `servers[0].url`, published exactly as configured, so it must never hold credentials or other secrets. When absent, the mount path without its trailing `/*` (`/` for the root mount) |
+| `apidocs.documents.<name>.info.title` | string | none | Document title. Required non-blank when `info` is configured; otherwise `info` comes from `@OpenAPIDefinition` on the declaring interface. Any `info` is refused for an application that serves its own contract (see [Served Contracts](#served-contracts)) |
+| `apidocs.documents.<name>.info.version` | string | none | Document version. Required non-blank when `info` is configured; otherwise `info` comes from `@OpenAPIDefinition` on the declaring interface. Any `info` is refused for an application that serves its own contract |
+| `apidocs.documents.<name>.info.description` | string | absent | Optional description, written to `info` when present. Any `info` is refused for an application that serves its own contract |
+| `apidocs.documents.<name>.serverUrl` | string | absent | The document's `servers[0].url`, published exactly as configured, so it must never hold credentials or other secrets. When absent, the mount path without its trailing `/*` (`/` for the root mount). Refused for an application that serves its own contract (see [Served Contracts](#served-contracts)) |
 
 Each key under `apidocs.documents` is an application `name`. The document list is a keyed collection:
 the key becomes the entry's `name`.
@@ -1545,7 +1812,9 @@ application is not checked.
 
 ### `info`
 
-Each enabled document needs an `info` with a non-blank `title` and `version`.
+Each enabled generated document needs an `info` with a non-blank `title` and `version`. A served
+contract takes its `info` from the contract, and a configured `info` or an `@OpenAPIDefinition` on
+its declaring interface is refused (see [Served Contracts](#served-contracts)).
 
 - **From configuration.** `apidocs.documents.<name>.info`, when present, is used as a whole and replaces
   the annotation's `info`: it publishes `title`, `description` (when present), and `version`, and no
@@ -1592,7 +1861,9 @@ credentials, internal hosts, or non-`http(s)` schemes in them.
 
 ### `serverUrl`
 
-`apidocs.documents.<name>.serverUrl`, when present on an enabled document, must be one of:
+`apidocs.documents.<name>.serverUrl`, when present on an enabled generated document, must be one of
+the forms below; on a document whose application serves its own contract it is refused whatever it
+holds (see [Served Contracts](#served-contracts)):
 
 - an absolute `http` or `https` URI with a host (the scheme is compared case-insensitively); or
 - an absolute path that starts with a single `/` and has no scheme or authority.
@@ -1668,7 +1939,8 @@ operations from the mount's contract (`openapi-contract`) while that contract is
 `jaxrs.openapiPath` fails startup if it has an enabled document. The shared contract file already is the
 mount's OpenAPI document, so no document is generated for it. Serve that file behind an access check at
 least as strict as the most restricted mount it describes. An application whose contract location is
-its own, from its annotation or its configuration, is not refused by this check.
+its own, from its annotation or its configuration, is not refused by this check: its contract is
+served as its document (see [Served Contracts](#served-contracts)).
 
 **Unvalidated composition.** The docs mount refuses to create its router when the composition validator
 has not checked it, which happens when the `HttpVerticle` is built without composition validators, such
@@ -1709,7 +1981,8 @@ through to later mounts. Keep such handlers pass-through, or have `matches` excl
 Every warning of the module is logged at WARN on logger
 `dev.vertique.rest.openapi.docs.DocumentWarnings` and starts with `apidocs.documents.<name>`. No
 warning carries schema text, an annotation value other than the extension names it lists, or a
-configuration value other than the document name and a mount path. Each is logged at most once per component, so a second composition
+configuration value other than the document name, a mount path, and, for a served contract, its
+contract location (see [Warnings of a served contract](#warnings-of-a-served-contract)). Each is logged at most once per component, so a second composition
 or server instance of the same component does not repeat it.
 
 ### Controls that skip the document routes
@@ -1789,6 +2062,9 @@ operations that restrict callers, and it is served without authentication: <entr
   security annotations, requirement sets, and required actions. Access checks added by router
   hooks, middleware, or interceptors are not detected.
 - **Publication proceeds.** The document is served as usual.
+- **Served contracts.** For a document that is the application's own contract, the entries come
+  from the mount's operations that are not hidden, never from the contract's `security` (see
+  [Warnings of a served contract](#warnings-of-a-served-contract)).
 - **When.** Held back like the metadata warnings and logged last, after every other warning of the
   document, only once the document is written; once per document and component. A protected
   document never logs it, nor does a public document whose operations restrict no caller.
@@ -1799,8 +2075,9 @@ operations that restrict callers, and it is served without authentication: <entr
 
 ### Startup failures
 
-Every failure below stops startup. Each message names what is wrong and never echoes configuration
-values, schema text, references, pattern text, redaction locations, reserved names, or annotation
+Every failure below stops startup. Each message names what is wrong and never echoes contract
+content or configuration values (except the contract location of a served contract with an
+unsupported extension), schema text, references, pattern text, redaction locations, reserved names, or annotation
 values. Messages about the document's content name operation ids, rendered paths, input names,
 component keys, tag names, annotation attributes, the class of the bound schema source, the
 declaring type and member of a hidden member, response statuses and header names, and the declaring
@@ -1830,6 +2107,11 @@ names are quoted.
 | A JAX-RS operation uses a reserved id `apidocs:<name>:json` or `apidocs:<name>:yaml` | `RestConfigurationException` naming the operation id, its method and template, the mount, and the application |
 | A `GET` or `HEAD` route of a JAX-RS mount can answer a document URL | `RestConfigurationException` with one line per route and URL, naming both |
 | A documented application resolves operations from the shared global contract | `RestConfigurationException` naming the application, the mount, and the strategy |
+| An application that serves its own contract has a configured `apidocs.documents.<name>.info` or `.serverUrl`, or an `@OpenAPIDefinition` on its declaring interface (see [Served Contracts](#served-contracts)) | `ConfigurationException` naming the application, its declaring interface, and the configuration path or `@OpenAPIDefinition`, stating that the served document is never rewritten; no value is echoed |
+| Two enabled documents serve their own contracts from one location after path normalization, or a contract location cannot be parsed as a path | `IllegalStateException` from `HttpVerticle` (`Invalid mount configuration:`) naming the applications, or the application and the setting the location comes from; never the location |
+| A served contract's location has an extension other than `.json`, `.yaml`, or `.yml` (any letter case), or none | `RestConfigurationException` naming the application, the setting, and the location, raised before the location is read |
+| A served contract cannot be read, or is not valid JSON or YAML | `RestConfigurationException` naming the application and the setting; no cause, and no file-system or parser text |
+| A served contract is not OpenAPI 3.0 or 3.1, has a non-local reference, an `operationRef` or `$id`, an unresolved or cyclic reference, a missing or repeated operation id, an unrouted id, an unbound or undescribed operation, a described hidden input, or a form schema that is not a plain object schema (see [Startup checks of a served contract](#startup-checks-of-a-served-contract)) | `RestConfigurationException` starting `The served contract of application '<name>' is refused: `, listing every violation, sorted, by operation id and JSON Pointer; no contract content |
 | Two operations of a documented application render to equivalent paths with different variable names, or with the same method | `RestConfigurationException` starting `Application '<name>' (declared by <binary name>) at mount '<mount path>'`, naming both routes by method, operation id, and rendered path, and stating that routes at one path must use the same variable names and differ in method |
 | An operation of a documented application hides a path parameter (see [Hidden inputs](#hidden-inputs)) | `RestConfigurationException` with the same start, naming the operation and the parameter, and stating that a path parameter cannot be hidden |
 | An operation of a documented application binds two visible inputs with the same name and location | `RestConfigurationException` with the same start, naming the operation, the input name, and the location, and stating that a document describes one parameter per name and location |
@@ -1996,6 +2278,30 @@ and its message can quote that value.
   A license without `name` is published as declared, although OpenAPI 3.1 requires `name`; set it.
 - **Expecting annotated `info` members beside a configured `info`.** A configured `info` replaces
   the annotation as a whole.
+- **Configuring `info` or `serverUrl` for an application that serves its own contract.** Startup
+  fails; the contract is served as written, so put the `info` and `servers` in the contract.
+- **Expecting `jaxrs.openapiPath` to be served.** The shared contract is never a document; give the
+  application its own `@RestApplication.openapiPath` or `jaxrs.applications.<name>.openapiPath`.
+- **Expecting a served contract to be enriched or redacted.** It is served as parsed: no inferred
+  responses, no security schemes, no validation disclosure, and nothing removed. Hidden operations
+  and hidden inputs are not stripped; a contract that describes a hidden input fails startup.
+- **Leaving a stray contract file in the working directory.** For a relative location, a
+  working-directory file shadows the packaged classpath resource, both for the document and for
+  `openapi-contract` validation. A WARN names the location; keep the working directory controlled.
+- **Pointing two applications at one contract file.** Each served document needs a contract
+  location of its own.
+- **Splitting a contract across files.** Only references within the document (`#/...`) are
+  accepted; bundle external references into the one file.
+- **Leaving a routed operation out of the contract, or describing one that is not routed.** Every
+  routed operation that is not hidden must be described with its own `operationId`, method, and
+  path, and every `operationId` outside webhooks and callbacks must name a routed operation.
+- **Expecting the contract's schemas to be checked against the code.** Under `web-validation` the
+  contract plays no part in validation and nothing compares its schemas with what the runtime
+  enforces; keep them in step.
+- **A relative `servers` URL under `openapi-contract`.** The strategy rejects it; omit `servers` and
+  accept the `servers` warning, or use an absolute URL.
+- **Expecting a contract file edit to be served without a restart.** The contract is loaded once
+  per component; a later edit is not served.
 
 ---
 
@@ -2109,3 +2415,17 @@ adds no route beyond the document URLs. It is not part of any starter.
 - Require a scheme whose handler returns no `openApiDescription()`: expect startup to fail naming
   the operation and the scheme; set `apidocs.documents.<name>.enabled: false` and expect startup to
   succeed with the route still refusing unauthenticated requests.
+- Give a `@ApiDocs(access = PUBLIC)` application `@RestApplication(openapiPath =
+  "openapi/partner.yaml")` with that resource on the classpath: expect both forms to parse to a tree
+  equal to the contract, the stored line to name `source: served contract`, and the source INFO
+  line to name the resource URL.
+- Place a file of the same relative name in the working directory: expect it served instead, and
+  the shadowing WARN.
+- Remove a routed operation from the contract, add an `operationId` the mount does not route, or add
+  a `$ref` to another file: expect startup to fail with `The served contract of application '<name>'
+  is refused: ` naming each violation by operation id or JSON Pointer.
+- Configure `apidocs.documents.<name>.info` for that application: expect startup to fail naming the
+  configuration path.
+- Point two documented applications at `a.yaml` and `./a.yaml`: expect startup to fail naming both
+  applications.
+- Give the contract no `servers`: expect it served without `servers` and one `servers` WARN.
