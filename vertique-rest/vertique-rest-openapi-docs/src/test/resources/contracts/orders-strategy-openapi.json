@@ -1,0 +1,30 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Orders",
+    "version": "1.0.0",
+    "description": "The orders contract, named only by configuration."
+  },
+  "paths": {
+    "/items": {
+      "get": {
+        "operationId": "listItems",
+        "responses": {
+          "200": {
+            "description": "The order items",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

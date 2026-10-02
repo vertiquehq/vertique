@@ -690,9 +690,10 @@ document nor how it is cached.
   refused, with the alternative of serving that file behind an access check (see
   [Startup Checks](#startup-checks)); an application with its own contract is served.
 - **`servers` under `openapi-contract`.** The strategy needs a contract it validates against to have
-  absolute server URLs or no `servers`: `vertx-openapi` rejects a relative server URL when it builds
-  the contract. The `servers` warning expects `servers[0].url` to equal the mount path, a relative
-  URL. Under `openapi-contract`, omit `servers` and accept the warning, or use an absolute URL.
+  absolute server URLs or no `servers`: `vertx-openapi` cannot load a contract with a relative server
+  URL, so startup fails. The `servers` warning expects `servers[0].url` to equal the mount path, a
+  relative URL. Under `openapi-contract`, omit `servers` and accept the warning, or use an absolute
+  URL.
 
 ---
 
@@ -2313,8 +2314,8 @@ and its message can quote that value.
 - **Expecting the contract's schemas to be checked against the code.** Under `web-validation` the
   contract plays no part in validation and nothing compares its schemas with what the runtime
   enforces; keep them in step.
-- **A relative `servers` URL under `openapi-contract`.** The strategy rejects it; omit `servers` and
-  accept the `servers` warning, or use an absolute URL.
+- **A relative `servers` URL under `openapi-contract`.** Startup fails: the strategy cannot load the
+  contract. Omit `servers` and accept the `servers` warning, or use an absolute URL.
 - **Expecting a contract file edit to be served without a restart.** The contract is loaded once
   per component; a later edit is not served.
 

@@ -116,12 +116,14 @@ public abstract class RestModule {
     abstract Set<RequestValidationStrategy> requestValidationStrategies();
 
     /**
-     * Declares the {@link OperationPublicationSink} multibinding set. Empty by default; a
-     * framework documentation module contributes to it through {@code @ElementsIntoSet}. Every
-     * JAX-RS mount hands its completed publication to each sink in this set once its router is
-     * built.
+     * Declares the {@link OperationPublicationSink} multibinding set. Empty by default; sibling
+     * framework modules contribute to it — the documentation module through
+     * {@code @ElementsIntoSet}, and the OpenAPI-contract validation module's startup contract-load
+     * check through {@code @IntoSet}. Every JAX-RS mount hands its completed publication to each
+     * sink in this set once its router is built.
      *
-     * @return the publication sink set (populated by {@code @ElementsIntoSet} contributions)
+     * @return the publication sink set (populated by {@code @ElementsIntoSet} and {@code @IntoSet}
+     *     contributions)
      */
     @Multibinds
     abstract Set<OperationPublicationSink> operationPublicationSinks();
