@@ -511,7 +511,7 @@ strategy reads it, so both read the same file:
 - **Nothing fetched.** No reference is followed outside the document, and no URL in it is resolved.
 - **No time bound.** The read of a contract has no time bound. A contract path that never returns,
   such as a named pipe with no writer, stalls startup without a log line, and every other instance
-  waits with it. A contract location must name a regular file or a classpath resource.
+  waits with it. Name a regular file or a classpath resource; the location is not checked for this.
 
 ### Startup checks of a served contract
 

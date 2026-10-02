@@ -44,8 +44,8 @@ import jakarta.inject.Singleton;
  *   <li>{@link VertxModule} — Vert.x instance and configuration</li>
  *   <li>{@link RestModule} — JAX-RS annotation-driven routing</li>
  *   <li>{@link RestValidationModule} — default {@code web-validation} request-validation strategy</li>
- *   <li>{@link OpenApiDocsModule} — application-scoped OpenAPI document publication, driven by
- *       configuration</li>
+ *   <li>{@link OpenApiDocsModule} — application-scoped OpenAPI document publication for the
+ *       applications that declare {@code @ApiDocs}; configuration can disable a document</li>
  *   <li>{@link DispatchModule} — Event bus service dispatch infrastructure (includes DeployerModule);
  *       also contributes the paired {@code SERVICES}-phase service deploy/undeploy lifecycle steps</li>
  *   <li>{@link ManagementModule} — Health check endpoints on management port</li>
