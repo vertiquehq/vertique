@@ -637,6 +637,41 @@ class ServedContractTest {
                                 root, "{\"operationId\": \"listOrders\", \"requestBody\": {\"note\": \"x\"}}"),
                         passes()));
 
+        // ----- Referenced Links naming hidden inputs at their own location -----
+        rows.put(
+                "(49) a components Link naming listOrders with query.debug, given by a reference",
+                row(
+                        root -> referencedLink(root, COMPONENTS_LINK, "query.debug"),
+                        refused("listOrders", HIDDEN_INPUT, COMPONENTS_LINK + "/parameters/query.debug")));
+        rows.put(
+                "(50) a components Link naming listOrders with header.X-Debug, given by a reference",
+                row(
+                        root -> referencedLink(root, COMPONENTS_LINK, "header.X-Debug"),
+                        refused("listOrders", HIDDEN_INPUT, COMPONENTS_LINK + "/parameters/header.X-Debug")));
+        rows.put(
+                "(51) an extension Link naming listOrders with query.debug, given by a reference",
+                row(
+                        root -> referencedLink(root, EXTENSION_LINK, "query.debug"),
+                        refused("listOrders", HIDDEN_INPUT, EXTENSION_LINK + "/parameters/query.debug")));
+        rows.put(
+                "(52) an extension Link naming listOrders with header.X-Debug, given by a reference",
+                row(
+                        root -> referencedLink(root, EXTENSION_LINK, "header.X-Debug"),
+                        refused("listOrders", HIDDEN_INPUT, EXTENSION_LINK + "/parameters/header.X-Debug")));
+        rows.put(
+                "(c14) a components Link naming listOrders with the visible key page, given by a reference",
+                row(root -> referencedLink(root, COMPONENTS_LINK, "page"), passes()));
+
+        // ----- A tree that is not a contract reports only the version rule -----
+        rows.put(
+                "(53) a tree without openapi carrying an external $ref, an operationId, and a path key",
+                replacingRoot(root -> json(NOT_A_CONTRACT), notAContract(VERSION_RULE, "/openapi")));
+        rows.put(
+                "(54) a root array holding that tree",
+                replacingRoot(
+                        root -> MAPPER.createArrayNode().add(json(NOT_A_CONTRACT)),
+                        notAContract(VERSION_RULE, ROOT_POINTER)));
+
         return rows.entrySet().stream()
                 .map(entry -> Arguments.of(
                         entry.getKey(),
@@ -650,6 +685,70 @@ class ServedContractTest {
 
     /** A schema describing only the hidden form input. */
     private static final String INTERNAL_REF_SCHEMA = "{\"properties\": {\"internalRef\": {\"type\": \"string\"}}}";
+
+    /** Where a referenced Link is stored under {@code components}. */
+    private static final String COMPONENTS_LINK = "/components/links/DebugLink";
+
+    /** Where a referenced Link is stored under a root extension. */
+    private static final String EXTENSION_LINK = "/x-stash/L";
+
+    /**
+     * A tree with no {@code openapi} member that also carries an external {@code $ref} under a key, an
+     * {@code operationId} no mount routes, and a path key, each holding a marked token.
+     */
+    private static final String NOT_A_CONTRACT = """
+            {
+              "aws": {"sk_live_zq7KEY": {"$ref": "https://zq7user:pw@internal.example/x"}},
+              "paths": {"/admin?zq7path=s3cr3t": {"get": {}}},
+              "svc": {"operationId": "zq7value"}
+            }
+            """;
+
+    /**
+     * Refuses {@link #NOT_A_CONTRACT} with the given fragments only: the message carries none of the
+     * tree's tokens and none of the wording of another rule.
+     */
+    private static Expectation notAContract(String... fragments) {
+        Expectation refusal = refused(fragments);
+        return refusal.neverEchoing(
+                "zq7KEY",
+                "zq7value",
+                "zq7path",
+                "internal.example",
+                "s3cr3t",
+                NOT_LOCAL_REFERENCE,
+                NOT_ROUTED,
+                MISSING_OPERATION_ID,
+                NOT_DESCRIBED);
+    }
+
+    /**
+     * Stores a Link naming {@code listOrders} with the one parameter key at the given pointer of the
+     * root, and gives the {@code 200} response of {@code listOrders} the one link {@code debug}, a
+     * reference to it.
+     */
+    private static void referencedLink(JsonNode root, String pointer, String parameterKey) {
+        int split = pointer.lastIndexOf('/');
+        String parent = pointer.substring(0, split);
+        String name = pointer.substring(split + 1);
+        ObjectNode link = MAPPER.createObjectNode().put("operationId", "listOrders");
+        link.putObject("parameters").put(parameterKey, "$response.body#/zq7");
+        ensureObject(root, parent).set(name, link);
+        obj(root, LIST_ORDERS + "/responses/200")
+                .putObject("links")
+                .putObject("debug")
+                .put("$ref", "#" + pointer);
+    }
+
+    /** The object at a JSON Pointer of plain member names, creating every missing object on the way. */
+    private static ObjectNode ensureObject(JsonNode root, String pointer) {
+        ObjectNode current = obj(root, "");
+        for (String member : pointer.substring(1).split("/")) {
+            JsonNode next = current.get(member);
+            current = next instanceof ObjectNode object ? object : current.putObject(member);
+        }
+        return current;
+    }
 
     /** Gives {@code createOrder} a JSON request body whose schema is the given reference. */
     private static void createOrderBody(JsonNode root, String ref) {
