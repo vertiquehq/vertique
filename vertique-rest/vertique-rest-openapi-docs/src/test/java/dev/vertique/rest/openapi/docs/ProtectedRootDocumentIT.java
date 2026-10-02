@@ -362,7 +362,7 @@ public class ProtectedRootDocumentIT {
         ProtectedRootTestComponents.RolesAbsentComponent absentComponent =
                 DaggerProtectedRootTestComponents_RolesAbsentComponent.factory().create(vertx, DocsConfigs.loopback());
 
-        // When: it is deployed as two instances; its outcome is recorded, not asserted
+        // When: it is deployed as two instances; its outcome is recorded and asserted after both deployments
         clearCapturedEvents();
         Outcome rolesAbsent = deploy(absentComponent::httpVerticle, new DeploymentOptions().setInstances(2));
         List<ILoggingEvent> absentEvents = capturedEvents();
@@ -378,6 +378,16 @@ public class ProtectedRootDocumentIT {
         Outcome rolesPresent = deploy(presentComponent::httpVerticle, new DeploymentOptions());
         List<ILoggingEvent> presentEvents = capturedEvents();
         undeployNow(rolesPresent);
+
+        // Then: both deployments started, so a missing line cannot stem from a failed deployment
+        assertAll(
+                "both deployments started",
+                () -> assertNull(
+                        rolesAbsent.failure(), () -> "rolesAbsent: the deployment failed: " + rolesAbsent.failure()),
+                () -> assertNotNull(rolesAbsent.port(), "rolesAbsent: the deployment published no port"),
+                () -> assertNull(
+                        rolesPresent.failure(), () -> "rolesPresent: the deployment failed: " + rolesPresent.failure()),
+                () -> assertNotNull(rolesPresent.port(), "rolesPresent: the deployment published no port"));
 
         // Then: the role-less deployment logged exactly one such line, an INFO starting with the
         // document's configuration path; the deployment with a role logged none

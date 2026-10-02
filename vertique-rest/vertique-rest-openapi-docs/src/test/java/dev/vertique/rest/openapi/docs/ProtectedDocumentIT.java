@@ -335,7 +335,9 @@ public class ProtectedDocumentIT {
     /**
      * A denied document request ends with the synthetic route's problem body and never reaches the
      * later mount at the same prefix, its failure handler, or an error interceptor, while live
-     * controls show each of those counters does count.
+     * controls show each of those counters does count. An anonymous {@code POST} to the document's
+     * URL is not answered by the document route: it ends in the later catch-all exactly as one to an
+     * unknown document's URL does.
      */
     @Test
     @DisplayName("A document denial ends on the documentation route and never reaches a later mount")
@@ -374,6 +376,15 @@ public class ProtectedDocumentIT {
                 errorInterceptorAfterDenials,
                 errorInterceptorAfterControls);
 
+        // When: an anonymous POST is sent to the management document's URL, then to an unknown document's
+        int catchAllBeforeManagementPost = observations.laterMountCatchAllHits();
+        int catchAllUserBeforePosts = observations.laterMountCatchAllUserHits();
+        Exchange managementPost = send(configured.target(), HttpMethod.POST, MANAGEMENT_JSON, null, Map.of());
+        int catchAllAfterManagementPost = observations.laterMountCatchAllHits();
+        Exchange unknownPost = send(configured.target(), HttpMethod.POST, UNKNOWN_JSON, null, Map.of());
+        int catchAllAfterUnknownPost = observations.laterMountCatchAllHits();
+        int catchAllUserAfterPosts = observations.laterMountCatchAllUserHits();
+
         // Then: each denial is exactly the problem body with no-store, and nothing after the docs route ran
         List<Executable> checks = new ArrayList<>();
         for (int i = 0; i < denials.size(); i++) {
@@ -384,7 +395,32 @@ public class ProtectedDocumentIT {
             checks.add(() -> assertEquals(problem, json(denial), denial.label() + ": exactly the problem body"));
             checks.add(
                     () -> assertEquals(NO_STORE, denial.header("Cache-Control"), denial.label() + ": Cache-Control"));
+            checks.add(() -> assertEquals(List.of(), denial.headers().getAll("Vary"), denial.label() + ": no Vary"));
         }
+
+        // Then: neither POST is answered by the document route; both end in the later mount's catch-all alike
+        for (Exchange post : List.of(managementPost, unknownPost)) {
+            checks.add(() -> assertEquals(404, post.status(), post.label() + ": status"));
+            checks.add(() -> assertEquals(
+                    LaterDocsPrefixMount.BODY, post.body().toString(), post.label() + ": the catch-all's body"));
+            checks.add(() -> assertNull(json(post), post.label() + ": not a problem body: " + post.body()));
+        }
+        checks.add(() -> assertEquals(
+                unknownPost.status(),
+                managementPost.status(),
+                "the management POST's status equals the unknown one's"));
+        checks.add(() -> assertEquals(
+                unknownPost.body(), managementPost.body(), "the management POST's body equals the unknown one's"));
+        checks.add(() -> assertEquals(
+                1,
+                catchAllAfterManagementPost - catchAllBeforeManagementPost,
+                "the management POST raised the catch-all count by one"));
+        checks.add(() -> assertEquals(
+                1,
+                catchAllAfterUnknownPost - catchAllAfterManagementPost,
+                "the unknown POST raised the catch-all count by one"));
+        checks.add(() -> assertEquals(
+                0, catchAllUserAfterPosts - catchAllUserBeforePosts, "the catch-all saw no user for either POST"));
         checks.add(() -> assertEquals(0, laterRoutesAfterDenials, "the later mount's routes never ran for a denial"));
         checks.add(() -> assertEquals(
                 0, laterManagementRouteAfterDenials, "the later mount's document-URL route never ran for a denial"));
@@ -506,10 +542,12 @@ public class ProtectedDocumentIT {
             checks.add(
                     () -> assertEquals(NO_STORE, request.header("Cache-Control"), request.label() + ": Cache-Control"));
             checks.add(() -> assertNoDocumentContent(request.label(), request));
+            checks.add(() -> assertEquals(List.of(), request.headers().getAll("Vary"), request.label() + ": no Vary"));
         }
         for (Exchange request : anonymousRequests) {
             checks.add(() -> assertEquals(401, request.status(), request.label() + ": status"));
             checks.add(() -> assertNoDocumentContent(request.label(), request));
+            checks.add(() -> assertEquals(List.of(), request.headers().getAll("Vary"), request.label() + ": no Vary"));
         }
 
         // Then: nothing after the docs route ran, and the control shows the catch-all counts
@@ -553,7 +591,9 @@ public class ProtectedDocumentIT {
                             new JsonObject(PROBLEM_503), json(authorized), "alice: exactly the problem body"),
                     () -> assertEquals(NO_STORE, authorized.header("Cache-Control"), "alice: Cache-Control"),
                     () -> assertNull(authorized.header("ETag"), "alice: no ETag"),
+                    () -> assertEquals(List.of(), authorized.headers().getAll("Vary"), "alice: no Vary"),
                     () -> assertEquals(401, anonymous.status(), "anonymous on the store-less server: status"),
+                    () -> assertEquals(List.of(), anonymous.headers().getAll("Vary"), "anonymous: no Vary"),
                     () -> assertEquals(0, catchAll, "the catch-all after the documentation router never ran"),
                     () -> assertEquals(200, shared.status(), "alice on the shared deployment: status"),
                     () -> assertTrue(
