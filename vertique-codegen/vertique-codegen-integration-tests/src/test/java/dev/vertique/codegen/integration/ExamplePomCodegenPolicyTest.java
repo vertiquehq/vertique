@@ -29,6 +29,7 @@ class ExamplePomCodegenPolicyTest {
                     + ".*?</dependency>");
     private static final List<String> EXAMPLES = List.of(
             "vertique-example-aop",
+            "vertique-example-apidocs",
             "vertique-example-custom-response",
             "vertique-example-db",
             "vertique-example-events",
