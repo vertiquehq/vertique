@@ -57,6 +57,19 @@ public final class ContractFiles {
     /** Failing: {@link #PARTNER} also describing {@code listOrders}'s hidden query parameter {@code debug}. */
     public static final String PARTNER_HIDDEN_PARAM = "contracts/partner-hidden-param.yaml";
 
+    /**
+     * Failing: a YAML stream of two documents, the first exactly {@link #PARTNER} and the second a
+     * mapping whose description carries {@value #MARKER}.
+     */
+    public static final String PARTNER_MULTI_DOCUMENT = "contracts/partner-multi-document.yaml";
+
+    /**
+     * Failing: a configured location with a line feed between {@code partner} and {@code
+     * zz-openapi.txt}, and so an unsupported extension; no such file exists. Built from a {@code char}
+     * so the source file holds no raw line feed.
+     */
+    public static final String PARTNER_LINE_FEED_TXT = "contracts/partner" + (char) 10 + "zz-openapi.txt";
+
     /** Valid: {@link #PARTNER} also describing the hidden operation {@code getOrderInternal}. */
     public static final String PARTNER_WITH_HIDDEN = "contracts/partner-with-hidden.yaml";
 

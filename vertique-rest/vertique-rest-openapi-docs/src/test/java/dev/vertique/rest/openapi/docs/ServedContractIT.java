@@ -197,6 +197,21 @@ public class ServedContractIT {
     /** The supported contract extensions, as the extension refusal lists them. */
     private static final String SUPPORTED_EXTENSIONS = ".json, .yaml, or .yml";
 
+    /**
+     * How the extension refusal names a configured location with a line feed: the line feed as a
+     * backslash, the letter u, and the four uppercase hexadecimal digits 000A, nothing truncated.
+     */
+    private static final String LINE_FEED_LOCATION_SHOWN = "'contracts/partner\\u000Azz-openapi.txt'";
+
+    /** The file name of an absolute contract location with a line feed between its two words. */
+    private static final String LINE_FEED_FILE_NAME = "absolute" + (char) 10 + "openapi.json";
+
+    /** How a source line names {@link #LINE_FEED_FILE_NAME}: the line feed shown as in a refusal. */
+    private static final String LINE_FEED_FILE_NAME_SHOWN = "absolute\\u000Aopenapi.json";
+
+    /** A line feed, which no message that names a location may carry raw. */
+    private static final char LINE_FEED = (char) 10;
+
     /** The configured {@code info} a served document refuses. */
     private static final String CONFIGURED_INFO_PATH = "apidocs.documents.partner.info";
 
@@ -592,18 +607,20 @@ public class ServedContractIT {
                         "(h) apidocs.documents.partner.info is configured",
                         ServedContractIT::sharedComponent,
                         () -> ContractConfigs.withPartnerInfo(ContractConfigs.shared()),
-                        row -> assertStartupFailure(row, PARTNER, PARTNER, null, CONFIGURED_INFO_PATH)),
+                        withoutPartnerNotices(
+                                row -> assertStartupFailure(row, PARTNER, PARTNER, null, CONFIGURED_INFO_PATH))),
                 new StartupRow(
                         "(i) the declaring interface also carries @OpenAPIDefinition",
                         ServedContractIT::annotatedInfoComponent,
                         ContractConfigs::shared,
-                        row -> assertStartupFailure(
-                                row, PARTNER, PARTNER, null, OPENAPI_DEFINITION, ANNOTATED_INFO_BINARY)),
+                        withoutPartnerNotices(row -> assertStartupFailure(
+                                row, PARTNER, PARTNER, null, OPENAPI_DEFINITION, ANNOTATED_INFO_BINARY))),
                 new StartupRow(
                         "(j) apidocs.documents.partner.serverUrl is configured",
                         ServedContractIT::sharedComponent,
                         () -> ContractConfigs.withPartnerServerUrl(ContractConfigs.shared()),
-                        row -> assertStartupFailure(row, PARTNER, PARTNER, null, CONFIGURED_SERVER_URL_PATH)),
+                        withoutPartnerNotices(
+                                row -> assertStartupFailure(row, PARTNER, PARTNER, null, CONFIGURED_SERVER_URL_PATH))),
                 partnerRefused(
                         "(k) a webhook operation reuses the routed id getOrderInternal",
                         ContractFiles.PARTNER_WEBHOOK_REUSE,
@@ -627,7 +644,16 @@ public class ServedContractIT {
                                 ContractConfigs.sharedWithPartnerContract(ContractFiles.PARTNER_EXTRA_OPERATION),
                                 PARTNER,
                                 false),
-                        ServedContractIT::assertDisabledDocumentReadsNothing));
+                        ServedContractIT::assertDisabledDocumentReadsNothing),
+                partnerRefused(
+                        "(o) the YAML contract holds a second document after a valid first one",
+                        ContractFiles.PARTNER_MULTI_DOCUMENT,
+                        NOT_YAML),
+                new StartupRow(
+                        "(p) the configured contract location holds a line feed and an unsupported extension",
+                        ServedContractIT::sharedComponent,
+                        () -> ContractConfigs.sharedWithPartnerContract(ContractFiles.PARTNER_LINE_FEED_TXT),
+                        withoutPartnerNotices(ServedContractIT::assertLineFeedLocationShownEscaped)));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -637,13 +663,51 @@ public class ServedContractIT {
         runStartupRow(row, vertx);
     }
 
-    /** A {@code partner} row whose contract the shared fixture's check or loader refuses. */
+    /**
+     * A {@code partner} row whose contract the shared fixture's check or loader refuses, logging no
+     * notice or warning for {@code partner}.
+     */
     private static StartupRow partnerRefused(String label, String location, String... fragments) {
         return new StartupRow(
                 label,
                 ServedContractIT::sharedComponent,
                 () -> ContractConfigs.sharedWithPartnerContract(location),
-                row -> assertStartupFailure(row, PARTNER, PARTNER, null, fragments));
+                withoutPartnerNotices(row -> assertStartupFailure(row, PARTNER, PARTNER, null, fragments)));
+    }
+
+    /**
+     * Runs a refused row's check, then asserts that the warning logger captured no {@code INFO} or
+     * {@code WARN} line for {@code partner}: a document that fails to load or to provision logs no
+     * source notice and none of its warnings.
+     */
+    private static RowCheck withoutPartnerNotices(RowCheck check) {
+        return row -> {
+            check.verify(row);
+            List<String> notices = row.test().noticeLines(PARTNER);
+            assertEquals(
+                    List.of(),
+                    notices,
+                    () -> row.label() + ": INFO or WARN lines for apidocs.documents.partner: " + notices);
+        };
+    }
+
+    /**
+     * Asserts the extension refusal of a configured location with a line feed: it names the location
+     * with the line feed escaped, carries no raw line feed, and no message in the cause chain carries
+     * the raw location.
+     */
+    private static void assertLineFeedLocationShownEscaped(Deployed row) {
+        Throwable refusal =
+                assertStartupFailure(row, PARTNER, PARTNER, null, LINE_FEED_LOCATION_SHOWN, SUPPORTED_EXTENSIONS);
+        String message = refusal.getMessage();
+        List<Throwable> chain = causeChain(row.outcome().failure());
+        assertAll(
+                row.label() + ": the refusal: " + message,
+                () -> assertTrue(message.indexOf(LINE_FEED) < 0, "the refusal carries no raw line feed"),
+                () -> assertTrue(
+                        chain.stream().noneMatch(cause -> String.valueOf(cause.getMessage())
+                                .contains(ContractFiles.PARTNER_LINE_FEED_TXT)),
+                        "no message in the cause chain carries the raw location"));
     }
 
     private static void assertServesTheHiddenOperation(Deployed row) throws Exception {
@@ -1193,6 +1257,43 @@ public class ServedContractIT {
                 () -> assertTrue(startsWithDocument(warning, PARTNER), "starts with apidocs.documents.partner"),
                 () -> assertTrue(namesApplication(warning, PARTNER), "names partner"),
                 () -> assertTrue(warning.contains(SHADOWED_CONTRACT), "names " + SHADOWED_CONTRACT));
+    }
+
+    /**
+     * An absolute contract location whose file name holds a line feed is served, and its source line
+     * names the resolved location with the line feed escaped as a refusal escapes it, never raw.
+     *
+     * <p>The shadowing warning, the other line that names a configured location, is not arranged: it
+     * needs a relative location that names both a working-directory file and a classpath resource
+     * with a line feed in its name.
+     */
+    @Test
+    @DisplayName("A source line names a resolved location with its control characters escaped, never raw")
+    void sourceLineEscapesAControlCharacterOfTheResolvedLocation(Vertx vertx, @TempDir Path tempDir) throws Exception {
+        // Given: a valid contract in a temporary file whose name holds a line feed
+        Path file = tempDir.resolve(LINE_FEED_FILE_NAME);
+        Files.writeString(file, ContractTexts.ABSOLUTE);
+        String expectedEnding = SERVED_FROM + tempDir.toAbsolutePath().normalize() + "/" + LINE_FEED_FILE_NAME_SHOWN;
+
+        // When: partner is deployed with that file as its configured contract location
+        Resolved resolved = deployAndReadPartner(
+                vertx,
+                "an absolute contract location whose file name holds a line feed",
+                sharedComponent(vertx, ContractConfigs.sharedWithPartnerContract(file.toString())),
+                null);
+
+        // Then: the file is served, and the source line names it escaped, with no raw line feed
+        List<String> notices = noticeLines(PARTNER);
+        assertAll(
+                resolved.label(),
+                () -> assertEquals(ContractTexts.ABSOLUTE_TITLE, resolved.title(), "info.title"),
+                () -> assertEquals(1, resolved.sourceLines().size(), () -> "source lines: " + resolved),
+                () -> assertTrue(
+                        resolved.sourceLines().stream().allMatch(line -> line.endsWith(expectedEnding)),
+                        () -> "the source line ends with " + expectedEnding + ": " + resolved.sourceLines()),
+                () -> assertTrue(
+                        notices.stream().noneMatch(line -> line.indexOf(LINE_FEED) >= 0),
+                        () -> "a line for partner carries a raw line feed: " + notices));
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -1906,6 +2007,18 @@ public class ServedContractIT {
                 .map(LogLine::message)
                 .filter(message -> startsWithDocument(message, document))
                 .filter(message -> message.contains(GENERATED_SOURCE) || message.contains(SERVED_FROM))
+                .toList();
+    }
+
+    /**
+     * Returns a document's notices and warnings: every {@code INFO} or {@code WARN} line of the warning
+     * logger that starts with {@code apidocs.documents.<name>}.
+     */
+    private List<String> noticeLines(String document) {
+        return warnings.lines().stream()
+                .filter(line -> line.level() == Level.INFO || line.level() == Level.WARN)
+                .map(LogLine::message)
+                .filter(message -> startsWithDocument(message, document))
                 .toList();
     }
 
