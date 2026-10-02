@@ -5,21 +5,33 @@ package dev.vertique.rest.openapi.docs;
 
 import dev.vertique.json.DefaultJsonMapperProfileRegistry;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
+import dev.vertique.rest.openapi.docs.assembly.AssemblyContext;
+import dev.vertique.rest.openapi.docs.diagnostics.DocumentWarnings;
 import java.util.Optional;
 import java.util.Set;
 
 /** Builds {@link AssemblyContext} values for tests, backed by a real profile registry. */
-final class TestContexts {
+public final class TestContexts {
 
     private TestContexts() {}
 
     /** Returns a context with no bound schema source. */
-    static AssemblyContext noSource() {
-        return new AssemblyContext(Optional.empty(), new DefaultJsonMapperProfileRegistry(Set.of()));
+    public static AssemblyContext noSource() {
+        return new AssemblyContext(
+                Optional.empty(),
+                new DefaultJsonMapperProfileRegistry(Set.of()),
+                new DocumentWarnings(),
+                Set.of(),
+                Set.of());
     }
 
     /** Returns a context with the given bound schema source. */
-    static AssemblyContext withSource(OperationSchemaSource source) {
-        return new AssemblyContext(Optional.of(source), new DefaultJsonMapperProfileRegistry(Set.of()));
+    public static AssemblyContext withSource(OperationSchemaSource source) {
+        return new AssemblyContext(
+                Optional.of(source),
+                new DefaultJsonMapperProfileRegistry(Set.of()),
+                new DocumentWarnings(),
+                Set.of(),
+                Set.of());
     }
 }

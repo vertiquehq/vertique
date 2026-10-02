@@ -18,6 +18,8 @@ import dev.vertique.rest.openapi.docs.ProtectedStartupTestComponents.ProtectedSt
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
 import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments.Outcome;
+import dev.vertique.rest.openapi.docs.serving.DocsRouterMount;
+import dev.vertique.rest.openapi.docs.serving.ServingAccess;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Route;
@@ -146,7 +148,9 @@ public class ProtectedDocumentStartupFailureIT {
         DocsRouterMount docsMount = markedDocsMount(label, component);
         Router router = Router.router(vertx);
         RestConfigurationException refusal = assertThrows(
-                RestConfigurationException.class, () -> docsMount.buildInto(router), label + ": the build fails");
+                RestConfigurationException.class,
+                () -> ServingAccess.buildInto(docsMount, router),
+                label + ": the build fails");
 
         // Then: the build failed and the router holds no route
         List<String> routes = router.getRoutes().stream().map(Route::getPath).toList();
@@ -233,7 +237,9 @@ public class ProtectedDocumentStartupFailureIT {
                 .toList();
         assertEquals(1, docsMounts.size(), label + ": the composition holds one documentation mount");
         DocsRouterMount docsMount = docsMounts.get(0);
-        assertTrue(docsMount.isValidated(), label + ": the composition validators marked the documentation mount");
+        assertTrue(
+                ServingAccess.isValidated(docsMount),
+                label + ": the composition validators marked the documentation mount");
         return docsMount;
     }
 

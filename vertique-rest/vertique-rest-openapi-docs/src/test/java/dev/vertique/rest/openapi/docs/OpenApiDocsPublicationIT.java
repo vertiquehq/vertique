@@ -27,6 +27,7 @@ import dev.vertique.rest.jaxrs.publication.ResponseShape;
 import dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration;
 import dev.vertique.rest.openapi.docs.DocsTestComponents.DocsProvisions;
 import dev.vertique.rest.openapi.docs.DocsTestComponents.Provisions;
+import dev.vertique.rest.openapi.docs.document.PublishedDocument;
 import dev.vertique.rest.openapi.docs.fixture.CatalogResource;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.ManualMountModule;
@@ -34,6 +35,8 @@ import dev.vertique.rest.openapi.docs.fixture.MarkerRouterMount;
 import dev.vertique.rest.openapi.docs.fixture.MgmtApi;
 import dev.vertique.rest.openapi.docs.fixture.PublicApi;
 import dev.vertique.rest.openapi.docs.fixture.support.Futures;
+import dev.vertique.rest.openapi.docs.publication.DocumentStore;
+import dev.vertique.rest.openapi.docs.publication.PublicationAccess;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -357,7 +360,7 @@ public class OpenApiDocsPublicationIT {
                     component.publicationSinks().size(),
                     answeredByLastMarker(response),
                     component instanceof DocsProvisions docs
-                            ? docs.documentStore().names().size()
+                            ? PublicationAccess.names(docs.documentStore()).size()
                             : null,
                     component.schemaSource().calls());
         } finally {
@@ -435,10 +438,10 @@ public class OpenApiDocsPublicationIT {
         try {
             DocumentStore store = component.documentStore();
             assertTrue(
-                    store.names().contains(PublicApi.NAME),
-                    "the store holds the public document, got " + store.names());
+                    PublicationAccess.names(store).contains(PublicApi.NAME),
+                    "the store holds the public document, got " + PublicationAccess.names(store));
 
-            for (String name : store.names()) {
+            for (String name : PublicationAccess.names(store)) {
                 // When: every object reachable from the completed entry is walked
                 Optional<PublishedDocument> entry = store.lookup(name);
                 assertTrue(entry.isPresent(), name + ": the entry is complete");
@@ -573,7 +576,7 @@ public class OpenApiDocsPublicationIT {
                     "the undocumented application and the manual mount are deployed, got " + mountPaths);
 
             // Then: only the documented application's document is stored and served
-            Set<String> storedNames = component.documentStore().names();
+            Set<String> storedNames = PublicationAccess.names(component.documentStore());
             List<String> storedLines = infoLinesContaining(docsAppender, STORED_KEYWORD);
             assertAll(
                     "only the documented application is published",
@@ -620,7 +623,8 @@ public class OpenApiDocsPublicationIT {
         // When: each is deployed in turn, its notices captured on their own
         List<String> enabledNotices = noticesOnDeployment(vertx, enabled);
         List<String> disabledNotices = noticesOnDeployment(vertx, disabled);
-        int disabledStoreSize = disabled.documentStore().names().size();
+        int disabledStoreSize =
+                PublicationAccess.names(disabled.documentStore()).size();
         List<String> withoutModuleNotices = noticesOnDeployment(vertx, withoutModule);
 
         // Then: only the component without the module logs the notice, once, for the documented application

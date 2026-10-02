@@ -30,7 +30,7 @@ import java.util.Set;
  * without building an {@code HttpVerticle}, so a test hands hand-assembled mount lists to a
  * validator directly. Resolving the mounts creates no router.
  */
-final class ValidatorTestComponents {
+public final class ValidatorTestComponents {
 
     private ValidatorTestComponents() {}
 
@@ -53,7 +53,7 @@ final class ValidatorTestComponents {
                 RecordingMountCustomizer.Binding.class,
                 MarkerRouterMount.Last.class
             })
-    interface DormantBesideSharedComponent {
+    public interface DormantBesideSharedComponent {
 
         /**
          * Resolves the mount multibinding. The documentation mount's provider is unscoped, so every
@@ -79,7 +79,7 @@ final class ValidatorTestComponents {
 
         /** Factory taking the application configuration. */
         @Component.Factory
-        interface ComponentFactory {
+        public interface ComponentFactory {
 
             /**
              * Creates the component.

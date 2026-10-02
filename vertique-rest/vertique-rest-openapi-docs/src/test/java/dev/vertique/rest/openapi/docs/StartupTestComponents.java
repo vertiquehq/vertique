@@ -34,6 +34,7 @@ import dev.vertique.rest.openapi.docs.fixture.startup.startupit.ContributedResou
 import dev.vertique.rest.openapi.docs.fixture.startup.startupit.HandBuiltMounts;
 import dev.vertique.rest.openapi.docs.fixture.startup.startupit.ProtectedOpsRegistrationModule;
 import dev.vertique.rest.openapi.docs.fixture.startup.startupit.PublicReservedRegistrationModule;
+import dev.vertique.rest.openapi.docs.publication.DocumentStore;
 import io.vertx.core.http.HttpServerOptions;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;

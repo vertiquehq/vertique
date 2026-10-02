@@ -34,6 +34,7 @@ import dev.vertique.rest.openapi.docs.fixture.protecteddocs.shared.GuardedManage
 import dev.vertique.rest.openapi.docs.fixture.protecteddocs.shared.Observations;
 import dev.vertique.rest.openapi.docs.fixture.startup.contract.TestValidationStrategies;
 import dev.vertique.rest.openapi.docs.fixture.startup.startupit.HandBuiltMounts;
+import dev.vertique.rest.openapi.docs.publication.DocumentStore;
 import dev.vertique.rest.openapi.validation.OpenApiContractValidationModule;
 import dev.vertique.rest.validation.RestValidationModule;
 import io.vertx.core.Vertx;

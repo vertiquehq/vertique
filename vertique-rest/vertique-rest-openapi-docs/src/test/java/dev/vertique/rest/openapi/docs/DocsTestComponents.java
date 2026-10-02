@@ -29,6 +29,7 @@ import dev.vertique.rest.openapi.docs.fixture.SharedRegistrationModule;
 import dev.vertique.rest.openapi.docs.fixture.SharedResourcesModule;
 import dev.vertique.rest.openapi.docs.fixture.StubSchemeHandler;
 import dev.vertique.rest.openapi.docs.fixture.UndocumentedRegistrationModule;
+import dev.vertique.rest.openapi.docs.publication.DocumentStore;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 import java.util.Set;

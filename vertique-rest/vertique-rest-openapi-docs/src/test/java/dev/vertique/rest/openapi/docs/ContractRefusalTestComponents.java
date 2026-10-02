@@ -16,6 +16,7 @@ import dev.vertique.rest.openapi.docs.fixture.SharedResourcesModule;
 import dev.vertique.rest.openapi.docs.fixture.startup.StartupRegistrations;
 import dev.vertique.rest.openapi.docs.fixture.startup.contract.ContractRegistrations;
 import dev.vertique.rest.openapi.docs.fixture.startup.contract.TestValidationStrategies;
+import dev.vertique.rest.openapi.docs.publication.DocumentStore;
 import dev.vertique.rest.openapi.validation.OpenApiContractValidationModule;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;

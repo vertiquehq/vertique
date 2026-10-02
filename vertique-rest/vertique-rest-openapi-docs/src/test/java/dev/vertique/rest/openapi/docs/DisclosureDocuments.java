@@ -12,8 +12,15 @@ import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.jaxrs.application.RestApplications.ContractOrigin;
 import dev.vertique.rest.jaxrs.publication.MountPublication;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
+import dev.vertique.rest.openapi.docs.assembly.AssemblyContext;
+import dev.vertique.rest.openapi.docs.assembly.DocumentAssembler;
+import dev.vertique.rest.openapi.docs.config.EnabledDocuments;
+import dev.vertique.rest.openapi.docs.config.InfoConfig;
+import dev.vertique.rest.openapi.docs.diagnostics.DocumentWarnings;
+import dev.vertique.rest.openapi.docs.document.PublishedDocument;
 import dev.vertique.rest.openapi.docs.fixture.disclosure.profile.TagsProfileModule;
 import dev.vertique.rest.openapi.docs.fixture.input.Publications;
+import dev.vertique.rest.openapi.docs.metadata.OperationFacts;
 import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
 import java.io.IOException;
@@ -23,6 +30,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Assembles the documents of synthetic publications for the disclosure unit proofs, in public or
@@ -39,7 +47,7 @@ import java.util.Optional;
  * tags-zx} profile of {@link TagsProfileModule}, so a publication whose operation names that profile
  * id resolves it. The bound schema source is the caller's: {@link #noSource()} binds none.
  */
-final class DisclosureDocuments {
+public final class DisclosureDocuments {
 
     /** The {@code info} of every document. */
     static final InfoConfig INFO = new InfoConfig("Disclosure", "1.0", null);
@@ -55,8 +63,9 @@ final class DisclosureDocuments {
      *
      * @return the context
      */
-    static AssemblyContext noSource() {
-        return new AssemblyContext(Optional.empty(), TagsProfileModule.registry());
+    public static AssemblyContext noSource() {
+        return new AssemblyContext(
+                Optional.empty(), TagsProfileModule.registry(), new DocumentWarnings(), Set.of(), Set.of());
     }
 
     /**
@@ -66,8 +75,13 @@ final class DisclosureDocuments {
      *     AnnotationSchemaSource}
      * @return the context
      */
-    static AssemblyContext withSource(OperationSchemaSource source) {
-        return new AssemblyContext(Optional.of(Objects.requireNonNull(source, "source")), TagsProfileModule.registry());
+    public static AssemblyContext withSource(OperationSchemaSource source) {
+        return new AssemblyContext(
+                Optional.of(Objects.requireNonNull(source, "source")),
+                TagsProfileModule.registry(),
+                new DocumentWarnings(),
+                Set.of(),
+                Set.of());
     }
 
     /**
@@ -77,7 +91,7 @@ final class DisclosureDocuments {
      * @param access the document's access
      * @return the enabled document
      */
-    static EnabledDocuments.EnabledDocument document(Publications.Built built, ApiDocs.Access access) {
+    public static EnabledDocuments.EnabledDocument document(Publications.Built built, ApiDocs.Access access) {
         MountPublication publication = built.publication();
         return new EnabledDocuments.EnabledDocument(
                 Objects.requireNonNull(publication.applicationName(), "applicationName"),
@@ -85,7 +99,9 @@ final class DisclosureDocuments {
                 Objects.requireNonNull(access, "access"),
                 publication.mountPath(),
                 ContractOrigin.GLOBAL,
-                INFO);
+                INFO,
+                null,
+                null);
     }
 
     /**
@@ -116,7 +132,7 @@ final class DisclosureDocuments {
      * @return both rendered forms
      * @throws RestConfigurationException when publication fails
      */
-    static Rendering render(Publications.Built built, ApiDocs.Access access, AssemblyContext context) {
+    public static Rendering render(Publications.Built built, ApiDocs.Access access, AssemblyContext context) {
         PublishedDocument published =
                 DocumentAssembler.assemble(document(built, access), built.publication(), facts(built), context);
         return new Rendering(published.json(), published.yaml());
@@ -129,7 +145,7 @@ final class DisclosureDocuments {
      * @param context the assembly context
      * @return both rendered forms
      */
-    static Rendering renderPublic(Publications.Built built, AssemblyContext context) {
+    public static Rendering renderPublic(Publications.Built built, AssemblyContext context) {
         return render(built, ApiDocs.Access.PUBLIC, context);
     }
 
@@ -140,7 +156,7 @@ final class DisclosureDocuments {
      * @param context the assembly context
      * @return both rendered forms
      */
-    static Rendering renderProtected(Publications.Built built, AssemblyContext context) {
+    public static Rendering renderProtected(Publications.Built built, AssemblyContext context) {
         return render(built, ApiDocs.Access.PROTECTED, context);
     }
 
@@ -152,7 +168,7 @@ final class DisclosureDocuments {
      * @param context the assembly context
      * @return the failure
      */
-    static RestConfigurationException failure(
+    public static RestConfigurationException failure(
             Publications.Built built, ApiDocs.Access access, AssemblyContext context) {
         return assertThrows(RestConfigurationException.class, () -> render(built, access, context));
     }
@@ -163,14 +179,14 @@ final class DisclosureDocuments {
      * @param json the JSON bytes
      * @param yaml the YAML bytes
      */
-    record Rendering(byte[] json, byte[] yaml) {
+    public record Rendering(byte[] json, byte[] yaml) {
 
         /**
          * Returns the JSON form as text.
          *
          * @return the UTF-8 decoded JSON bytes
          */
-        String jsonText() {
+        public String jsonText() {
             return new String(json, StandardCharsets.UTF_8);
         }
 
@@ -179,7 +195,7 @@ final class DisclosureDocuments {
          *
          * @return the UTF-8 decoded YAML bytes
          */
-        String yamlText() {
+        public String yamlText() {
             return new String(yaml, StandardCharsets.UTF_8);
         }
 
@@ -188,7 +204,7 @@ final class DisclosureDocuments {
          *
          * @return the document, members in written order
          */
-        JsonObject document() {
+        public JsonObject document() {
             return new JsonObject(jsonText());
         }
 
@@ -197,7 +213,7 @@ final class DisclosureDocuments {
          *
          * @return the tree
          */
-        JsonNode jsonTree() {
+        public JsonNode jsonTree() {
             return read(JSON, json);
         }
 
@@ -207,7 +223,7 @@ final class DisclosureDocuments {
          *
          * @return the tree
          */
-        JsonNode yamlTree() {
+        public JsonNode yamlTree() {
             return read(YAML, yaml);
         }
 
@@ -217,7 +233,7 @@ final class DisclosureDocuments {
          * @param text the text
          * @return {@code true} when the JSON or the YAML text contains it
          */
-        boolean contains(String text) {
+        public boolean contains(String text) {
             return jsonText().contains(text) || yamlText().contains(text);
         }
 
@@ -227,7 +243,7 @@ final class DisclosureDocuments {
          * @return the object, or {@code null} when absent
          */
         @Nullable
-        JsonObject rootValidation() {
+        public JsonObject rootValidation() {
             return document().getJsonObject("x-vertique-validation");
         }
 

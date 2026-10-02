@@ -19,11 +19,18 @@ import dev.vertique.rest.jaxrs.publication.MountPublication;
 import dev.vertique.rest.jaxrs.publication.OperationPublication;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
 import dev.vertique.rest.openapi.docs.DeterminismTestComponents.CaptureComponent;
+import dev.vertique.rest.openapi.docs.assembly.AssemblyContext;
+import dev.vertique.rest.openapi.docs.assembly.DocumentAssembler;
+import dev.vertique.rest.openapi.docs.config.EnabledDocuments;
+import dev.vertique.rest.openapi.docs.diagnostics.DocumentWarnings;
+import dev.vertique.rest.openapi.docs.document.PublishedDocument;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.conformance.complete.CompleteEntries;
 import dev.vertique.rest.openapi.docs.fixture.conformance.complete.RefEntriesApi;
 import dev.vertique.rest.openapi.docs.fixture.conformance.determinism.ByteDifferences;
 import dev.vertique.rest.openapi.docs.fixture.support.Deployments;
+import dev.vertique.rest.openapi.docs.metadata.OperationFacts;
+import dev.vertique.rest.openapi.docs.publication.PublicationAccess;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
@@ -207,8 +214,8 @@ class DocumentDeterminismIT {
 
     /** Assembles one variant as the documentation sink does, with a fresh warning guard. */
     private static Assembled assemble(String name, Inputs inputs) {
-        Map<String, OperationFacts> facts = DocsPublicationSink.operationFacts(inputs.attached());
-        MountPublication detached = DocsPublicationSink.detach(inputs.attached());
+        Map<String, OperationFacts> facts = PublicationAccess.operationFacts(inputs.attached());
+        MountPublication detached = PublicationAccess.detach(inputs.attached());
         EnabledDocuments.EnabledDocument document =
                 MetadataDocuments.document(inputs.attached(), ApiDocs.Access.PUBLIC);
         AssemblyContext context = new AssemblyContext(

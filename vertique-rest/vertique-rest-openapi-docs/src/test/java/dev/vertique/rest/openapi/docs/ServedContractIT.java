@@ -36,6 +36,8 @@ import dev.vertique.rest.openapi.docs.fixture.support.Futures;
 import dev.vertique.rest.openapi.docs.fixture.support.OwnedWebClient;
 import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
 import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments.Outcome;
+import dev.vertique.rest.openapi.docs.publication.DocumentStore;
+import dev.vertique.rest.openapi.docs.publication.PublicationAccess;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Future;
 import io.vertx.core.MultiMap;
@@ -736,7 +738,9 @@ public class ServedContractIT {
         assertAll(
                 row.label(),
                 () -> assertEquals(404, document.status(), "the docs mount does not answer the document URL"),
-                () -> assertFalse(row.component().documentStore().names().contains(PARTNER), "no entry for partner"),
+                () -> assertFalse(
+                        PublicationAccess.names(row.component().documentStore()).contains(PARTNER),
+                        "no entry for partner"),
                 () -> assertEquals(List.of(), test.sourceLines(PARTNER), "no source line for partner"),
                 () -> assertEquals(List.of(), test.loaderLines(PARTNER), "no contract was loaded for partner"));
     }
@@ -1691,7 +1695,7 @@ public class ServedContractIT {
         assertNull(row.outcome().port(), () -> label + ": a port was published");
         if (storeName != null) {
             assertFalse(
-                    row.component().documentStore().names().contains(storeName),
+                    PublicationAccess.names(row.component().documentStore()).contains(storeName),
                     () -> label + ": the store holds an entry for " + storeName);
         }
         Throwable match = chain.stream()

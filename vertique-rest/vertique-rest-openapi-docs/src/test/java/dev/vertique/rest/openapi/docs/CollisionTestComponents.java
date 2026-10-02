@@ -16,6 +16,7 @@ import dev.vertique.rest.openapi.docs.fixture.startup.collision.CaseMount;
 import dev.vertique.rest.openapi.docs.fixture.startup.collision.CaseResources;
 import dev.vertique.rest.openapi.docs.fixture.startup.collision.CollisionRegistrations;
 import dev.vertique.rest.openapi.docs.fixture.startup.collision.PublicationRetainingSink;
+import dev.vertique.rest.openapi.docs.publication.DocumentStore;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 

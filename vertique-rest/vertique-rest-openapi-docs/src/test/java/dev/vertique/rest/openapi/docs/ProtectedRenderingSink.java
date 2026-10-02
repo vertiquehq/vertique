@@ -13,6 +13,15 @@ import dev.vertique.rest.jaxrs.publication.OperationDetail;
 import dev.vertique.rest.jaxrs.publication.OperationPublication;
 import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
+import dev.vertique.rest.openapi.docs.assembly.AssemblyContext;
+import dev.vertique.rest.openapi.docs.assembly.DocumentAssembler;
+import dev.vertique.rest.openapi.docs.config.EnabledDocuments;
+import dev.vertique.rest.openapi.docs.config.InfoConfig;
+import dev.vertique.rest.openapi.docs.diagnostics.DocumentWarnings;
+import dev.vertique.rest.openapi.docs.document.PublishedDocument;
+import dev.vertique.rest.openapi.docs.metadata.OperationFacts;
+import dev.vertique.rest.openapi.docs.publication.DocsPublicationSink;
+import dev.vertique.rest.openapi.docs.publication.PublicationAccess;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -72,7 +81,7 @@ final class ProtectedRenderingSink implements OperationPublicationSink {
             Optional<OperationSchemaSource> schemaSource,
             JsonMapperProfileRegistry profiles,
             RestApplications applications) {
-        this.context = new AssemblyContext(schemaSource, profiles);
+        this.context = new AssemblyContext(schemaSource, profiles, new DocumentWarnings(), Set.of(), Set.of());
         this.applications = Objects.requireNonNull(applications, "applications");
     }
 
@@ -117,9 +126,9 @@ final class ProtectedRenderingSink implements OperationPublicationSink {
                 .map(RestApplications.Entry::contractOrigin)
                 .orElse(ContractOrigin.GLOBAL);
         EnabledDocuments.EnabledDocument document = new EnabledDocuments.EnabledDocument(
-                applicationName, declaringType, apiDocs.access(), publication.mountPath(), origin, INFO);
-        Map<String, OperationFacts> facts = DocsPublicationSink.operationFacts(publication);
-        MountPublication detached = DocsPublicationSink.detach(publication);
+                applicationName, declaringType, apiDocs.access(), publication.mountPath(), origin, INFO, null, null);
+        Map<String, OperationFacts> facts = PublicationAccess.operationFacts(publication);
+        MountPublication detached = PublicationAccess.detach(publication);
         Callable<Outcome> task = () -> render(document, detached, facts);
         Context caller = Vertx.currentContext();
         if (caller == null) {
