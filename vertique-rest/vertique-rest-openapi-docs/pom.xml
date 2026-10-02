@@ -133,6 +133,14 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>logback-classic</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Test scope only: the Swagger JAX-RS reader the build-time Maven plugin runs, so a test can
+             compare the operations it keeps with the runtime document's. Version is managed by the
+             root POM. -->
+        <dependency>
+            <groupId>io.swagger.core.v3</groupId>
+            <artifactId>swagger-jaxrs2-jakarta</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
