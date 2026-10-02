@@ -189,7 +189,7 @@ final class InputAssembler {
             RedactionManifest manifest = null;
             if (captured != null) {
                 manifest = ManifestVerifier.verify(subject, operationId, captured, schemas.bodyProvenance(), context);
-                checked = embedder.check(InputDescription.body(operationId), captured);
+                checked = embedder.check(SchemaPublicationSubject.body(operationId), captured);
             }
             HiddenMemberRefusal.refuse(subject, operationId, bodyBinding, detail.profileId(), generators);
             if (checked != null) {
@@ -295,8 +295,9 @@ final class InputAssembler {
         JsonObject captured = captured(schemas, binding);
         SchemaEmbedder.CheckedSchema checked = null;
         if (captured != null) {
-            InputDescription input = InputDescription.parameter(operationId, binding.location(), binding.name());
-            ObjectNode tree = DocumentWriter.tree(captured);
+            SchemaPublicationSubject input =
+                    SchemaPublicationSubject.parameter(operationId, binding.location(), binding.name());
+            ObjectNode tree = SchemaTrees.tree(captured);
             ParameterPropertyNames.refuse(subject, input, tree);
             checked = embedder.check(input, tree);
         }
@@ -325,8 +326,8 @@ final class InputAssembler {
         if (captured == null) {
             return new PropertyPlan(binding.name(), null, unenforced(binding));
         }
-        InputDescription input = InputDescription.formField(operationId, binding.name());
-        ObjectNode tree = DocumentWriter.tree(captured);
+        SchemaPublicationSubject input = SchemaPublicationSubject.formField(operationId, binding.name());
+        ObjectNode tree = SchemaTrees.tree(captured);
         ParameterPropertyNames.refuse(subject, input, tree);
         return new PropertyPlan(binding.name(), embedder.check(input, tree), null);
     }

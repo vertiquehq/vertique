@@ -43,7 +43,7 @@ final class HiddenMemberRefusal {
             hidden = generators.generator(profileId).hiddenMembers(body.type());
         } catch (RuntimeException e) {
             throw new RestConfigurationException(
-                    subject + ": " + InputDescription.body(operationId).refusalPhrase()
+                    subject + ": " + SchemaPublicationSubject.body(operationId).refusalPhrase()
                             + " could not be inspected for hidden members");
         }
         if (hidden.isEmpty()) {
@@ -51,8 +51,8 @@ final class HiddenMemberRefusal {
         }
         HiddenMember first = hidden.get(0);
         throw new RestConfigurationException(
-                subject + ": " + InputDescription.body(operationId).refusalPhrase() + " describes " + what(first)
-                        + ", which carries " + marker(first.marker()) + "; " + fix(first));
+                subject + ": " + SchemaPublicationSubject.body(operationId).refusalPhrase() + " describes "
+                        + what(first) + ", which carries " + marker(first.marker()) + "; " + fix(first));
     }
 
     /**

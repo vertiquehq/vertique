@@ -39,7 +39,7 @@ final class ManifestVerifier {
             return manifest;
         }
         throw new RestConfigurationException(
-                subject + ": " + InputDescription.body(operationId).refusalPhrase()
+                subject + ": " + SchemaPublicationSubject.body(operationId).refusalPhrase()
                         + " carries no redaction manifest matching its content " + sourcePhrase(context)
                         + "; only the framework's schema generator binds one, so the source must return"
                         + " the generated body schema and its manifest unchanged");

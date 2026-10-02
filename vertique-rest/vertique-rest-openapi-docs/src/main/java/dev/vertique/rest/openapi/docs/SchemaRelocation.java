@@ -68,7 +68,7 @@ final class SchemaRelocation {
         List<Definition> definitions = new ArrayList<>();
         if (removed instanceof ObjectNode defs) {
             for (Map.Entry<String, JsonNode> entry : defs.properties()) {
-                String key = InputDescription.componentKey(componentKey + "." + entry.getKey());
+                String key = SchemaPublicationSubject.componentKey(componentKey + "." + entry.getKey());
                 definitionKeys.put(entry.getKey(), key);
                 definitions.add(new Definition(key, entry.getValue()));
             }

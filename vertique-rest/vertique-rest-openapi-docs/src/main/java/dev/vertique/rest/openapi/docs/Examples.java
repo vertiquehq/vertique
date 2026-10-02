@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.openapi.docs;
 
-import static dev.vertique.rest.openapi.docs.OperationMetadata.isSet;
+import static dev.vertique.rest.openapi.docs.AnnotationValues.isSet;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -108,7 +108,7 @@ final class Examples {
                         + ": an example has a value or an external value, not both");
             }
             if (isSet(example.ref())) {
-                throw InputDocumentation.unresolvedReference(subject, operationId, "@ExampleObject.ref in " + where);
+                throw AnnotationValues.unresolvedReference(subject, operationId, "@ExampleObject.ref in " + where);
             }
         }
     }

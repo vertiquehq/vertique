@@ -45,7 +45,7 @@ final class SchemaRefusals {
      * @throws RestConfigurationException naming the first refused construct, identifiers and anchors
      *     before references
      */
-    static void check(String subject, InputDescription input, JsonNode schema) {
+    static void check(String subject, SchemaPublicationSubject input, JsonNode schema) {
         SchemaPositions.walk(schema, (owner, keyword, value, pointer, atRoot) -> {
             String reason =
                     switch (keyword) {
@@ -76,7 +76,7 @@ final class SchemaRefusals {
     }
 
     private static RestConfigurationException refusal(
-            String subject, InputDescription input, String reason, String pointer) {
+            String subject, SchemaPublicationSubject input, String reason, String pointer) {
         return new RestConfigurationException(
                 subject + ": " + input.refusalPhrase() + " " + reason + " at '" + pointer + "'" + RULE);
     }

@@ -33,7 +33,7 @@ final class ParameterPropertyNames {
      * @param schema the document's own copy of the captured schema, only read
      * @throws RestConfigurationException when the schema holds the keyword
      */
-    static void refuse(String subject, InputDescription input, JsonNode schema) {
+    static void refuse(String subject, SchemaPublicationSubject input, JsonNode schema) {
         SchemaPositions.walk(schema, (owner, keyword, value, pointer, atRoot) -> {
             if (KEYWORD.equals(keyword)) {
                 throw new RestConfigurationException(subject + ": " + input.refusalPhrase()

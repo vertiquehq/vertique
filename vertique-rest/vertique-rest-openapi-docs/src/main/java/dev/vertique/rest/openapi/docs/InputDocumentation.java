@@ -3,8 +3,9 @@
 
 package dev.vertique.rest.openapi.docs;
 
-import static dev.vertique.rest.openapi.docs.OperationMetadata.isSet;
-import static dev.vertique.rest.openapi.docs.OperationMetadata.setOrNull;
+import static dev.vertique.rest.openapi.docs.AnnotationValues.first;
+import static dev.vertique.rest.openapi.docs.AnnotationValues.isSet;
+import static dev.vertique.rest.openapi.docs.AnnotationValues.setOrNull;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -74,20 +75,6 @@ final class InputDocumentation {
             return "form field " + binding.name();
         }
         return binding.location().name().toLowerCase(Locale.ROOT) + " parameter " + binding.name();
-    }
-
-    /**
-     * Builds the failure of an annotation reference the document cannot resolve.
-     *
-     * @param subject the failure-message subject naming the application and its mount
-     * @param operationId the runtime operation id
-     * @param attribute the attribute and the input it is declared on, for example {@code
-     *     @Parameter.ref on query parameter q}
-     * @return the failure
-     */
-    static RestConfigurationException unresolvedReference(String subject, String operationId, String attribute) {
-        return new RestConfigurationException(subject + ": operation '" + operationId + "' declares " + attribute
-                + "; the document declares no reusable parameters, request bodies, or examples for it to name");
     }
 
     /**
@@ -242,24 +229,6 @@ final class InputDocumentation {
         for (Content content : requestBody.content()) {
             if (isSet(content.schema().description())) {
                 return content.schema().description();
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Returns the first annotation of a type.
-     *
-     * @param annotations the annotations, in order
-     * @param type the annotation type
-     * @param <A> the annotation type
-     * @return the first annotation of the type, or {@code null} when there is none
-     */
-    @Nullable
-    static <A extends Annotation> A first(List<Annotation> annotations, Class<A> type) {
-        for (Annotation annotation : annotations) {
-            if (type.isInstance(annotation)) {
-                return type.cast(annotation);
             }
         }
         return null;

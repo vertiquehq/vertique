@@ -46,6 +46,9 @@ final class ValidationDisclosure {
     /** The runtime class name of the framework's annotation-driven operation schema source. */
     static final String ANNOTATION_SCHEMA_SOURCE = "dev.vertique.rest.validation.AnnotationSchemaSource";
 
+    /** The regular-expression dialect of every pattern a document publishes. */
+    static final String PATTERN_DIALECT = "java.util.regex";
+
     private static final JsonNodeFactory NODES = JsonNodeFactory.instance;
 
     private final boolean disclosed;
@@ -81,7 +84,7 @@ final class ValidationDisclosure {
      */
     ObjectNode root(AssemblyContext context, DisclosureTally tally) {
         ObjectNode root = NODES.objectNode();
-        root.put("patternDialect", DocumentAssembler.PATTERN_DIALECT);
+        root.put("patternDialect", PATTERN_DIALECT);
         if (!disclosed) {
             return root;
         }

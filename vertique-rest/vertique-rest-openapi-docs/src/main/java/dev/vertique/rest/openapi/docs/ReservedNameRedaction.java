@@ -60,7 +60,7 @@ final class ReservedNameRedaction {
         for (String pointer : manifest.pointers()) {
             if (!resolve(schema, pointer, members, elements)) {
                 throw new RestConfigurationException(subject + ": "
-                        + InputDescription.body(operationId).refusalPhrase()
+                        + SchemaPublicationSubject.body(operationId).refusalPhrase()
                         + " carries a redaction manifest that does not resolve in its schema "
                         + ManifestVerifier.sourcePhrase(context));
             }

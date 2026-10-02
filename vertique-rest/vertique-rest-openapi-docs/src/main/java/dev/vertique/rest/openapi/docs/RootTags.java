@@ -54,7 +54,7 @@ final class RootTags {
     void add(String operationId, OperationMetadata metadata) {
         for (Tag tag : metadata.declaredTags()) {
             Merged merged = byName.computeIfAbsent(tag.name(), name -> new Merged());
-            if (OperationMetadata.isSet(tag.description())) {
+            if (AnnotationValues.isSet(tag.description())) {
                 merged.description =
                         merge(tag.name(), "description", merged.description, tag.description(), operationId);
             }

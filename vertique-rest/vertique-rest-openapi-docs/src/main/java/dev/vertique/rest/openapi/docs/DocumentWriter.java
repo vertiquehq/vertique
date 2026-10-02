@@ -8,7 +8,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
-import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -31,7 +30,7 @@ final class DocumentWriter {
     /** The OpenAPI version every document declares. */
     static final String OPENAPI_VERSION = "3.1.1";
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final ObjectMapper JSON = SchemaTrees.JSON;
 
     private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
 
@@ -100,22 +99,6 @@ final class DocumentWriter {
 
     private static void putExtensions(ObjectNode node, Map<String, JsonNode> extensions) {
         extensions.forEach((name, value) -> node.set(name, value.deepCopy()));
-    }
-
-    /**
-     * Copies a captured schema into a document tree node. The captured object is only read: the
-     * returned tree is a new, independent copy, so changing it never reaches the captured object.
-     *
-     * @param captured the captured schema
-     * @return a new tree holding the same members, in the same order
-     * @throws IllegalStateException when the captured schema cannot be read as JSON
-     */
-    static ObjectNode tree(JsonObject captured) {
-        try {
-            return (ObjectNode) JSON.readTree(captured.encode());
-        } catch (JsonProcessingException e) {
-            throw new IllegalStateException("A captured schema cannot be read as JSON", e);
-        }
     }
 
     /**

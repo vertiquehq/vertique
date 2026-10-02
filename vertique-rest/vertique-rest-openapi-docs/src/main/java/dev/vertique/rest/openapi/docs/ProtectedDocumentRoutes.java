@@ -94,7 +94,7 @@ final class ProtectedDocumentRoutes {
                 scheme,
                 apiDocs.rolesAllowed(),
                 "json",
-                DocsRouterMount.JSON_TYPE,
+                DocumentResponses.JSON_TYPE,
                 PublishedDocument::json,
                 PublishedDocument::jsonTag,
                 vary);
@@ -105,7 +105,7 @@ final class ProtectedDocumentRoutes {
                 scheme,
                 apiDocs.rolesAllowed(),
                 "yaml",
-                DocsRouterMount.YAML_TYPE,
+                DocumentResponses.YAML_TYPE,
                 PublishedDocument::yaml,
                 PublishedDocument::yamlTag,
                 vary);
@@ -154,7 +154,7 @@ final class ProtectedDocumentRoutes {
             ctx.fail(503);
             return;
         }
-        DocsRouterMount.write(
+        DocumentResponses.write(
                 ctx, stored.get(), contentType, bytes, tag, DocumentCachePolicy.PROTECTED_CACHE_CONTROL, vary);
     }
 }

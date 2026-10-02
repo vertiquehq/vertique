@@ -3,6 +3,10 @@
 
 package dev.vertique.rest.openapi.docs;
 
+import static dev.vertique.rest.openapi.docs.AnnotationValues.first;
+import static dev.vertique.rest.openapi.docs.AnnotationValues.isSet;
+import static dev.vertique.rest.openapi.docs.AnnotationValues.setOrNull;
+
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.swagger.v3.oas.annotations.ExternalDocumentation;
@@ -66,7 +70,7 @@ record OperationMetadata(
         if (facts == null) {
             return NONE;
         }
-        Operation operation = InputDocumentation.first(facts.methodAnnotations(), Operation.class);
+        Operation operation = first(facts.methodAnnotations(), Operation.class);
         List<Tag> methodTags = tags(facts.methodAnnotations());
         List<Tag> classTags = tags(facts.classAnnotations());
 
@@ -148,27 +152,6 @@ record OperationMetadata(
         }
         node.put("url", externalDocs.url());
         return node;
-    }
-
-    /**
-     * Tells whether an annotation string member is set.
-     *
-     * @param value the member value
-     * @return {@code true} when it is neither {@code null} nor blank
-     */
-    static boolean isSet(@Nullable String value) {
-        return value != null && !value.isBlank();
-    }
-
-    /**
-     * Returns an annotation string member when it is set.
-     *
-     * @param value the member value
-     * @return the value when it is neither {@code null} nor blank, else {@code null}
-     */
-    @Nullable
-    static String setOrNull(@Nullable String value) {
-        return isSet(value) ? value : null;
     }
 
     /**

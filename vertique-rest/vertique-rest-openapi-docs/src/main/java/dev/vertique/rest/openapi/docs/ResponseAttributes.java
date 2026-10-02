@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.openapi.docs;
 
-import static dev.vertique.rest.openapi.docs.OperationMetadata.isSet;
+import static dev.vertique.rest.openapi.docs.AnnotationValues.isSet;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;

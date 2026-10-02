@@ -78,9 +78,6 @@ final class DocumentAssembler {
     /** The JSON Schema dialect every document declares at its root. */
     static final String JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema";
 
-    /** The regular-expression dialect of every pattern a document publishes. */
-    static final String PATTERN_DIALECT = "java.util.regex";
-
     /** The warning kind of the unpublished extensions of an annotated {@code info}. */
     private static final String INFO_EXTENSIONS = "info-extensions";
 

@@ -16,8 +16,8 @@ import java.util.SortedMap;
  *
  * <p>First every captured schema of the document is {@linkplain #check checked}: it is copied into a
  * tree the document owns and walked for {@linkplain SchemaRefusals refused constructs}. Only then is
- * each checked schema {@linkplain #publish published}: a request body always becomes a component,
- * and a parameter or form field becomes one only when it holds a {@code $ref} or a {@code $defs} at a
+ * each checked schema {@linkplain #publish published}: a request body or response schema always
+ * becomes a component (see {@link SchemaPublicationSubject#alwaysComponent()}), and a parameter or form field becomes one only when it holds a {@code $ref} or a {@code $defs} at a
  * schema position; any other schema is published inline, unchanged. A component is {@linkplain
  * SchemaRelocation relocated} and registered with its relocated definitions in the document's
  * {@link ComponentRegistry}, so key collisions are found as components are published.
@@ -52,19 +52,19 @@ final class SchemaEmbedder {
      * @return the checked copy, to publish once every input of the document is checked
      * @throws RestConfigurationException when the schema holds a refused construct
      */
-    CheckedSchema check(InputDescription input, JsonObject captured) {
-        return check(input, DocumentWriter.tree(captured));
+    CheckedSchema check(SchemaPublicationSubject input, JsonObject captured) {
+        return check(input, SchemaTrees.tree(captured));
     }
 
     /**
      * Refuses the constructs a published schema may not hold in a tree the document already owns.
      *
      * @param input the input the schema was captured for
-     * @param tree the document's own copy of the captured schema, made by {@link DocumentWriter#tree}
+     * @param tree the document's own copy of the captured schema, made by {@link SchemaTrees#tree}
      * @return the checked copy, to publish once every input of the document is checked
      * @throws RestConfigurationException when the schema holds a refused construct
      */
-    CheckedSchema check(InputDescription input, ObjectNode tree) {
+    CheckedSchema check(SchemaPublicationSubject input, ObjectNode tree) {
         SchemaRefusals.check(subject, input, tree);
         return new CheckedSchema(input, tree);
     }
@@ -79,9 +79,9 @@ final class SchemaEmbedder {
      * @throws RestConfigurationException when a component key is already taken in the document
      */
     JsonNode publish(CheckedSchema checked) {
-        InputDescription input = checked.input();
+        SchemaPublicationSubject input = checked.input();
         ObjectNode schema = checked.tree();
-        if (!input.body() && !SchemaRelocation.holdsReferences(schema)) {
+        if (!input.alwaysComponent() && !SchemaRelocation.holdsReferences(schema)) {
             return schema;
         }
         String key = input.componentKey();
@@ -118,5 +118,5 @@ final class SchemaEmbedder {
      * @param input the input the schema was captured for
      * @param tree the owned copy
      */
-    record CheckedSchema(InputDescription input, ObjectNode tree) {}
+    record CheckedSchema(SchemaPublicationSubject input, ObjectNode tree) {}
 }

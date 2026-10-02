@@ -186,7 +186,7 @@ final class ResponseAssembler {
                     + ", but its return type publishes no inferable response content; remove the attribute or"
                     + " declare the content");
         }
-        String description = OperationMetadata.isSet(response.description())
+        String description = AnnotationValues.isSet(response.description())
                 ? response.description()
                 : ResponseStatuses.reasonPhrase(status);
         List<Slot> slots = new ArrayList<>();
@@ -202,7 +202,7 @@ final class ResponseAssembler {
         List<PlannedHeader> headers = new ArrayList<>();
         Set<String> headerNames = new HashSet<>();
         for (Header header : response.headers()) {
-            if (!OperationMetadata.isSet(header.name())) {
+            if (!AnnotationValues.isSet(header.name())) {
                 continue;
             }
             if (!headerNames.add(asciiLowerCase(header.name()))) {
@@ -279,7 +279,7 @@ final class ResponseAssembler {
             ObjectNode examples =
                     Examples.render(prefix, operationId, "@Content.examples on status " + status, content.examples());
             List<String> applied =
-                    OperationMetadata.isSet(content.mediaType()) ? List.of(content.mediaType()) : produces;
+                    AnnotationValues.isSet(content.mediaType()) ? List.of(content.mediaType()) : produces;
             for (String mediaType : applied) {
                 if (mediaTypes.containsKey(mediaType)) {
                     throw new RestConfigurationException(prefix + ": operation '" + operationId
@@ -464,7 +464,7 @@ final class ResponseAssembler {
          */
         ObjectNode publish(SchemaEmbedder embedder) {
             ObjectNode node = NODES.objectNode();
-            if (OperationMetadata.isSet(declaration.description())) {
+            if (AnnotationValues.isSet(declaration.description())) {
                 node.put("description", declaration.description());
             }
             if (declaration.required()) {

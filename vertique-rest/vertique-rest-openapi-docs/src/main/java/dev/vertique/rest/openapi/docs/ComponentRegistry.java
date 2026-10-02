@@ -42,7 +42,7 @@ final class ComponentRegistry {
      * @param relocated whether the component is a definition relocated out of the input's schema
      * @throws RestConfigurationException when a component with the key is already registered
      */
-    void register(String key, JsonNode schema, InputDescription input, boolean relocated) {
+    void register(String key, JsonNode schema, SchemaPublicationSubject input, boolean relocated) {
         Component existing = components.get(key);
         if (existing != null) {
             String named = existing.relocated() || relocated ? "one component" : "component '" + key + "'";
@@ -64,7 +64,7 @@ final class ComponentRegistry {
         return Collections.unmodifiableSortedMap(schemas);
     }
 
-    private static String phrase(InputDescription input, boolean relocated) {
+    private static String phrase(SchemaPublicationSubject input, boolean relocated) {
         return relocated ? "a relocated definition of " + input.collisionPhrase() : input.collisionPhrase();
     }
 

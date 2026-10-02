@@ -3,9 +3,9 @@
 
 package dev.vertique.rest.openapi.docs;
 
-import static dev.vertique.rest.openapi.docs.InputDocumentation.first;
+import static dev.vertique.rest.openapi.docs.AnnotationValues.first;
+import static dev.vertique.rest.openapi.docs.AnnotationValues.isSet;
 import static dev.vertique.rest.openapi.docs.InputDocumentation.isDefault;
-import static dev.vertique.rest.openapi.docs.OperationMetadata.isSet;
 
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.jaxrs.publication.InputBinding;
@@ -199,7 +199,7 @@ final class MetadataAgreement {
             }
             String input = InputDocumentation.REQUEST_BODY;
             if (isSet(requestBody.ref())) {
-                throw InputDocumentation.unresolvedReference(subject, operationId, "@RequestBody.ref on " + input);
+                throw AnnotationValues.unresolvedReference(subject, operationId, "@RequestBody.ref on " + input);
             }
             for (Content content : requestBody.content()) {
                 if (isSet(content.mediaType()) && !mediaTypes.contains(content.mediaType())) {
@@ -240,7 +240,7 @@ final class MetadataAgreement {
             }
             String input = InputDocumentation.phrase(binding);
             if (isSet(parameter.ref())) {
-                throw InputDocumentation.unresolvedReference(subject, operationId, "@Parameter.ref on " + input);
+                throw AnnotationValues.unresolvedReference(subject, operationId, "@Parameter.ref on " + input);
             }
             if (parameter.content().length > 0) {
                 throw contradiction(operationId, "@Parameter.content on " + input, "a parameter's content");
