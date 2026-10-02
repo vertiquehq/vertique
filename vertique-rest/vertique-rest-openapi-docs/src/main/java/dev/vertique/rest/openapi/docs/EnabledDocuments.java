@@ -52,11 +52,13 @@ record EnabledDocuments(List<EnabledDocument> all) {
      * @param mountPath the mount path of the application
      * @param contractOrigin where the application's contract comes from
      * @param info the {@code info} object of the document: its {@code title}, {@code version}, and
-     *     {@code description}
+     *     {@code description}; {@code null} when not configured, and always {@code null} once
+     *     resolved for a document whose application serves its own contract
      * @param serverUrl the configured server URL of the document, or {@code null} when absent
      * @param annotatedInfo the complete {@code info} read from the declaring interface's {@code
      *     OpenAPIDefinition}, which the document publishes instead of {@code info}; {@code null}
-     *     when the {@code info} is configured or not yet resolved
+     *     when the {@code info} is configured, not yet resolved, or the application serves its own
+     *     contract
      */
     record EnabledDocument(
             String name,
@@ -64,7 +66,7 @@ record EnabledDocuments(List<EnabledDocument> all) {
             ApiDocs.Access access,
             String mountPath,
             ContractOrigin contractOrigin,
-            InfoConfig info,
+            @Nullable InfoConfig info,
             @Nullable String serverUrl,
             @Nullable AnnotatedInfo annotatedInfo) {
 
@@ -85,7 +87,7 @@ record EnabledDocuments(List<EnabledDocument> all) {
                 ApiDocs.Access access,
                 String mountPath,
                 ContractOrigin contractOrigin,
-                InfoConfig info,
+                @Nullable InfoConfig info,
                 @Nullable String serverUrl) {
             this(name, declaringType, access, mountPath, contractOrigin, info, serverUrl, null);
         }
@@ -107,7 +109,7 @@ record EnabledDocuments(List<EnabledDocument> all) {
                 ApiDocs.Access access,
                 String mountPath,
                 ContractOrigin contractOrigin,
-                InfoConfig info) {
+                @Nullable InfoConfig info) {
             this(name, declaringType, access, mountPath, contractOrigin, info, null, null);
         }
     }

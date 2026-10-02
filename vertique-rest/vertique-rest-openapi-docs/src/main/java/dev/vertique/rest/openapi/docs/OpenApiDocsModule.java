@@ -109,6 +109,8 @@ public abstract class OpenApiDocsModule {
      *
      * @param documents the enabled documents
      * @param apidocsConfig the parsed {@code apidocs} section, whose path is the documentation prefix
+     * @param applications the declared applications of the component, whose effective contract
+     *     locations the validator compares
      * @param warnings the documentation module's warnings of the component
      * @param mountCustomizers the registered mount customizers
      * @param middlewares the registered middlewares
@@ -121,6 +123,7 @@ public abstract class OpenApiDocsModule {
     static Set<MountCompositionValidator> compositionValidators(
             EnabledDocuments documents,
             ApidocsConfig apidocsConfig,
+            RestApplications applications,
             DocumentWarnings warnings,
             Set<MountCustomizer> mountCustomizers,
             Set<Middleware> middlewares,
@@ -132,6 +135,7 @@ public abstract class OpenApiDocsModule {
         return Set.of(new DocsCompositionValidator(
                 documents,
                 apidocsConfig.path(),
+                applications,
                 warnings,
                 mountCustomizers,
                 middlewares,
@@ -216,15 +220,18 @@ public abstract class OpenApiDocsModule {
      * holds only {@code enabled}, {@code info}, and {@code serverUrl}; and {@code enabled: true}
      * requires {@link ApiDocs} on the declaring interface. The {@link ApiDocs} of every active
      * application is re-checked for its shape, whether or not its document is disabled. When at least
-     * one document is enabled, {@code apidocs.path} is checked, and each enabled document takes its
-     * {@code info} from configuration, else from an {@code OpenAPIDefinition} on its declaring
-     * interface itself, and has a valid {@code serverUrl} when one is configured.
+     * one document is enabled, {@code apidocs.path} is checked. Each enabled generated document takes
+     * its {@code info} from configuration, else from an {@code OpenAPIDefinition} on its declaring
+     * interface itself, and has a valid {@code serverUrl} when one is configured. Each enabled
+     * document whose application serves its own contract needs no {@code info}, and configures
+     * neither {@code info} nor {@code serverUrl} and carries no {@code OpenAPIDefinition} on its
+     * declaring interface itself, since each would rewrite that contract.
      *
      * @param config the root configuration
      * @param apidocsConfig the parsed {@code apidocs} section
      * @param applications the declared applications of the component
-     * @return the enabled documents, ordered by application name, each with its resolved
-     *     {@code info}
+     * @return the enabled documents, ordered by application name, each generated one with its
+     *     resolved {@code info}
      * @throws ConfigurationException when a document entry, {@code apidocs.path}, or the
      *     {@code info} or {@code serverUrl} of an enabled document is invalid, or, as the
      *     {@code RestConfigurationException} subtype, when the {@link ApiDocs} of an active

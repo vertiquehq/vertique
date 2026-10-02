@@ -7,6 +7,7 @@ import dev.vertique.core.config.JsonConfigPaths;
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.jaxrs.publication.RestApplications;
+import dev.vertique.rest.jaxrs.publication.RestApplications.ContractOrigin;
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
 import io.swagger.v3.oas.annotations.info.Info;
 import io.vertx.core.json.JsonObject;
@@ -37,8 +38,13 @@ import java.util.stream.Collectors;
  * fails. Second, the {@link ApiDocs} of every
  * active application is re-checked for its shape, whether or not configuration disables its
  * document, and every violation is reported in one failure. Third, only when at least one document
- * is enabled, {@code apidocs.path} is checked, then the {@code info} and {@code serverUrl} of each
- * enabled document in name order; the first violation fails.
+ * is enabled, {@code apidocs.path} is checked, then each enabled document in name order; the first
+ * violation fails. A generated document, whose application's contract origin is {@link
+ * ContractOrigin#GLOBAL}, has its {@code info} resolved and its {@code serverUrl} checked. A
+ * document whose application serves its own contract, its origin {@link
+ * ContractOrigin#CONFIGURATION} or {@link ContractOrigin#ANNOTATION}, needs no {@code info}: a
+ * configured {@code info} or {@code serverUrl}, or an {@link OpenAPIDefinition} on its declaring
+ * interface itself, would rewrite that contract and fails instead.
  *
  * <p>Every failure that concerns a declared application names the application and its declaring
  * interface. No failure echoes a configuration value or an annotation attribute value; an entry key
@@ -58,15 +64,19 @@ final class DocumentConfigChecks {
     private DocumentConfigChecks() {}
 
     /**
-     * Runs every configuration check and resolves the {@code info} of each selected document.
+     * Runs every configuration check and resolves the {@code info} of each selected generated
+     * document.
      *
      * @param config the root configuration, whose raw {@code apidocs.documents} keys are checked
      * @param apidocsConfig the parsed {@code apidocs} section, which is enabled
      * @param applications the declared applications of the component
      * @param selected the documents the configuration and the annotations enable, in name order
-     * @return the selected documents, each carrying its resolved {@code info}
+     * @return the selected documents, each generated one carrying its resolved {@code info}, and each
+     *     one whose application serves its own contract carrying no {@code info}, server URL, or
+     *     annotated {@code info}
      * @throws ConfigurationException when a document entry, {@code apidocs.path}, or the
-     *     {@code info} or {@code serverUrl} of an enabled document is invalid
+     *     {@code info} or {@code serverUrl} of an enabled generated document is invalid, or when the
+     *     metadata of a document whose application serves its own contract would rewrite it
      * @throws RestConfigurationException when the {@link ApiDocs} of an active application is
      *     malformed
      */
@@ -83,6 +93,19 @@ final class DocumentConfigChecks {
         checkPath(apidocsConfig.path());
         List<EnabledDocuments.EnabledDocument> resolved = new ArrayList<>(selected.size());
         for (EnabledDocuments.EnabledDocument document : selected) {
+            if (document.contractOrigin() != ContractOrigin.GLOBAL) {
+                checkNoMetadataOverride(document);
+                resolved.add(new EnabledDocuments.EnabledDocument(
+                        document.name(),
+                        document.declaringType(),
+                        document.access(),
+                        document.mountPath(),
+                        document.contractOrigin(),
+                        null,
+                        null,
+                        null));
+                continue;
+            }
             AnnotatedInfo annotated = resolveInfo(document);
             InfoConfig info = annotated == null
                     ? document.info()
@@ -266,6 +289,36 @@ final class DocumentConfigChecks {
     private static ConfigurationException infoFailure(EnabledDocuments.EnabledDocument document, String settingPath) {
         return new ConfigurationException("Application '" + document.name() + "' (declared by "
                 + document.declaringType().getName() + ") needs a non-blank configured '" + settingPath + "'");
+    }
+
+    /**
+     * Refuses the metadata that would rewrite the contract an application serves as its document:
+     * a configured {@code info}, then a configured {@code serverUrl}, then an {@link
+     * OpenAPIDefinition} read with {@link Class#getDeclaredAnnotation(Class)} from the declaring
+     * interface itself. A configured value counts whatever it holds, and no failure echoes it.
+     *
+     * @throws ConfigurationException naming the configuration path, or the annotation and the
+     *     declaring interface, of the first override found
+     */
+    private static void checkNoMetadataOverride(EnabledDocuments.EnabledDocument document) {
+        String base = "apidocs.documents." + document.name();
+        if (document.info() != null) {
+            throw metadataOverride(document, "configures '" + base + ".info'");
+        }
+        if (document.serverUrl() != null) {
+            throw metadataOverride(document, "configures '" + base + ".serverUrl'");
+        }
+        if (document.declaringType().getDeclaredAnnotation(OpenAPIDefinition.class) != null) {
+            throw metadataOverride(
+                    document,
+                    "declares @OpenAPIDefinition on " + document.declaringType().getName());
+        }
+    }
+
+    private static ConfigurationException metadataOverride(EnabledDocuments.EnabledDocument document, String what) {
+        return new ConfigurationException("Application '" + document.name() + "' (declared by "
+                + document.declaringType().getName() + ") serves its own OpenAPI contract as its document, but "
+                + what + ", which would rewrite that contract; the served document is never rewritten, so remove it");
     }
 
     private static void checkServerUrl(EnabledDocuments.EnabledDocument document) {
