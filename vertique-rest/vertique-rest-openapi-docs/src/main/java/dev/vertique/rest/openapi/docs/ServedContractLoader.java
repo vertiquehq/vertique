@@ -54,7 +54,8 @@ final class ServedContractLoader {
 
     private static final ObjectMapper JSON = new ObjectMapper().enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
 
-    private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
+    private static final ObjectMapper YAML =
+            new ObjectMapper(new YAMLFactory()).enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
 
     private ServedContractLoader() {}
 
@@ -102,9 +103,13 @@ final class ServedContractLoader {
         ServedContractChecks.check(name, contract, mountPath, routed);
 
         PendingWarnings pending = new PendingWarnings(name);
-        pending.notice(DocumentWarnings.SOURCE, DocumentWarnings.servedSource(name, resolution.location()));
+        pending.notice(
+                DocumentWarnings.SOURCE,
+                DocumentWarnings.servedSource(name, ContractReferences.display(resolution.location())));
         if (resolution.shadowsClasspath()) {
-            pending.add(DocumentWarnings.CONTRACT_SHADOWED, DocumentWarnings.contractShadowed(name, path));
+            pending.add(
+                    DocumentWarnings.CONTRACT_SHADOWED,
+                    DocumentWarnings.contractShadowed(name, ContractReferences.display(path)));
         }
         if (!firstServerIsMount(contract, mountPath)) {
             pending.add(DocumentWarnings.CONTRACT_SERVERS, DocumentWarnings.contractServers(name, mountPath));
@@ -135,7 +140,7 @@ final class ServedContractLoader {
             case "json" -> false;
             case "yaml", "yml" -> true;
             default ->
-                throw new RestConfigurationException(subject + " at '" + path
+                throw new RestConfigurationException(subject + " at '" + ContractReferences.display(path)
                         + "' has an unsupported extension; a contract location ends with " + SUPPORTED_EXTENSIONS);
         };
     }
