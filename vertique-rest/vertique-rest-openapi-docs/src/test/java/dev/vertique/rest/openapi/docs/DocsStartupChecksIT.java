@@ -25,8 +25,6 @@ import dev.vertique.rest.openapi.docs.StartupTestComponents.VerticleInputsStartu
 import dev.vertique.rest.openapi.docs.StartupTestComponents.ZeroDeclarationStartupComponent;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.MarkerRouterMount;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments.Outcome;
 import dev.vertique.rest.openapi.docs.fixture.startup.startupit.ApiJsonIdResource;
 import dev.vertique.rest.openapi.docs.fixture.startup.startupit.ContributedResources;
 import dev.vertique.rest.openapi.docs.fixture.startup.startupit.CountingResource;
@@ -38,6 +36,9 @@ import dev.vertique.rest.openapi.docs.fixture.startup.startupit.ReservedMgmtReso
 import dev.vertique.rest.openapi.docs.fixture.startup.startupit.ReservedYamlResource;
 import dev.vertique.rest.openapi.docs.fixture.startup.startupit.TenantProbeResource;
 import dev.vertique.rest.openapi.docs.fixture.startup.startupit.ThreeSegmentsResource;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments.Outcome;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -47,6 +48,7 @@ import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import jakarta.annotation.Nullable;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -1310,12 +1312,12 @@ public class DocsStartupChecksIT {
 
     /** Sends {@code GET} for the {@code public} document's JSON form and waits for the whole response. */
     private HttpResponse<Buffer> getJsonDocument(int port) throws Exception {
-        return await(client.get(port, LOOPBACK, PUBLIC_JSON_URL).send());
+        return Futures.await(client.get(port, LOOPBACK, PUBLIC_JSON_URL).send(), Duration.ofSeconds(15));
     }
 
     /** Sends {@code GET} for a path and waits for the whole response. */
     private HttpResponse<Buffer> get(int port, String path) throws Exception {
-        return await(client.get(port, LOOPBACK, path).send());
+        return Futures.await(client.get(port, LOOPBACK, path).send(), Duration.ofSeconds(15));
     }
 
     /**
@@ -1398,10 +1400,5 @@ public class DocsStartupChecksIT {
      */
     private static Pattern standingAlone(String word) {
         return Pattern.compile("(?<![\\w./-])" + Pattern.quote(word) + "(?![\\w./-])");
-    }
-
-    /** Blocks the JUnit thread for a future's result, bounded below the class timeout. */
-    private static <T> T await(Future<T> future) throws Exception {
-        return future.toCompletionStage().toCompletableFuture().get(15, TimeUnit.SECONDS);
     }
 }

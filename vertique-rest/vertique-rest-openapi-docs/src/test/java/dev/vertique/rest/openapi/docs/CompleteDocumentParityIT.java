@@ -23,9 +23,10 @@ import dev.vertique.rest.openapi.docs.fixture.conformance.complete.RefEntriesApi
 import dev.vertique.rest.openapi.docs.fixture.conformance.complete.ReflectedEntryResource;
 import dev.vertique.rest.openapi.docs.fixture.conformance.complete.ReflectedFilter;
 import dev.vertique.rest.openapi.docs.fixture.conformance.complete.ReflectedPaging;
-import dev.vertique.rest.openapi.docs.fixture.conformance.support.Deployments;
-import dev.vertique.rest.openapi.docs.fixture.conformance.support.DocumentRequests;
-import dev.vertique.rest.openapi.docs.fixture.conformance.support.DocumentRequests.Answer;
+import dev.vertique.rest.openapi.docs.fixture.support.Deployments;
+import dev.vertique.rest.openapi.docs.fixture.support.DocumentRequests;
+import dev.vertique.rest.openapi.docs.fixture.support.DocumentRequests.Answer;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Verticle;
 import io.vertx.core.Vertx;
@@ -35,6 +36,7 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -67,6 +69,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 public class CompleteDocumentParityIT {
 
+    /** The longest one deployment, request, or undeployment is awaited. */
+    private static final Duration WAIT = Duration.ofSeconds(5);
+
     /** The path keys both documents publish; the hidden operation's path is not among them. */
     private static final Set<String> PUBLISHED_PATHS =
             Set.of(CompleteEntries.RESOURCE_PATH, CompleteEntries.ENTRY_ROUTE, CompleteEntries.EXPORTS_ROUTE);
@@ -88,7 +93,7 @@ public class CompleteDocumentParityIT {
         try {
             client.close();
         } finally {
-            Deployments.undeployAll(vertx, deploymentIds);
+            Deployments.undeployAll(vertx, deploymentIds, WAIT);
             deploymentIds.clear();
         }
     }
@@ -199,13 +204,13 @@ public class CompleteDocumentParityIT {
      * hidden operation's route under its mount, then undeploys it.
      */
     private Served serve(Supplier<Verticle> verticles, String documentName, String mountPath) throws Exception {
-        int port = Deployments.deployAndReadPort(vertx, verticles, new DeploymentOptions(), deploymentIds);
+        int port = Deployments.deployAndReadPort(vertx, verticles, new DeploymentOptions(), deploymentIds, WAIT);
         String documentPath = DocsConfigs.DEFAULT_APIDOCS_PATH + "/" + documentName + "/openapi.json";
-        Answer document = DocumentRequests.get(client, port, documentPath, null);
+        Answer document = DocumentRequests.get(client, port, documentPath, null, WAIT);
         assertEquals(200, document.status(), () -> "GET " + documentPath + " must answer 200");
-        Answer hidden = DocumentRequests.get(client, port, mountPath + CompleteEntries.LIVE_ROUTE, null);
+        Answer hidden = DocumentRequests.get(client, port, mountPath + CompleteEntries.LIVE_ROUTE, null, WAIT);
         String deploymentId = deploymentIds.remove(deploymentIds.size() - 1);
-        Deployments.await(vertx.undeploy(deploymentId));
+        Futures.await(vertx.undeploy(deploymentId), WAIT);
         return new Served(new JsonObject(Buffer.buffer(document.body())), hidden);
     }
 

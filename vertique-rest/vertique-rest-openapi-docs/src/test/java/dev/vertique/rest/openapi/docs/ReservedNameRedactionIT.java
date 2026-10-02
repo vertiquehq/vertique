@@ -32,8 +32,9 @@ import dev.vertique.rest.openapi.docs.fixture.disclosure.sources.InPlaceEditingS
 import dev.vertique.rest.openapi.docs.fixture.disclosure.sources.ManifestFreeSchemaSource;
 import dev.vertique.rest.openapi.docs.fixture.disclosure.sources.ReplacingSchemaSource;
 import dev.vertique.rest.openapi.docs.fixture.input.RecordingSchemaSource;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments.Outcome;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments.Outcome;
 import io.vertx.core.Future;
 import io.vertx.core.Verticle;
 import io.vertx.core.Vertx;
@@ -50,7 +51,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -234,7 +234,7 @@ public class ReservedNameRedactionIT {
                     assertFalse(ignoredName.body().contains(AUDIT_TRAIL), "the refusal does not echo " + AUDIT_TRAIL));
             assertAll("the redacted notes documents and the gate's answers", checks.stream());
         } finally {
-            undeploy(renderings.serving());
+            StartupDeployments.undeployAndClear(vertx, renderings.serving());
         }
     }
 
@@ -334,7 +334,7 @@ public class ReservedNameRedactionIT {
                     "after the requests, the body the source returned still matches its manifest"));
             assertAll("the redacted folds documents and the gate's answers", checks.stream());
         } finally {
-            undeploy(renderings.serving());
+            StartupDeployments.undeployAndClear(vertx, renderings.serving());
         }
     }
 
@@ -407,7 +407,7 @@ public class ReservedNameRedactionIT {
         Map<Refusal, Outcome> outcomes = new LinkedHashMap<>();
         for (Refusal refusal : refusals) {
             Outcome outcome = deploy(refusal.component().get()::httpVerticle);
-            undeploy(outcome);
+            StartupDeployments.undeployAndClear(vertx, outcome);
             outcomes.put(refusal, outcome);
             // Evidence: the refusal message alone, which by design quotes no schema value.
             Throwable failure = outcome.failure();
@@ -482,7 +482,7 @@ public class ReservedNameRedactionIT {
                             .send());
             return new Observed(valid, invalid, document);
         } finally {
-            undeploy(outcome);
+            StartupDeployments.undeployAndClear(vertx, outcome);
         }
     }
 
@@ -542,7 +542,7 @@ public class ReservedNameRedactionIT {
                     () -> "the rendering composition deploys; it failed with " + rendered.failure());
             failure = rendering.protectedRendering().failure(application);
         } finally {
-            undeploy(rendered);
+            StartupDeployments.undeployAndClear(vertx, rendered);
         }
         Optional<String> assemblyFailure = failure;
         assertEquals(Optional.empty(), assemblyFailure, () -> "the protected document assembles: " + assemblyFailure);
@@ -561,7 +561,12 @@ public class ReservedNameRedactionIT {
             byte[] yaml = fetch(port, InputAssemblyIT.documentPath(application, InputAssemblyIT.YAML_FORM));
             return new Renderings(new Rendering(json, yaml), protectedForm, deployment);
         } catch (Throwable failed) {
-            undeploy(deployment);
+            // A failed undeployment must not replace the failure that ended the rendering.
+            try {
+                StartupDeployments.undeployAndClear(vertx, deployment);
+            } catch (Throwable cleanupFailure) {
+                failed.addSuppressed(cleanupFailure);
+            }
             throw failed;
         }
     }
@@ -613,27 +618,18 @@ public class ReservedNameRedactionIT {
     }
 
     private static byte[] fetch(int port, String uri) throws Exception {
-        HttpResponse<Buffer> response = await(client.get(port, HOST, uri).send());
+        HttpResponse<Buffer> response =
+                Futures.await(client.get(port, HOST, uri).send(), StartupDeployments.BOUND);
         assertEquals(200, response.statusCode(), () -> "GET " + uri + " answers 200");
         Buffer body = response.body();
         return body == null ? new byte[0] : body.getBytes();
     }
 
     private static Answer answer(Future<HttpResponse<Buffer>> response) throws Exception {
-        HttpResponse<Buffer> received = await(response);
+        HttpResponse<Buffer> received = Futures.await(response, StartupDeployments.BOUND);
         Buffer body = received.body();
         return new Answer(
                 received.statusCode(), received.getHeader("Content-Type"), body == null ? "" : body.toString());
-    }
-
-    private static <T> T await(Future<T> future) throws Exception {
-        try {
-            return future.toCompletionStage()
-                    .toCompletableFuture()
-                    .get(StartupDeployments.BOUND.toMillis(), TimeUnit.MILLISECONDS);
-        } catch (ExecutionException failed) {
-            throw new AssertionError("the request failed", failed.getCause());
-        }
     }
 
     /**
@@ -645,14 +641,5 @@ public class ReservedNameRedactionIT {
     private static Outcome deploy(Supplier<Verticle> verticles) throws Exception {
         vertx.sharedData().getLocalMap(StartupDeployments.LOCAL_MAP).clear();
         return StartupDeployments.deploy(vertx, verticles);
-    }
-
-    /** Undeploys a successful deployment, if any, and clears the {@code vertique} local map. */
-    private static void undeploy(Outcome outcome) throws Exception {
-        try {
-            StartupDeployments.undeploy(vertx, outcome);
-        } finally {
-            vertx.sharedData().getLocalMap(StartupDeployments.LOCAL_MAP).clear();
-        }
     }
 }

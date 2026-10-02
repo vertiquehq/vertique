@@ -10,6 +10,7 @@ import dev.vertique.core.VertxConfig;
 import dev.vertique.rest.auth.jwt.JwtAuthModule;
 import dev.vertique.rest.core.router.HttpVerticle;
 import dev.vertique.rest.jaxrs.RestModule;
+import dev.vertique.rest.openapi.docs.fixture.MarkerRouterMount;
 import dev.vertique.rest.openapi.docs.fixture.conformance.shared.CountingCanonicalSchemaSource;
 import dev.vertique.rest.openapi.docs.fixture.conformance.shared.OrderBodySwitchingSchemaSource;
 import dev.vertique.rest.openapi.docs.fixture.conformance.shared.SharedApplicationsModule;
@@ -24,12 +25,14 @@ import jakarta.inject.Singleton;
  * <p>Each composes the framework's REST, JWT authentication (scheme {@code bearerAuth}), and
  * documentation modules with the public and management applications of {@link
  * SharedApplicationsModule} and one {@code web-validation} wiring of {@link
- * SharedSchemaSourceModules}, which decorates the canonical schema source. Each instance owns its own
- * document store, so the test builds one instance per scenario.
+ * SharedSchemaSourceModules}, which decorates the canonical schema source. The counting and
+ * first-variant graphs also place a {@link MarkerRouterMount} after every other mount, so a response
+ * shows whether the documentation mount answered it. Each instance owns its own document store, so
+ * the test builds one instance per scenario.
  */
-final class MultiInstanceDocumentTestComponents {
+final class OpenApiDocsMultiInstanceTestComponents {
 
-    private MultiInstanceDocumentTestComponents() {}
+    private OpenApiDocsMultiInstanceTestComponents() {}
 
     /** The graph whose schema source counts its calls and returns the canonical result unchanged. */
     @Singleton
@@ -40,7 +43,8 @@ final class MultiInstanceDocumentTestComponents {
                 ConfigParsingModule.class,
                 JwtAuthModule.class,
                 SharedApplicationsModule.class,
-                SharedSchemaSourceModules.Counting.class
+                SharedSchemaSourceModules.Counting.class,
+                MarkerRouterMount.Last.class
             })
     interface CountingSourceComponent {
 
@@ -85,7 +89,8 @@ final class MultiInstanceDocumentTestComponents {
                 ConfigParsingModule.class,
                 JwtAuthModule.class,
                 SharedApplicationsModule.class,
-                SharedSchemaSourceModules.SwitchingFromFirstVariant.class
+                SharedSchemaSourceModules.SwitchingFromFirstVariant.class,
+                MarkerRouterMount.Last.class
             })
     interface FirstVariantComponent {
 
@@ -102,6 +107,13 @@ final class MultiInstanceDocumentTestComponents {
          * @return the source
          */
         OrderBodySwitchingSchemaSource switchingSource();
+
+        /**
+         * Returns the component's document store.
+         *
+         * @return the store
+         */
+        DocumentStore documentStore();
 
         /** Factory taking the Vert.x instance, which the JWT provider needs, and the configuration. */
         @Component.Factory

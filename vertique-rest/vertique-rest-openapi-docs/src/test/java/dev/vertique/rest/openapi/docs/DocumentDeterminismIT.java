@@ -23,11 +23,12 @@ import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.conformance.complete.CompleteEntries;
 import dev.vertique.rest.openapi.docs.fixture.conformance.complete.RefEntriesApi;
 import dev.vertique.rest.openapi.docs.fixture.conformance.determinism.ByteDifferences;
-import dev.vertique.rest.openapi.docs.fixture.conformance.support.Deployments;
+import dev.vertique.rest.openapi.docs.fixture.support.Deployments;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import java.io.IOException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -66,7 +67,10 @@ import org.junit.jupiter.api.function.Executable;
  * while the served bytes and entity tags must equal the same pinned literals.
  */
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
-class DocumentDeterminismTest {
+class DocumentDeterminismIT {
+
+    /** The longest one deployment, request, or undeployment is awaited. */
+    private static final Duration WAIT = Duration.ofSeconds(5);
 
     /** The document's top-level members, in the order the document writer emits them. */
     private static final List<String> TOP_LEVEL_MEMBERS = List.of(
@@ -100,9 +104,9 @@ class DocumentDeterminismTest {
                 DaggerDeterminismTestComponents_CaptureComponent.factory().create(vertx, webValidationConfig());
         List<String> deploymentIds = new ArrayList<>();
         try {
-            Deployments.deployAndReadPort(vertx, component::httpVerticle, new DeploymentOptions(), deploymentIds);
+            Deployments.deployAndReadPort(vertx, component::httpVerticle, new DeploymentOptions(), deploymentIds, WAIT);
         } finally {
-            Deployments.undeployAll(vertx, deploymentIds);
+            Deployments.undeployAll(vertx, deploymentIds, WAIT);
         }
         MountPublication attached = component.capture().publication(RefEntriesApi.NAME);
         assertNotNull(attached, "the mount of application 'ref' must have been published to the capturing sink");
@@ -129,7 +133,7 @@ class DocumentDeterminismTest {
         assertCapturedFixture(captured);
         List<Variant> variants = List.of(
                 variant("identity", inputs -> inputs),
-                variant("operations reversed", DocumentDeterminismTest::operationsReversed));
+                variant("operations reversed", DocumentDeterminismIT::operationsReversed));
 
         // When: each variant is assembled and rendered
         List<Assembled> assembled = new ArrayList<>();

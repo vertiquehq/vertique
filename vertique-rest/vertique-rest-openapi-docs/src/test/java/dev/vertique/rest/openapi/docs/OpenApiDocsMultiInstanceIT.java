@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -17,27 +18,33 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.rest.core.RestConfigurationException;
-import dev.vertique.rest.openapi.docs.fixture.CatalogResource;
 import dev.vertique.rest.openapi.docs.fixture.ContextRecordingRouterMount;
-import dev.vertique.rest.openapi.docs.fixture.CountingSchemaSource;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
-import dev.vertique.rest.openapi.docs.fixture.ManagementResource;
 import dev.vertique.rest.openapi.docs.fixture.MarkerRouterMount;
 import dev.vertique.rest.openapi.docs.fixture.PublicApi;
 import dev.vertique.rest.openapi.docs.fixture.RecordingPublicationSink;
-import dev.vertique.rest.openapi.docs.fixture.StatefulSchemaSource;
+import dev.vertique.rest.openapi.docs.fixture.conformance.shared.BackOfficeApi;
+import dev.vertique.rest.openapi.docs.fixture.conformance.shared.OrderBodySwitchingSchemaSource;
+import dev.vertique.rest.openapi.docs.fixture.conformance.support.StoreLogCapture;
+import dev.vertique.rest.openapi.docs.fixture.protecteddocs.shared.SharedDeployment;
+import dev.vertique.rest.openapi.docs.fixture.support.Cleanup;
+import dev.vertique.rest.openapi.docs.fixture.support.Deployments;
+import dev.vertique.rest.openapi.docs.fixture.support.DocumentRequests;
+import dev.vertique.rest.openapi.docs.fixture.support.DocumentRequests.Answer;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
+import dev.vertique.rest.validation.WebValidationStrategy;
 import io.vertx.core.Context;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Future;
-import io.vertx.core.Verticle;
 import io.vertx.core.Vertx;
 import io.vertx.core.VertxOptions;
 import io.vertx.core.WorkerExecutor;
 import io.vertx.core.buffer.Buffer;
-import io.vertx.ext.web.client.HttpResponse;
+import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.client.WebClient;
-import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
+import jakarta.annotation.Nullable;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -46,11 +53,8 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -61,15 +65,26 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.slf4j.LoggerFactory;
 
 /**
- * Integration proof that one component's compositions share one document: a documented
- * application's document is assembled once per component, whether the compositions start one after
- * the other or race; a later composition whose snapshot differs from the stored one fails its
- * startup with a message that names where, never what; and a racing composition neither assembles
- * again nor blocks its event loop while the first composition's assembly runs on a worker thread.
+ * Integration proof that one component's compositions share one document per application: each
+ * complete document, a public one and a protected one, is assembled and stored once per component
+ * and served byte-identically by every composition, whether the compositions start one after the
+ * other or race; a later composition whose snapshot differs from the stored one fails its startup
+ * with a message that names where, never what; and a racing composition neither assembles again nor
+ * blocks its event loop while the first composition's assembly runs on a worker thread.
  *
- * <p>The documentation module's log lines are captured at {@code DEBUG} on the module's package
- * logger. The contract fixes their levels and what they name, not their wording, so this proof
- * classifies them by level and keyword:
+ * <p>The sharing and divergence scenarios use the applications {@code public} at {@code /api/public}
+ * ({@code @ApiDocs(access = PUBLIC)}) and {@code management} at {@code /api/mgmt} ({@code
+ * @ApiDocs(access = PROTECTED, securityScheme = "bearerAuth", rolesAllowed = {"admin"})}); their
+ * resources have query, header, and path parameters, a JSON request body, inferred and declared
+ * responses, and guarded operations. The management document is read with an {@code admin} bearer
+ * token. A marker mount placed after every other mount answers any request the documentation mount
+ * does not, so every document response is checked to come from the documentation mount. Requests
+ * travel over separate connections, and no assertion depends on which instance of a two-instance
+ * deployment answered. Their store log lines are classified by {@link StoreLogCapture}.
+ *
+ * <p>The gated worker-thread scenario uses the shared fixture's documented application {@value
+ * #NAME}. Its log lines are captured at {@code DEBUG} on the module's package logger, with each
+ * event's thread name, and classified by level and keyword:
  *
  * <ul>
  *   <li>a <em>stored</em> line is an {@code INFO} line containing {@value #STORED_KEYWORD};
@@ -84,8 +99,93 @@ import org.slf4j.LoggerFactory;
  * appended, on the logging thread; logback resolves it lazily otherwise.
  */
 @ExtendWith(VertxExtension.class)
-@Timeout(value = 20, unit = TimeUnit.SECONDS)
+@Timeout(value = 30, unit = TimeUnit.SECONDS)
 public class OpenApiDocsMultiInstanceIT {
+
+    // --- Sharing and divergence scenarios: the public and management applications ---
+
+    /** The longest one deployment, request, or undeployment is awaited. */
+    private static final Duration WAIT = Duration.ofSeconds(5);
+
+    /** The public application's name. */
+    private static final String PUBLIC_NAME = "public";
+
+    /** The public application's mount path, as the store's log lines name it. */
+    private static final String PUBLIC_MOUNT = "/api/public/*";
+
+    /** The management application's name. */
+    private static final String MANAGEMENT_NAME = "management";
+
+    /** The management application's mount path, as the store's log lines and failures name it. */
+    private static final String MANAGEMENT_MOUNT = "/api/mgmt/*";
+
+    /** The public document's JSON form. */
+    private static final String PUBLIC_JSON = "/apidocs/public/openapi.json";
+
+    /** The public document's YAML form. */
+    private static final String PUBLIC_YAML = "/apidocs/public/openapi.yaml";
+
+    /** The management document's JSON form. */
+    private static final String MANAGEMENT_JSON = "/apidocs/management/openapi.json";
+
+    /** The management document's YAML form. */
+    private static final String MANAGEMENT_YAML = "/apidocs/management/openapi.yaml";
+
+    /** The operation ids the public document lists. */
+    private static final Set<String> PUBLIC_OPERATIONS = Set.of("listEntries", "getEntry");
+
+    /** The operation ids the management document lists. */
+    private static final Set<String> MANAGEMENT_OPERATIONS = Set.of("createOrder", "readOrder");
+
+    /** The operation whose request body the switching source varies. */
+    private static final String CREATE_ORDER = "createOrder";
+
+    /** The component holding the request body of {@value #CREATE_ORDER}. */
+    private static final String CREATE_ORDER_BODY_KEY = "createOrder.request";
+
+    /** The reference from {@value #CREATE_ORDER}'s request body to its component. */
+    private static final String CREATE_ORDER_BODY_REF = "#/components/schemas/createOrder.request";
+
+    /** The property names of the order body's first variant. */
+    private static final Set<String> FIRST_VARIANT_PROPERTIES = Set.of("item", "quantity");
+
+    /** The property names of the order body's second variant: one more than the first. */
+    private static final Set<String> SECOND_VARIANT_PROPERTIES = Set.of("item", "quantity", "giftNote");
+
+    /** The one property only the second variant has: the schema text that varies between compositions. */
+    private static final String SECOND_VARIANT_ONLY_PROPERTY = "giftNote";
+
+    /** The compositions the sequential scenario starts: one deployment after the other. */
+    private static final int SEQUENTIAL_COMPOSITIONS = 2;
+
+    /** The instances of the single two-instance deployment. */
+    private static final int INSTANCES = 2;
+
+    /** The documented applications of each component; one composition compares each of them. */
+    private static final int DOCUMENTED_APPLICATIONS = 2;
+
+    /** The assembly lines expected per application per component: the single flight assembles once. */
+    private static final int ASSEMBLY_LINES_PER_APPLICATION = 1;
+
+    /** The "stored" lines expected per application per component: only one composition stores. */
+    private static final int STORED_LINES_PER_APPLICATION = 1;
+
+    /** The comparison lines expected per application per component: the other composition compares. */
+    private static final int COMPARISON_LINES_PER_APPLICATION = 1;
+
+    /** The prefix every comparison line of the document store starts with, whatever the application. */
+    private static final String COMPARISON_PREFIX = "Compared the snapshot of application '";
+
+    /** The requests sent per form of each document on each published port, each on its own connection. */
+    private static final int REQUESTS_PER_FORM = 8;
+
+    /** A path no application or documentation route matches, so only the marker mount answers it. */
+    private static final String UNMATCHED_PATH = "/no-such-route";
+
+    /** Every lowercase hex SHA-256 rendering, which no failure message may contain. */
+    private static final Pattern HEX_DIGEST = Pattern.compile("[0-9a-f]{64}");
+
+    // --- Gated worker-thread scenario: the shared fixture's documented application ---
 
     /** The documentation module's package logger, the parent of every logger the module uses. */
     private static final String DOCS_LOGGER = "dev.vertique.rest.openapi.docs";
@@ -99,26 +199,13 @@ public class OpenApiDocsMultiInstanceIT {
     /** The keyword of the {@code DEBUG} line logged once per snapshot comparison. */
     private static final String COMPARISON_KEYWORD = "compar";
 
-    /** The documented application. */
+    /** The documented application of the gated scenario. */
     private static final String NAME = PublicApi.NAME;
 
-    /** The documented application's mount path. */
+    /** The gated scenario's documented application's mount path. */
     private static final String MOUNT_PATH = PublicApi.MOUNT_PATH;
 
-    /** The URL of the documented application's JSON form. */
-    private static final String JSON_URL = DocsConfigs.DEFAULT_APIDOCS_PATH + "/" + NAME + "/openapi.json";
-
-    /** The URL of the documented application's YAML form. */
-    private static final String YAML_URL = DocsConfigs.DEFAULT_APIDOCS_PATH + "/" + NAME + "/openapi.yaml";
-
-    /** Every operation of the shared fixture, over both applications. */
-    private static final List<String> OPERATION_IDS = List.of(
-            CatalogResource.LIST_ITEMS,
-            CatalogResource.GET_ITEM,
-            CatalogResource.CREATE_ITEM,
-            ManagementResource.GET_STATUS);
-
-    /** The number of compositions each scenario starts. */
+    /** The number of compositions the gated scenario starts. */
     private static final int COMPOSITIONS = 2;
 
     /** Assembly lines expected per application per component: the single flight assembles once. */
@@ -129,15 +216,6 @@ public class OpenApiDocsMultiInstanceIT {
 
     /** Comparison lines expected: the one composition that did not assemble compares. */
     private static final int EXPECTED_COMPARISON_LINES = 1;
-
-    /** Requests of the racing scenario, sent per form over non-keep-alive connections. */
-    private static final int REQUESTS_PER_FORM = 8;
-
-    /** Every lowercase hex SHA-256 rendering, which no failure message may contain. */
-    private static final Pattern HEX_DIGEST = Pattern.compile("[0-9a-f]{64}");
-
-    /** The longest the extension-driven tests wait for one deployment, request, or undeployment. */
-    private static final long WAIT_SECONDS = 5;
 
     /** The name of the gated test's one-thread worker pool, shared by the gate and the deployment. */
     private static final String GATED_POOL = "apidocs-single-flight-gated-pool";
@@ -161,11 +239,8 @@ public class OpenApiDocsMultiInstanceIT {
     private Level previousDocsLevel;
     private CapturingAppender appender;
 
-    /** Sends the document requests of the extension-driven tests; closed before the Vert.x instance. */
-    private WebClient client;
-
-    /** Sends the racing scenario's requests, each on its own connection. */
-    private WebClient nonKeepAliveClient;
+    /** One document form and the bearer token it is requested with. */
+    private record Form(String path, @Nullable String token) {}
 
     @BeforeEach
     void captureDocsLogs() {
@@ -185,177 +260,253 @@ public class OpenApiDocsMultiInstanceIT {
     }
 
     @Test
-    @DisplayName("Two compositions of one component share one document assembled and stored once")
-    void twoCompositionsShareOneDocument(Vertx vertx) throws Exception {
+    @DisplayName("Two compositions assemble and store each complete document once and serve identical bytes and"
+            + " entity tags")
+    void compositionsShareOneDocumentPerApplication(Vertx vertx) throws Exception {
         List<String> deployments = new ArrayList<>();
-        client = WebClient.create(vertx, new WebClientOptions().setDefaultHost("127.0.0.1"));
-        nonKeepAliveClient = WebClient.create(
-                vertx, new WebClientOptions().setDefaultHost("127.0.0.1").setKeepAlive(false));
+        WebClient client = DocumentRequests.separateConnectionsClient(vertx);
+        String adminToken = SharedDeployment.alice(SharedDeployment.jwtAuth(vertx));
+        List<Form> forms = List.of(
+                new Form(PUBLIC_JSON, null),
+                new Form(PUBLIC_YAML, null),
+                new Form(MANAGEMENT_JSON, adminToken),
+                new Form(MANAGEMENT_YAML, adminToken));
         try {
-            // (i) Given: the shared fixture with its deterministic counting source.
-            DocsTestComponents.SharedComponent sequential =
-                    DaggerDocsTestComponents_SharedComponent.factory().create(DocsConfigs.shared());
+            // (i) Given: one component whose schema source counts calls to the canonical source.
+            OpenApiDocsMultiInstanceTestComponents.CountingSourceComponent sequential =
+                    DaggerOpenApiDocsMultiInstanceTestComponents_CountingSourceComponent.factory()
+                            .create(vertx, webValidationConfig());
 
             // When: its HttpVerticle supplier is deployed twice, one deployment after the other.
-            int firstPort = deployAndReadPort(vertx, sequential::httpVerticle, new DeploymentOptions(), deployments);
-            int secondPort = deployAndReadPort(vertx, sequential::httpVerticle, new DeploymentOptions(), deployments);
-            List<LogLine> sequentialLines = appender.lines();
+            int firstPort;
+            int secondPort;
+            try (StoreLogCapture logs = StoreLogCapture.attach()) {
+                firstPort = Deployments.deployAndReadPort(
+                        vertx, sequential::httpVerticle, new DeploymentOptions(), deployments, WAIT);
+                secondPort = Deployments.deployAndReadPort(
+                        vertx, sequential::httpVerticle, new DeploymentOptions(), deployments, WAIT);
 
-            // Then: one assembly, one stored document, and one comparison for the documented mount.
-            assertEquals(
-                    EXPECTED_ASSEMBLY_LINES,
-                    assemblyLines(sequentialLines).size(),
-                    () -> "sequential compositions: assembly lines for " + NAME + " at " + MOUNT_PATH + ": "
-                            + sequentialLines);
-            assertEquals(
-                    EXPECTED_STORED_LINES,
-                    storedLines(sequentialLines).size(),
-                    () -> "sequential compositions: stored lines for " + NAME + ": " + sequentialLines);
-            assertEquals(
-                    EXPECTED_COMPARISON_LINES,
-                    comparisonLines(sequentialLines).size(),
-                    () -> "sequential compositions: comparison lines: " + sequentialLines);
-
-            // Then: both ports serve the same bytes and entity tag for each form.
-            for (String url : List.of(JSON_URL, YAML_URL)) {
-                Served fromFirst = get(client, firstPort, url);
-                Served fromSecond = get(client, secondPort, url);
-                assertServedByDocs(fromFirst, url);
-                assertServedByDocs(fromSecond, url);
-                assertArrayEquals(fromFirst.body(), fromSecond.body(), () -> url + ": the two ports' bodies differ");
-                assertEquals(fromFirst.etag(), fromSecond.etag(), () -> url + ": the two ports' entity tags differ");
+                // Then: per application, one assembly, one stored document, and one comparison.
+                assertAssembledStoredAndComparedOnce(logs, "one deployment after the other");
             }
 
-            // Then: the source was called once per operation per composition, the docs module adding none.
-            CountingSchemaSource source = sequential.schemaSource();
-            for (String operationId : OPERATION_IDS) {
+            // Then: every operation was resolved once per composition, the docs module adding none.
+            int sequentialCallsAfterStartup = sequential.countingSource().calls();
+            for (String operationId : List.of("listEntries", "getEntry", "createOrder", "readOrder")) {
                 assertEquals(
-                        COMPOSITIONS,
-                        source.calls(operationId),
-                        () -> "schema-source calls for " + operationId + " over " + COMPOSITIONS + " compositions");
+                        SEQUENTIAL_COMPOSITIONS,
+                        sequential.countingSource().calls(operationId),
+                        () -> "schema-source calls for " + operationId + " over two sequential compositions");
             }
 
-            // (ii) Given: a fresh component. When: deployed once with two instances.
-            appender.clear();
-            DocsTestComponents.SharedComponent racing =
-                    DaggerDocsTestComponents_SharedComponent.factory().create(DocsConfigs.shared());
-            int racingPort = deployAndReadPort(
-                    vertx, racing::httpVerticle, new DeploymentOptions().setInstances(COMPOSITIONS), deployments);
-            List<LogLine> racingLines = appender.lines();
+            // Given: the marker mount is live, so a document answered without its header came from the
+            // documentation mount.
+            Answer unmatched = DocumentRequests.get(client, firstPort, UNMATCHED_PATH, null, WAIT);
+            assertEquals(200, unmatched.status(), "the marker mount's status for an unmatched path");
+            assertEquals(
+                    MarkerRouterMount.LAST,
+                    unmatched.headers().get(MarkerRouterMount.HEADER),
+                    "the marker mount did not answer an unmatched path");
 
-            // Then: the same counts, whatever the interleaving of the two compositions.
-            assertEquals(
-                    EXPECTED_ASSEMBLY_LINES,
-                    assemblyLines(racingLines).size(),
-                    () -> "two instances: assembly lines for " + NAME + " at " + MOUNT_PATH + ": " + racingLines);
-            assertEquals(
-                    EXPECTED_STORED_LINES,
-                    storedLines(racingLines).size(),
-                    () -> "two instances: stored lines for " + NAME + ": " + racingLines);
-            assertEquals(
-                    EXPECTED_COMPARISON_LINES,
-                    comparisonLines(racingLines).size(),
-                    () -> "two instances: comparison lines: " + racingLines);
-
-            // Then: requests over fresh connections return one body and one entity tag per form.
-            for (String url : List.of(JSON_URL, YAML_URL)) {
+            // When: each form is requested repeatedly on both ports.
+            // Then: the documentation mount answers, and both ports serve the same bytes and one entity
+            // tag per form.
+            assertNotEquals(firstPort, secondPort);
+            for (Form form : forms) {
                 Set<String> bodies = new HashSet<>();
                 Set<String> etags = new HashSet<>();
-                for (int request = 0; request < REQUESTS_PER_FORM; request++) {
-                    Served served = get(nonKeepAliveClient, racingPort, url);
-                    assertServedByDocs(served, url);
-                    bodies.add(Buffer.buffer(served.body()).toString());
-                    etags.add(served.etag());
+                List<byte[]> firstBodyPerPort = new ArrayList<>();
+                for (int port : List.of(firstPort, secondPort)) {
+                    firstBodyPerPort.add(collect(client, port, form, bodies, etags));
                 }
-                assertEquals(1, bodies.size(), () -> url + ": distinct bodies over " + REQUESTS_PER_FORM + " requests");
-                assertEquals(1, etags.size(), () -> url + ": distinct entity tags: " + etags);
+                assertArrayEquals(
+                        firstBodyPerPort.get(0),
+                        firstBodyPerPort.get(1),
+                        () -> form.path() + ": the two ports' bodies differ");
+                assertEquals(1, bodies.size(), () -> form.path() + ": distinct bodies over both ports");
+                assertEquals(1, etags.size(), () -> form.path() + ": distinct entity tags over both ports: " + etags);
             }
+            assertOperations(client, firstPort, adminToken);
+
+            // Then: the requests performed no schema-source call.
+            assertEquals(
+                    sequentialCallsAfterStartup,
+                    sequential.countingSource().calls(),
+                    "schema-source calls after the requests, sequential compositions");
+
+            // (ii) Given: a fresh component. When: it is deployed once with two instances.
+            OpenApiDocsMultiInstanceTestComponents.CountingSourceComponent twoInstances =
+                    DaggerOpenApiDocsMultiInstanceTestComponents_CountingSourceComponent.factory()
+                            .create(vertx, webValidationConfig());
+            int sharedPort;
+            try (StoreLogCapture logs = StoreLogCapture.attach()) {
+                sharedPort = Deployments.deployAndReadPort(
+                        vertx,
+                        twoInstances::httpVerticle,
+                        new DeploymentOptions().setInstances(INSTANCES),
+                        deployments,
+                        WAIT);
+
+                // Then: the same counts per application, whatever the interleaving of the two compositions.
+                assertAssembledStoredAndComparedOnce(logs, "one deployment of two instances");
+            }
+            int twoInstanceCallsAfterStartup = twoInstances.countingSource().calls();
+            assertTrue(twoInstanceCallsAfterStartup > 0, "the counting source was not asked at startup");
+
+            // When: each form is requested repeatedly over separate connections.
+            // Then: the documentation mount answers with one body and one entity tag per form,
+            // whichever instance answered.
+            for (Form form : forms) {
+                Set<String> bodies = new HashSet<>();
+                Set<String> etags = new HashSet<>();
+                collect(client, sharedPort, form, bodies, etags);
+                assertEquals(1, bodies.size(), () -> form.path() + ": distinct bodies over two instances");
+                assertEquals(
+                        1, etags.size(), () -> form.path() + ": distinct entity tags over two instances: " + etags);
+            }
+            assertOperations(client, sharedPort, adminToken);
+
+            // Then: the requests performed no schema-source call.
+            assertEquals(
+                    twoInstanceCallsAfterStartup,
+                    twoInstances.countingSource().calls(),
+                    "schema-source calls after the requests, two instances");
         } finally {
-            closeClients();
-            undeployAll(vertx, deployments);
+            client.close();
+            Deployments.undeployAll(vertx, deployments, WAIT);
         }
     }
 
     @Test
     @DisplayName("A later composition whose snapshot differs fails its startup naming where, never what")
-    void divergentSnapshotFailsStartup(Vertx vertx) throws Exception {
+    void divergentSnapshotFailsStartupNamingWhereNeverWhat(Vertx vertx) throws Exception {
         List<String> deployments = new ArrayList<>();
-        client = WebClient.create(vertx, new WebClientOptions().setDefaultHost("127.0.0.1"));
+        WebClient client = DocumentRequests.separateConnectionsClient(vertx);
+        String adminToken = SharedDeployment.alice(SharedDeployment.jwtAuth(vertx));
         try {
-            // Given: the shared fixture with a stateful source whose createItem dryRun schema carries
-            // the source's call number.
-            DocsTestComponents.StatefulSourceComponent component =
-                    DaggerDocsTestComponents_StatefulSourceComponent.factory().create(DocsConfigs.shared());
+            // Given: a component whose source describes the order body's first variant on its first
+            // resolution and the second variant on every later one.
+            OpenApiDocsMultiInstanceTestComponents.FirstVariantComponent component =
+                    DaggerOpenApiDocsMultiInstanceTestComponents_FirstVariantComponent.factory()
+                            .create(vertx, webValidationConfig());
+            OrderBodySwitchingSchemaSource source = component.switchingSource();
             DocumentStore store = component.documentStore();
 
-            // When: the supplier is deployed once, and what the first composition stored and serves is
-            // recorded.
-            int firstPort = deployAndReadPort(vertx, component::httpVerticle, new DeploymentOptions(), deployments);
-            Optional<PublishedDocument> storedBefore = store.lookup(NAME);
-            Served jsonBefore = get(client, firstPort, JSON_URL);
-            Served yamlBefore = get(client, firstPort, YAML_URL);
+            int winnerPort;
+            Answer winnerJsonBefore;
+            Answer winnerYamlBefore;
+            Optional<PublishedDocument> storedBefore;
+            Throwable comparerFailure;
+            try (StoreLogCapture logs = StoreLogCapture.attach()) {
+                // (i) When: the winner deploys with one instance; what it stored and serves is recorded.
+                winnerPort = Deployments.deployAndReadPort(
+                        vertx, component::httpVerticle, new DeploymentOptions(), deployments, WAIT);
+                storedBefore = store.lookup(MANAGEMENT_NAME);
+                winnerJsonBefore = DocumentRequests.get(client, winnerPort, MANAGEMENT_JSON, adminToken, WAIT);
+                winnerYamlBefore = DocumentRequests.get(client, winnerPort, MANAGEMENT_YAML, adminToken, WAIT);
 
-            // When: the supplier is deployed a second time.
-            vertx.sharedData().getLocalMap("vertique").remove("http.port");
-            Throwable failure = failureOf(deploy(vertx, component::httpVerticle, new DeploymentOptions()), deployments);
+                // Then: it serves the first variant's properties from the documentation mount.
+                assertServedByDocs(winnerJsonBefore, "winner: " + MANAGEMENT_JSON);
+                assertServedByDocs(winnerYamlBefore, "winner: " + MANAGEMENT_YAML);
+                assertEquals(
+                        FIRST_VARIANT_PROPERTIES,
+                        createOrderBodyProperties(winnerJsonBefore),
+                        "winner: the createOrder request component's properties");
+                assertEquals(1, source.orderResolutions(), "winner: resolutions of createOrder");
 
-            // Then: the second composition's startup fails with a configuration failure that names the
-            // application, its declaring interface, its mount, and the differing operation.
-            assertNotNull(failure, "the second composition started although its snapshot differs");
+                // (ii) When: the comparer, the same supplier, deploys after the winner completed.
+                comparerFailure = Deployments.failureOf(vertx, component::httpVerticle, new DeploymentOptions(), WAIT);
+
+                // Then: the comparer compared its management snapshot, and only the winner assembled.
+                assertEquals(
+                        COMPARISON_LINES_PER_APPLICATION,
+                        logs.comparisonLines(MANAGEMENT_NAME, MANAGEMENT_MOUNT).size(),
+                        () -> "comparer: comparison lines for management: " + logs.allMessages());
+                assertEquals(
+                        ASSEMBLY_LINES_PER_APPLICATION,
+                        logs.assemblyLines(MANAGEMENT_NAME, MANAGEMENT_MOUNT).size(),
+                        () -> "winner and comparer: assembly lines for management: " + logs.allMessages());
+            }
+
+            // Then: the comparer did render its own, differing, schema: the source was consulted once per
+            // composition.
+            assertEquals(2, source.orderResolutions(), "comparer: resolutions of createOrder");
+
+            // Then: it fails with the snapshot comparison's configuration failure naming the application,
+            // its declaring interface, its mount, and the differing operation.
+            assertNotNull(comparerFailure, "the comparer started although its snapshot differs");
             RestConfigurationException divergence = assertInstanceOf(
                     RestConfigurationException.class,
-                    failure,
-                    () -> "the divergence failure's class: "
-                            + failure.getClass().getName() + ": " + failure);
+                    comparerFailure,
+                    () -> "comparer: the failure's class: "
+                            + comparerFailure.getClass().getName() + ": " + comparerFailure);
             String message = divergence.getMessage();
-            assertNotNull(message, "the divergence failure has no message");
-            assertTrue(message.contains(NAME), () -> "the message does not name the application: " + message);
-            assertTrue(
-                    message.contains(PublicApi.class.getName()),
-                    () -> "the message does not name the declaring interface: " + message);
-            assertTrue(message.contains(MOUNT_PATH), () -> "the message does not name the mount: " + message);
-            assertTrue(
-                    message.contains(CatalogResource.CREATE_ITEM),
-                    () -> "the message does not name the differing operation: " + message);
+            assertNotNull(message, "comparer: the failure has no message");
+            for (String part : List.of(
+                    "application '" + MANAGEMENT_NAME + "'",
+                    BackOfficeApi.class.getName(),
+                    "at '" + MANAGEMENT_MOUNT + "'",
+                    "differs from the document already published for the application",
+                    "operation '" + CREATE_ORDER + "' differs")) {
+                assertTrue(message.contains(part), () -> "comparer: the message lacks <" + part + ">: " + message);
+            }
 
-            // Then: it carries neither the varying schema text, nor any schema, nor a digest.
+            // Then: it is not the redaction-data refusal, and it carries neither the varying schema text,
+            // nor any schema, nor the source's name, nor a digest.
             assertFalse(
-                    message.contains(StatefulSchemaSource.CALL_MARKER),
-                    () -> "the message echoes the varying schema keyword: " + message);
-            assertFalse(message.contains("{"), () -> "the message carries schema text: " + message);
-            assertFalse(HEX_DIGEST.matcher(message).find(), () -> "the message carries a digest: " + message);
+                    message.toLowerCase(Locale.ROOT).contains("manifest"),
+                    () -> "comparer: the message is the redaction-data refusal: " + message);
+            assertFalse(
+                    message.contains(OrderBodySwitchingSchemaSource.class.getSimpleName()),
+                    () -> "comparer: the message names the schema source: " + message);
+            assertFalse(
+                    message.contains(SECOND_VARIANT_ONLY_PROPERTY),
+                    () -> "comparer: the message echoes the varying schema property: " + message);
+            for (String schemaText : List.of("\"properties\"", "\"type\"", "{")) {
+                assertFalse(
+                        message.contains(schemaText),
+                        () -> "comparer: the message carries schema text " + schemaText + ": " + message);
+            }
+            assertFalse(HEX_DIGEST.matcher(message).find(), () -> "comparer: the message carries a digest: " + message);
 
-            // Then: the second composition did render its own, differing, schema.
-            assertEquals(
-                    COMPOSITIONS,
-                    component.statefulSchemaSource().calls(CatalogResource.CREATE_ITEM),
-                    "the stateful source was not consulted once per composition");
-
-            // Then: only the first composition assembled.
-            List<LogLine> lines = appender.lines();
-            assertEquals(
-                    EXPECTED_ASSEMBLY_LINES,
-                    assemblyLines(lines).size(),
-                    () -> "assembly lines for " + NAME + " at " + MOUNT_PATH + ": " + lines);
-
-            // Then: the stored entry and the first composition's served bytes are unchanged.
-            Optional<PublishedDocument> storedAfter = store.lookup(NAME);
-            assertTrue(storedBefore.isPresent(), "the first composition stored no document");
-            assertTrue(storedAfter.isPresent(), "the failed composition removed the stored document");
+            // Then: the stored entry is unchanged.
+            Optional<PublishedDocument> storedAfter = store.lookup(MANAGEMENT_NAME);
+            assertTrue(storedBefore.isPresent(), "the winner stored no document");
+            assertTrue(storedAfter.isPresent(), "the failed comparer removed the stored document");
             assertArrayEquals(storedBefore.get().json(), storedAfter.get().json(), "the stored JSON bytes changed");
             assertArrayEquals(storedBefore.get().yaml(), storedAfter.get().yaml(), "the stored YAML bytes changed");
             assertEquals(storedBefore.get().snapshot(), storedAfter.get().snapshot(), "the stored snapshot changed");
-            Served jsonAfter = get(client, firstPort, JSON_URL);
-            Served yamlAfter = get(client, firstPort, YAML_URL);
-            assertServedByDocs(jsonBefore, JSON_URL);
-            assertServedByDocs(yamlBefore, YAML_URL);
-            assertArrayEquals(jsonBefore.body(), jsonAfter.body(), "the served JSON bytes changed");
-            assertEquals(jsonBefore.etag(), jsonAfter.etag(), "the served JSON entity tag changed");
-            assertArrayEquals(yamlBefore.body(), yamlAfter.body(), "the served YAML bytes changed");
-            assertEquals(yamlBefore.etag(), yamlAfter.etag(), "the served YAML entity tag changed");
+
+            // Then: the winner still serves the bytes and entity tag it served before, in both forms.
+            Answer winnerJsonAfter = DocumentRequests.get(client, winnerPort, MANAGEMENT_JSON, adminToken, WAIT);
+            Answer winnerYamlAfter = DocumentRequests.get(client, winnerPort, MANAGEMENT_YAML, adminToken, WAIT);
+            assertEquals(200, winnerJsonAfter.status(), "winner after the comparer: JSON status");
+            assertEquals(200, winnerYamlAfter.status(), "winner after the comparer: YAML status");
+            assertArrayEquals(winnerJsonBefore.body(), winnerJsonAfter.body(), "winner after the comparer: JSON body");
+            assertEquals(winnerJsonBefore.etag(), winnerJsonAfter.etag(), "winner after the comparer: JSON entity tag");
+            assertArrayEquals(winnerYamlBefore.body(), winnerYamlAfter.body(), "winner after the comparer: YAML body");
+            assertEquals(winnerYamlBefore.etag(), winnerYamlAfter.etag(), "winner after the comparer: YAML entity tag");
+
+            // (iii) When: the control, whose source describes the second variant from the start,
+            // deploys and its management document is fetched.
+            OpenApiDocsMultiInstanceTestComponents.SecondVariantComponent control =
+                    DaggerOpenApiDocsMultiInstanceTestComponents_SecondVariantComponent.factory()
+                            .create(vertx, webValidationConfig());
+            int variantTwoControlPort = Deployments.deployAndReadPort(
+                    vertx, control::httpVerticle, new DeploymentOptions(), deployments, WAIT);
+            Answer variantTwoControl =
+                    DocumentRequests.get(client, variantTwoControlPort, MANAGEMENT_JSON, adminToken, WAIT);
+
+            // Then: it serves the second variant's properties, so that variant alone publishes.
+            assertEquals(200, variantTwoControl.status(), "variantTwoControl: status of the management document");
+            assertEquals(
+                    SECOND_VARIANT_PROPERTIES,
+                    createOrderBodyProperties(variantTwoControl),
+                    "variantTwoControl: the createOrder request component's properties");
+            assertEquals(1, control.switchingSource().orderResolutions(), "variantTwoControl: resolutions");
         } finally {
-            closeClients();
-            undeployAll(vertx, deployments);
+            client.close();
+            Deployments.undeployAll(vertx, deployments, WAIT);
         }
     }
 
@@ -367,8 +518,12 @@ public class OpenApiDocsMultiInstanceIT {
         CountDownLatch gateStarted = new CountDownLatch(1);
         CountDownLatch gateRelease = new CountDownLatch(1);
         AtomicReference<String> gateThread = new AtomicReference<>();
-        String deploymentId = null;
-        try {
+        try (Cleanup cleanup = new Cleanup()) {
+            // Teardown, last registered first: the deployment is undone, the gate released, and the
+            // instance closed, each attempted and each failure or timeout reported.
+            cleanup.await("close the test-owned Vert.x instance", vertx::close, GATED_CLOSE_BOUND);
+            cleanup.step("release the gate", gateRelease::countDown);
+
             // Given: the shared fixture plus the recording sink and the SYSTEM_LAST context recorder.
             DocsTestComponents.RecordingSinkComponent component =
                     DaggerDocsTestComponents_RecordingSinkComponent.factory().create(DocsConfigs.shared());
@@ -403,7 +558,7 @@ public class OpenApiDocsMultiInstanceIT {
                         .setInstances(COMPOSITIONS)
                         .setWorkerPoolName(GATED_POOL)
                         .setWorkerPoolSize(1);
-                deployment = deploy(vertx, component::httpVerticle, options);
+                deployment = Deployments.deploy(vertx, component::httpVerticle, options);
                 bothCallsWhileGated = recordingSink.awaitCalls(MOUNT_PATH, COMPOSITIONS, BOTH_CALLS_BOUND);
                 assemblyLinesWhileGated = assemblyLines(appender.lines()).size();
                 storedWhileGated = store.lookup(NAME).isPresent();
@@ -417,8 +572,9 @@ public class OpenApiDocsMultiInstanceIT {
                             + " while the named pool was gated; recorded calls: " + recordingSink.calls(MOUNT_PATH));
 
             // When: the deployment completes; then the gate's own outcome is observed.
-            deploymentId = awaitBounded(deployment, GATED_DEPLOY_BOUND);
-            assertTrue(awaitBounded(gate, GATED_DEPLOY_BOUND), "the gate was released by its bound, not by the test");
+            String deploymentId = Futures.await(deployment, GATED_DEPLOY_BOUND);
+            cleanup.await("undeploy the gated deployment", () -> vertx.undeploy(deploymentId), GATED_CLOSE_BOUND);
+            assertTrue(Futures.await(gate, GATED_DEPLOY_BOUND), "the gate was released by its bound, not by the test");
             List<LogLine> lines = appender.lines();
             String poolThread = gateThread.get();
 
@@ -454,131 +610,133 @@ public class OpenApiDocsMultiInstanceIT {
             // Then: both compositions reached mountBuilt while the assembly was still gated.
             assertEquals(0, assemblyLinesWhileGated, "an assembly completed while the named pool was gated");
             assertFalse(storedWhileGated, "a document was stored while the named pool was gated");
-        } finally {
-            gateRelease.countDown();
-            closeGatedVertx(vertx, deploymentId);
         }
     }
 
-    // --- Deployment helpers ---
+    // --- Sharing and divergence helpers ---
 
     /**
-     * Deploys a supplier, records the deployment, and returns the port the deployment published in
-     * the {@code vertique} local map.
+     * Returns the shared deployment's configuration without an {@code apidocs} section, with the
+     * {@code web-validation} strategy so the schema source is asked.
      */
-    private static int deployAndReadPort(
-            Vertx vertx, Supplier<Verticle> supplier, DeploymentOptions options, List<String> deployments)
+    private static JsonObject webValidationConfig() {
+        JsonObject config = SharedDeployment.withoutApidocs();
+        config.getJsonObject("jaxrs").put("validationStrategy", WebValidationStrategy.ID);
+        return config;
+    }
+
+    /**
+     * Asserts one assembly line, one "stored" line, and one comparison line for each application, and
+     * one comparison line per application in all.
+     */
+    private static void assertAssembledStoredAndComparedOnce(StoreLogCapture logs, String scenario) {
+        for (String[] application :
+                List.of(new String[] {PUBLIC_NAME, PUBLIC_MOUNT}, new String[] {MANAGEMENT_NAME, MANAGEMENT_MOUNT})) {
+            String name = application[0];
+            String mount = application[1];
+            assertEquals(
+                    ASSEMBLY_LINES_PER_APPLICATION,
+                    logs.assemblyLines(name, mount).size(),
+                    () -> scenario + ": assembly lines for " + name + " at " + mount + ": " + logs.allMessages());
+            assertEquals(
+                    STORED_LINES_PER_APPLICATION,
+                    logs.storedLines(name, mount).size(),
+                    () -> scenario + ": stored lines for " + name + " at " + mount + ": " + logs.allMessages());
+            assertEquals(
+                    COMPARISON_LINES_PER_APPLICATION,
+                    logs.comparisonLines(name, mount).size(),
+                    () -> scenario + ": comparison lines for " + name + " at " + mount + ": " + logs.allMessages());
+        }
+        assertEquals(
+                DOCUMENTED_APPLICATIONS * COMPARISON_LINES_PER_APPLICATION,
+                logs.allMessages().stream()
+                        .filter(message -> message.startsWith(COMPARISON_PREFIX))
+                        .count(),
+                () -> scenario + ": comparison lines over every application: " + logs.allMessages());
+    }
+
+    /**
+     * Requests one form repeatedly on one port, checks that the documentation mount answered each
+     * request, collects each body and entity tag, and returns the first body's bytes.
+     */
+    private static byte[] collect(WebClient client, int port, Form form, Set<String> bodies, Set<String> etags)
             throws Exception {
-        vertx.sharedData().getLocalMap("vertique").remove("http.port");
-        deployments.add(awaitBounded(deploy(vertx, supplier, options), Duration.ofSeconds(WAIT_SECONDS)));
-        Object port = vertx.sharedData().getLocalMap("vertique").get("http.port");
-        assertNotNull(port, "the deployment published no http.port");
-        return (Integer) port;
-    }
-
-    /** Deploys a supplier; a synchronous throw becomes a failed future. */
-    private static Future<String> deploy(Vertx vertx, Supplier<Verticle> supplier, DeploymentOptions options) {
-        try {
-            return vertx.deployVerticle(supplier, options);
-        } catch (Throwable t) {
-            return Future.failedFuture(t);
-        }
-    }
-
-    /**
-     * Waits for a deployment expected to fail and returns its failure, or {@code null} when it
-     * succeeded, in which case the deployment is recorded for undeployment.
-     */
-    private static Throwable failureOf(Future<String> deployment, List<String> deployments) throws Exception {
-        try {
-            deployments.add(deployment.toCompletionStage().toCompletableFuture().get(WAIT_SECONDS, TimeUnit.SECONDS));
-            return null;
-        } catch (ExecutionException failed) {
-            return failed.getCause();
-        }
-    }
-
-    /** Waits for a future within a bound; a failure or a timeout fails the test with its cause. */
-    private static <T> T awaitBounded(Future<T> future, Duration bound) throws Exception {
-        try {
-            return future.toCompletionStage().toCompletableFuture().get(bound.toMillis(), TimeUnit.MILLISECONDS);
-        } catch (ExecutionException failed) {
-            throw new AssertionError("the future failed: " + failed.getCause(), failed.getCause());
-        } catch (TimeoutException incomplete) {
-            throw new AssertionError("the future did not complete within " + bound, incomplete);
-        }
-    }
-
-    private void closeClients() {
-        if (client != null) {
-            client.close();
-            client = null;
-        }
-        if (nonKeepAliveClient != null) {
-            nonKeepAliveClient.close();
-            nonKeepAliveClient = null;
-        }
-    }
-
-    private static void undeployAll(Vertx vertx, List<String> deployments) throws Exception {
-        for (String deploymentId : deployments) {
-            awaitBounded(vertx.undeploy(deploymentId), Duration.ofSeconds(WAIT_SECONDS));
-        }
-    }
-
-    /**
-     * Undeploys the gated deployment and closes the test-owned Vert.x instance, each within a bound,
-     * so a deadlocked event loop still ends the run.
-     */
-    private static void closeGatedVertx(Vertx vertx, String deploymentId) {
-        try {
-            if (deploymentId != null) {
-                vertx.undeploy(deploymentId)
-                        .toCompletionStage()
-                        .toCompletableFuture()
-                        .get(GATED_CLOSE_BOUND.toMillis(), TimeUnit.MILLISECONDS);
+        byte[] first = null;
+        for (int request = 0; request < REQUESTS_PER_FORM; request++) {
+            Answer answer = DocumentRequests.get(client, port, form.path(), form.token(), WAIT);
+            assertServedByDocs(answer, form.path() + " on port " + port);
+            if (first == null) {
+                first = answer.body();
             }
-        } catch (Exception undeployFailed) {
-            // The close below still runs; the test's own assertions report the failure.
+            bodies.add(new String(answer.body(), StandardCharsets.UTF_8));
+            etags.add(answer.etag());
         }
-        try {
-            vertx.close()
-                    .toCompletionStage()
-                    .toCompletableFuture()
-                    .get(GATED_CLOSE_BOUND.toMillis(), TimeUnit.MILLISECONDS);
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-        } catch (ExecutionException | TimeoutException notClosed) {
-            // A deadlocked event loop cannot close; the fork's exit bound ends it.
-        }
-    }
-
-    // --- Request helpers ---
-
-    /** What a document request returned. */
-    private record Served(int status, String marker, String contentType, String etag, byte[] body) {}
-
-    private static Served get(WebClient webClient, int port, String url) throws Exception {
-        HttpResponse<Buffer> response =
-                awaitBounded(webClient.get(port, "127.0.0.1", url).send(), Duration.ofSeconds(WAIT_SECONDS));
-        Buffer body = response.body();
-        return new Served(
-                response.statusCode(),
-                response.getHeader(MarkerRouterMount.HEADER),
-                response.getHeader("Content-Type"),
-                response.getHeader("ETag"),
-                body == null ? new byte[0] : body.getBytes());
+        return first;
     }
 
     /** Asserts that the documentation mount, not the marker mount, answered with a document. */
-    private static void assertServedByDocs(Served served, String url) {
-        assertEquals(200, served.status(), () -> url + ": status");
-        assertNull(served.marker(), () -> url + ": answered by the marker mount, not the documentation mount");
-        assertNotNull(served.etag(), () -> url + ": no entity tag");
-        assertTrue(served.body().length > 0, () -> url + ": empty body");
+    private static void assertServedByDocs(Answer answer, String label) {
+        assertEquals(200, answer.status(), () -> label + ": status");
+        assertNull(
+                answer.headers().get(MarkerRouterMount.HEADER),
+                () -> label + ": answered by the marker mount, not the documentation mount");
+        assertNotNull(answer.etag(), () -> label + ": no entity tag");
+        assertTrue(answer.body().length > 0, () -> label + ": empty body");
     }
 
-    // --- Log helpers ---
+    /** Asserts that both JSON documents served on a port are complete: they list every operation. */
+    private static void assertOperations(WebClient client, int port, String adminToken) throws Exception {
+        assertEquals(
+                PUBLIC_OPERATIONS,
+                operationIds(DocumentRequests.get(client, port, PUBLIC_JSON, null, WAIT)),
+                "the public document's operations");
+        assertEquals(
+                MANAGEMENT_OPERATIONS,
+                operationIds(DocumentRequests.get(client, port, MANAGEMENT_JSON, adminToken, WAIT)),
+                "the management document's operations");
+    }
+
+    /** Returns the operation ids of a JSON document. */
+    private static Set<String> operationIds(Answer answer) {
+        JsonObject paths = document(answer).getJsonObject("paths");
+        Set<String> ids = new HashSet<>();
+        for (String path : paths.fieldNames()) {
+            JsonObject item = paths.getJsonObject(path);
+            for (String method : item.fieldNames()) {
+                ids.add(item.getJsonObject(method).getString("operationId"));
+            }
+        }
+        return ids;
+    }
+
+    /**
+     * Returns the property names of {@value #CREATE_ORDER}'s request-body component, after checking
+     * that the operation's JSON body references it.
+     */
+    private static Set<String> createOrderBodyProperties(Answer answer) {
+        JsonObject document = document(answer);
+        String reference = document.getJsonObject("paths")
+                .getJsonObject("/orders")
+                .getJsonObject("post")
+                .getJsonObject("requestBody")
+                .getJsonObject("content")
+                .getJsonObject("application/json")
+                .getJsonObject("schema")
+                .getString("$ref");
+        assertEquals(CREATE_ORDER_BODY_REF, reference, "the createOrder body's reference");
+        JsonObject component =
+                document.getJsonObject("components").getJsonObject("schemas").getJsonObject(CREATE_ORDER_BODY_KEY);
+        assertNotNull(component, () -> "no component " + CREATE_ORDER_BODY_KEY + ": " + document.encode());
+        return new HashSet<>(component.getJsonObject("properties").fieldNames());
+    }
+
+    /** Parses a JSON document answer. */
+    private static JsonObject document(Answer answer) {
+        assertEquals(200, answer.status(), "status of a JSON document");
+        return new JsonObject(Buffer.buffer(answer.body()));
+    }
+
+    // --- Gated scenario log helpers ---
 
     /** One captured log event: its level, formatted message, and the thread that logged it. */
     private record LogLine(Level level, String message, String thread) {
@@ -634,14 +792,6 @@ public class OpenApiDocsMultiInstanceIT {
         List<LogLine> lines() {
             synchronized (this) {
                 return List.copyOf(captured);
-            }
-        }
-
-        /** Forgets every line captured so far. */
-        void clear() {
-            synchronized (this) {
-                captured.clear();
-                list.clear();
             }
         }
     }

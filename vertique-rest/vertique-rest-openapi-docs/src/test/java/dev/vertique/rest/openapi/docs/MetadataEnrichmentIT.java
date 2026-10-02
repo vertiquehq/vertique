@@ -27,8 +27,8 @@ import dev.vertique.rest.openapi.docs.fixture.metadata.it.enrichment.GeneratedCa
 import dev.vertique.rest.openapi.docs.fixture.metadata.it.enrichment.ReflApi;
 import dev.vertique.rest.openapi.docs.fixture.metadata.it.enrichment.ReflectedCatalogResource;
 import dev.vertique.rest.openapi.docs.fixture.metadata.it.enrichment.ShopApi;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
 import io.vertx.core.DeploymentOptions;
-import io.vertx.core.Future;
 import io.vertx.core.Verticle;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -37,6 +37,7 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.IdentityHashMap;
@@ -305,25 +306,22 @@ public class MetadataEnrichmentIT {
      */
     private static byte[] fetchDocument(Supplier<Verticle> verticles, String documentName) throws Exception {
         vertx.sharedData().getLocalMap("vertique").clear();
-        String id = await(vertx.deployVerticle(verticles, new DeploymentOptions()));
+        String id = Futures.await(vertx.deployVerticle(verticles, new DeploymentOptions()), Duration.ofSeconds(15));
         try {
             Integer port = (Integer) vertx.sharedData().getLocalMap("vertique").get("http.port");
             assertNotNull(port, "the deployment must publish its port");
             String uri = InputAssemblyIT.documentPath(documentName, InputAssemblyIT.JSON_FORM);
-            HttpResponse<Buffer> response = await(client.get(port, HOST, uri).send());
+            HttpResponse<Buffer> response =
+                    Futures.await(client.get(port, HOST, uri).send(), Duration.ofSeconds(15));
             assertEquals(200, response.statusCode(), () -> "GET " + uri + " must answer 200");
             Buffer body = response.body();
             return body == null ? new byte[0] : body.getBytes();
         } finally {
             try {
-                await(vertx.undeploy(id));
+                Futures.await(vertx.undeploy(id), Duration.ofSeconds(15));
             } finally {
                 vertx.sharedData().getLocalMap("vertique").clear();
             }
         }
-    }
-
-    private static <T> T await(Future<T> future) throws Exception {
-        return future.toCompletionStage().toCompletableFuture().get(15, TimeUnit.SECONDS);
     }
 }

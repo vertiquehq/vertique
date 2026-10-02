@@ -19,8 +19,9 @@ import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.openapi.docs.ContractRefusalTestComponents.DocsProvisions;
 import dev.vertique.rest.openapi.docs.ContractRefusalTestComponents.Provisions;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments.Outcome;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments.Outcome;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -34,7 +35,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
 import java.util.function.Supplier;
@@ -521,14 +521,7 @@ public class OpenApiContractRefusalIT {
 
     /** Waits for a response and returns its status, {@code Content-Type}, and body. */
     private static Exchange exchange(Future<HttpResponse<Buffer>> response) throws Exception {
-        HttpResponse<Buffer> received;
-        try {
-            received = response.toCompletionStage()
-                    .toCompletableFuture()
-                    .get(StartupDeployments.BOUND.toMillis(), TimeUnit.MILLISECONDS);
-        } catch (ExecutionException failed) {
-            throw new AssertionError("the request failed", failed.getCause());
-        }
+        HttpResponse<Buffer> received = Futures.await(response, StartupDeployments.BOUND);
         Buffer body = received.body();
         return new Exchange(
                 received.statusCode(), received.getHeader("Content-Type"), body == null ? "" : body.toString());

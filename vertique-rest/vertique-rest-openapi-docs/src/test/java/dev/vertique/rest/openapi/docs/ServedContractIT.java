@@ -30,8 +30,12 @@ import dev.vertique.rest.openapi.docs.fixture.contract.ContractTexts;
 import dev.vertique.rest.openapi.docs.fixture.contract.WorkingDirectoryFile;
 import dev.vertique.rest.openapi.docs.fixture.protecteddocs.shared.Observations;
 import dev.vertique.rest.openapi.docs.fixture.protecteddocs.shared.SharedDeployment;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments.Outcome;
+import dev.vertique.rest.openapi.docs.fixture.support.Cleanup;
+import dev.vertique.rest.openapi.docs.fixture.support.Deployments;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
+import dev.vertique.rest.openapi.docs.fixture.support.OwnedWebClient;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments.Outcome;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Future;
 import io.vertx.core.MultiMap;
@@ -39,6 +43,7 @@ import io.vertx.core.Vertx;
 import io.vertx.core.VertxOptions;
 import io.vertx.core.WorkerExecutor;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.http.HttpClientOptions;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.auth.jwt.JWTAuth;
@@ -61,9 +66,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
@@ -933,12 +936,15 @@ public class ServedContractIT {
     void racingCompositionsLoadTheContractOnceOnAWorkerThread() throws Exception {
         // Given: a test-owned Vert.x instance with one event loop.
         Vertx gatedVertx = Vertx.vertx(new VertxOptions().setEventLoopPoolSize(1));
-        WebClient gatedClient = null;
         CountDownLatch gateStarted = new CountDownLatch(1);
         CountDownLatch gateRelease = new CountDownLatch(1);
         AtomicReference<String> gateThread = new AtomicReference<>();
-        String deploymentId = null;
-        try {
+        try (Cleanup cleanup = new Cleanup()) {
+            // Teardown, last registered first: the client is closed, the deployment undone, the gate
+            // released, and the instance closed, each attempted and each failure or timeout reported.
+            cleanup.await("close the test-owned Vert.x instance", gatedVertx::close, GATED_CLOSE_BOUND);
+            cleanup.step("release the gate", gateRelease::countDown);
+
             // Given: partner as the only documented application, with the recording sink beside the docs sink.
             docs.clear();
             GatedProvisions component = DaggerServedContractTestComponents_GatedPartnerComponent.factory()
@@ -977,7 +983,7 @@ public class ServedContractIT {
                         .sharedData()
                         .getLocalMap(StartupDeployments.LOCAL_MAP)
                         .remove(StartupDeployments.PORT_KEY);
-                deployment = deployGated(gatedVertx, component, options);
+                deployment = Deployments.deploy(gatedVertx, component::httpVerticle, options);
                 bothCallsWhileGated = recordingSink.awaitCalls(PARTNER_MOUNT_PATH, COMPOSITIONS, BOTH_CALLS_BOUND);
                 loaderLinesWhileGated = loaderLines(PARTNER).size();
                 storedWhileGated = store.lookup(PARTNER).isPresent();
@@ -992,8 +998,9 @@ public class ServedContractIT {
                             + recordingSink.calls(PARTNER_MOUNT_PATH));
 
             // When: the deployment completes; then the gate's own outcome is observed.
-            deploymentId = awaitBounded(deployment, GATED_DEPLOY_BOUND);
-            assertTrue(awaitBounded(gate, GATED_DEPLOY_BOUND), "the gate was released by its bound, not by the test");
+            String deploymentId = Futures.await(deployment, GATED_DEPLOY_BOUND);
+            cleanup.await("undeploy the gated deployment", () -> gatedVertx.undeploy(deploymentId), GATED_CLOSE_BOUND);
+            assertTrue(Futures.await(gate, GATED_DEPLOY_BOUND), "the gate was released by its bound, not by the test");
             List<LogLine> lines = docs.lines();
             String poolThread = gateThread.get();
 
@@ -1030,8 +1037,11 @@ public class ServedContractIT {
                     .getLocalMap(StartupDeployments.LOCAL_MAP)
                     .get(StartupDeployments.PORT_KEY);
             assertNotNull(port, "the deployment published no http.port");
-            gatedClient = WebClient.create(
-                    gatedVertx, new WebClientOptions().setDefaultHost(HOST).setKeepAlive(false));
+            // The client wraps a raw client so its close is awaited before the owned instance closes.
+            OwnedWebClient owned = OwnedWebClient.create(
+                    gatedVertx, new HttpClientOptions().setDefaultHost(HOST).setKeepAlive(false));
+            cleanup.await("close the gated client", owned::close, GATED_CLOSE_BOUND);
+            WebClient gatedClient = owned.client();
             for (String url : List.of(jsonUrl(PARTNER), yamlUrl(PARTNER))) {
                 Set<String> bodies = new HashSet<>();
                 Set<String> etags = new HashSet<>();
@@ -1046,59 +1056,6 @@ public class ServedContractIT {
                 assertEquals(1, etags.size(), () -> url + ": distinct entity tags: " + etags);
                 assertFalse(etags.contains(null), () -> url + ": a response without an entity tag");
             }
-        } finally {
-            gateRelease.countDown();
-            if (gatedClient != null) {
-                gatedClient.close();
-            }
-            closeGatedVertx(gatedVertx, deploymentId);
-        }
-    }
-
-    /** Deploys the gated component's supplier; a synchronous throw becomes a failed future. */
-    private static Future<String> deployGated(Vertx vertx, GatedProvisions component, DeploymentOptions options) {
-        try {
-            return vertx.deployVerticle(component::httpVerticle, options);
-        } catch (Throwable t) {
-            return Future.failedFuture(t);
-        }
-    }
-
-    /** Waits for a future within a bound; a failure or a timeout fails the test with its cause. */
-    private static <T> T awaitBounded(Future<T> future, Duration bound) throws Exception {
-        try {
-            return future.toCompletionStage().toCompletableFuture().get(bound.toMillis(), TimeUnit.MILLISECONDS);
-        } catch (ExecutionException failed) {
-            throw new AssertionError("the future failed: " + failed.getCause(), failed.getCause());
-        } catch (TimeoutException incomplete) {
-            throw new AssertionError("the future did not complete within " + bound, incomplete);
-        }
-    }
-
-    /**
-     * Undeploys the gated deployment and closes the test-owned Vert.x instance, each within a bound,
-     * so a deadlocked event loop still ends the run.
-     */
-    private static void closeGatedVertx(Vertx vertx, String deploymentId) {
-        try {
-            if (deploymentId != null) {
-                vertx.undeploy(deploymentId)
-                        .toCompletionStage()
-                        .toCompletableFuture()
-                        .get(GATED_CLOSE_BOUND.toMillis(), TimeUnit.MILLISECONDS);
-            }
-        } catch (Exception undeployFailed) {
-            // The close below still runs; the test's own assertions report the failure.
-        }
-        try {
-            vertx.close()
-                    .toCompletionStage()
-                    .toCompletableFuture()
-                    .get(GATED_CLOSE_BOUND.toMillis(), TimeUnit.MILLISECONDS);
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-        } catch (ExecutionException | TimeoutException notClosed) {
-            // A deadlocked event loop cannot close; the fork's exit bound ends it.
         }
     }
 
@@ -1926,24 +1883,17 @@ public class ServedContractIT {
             request.putHeader("Authorization", "Bearer " + token);
         }
         headers.forEach(request::putHeader);
-        HttpResponse<Buffer> response = await(request.send());
+        HttpResponse<Buffer> response = Futures.await(request.send(), Duration.ofSeconds(REQUEST_SECONDS));
         Buffer body = response.body() == null ? Buffer.buffer() : response.body();
         List<String> trace = observations == null ? List.of() : observations.trace(key);
         return new Exchange(response.statusCode(), response.headers(), body, trace);
     }
 
     private Exchange post(int port, String uri, JsonObject body) throws Exception {
-        HttpResponse<Buffer> response = await(client.post(port, HOST, uri).sendJsonObject(body.copy()));
+        HttpResponse<Buffer> response = Futures.await(
+                client.post(port, HOST, uri).sendJsonObject(body.copy()), Duration.ofSeconds(REQUEST_SECONDS));
         Buffer received = response.body() == null ? Buffer.buffer() : response.body();
         return new Exchange(response.statusCode(), response.headers(), received, List.of());
-    }
-
-    private static <T> T await(Future<T> future) throws Exception {
-        try {
-            return future.toCompletionStage().toCompletableFuture().get(REQUEST_SECONDS, TimeUnit.SECONDS);
-        } catch (ExecutionException failed) {
-            throw new AssertionError("the request failed", failed.getCause());
-        }
     }
 
     // ---------------------------------------------------------------------------------------------

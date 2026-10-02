@@ -19,8 +19,9 @@ import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.protecteddocs.root.DecisionRecorder;
 import dev.vertique.rest.openapi.docs.fixture.protecteddocs.root.RootApplicationModule;
 import dev.vertique.rest.openapi.docs.fixture.protecteddocs.root.StatusResource;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments.Outcome;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments.Outcome;
 import dev.vertique.security.events.AuthorizationDecisionEvent;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.MultiMap;
@@ -36,6 +37,7 @@ import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -493,8 +495,7 @@ public class ProtectedRootDocumentIT {
         if (ifNoneMatch != null) {
             request.putHeader("If-None-Match", ifNoneMatch);
         }
-        HttpResponse<Buffer> response =
-                request.send().toCompletionStage().toCompletableFuture().get(REQUEST_SECONDS, TimeUnit.SECONDS);
+        HttpResponse<Buffer> response = Futures.await(request.send(), Duration.ofSeconds(REQUEST_SECONDS));
         return new Reply(response.statusCode(), response.headers(), response.body());
     }
 

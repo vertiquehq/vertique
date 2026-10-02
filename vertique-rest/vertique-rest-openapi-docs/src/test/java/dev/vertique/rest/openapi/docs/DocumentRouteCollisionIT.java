@@ -18,7 +18,6 @@ import dev.vertique.rest.openapi.docs.CollisionTestComponents.CaseMountComponent
 import dev.vertique.rest.openapi.docs.CollisionTestComponents.DocumentedProvisions;
 import dev.vertique.rest.openapi.docs.fixture.CatalogResource;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments;
 import dev.vertique.rest.openapi.docs.fixture.startup.collision.CaseMount;
 import dev.vertique.rest.openapi.docs.fixture.startup.collision.CaseResource;
 import dev.vertique.rest.openapi.docs.fixture.startup.collision.CaseResources;
@@ -38,6 +37,8 @@ import dev.vertique.rest.openapi.docs.fixture.startup.collision.GetUpperApidocsR
 import dev.vertique.rest.openapi.docs.fixture.startup.collision.GetXResource;
 import dev.vertique.rest.openapi.docs.fixture.startup.collision.HeadThreeSegmentsResource;
 import dev.vertique.rest.openapi.docs.fixture.startup.collision.PostThreeSegmentsResource;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpMethod;
@@ -46,6 +47,7 @@ import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import jakarta.annotation.Nullable;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -793,10 +795,7 @@ public class DocumentRouteCollisionIT {
     // ---------------------------------------------------------------------------------------------
 
     private static HttpResponse<Buffer> send(HttpMethod method, int port, String uri) throws Exception {
-        return client.request(method, port, LOOPBACK, uri)
-                .send()
-                .toCompletionStage()
-                .toCompletableFuture()
-                .get(REQUEST_BOUND_SECONDS, TimeUnit.SECONDS);
+        return Futures.await(
+                client.request(method, port, LOOPBACK, uri).send(), Duration.ofSeconds(REQUEST_BOUND_SECONDS));
     }
 }

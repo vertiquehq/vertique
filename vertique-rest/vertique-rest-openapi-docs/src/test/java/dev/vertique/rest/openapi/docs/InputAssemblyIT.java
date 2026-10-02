@@ -44,8 +44,8 @@ import dev.vertique.rest.openapi.docs.fixture.input.patterns.FlaggedRequest;
 import dev.vertique.rest.openapi.docs.fixture.input.patterns.FoldedRequest;
 import dev.vertique.rest.openapi.docs.fixture.input.patterns.PatternsApi;
 import dev.vertique.rest.openapi.docs.fixture.input.patterns.PatternsResource;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
 import io.vertx.core.DeploymentOptions;
-import io.vertx.core.Future;
 import io.vertx.core.Verticle;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -55,6 +55,7 @@ import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -1052,7 +1053,8 @@ public class InputAssemblyIT {
      * @return the response
      */
     static HttpResponse<Buffer> fetch(int port, String uri) throws Exception {
-        HttpResponse<Buffer> response = await(client.get(port, HOST, uri).send());
+        HttpResponse<Buffer> response =
+                Futures.await(client.get(port, HOST, uri).send(), Duration.ofSeconds(15));
         assertEquals(200, response.statusCode(), () -> "GET " + uri + " must answer 200");
         return response;
     }
@@ -1157,7 +1159,7 @@ public class InputAssemblyIT {
      */
     static Deployment deploy(Supplier<Verticle> verticles) throws Exception {
         vertx.sharedData().getLocalMap("vertique").clear();
-        String id = await(vertx.deployVerticle(verticles, new DeploymentOptions()));
+        String id = Futures.await(vertx.deployVerticle(verticles, new DeploymentOptions()), Duration.ofSeconds(15));
         Integer port = (Integer) vertx.sharedData().getLocalMap("vertique").get("http.port");
         assertNotNull(port, "the deployment must publish its port");
         return new Deployment(id, port);
@@ -1170,7 +1172,7 @@ public class InputAssemblyIT {
      */
     static void undeploy(Deployment deployment) throws Exception {
         try {
-            await(vertx.undeploy(deployment.id()));
+            Futures.await(vertx.undeploy(deployment.id()), Duration.ofSeconds(15));
         } finally {
             vertx.sharedData().getLocalMap("vertique").clear();
         }
@@ -1179,9 +1181,5 @@ public class InputAssemblyIT {
     static byte[] bodyBytes(HttpResponse<Buffer> response) {
         Buffer body = response.body();
         return body == null ? new byte[0] : body.getBytes();
-    }
-
-    static <T> T await(Future<T> future) throws Exception {
-        return future.toCompletionStage().toCompletableFuture().get(15, TimeUnit.SECONDS);
     }
 }

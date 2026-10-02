@@ -15,9 +15,9 @@ import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.responses.it.AccountResource;
 import dev.vertique.rest.openapi.docs.fixture.responses.it.AccountsApi;
 import dev.vertique.rest.openapi.docs.fixture.responses.it.ReportResource;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments.Outcome;
-import io.vertx.core.Future;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments.Outcome;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.JsonObject;
@@ -33,7 +33,6 @@ import io.vertx.json.schema.Validator;
 import io.vertx.junit5.VertxExtension;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -134,9 +133,10 @@ public class ResponsePublicationIT {
         // When: the document is fetched, then a valid body is posted
         JsonObject document = publishedDocument(AccountsApi.NAME);
         JsonObject requestBody = new JsonObject().put("display_name", "Ada").put("password", "pw-1");
-        HttpResponse<Buffer> created =
-                await(client.post(deployment.port(), HOST, AccountsApi.PATH + AccountResource.ROUTE)
-                        .sendJsonObject(requestBody));
+        HttpResponse<Buffer> created = Futures.await(
+                client.post(deployment.port(), HOST, AccountsApi.PATH + AccountResource.ROUTE)
+                        .sendJsonObject(requestBody),
+                StartupDeployments.BOUND);
 
         // Then: exactly one 200 response, described OK, with one JSON media type referencing create.response
         JsonObject responses = responses(document, AccountResource.ROUTE, "post");
@@ -260,7 +260,7 @@ public class ResponsePublicationIT {
         String path = InputAssemblyIT.documentPath(name, InputAssemblyIT.JSON_FORM);
         assertEquals(DocsConfigs.DEFAULT_APIDOCS_PATH + "/" + name + "/openapi.json", path, "the document URL");
         HttpResponse<Buffer> response =
-                await(client.get(deployment.port(), HOST, path).send());
+                Futures.await(client.get(deployment.port(), HOST, path).send(), StartupDeployments.BOUND);
         assertEquals(200, response.statusCode(), () -> "GET " + path + ": " + response.bodyAsString());
         return new JsonObject(response.body());
     }
@@ -321,15 +321,5 @@ public class ResponsePublicationIT {
     /** Escapes a JSON Pointer reference token (RFC 6901). */
     private static String pointerEscape(String token) {
         return token.replace("~", "~0").replace("/", "~1");
-    }
-
-    private static <T> T await(Future<T> future) throws Exception {
-        try {
-            return future.toCompletionStage()
-                    .toCompletableFuture()
-                    .get(StartupDeployments.BOUND.toMillis(), TimeUnit.MILLISECONDS);
-        } catch (ExecutionException failed) {
-            throw new AssertionError("the request failed", failed.getCause());
-        }
     }
 }

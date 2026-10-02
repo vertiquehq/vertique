@@ -5,6 +5,7 @@ package dev.vertique.rest.openapi.docs.fixture.contract;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryNotEmptyException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
@@ -67,7 +68,11 @@ public final class WorkingDirectoryFile implements AutoCloseable {
             }
             Files.writeString(file, text, StandardCharsets.UTF_8);
         } catch (IOException | RuntimeException failure) {
-            written.close();
+            try {
+                written.close();
+            } catch (IOException | RuntimeException cleanupFailure) {
+                failure.addSuppressed(cleanupFailure);
+            }
             throw failure;
         }
         return written;
@@ -83,22 +88,36 @@ public final class WorkingDirectoryFile implements AutoCloseable {
     }
 
     /**
-     * Deletes the file, if present, then every directory {@link #write} created, deepest first. Never
-     * throws: a failed deletion leaves the rest to be attempted.
+     * Deletes the file, if present, then every directory {@link #write} created, deepest first. Every
+     * deletion is attempted even when an earlier one failed. A created directory that something else
+     * wrote into is not empty and stays, without a failure: it is not this file's to delete.
+     *
+     * @throws IOException when a deletion failed for any other reason: the first failure, with every
+     *     later one suppressed
      */
     @Override
-    public void close() {
+    public void close() throws IOException {
+        IOException failure = null;
         try {
             Files.deleteIfExists(absolutePath);
-        } catch (IOException ignored) {
-            // The directories below are still attempted.
+        } catch (IOException fileNotDeleted) {
+            failure = fileNotDeleted;
         }
         while (!createdDirectories.isEmpty()) {
             try {
                 Files.deleteIfExists(createdDirectories.pop());
-            } catch (IOException ignored) {
+            } catch (DirectoryNotEmptyException writtenIntoByOthers) {
                 // A directory something else wrote into stays.
+            } catch (IOException directoryNotDeleted) {
+                if (failure == null) {
+                    failure = directoryNotDeleted;
+                } else {
+                    failure.addSuppressed(directoryNotDeleted);
+                }
             }
+        }
+        if (failure != null) {
+            throw failure;
         }
     }
 }

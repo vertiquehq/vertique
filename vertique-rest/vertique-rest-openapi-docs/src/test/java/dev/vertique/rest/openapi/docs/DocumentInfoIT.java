@@ -13,14 +13,15 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.vertique.rest.core.router.HttpVerticle;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.metadata.info.InfoRegistrations;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
 import io.vertx.core.DeploymentOptions;
-import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
+import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.AfterAll;
@@ -136,12 +137,15 @@ public class DocumentInfoIT {
         vertx.sharedData().getLocalMap("vertique").clear();
         String id = null;
         try {
-            id = await(vertx.deployVerticle(() -> verticle.get(), new DeploymentOptions()));
+            id = Futures.await(
+                    vertx.deployVerticle(() -> verticle.get(), new DeploymentOptions()), Duration.ofSeconds(15));
             Integer port = (Integer) vertx.sharedData().getLocalMap("vertique").get("http.port");
             assertNotNull(port, "the deployment must publish its port");
-            HttpResponse<Buffer> json = await(client.get(port, HOST, JSON_PATH).send());
+            HttpResponse<Buffer> json =
+                    Futures.await(client.get(port, HOST, JSON_PATH).send(), Duration.ofSeconds(15));
             assertEquals(200, json.statusCode(), "GET " + JSON_PATH);
-            HttpResponse<Buffer> yaml = await(client.get(port, HOST, YAML_PATH).send());
+            HttpResponse<Buffer> yaml =
+                    Futures.await(client.get(port, HOST, YAML_PATH).send(), Duration.ofSeconds(15));
             assertEquals(200, yaml.statusCode(), "GET " + YAML_PATH);
             return new Outcome(
                     null, new JsonObject(json.body()), YAML.readTree(yaml.body().getBytes()));
@@ -150,15 +154,11 @@ public class DocumentInfoIT {
         } finally {
             if (id != null) {
                 try {
-                    await(vertx.undeploy(id));
+                    Futures.await(vertx.undeploy(id), Duration.ofSeconds(15));
                 } finally {
                     vertx.sharedData().getLocalMap("vertique").clear();
                 }
             }
         }
-    }
-
-    private static <T> T await(Future<T> future) throws Exception {
-        return future.toCompletionStage().toCompletableFuture().get(15, TimeUnit.SECONDS);
     }
 }

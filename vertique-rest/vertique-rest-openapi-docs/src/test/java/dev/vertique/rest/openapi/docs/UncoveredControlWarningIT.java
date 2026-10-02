@@ -14,7 +14,8 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -23,6 +24,7 @@ import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -355,10 +357,6 @@ public class UncoveredControlWarningIT {
 
     /** Sends one GET to the loopback server and waits for its response. */
     private HttpResponse<Buffer> get(int port, String url) throws Exception {
-        return client.get(port, "127.0.0.1", url)
-                .send()
-                .toCompletionStage()
-                .toCompletableFuture()
-                .get(REQUEST_SECONDS, TimeUnit.SECONDS);
+        return Futures.await(client.get(port, "127.0.0.1", url).send(), Duration.ofSeconds(REQUEST_SECONDS));
     }
 }

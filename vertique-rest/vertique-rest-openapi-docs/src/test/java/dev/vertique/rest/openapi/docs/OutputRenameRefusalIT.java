@@ -19,9 +19,9 @@ import dev.vertique.rest.openapi.docs.fixture.responses.it.NoteExplicitResource;
 import dev.vertique.rest.openapi.docs.fixture.responses.it.NoteResource;
 import dev.vertique.rest.openapi.docs.fixture.responses.it.NotesApi;
 import dev.vertique.rest.openapi.docs.fixture.responses.it.NotesExplicitApi;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments.Outcome;
-import io.vertx.core.Future;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments.Outcome;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.JsonObject;
@@ -31,7 +31,6 @@ import io.vertx.junit5.VertxExtension;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.stream.Stream;
@@ -202,20 +201,20 @@ public class OutputRenameRefusalIT {
         String documentBody = null;
         try {
             if (!row.refused() && outcome.deployed() && outcome.port() != null) {
-                HttpResponse<Buffer> answer =
-                        await(client.get(outcome.port(), HOST, row.route()).send());
+                HttpResponse<Buffer> answer = Futures.await(
+                        client.get(outcome.port(), HOST, row.route()).send(), StartupDeployments.BOUND);
                 status = answer.statusCode();
                 body = answer.bodyAsString();
                 if (row.enabledDocument() != null) {
                     String documentUri = InputAssemblyIT.documentPath(row.enabledDocument(), InputAssemblyIT.JSON_FORM);
-                    HttpResponse<Buffer> document =
-                            await(client.get(outcome.port(), HOST, documentUri).send());
+                    HttpResponse<Buffer> document = Futures.await(
+                            client.get(outcome.port(), HOST, documentUri).send(), StartupDeployments.BOUND);
                     documentStatus = document.statusCode();
                     documentBody = document.bodyAsString();
                 }
             }
         } finally {
-            undeploy(outcome);
+            StartupDeployments.undeployAndClear(vertx, outcome);
         }
 
         // Then
@@ -291,24 +290,5 @@ public class OutputRenameRefusalIT {
     private static Outcome deploy(Function<JsonObject, Served> components, JsonObject config) throws Exception {
         vertx.sharedData().getLocalMap(StartupDeployments.LOCAL_MAP).clear();
         return StartupDeployments.deploy(vertx, () -> components.apply(config).httpVerticle());
-    }
-
-    /** Undeploys a successful deployment, if any, and clears the {@code vertique} local map. */
-    private static void undeploy(Outcome outcome) throws Exception {
-        try {
-            StartupDeployments.undeploy(vertx, outcome);
-        } finally {
-            vertx.sharedData().getLocalMap(StartupDeployments.LOCAL_MAP).clear();
-        }
-    }
-
-    private static <T> T await(Future<T> future) throws Exception {
-        try {
-            return future.toCompletionStage()
-                    .toCompletableFuture()
-                    .get(StartupDeployments.BOUND.toMillis(), TimeUnit.MILLISECONDS);
-        } catch (ExecutionException failed) {
-            throw new AssertionError("the request failed", failed.getCause());
-        }
     }
 }

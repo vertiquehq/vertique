@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.openapi.docs.fixture.conformance.support;
+package dev.vertique.rest.openapi.docs.fixture.support;
 
 import io.vertx.core.MultiMap;
 import io.vertx.core.Vertx;
@@ -11,6 +11,7 @@ import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.client.WebClientOptions;
 import jakarta.annotation.Nullable;
+import java.time.Duration;
 
 /** Request helpers for reading documents from a deployed component on the loopback interface. */
 public final class DocumentRequests {
@@ -34,21 +35,23 @@ public final class DocumentRequests {
             MultiMap headers) {}
 
     /**
-     * Sends a {@code GET} to {@code 127.0.0.1} and waits up to five seconds for the answer.
+     * Sends a {@code GET} to {@code 127.0.0.1} and waits up to {@code bound} for the answer.
      *
      * @param client the client to send with
      * @param port the port to connect to
      * @param path the request path, including any query
      * @param bearerToken a bearer token to present, or {@code null} to send no credentials
+     * @param bound the longest the answer is awaited
      * @return the answer
      * @throws Exception when the request fails or times out
      */
-    public static Answer get(WebClient client, int port, String path, @Nullable String bearerToken) throws Exception {
+    public static Answer get(WebClient client, int port, String path, @Nullable String bearerToken, Duration bound)
+            throws Exception {
         HttpRequest<Buffer> request = client.get(port, "127.0.0.1", path);
         if (bearerToken != null) {
             request.putHeader("Authorization", "Bearer " + bearerToken);
         }
-        HttpResponse<Buffer> response = Deployments.await(request.send());
+        HttpResponse<Buffer> response = Futures.await(request.send(), bound);
         Buffer body = response.body();
         return new Answer(
                 response.statusCode(),

@@ -33,8 +33,8 @@ import dev.vertique.rest.openapi.docs.fixture.responses.it.ReceiptsApi;
 import dev.vertique.rest.openapi.docs.fixture.responses.it.ReceiptsExplicitApi;
 import dev.vertique.rest.openapi.docs.fixture.responses.it.TierResource;
 import dev.vertique.rest.openapi.docs.fixture.responses.it.TiersApi;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments.Outcome;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments.Outcome;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.JsonObject;
@@ -293,7 +293,7 @@ public class OutputHiddenMemberRefusalIT {
                 observed.addAll(row.started().observe(outcome.port()));
             }
         } finally {
-            undeploy(outcome);
+            StartupDeployments.undeployAndClear(vertx, outcome);
         }
 
         // Then
@@ -436,15 +436,6 @@ public class OutputHiddenMemberRefusalIT {
     private static Outcome deploy(Function<JsonObject, Served> components, JsonObject config) throws Exception {
         vertx.sharedData().getLocalMap(StartupDeployments.LOCAL_MAP).clear();
         return StartupDeployments.deploy(vertx, () -> components.apply(config).httpVerticle());
-    }
-
-    /** Undeploys a successful deployment, if any, and clears the {@code vertique} local map. */
-    private static void undeploy(Outcome outcome) throws Exception {
-        try {
-            StartupDeployments.undeploy(vertx, outcome);
-        } finally {
-            vertx.sharedData().getLocalMap(StartupDeployments.LOCAL_MAP).clear();
-        }
     }
 
     /**

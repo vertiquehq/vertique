@@ -21,9 +21,9 @@ import dev.vertique.rest.openapi.docs.fixture.security.orders.OrdersApi;
 import dev.vertique.rest.openapi.docs.fixture.security.vault.UndescribedVaultHandler;
 import dev.vertique.rest.openapi.docs.fixture.security.vault.VaultApi;
 import dev.vertique.rest.openapi.docs.fixture.security.vault.VaultResource;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments.Outcome;
-import io.vertx.core.Future;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments.Outcome;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.JsonArray;
@@ -35,7 +35,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterAll;
@@ -331,14 +330,15 @@ public class DocumentSecurityIT {
         String body = null;
         try {
             if (!documentEnabled && outcome.deployed() && outcome.port() != null) {
-                HttpResponse<Buffer> answer =
-                        await(client.get(outcome.port(), HOST, VaultApi.PATH + VaultResource.ROUTE)
-                                .send());
+                HttpResponse<Buffer> answer = Futures.await(
+                        client.get(outcome.port(), HOST, VaultApi.PATH + VaultResource.ROUTE)
+                                .send(),
+                        StartupDeployments.BOUND);
                 status = answer.statusCode();
                 body = answer.bodyAsString();
             }
         } finally {
-            undeploy(outcome);
+            StartupDeployments.undeployAndClear(vertx, outcome);
         }
         int descriptionCalls = UndescribedVaultHandler.descriptionCalls();
 
@@ -479,7 +479,8 @@ public class DocumentSecurityIT {
     /** Fetches one form of a public document; it must answer {@code 200}. */
     private static String fetchDocument(int port, String name, String form) throws Exception {
         String path = DocsConfigs.DEFAULT_APIDOCS_PATH + "/" + name + "/" + form;
-        HttpResponse<Buffer> response = await(client.get(port, HOST, path).send());
+        HttpResponse<Buffer> response =
+                Futures.await(client.get(port, HOST, path).send(), StartupDeployments.BOUND);
         assertEquals(200, response.statusCode(), () -> "GET " + path + ": " + response.bodyAsString());
         assertNotNull(response.body(), () -> "GET " + path + " answers with a body");
         return response.bodyAsString();
@@ -494,24 +495,5 @@ public class DocumentSecurityIT {
         return StartupDeployments.deploy(vertx, () -> DaggerDocumentSecurityTestComponents_VaultComponent.factory()
                 .create(config)
                 .httpVerticle());
-    }
-
-    /** Undeploys a successful deployment, if any, and clears the {@code vertique} local map. */
-    private static void undeploy(Outcome outcome) throws Exception {
-        try {
-            StartupDeployments.undeploy(vertx, outcome);
-        } finally {
-            vertx.sharedData().getLocalMap(StartupDeployments.LOCAL_MAP).clear();
-        }
-    }
-
-    private static <T> T await(Future<T> future) throws Exception {
-        try {
-            return future.toCompletionStage()
-                    .toCompletableFuture()
-                    .get(StartupDeployments.BOUND.toMillis(), TimeUnit.MILLISECONDS);
-        } catch (ExecutionException failed) {
-            throw new AssertionError("the request failed", failed.getCause());
-        }
     }
 }

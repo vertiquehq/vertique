@@ -15,10 +15,11 @@ import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.openapi.docs.ContractLoadTestComponents.Provisions;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.PublicApi;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments.Outcome;
 import dev.vertique.rest.openapi.docs.fixture.startup.contractload.AnnotatedContractApi;
 import dev.vertique.rest.openapi.docs.fixture.startup.contractload.ContractLoadModules;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments.Outcome;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -35,7 +36,6 @@ import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
@@ -502,14 +502,7 @@ public class OpenApiContractLoadStartupIT {
     private int postItem(int port, JsonObject item) throws Exception {
         Future<HttpResponse<Buffer>> response =
                 client.post(port, LOOPBACK, ITEMS_URI).sendJsonObject(item.copy());
-        try {
-            return response.toCompletionStage()
-                    .toCompletableFuture()
-                    .get(StartupDeployments.BOUND.toMillis(), TimeUnit.MILLISECONDS)
-                    .statusCode();
-        } catch (ExecutionException failed) {
-            throw new AssertionError("the request failed", failed.getCause());
-        }
+        return Futures.await(response, StartupDeployments.BOUND).statusCode();
     }
 
     /** Writes the loadable public contract to the temporary directory and returns its absolute location. */

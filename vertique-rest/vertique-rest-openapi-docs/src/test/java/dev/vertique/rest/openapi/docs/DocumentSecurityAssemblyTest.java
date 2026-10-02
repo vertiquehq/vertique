@@ -44,7 +44,7 @@ import dev.vertique.rest.openapi.docs.fixture.security.unit.GhostBearerHandler;
 import dev.vertique.rest.openapi.docs.fixture.security.unit.GhostCaptureComponent;
 import dev.vertique.rest.openapi.docs.fixture.security.unit.GhostQueryKeyHandler;
 import dev.vertique.rest.openapi.docs.fixture.security.unit.GhostResource;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import java.io.UncheckedIOException;

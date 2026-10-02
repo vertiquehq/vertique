@@ -30,8 +30,9 @@ import dev.vertique.rest.openapi.docs.fixture.disclosure.it.hidden.AccountsAppli
 import dev.vertique.rest.openapi.docs.fixture.disclosure.it.hidden.HiddenProbeApi;
 import dev.vertique.rest.openapi.docs.fixture.disclosure.it.hidden.HiddenProbeResource;
 import dev.vertique.rest.openapi.docs.fixture.input.GeneratedBodies;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments.Outcome;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments.Outcome;
 import io.vertx.core.Future;
 import io.vertx.core.Verticle;
 import io.vertx.core.Vertx;
@@ -41,6 +42,7 @@ import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -523,8 +525,7 @@ public class HiddenInputOmissionIT {
     }
 
     private static Exchange exchange(Future<HttpResponse<Buffer>> request) throws Exception {
-        HttpResponse<Buffer> response =
-                request.toCompletionStage().toCompletableFuture().get(15, TimeUnit.SECONDS);
+        HttpResponse<Buffer> response = Futures.await(request, Duration.ofSeconds(15));
         Buffer body = response.body();
         return new Exchange(response.statusCode(), body == null ? new byte[0] : body.getBytes());
     }

@@ -13,10 +13,10 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments;
 import dev.vertique.rest.openapi.docs.fixture.startup.fallthrough.FallThroughCounters;
 import dev.vertique.rest.openapi.docs.fixture.startup.fallthrough.FallThroughCounters.Counts;
-import io.vertx.core.Future;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
 import io.vertx.core.Verticle;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -27,6 +27,7 @@ import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Duration;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -259,8 +260,8 @@ public class DocsFallThroughIT {
         String documentTag = null;
         for (Row row : table) {
             Counts before = counters.snapshot();
-            HttpResponse<Buffer> response =
-                    await(client.request(row.method(), port, HOST, row.uri()).send());
+            HttpResponse<Buffer> response = Futures.await(
+                    client.request(row.method(), port, HOST, row.uri()).send(), Duration.ofSeconds(15));
             Counts after = counters.snapshot();
 
             assertEquals(row.delta(), after.minus(before), () -> row + ": counter changes");
@@ -369,9 +370,5 @@ public class DocsFallThroughIT {
     private static String strongTag(byte[] bytes) throws Exception {
         return "\""
                 + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)) + "\"";
-    }
-
-    private static <T> T await(Future<T> future) throws Exception {
-        return future.toCompletionStage().toCompletableFuture().get(15, TimeUnit.SECONDS);
     }
 }
