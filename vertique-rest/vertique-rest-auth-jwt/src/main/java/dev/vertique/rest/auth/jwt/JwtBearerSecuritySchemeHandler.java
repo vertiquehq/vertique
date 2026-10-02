@@ -4,9 +4,9 @@
 package dev.vertique.rest.auth.jwt;
 
 import dev.vertique.rest.core.routing.SecuritySchemeRegistry;
-import dev.vertique.rest.core.security.Http;
-import dev.vertique.rest.core.security.SecuritySchemeDescription;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
+import dev.vertique.rest.core.security.scheme.Http;
+import dev.vertique.rest.core.security.scheme.SecuritySchemeDescription;
 import dev.vertique.rest.security.CredentialRejectionReporter;
 import dev.vertique.rest.security.RestAuthenticationEvidence;
 import dev.vertique.security.AuthenticationEvidence;

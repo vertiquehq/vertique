@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.core.security;
+package dev.vertique.rest.core.security.scheme;
 
 import java.util.Optional;
 
@@ -16,7 +16,7 @@ import java.util.Optional;
  * strings and relative URIs with an {@link IllegalArgumentException}, each naming the offending
  * argument. A {@code with*} method returns a new instance and leaves its receiver unchanged.
  *
- * @see SecuritySchemeHandler#openApiDescription()
+ * @see dev.vertique.rest.core.security.SecuritySchemeHandler#openApiDescription()
  */
 public sealed interface SecuritySchemeDescription permits Http, ApiKey, OAuth2, OpenIdConnect, MutualTls {
 

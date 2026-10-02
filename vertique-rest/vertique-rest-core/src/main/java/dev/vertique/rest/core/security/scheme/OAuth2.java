@@ -1,48 +1,62 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.core.security;
+package dev.vertique.rest.core.security.scheme;
 
 import jakarta.annotation.Nullable;
 import java.util.Objects;
 import java.util.Optional;
 
 /**
- * A mutual TLS security scheme description (OpenAPI {@code type: mutualTLS}). Immutable; built
- * through {@link #of()}.
+ * An OAuth 2 security scheme description (OpenAPI {@code type: oauth2}). Immutable; built through
+ * {@link #of(OAuthFlows)}.
  */
-public final class MutualTls implements SecuritySchemeDescription {
+public final class OAuth2 implements SecuritySchemeDescription {
+
+    private final OAuthFlows flows;
 
     @Nullable
     private final String description;
 
-    private MutualTls(@Nullable String description) {
+    private OAuth2(OAuthFlows flows, @Nullable String description) {
+        this.flows = flows;
         this.description = description;
     }
 
     /**
-     * Describes a mutual TLS scheme.
+     * Describes an OAuth 2 scheme with the given flows.
      *
-     * @return a new {@link MutualTls} description
+     * @param flows the configured OAuth flows, built through {@link OAuthFlows#builder()}
+     * @return a new {@link OAuth2} description
+     * @throws NullPointerException if {@code flows} is {@code null}
      */
-    public static MutualTls of() {
-        return new MutualTls(null);
+    public static OAuth2 of(OAuthFlows flows) {
+        return new OAuth2(Objects.requireNonNull(flows, "flows must not be null"), null);
     }
 
     /**
      * Returns a copy of this description with the given human-readable description.
      *
      * @param description the description text
-     * @return a new {@link MutualTls} instance; this instance is unchanged
+     * @return a new {@link OAuth2} instance; this instance is unchanged
      * @throws NullPointerException     if {@code description} is {@code null}
      * @throws IllegalArgumentException if {@code description} is blank
      */
-    public MutualTls withDescription(String description) {
+    public OAuth2 withDescription(String description) {
         Objects.requireNonNull(description, "description must not be null");
         if (description.isBlank()) {
             throw new IllegalArgumentException("description must not be blank");
         }
-        return new MutualTls(description);
+        return new OAuth2(flows, description);
+    }
+
+    /**
+     * The configured OAuth flows.
+     *
+     * @return the flows
+     */
+    public OAuthFlows flows() {
+        return flows;
     }
 
     @Override
@@ -53,7 +67,7 @@ public final class MutualTls implements SecuritySchemeDescription {
     // --- Object contract ---
 
     /**
-     * Two {@code MutualTls} descriptions are equal when their descriptions are equal.
+     * Two {@code OAuth2} descriptions are equal when their flows and description are equal.
      *
      * @param obj the object to compare to
      * @return {@code true} if the objects describe the same scheme
@@ -63,10 +77,10 @@ public final class MutualTls implements SecuritySchemeDescription {
         if (this == obj) {
             return true;
         }
-        if (!(obj instanceof MutualTls other)) {
+        if (!(obj instanceof OAuth2 other)) {
             return false;
         }
-        return Objects.equals(description, other.description);
+        return flows.equals(other.flows) && Objects.equals(description, other.description);
     }
 
     /**
@@ -76,7 +90,7 @@ public final class MutualTls implements SecuritySchemeDescription {
      */
     @Override
     public int hashCode() {
-        return Objects.hashCode(description);
+        return Objects.hash(flows, description);
     }
 
     /**
@@ -86,6 +100,6 @@ public final class MutualTls implements SecuritySchemeDescription {
      */
     @Override
     public String toString() {
-        return "MutualTls[description=" + description + "]";
+        return "OAuth2[flows=" + flows + ", description=" + description + "]";
     }
 }

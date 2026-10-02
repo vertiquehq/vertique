@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.core.security;
+package dev.vertique.rest.core.security.scheme;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.rest.core.routing.SecuritySchemeRegistry;
+import dev.vertique.rest.core.security.SecuritySchemeHandler;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -87,21 +88,21 @@ class SecuritySchemeDescriptionTest {
             ApiKey.class,
                     List.of(
                             "description(): java.util.Optional<java.lang.String>",
-                            "in(): dev.vertique.rest.core.security.ApiKey$Location",
+                            "in(): dev.vertique.rest.core.security.scheme.ApiKey$Location",
                             "name(): java.lang.String"),
             OAuth2.class,
                     List.of(
                             "description(): java.util.Optional<java.lang.String>",
-                            "flows(): dev.vertique.rest.core.security.OAuthFlows"),
+                            "flows(): dev.vertique.rest.core.security.scheme.OAuthFlows"),
             OpenIdConnect.class,
                     List.of("description(): java.util.Optional<java.lang.String>", "openIdConnectUrl(): java.net.URI"),
             MutualTls.class, List.of("description(): java.util.Optional<java.lang.String>"),
             OAuthFlows.class,
                     List.of(
-                            "authorizationCode(): java.util.Optional<dev.vertique.rest.core.security.OAuthFlow>",
-                            "clientCredentials(): java.util.Optional<dev.vertique.rest.core.security.OAuthFlow>",
-                            "implicit(): java.util.Optional<dev.vertique.rest.core.security.OAuthFlow>",
-                            "password(): java.util.Optional<dev.vertique.rest.core.security.OAuthFlow>"),
+                            "authorizationCode(): java.util.Optional<dev.vertique.rest.core.security.scheme.OAuthFlow>",
+                            "clientCredentials(): java.util.Optional<dev.vertique.rest.core.security.scheme.OAuthFlow>",
+                            "implicit(): java.util.Optional<dev.vertique.rest.core.security.scheme.OAuthFlow>",
+                            "password(): java.util.Optional<dev.vertique.rest.core.security.scheme.OAuthFlow>"),
             OAuthFlow.class,
                     List.of(
                             "authorizationUrl(): java.util.Optional<java.net.URI>",
@@ -111,15 +112,15 @@ class SecuritySchemeDescriptionTest {
 
     private static final List<String> EXPECTED_BUILDER_METHODS = List.of(
             "authorizationCode(java.net.URI, java.net.URI, java.util.Map<java.lang.String, java.lang.String>):"
-                    + " dev.vertique.rest.core.security.OAuthFlows$Builder",
-            "build(): dev.vertique.rest.core.security.OAuthFlows",
+                    + " dev.vertique.rest.core.security.scheme.OAuthFlows$Builder",
+            "build(): dev.vertique.rest.core.security.scheme.OAuthFlows",
             "clientCredentials(java.net.URI, java.util.Map<java.lang.String, java.lang.String>):"
-                    + " dev.vertique.rest.core.security.OAuthFlows$Builder",
+                    + " dev.vertique.rest.core.security.scheme.OAuthFlows$Builder",
             "implicit(java.net.URI, java.util.Map<java.lang.String, java.lang.String>):"
-                    + " dev.vertique.rest.core.security.OAuthFlows$Builder",
+                    + " dev.vertique.rest.core.security.scheme.OAuthFlows$Builder",
             "password(java.net.URI, java.util.Map<java.lang.String, java.lang.String>):"
-                    + " dev.vertique.rest.core.security.OAuthFlows$Builder",
-            "refreshUrl(java.net.URI): dev.vertique.rest.core.security.OAuthFlows$Builder");
+                    + " dev.vertique.rest.core.security.scheme.OAuthFlows$Builder",
+            "refreshUrl(java.net.URI): dev.vertique.rest.core.security.scheme.OAuthFlows$Builder");
 
     private static final Set<String> EXCLUDED_ACCESSOR_NAMES = Set.of("hashCode", "toString");
 

@@ -4,9 +4,9 @@
 package dev.vertique.rest.openapi.docs.fixture.security.orders;
 
 import dev.vertique.rest.core.routing.SecuritySchemeRegistry;
-import dev.vertique.rest.core.security.ApiKey;
-import dev.vertique.rest.core.security.SecuritySchemeDescription;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
+import dev.vertique.rest.core.security.scheme.ApiKey;
+import dev.vertique.rest.core.security.scheme.SecuritySchemeDescription;
 import io.vertx.core.Future;
 import io.vertx.ext.web.handler.AuthenticationHandler;
 import io.vertx.ext.web.handler.HttpException;
