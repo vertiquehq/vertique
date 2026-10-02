@@ -5,13 +5,13 @@ package dev.vertique.rest.openapi.docs;
 
 import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.rest.core.RestConfigurationException;
+import dev.vertique.rest.jaxrs.application.RestApplications;
+import dev.vertique.rest.jaxrs.application.RestApplications.ContractOrigin;
 import dev.vertique.rest.jaxrs.publication.InputBinding;
 import dev.vertique.rest.jaxrs.publication.MountPublication;
 import dev.vertique.rest.jaxrs.publication.OperationDetail;
 import dev.vertique.rest.jaxrs.publication.OperationPublication;
 import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
-import dev.vertique.rest.jaxrs.publication.RestApplications;
-import dev.vertique.rest.jaxrs.publication.RestApplications.ContractOrigin;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
 import io.vertx.core.Context;
 import io.vertx.core.Future;

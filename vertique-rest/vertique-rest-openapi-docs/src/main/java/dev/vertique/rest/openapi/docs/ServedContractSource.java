@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.openapi.docs;
 
-import dev.vertique.rest.jaxrs.publication.RestApplications;
+import dev.vertique.rest.jaxrs.application.RestApplications;
 import java.io.File;
 import java.net.URL;
 import java.nio.file.Path;

@@ -22,7 +22,7 @@ import dev.vertique.rest.core.security.AuthEnforcementCapability;
 import dev.vertique.rest.core.security.Authorized;
 import dev.vertique.rest.core.security.SecurityPolicyViolation;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
-import dev.vertique.rest.jaxrs.publication.SyntheticOperation;
+import dev.vertique.rest.jaxrs.synthetic.SyntheticOperation;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.vertx.core.Future;

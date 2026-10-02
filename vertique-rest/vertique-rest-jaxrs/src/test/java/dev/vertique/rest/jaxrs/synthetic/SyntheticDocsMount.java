@@ -5,8 +5,6 @@ package dev.vertique.rest.jaxrs.synthetic;
 
 import dev.vertique.core.extension.ExtensionPhase;
 import dev.vertique.rest.core.router.RouterMount;
-import dev.vertique.rest.jaxrs.publication.SyntheticOperation;
-import dev.vertique.rest.jaxrs.publication.SyntheticOperations;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
