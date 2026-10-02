@@ -48,10 +48,14 @@ final class ApiDocsUiMount implements RouterMount {
 
     /**
      * The page's content security policy: a restrictive base policy whose {@code script-src} names
-     * this origin and exactly {@link #REDOC_SCRIPT_URL}.
+     * this origin and exactly {@link #REDOC_SCRIPT_URL}, plus the two additions Redoc 2.5.4 needs,
+     * measured in a browser on 2026-10-02. {@code style-src 'unsafe-inline'} is needed because Redoc
+     * injects its styles at run time. {@code worker-src blob:} is needed because its search runs in a
+     * worker created from a blob URL. Images it would load (a data-URL icon and a logo from another
+     * origin) stay blocked without affecting rendering.
      */
     static final String CONTENT_SECURITY_POLICY = "default-src 'none'; script-src 'self' " + REDOC_SCRIPT_URL
-            + "; style-src 'self'; connect-src 'self'; frame-ancestors 'none'";
+            + "; style-src 'self' 'unsafe-inline'; connect-src 'self'; worker-src blob:; frame-ancestors 'none'";
 
     /** Creates the mount. */
     ApiDocsUiMount() {}

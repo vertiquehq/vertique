@@ -67,7 +67,7 @@ public class ApiDocsUiIT {
      * The additions Redoc needs outside {@code script-src}, as {@code "<directive> <source>"}
      * entries, as measured in a browser loading the page.
      */
-    private static final Set<String> REDOC_ADDITIONS = Set.of();
+    private static final Set<String> REDOC_ADDITIONS = Set.of("style-src 'unsafe-inline'", "worker-src blob:");
 
     private static final Pattern EXACT_JSDELIVR_VERSION = Pattern.compile(
             "https://cdn\\.jsdelivr\\.net/npm/redoc@\\d+\\.\\d+\\.\\d+/bundles/redoc\\.standalone\\.js");
