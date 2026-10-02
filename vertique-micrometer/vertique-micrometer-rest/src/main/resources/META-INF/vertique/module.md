@@ -106,7 +106,8 @@ interface AppComponent { /* ... */ }
 ### RestServerRequestMetricsListener
 
 `@Singleton` `RestRequestCompletedListener`. Records one timer sample per
-`RestRequestCompletedEvent`, so JAX-RS operations only. The `route` tag is the operation's route
+`RestRequestCompletedEvent`: JAX-RS operations and framework synthetic operations, such as
+protected API document reads. The `route` tag is the operation's route
 template and the `operation` tag its operationId, both read from `event.operation()`; neither falls
 back to `UNKNOWN`. Meter name: `vertique.rest.server.requests`. When `MetricsConfig.enabled()` is
 `false` (i.e., `metrics.enabled=false` in config), returns immediately without recording.
@@ -142,7 +143,8 @@ On `onRequest`:
 
 ### `vertique.rest.server.requests` — Timer
 
-Per-request timer. One sample is recorded per `RestRequestCompletedEvent`, JAX-RS operations only.
+Per-request timer. One sample is recorded per `RestRequestCompletedEvent`: JAX-RS operations and
+framework synthetic operations (see **API document reads** below).
 
 | Tag | Values | Notes |
 |-----|--------|-------|
@@ -157,10 +159,14 @@ All tags above are part of `vertique-micrometer-core`'s growth-only cardinality-
 each key is capped at `metrics.cardinality.maxTagValuesPerKey` distinct values (default `200`)
 across the composite. See `vertique-micrometer-core`'s module reference for the guard mechanism.
 
-**API document reads.** API document routes are framework synthetic operations that no JAX-RS
-operation route claims, so a document read completes as an `HttpRequestCompletedEvent`, not a
-`RestRequestCompletedEvent`, and is not timed in `vertique.rest.server.requests`. Vert.x's native
-HTTP server metrics count document reads with every other request.
+**API document reads.** A read of a protected API document, and its `401` or `403` denial,
+completes as a REST operation completion whose operation is a framework synthetic operation. It is
+timed in `vertique.rest.server.requests` with `operation` `apidocs:<name>:json` or
+`apidocs:<name>:yaml` and `route` `/<name>/openapi.json` or `/<name>/openapi.yaml`: the descriptor's
+route template, the document path relative to the documentation prefix (`apidocs.path`), which it
+does not include. `method` is the request's method, so a `HEAD` read is tagged `HEAD`. A public
+document read is claimed by no operation route, completes as an `HttpRequestCompletedEvent`, and is
+not timed there. Vert.x's native HTTP server metrics count document reads with every other request.
 
 **No application tag yet.** The timer does not carry the application name (`rest.application`).
 When one resource is mounted by more than one application with the same operationId and route, both
